@@ -1,486 +1,341 @@
-import { type ReactElement, type ReactNode, useEffect, useState } from 'react';
+import { useId, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  AlertTriangle,
-  Building2,
-  CheckCircle2,
-  Clock,
-  Globe,
-  Lock,
-  Pencil,
-  X,
-  type LucideIcon,
-} from 'lucide-react';
-import {
-  Button,
+  Alert,
+  Badge,
+  buttonClass,
   Card,
-  EmptyState,
-  IconTile,
+  CardBody,
+  ErrorState,
+  formatNumber,
   Input,
-  Modal,
-  PageContainer,
-  SectionHeader,
-  Skeleton,
-  StatusBadge,
-} from '../../design-system';
-import { getBots, getCurrentUser, updateBot, updateClientProfile } from '../../services/api';
+  LoadingRows,
+  LockedState,
+  normalizeUrl,
+  PropertyGrid,
+  SaveBar,
+  SettingBand,
+  SettingGroup,
+  SettingRow,
+  Stack,
+  toast,
+  validateUrl,
+} from '../../ui';
+import { getCurrentUser, updateClientProfile } from '../../services/api';
+import { keys } from '../../query/keys';
 import { useWorkspace } from '../../context/WorkspaceContext';
+import { useBotContext } from '../../context/BotContext';
 import { useEntitlements } from '../../hooks/useEntitlements';
-import { useUpgradeModal } from '../../context/UpgradeModalContext';
-import { type Bot, type CurrentUser } from '../../types/domain';
-import { BusinessHoursEditor, type BusinessHours } from './BusinessHoursEditor';
+import { roleLabel, roleTone } from './roles';
+import { describeDirty, useDraft } from './draft';
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+/**
+ * Settings ▸ Workspace — who this account is.
+ *
+ * Three fields and a fact sheet. The page it replaces put an "Edit details"
+ * button beside a read-only card, so the fields were invisible until you asked
+ * for them and the page could not tell you whether anything was unsaved. Here
+ * the fields *are* the group, and the footer always says which state you are in.
+ *
+ * The fields and the facts share one form measure, in that order. The fact
+ * sheet is read-only context for the form, and as a *full-width* card under a
+ * full-width form it was context nobody ever had in view while editing — 500px
+ * below the fields, because both boxes were 900px wide to hold a 256px control.
+ * At 672 the whole page is about 550px tall and both are on screen at once,
+ * which is what putting them side by side was trying to buy.
+ *
+ * What is deliberately **not** here any more: the chatbot business-hours editor.
+ * It wrote `bots[0]` unconditionally, so in a workspace with two chatbots the
+ * second could never be given hours and the first was silently edited instead
+ * (ledger B1). Hours are a property of a chatbot, so they belong on that
+ * chatbot's own Experience page, and this page links there rather than
+ * reproducing a control that edits the wrong object.
+ */
 
-function toMessage(error: unknown, fallback: string): string {
-  if (error instanceof Error && error.message) return error.message;
-  return fallback;
-}
+/**
+ * What this form edits, and what each field is really called.
+ *
+ * `company_name` is labelled "Workspace name" because that is what it *is*:
+ * `GET /me/workspaces` resolves a workspace's display name as
+ * `company_name or name or email`, so this field is the one that actually
+ * names the workspace everywhere the product shows one.
+ *
+ * The Client row's `name` used to be edited here too, under the label "Name"
+ * and the hint "Shown in the workspace switcher." Both were wrong. It is the
+ * PERSON's name — the account menu at the foot of the rail renders it, and so
+ * does Home's greeting — and the switcher it named was removed. Worse, it was
+ * a second editor for a field `/account` already owns (see
+ * `ProfileSection`, whose own docstring says a workspace owner's name lives
+ * on the Client row and goes through this same endpoint). Two forms writing
+ * one field, one of them describing it as something else entirely. It is gone
+ * from here; "Managed elsewhere" at the foot of the page points at its real
+ * home.
+ */
+const FIELD_LABELS = {
+  company_name: 'Workspace name',
+  website: 'Website',
+} as const;
 
-// ── Load state machine ───────────────────────────────────────────────────────
+type ProfileFields = { company_name: string; website: string };
 
-type LoadPhase =
-  | { readonly status: 'loading' }
-  | { readonly status: 'error'; readonly message: string }
-  | { readonly status: 'ready'; readonly user: CurrentUser; readonly bots: Bot[] };
+export function GeneralPage() {
+  const queryClient = useQueryClient();
+  const { currentWorkspaceId, currentRole, refresh: refreshWorkspace } = useWorkspace();
+  const { bots } = useBotContext();
+  const { planName, planSlug, limitFor } = useEntitlements();
+  const fieldId = useId();
 
-// ── Small presentational pieces ──────────────────────────────────────────────
+  const me = useQuery({
+    queryKey: keys.session.me(),
+    queryFn: getCurrentUser,
+    staleTime: 60_000,
+  });
 
-interface SettingRowProps {
-  icon: LucideIcon;
-  label: string;
-  value: ReactNode;
-}
+  const draft = useDraft<ProfileFields>({
+    company_name: '',
+    website: '',
+  });
 
-/** A key/value line inside a workspace card. */
-function SettingRow({ icon: Icon, label, value }: SettingRowProps): ReactElement {
-  return (
-    <div className="flex items-center justify-between gap-4 py-3">
-      <span className="flex items-center gap-2 text-[13px] text-[var(--ds-text-muted)]">
-        <Icon size={15} aria-hidden="true" className="text-[var(--ds-text-subtle)]" />
-        {label}
-      </span>
-      <span className="min-w-0 truncate text-right text-[13px] font-medium text-[var(--ds-text)]">
-        {value || '-'}
-      </span>
-    </div>
-  );
-}
+  // Adopt the server's copy exactly once per identity, during render rather
+  // than in an effect. React's own "adjust state when a prop changes" pattern:
+  // an effect would render the empty form first and then replace it, and
+  // re-running on every background refetch would discard whatever the user is
+  // halfway through typing.
+  const [committedFor, setCommittedFor] = useState<number | null>(null);
+  if (me.data && committedFor !== me.data.id) {
+    setCommittedFor(me.data.id);
+    draft.commit({
+      company_name: me.data.company_name ?? '',
+      website: me.data.website ?? '',
+    });
+  }
 
-// ── Page ─────────────────────────────────────────────────────────────────────
+  const save = useMutation({
+    mutationFn: async () => {
+      const patch: Record<string, string> = {};
+      if (draft.patch.company_name !== undefined) patch.company_name = draft.patch.company_name;
+      if (draft.patch.website !== undefined) patch.website = normalizeUrl(draft.patch.website);
+      return updateClientProfile(patch);
+    },
+    onSuccess: (updated) => {
+      draft.commit({
+        company_name: updated.company_name ?? '',
+        website: updated.website ?? '',
+      });
+      void queryClient.invalidateQueries({ queryKey: keys.session.me() });
+      // The rail and the top bar read the workspace name from their own
+      // context, not from this query — without this they keep the old name
+      // until a reload, which reads as a save that did not take.
+      void refreshWorkspace();
+      toast.success('Workspace updated');
+    },
+  });
 
-export function GeneralPage(): ReactElement {
-  const { currentWorkspaceId, currentWorkspaceName, currentRole, workspaces, refresh: refreshWorkspace } = useWorkspace();
-  const { hasFeature } = useEntitlements();
-  const { openUpgradeModal } = useUpgradeModal();
-  const liveChatUnlocked = hasFeature('live_chat');
-
-  const [phase, setPhase] = useState<LoadPhase>({ status: 'loading' });
-  const [refreshToken, setRefreshToken] = useState(0);
-
-  // ── Workspace Details Edit State ─────────────────────────────────────────
-  const [isEditing, setIsEditing] = useState(false);
-  const [editName, setEditName] = useState('');
-  const [editCompany, setEditCompany] = useState('');
-  const [editWebsite, setEditWebsite] = useState('');
-  const [isSavingDetails, setIsSavingDetails] = useState(false);
-  const [detailsError, setDetailsError] = useState<string | null>(null);
-  const [detailsSuccess, setDetailsSuccess] = useState<string | null>(null);
-
-  // ── Business Hours Modal State ───────────────────────────────────────────
-  const [isHoursModalOpen, setIsHoursModalOpen] = useState(false);
-  const [hoursDraft, setHoursDraft] = useState<BusinessHours | null>(null);
-  const [isSavingHours, setIsSavingHours] = useState(false);
-  const [hoursNotice, setHoursNotice] = useState<string | null>(null);
-
-  // Load user data and workspace bots
-  useEffect(() => {
-    let active = true;
-    void (async () => {
-      try {
-        const [user, bots] = await Promise.all([
-          getCurrentUser(),
-          getBots().catch(() => [] as Bot[]),
-        ]);
-        if (!active) return;
-        setPhase({ status: 'ready', user, bots });
-      } catch (error) {
-        if (!active) return;
-        setPhase({
-          status: 'error',
-          message: toMessage(error, 'We couldn’t load your workspace. Please try again.'),
-        });
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [refreshToken]);
-
-  const retry = (): void => {
-    setPhase({ status: 'loading' });
-    setRefreshToken((token) => token + 1);
-  };
-
-  const user = phase.status === 'ready' ? phase.user : null;
-  const bots = phase.status === 'ready' ? phase.bots : [];
-  const primaryBot = bots[0] ?? null;
-
-  const currentWorkspace = workspaces.find((workspace) => workspace.id === currentWorkspaceId);
-  const agentCount = currentWorkspace?.bot_count ?? user?.bot_count ?? 0;
-  const roleTone = currentRole === 'owner' ? 'accent' : currentRole === 'admin' ? 'info' : 'neutral';
-
-  // Start editing workspace identity
-  const handleStartEdit = (): void => {
-    if (!user) return;
-    setEditName(currentWorkspaceName ?? user.name ?? '');
-    setEditCompany(user.company_name ?? '');
-    setEditWebsite(user.website ?? '');
-    setDetailsError(null);
-    setDetailsSuccess(null);
-    setIsEditing(true);
-  };
-
-  // Save workspace identity
-  const handleSaveDetails = async (e: React.FormEvent): Promise<void> => {
-    e.preventDefault();
-    if (!user) return;
-
-    const trimmedName = editName.trim();
-    if (!trimmedName) {
-      setDetailsError('Workspace name cannot be empty.');
+  function handleSave() {
+    const errors: Partial<Record<keyof ProfileFields, string>> = {};
+    // No required rule on the workspace name. Blank is a real answer: the
+    // backend falls back to the owner's own name, so an empty field still
+    // produces a workspace that is named somewhere — the row's own hint says
+    // as much. Rejecting it would be inventing a constraint the API does not
+    // have.
+    const website = draft.values.website.trim();
+    if (website) {
+      const reason = validateUrl(website);
+      if (reason) errors.website = reason;
+    }
+    if (Object.keys(errors).length > 0) {
+      draft.setErrors(errors);
       return;
     }
+    save.mutate();
+  }
 
-    setIsSavingDetails(true);
-    setDetailsError(null);
-    setDetailsSuccess(null);
+  const isOperator = currentRole === 'operator' || me.data?.kind === 'operator';
 
-    try {
-      const updated = await updateClientProfile({
-        name: trimmedName,
-        company_name: editCompany.trim() || undefined,
-        website: editWebsite.trim() || undefined,
-      });
+  if (me.isPending) {
+    return (
+      <Card>
+        <CardBody>
+          <LoadingRows rows={4} />
+        </CardBody>
+      </Card>
+    );
+  }
 
-      // Update local phase user state
-      setPhase((prev) => {
-        if (prev.status !== 'ready') return prev;
-        return {
-          ...prev,
-          user: {
-            ...prev.user,
-            name: updated.name,
-            company_name: updated.company_name ?? null,
-            website: updated.website ?? null,
-          },
-        };
-      });
-
-      // Refresh workspace context across topbar and app shell
-      void refreshWorkspace();
-
-      setDetailsSuccess('Workspace details updated successfully!');
-      setIsEditing(false);
-    } catch (error) {
-      setDetailsError(toMessage(error, 'Failed to update workspace details. Please try again.'));
-    } finally {
-      setIsSavingDetails(false);
-    }
-  };
-
-  // Open Business Hours editor modal
-  const handleOpenHoursModal = (): void => {
-    const hours = (primaryBot?.business_hours as unknown as BusinessHours | null) ?? null;
-    setHoursDraft(hours);
-    setHoursNotice(null);
-    setIsHoursModalOpen(true);
-  };
-
-  // Save Business Hours
-  const handleSaveHours = async (): Promise<void> => {
-    if (!primaryBot || !hoursDraft) return;
-
-    setIsSavingHours(true);
-    try {
-      await updateBot(primaryBot.id, { business_hours: hoursDraft as unknown as Record<string, unknown> });
-      setPhase((prev) => {
-        if (prev.status !== 'ready') return prev;
-        const updatedBots = prev.bots.map((b) =>
-          b.id === primaryBot.id ? { ...b, business_hours: hoursDraft as unknown as Record<string, unknown> } : b,
-        );
-        return { ...prev, bots: updatedBots };
-      });
-      setHoursNotice('Business hours updated successfully.');
-      setIsHoursModalOpen(false);
-    } catch (error) {
-      setHoursNotice(toMessage(error, 'Failed to update business hours.'));
-    } finally {
-      setIsSavingHours(false);
-    }
-  };
-
-  const primaryBotHours = primaryBot?.business_hours as unknown as BusinessHours | null;
-
-  return (
-    <PageContainer>
-      {phase.status === 'loading' && <LoadingState />}
-
-      {phase.status === 'error' && (
-        <EmptyState
-          icon={AlertTriangle}
-          title="Couldn’t load your workspace"
-          description={phase.message}
-          action={<Button onClick={retry}>Try again</Button>}
+  if (me.isError) {
+    return (
+      <Card>
+        <ErrorState
+          title="We could not load this workspace"
+          description={me.error instanceof Error ? me.error.message : undefined}
+          onRetry={() => void me.refetch()}
         />
-      )}
+      </Card>
+    );
+  }
 
-      {phase.status === 'ready' && user && (
-        <>
-          {detailsSuccess && (
-            <div className="flex items-center gap-2 rounded-lg border border-[var(--ds-accent-soft)] bg-[var(--ds-accent-soft)]/20 p-3 text-[13px] font-medium text-[var(--ds-accent-text)]">
-              <CheckCircle2 size={16} className="shrink-0" />
-              {detailsSuccess}
-            </div>
-          )}
+  // Forbidden. An operator seat can reach this URL — the router lets them into
+  // `/account`, and a linked admin lands here from a bookmark — but
+  // `PATCH /client/profile` is client-identity only, so showing them the form
+  // would be showing them a save button that always 403s.
+  if (isOperator) {
+    return (
+      <LockedState
+        title="Only the workspace owner can change this"
+        description="Your name, email and alerts are on your account page."
+        action={
+          <Link to="/account" className={buttonClass('primary', 'md')}>
+            Go to your account
+          </Link>
+        }
+      />
+    );
+  }
 
-          {/* ── Workspace identity ──────────────────────────────────────── */}
-          <section aria-labelledby="workspace-identity-heading" className="space-y-4">
-            <SectionHeader
-              title={<span id="workspace-identity-heading">Workspace</span>}
-              description="The account these chatbots, conversations, and billing belong to."
-              actions={
-                !isEditing ? (
-                  <Button variant="outline" size="sm" onClick={handleStartEdit}>
-                    <Pencil size={14} className="mr-1.5" />
-                    Edit details
-                  </Button>
-                ) : undefined
-              }
-            />
+  const botLimit = limitFor('bots');
 
-            <Card className="p-6">
-              {!isEditing ? (
-                <>
-                  <div className="flex items-center gap-4">
-                    <IconTile icon={Building2} tone="accent" size="lg" />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-[15px] font-semibold text-[var(--ds-text)]">
-                        {currentWorkspaceName ?? user.company_name ?? user.name ?? 'Your workspace'}
-                      </p>
-                      <p className="mt-0.5 text-[13px] text-[var(--ds-text-muted)]">
-                        {agentCount} chatbot{agentCount === 1 ? '' : 's'} in this workspace
-                      </p>
-                    </div>
-                    {currentRole && (
-                      <StatusBadge tone={roleTone} className="shrink-0 capitalize">
-                        {currentRole}
-                      </StatusBadge>
-                    )}
-                  </div>
-                  <div className="mt-4 divide-y divide-[var(--ds-border)] border-t border-[var(--ds-border)]">
-                    <SettingRow icon={Building2} label="Company" value={user.company_name} />
-                    <SettingRow icon={Globe} label="Website" value={user.website} />
-                  </div>
-                </>
-              ) : (
-                <form onSubmit={(e) => void handleSaveDetails(e)} className="space-y-4">
-                  <div className="flex items-center justify-between pb-2 border-b border-[var(--ds-border)]">
-                    <h3 className="text-[14px] font-semibold text-[var(--ds-text)]">Edit workspace details</h3>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setIsEditing(false)}
-                      aria-label="Cancel editing"
-                    >
-                      <X size={16} />
-                    </Button>
-                  </div>
-
-                  {detailsError && (
-                    <div className="rounded-lg bg-[var(--ds-danger-soft)] p-3 text-[13px] text-[var(--ds-danger-text)]">
-                      {detailsError}
-                    </div>
-                  )}
-
-                  <div className="space-y-3">
-                    <div>
-                      <label className="block text-[13px] font-medium text-[var(--ds-text)] mb-1">
-                        Workspace Name *
-                      </label>
-                      <Input
-                        value={editName}
-                        onChange={(e) => setEditName(e.target.value)}
-                        placeholder="e.g. Acme Support Workspace"
-                        required
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[13px] font-medium text-[var(--ds-text)] mb-1">
-                        Company Name
-                      </label>
-                      <Input
-                        value={editCompany}
-                        onChange={(e) => setEditCompany(e.target.value)}
-                        placeholder="e.g. Acme Corporation"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[13px] font-medium text-[var(--ds-text)] mb-1">
-                        Website URL
-                      </label>
-                      <Input
-                        type="url"
-                        value={editWebsite}
-                        onChange={(e) => setEditWebsite(e.target.value)}
-                        placeholder="https://example.com"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-end gap-3 pt-3 border-t border-[var(--ds-border)]">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setIsEditing(false)}
-                      disabled={isSavingDetails}
-                    >
-                      Cancel
-                    </Button>
-                    <Button type="submit" size="sm" disabled={isSavingDetails}>
-                      {isSavingDetails ? 'Saving...' : 'Save changes'}
-                    </Button>
-                  </div>
-                </form>
-              )}
-            </Card>
-          </section>
-
-          {/* ── Agent defaults ─────────────────────────────────────────────── */}
-          <section aria-labelledby="defaults-heading" className="space-y-4">
-            <SectionHeader
-              title={<span id="defaults-heading">Agent defaults</span>}
-              description="Workspace-wide defaults that new chatbots start from. Each chatbot can override these."
-            />
-
-            {/* Business hours default configuration */}
-            <Card className="p-6">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <p className="flex items-center gap-2 text-[14px] font-semibold text-[var(--ds-text)]">
-                    <Clock
-                      size={16}
-                      aria-hidden="true"
-                      className={
-                        liveChatUnlocked
-                          ? 'text-[var(--ds-accent-text)]'
-                          : 'text-[var(--ds-text-subtle)]'
-                      }
-                    />
-                    Business hours
-                    {!liveChatUnlocked && (
-                      <Lock
-                        size={12}
-                        strokeWidth={1.75}
-                        aria-hidden="true"
-                        className="text-[var(--ds-text-subtle)]"
-                      />
-                    )}
-                  </p>
-                  <p className="mt-1 text-[13px] text-[var(--ds-text-muted)]">
-                    Business hours decide when live chat shows as available and when visitors see the offline form.
-                  </p>
-                </div>
-                {liveChatUnlocked ? (
-                  <Button variant="outline" size="sm" onClick={handleOpenHoursModal} className="shrink-0">
-                    Configure schedule
-                  </Button>
-                ) : (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => openUpgradeModal('live_chat')}
-                    className="shrink-0"
-                  >
-                    <Lock size={12} strokeWidth={1.75} aria-hidden="true" />
-                    Upgrade to configure
-                  </Button>
-                )}
-              </div>
-
-              {hoursNotice && liveChatUnlocked && (
-                <p className="mt-3 text-[12px] text-[var(--ds-accent-text)]">{hoursNotice}</p>
-              )}
-
-              <div className="mt-4 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-3 text-[13px] text-[var(--ds-text-muted)] flex items-center justify-between">
-                <span>
-                  Schedule status:{' '}
-                  <strong className="text-[var(--ds-text)]">
-                    {!liveChatUnlocked
-                      ? 'Not available on Free'
-                      : primaryBotHours && primaryBotHours.enabled
-                        ? `Active (${primaryBotHours.timezone || 'UTC'})`
-                        : 'Always available (24/7)'}
-                  </strong>
-                </span>
-                <StatusBadge
-                  tone={
-                    !liveChatUnlocked
-                      ? 'neutral'
-                      : primaryBotHours && primaryBotHours.enabled
-                        ? 'accent'
-                        : 'neutral'
-                  }
-                >
-                  {!liveChatUnlocked
-                    ? 'Locked'
-                    : primaryBotHours && primaryBotHours.enabled
-                      ? 'Schedule Active'
-                      : '24/7 Mode'}
-                </StatusBadge>
-              </div>
-            </Card>
-          </section>
-
-          {/* Business Hours Modal */}
-          <Modal
-            open={isHoursModalOpen}
-            onClose={() => setIsHoursModalOpen(false)}
-            title="Configure Business Hours"
-          >
-            <div className="space-y-4">
-              <BusinessHoursEditor
-                value={hoursDraft}
-                onChange={(next) => setHoursDraft(next)}
-              />
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-[var(--ds-border)]">
-                <Button variant="ghost" size="sm" onClick={() => setIsHoursModalOpen(false)}>
-                  Cancel
-                </Button>
-                <Button size="sm" onClick={() => void handleSaveHours()} disabled={isSavingHours}>
-                  {isSavingHours ? 'Saving...' : 'Save schedule'}
-                </Button>
-              </div>
-            </div>
-          </Modal>
-        </>
-      )}
-    </PageContainer>
-  );
-}
-
-// ── Loading skeleton ─────────────────────────────────────────────────────────
-
-function LoadingState(): ReactElement {
   return (
-    <div className="space-y-6">
-      <Skeleton className="h-6 w-40 rounded-lg" />
-      <Skeleton className="h-40 w-full rounded-xl" />
-      <Skeleton className="h-6 w-40 rounded-lg" />
-      <Skeleton className="h-36 w-full rounded-xl" />
-    </div>
+    /* One column, not two. `Columns asideWidth="md"` splits at `@5xl/page`
+       (1024) and this content column is 904px inside the settings rail at 1440,
+       so the side-by-side layout this page was written for never rendered at the
+       width it was designed for — the fact sheet sat under the form anyway, with
+       the rail's own column empty beside it. Splitting 904 in two instead is
+       worse, not better: the control column is a fixed 256px, so a 440px half
+       leaves 120px for a label and its hint, and "Shown in the workspace
+       switcher." wraps onto three lines.
+
+       The measure is `SettingGroup`'s own now, so there is no `Measure` here:
+       both groups cap themselves at 672, which is where a label and its control
+       stay bound and where Linear, Stripe and the Razorpay dashboard all put a
+       settings form. It is also one right edge for the page — the row's 640px
+       pair cap and the save bar's edge were 264px apart at 904 wide. */
+    <Stack>
+      <SettingGroup title="Identity">
+        {save.isError ? (
+          <SettingBand>
+            <Alert tone="danger" live title="We could not save that">
+              {save.error instanceof Error
+                ? save.error.message
+                : 'Something went wrong. Please try again.'}
+            </Alert>
+          </SettingBand>
+        ) : null}
+
+        <SettingRow
+          label={FIELD_LABELS.company_name}
+          htmlFor={`${fieldId}-company`}
+          description="Names this workspace across the app, and on your invoices. Leave it blank to use your own name."
+          error={draft.errors.company_name}
+        >
+          <Input
+            id={`${fieldId}-company`}
+            value={draft.values.company_name}
+            onChange={(event) => draft.set('company_name', event.target.value)}
+            placeholder="Acme Corporation"
+            autoComplete="organization"
+          />
+        </SettingRow>
+
+        <SettingRow
+          label={FIELD_LABELS.website}
+          htmlFor={`${fieldId}-website`}
+          // Every other row in this group carries a clause, and a bare label
+          // beside two described ones reads as a row that lost its hint.
+          description="Where your chatbot lives. Used as the default crawl target."
+          error={draft.errors.website}
+        >
+          <Input
+            id={`${fieldId}-website`}
+            value={draft.values.website}
+            onChange={(event) => draft.set('website', event.target.value)}
+            placeholder="acme.com"
+            inputMode="url"
+          />
+        </SettingRow>
+
+        <SaveBar
+          variant="footer"
+          dirty={draft.isDirty}
+          summary={describeDirty(draft.dirty, FIELD_LABELS)}
+          saving={save.isPending}
+          onSave={handleSave}
+          onDiscard={draft.reset}
+        />
+      </SettingGroup>
+
+      {/* Facts only, and only the ones somebody reads. "Workspaces: 1" went:
+          a count that says "one" to almost every account is not information,
+          and the accounts it would say "two" to already switch from the
+          account menu. `Workspace ID` stays but sits last — it is the one
+          value here nobody wants until support asks for it. */}
+      <SettingGroup title="This workspace" titleAs="h2">
+        <SettingBand>
+          <PropertyGrid
+            items={[
+              {
+                label: 'Your role',
+                value: (
+                  <Badge tone={roleTone(currentRole ?? 'owner')}>
+                    {roleLabel(currentRole ?? 'owner')}
+                  </Badge>
+                ),
+              },
+              {
+                label: 'Plan',
+                value: (
+                  <Link
+                    to="/billing"
+                    className="text-accent-600 underline-offset-2 hover:underline"
+                  >
+                    {planName || planSlug || 'Free'}
+                  </Link>
+                ),
+              },
+              {
+                label: 'Chatbots',
+                value: (
+                  <span className="figure">
+                    {formatNumber(bots.length)}
+                    {botLimit > 0 ? (
+                      <span className="text-text-tertiary"> of {formatNumber(botLimit)}</span>
+                    ) : null}
+                  </span>
+                ),
+              },
+              { label: 'Sign-in email', value: me.data?.email },
+              {
+                label: 'Workspace ID',
+                value: <span className="figure">{currentWorkspaceId ?? me.data?.id}</span>,
+              },
+            ]}
+          />
+        </SettingBand>
+      </SettingGroup>
+
+      {/* The two things people come to Settings for and do not find here.
+          Both used to be either absent (your own profile) or a lone row
+          hanging off the bottom of the fact sheet, where a navigation link
+          read as one more read-only property. Named as a group, the absence
+          is an answer rather than a gap. */}
+      <SettingGroup title="Managed elsewhere" titleAs="h2">
+        <SettingRow
+          label="Your profile"
+          description="Your own name, password, email and alerts."
+        >
+          <Link to="/account" className={buttonClass('secondary', 'sm')}>
+            Open account
+          </Link>
+        </SettingRow>
+        <SettingRow
+          label="Chatbot settings"
+          description="Hours, greeting, tone and the install snippet live on each chatbot."
+        >
+          <Link to="/chatbots" className={buttonClass('secondary', 'sm')}>
+            Open chatbots
+          </Link>
+        </SettingRow>
+      </SettingGroup>
+    </Stack>
   );
 }

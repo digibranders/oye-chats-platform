@@ -1,61 +1,45 @@
-import { type ReactElement } from 'react';
-import { Card, SectionHeader } from '../../design-system';
+import { RankedBars, formatNumber, formatRelative } from '../../ui';
 import { type TopDownvotedItem } from './feedback-helpers';
 
-interface TopDownvotedQuestionsProps {
-  items: TopDownvotedItem[];
+export interface TopDownvotedQuestionsProps {
+  items: readonly TopDownvotedItem[];
+  /** The currently selected question, if the list below is showing one. */
+  selected?: string | null;
   /** Called with the question text when a row is activated (click-to-jump). */
   onSelect: (question: string) => void;
 }
 
 /**
- * TopDownvotedQuestions - the most-repeated negatively-rated questions,
- * ranked, with a proportional bar. Clicking a row jumps to a matching item in
- * the list below (handled by the caller - see `FeedbackPanel`). Restyled port
- * of the legacy "Top downvoted questions" panel (`pages/Feedback.jsx:246-294`).
+ * The questions the chatbot keeps getting wrong.
+ *
+ * `RankedBars`, not a hand-drawn bar list: these are peers competing for the
+ * same attention, not one quantity against a ceiling, so `Progress` and `Meter`
+ * semantics would both be lies. The primitive states every count in text, which
+ * is what makes the ranking survive being printed or read aloud — the version
+ * this replaces drew the same shape by hand at its own height, one of three
+ * such copies in the app.
+ *
+ * Each row is a real button that selects the question in the list below, and
+ * says so via `aria-pressed`.
  */
-export function TopDownvotedQuestions({ items, onSelect }: TopDownvotedQuestionsProps): ReactElement {
-  const max = items[0]?.count ?? 0;
-
+export function TopDownvotedQuestions({
+  items,
+  selected = null,
+  onSelect,
+}: TopDownvotedQuestionsProps) {
   return (
-    <Card className="p-5">
-      <SectionHeader
-        title="Top downvoted questions"
-        actions={
-          <span className="text-[10px] font-medium uppercase tracking-wider text-[var(--ds-text-subtle)]">
-            Fix these first
-          </span>
-        }
-      />
-      <ul className="mt-4 space-y-2.5">
-        {items.map((item) => {
-          const width = max > 0 ? Math.max(6, Math.round((item.count / max) * 100)) : 0;
-          return (
-            <li key={item.question}>
-              <button
-                type="button"
-                onClick={() => onSelect(item.question)}
-                className="group w-full text-left focus-visible:outline-none"
-              >
-                <div className="flex items-center gap-3">
-                  <p className="flex-1 truncate text-[13px] text-[var(--ds-text)] transition-colors group-hover:text-[var(--ds-accent-text)] group-focus-visible:text-[var(--ds-accent-text)]">
-                    {item.question}
-                  </p>
-                  <span className="shrink-0 text-[12px] font-bold tabular-nums text-[var(--ds-danger)]">
-                    {item.count}
-                  </span>
-                </div>
-                <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-[var(--ds-bg-sunken)]">
-                  <div
-                    className="h-full rounded-full bg-[var(--ds-danger)] opacity-80 transition-all duration-500 group-hover:opacity-100"
-                    style={{ width: `${width}%` }}
-                  />
-                </div>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-    </Card>
+    <RankedBars
+      label="Most frequently unhelpful questions"
+      tone="danger"
+      items={items.map((item) => ({
+        id: item.question,
+        label: item.question,
+        value: item.count,
+        display: formatNumber(item.count),
+        meta: `Last rated unhelpful ${formatRelative(item.lastAt)}`,
+        selected: selected === item.question,
+        onSelect: () => onSelect(item.question),
+      }))}
+    />
   );
 }

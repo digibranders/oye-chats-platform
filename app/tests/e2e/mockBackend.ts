@@ -146,11 +146,12 @@ export async function mockBackend(page: Page, opts: MockOptions = {}): Promise<O
     (route) => route.abort(),
   );
 
-  // The app root injects the production chat widget from cdn.oyechats.com.
-  // Nothing mocked it, so the browser fetched it from the real CDN on every
-  // spec. Chromium tolerated that; WebKit blocks the `load` event on it, which
-  // timed out every single navigation once WebKit was added to the matrix.
-  // Aborting keeps the suite hermetic and independent of an external host.
+  // Belt and braces. The app root used to inject the production chat widget
+  // from cdn.oyechats.com, and WebKit blocks the `load` event on it, which
+  // timed out every navigation in the suite. The injection is gone, so nothing
+  // should request this host any more — but the catch-all above already aborts
+  // it, and leaving the specific rule means a re-added embed fails loudly here
+  // rather than quietly reaching a real CDN from the tests.
   await page.route('https://cdn.oyechats.com/**', (route) => route.abort());
 
   // ORDER MATTERS. Playwright tries the most recently registered matching route

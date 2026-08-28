@@ -1,113 +1,588 @@
-import { useState, type ReactElement } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Inbox as InboxIcon } from 'lucide-react';
-import { PageContainer } from '../../design-system';
-import { Tabs, type TabItem } from '../../design-system/components/Tabs';
-import { FeatureGate } from '../../design-system/components/FeatureGate';
-import { LockedFeatureCard } from '../../design-system/components/LockedFeatureCard';
+import { MessageSquare, UserPlus } from 'lucide-react';
+import {
+  Badge,
+  Button,
+  Drawer,
+  EmptyState,
+  LockedState,
+  SplitPane,
+  Spinner,
+  Switch,
+  buttonClass,
+  toast,
+  useMediaQuery,
+} from '../../ui';
+import { Link } from 'react-router-dom';
+import { addSelfAsOperator, getCannedResponses } from '../../services/api';
 import { useEntitlements } from '../../hooks/useEntitlements';
 import { useBotContext } from '../../context/BotContext';
-import { OfflineMessagesPanel } from './OfflineMessagesPanel';
-import { LiveChatPanel } from './LiveChatPanel';
-import { CannedResponsesPanel } from './CannedResponsesPanel';
-import { useOperatorStatus } from './useOperatorStatus';
+import type { CannedResponse } from '../../types/domain';
+import { ChatPane } from './ChatPane';
+import { ConversationList } from './ConversationList';
+import { InboxSocketProvider } from './InboxSocketContext';
+import { useInboxSocket } from './inboxSocket';
+import { OperatorLanguagePicker } from './OperatorLanguagePicker';
+import { MessagePane } from './MessagePane';
+import { SnippetsDrawer } from './SnippetsDrawer';
+import { VisitorPanel } from './VisitorPanel';
+import { profileFromSession, type VisitorProfile } from './visitorProfile';
+import { useOfflineMessages } from './useOfflineMessages';
+import { useOperatorStatus, type OperatorStatusState } from './useOperatorStatus';
+import { useQualifiedSessions, useSessionDetails } from './inboxQueries';
+import {
+  INBOX_VIEWS,
+  VIEW_META,
+  sessionIdFromItemId,
+  toLiveItem,
+  toOfflineItem,
+  toQualifiedItem,
+  toWaitingItem,
+  type InboxItem,
+  type InboxView,
+} from './inboxModel';
+import type { ConnectionStatus } from './liveChatProtocol';
 import { useTranslation } from '../../i18n/useTranslation';
 
-type InboxTab = 'messages' | 'live' | 'replies';
+/** How often the wait timers advance. One clock for the whole surface. */
+const CLOCK_MS = 5000;
 
-// @i18n-exempt: resolved at the render site from the tab key
-// (`inbox.tab.<key>`); the labels here are that lookup's English fallback.
-const TABS: TabItem[] = [
-  // Module constant: evaluated at import, before a locale exists. The label is
-  // resolved at render from the tab key (`TabItem` is a design-system type and
-  // gaining a `labelKey` for one consumer would be the wrong place to put it).
-  { key: 'messages', label: 'Messages' },
-  { key: 'live', label: 'Live chat' },
-  { key: 'replies', label: 'Quick replies' },
-];
+const CONNECTION: Record<ConnectionStatus, { label: string; tone: 'neutral' | 'success' | 'warning' | 'danger' }> = {
+  idle: { label: 'Not connected', tone: 'neutral' },
+  connecting: { label: 'Connecting', tone: 'warning' },
+  connected: { label: 'Connected', tone: 'success' },
+  reconnecting: { label: 'Reconnecting', tone: 'warning' },
+  duplicate: { label: 'Open in another tab', tone: 'danger' },
+};
+
+function isLiveView(view: InboxView): boolean {
+  return view !== 'messages';
+}
+
+function parseView(raw: string | null): InboxView {
+  return INBOX_VIEWS.includes(raw as InboxView) ? (raw as InboxView) : 'waiting';
+}
 
 /**
- * InboxPage - answers "What are my visitors saying?".
+ * The inbox.
  *
- * One job: give an operator a single place to read and respond to visitors. Two
- * modes behind a tab: fully-wired offline messages (read, triage, reply, delete)
- * and a scaffolded live-chat console. Live-chat availability is owned by the Live
- * chat tab (where it’s relevant), not the shared header; the inbox is scoped to
- * the active agent.
+ * One page, one socket, one list. The socket is mounted here — above everything
+ * that can change — because the connection corresponds to "this operator is at
+ * their desk", not to whichever panel happens to be rendered. The console this
+ * replaces mounted it inside a conditionally-rendered tab, so switching to
+ * Messages closed `/ws/operator` and discarded every transcript, unread count,
+ * presence flag and typing state on the board, mid-conversation.
  */
-const TAB_KEYS: readonly InboxTab[] = ['messages', 'live', 'replies'];
-
-export function InboxPage(): ReactElement {
-  const { t } = useTranslation();
+export function InboxPage() {
   const { selectedBot } = useBotContext();
   const botId = selectedBot?.id;
-  const { isFree } = useEntitlements();
-  const [searchParams] = useSearchParams();
-  // Honour a deep link (e.g. the incoming-chat banner routes to
-  // `/inbox?tab=live`) as the initial tab; falls back to Messages.
-  const requestedTab = searchParams.get('tab') as InboxTab | null;
-  const [tab, setTab] = useState<InboxTab>(
-    requestedTab && TAB_KEYS.includes(requestedTab) ? requestedTab : 'messages',
-  );
-  const operator = useOperatorStatus(botId);
+  const { hasFeature, loading: planLoading } = useEntitlements();
+  const liveChat = hasFeature('live_chat');
+  const operator = useOperatorStatus(liveChat ? botId : undefined);
 
-  // Support / live chat is a paid workspace. The sidebar renders the nav item
-  // locked on Free, but a Free user who deep-links `/inbox` lands here - so
-  // guard the whole surface with the same upgrade teaser instead of showing an
-  // empty (Free never has live chat or offline messages) support console.
-  // Placed after every hook so hook order stays stable across the plan resolving.
-  if (isFree) {
+  // Connect only when this operator is genuinely on duty. A socket opened while
+  // they are away routes visitors to a desk nobody is sitting at.
+  const connect = liveChat && !operator.unavailable && operator.isOnline;
+
+  // Having an operator seat is not the same as being at the desk. The
+  // self-service reads that DESCRIBE the operator — their working language —
+  // are theirs whether or not they are taking chats right now, so they are
+  // gated on this rather than on the live connection.
+  const isOperator = liveChat && !operator.loading && !operator.unavailable;
+
+  return (
+    <InboxSocketProvider enabled={connect} isOperator={isOperator}>
+      <InboxConsole botId={botId} operator={operator} liveChat={liveChat} planLoading={planLoading} />
+    </InboxSocketProvider>
+  );
+}
+
+interface ConsoleProps {
+  botId: number | undefined;
+  operator: OperatorStatusState;
+  liveChat: boolean;
+  planLoading: boolean;
+}
+
+function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) {
+  const { t } = useTranslation();
+  const socket = useInboxSocket();
+  const [params, setParams] = useSearchParams();
+  // `SplitPane` shows its third pane at 1152px of split width, which beside the
+  // 224px rail is a 1376px viewport. The console used to promise three panes at
+  // 1280 and could not honour it: at exactly 1280 the transcript was 392px wide.
+  //
+  // A collapsed rail widens the split, so the pane can appear a little before
+  // this says so — which offers the drawer as well as the pane for a moment,
+  // rather than neither. That is the right way round for the error to fall.
+  const wide = useMediaQuery('(min-width: 1376px)');
+
+  const view = parseView(params.get('view'));
+  const selectedId = params.get('c');
+  const [query, setQuery] = useState('');
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [snippets, setSnippets] = useState<CannedResponse[]>([]);
+  const [snippetsLoading, setSnippetsLoading] = useState(true);
+  const [snippetsOpen, setSnippetsOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [joining, setJoining] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+
+  const offline = useOfflineMessages(botId);
+  const qualified = useQualifiedSessions(liveChat, socket.qualifiedVersion);
+
+  // Connection trouble is announced, not laid out. Three `Alert`s used to render
+  // between the header and the grid, so a reconnect resized the transcript and
+  // the composer while the operator was typing into them.
+  useEffect(() => {
+    if (operator.error) toast.error(operator.error);
+  }, [operator.error]);
+
+  useEffect(() => {
+    if (socket.lastError) toast.warning(socket.lastError);
+  }, [socket.lastError]);
+
+  // ── One clock, so wait times count up without a timer per row ──
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), CLOCK_MS);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  // ── Saved replies, shared by the composer and the message pane ──
+  const loadSnippets = useCallback(() => {
+    setSnippetsLoading(true);
+    getCannedResponses()
+      .then((result) => setSnippets(result.responses ?? []))
+      .catch(() => setSnippets([]))
+      .finally(() => setSnippetsLoading(false));
+  }, []);
+  useEffect(loadSnippets, [loadSnippets]);
+
+  // ── The four scopes, from four sources, in one shape ──
+  const matchesBot = useCallback(
+    (candidate: number | null): boolean => botId == null || candidate == null || candidate === botId,
+    [botId],
+  );
+
+  const waiting = useMemo(
+    () => socket.queue.filter((entry) => matchesBot(entry.bot_id)).map(toWaitingItem),
+    [socket.queue, matchesBot],
+  );
+
+  const yours = useMemo(
+    () =>
+      Object.values(socket.activeChats)
+        .filter((chat) => matchesBot(chat.bot_id))
+        .map((chat) =>
+          toLiveItem(
+            chat,
+            socket.messagesBySession[chat.session_id],
+            socket.unreadBySession[chat.session_id] ?? 0,
+            socket.presenceBySession[chat.session_id] !== 'disconnected',
+            socket.endedBySession[chat.session_id],
+          ),
+        ),
+    [
+      socket.activeChats,
+      socket.messagesBySession,
+      socket.unreadBySession,
+      socket.presenceBySession,
+      socket.endedBySession,
+      matchesBot,
+    ],
+  );
+
+  const messages = useMemo(() => offline.messages.map(toOfflineItem), [offline.messages]);
+
+  const qualifiedItems = useMemo(
+    () => qualified.sessions.filter((session) => matchesBot(session.bot_id)).map(toQualifiedItem),
+    [qualified.sessions, matchesBot],
+  );
+
+  const byView: Record<InboxView, InboxItem[]> = useMemo(
+    () => ({ waiting, yours, messages, qualified: qualifiedItems }),
+    [waiting, yours, messages, qualifiedItems],
+  );
+
+  // One quantity: open conversations in the scope. It used to be *unread
+  // messages* when anything was unread and *open conversations* otherwise, so
+  // the number changed meaning without telling anyone. Unread is a separate
+  // signal, carried as a dot on the switcher.
+  const counts: Record<InboxView, number> = useMemo(
+    () => ({
+      waiting: waiting.length,
+      yours: yours.length,
+      messages: offline.total,
+      qualified: qualifiedItems.length,
+    }),
+    [waiting.length, yours.length, offline.total, qualifiedItems.length],
+  );
+
+  const unread: Partial<Record<InboxView, boolean>> = useMemo(
+    () => ({
+      yours: yours.some((item) => item.unread > 0),
+      messages: messages.some((item) => item.unread > 0),
+    }),
+    [yours, messages],
+  );
+
+  const items = byView[view];
+  const selected = items.find((item) => item.id === selectedId) ?? null;
+
+  const setSelection = useCallback(
+    (next: InboxView, itemId: string | null) => {
+      setParams(
+        (current) => {
+          const draft = new URLSearchParams(current);
+          draft.set('view', next);
+          if (itemId) draft.set('c', itemId);
+          else draft.delete('c');
+          draft.delete('session');
+          return draft;
+        },
+        { replace: true },
+      );
+    },
+    [setParams],
+  );
+
+  // ── Deep links ──
+  // `?session=` is what the notification banner and the rail's waiting badge
+  // link to. Resolve it to whichever scope actually holds that conversation
+  // rather than assuming one — the previous page assumed "live", so a link to a
+  // visitor still in the queue landed on an empty panel.
+  const legacySession = params.get('session');
+  useEffect(() => {
+    if (!legacySession) return;
+    const target = `s.${legacySession}`;
+    const scope = INBOX_VIEWS.find((candidate) => byView[candidate].some((item) => item.id === target));
+    setSelection(scope ?? view, target);
+  }, [legacySession, byView, view, setSelection]);
+
+  // A conversation that has left every scope (accepted by someone else,
+  // transferred away) must not leave the centre pane showing a stale header.
+  const knownIds = useMemo(
+    () => new Set(INBOX_VIEWS.flatMap((candidate) => byView[candidate].map((item) => item.id))),
+    [byView],
+  );
+  const previousKnown = useRef(knownIds);
+  useEffect(() => {
+    previousKnown.current = knownIds;
+  }, [knownIds]);
+
+  // Follow a conversation across scopes: accepting a waiting visitor moves the
+  // same session from Waiting into Yours, and the operator should stay on it.
+  useEffect(() => {
+    if (!selectedId || selected) return;
+    const scope = INBOX_VIEWS.find((candidate) => byView[candidate].some((item) => item.id === selectedId));
+    if (scope && scope !== view) setSelection(scope, selectedId);
+  }, [selectedId, selected, byView, view, setSelection]);
+
+  const sessionId = selected?.sessionId ?? sessionIdFromItemId(selectedId);
+  const details = useSessionDetails(selected && selected.kind !== 'offline' ? sessionId : null);
+
+  const profile: VisitorProfile | null = useMemo(() => {
+    if (!selected) return null;
+    if (selected.kind === 'offline') {
+      const record = offline.messages.find((message) => message.id === selected.messageId);
+      if (!record) return null;
+      return {
+        kind: 'offline',
+        name: selected.name,
+        email: record.visitor_email ?? null,
+        phone: record.visitor_phone ?? null,
+        company: null,
+        location: null,
+        device: null,
+        pageUrl: null,
+        referrer: null,
+        botName: record.bot_name ?? null,
+        departmentName: null,
+        operatorName: null,
+        startedAt: record.created_at ?? null,
+        lastActiveAt: record.replied_at ?? record.read_at ?? null,
+        messageCount: null,
+        rating: null,
+        handoffReason: null,
+        bant: null,
+        // An offline message is a form submission, not a conversation: it has
+        // no resolved language and never reached the quotation flow.
+        languageCode: null,
+        quotation: null,
+      };
+    }
+    return details.details ? profileFromSession(details.details, selected.name) : null;
+  }, [selected, offline.messages, details.details]);
+
+  async function joinLiveChat(): Promise<void> {
+    setJoining(true);
+    try {
+      await addSelfAsOperator(botId);
+      await operator.refresh();
+      toast.success(t('inbox.youCanNowTakeLive') || 'You can now take live chats');
+    } catch (err) {
+      toast.error(t('inbox.couldNotAddYouAs') || 'Could not add you as an operator', {
+        description: err instanceof Error ? err.message : t('inbox.pleaseTryAgain') || 'Please try again.',
+      });
+    } finally {
+      setJoining(false);
+    }
+  }
+
+  // ── Plan gate ──────────────────────────────────────────────────────────
+  if (!liveChat && planLoading) {
     return (
-      <PageContainer
-        title={t('inbox.support') || 'Support'}
-        description={t('inbox.seeWhatYourVisitorsAre') || 'See what your visitors are saying and respond fast.'}
-      >
-        <div className="mx-auto w-full max-w-md py-12">
-          <LockedFeatureCard intent="view_support" icon={InboxIcon} />
-        </div>
-      </PageContainer>
+      <div className="flex h-full items-center justify-center">
+        <Spinner className="h-5 w-5" />
+      </div>
     );
   }
 
+  const connection = CONNECTION[socket.status];
+  const offlineLive = isLiveView(view) && !operator.isOnline;
+
+  const emptyOverride =
+    liveChat && offlineLive && isLiveView(view)
+      ? {
+          title: t('inbox.youAreNotTakingChats') || 'You are not taking chats',
+          description:
+            t('inbox.turnYourselfOnAboveAnd') || 'Turn yourself on above and waiting visitors will appear here the moment they ask for a person.',
+        }
+      : liveChat && operator.unavailable && isLiveView(view)
+        ? {
+            title: t('inbox.youAreNotSetUp') || 'You are not set up to take chats',
+            description: t('inbox.addYourselfAsAnOperator') || 'Add yourself as an operator on this workspace to see and answer live conversations.',
+            action: (
+              <Button onClick={() => void joinLiveChat()} loading={joining} disabled={joining}>
+                <UserPlus aria-hidden />
+                {t('inbox.addMeAsAnOperator') || 'Add me as an operator'}
+              </Button>
+            ),
+          }
+        : !liveChat && isLiveView(view)
+          ? {
+              title: t('inbox.liveChatIsNotOn') || 'Live chat is not on your plan',
+              description:
+                t('inbox.upgradeToAnswerVisitorsYourself') || 'Upgrade to answer visitors yourself, take over from the AI, and see who is on your site right now.',
+              action: (
+                <Link to="/billing" className={buttonClass('primary', 'sm')}>
+                  {t('inbox.seePlans') || 'See plans'}
+                </Link>
+              ),
+            }
+          : null;
+
+  const listPane = (
+    <ConversationList
+      view={view}
+      onViewChange={(next) => setSelection(next, null)}
+      counts={counts}
+      unread={unread}
+      items={liveChat || view === 'messages' ? items : []}
+      selectedId={selectedId}
+      onSelect={(item) => {
+        setSelection(view, item.id);
+        setDetailsOpen(false);
+      }}
+      query={query}
+      onQueryChange={setQuery}
+      loading={view === 'messages' ? offline.loading : view === 'qualified' ? qualified.loading : false}
+      error={view === 'messages' ? offline.error : view === 'qualified' ? qualified.error : null}
+      onRetry={view === 'messages' ? offline.reload : qualified.reload}
+      now={now}
+      emptyOverride={emptyOverride}
+      footer={
+        view === 'messages' && offline.total > offline.pageSize ? (
+          <div className="flex items-center justify-between gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={offline.page <= 1}
+              onClick={() => offline.setPage(offline.page - 1)}
+            >
+              {t('inbox.previous') || 'Previous'}
+            </Button>
+            <span className="figure text-2xs text-text-tertiary">
+              Page {offline.page} of {Math.max(1, Math.ceil(offline.total / offline.pageSize))}
+            </span>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={offline.page >= Math.ceil(offline.total / offline.pageSize)}
+              onClick={() => offline.setPage(offline.page + 1)}
+            >
+              {t('inbox.next') || 'Next'}
+            </Button>
+          </div>
+        ) : null
+      }
+    />
+  );
+
+  const centrePane = (() => {
+    if (!liveChat && isLiveView(view)) {
+      return (
+        <div className="flex h-full items-center justify-center bg-canvas p-6">
+          <LockedState
+            className="max-w-md"
+            title={t('inbox.liveChatIsAPaid') || 'Live chat is a paid feature'}
+            description={t('inbox.yourVisitorsCanStillLeave') || 'Your visitors can still leave you messages — those are in the Messages scope. Upgrade to answer them in real time, take conversations over from the AI, and route them to your team.'}
+            action={
+              <Link to="/billing" className={buttonClass('primary')}>
+                {t('inbox.seePlans') || 'See plans'}
+              </Link>
+            }
+          />
+        </div>
+      );
+    }
+    if (!selected) {
+      return (
+        <div className="flex h-full items-center justify-center bg-canvas p-6">
+          <EmptyState
+            icon={MessageSquare}
+            title={t('inbox.nothingOpen') || 'Nothing open'}
+            description={VIEW_META[view].blurb}
+          />
+        </div>
+      );
+    }
+    if (selected.kind === 'offline') {
+      const record = offline.messages.find((message) => message.id === selected.messageId);
+      if (!record) return null;
+      return (
+        <MessagePane
+          key={selected.id}
+          message={record}
+          snippets={snippets}
+          onManageSnippets={() => setSnippetsOpen(true)}
+          onStatusChange={offline.updateStatus}
+          onDelete={async (id) => {
+            await offline.remove(id);
+            setSelection(view, null);
+          }}
+        />
+      );
+    }
+    return (
+      <ChatPane
+        key={selected.id}
+        item={selected}
+        draft={drafts[selected.id] ?? ''}
+        onDraftChange={(value) => setDrafts((current) => ({ ...current, [selected.id]: value }))}
+        snippets={snippets}
+        onManageSnippets={() => setSnippetsOpen(true)}
+        now={now}
+        onLeft={() => setSelection(view, null)}
+        onShowDetails={wide ? undefined : () => setDetailsOpen(true)}
+      />
+    );
+  })();
+
+  const visitorProps = {
+    profile,
+    sessionId: selected && selected.kind !== 'offline' ? sessionId : null,
+    loading: details.loading,
+    error: details.error,
+    onRetry: details.reload,
+  };
+
   return (
-    <PageContainer
-      title={t('inbox.support') || 'Support'}
-      description={t('inbox.seeWhatYourVisitorsAre') || 'See what your visitors are saying and respond fast.'}
-    >
-      <Tabs
-        tabs={TABS.map((tab) => ({
-          ...tab,
-          label: t(`inbox.tab.${tab.key}`) || tab.label,
-        }))}
-        value={tab}
-        onChange={(key) => setTab(key as InboxTab)}
-        ariaLabel={t('inbox.supportSections') || 'Support sections'}
+    <div className="flex h-full min-h-0 flex-col">
+      {/* A status strip, not a title bar. The shell's breadcrumb already renders
+          "Inbox" in the 56px top bar; a second bordered bar under it repeating
+          the word cost ~100px of chrome before any conversation. */}
+      <header className="flex min-h-row shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-border bg-surface px-cell">
+        <h1 className="sr-only">{t('inbox.inbox') || 'Inbox'}</h1>
+        {liveChat && !operator.unavailable ? (
+          <Badge tone={connection.tone} dot>
+            {connection.label}
+          </Badge>
+        ) : null}
+
+        <div className="ml-auto flex items-center gap-3">
+          {!liveChat ? (
+            <Link to="/billing" className={buttonClass('primary', 'sm')}>
+              {t('inbox.addLiveChat') || 'Add live chat'}
+            </Link>
+          ) : operator.unavailable ? (
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => void joinLiveChat()}
+              loading={joining}
+              disabled={joining}
+            >
+              <UserPlus aria-hidden />
+              {t('inbox.addMeAsAnOperator') || 'Add me as an operator'}
+            </Button>
+          ) : (
+            <>
+              {/* The working language sits beside availability because both are
+                  this operator's own settings for this desk, not workspace
+                  configuration — and because the language decides what they can
+                  read the moment they start taking chats. It appears only when
+                  the chatbot actually offers a second language. */}
+              {socket.operatorAvailableLocales.length > 0 ? (
+                <OperatorLanguagePicker
+                  value={socket.operatorLanguage}
+                  availableLocales={socket.operatorAvailableLocales}
+                  onChange={socket.setOperatorLanguage}
+                />
+              ) : null}
+              <Switch
+                checked={operator.isOnline}
+                onCheckedChange={() => void operator.toggle()}
+                disabled={operator.saving || operator.loading}
+                label={t('inbox.takingChats') || 'Taking chats'}
+              />
+            </>
+          )}
+        </div>
+      </header>
+
+      {/* `SplitPane` keeps both panes mounted when the layout stacks, so a
+          half-typed reply and a scroll position survive going back and forth —
+          and it lets the operator drag the split and remembers where they put
+          it. The duplicate-tab `Alert` that used to sit here is gone: the badge
+          above already says "Open in another tab", and rendering a banner
+          between the header and the grid resized the transcript and the
+          composer under an operator who was mid-sentence. */}
+      <SplitPane
+        list={listPane}
+        detail={centrePane}
+        inspector={<VisitorPanel {...visitorProps} />}
+        selected={Boolean(selected)}
+        onBack={() => setSelection(view, null)}
+        backLabel="Conversations"
+        listWidth="md"
+        resizable
+        storageKey="oyechats.inbox.list-width"
+        listLabel="Conversations"
+        detailLabel="Conversation"
+        inspectorLabel="Visitor"
       />
 
-      <div
-        role="tabpanel"
-        id="tabpanel-messages"
-        aria-labelledby="tab-messages"
-        hidden={tab !== 'messages'}
-      >
-        {tab === 'messages' && <OfflineMessagesPanel botId={botId} />}
-      </div>
+      {!wide ? (
+        /* `xs` (320), not `sm` (448). This drawer stands in for the third
+           pane at widths that cannot hold it, and the pane is 288 — at `sm`
+           the same content sat in 448px with 128px of empty gutter beside it,
+           and its property rows changed shape between the two presentations of
+           one panel. `Drawer` documents `xs` as "the width of a pane… the
+           inbox's visitor panel" for exactly this. */
+        <Drawer open={detailsOpen} onOpenChange={setDetailsOpen} title={t('inbox.visitorDetails') || 'Visitor details'} width="xs">
+          <VisitorPanel {...visitorProps} variant="drawer" />
+        </Drawer>
+      ) : null}
 
-      <div role="tabpanel" id="tabpanel-live" aria-labelledby="tab-live" hidden={tab !== 'live'}>
-        {tab === 'live' && (
-          <FeatureGate feature="live_chat" intent="live_chat">
-            <LiveChatPanel operator={operator} botId={botId} />
-          </FeatureGate>
-        )}
-      </div>
-
-      <div role="tabpanel" id="tabpanel-replies" aria-labelledby="tab-replies" hidden={tab !== 'replies'}>
-        {tab === 'replies' && (
-          <FeatureGate feature="live_chat" intent="add_canned_response">
-            <CannedResponsesPanel />
-          </FeatureGate>
-        )}
-      </div>
-    </PageContainer>
+      <SnippetsDrawer
+        open={snippetsOpen}
+        onOpenChange={setSnippetsOpen}
+        snippets={snippets}
+        loading={snippetsLoading}
+        onChanged={loadSnippets}
+      />
+    </div>
   );
 }

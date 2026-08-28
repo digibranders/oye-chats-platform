@@ -1,42 +1,52 @@
-import { useState } from 'react';
-import { ChevronDown } from 'lucide-react';
-import { cn } from '../../design-system';
-import { useTranslation } from '../../i18n/useTranslation';
+import { Button, cn, useClipboard } from '../../ui';
 
-interface ErrorDetailsProps {
+export interface ErrorDetailsProps {
+  /** The technical detail — message and stack. Absent for a plain 404. */
   detail?: string;
   className?: string;
 }
 
 /**
- * Collapsible technical detail (message + stack) for an error surface. Renders
- * nothing in production builds - end users never see a stack trace, but during
- * development this replaces React Router's raw crash screen with an inspectable,
- * on-brand panel.
+ * The diagnostic, folded away.
+ *
+ * A stack trace is not an explanation, so it never speaks first: the surfaces
+ * around this one say what happened in the user's terms, and this stays shut
+ * until somebody deliberately opens it. What it is *for* is the support
+ * conversation — "send us what it says under Technical details" is a far
+ * shorter path than asking a customer to open a developer console — so it is
+ * labelled as a diagnostic, and it carries a copy button, which is the only
+ * thing anyone actually wants to do with a stack.
+ *
+ * A native `<details>` rather than a `useState` disclosure: it is closed by
+ * default with no JavaScript, it is keyboard-operable and announced as a
+ * disclosure without any ARIA of ours, and it stays findable by the browser's
+ * own in-page search when collapsed.
  */
 export function ErrorDetails({ detail, className }: ErrorDetailsProps) {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
+  const { state, copy } = useClipboard();
 
-  if (!import.meta.env.DEV || !detail) return null;
+  if (!detail) return null;
 
   return (
-    <div className={cn('mt-6 text-left', className)}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="inline-flex items-center gap-1 text-xs font-medium text-[var(--ds-text-subtle)] transition-colors hover:text-[var(--ds-text-muted)]"
-      >
-        <ChevronDown size={13} className={cn('transition-transform', open && 'rotate-180')} />
-        {open
-          ? t('app.hideTechnicalDetails') || 'Hide technical details'
-          : t('app.showTechnicalDetails') || 'Show technical details'}
-      </button>
-      {open && (
-        <pre className="mt-2 max-h-64 overflow-auto rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-3 text-[11px] leading-relaxed text-[var(--ds-text-muted)]">
+    <details className={cn('group', className)}>
+      <summary className="cursor-pointer text-xs text-text-secondary hover:text-text-primary">
+        Technical details — for support, not an explanation
+      </summary>
+      <div className="mt-2">
+        <pre className="max-h-64 overflow-auto rounded-md border border-border bg-surface-sunken p-3 font-mono text-2xs leading-relaxed text-text-secondary">
           {detail}
         </pre>
-      )}
-    </div>
+        <div className="mt-2 flex items-center gap-3">
+          <Button size="sm" variant="secondary" onClick={() => void copy(detail)}>
+            {state === 'copied' ? 'Copied' : 'Copy details'}
+          </Button>
+          <span aria-live="polite" className="text-xs text-text-secondary">
+            {state === 'failed'
+              ? 'Your browser blocked the clipboard. Select the text above and copy it.'
+              : null}
+          </span>
+        </div>
+      </div>
+    </details>
   );
 }

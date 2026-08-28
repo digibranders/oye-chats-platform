@@ -6,12 +6,14 @@ and can be modified at runtime without code changes.
 """
 
 import logging
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import AfterValidator, BaseModel, Field, StringConstraints
-from sqlalchemy import func, select
+from sqlalchemy import desc, func, select
 
+from app import config as app_config
 from app.api.auth import get_superadmin
 from app.api.superadmin_routes_v2 import _require_write
 from app.config import DISPLAY_USD_TO_INR, EXTRA_SEAT_PRICE_USD_CENTS, RAZORPAY_SEAT_PLAN_PRICE_CENTS
@@ -186,11 +188,17 @@ class UpdateSubscriptionRequest(BaseModel):
     # two copies of one allow-list drift, and moving the rejection into the
     # schema would silently change this endpoint's status code.
     status: str | None = Field(default=None, max_length=32)
-    # Bounds (M8): a negative quantity yields negative MRR; a negative
-    # extend_trial_days silently back-dates/shortens the trial.
+    # Bounds (M8): a negative quantity yields negative MRR.
     operator_quantity: int | None = Field(default=None, ge=0, le=1000)
     billing_cycle: Literal["monthly", "annual"] | None = None
-    extend_trial_days: int | None = Field(default=None, ge=0, le=365)
+    # A trial EXTENSION, so the only meaningful values are whole positive days
+    # inside one year. ``0`` is a no-op dressed up as an edit (it commits, logs
+    # "updated subscription" and moves nothing); a negative value would silently
+    # SHORTEN a paying prospect's trial with nothing in the audit trail naming
+    # it as a shortening; and an unbounded value overflows ``trial_end +
+    # timedelta(days=N)`` past ``datetime.max`` and 500s inside the stdlib
+    # rather than answering the operator. All three are 422s, not writes.
+    extend_trial_days: int | None = Field(default=None, ge=1, le=365)
 
 
 class PricingContentRequest(BaseModel):
@@ -248,6 +256,8 @@ def list_all_plans(superadmin: Client = Depends(get_superadmin)):
                 "included_operator_seats": p.included_operator_seats,
                 "extra_seat_price_cents": p.extra_seat_price_cents,
                 "extra_seat_price_usd_cents": p.extra_seat_price_usd_cents,
+                # Rows that predate (or were seeded around) the write-time guard.
+                "drifted": _seat_price_drifted(p),
                 "is_active": p.is_active,
                 "is_default": p.is_default,
                 "sort_order": p.sort_order,
@@ -259,6 +269,67 @@ def list_all_plans(superadmin: Client = Depends(get_superadmin)):
             }
             for p in plans
         ]
+
+
+def _seat_price_drifted(plan: Plan) -> bool:
+    """Does this plan advertise a seat price the seat add-on will not charge?
+
+    The definition is the one already logged at WARNING level in
+    ``subscription_routes.update_seats``: ``int(plan.extra_seat_price_cents or
+    0) != RAZORPAY_SEAT_PLAN_PRICE_CENTS``. Every extra seat bills the single
+    global seat add-on, so any other number in the column is a price the
+    customer is shown and never billed. Note this is STRICTER than the
+    write-time guard, which also permits ``0``: a plan carrying ``0`` still
+    sells seats at ₹449 through ``/subscriptions/seats``, it just displays
+    nothing, which is exactly the divergence that log line exists to surface.
+
+    The one exemption is a plan with UNLIMITED included seats. ``/seats``
+    rejects those with a 400 before it reaches the drift check, so no seat can
+    ever be sold against them and their ``0`` is correct rather than drifted.
+    """
+    if int(plan.included_operator_seats or 0) < 0:
+        return False
+    return int(plan.extra_seat_price_cents or 0) != RAZORPAY_SEAT_PLAN_PRICE_CENTS
+
+
+@router.get("/billing/seat-pricing")
+def get_seat_pricing(superadmin: Client = Depends(get_superadmin)):
+    """The canonical extra-seat prices, and whether either rail can actually sell one.
+
+    ``_reject_seat_price_drift`` accepts only ``0`` or the canonical constant,
+    but nothing served that constant, so a console could only hard-code it or
+    learn it from a 422. (Per-plan seat pricing is already on
+    ``GET /superadmin/plans`` as ``extra_seat_price_cents`` /
+    ``extra_seat_price_usd_cents``. What was missing is the constant those
+    columns are graded against.)
+
+    ``plan_configured`` is served beside each price because the two fail
+    independently: the price is a compile-time constant that is always present,
+    while ``razorpay_service.create_seat_addon_subscription`` raises
+    ``RazorpayBillingError`` when the rail's ``RAZORPAY_SEAT_PLAN_ID*`` is
+    unset. A surface showing ₹449 without showing that the add-on is unwired is
+    quoting a price nobody can buy.
+
+    The ids themselves are secrets-adjacent gateway references and are NOT
+    returned; the operator needs to know whether one is set, not what it is.
+    """
+    return {
+        "inr": {
+            "currency": "INR",
+            # The same module-level constants ``_reject_seat_price_drift``
+            # compares against, so this endpoint can never advertise a value
+            # the plan editor would reject.
+            "price_cents": RAZORPAY_SEAT_PLAN_PRICE_CENTS,
+            "plan_configured": bool(app_config.RAZORPAY_SEAT_PLAN_ID),
+            "plan_id_env_var": "RAZORPAY_SEAT_PLAN_ID",
+        },
+        "usd": {
+            "currency": "USD",
+            "price_cents": EXTRA_SEAT_PRICE_USD_CENTS,
+            "plan_configured": bool(app_config.RAZORPAY_SEAT_PLAN_ID_USD),
+            "plan_id_env_var": "RAZORPAY_SEAT_PLAN_ID_USD",
+        },
+    }
 
 
 def _reject_seat_price_drift(data: dict) -> None:
@@ -685,57 +756,128 @@ def write_pricing_content(request: PricingContentRequest, superadmin: Client = D
 # ── Subscription Management ──
 
 
+def _as_utc(value: datetime) -> datetime:
+    """Read a stored timestamp as UTC-aware, whatever the driver handed back."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def _extend_trial(sub: Subscription, days: int) -> None:
+    """Push ``trial_end`` out by ``days``, carrying ``current_period_end`` with it.
+
+    BOTH dates move, because a trial row is created with them EQUAL and the rest
+    of the platform reads them as one fact split over two columns
+    (``plan_service.assign_default_plan_to_client`` / ``start_trial_for_client``
+    pin ``current_period_end = trial_end``). Moving only ``trial_end`` is what
+    makes them disagree, and the disagreement is not cosmetic:
+
+    * ``subscription_routes.effective_resets_at`` reads ``current_period_end``
+      for the customer's "Resets on" label. Left behind, it is now in the past,
+      so that helper walks it forward by WHOLE MONTHS and shows the customer a
+      renewal date roughly a month out that nothing will ever act on.
+    * ``worker.tasks.task_execute_pending_cancellations`` sweeps on
+      ``current_period_end <= now + GATEWAY_CANCEL_LEAD_DAYS`` for rows in
+      ``('active', 'trialing', 'past_due')``. A cancel-pending trial would have
+      its mandate cancelled at the OLD deadline, mid-extension.
+
+    ``task_expire_trials`` (which owns ``trial_end``) and
+    ``task_renew_due_subscriptions`` (which excludes ``trialing`` outright) stay
+    correct either way, so this is the only place the two columns can drift.
+
+    ``current_period_end`` is carried only when it sits at or before the trial
+    deadline. A row whose period already ends LATER than its trial is being
+    driven by a live gateway mandate, and this endpoint writes nothing to
+    Razorpay, so quietly deferring the local copy of the charge date would make
+    the row lie about when the customer gets billed.
+    """
+    delta = timedelta(days=days)
+    old_trial_end = sub.trial_end
+    sub.trial_end = old_trial_end + delta
+    period_end = sub.current_period_end
+    if period_end is not None and _as_utc(period_end) <= _as_utc(old_trial_end):
+        sub.current_period_end = period_end + delta
+
+
 @router.get("/subscriptions")
 def list_subscriptions(
-    status: str | None = None,
-    plan_id: int | None = None,
     superadmin: Client = Depends(get_superadmin),
+    page: int = Query(1, ge=1),
+    # Defaults to the OLD hard cap rather than the invoices default of 50, so
+    # an un-paged caller gets exactly the row set it gets today plus a ``total``.
+    # Dropping the default page size instead would have truncated the existing
+    # console harder while removing the signal it truncates on, which is the
+    # same defect in a smaller number.
+    limit: int = Query(200, ge=1, le=200),
+    status: str | None = Query(None, max_length=32),
+    plan_id: RowId | None = Query(None),
+    search: str | None = Query(None, max_length=120),
 ):
-    """List all subscriptions with optional status/plan filters."""
+    """All subscriptions, newest first, paged.
+
+    Same envelope and paging contract as ``/superadmin/invoices``
+    (``{total, page, limit, items}``): a hard ``LIMIT 200`` with no total told
+    an operator on a growing install that there were exactly 200 subscriptions
+    and gave them no way to reach the 201st.
+
+    ``search`` matches the owning account's email or name, with the same
+    backslash / percent / underscore escaping ``list_all_invoices`` applies: an
+    unescaped ``%`` in operator input turns the filter into a full scan that
+    matches every row.
+    """
     with get_session() as session:
-        stmt = select(Subscription).order_by(Subscription.created_at.desc())
+        stmt = select(Subscription, Client.name, Client.email).join(Client, Subscription.client_id == Client.id)
         if status:
             stmt = stmt.where(Subscription.status == status)
         if plan_id:
             stmt = stmt.where(Subscription.plan_id == plan_id)
+        if search:
+            escaped = search.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            needle = f"%{escaped}%"
+            stmt = stmt.where(Client.email.ilike(needle) | Client.name.ilike(needle))
 
-        subs = session.execute(stmt.limit(200)).scalars().all()
+        total = session.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0
+        rows = session.execute(
+            # ``created_at`` alone is not a total order: subscriptions written in
+            # one transaction share a timestamp, and Postgres may then order two
+            # OFFSET queries differently, so the pager duplicates one row and
+            # drops another. The id tiebreak makes the order deterministic.
+            stmt.order_by(desc(Subscription.created_at), desc(Subscription.id)).offset((page - 1) * limit).limit(limit)
+        ).all()
 
-        # Batch-load client names and plan names
-        client_ids = {s.client_id for s in subs}
-        plan_ids = {s.plan_id for s in subs}
-
-        client_rows = (
-            session.execute(select(Client).where(Client.id.in_(client_ids))).scalars().all() if client_ids else []
-        )
-        clients = {c.id: {"name": c.name, "email": c.email} for c in client_rows}
-
+        # Plans are still batch-loaded rather than joined: ``plan_id`` can point
+        # at a soft-deleted row, and an inner join would silently drop those
+        # subscriptions from a list whose whole job is to show every one.
+        plan_ids = {sub.plan_id for sub, _, _ in rows}
         plans = (
             {p.id: p.name for p in session.execute(select(Plan).where(Plan.id.in_(plan_ids))).scalars().all()}
             if plan_ids
             else {}
         )
 
-        return [
-            {
-                "id": s.id,
-                "client_id": s.client_id,
-                "client_name": clients.get(s.client_id, {}).get("name", "Unknown"),
-                "client_email": clients.get(s.client_id, {}).get("email"),
-                "plan_id": s.plan_id,
-                "plan_name": plans.get(s.plan_id, "Unknown"),
-                "status": s.status,
-                "billing_cycle": s.billing_cycle,
-                "operator_quantity": s.operator_quantity,
-                "payment_provider": s.payment_provider,
-                "current_period_start": s.current_period_start.isoformat() if s.current_period_start else None,
-                "current_period_end": s.current_period_end.isoformat() if s.current_period_end else None,
-                "trial_end": s.trial_end.isoformat() if s.trial_end else None,
-                "canceled_at": s.canceled_at.isoformat() if s.canceled_at else None,
-                "created_at": s.created_at.isoformat() if s.created_at else None,
-            }
-            for s in subs
-        ]
+        return {
+            "total": int(total),
+            "page": page,
+            "limit": limit,
+            "items": [
+                {
+                    "id": s.id,
+                    "client_id": s.client_id,
+                    "client_name": client_name,
+                    "client_email": client_email,
+                    "plan_id": s.plan_id,
+                    "plan_name": plans.get(s.plan_id, "Unknown"),
+                    "status": s.status,
+                    "billing_cycle": s.billing_cycle,
+                    "operator_quantity": s.operator_quantity,
+                    "payment_provider": s.payment_provider,
+                    "current_period_start": s.current_period_start.isoformat() if s.current_period_start else None,
+                    "current_period_end": s.current_period_end.isoformat() if s.current_period_end else None,
+                    "trial_end": s.trial_end.isoformat() if s.trial_end else None,
+                    "canceled_at": s.canceled_at.isoformat() if s.canceled_at else None,
+                    "created_at": s.created_at.isoformat() if s.created_at else None,
+                }
+                for s, client_name, client_email in rows
+            ],
+        }
 
 
 @router.put("/subscriptions/{subscription_id}")
@@ -750,6 +892,24 @@ def update_subscription(
         sub = session.execute(select(Subscription).where(Subscription.id == subscription_id)).scalars().first()
         if not sub:
             raise HTTPException(status_code=404, detail="Subscription not found.")
+
+        # Validated BEFORE any field is written, so a combined request
+        # (``{"status": ..., "extend_trial_days": ...}``) against a row with no
+        # trial applies nothing at all. ``get_session`` does roll back on the
+        # raise, but a refusal should not depend on that to be atomic.
+        if request.extend_trial_days is not None and sub.trial_end is None:
+            # 409, not 200-and-nothing. The request is well formed; the row
+            # simply has no trial to move, and answering 200 told a support
+            # engineer they had granted days they had not granted.
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Subscription {sub.id} has no trial to extend (trial_end is null; status "
+                    f"{sub.status!r}). extend_trial_days only moves an EXISTING trial deadline. "
+                    "To put this customer on a trial, have them start one via POST "
+                    "/subscriptions/start-trial, or set the dates on the row directly."
+                ),
+            )
 
         if request.plan_id is not None:
             plan = session.execute(select(Plan).where(Plan.id == request.plan_id)).scalars().first()
@@ -793,16 +953,21 @@ def update_subscription(
         if request.billing_cycle is not None:
             sub.billing_cycle = request.billing_cycle
 
-        if request.extend_trial_days is not None and sub.trial_end:
-            from datetime import timedelta
-
-            sub.trial_end = sub.trial_end + timedelta(days=request.extend_trial_days)
+        if request.extend_trial_days is not None:
+            # Refused above when there is no trial to move.
+            _extend_trial(sub, request.extend_trial_days)
 
         session.commit()
 
         logger.info(f"Superadmin {superadmin.id} updated subscription {subscription_id}")
 
-        return {"message": "Subscription updated successfully."}
+        return {
+            "message": "Subscription updated successfully.",
+            # Echo the two dates so the caller can SEE what moved rather than
+            # inferring it from a 200.
+            "trial_end": sub.trial_end.isoformat() if sub.trial_end else None,
+            "current_period_end": sub.current_period_end.isoformat() if sub.current_period_end else None,
+        }
 
 
 # ── Revenue Metrics ──

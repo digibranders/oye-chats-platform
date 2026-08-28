@@ -128,5 +128,22 @@ ${steps}
 5. **Verification:**
    - Public info probe: \`GET ${api}/bots/settings/public\` (H: X-Bot-Key: ${botKey})
    - AI chat probe (consumes one message credit): \`POST ${api}/chat\` (H: X-Bot-Key: ${botKey}). Do not add an \`Origin\` or \`Referer\` header when testing via curl.
-6. **CSP Allowances (if CSP is active):** \`script-src ${new URL(scriptUrl).origin}\` and \`connect-src ${api}\`.`;
+6. **CSP Allowances (if CSP is active):** \`script-src ${new URL(scriptUrl).origin}\` and \`connect-src ${api}\`.
+
+## Known Failure Modes
+Check these before reporting the install as done. Each one produces a page that
+looks correct and a widget that never appears.
+1. **The tag is in \`<head>\`.** It must be in \`<body>\`, immediately before the
+   closing tag - in \`<head>\` it runs before there is a document to mount into.
+2. **A CSP header is silently refusing the bundle.** The browser logs a console
+   error and renders nothing else. Add the two directives above.
+3. **A cache is still serving the previous HTML.** Purge the CDN or page cache
+   and hard-refresh before concluding the tag is missing.
+4. **Origin restrictions.** The account can lock this chatbot to an allow-list of
+   domains. An entry for \`acme.com\` does NOT admit \`www.acme.com\` - only
+   \`*.acme.com\` does. A blocked request returns 403 \`origin_not_allowed\`.
+5. **localhost never counts as installed.** The dashboard marks the widget live
+   only when it loads from a real external site; a load from localhost, a
+   \`file://\` page, or the hosted preview is deliberately ignored. Deploy to a
+   real domain before checking the dashboard.`;
 }

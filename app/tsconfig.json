@@ -24,7 +24,7 @@
     "verbatimModuleSyntax": true,
     "noEmit": true
   },
-  "//": "Incremental TypeScript: only new .ts/.tsx are typechecked. Legacy .jsx/.js is intentionally excluded and migrated per-surface (see app/docs/ADMIN_2.0_AUDIT_AND_ARCHITECTURE_PLAN.md, decision #2).",
+  "//": "app/src is 100% TypeScript. allowJs stays false and scripts/assert-no-legacy-js.mjs enforces it in CI; see docs/superpowers/plans/2026-08-27-app-typescript-migration.md.",
   "include": ["src/**/*.ts", "src/**/*.tsx"],
   "exclude": ["node_modules", "dist"]
 }

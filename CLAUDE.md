@@ -4,8 +4,13 @@ OyeChats is a **SaaS chatbot platform** where customers sign up, create chatbot 
 
 ---
 
-> ## 🚀 ACTIVE MANDATE — Admin Platform 2.0 rebuild → see [`app/CLAUDE.md`](app/CLAUDE.md)
-> All work inside `app/` (the admin dashboard) is governed by a **complete product-rebuild mandate**. Before touching anything in `app/`, read **`app/CLAUDE.md`**. In short: the admin dashboard is being rebuilt from first principles as a premium SaaS (Linear/Stripe/Vercel-grade); **reuse** the backend/APIs/DB/auth/logic documented in this file, but the existing UI, navigation, onboarding, layouts, pages, and flows are **technical references only — NOT UX references.** Every `app/src/pages/*` entry in the Key Files table below is a pointer to reusable logic, not a UX/layout reference.
+> ## ACTIVE MANDATE — the console rebuild → see [`app/CLAUDE.md`](app/CLAUDE.md)
+> All work inside `app/` (the admin dashboard) is governed by a complete rebuild
+> mandate, and by the design language in [`app/DESIGN.md`](app/DESIGN.md). This
+> file stays the **technical** reference — backend, APIs, DB models, auth, dev
+> commands — and every word of it still applies. What it says about the *UI* does
+> not: the existing pages, navigation, onboarding and layouts are pointers to
+> reusable logic, never to UX worth keeping.
 
 ---
 
@@ -18,10 +23,27 @@ OyeChats is a **SaaS chatbot platform** where customers sign up, create chatbot 
 Run only the checks relevant to the files you changed:
 
 ### JavaScript / TypeScript Projects
-| Project | Directory | Lint | Typecheck | Build |
-|---------|-----------|------|-----------|-------|
-| Admin Dashboard | `app/` | `npm run lint` | — (JS) | `npm run build` |
-| Chat Widget | `widget/` | `npm run lint` | — (JS) | `npm run build` |
+| Project | Directory | Lint | Typecheck | Tests | Build |
+|---------|-----------|------|-----------|-------|-------|
+| Admin Dashboard | `app/` | `npm run lint` | `npx tsc --noEmit` | `npx vitest run` | `npm run build` |
+| Chat Widget | `widget/` | `npm run lint` | — (JS) | `npm test` | `npm run build` |
+
+`app/` is TypeScript end to end, so `tsc --noEmit` is not optional there: Vite
+transpiles and strips types without checking them, and `npm run build` passes
+on code that does not typecheck.
+
+**The admin dashboard also has a browser suite, and CI runs it.** It is the
+only gate that exercises real layout and a real event loop, so it catches what
+jsdom cannot: elements covered by other elements, overflow, and text rendered
+twice on one screen.
+
+```bash
+cd app && npm run build && npx playwright install chromium && npm run e2e
+```
+
+Run it whenever you change the inbox, the shell, or anything under
+`features/agents/experience`. It needs the build first: it drives `vite
+preview`, not the dev server, so what is under test is what ships.
 
 ### Python Backend
 | Check | Command (run inside conda `oye` env) |
@@ -151,6 +173,47 @@ Then embed:
 <script src="http://localhost:4173/oyechats-widget.js" data-bot-key="bot-xxx"></script>
 ```
 
+## How the Hosted Demo Page Works
+
+`GET /demo/{bot_key}` is the shareable link on the Deploy page. It shows the
+customer's **own website** with the real widget live on top, so a prospect who
+opens it sees the thing in context rather than a generic sample page.
+
+Three renderings, in descending order of fidelity (`bot_routes.py`):
+
+1. **Live frame**: only when `?url=` is passed AND the site permits framing.
+   Used by the dashboard's preview dialog, where a blank frame is recoverable
+   because the customer is watching. `?url=` is restricted to the bot's own
+   website and its `allowed_domains`: the route is unauthenticated and its key
+   is public, so an open parameter would let anyone serve arbitrary third-party
+   HTML from an oyechats.com URL under our branding.
+2. **Captured site** (default): a stored full-page screenshot of the customer's
+   site as the backdrop, real widget on top. This is what a shared link
+   resolves to, because it is the only rendering that works for everyone:
+   roughly 40% of sites forbid framing (`X-Frame-Options` / CSP
+   `frame-ancestors`), and a headless capture is subject to neither.
+3. **Hero page**: last resort, for a bot with no website or no usable capture.
+
+The capture is taken on the worker during training (`task_capture_demo_screenshot`
+→ `screenshot_service.refresh_bot_capture`), never on the demo page's request
+path, because a full-page render takes tens of seconds. It is stored on R2 under
+an unguessable key and recorded on `bots.demo_screenshot_*`. A capture older
+than `DEMO_SCREENSHOT_TTL_DAYS`, or one taken of a site the bot no longer points
+at, is not served.
+
+> **Known limitation:** sections that reveal on scroll (IntersectionObserver,
+> AOS, Framer Motion) capture blank. A full-page screenshot extends the document
+> but never scrolls through it, so those observers never fire.
+> `DEMO_SCREENSHOT_WAIT_SECONDS` fixes the *other* cause of blank bands (lazily
+> loaded media) but cannot fix this one. A proper fix needs a renderer that
+> scrolls before capturing, which neither Reader nor Spider exposes.
+
+> **Provider status (2026-08-27):** Jina Reader `X-Respond-With: pageshot` works
+> and is the default. Spider's `POST /screenshot` returns HTTP 200 with
+> `{"error": "screenshot route produced no image bytes on this backend"}` on our
+> account **and bills for the attempt**, so the fallback is currently inert.
+> Re-test before relying on it.
+
 ## RAG Pipeline
 
 ```
@@ -176,7 +239,7 @@ User Question
 
 **Core**
 - **Client** — Account (email, hashed_password, api_key, max_bots, is_superadmin, is_bot_manager)
-- **Bot** — Chatbot instance (bot_key, system_prompt, colors, logos, business_hours, live_chat_enabled, qualification_framework)
+- **Bot** — Chatbot instance (bot_key, system_prompt, colors, logos, business_hours, live_chat_enabled, qualification_framework, demo_screenshot_*)
 - **Document** — Ingested content chunks (text + `Vector(768)` + TSVECTOR)
 - **ChatSession** — Conversation (status: bot|waiting|live|closed, BANT scores/tier, visitor_rating, assigned_operator_id)
 - **ChatMessage** — Individual messages (role: user|bot|operator|system, trace_id)
@@ -357,6 +420,8 @@ npm install && npm run dev       # Dev server (localhost:3000)
 | Document ingestion | `api/app/ingestion/pipeline.py` |
 | Embedding generation | `api/app/ingestion/embedder.py` |
 | Crawler (Spider.cloud + Jina Reader) | `api/app/services/spider_service.py`, `api/app/services/jina_service.py`, `api/app/services/crawl_orchestrator.py` |
+| Demo-page website capture | `api/app/services/screenshot_service.py` |
+| Hosted demo page (`GET /demo/{bot_key}`) | `api/app/api/bot_routes.py` |
 | ARQ worker tasks | `api/app/worker/tasks.py` |
 | WebSocket live chat | `api/app/api/ws_routes.py` |
 | Chat routes (SSE) | `api/app/api/chat_routes.py` |
@@ -383,7 +448,7 @@ npm install && npm run dev       # Dev server (localhost:3000)
 | Admin billing | `app/src/pages/Billing.jsx` |
 | Admin qualification config | `app/src/pages/Qualification.jsx` |
 
-> ⚠️ **Under the Admin Platform 2.0 mandate, every `app/src/pages/*` and `app/src/App.jsx` entry above is a TECHNICAL reference only** — use it to find which APIs/hooks/business logic to reuse, NOT as a UX/layout/navigation reference. The pages, flows, IA, and navigation are being rebuilt from first principles (see the mandate at the top of this file).
+> ⚠️ **Every `app/src/*` entry above is a TECHNICAL reference only** — use it to find which APIs, hooks and business logic to reuse, never as a UX, layout or navigation reference. The pages, flows, IA and navigation are being rebuilt from first principles; see [`app/CLAUDE.md`](app/CLAUDE.md) and [`app/DESIGN.md`](app/DESIGN.md).
 
 ## Tech Stack
 

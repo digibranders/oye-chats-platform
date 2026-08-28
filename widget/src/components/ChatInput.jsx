@@ -61,6 +61,7 @@ const ChatInput = ({
     // Bot mode
     onSubmit,
     isTyping = false,
+    locked = false,
     onHandoff,
     showProminentHandoff = false,
     // Live mode
@@ -434,7 +435,7 @@ const ChatInput = ({
         // Guard against double-sends while bot is generating a response.
         // The textarea is intentionally NOT disabled during isTyping so that
         // the mobile keyboard stays open and users can type ahead.
-        if (isTyping || isWaiting) return;
+        if (isTyping || isWaiting || locked) return;
         // Slash-command interception. Deliberately WHOLE-INPUT-ONLY. A
         // mid-sentence match like "hello /human" is NOT intercepted: Enter
         // sends the text as a normal message so the visitor never silently
@@ -464,7 +465,7 @@ const ChatInput = ({
     };
 
     const hasText = inputText.trim().length > 0;
-    const sendDisabled = !hasText || isTyping || isWaiting;
+    const sendDisabled = !hasText || isTyping || isWaiting || locked;
 
     return (
         <div className={`${currentTheme.inputArea} oyechats-safe-bottom`}>
@@ -620,7 +621,9 @@ const ChatInput = ({
                                 onBlur={handleBlur}
                                 onScroll={handleTextareaScroll}
                                 placeholder={
-                                    isWaiting
+                                    locked
+                                        ? (t('input.finish_quote') || 'Finish the quote above to continue…')
+                                        : isWaiting
                                         ? (t('system.connecting') || 'Connecting you with the support team...')
                                         : effectivePlaceholder
                                 }
@@ -642,7 +645,7 @@ const ChatInput = ({
                                     padding: 0,
                                     scrollbarWidth: 'none',
                                 }}
-                                disabled={isWaiting || isReconnecting}
+                                disabled={isWaiting || isReconnecting || locked}
                                 ref={inputRef}
                                 rows={1}
                             />

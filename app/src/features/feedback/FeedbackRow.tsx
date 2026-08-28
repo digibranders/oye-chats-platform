@@ -1,107 +1,123 @@
-import { type ReactElement } from 'react';
-import { ChevronDown, ChevronUp, ThumbsDown, ThumbsUp } from 'lucide-react';
-import { cn } from '../../design-system';
+import {
+  Badge,
+  Button,
+  Disclosure,
+  Eyebrow,
+  cn,
+  formatDateTime,
+  useClipboard,
+} from '../../ui';
 import { type FeedbackItem } from './types';
-import { formatDateTime } from '../../i18n/formatters';
 
-// Built per call, not once at import: a module-level Intl instance captures
-// whatever locale was active when the module first loaded and never changes
-// again, so a language switch would leave every row in the old language.
-function formatFeedbackDate(value: string | number | Date): string {
-  return formatDateTime(value, { year: undefined });
-}
+/** A generated visitor handle ("User -3", "anon_8f21") rather than a name. */
+const IDENTIFIER = /^(user|visitor|anon)[\s_-]/i;
 
-interface FeedbackRowProps {
+export interface FeedbackRowProps {
   item: FeedbackItem;
   expanded: boolean;
   onToggle: () => void;
 }
 
 /**
- * FeedbackRow - one expandable feedback card: 👍/👎, truncated question,
- * formatted date, anonymized user; expands to the full Q&A and, for
- * negatives, a "Copy issue to clipboard" action. Restyled port of the legacy
- * card (`pages/Feedback.jsx:301-375`).
+ * One rated answer, expandable to the full exchange.
+ *
+ * The row it replaces was a card in a stack of cards, each with its own
+ * hairline and its own hover shadow, so a hundred ratings read as a hundred
+ * objects rather than one list — and the rating itself was a coloured thumb
+ * glyph and nothing else, which tells a reader who cannot separate the green
+ * from the red exactly nothing. The verdict is now a `Badge`, which always
+ * carries its word.
+ *
+ * The disclosure comes from the design system, wrapped in a heading so a log of
+ * a hundred ratings is navigable by heading — which is the whole reason the
+ * rows are collapsed in the first place.
  */
-export function FeedbackRow({ item, expanded, onToggle }: FeedbackRowProps): ReactElement {
-  const isPositive = item.feedback === 1;
+export function FeedbackRow({ item, expanded, onToggle }: FeedbackRowProps) {
+  const positive = item.feedback === 1;
+  const { state, copy } = useClipboard();
 
-  function copyIssue(): void {
-    const text = `Issue: Poor chatbot response\n\nQuestion: ${item.question}\n\nBot Answer: ${item.answer}\n\nFeedback: Negative (thumbs down)`;
-    void navigator.clipboard.writeText(text);
+  function copyIssue() {
+    void copy(
+      [
+        'Issue: unhelpful chatbot answer',
+        '',
+        `Question: ${item.question}`,
+        '',
+        `Answer: ${item.answer}`,
+        '',
+        `Rated: not helpful, ${formatDateTime(item.created_at)}`,
+      ].join('\n'),
+    );
   }
 
   return (
-    <div
-      data-feedback-id={item.message_id}
-      className="overflow-hidden rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] transition-shadow hover:shadow-[var(--ds-shadow-sm)]"
-    >
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={expanded}
-        className="flex w-full items-center gap-4 p-4 text-left focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
-      >
-        <div
-          className={cn(
-            'flex shrink-0 items-center justify-center rounded-lg p-2',
-            isPositive ? 'bg-[var(--ds-success-soft)]' : 'bg-[var(--ds-danger-soft)]',
-          )}
-        >
-          {isPositive ? (
-            <ThumbsUp size={16} className="fill-current text-[var(--ds-success)]" aria-hidden="true" />
-          ) : (
-            <ThumbsDown size={16} className="fill-current text-[var(--ds-danger)]" aria-hidden="true" />
-          )}
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-[13px] font-medium text-[var(--ds-text)]">{item.question}</p>
-          <div className="mt-1 flex items-center gap-3">
-            <span className="text-[11px] text-[var(--ds-text-subtle)]">
-              {formatFeedbackDate(item.created_at)}
+    <li data-feedback-id={item.message_id} className="border-t border-border first:border-t-0">
+      <Disclosure
+        headingLevel={3}
+        open={expanded}
+        onOpenChange={onToggle}
+        regionLabel={`Full exchange: ${item.question}`}
+        className="px-cell py-1"
+        panelClassName="pb-3 pr-cell"
+        summary={
+          <span className="flex min-w-0 items-center gap-3">
+            <Badge tone={positive ? 'success' : 'danger'} dot>
+              {positive ? 'Helpful' : 'Not helpful'}
+            </Badge>
+            <span className="min-w-0 flex-1 truncate text-base text-text-primary">
+              {item.question}
             </span>
-            <span className="text-[11px] font-medium text-[var(--ds-accent-text)]">{item.user}</span>
-          </div>
-        </div>
-        {expanded ? (
-          <ChevronUp size={16} className="shrink-0 text-[var(--ds-text-subtle)]" aria-hidden="true" />
-        ) : (
-          <ChevronDown size={16} className="shrink-0 text-[var(--ds-text-subtle)]" aria-hidden="true" />
-        )}
-      </button>
-
-      <div
-        className={cn(
-          'grid transition-[grid-template-rows] duration-200 ease-in-out',
-          expanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
-        )}
+          </span>
+        }
+        trailing={
+          <span className="flex items-center gap-3">
+            {/* `.figure` only when it really is an id. Mono on "Priya Sharma"
+                is mono on a name, which DESIGN reserves for figures and code.
+                Hidden below `md`: at `sm` the row is already three deep. */}
+            <span
+              className={cn(
+                'hidden max-w-32 truncate text-xs text-text-tertiary md:inline',
+                IDENTIFIER.test(item.user) && 'figure',
+              )}
+            >
+              {item.user}
+            </span>
+            <span className="figure text-xs text-text-secondary">
+              {formatDateTime(item.created_at)}
+            </span>
+          </span>
+        }
       >
-        <div className="overflow-hidden">
-          <div className="space-y-3 px-4 pb-4">
-            <div className="rounded-lg bg-[var(--ds-bg-sunken)] p-3">
-              <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[var(--ds-text-subtle)]">
-                User Question
-              </p>
-              <p className="text-[13px] text-[var(--ds-text)]">{item.question}</p>
+          {/* A quotation rule, not a fill. A `bg-surface-sunken` block on the
+              card's own `bg-surface` reads as a rendering artefact; the 3px
+              leading rule is the device the visitor panel already uses for
+              "here is what someone said", so the two treatments match. */}
+          <dl className="grid gap-3">
+            <div className="border-l-[3px] border-l-border-strong pl-3">
+              <Eyebrow as="dt">Visitor asked</Eyebrow>
+              <dd className="mt-1 text-prose text-text-primary">{item.question}</dd>
             </div>
-            <div className="rounded-lg bg-[var(--ds-bg-sunken)] p-3">
-              <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[var(--ds-text-subtle)]">
-                Bot Answer
-              </p>
-              <p className="text-[13px] text-[var(--ds-text-muted)]">{item.answer}</p>
+            <div className="border-l-[3px] border-l-border-strong pl-3">
+              <Eyebrow as="dt">Chatbot answered</Eyebrow>
+              <dd className="mt-1 text-prose text-text-secondary">{item.answer}</dd>
             </div>
-            {!isPositive && (
-              <button
-                type="button"
-                onClick={copyIssue}
-                className="w-full rounded-lg border border-[var(--ds-danger)]/30 px-3 py-1.5 text-[12px] font-medium text-[var(--ds-danger)] transition-colors hover:bg-[var(--ds-danger-soft)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
-              >
-                Copy issue to clipboard
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
+          </dl>
+
+          {!positive ? (
+            <div className="mt-3 flex items-center gap-3">
+              <Button size="sm" variant="secondary" onClick={copyIssue}>
+                {state === 'copied' ? 'Copied' : 'Copy this exchange'}
+              </Button>
+              {/* An alert, not a toast: it explains why nothing happened, and
+                  the user has to read it in order to get the text another way. */}
+              <span aria-live="polite" className="text-xs text-text-secondary">
+                {state === 'failed'
+                  ? 'Your browser blocked the clipboard. Select the text above and copy it.'
+                  : null}
+              </span>
+            </div>
+          ) : null}
+      </Disclosure>
+    </li>
   );
 }

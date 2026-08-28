@@ -12,11 +12,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.cache import BOT_CONFIG_TTL, bot_config_key, cache_get, cache_set
-from app.core.origin_check import extract_hostname, is_origin_allowed
+from app.core.origin_check import extract_hostname, is_origin_allowed, origin_check_applies
 from app.db.models import Affiliate, Bot, Client, ImpersonationToken, Operator, Subscription
 from app.db.session import get_session
 from app.schemas.validators import RowId
-from app.services import plan_service
+from app.services import credit_service, plan_service
 from app.services.audit_service import record_audit
 from app.services.runtime_config import is_impersonation_enabled
 
@@ -997,6 +997,25 @@ def _bot_to_cache_dict(bot: Bot) -> dict:
         #    because the field was never cached.
         "calcom_url": bot.calcom_url,
         "widget_installed_at": bot.widget_installed_at.isoformat() if bot.widget_installed_at else None,
+        # Widget liveness heartbeat. Cached alongside ``widget_installed_at``
+        # so a cache hit serves the same install picture the DB holds. Neither
+        # gates anything on the widget path: the heartbeat's own throttle is a
+        # Redis key, not this value, so a stale read here cannot cause an extra
+        # write. ``widget_last_seen_at`` must also appear in
+        # ``_CACHED_DATETIME_FIELDS`` or it round-trips as a string.
+        #
+        # Read through ``getattr`` with a default, like ``session_share_domain``
+        # and ``answer_links`` below, because this function does not only see
+        # freshly-loaded ORM rows. It also re-serializes bots rebuilt by
+        # ``_bot_from_cache_dict`` and lightweight stand-ins, neither of which
+        # carries a column added after the entry was written. A bare attribute
+        # read would raise on exactly the deploy this column ships in — every
+        # warm pre-deploy cache entry — and it would raise on the widget
+        # bootstrap path, i.e. a 500 for live visitors.
+        "widget_last_seen_at": (
+            _seen.isoformat() if (_seen := getattr(bot, "widget_last_seen_at", None)) is not None else None
+        ),
+        "widget_last_origin": getattr(bot, "widget_last_origin", None),
         "notification_email": bot.notification_email,
         "notification_emails": bot.notification_emails,
         "reply_to_email": bot.reply_to_email,
@@ -1038,7 +1057,7 @@ def _bot_to_cache_dict(bot: Bot) -> dict:
     }
 
 
-_CACHED_DATETIME_FIELDS = frozenset({"created_at", "widget_installed_at"})
+_CACHED_DATETIME_FIELDS = frozenset({"created_at", "widget_installed_at", "widget_last_seen_at"})
 
 
 def _bot_from_cache_dict(data: dict) -> Bot:
@@ -1067,23 +1086,30 @@ def _enforce_bot_origin(bot: Bot, request: Request | None) -> None:
     reject so a non-browser client cannot bypass the check by simply omitting
     the headers.
     """
-    if not getattr(bot, "domain_check_enabled", False):
+    enabled = bool(getattr(bot, "domain_check_enabled", False))
+    if not enabled:
         return
     if request is None:
         # Defensive: dependencies are always called with a Request, but if a
         # caller invokes get_current_bot programmatically without one we still
         # fail closed rather than silently allowing the request.
+        #
+        # Deliberately ordered BEFORE the allowlist check, as it always has
+        # been: a programmatic call with the flag set is a caller bug and must
+        # not benefit from the empty-allowlist fail-open.
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="origin_not_allowed",
         )
 
-    allowed: list[str] = list(bot.allowed_domains or [])
-    if not allowed:
+    allowed: list[str] = list(getattr(bot, "allowed_domains", None) or [])
+    if not origin_check_applies(domain_check_enabled=enabled, allowed=allowed):
         # Fail-open on an empty allowlist: enforcement only bites when an
         # allowlist is actually configured. This lets us default the flag ON
         # for new bots (and backfill it for configured ones) without bricking
         # any bot that has ``domain_check_enabled`` set but no domains listed.
+        # The condition lives in ``origin_check_applies`` so the visitor
+        # WebSocket decides this identically.
         return
 
     origin = request.headers.get("origin") or request.headers.get("referer")
@@ -1181,12 +1207,7 @@ def get_current_bot(
                 # Pre-resolve which ledger scope this bot drains. bot.subscription
                 # is a lazy relationship that can't be accessed after expunge(), so
                 # we pull subscription.bot_id here and stash it for credit routing.
-                if bot.subscription_id:
-                    bot._subscription_bot_id = session.scalar(
-                        select(Subscription.bot_id).where(Subscription.id == bot.subscription_id)
-                    )
-                else:
-                    bot._subscription_bot_id = None
+                bot._subscription_bot_id = credit_service.live_subscription_bot_id(session, bot.subscription_id)
                 # Cache for future requests
                 cache_set(bot_config_key(bot_key), _bot_to_cache_dict(bot), BOT_CONFIG_TTL)
                 session.expunge(bot)
@@ -1214,12 +1235,7 @@ def get_current_bot(
                     _ = bot.id, bot.name, bot.system_prompt, bot.client_id, bot.bot_key
                     _ = bot.primary_color, bot.header_color, bot.background_color
                     _ = bot.bot_logo, bot.launcher_name, bot.launcher_logo
-                    if bot.subscription_id:
-                        bot._subscription_bot_id = session.scalar(
-                            select(Subscription.bot_id).where(Subscription.id == bot.subscription_id)
-                        )
-                    else:
-                        bot._subscription_bot_id = None
+                    bot._subscription_bot_id = credit_service.live_subscription_bot_id(session, bot.subscription_id)
                     session.expunge(bot)
                     return bot
                 # No bot exists. Client hasn't created one yet (expected for new accounts)
@@ -1368,12 +1384,7 @@ def get_bot_for_chat(
             # routing never lazy-loads bot.subscription on a detached object,
             # even though preview replies skip deduction, downstream code that
             # inspects _subscription_bot_id stays consistent.
-            if bot.subscription_id:
-                bot._subscription_bot_id = session.scalar(
-                    select(Subscription.bot_id).where(Subscription.id == bot.subscription_id)
-                )
-            else:
-                bot._subscription_bot_id = None
+            bot._subscription_bot_id = credit_service.live_subscription_bot_id(session, bot.subscription_id)
             session.expunge(bot)
             # Owner-preview: origin check is bypassed (no _enforce_bot_origin) and
             # the reply is free.

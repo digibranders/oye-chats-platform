@@ -1,51 +1,42 @@
-import { type ReactElement, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
+import { ChevronRight, File as FileIcon, Folder, FolderOpen, Globe, Maximize2 } from 'lucide-react';
+import { Button, Checkbox, Dialog, cn, formatNumber } from '../../../ui';
+// A pure helper, not a component, so the module-level resolver rather than the hook.
 import { t as translateNow } from '../../../i18n/i18n';
-import {
-  Check,
-  ChevronRight,
-  File as FileIcon,
-  Folder,
-  FolderOpen,
-  House,
-  Maximize2,
-  Minus,
-} from 'lucide-react';
-import { cn, Modal } from '../../../design-system';
-import { useTranslation } from '../../../i18n/useTranslation';
-import { Trans } from '../../../i18n/Trans';
-import { formatNumber } from '../../../i18n/formatters';
 
 /**
- * A node in the discovered-page route tree. A node can be a folder (has
- * ``children``), a page (has a ``url``), or both (e.g. ``/blog`` is a real page
- * that also has ``/blog/post-1`` beneath it). ``urls`` is the flattened set of
- * every page URL in this subtree (including this node's own) precomputed so
- * selection maths (checked / indeterminate / toggle-all) stay O(1) per node.
+ * A node in the discovered-page route tree.
+ *
+ * A node can be a folder (has `children`), a page (has a `url`), or both —
+ * `/blog` is usually a real page that also has `/blog/post-1` beneath it.
+ * `urls` is the flattened set of every page in the subtree, precomputed once so
+ * the selection maths (checked / indeterminate / toggle-all) stays O(1) a node.
  */
 interface PageNode {
-  /** Path key, e.g. ``/``, ``/blog``, ``/blog/post-1?ref=x``. Unique per node. */
   id: string;
-  /** Display label for this level (the last path segment, or the host at root). */
   segment: string;
-  /** The real page URL when this node is itself a crawlable page. */
   url: string | null;
   children: PageNode[];
-  /** Every page URL in this subtree, including ``url``. Computed after build. */
   urls: string[];
 }
 
-export interface CrawlPageTreeProps {
-  /** All discovered page URLs (from ``/crawl/discover``). */
-  urls: readonly string[];
-  /** Controlled set of currently-selected page URLs. */
-  selected: readonly string[];
-  /** Called with the next full selection whenever the user toggles a node. */
-  onSelectionChange: (next: string[]) => void;
-  /** Disables all interaction (e.g. while a crawl is starting). */
-  disabled?: boolean;
+/**
+ * `decodeURIComponent` that cannot take the panel down.
+ *
+ * It throws `URIError` on a lone `%` or a truncated escape, and real sitemaps
+ * contain both — `/sale/50%_off` survives `new URL()` intact and then throws
+ * here. Unguarded, one such URL unmounted the whole add-knowledge panel to the
+ * error boundary and left the customer unable to add their website at all. A
+ * slightly uglier label beats no panel.
+ */
+function safeDecode(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
 }
 
-/** Host label shown at the tree root, derived from the first parseable URL. */
 function rootHost(urls: readonly string[]): string {
   for (const raw of urls) {
     try {
@@ -58,34 +49,13 @@ function rootHost(urls: readonly string[]): string {
 }
 
 /**
- * Build a route tree from a flat URL list. URLs are grouped by their path
- * segments; the last segment carries any query string so two pages that differ
- * only by ``?query`` remain distinct, selectable leaves rather than colliding.
- */
-/**
- * `decodeURIComponent` that cannot take the panel down.
+ * Build a route tree from a flat URL list.
  *
- * It throws `URIError` on a lone `%` or a truncated escape, and real sitemaps
- * contain both. `/sale/50%_off` survives `new URL()` intact and then throws
- * here. This sat inside a `useMemo` with no guard (the `new URL()` above it IS
- * guarded, so the wrong failure was anticipated), which meant one such URL
- * unmounted the whole Add-Knowledge panel to the error boundary and left the
- * customer unable to add their website at all, with no way to recover.
- *
- * Falling back to the raw segment shows a slightly uglier label; throwing
- * shows nothing.
+ * The last segment carries any query string, so two pages that differ only by
+ * `?variant=` stay distinct, selectable leaves rather than collapsing into one.
  */
-function safeDecode(segment: string): string {
-  try {
-    return decodeURIComponent(segment);
-  } catch {
-    return segment;
-  }
-}
-
 function buildTree(urls: readonly string[]): PageNode {
-  const host = rootHost(urls);
-  const root: PageNode = { id: '/', segment: host, url: null, children: [], urls: [] };
+  const root: PageNode = { id: '/', segment: rootHost(urls), url: null, children: [], urls: [] };
   const byPath = new Map<string, PageNode>([['/', root]]);
 
   for (const raw of urls) {
@@ -98,35 +68,38 @@ function buildTree(urls: readonly string[]): PageNode {
     const search = parsed.search || '';
     const segments = parsed.pathname.split('/').filter(Boolean);
 
-    // Homepage ("/" or "/?query"): attach to the root, or hang a labelled leaf
-    // when a query string makes it distinct from the bare homepage.
     if (segments.length === 0) {
-      if (search) {
-        const id = `/${search}`;
-        let node = byPath.get(id);
-        if (!node) {
-          node = { id, segment: search, url: raw, children: [], urls: [] };
-          byPath.set(id, node);
-          root.children.push(node);
-        } else {
-          node.url = raw;
-        }
-      } else {
+      if (!search) {
         root.url = raw;
+        continue;
+      }
+      const id = `/${search}`;
+      const existing = byPath.get(id);
+      if (existing) {
+        existing.url = raw;
+      } else {
+        const node: PageNode = { id, segment: search, url: raw, children: [], urls: [] };
+        byPath.set(id, node);
+        root.children.push(node);
       }
       continue;
     }
 
     let parent = root;
-    let acc = '';
-    segments.forEach((seg, i) => {
-      const isLast = i === segments.length - 1;
-      const label = safeDecode(seg) + (isLast ? search : '');
-      acc += `/${seg}${isLast ? search : ''}`;
-      let node = byPath.get(acc);
+    let path = '';
+    segments.forEach((segment, index) => {
+      const isLast = index === segments.length - 1;
+      path += `/${segment}${isLast ? search : ''}`;
+      let node = byPath.get(path);
       if (!node) {
-        node = { id: acc, segment: label, url: null, children: [], urls: [] };
-        byPath.set(acc, node);
+        node = {
+          id: path,
+          segment: safeDecode(segment) + (isLast ? search : ''),
+          url: null,
+          children: [],
+          urls: [],
+        };
+        byPath.set(path, node);
         parent.children.push(node);
       }
       if (isLast) node.url = raw;
@@ -134,7 +107,6 @@ function buildTree(urls: readonly string[]): PageNode {
     });
   }
 
-  // Bottom-up: flatten subtree URLs and sort (folders before leaves, then alpha).
   const finalize = (node: PageNode): string[] => {
     node.children.sort((a, b) => {
       const aFolder = a.children.length > 0 ? 0 : 1;
@@ -152,31 +124,20 @@ function buildTree(urls: readonly string[]): PageNode {
 }
 
 /**
- * Canonicalise a raw crawl URL list down to the exact deduplicated set the
- * tree renders, one URL per page, near-duplicate path variants (a trailing
- * slash, a re-ordered query, etc.) collapsed into a single node. Seed the
- * selection with this so the submitted crawl list matches what the user sees
- * and never carries redundant duplicates. Order is DISCOVERY order, not the
- * tree's.
+ * The discovered URLs, deduplicated exactly as the tree deduplicates them, in
+ * **discovery order**.
  *
- * That distinction is load-bearing. This list is submitted as ``ordered_urls``,
- * and the backend truncates it to what the plan and the credit balance allow
- * (``document_routes``: ``same_origin[:effective_max_pages]``, then per-page
- * deduction "in order"). The tree sorts folders before leaves and then
+ * That order is load-bearing. This list is submitted as `ordered_urls`, and the
+ * backend truncates it to what the plan and the credit balance allow, then
+ * deducts per page in order. The tree sorts folders before leaves and then
  * alphabetically, which is right for reading and wrong for buying: on a site
- * whose budget covers a fraction of its pages, a ``/blog`` subtree would sort
- * ahead of the ``/about`` and ``/pricing`` leaves and consume the entire
- * allowance, leaving an agent that cannot answer a pricing question. Discovery
- * order puts the seed URL first and follows the site's own sitemap priority.
- *
- * Intentionally co-located with the component: it wraps the private ``buildTree``
- * used by the tree, so splitting it into its own module would fragment that
- * logic. The Fast-Refresh "components only" rule is disabled for this one export.
+ * whose budget covers a fraction of its pages, a `/blog` subtree would sort
+ * ahead of `/about` and `/pricing` and eat the whole allowance, leaving a
+ * chatbot that cannot answer a pricing question. Discovery order puts the seed
+ * URL first and follows the site's own sitemap priority.
  */
 // eslint-disable-next-line react-refresh/only-export-components
 export function canonicalCrawlUrls(urls: readonly string[]): string[] {
-  // `buildTree` decides WHICH url survives each collapse (trailing slash, www,
-  // scheme); this keeps that choice and only restores the incoming order.
   const canonical = new Set(buildTree(urls).urls);
   const seen = new Set<string>();
   const ordered: string[] = [];
@@ -188,39 +149,23 @@ export function canonicalCrawlUrls(urls: readonly string[]): string[] {
   return ordered;
 }
 
-type CheckState = 'checked' | 'indeterminate' | 'unchecked';
+/** One level of nesting, on the 4-base scale. */
+const INDENT_PX = 16;
 
-function checkState(node: PageNode, selected: Set<string>): CheckState {
+type CheckState = true | false | 'indeterminate';
+
+function checkState(node: PageNode, selected: ReadonlySet<string>): CheckState {
   let hit = 0;
-  for (const u of node.urls) if (selected.has(u)) hit += 1;
-  if (hit === 0) return 'unchecked';
-  if (hit === node.urls.length) return 'checked';
-  return 'indeterminate';
+  for (const url of node.urls) if (selected.has(url)) hit += 1;
+  if (hit === 0) return false;
+  return hit === node.urls.length ? true : 'indeterminate';
 }
 
-/** A three-state checkbox rendered as a styled button box. */
-function CheckBox({ state }: { state: CheckState }): ReactElement {
-  return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        'flex h-4 w-4 shrink-0 items-center justify-center rounded-[5px] border transition-colors',
-        state === 'unchecked'
-          ? 'border-[var(--ds-border-strong)] bg-[var(--ds-bg-surface)]'
-          : 'border-[var(--ds-accent)] bg-[var(--ds-accent)] text-white',
-      )}
-    >
-      {state === 'checked' && <Check size={12} strokeWidth={3} />}
-      {state === 'indeterminate' && <Minus size={12} strokeWidth={3} />}
-    </span>
-  );
-}
-
-interface TreeRowProps {
+interface RowProps {
   node: PageNode;
   depth: number;
-  selected: Set<string>;
-  expanded: Set<string>;
+  selected: ReadonlySet<string>;
+  expanded: ReadonlySet<string>;
   disabled: boolean;
   onToggleSelect: (node: PageNode) => void;
   onToggleExpand: (id: string) => void;
@@ -234,61 +179,62 @@ function TreeRow({
   disabled,
   onToggleSelect,
   onToggleExpand,
-}: TreeRowProps): ReactElement {
+}: RowProps) {
   const hasChildren = node.children.length > 0;
-  const isOpen = expanded.has(node.id);
+  const open = expanded.has(node.id);
   const state = checkState(node, selected);
-  const pageCount = node.urls.length;
-
-  const RowIcon = hasChildren ? (isOpen ? FolderOpen : Folder) : FileIcon;
-  const rowLabel = depth === 0 ? node.segment : node.segment || '/';
+  const label = depth === 0 ? node.segment : node.segment || '/';
+  const RowIcon = depth === 0 ? Globe : hasChildren ? (open ? FolderOpen : Folder) : FileIcon;
+  const groupId = `${node.id}-children`;
 
   return (
-    <li role="treeitem" aria-expanded={hasChildren ? isOpen : undefined} aria-selected={state === 'checked'}>
+    <li>
+      {/* The row is 36px regardless — `py-1` around a 28px control or the 28px
+          spacer below — so the SC 2.5.8 target floor is met by the spacer's own
+          height rather than by a `min-h` the layout always exceeded. The indent
+          is computed from a depth, which genuinely cannot be a utility class;
+          the step is a named constant so it stays on the 4-base scale. */}
       <div
-        className="flex items-center gap-1.5 rounded-md py-1 pr-2 hover:bg-[var(--ds-bg-sunken)]"
-        style={{ paddingLeft: `${depth * 16 + 4}px` }}
+        className="flex items-center gap-1.5 rounded-sm py-1 pr-2 hover:bg-surface-hover"
+        style={{ paddingLeft: `${depth * INDENT_PX + 4}px` }}
       >
         {hasChildren ? (
-          <button
-            type="button"
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-expanded={open}
+            aria-controls={groupId}
+            aria-label={`${open ? translateNow('agents.collapse') || 'Collapse' : translateNow('agents.expand') || 'Expand'} ${label}`}
             onClick={() => onToggleExpand(node.id)}
-            aria-label={isOpen ? `Collapse ${rowLabel}` : `Expand ${rowLabel}`}
-            className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--ds-text-subtle)] hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
           >
             <ChevronRight
-              size={14}
-              className={cn('transition-transform', isOpen && 'rotate-90')}
-              aria-hidden="true"
+              aria-hidden
+              className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-90')}
             />
-          </button>
+          </Button>
         ) : (
-          <span className="h-5 w-5 shrink-0" />
+          // 28px, which is what actually sets the row's minimum target.
+          <span aria-hidden className="h-control-sm w-control-sm" />
         )}
-
-        <button
-          type="button"
+        <Checkbox
+          checked={state}
           disabled={disabled}
-          onClick={() => onToggleSelect(node)}
-          className="flex min-w-0 flex-1 items-center gap-2 text-left focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)] rounded disabled:cursor-not-allowed"
-        >
-          <CheckBox state={state} />
-          {depth === 0 ? (
-            <House size={14} className="shrink-0 text-[var(--ds-text-subtle)]" aria-hidden="true" />
-          ) : (
-            <RowIcon size={14} className="shrink-0 text-[var(--ds-text-subtle)]" aria-hidden="true" />
-          )}
-          <span className="truncate text-[13px] text-[var(--ds-text)]">{rowLabel}</span>
-          {hasChildren && (
-            <span className="shrink-0 text-[11px] tabular-nums text-[var(--ds-text-subtle)]">
-              {pageCount}
-            </span>
-          )}
-        </button>
+          onCheckedChange={() => onToggleSelect(node)}
+          aria-label={
+            hasChildren
+              ? `${label} and everything under it, ${node.urls.length} pages`
+              : `${label}`
+          }
+        />
+        <RowIcon aria-hidden className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
+        <span className="truncate text-sm text-text-primary">{label}</span>
+        {hasChildren ? (
+          <span className="figure shrink-0 text-2xs text-text-tertiary">{node.urls.length}</span>
+        ) : null}
       </div>
 
-      {hasChildren && isOpen && (
-        <ul role="group">
+      {hasChildren && open ? (
+        <ul id={groupId}>
           {node.children.map((child) => (
             <TreeRow
               key={child.id}
@@ -302,175 +248,142 @@ function TreeRow({
             />
           ))}
         </ul>
-      )}
+      ) : null}
     </li>
   );
 }
 
+export interface CrawlPageTreeProps {
+  urls: readonly string[];
+  selected: readonly string[];
+  onSelectionChange: (next: string[]) => void;
+  disabled?: boolean;
+}
+
 /**
- * CrawlPageTree, an interactive route tree of every page discovered on a site,
- * letting the customer choose exactly which pages to train the AI on before the
- * crawl runs. Folders aggregate their descendants with a tri-state checkbox and
- * toggle all pages beneath them at once; the selection is reported upward as a
- * flat URL list ready to pass as ``ordered_urls`` to the crawl endpoint.
+ * Which pages of a discovered site to train on, before a single credit is spent.
+ *
+ * Nested lists of real checkboxes and real disclosure buttons rather than
+ * `role="tree"`. A tree widget owes its user the full APG keyboard contract —
+ * arrow navigation, type-ahead, Home/End, a roving tabindex — and the version
+ * this replaces claimed `role="tree"` while shipping none of it, which is worse
+ * for a screen-reader user than the grouped checkboxes it actually was: the role
+ * promised keys that did nothing. Here every control is in the tab order and
+ * behaves exactly as it announces.
  */
 export function CrawlPageTree({
   urls,
   selected,
   onSelectionChange,
   disabled = false,
-}: CrawlPageTreeProps): ReactElement {
-  const { t } = useTranslation();
+}: CrawlPageTreeProps) {
   const tree = useMemo(() => buildTree(urls), [urls]);
-  const allUrls = tree.urls;
+  // Discovery order, not tree order. Everything this component emits is
+  // submitted as `ordered_urls` and billed in the order it is sent, so the
+  // alphabetical, folders-first order the tree reads best in would spend a
+  // small site's whole budget on `/blog` before it reached `/pricing`.
+  const allUrls = useMemo(() => canonicalCrawlUrls(urls), [urls]);
   const selectedSet = useMemo(() => new Set(selected), [selected]);
+  const [maximized, setMaximized] = useState(false);
 
-  // Default-expand only the top level so large sites open scannable, not as a
-  // wall of every nested page. Users drill in (or Expand all) from there.
   const [expanded, setExpanded] = useState<Set<string>>(() => {
-    const top = new Set<string>();
-    top.add(tree.id);
-    for (const child of tree.children) if (child.children.length > 0) top.add(child.id);
-    return top;
+    // Only the top level opens by default: a 400-page site rendered fully
+    // expanded is a wall, and the customer's first job is to scan the sections.
+    const open = new Set<string>([tree.id]);
+    for (const child of tree.children) if (child.children.length > 0) open.add(child.id);
+    return open;
   });
 
-  const toggleExpand = (id: string): void => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
+  function toggleExpand(id: string) {
+    setExpanded((current) => {
+      const next = new Set(current);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
-  };
+  }
 
-  const toggleSelect = (node: PageNode): void => {
-    const state = checkState(node, selectedSet);
+  function toggleSelect(node: PageNode) {
     const next = new Set(selectedSet);
-    if (state === 'checked') {
-      for (const u of node.urls) next.delete(u);
+    if (checkState(node, selectedSet) === true) {
+      for (const url of node.urls) next.delete(url);
     } else {
-      for (const u of node.urls) next.add(u);
+      for (const url of node.urls) next.add(url);
     }
-    onSelectionChange(allUrls.filter((u) => next.has(u)));
-  };
+    // Re-derived from `allUrls` so the emitted order stays discovery order.
+    onSelectionChange(allUrls.filter((url) => next.has(url)));
+  }
 
-  const setAllExpanded = (open: boolean): void => {
+  function setAllExpanded(open: boolean) {
     if (!open) {
       setExpanded(new Set());
       return;
     }
     const ids = new Set<string>();
-    const walk = (node: PageNode): void => {
-      if (node.children.length > 0) {
-        ids.add(node.id);
-        node.children.forEach(walk);
-      }
+    const walk = (node: PageNode) => {
+      if (node.children.length === 0) return;
+      ids.add(node.id);
+      node.children.forEach(walk);
     };
     walk(tree);
     setExpanded(ids);
-  };
-
-  // Count only selected pages that exist in the tree, NOT `selectedSet.size`.
-  // The parent seeds `selected` from the raw crawl result, which can carry
-  // near-duplicates (e.g. a trailing-slash variant of a page) that buildTree
-  // canonicalises into a single node, so the raw set can hold more URLs than
-  // the tree has pages. Counting the intersection keeps the header honest
-  // ("N of M" with N ≤ M) and lets "Select all" read as fully checked once
-  // every tree page is picked, instead of the impossible "18 of 17".
-  const selectedCount = useMemo(
-    () => allUrls.reduce((n, u) => (selectedSet.has(u) ? n + 1 : n), 0),
-    [allUrls, selectedSet],
-  );
-  const allSelected = selectedCount === allUrls.length && allUrls.length > 0;
-
-  // The tree can grow into hundreds of pages on a big site, which the inline
-  // `max-h-72` scroller only shows a sliver of. `maximized` opens the exact
-  // same tree in a large modal. Selection and expand state are shared (they
-  // live in this component / the parent), so both views stay in lockstep.
-  const [maximized, setMaximized] = useState(false);
-  // Auto-open the maximized view the moment a crawl first yields pages, so the
-  // discovered tree lands in the big window by default instead of the cramped
-  // inline strip. A fresh crawl (count returning to 0, then rising) re-opens
-  // it; incremental updates that never hit 0, and a manual close, are
-  // respected. Uses the adjust-state-during-render pattern rather than an
-  // effect to avoid an extra paint (see React "You Might Not Need an Effect").
-  const [prevUrlCount, setPrevUrlCount] = useState(0);
-  if (prevUrlCount !== allUrls.length) {
-    setPrevUrlCount(allUrls.length);
-    if (allUrls.length > 0 && prevUrlCount === 0) setMaximized(true);
   }
 
-  // Rendered inline AND inside the modal. `bodyMaxHeight` is the only thing
-  // that differs (a taller scroller in the modal); `showMaximize` hides the
-  // maximize affordance in the modal, where the modal's own close takes over.
-  const renderTree = (bodyMaxHeight: string, showMaximize: boolean): ReactElement => (
-    <div className="rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)]">
-      {/* Toolbar: select-all + count + expand controls */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--ds-border)] px-3 py-2">
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
+  // Counted as the intersection with the tree, never `selectedSet.size`. The
+  // caller seeds the selection from the raw discovery result, which can hold
+  // near-duplicates the tree collapses into one node — so the raw set can be
+  // larger than the tree, and the header would read the impossible "18 of 17".
+  const selectedCount = useMemo(
+    () => allUrls.reduce((count, url) => (selectedSet.has(url) ? count + 1 : count), 0),
+    [allUrls, selectedSet],
+  );
+  const allSelected = allUrls.length > 0 && selectedCount === allUrls.length;
+
+  /** Whether "expand all" would still do anything, so one button can be both. */
+  const anyCollapsed = useMemo(() => {
+    const walk = (node: PageNode): boolean =>
+      node.children.length > 0 &&
+      (!expanded.has(node.id) || node.children.some(walk));
+    return walk(tree);
+  }, [tree, expanded]);
+
+  const body = (maxHeight: string, showMaximize: boolean) => (
+    <div className="rounded-md border border-border bg-surface">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-surface-sunken px-3 py-2">
+        <div className="flex items-center gap-2.5">
+          <Checkbox
+            checked={allSelected ? true : selectedCount > 0 ? 'indeterminate' : false}
             disabled={disabled}
-            onClick={() => onSelectionChange(allSelected ? [] : [...allUrls])}
-            className="flex items-center gap-2 rounded text-[13px] font-medium text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)] disabled:cursor-not-allowed"
-          >
-            <CheckBox
-              state={allSelected ? 'checked' : selectedCount > 0 ? 'indeterminate' : 'unchecked'}
-            />
-            {allSelected ? t('agents.clearAll') || 'Clear all' : t('agents.selectAll') || 'Select all'}
-          </button>
-          <span className="text-[12px] text-[var(--ds-text-muted)]">
-            <Trans
-              k="agents.selectedOfTotal"
-              fallback="{selected} of {total} selected"
-              values={{
-                selected: (
-                  <span className="font-semibold tabular-nums text-[var(--ds-text)]">
-                    {formatNumber(selectedCount)}
-                  </span>
-                ),
-                total: <span className="tabular-nums">{formatNumber(allUrls.length)}</span>,
-              }}
-            />
+            onCheckedChange={() => onSelectionChange(allSelected ? [] : [...allUrls])}
+            aria-label={allSelected ? translateNow('agents.clearEveryPage') || 'Clear every page' : translateNow('agents.selectEveryPage') || 'Select every page'}
+          />
+          <span className="text-xs text-text-secondary">
+            <span className="figure font-medium text-text-primary">
+              {formatNumber(selectedCount)}
+            </span>{' '}
+            of <span className="figure">{formatNumber(allUrls.length)}</span> pages selected
           </span>
         </div>
-        <div className="flex items-center gap-1 text-[12px]">
-          <button
-            type="button"
-            onClick={() => setAllExpanded(true)}
-            className="rounded px-1.5 py-0.5 text-[var(--ds-text-muted)] hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
-          >
-            {t('agents.expandAll') || 'Expand all'}
-          </button>
-          <span className="text-[var(--ds-border-strong)]">·</span>
-          <button
-            type="button"
-            onClick={() => setAllExpanded(false)}
-            className="rounded px-1.5 py-0.5 text-[var(--ds-text-muted)] hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
-          >
-            {t('agents.collapseAll') || 'Collapse all'}
-          </button>
-          {showMaximize && (
-            <>
-              <span className="text-[var(--ds-border-strong)]">·</span>
-              <button
-                type="button"
-                onClick={() => setMaximized(true)}
-                aria-label={t('agents.maximizePageList') || 'Maximize page list'}
-                title={t('agents.maximize') || 'Maximize'}
-                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[var(--ds-text-muted)] hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
-              >
-                <Maximize2 size={13} aria-hidden="true" />
-                {t('agents.maximize') || 'Maximize'}
-              </button>
-            </>
-          )}
+        <div className="flex items-center gap-1">
+          {/* One control with two states, not two controls one of which is
+              always a no-op. */}
+          <Button size="sm" variant="ghost" onClick={() => setAllExpanded(!anyCollapsed)}>
+            {anyCollapsed ? translateNow('agents.expandAll') || 'Expand all' : translateNow('agents.collapseAll') || 'Collapse all'}
+          </Button>
+          {showMaximize ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setMaximized(true)}
+              iconLeft={<Maximize2 aria-hidden className="h-3.5 w-3.5" />}
+            >
+              {translateNow('agents.expandView') || 'Expand view'}
+            </Button>
+          ) : null}
         </div>
       </div>
-
-      {/* The tree itself */}
-      <div className={cn('overflow-y-auto py-1.5 pr-1', bodyMaxHeight)}>
-        <ul role="tree" aria-label={t('agents.discoveredPages') || 'Discovered pages'}>
+      <div className={cn('overflow-y-auto py-1.5 pr-1', maxHeight)}>
+        <ul aria-label={translateNow('agents.pagesFoundOnThisWebsite') || 'Pages found on this website'}>
           <TreeRow
             node={tree}
             depth={0}
@@ -487,16 +400,19 @@ export function CrawlPageTree({
 
   return (
     <>
-      {renderTree('max-h-72', true)}
-      <Modal
+      {/* Only one copy of the tree is mounted. Rendering the inline body while
+          the dialog is open re-rendered two full trees — 400 rows each on a
+          large site — on every checkbox press. */}
+      {maximized ? null : body('max-h-72', true)}
+      <Dialog
         open={maximized}
-        onClose={() => setMaximized(false)}
-        title={t('agents.discoveredPages') || 'Discovered pages'}
-        description={t('agents.pickThePagesToAdd') || 'Pick the pages to add to your knowledge base.'}
+        onOpenChange={setMaximized}
         size="xl"
+        title={translateNow('agents.pagesFoundOnThisWebsite') || 'Pages found on this website'}
+        description={translateNow('agents.youAreChargedPerPage') || 'You are charged per page — leave out what visitors never ask about.'}
       >
-        {renderTree('max-h-[65vh]', false)}
-      </Modal>
+        {body('max-h-[60vh]', false)}
+      </Dialog>
     </>
   );
 }

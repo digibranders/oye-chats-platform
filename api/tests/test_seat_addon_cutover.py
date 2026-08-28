@@ -519,3 +519,54 @@ def test_promote_scheduled_change_seat_carry_reaches_activation(db):
     assert new.seat_addon_subscription_id == "sub_addon_dge2e_new"
     assert new.seat_addon_pending_quantity == 4
     assert new.seat_addon_quantity == 0
+
+
+# ── The branding add-on is the THIRD mandate on the row ──────────────────────
+#
+# The deferred cancel (`execute_gateway_cancellation`) and the scheduled
+# downgrade (`promote_scheduled_change`) both retire it. The upgrade / resume
+# cutover — this sweep — never did. So a customer who bought branding removal
+# and then UPGRADED kept paying that mandate forever while the new subscription
+# row carried `branding_addon_active = False`, which is what the entitlement
+# resolver reads: the "Powered by OyeChats" badge came back on their live site
+# the moment the upgrade landed, and they were still being charged to hide it.
+
+
+def test_activation_retires_the_old_branding_addon(db):
+    from app.services import razorpay_service as rzp
+
+    client = _make_client(db, email="brandcutover@e.com")
+    std = _make_plan(db, slug="std-brandcut")
+    pro = _make_plan(db, slug="pro-brandcut")
+    old = _make_sub(
+        db,
+        client,
+        std,
+        razorpay_subscription_id="sub_old_brandcut",
+        status="active",
+    )
+    old.branding_addon_subscription_id = "sub_branding_old"
+    old.branding_addon_active = True
+    db.commit()
+
+    fake = MagicMock()
+    payload = _activation_payload(
+        razorpay_sub_id="sub_new_brandcut",
+        client_id=client.id,
+        plan_id=pro.id,
+        prev_sub_id="sub_old_brandcut",
+    )
+
+    with patch.object(rzp, "_get_razorpay", return_value=fake):
+        rzp._handle_subscription_activated(db, payload)
+    db.commit()
+
+    branding_cancels = [c for c in fake.subscription.cancel.call_args_list if c.args[0] == "sub_branding_old"]
+    assert branding_cancels, (
+        "the upgrade cutover must retire the branding mandate; leaving it live bills the "
+        f"customer for an entitlement the new row does not carry. calls={fake.subscription.cancel.call_args_list}"
+    )
+
+    db.refresh(old)
+    assert old.branding_addon_subscription_id is None
+    assert old.branding_addon_active is False

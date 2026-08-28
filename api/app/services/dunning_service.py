@@ -18,6 +18,54 @@ import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from app.db.models import Plan
+
+
+def cycle_charge_minor(
+    plan: Plan | None,
+    billing_cycle: str | None,
+    currency: str,
+    discount_bps: int = 0,
+) -> int | None:
+    """The ONE billing cycle a past-due subscription is about to lose, minor units.
+
+    Three axes, and every one of them has to be honoured or the figure is a
+    different customer's price:
+
+    * **Cycle.** Reading ``monthly_price_cents`` for an annual subscriber
+      understates the attempted charge by roughly twelve.
+    * **Rail.** ``*_usd_cents`` for a USD customer. Quoting the INR column
+      under a dollar sign is a rupee amount wearing the wrong currency.
+    * **Discount.** A standing referral discount is realised by swapping in a
+      DISCOUNTED Razorpay plan (``razorpay_service.resolve_discounted_plan``),
+      so it recurs on every charge while ``Plan`` keeps the list price. Applied
+      here with that function's own arithmetic — ``base - floor(base × bps /
+      10000)`` — so the two cannot drift apart.
+
+    Returns ``None`` for a missing or non-positive price rather than ``0``.
+    Zero would print "₹0.00 failed" at a customer about to lose a real cycle,
+    and would count as nothing in any total built from this.
+
+    Shared deliberately: the super-admin at-risk queue and the customer-facing
+    dunning email must never quote different numbers for the same charge.
+    """
+    if plan is None:
+        return None
+    annual = (billing_cycle or "monthly").strip().lower() == "annual"
+    if (currency or "INR").strip().upper() == "USD":
+        price = plan.annual_price_usd_cents if annual else plan.monthly_price_usd_cents
+    else:
+        price = plan.annual_price_cents if annual else plan.monthly_price_cents
+    if price is None or int(price) <= 0:
+        return None
+    price = int(price)
+    if discount_bps:
+        price -= (price * int(discount_bps)) // 10000
+    return price
+
 
 logger = logging.getLogger(__name__)
 

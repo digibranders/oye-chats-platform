@@ -127,6 +127,7 @@ export default {
         input: {
             placeholder: 'संदेश लिखें...',
             slash_hint: 'संदेश लिखें... या कमांड के लिए / दबाएँ',
+            finish_quote: 'जारी रखने के लिए ऊपर दिया गया कोटेशन पूरा करें…',
             send_aria: 'संदेश भेजें',
             attach_file: 'फ़ाइल संलग्न करें',
             book_meeting: 'मीटिंग बुक करें',

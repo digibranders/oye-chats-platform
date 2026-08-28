@@ -9,6 +9,7 @@ from app.db.models import (
     BANTSignal,
     Bot,
     BotGrowthEvent,
+    ChatAuditLog,
     ChatMessage,
     ChatSession,
     Client,
@@ -1076,6 +1077,67 @@ def get_resolution_summary(session, client_id: int = None, bot_id: int = None):
         "unresolved": unresolved,
         "total": total,
         "rate": rate,
+    }
+
+
+def get_queue_summary(session, client_id: int = None, bot_id: int = None, since: datetime | None = None):
+    """Current live-chat queue depth plus historical wait-time / abandonment.
+
+    - ``current_depth``: count of ``ChatSession.status == 'waiting'`` within the
+      last hour (same staleness window as ``_current_queue_size`` in
+      ``live_chat_availability_service.py``).
+    - ``avg_wait_seconds``: average delta between ``handoff_requested`` and the
+      terminal entry for the same wait (``accepted``, ``timeout``,
+      ``visitor_cancelled``).
+    - ``resolved_count``: waits resolved by an operator joining (``accepted``).
+    - ``abandoned_count``: waits that timed out or were cancelled by the visitor.
+    """
+    sf = _session_owner_filter(bot_id, client_id)
+
+    # 1. Current depth — live now, bounded by staleness so dead rows don't linger.
+    cutoff = datetime.now(UTC) - timedelta(hours=1)
+    current_depth = session.execute(
+        select(func.count(ChatSession.id)).where(
+            sf,
+            ChatSession.status == "waiting",
+            ChatSession.last_active_at >= cutoff,
+        )
+    ).scalar_one()
+
+    # 2. Historical waits — pair each handoff_requested with its immediate terminal row.
+    rows = session.execute(
+        select(ChatAuditLog.session_id, ChatAuditLog.action, ChatAuditLog.created_at)
+        .join(ChatSession, ChatSession.id == ChatAuditLog.session_id)
+        .where(sf, *([ChatAuditLog.created_at >= since] if since is not None else []))
+        .order_by(ChatAuditLog.session_id, ChatAuditLog.created_at.asc())
+    ).all()
+
+    wait_seconds_list: list[float] = []
+    resolved = 0
+    abandoned = 0
+    current_handoff_at: dict[str, datetime] = {}
+
+    for row in rows:
+        action = row.action
+        created_at = row.created_at
+        if action == "handoff_requested" and created_at:
+            current_handoff_at[row.session_id] = created_at
+        elif action in ("accepted", "timeout", "visitor_cancelled") and row.session_id in current_handoff_at:
+            start = current_handoff_at.pop(row.session_id)
+            if created_at and created_at >= start:
+                wait_seconds_list.append((created_at - start).total_seconds())
+                if action == "accepted":
+                    resolved += 1
+                else:
+                    abandoned += 1
+
+    avg_wait = round(sum(wait_seconds_list) / len(wait_seconds_list)) if wait_seconds_list else None
+
+    return {
+        "current_depth": int(current_depth or 0),
+        "avg_wait_seconds": avg_wait,
+        "resolved_count": resolved,
+        "abandoned_count": abandoned,
     }
 
 

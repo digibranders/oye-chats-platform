@@ -1,35 +1,37 @@
-import { type ReactElement } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { LogOut, Monitor } from 'lucide-react';
-import { Button, Card, SectionHeader, StatusBadge } from '../../design-system';
+import { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { LogOut } from 'lucide-react';
+import { Badge, Button, ConfirmDialog, SettingGroup, SettingRow, buttonClass } from '../../ui';
 import { clearAuthStorage } from '../../utils/authStorage';
 import { endImpersonationSession, isImpersonating } from '../../utils/impersonation';
 import { useTranslation } from '../../i18n/useTranslation';
 
 export interface AccountSessionsSectionProps {
-  /** The signed-in account's email, shown against the current device. */
+  /** The signed-in address, shown against the current device. */
   email: string;
 }
 
 /**
- * AccountSessionsSection - active sign-in sessions + the (not-yet-built)
- * two-factor / device-management surface. Moved here from the former Workspace
- * ▸ Security tab: this is account-level protection, so it belongs on Settings
- * beside Account security, not on a workspace-admin surface.
+ * Where you are signed in.
  *
- * What's real: the current device with a working `Sign out`. Two-factor auth
- * and multi-device management are stated plainly as not-yet-built rather than
- * rendered as controls that look actionable but do nothing.
+ * Exactly one device, because that is all the backend can tell us: there is no
+ * session table and no revoke-elsewhere endpoint. The card says so rather than
+ * listing a "Two-factor authentication" row with a switch that does nothing —
+ * a control that looks actionable and is not is worse than an honest absence,
+ * because it makes the user believe they have protection they do not have.
+ *
+ * Rotating the workspace API key *does* end every other session, since the key
+ * is the credential, so that is where a user who has lost a device is pointed.
  */
-export function AccountSessionsSection({ email }: AccountSessionsSectionProps): ReactElement {
-  const { t } = useTranslation();
+export function AccountSessionsSection({ email }: AccountSessionsSectionProps) {
   const navigate = useNavigate();
+  const { t } = useTranslation();
+  const [confirming, setConfirming] = useState(false);
 
-  const handleSignOut = (): void => {
-    // In an impersonated support session this button ends the SUPPORT session
-    // only. `clearAuthStorage()` clears the shared localStorage bundle, which
-    // holds the super-admin's own credentials for every other tab of this
-    // browser - signing out of a customer's Account must never touch them.
+  function signOut(): void {
+    // In an impersonated support tab this ends the *support* session only.
+    // `clearAuthStorage()` wipes the shared localStorage bundle, which holds
+    // the super-admin's own credentials for every other tab of this browser.
     if (isImpersonating()) {
       endImpersonationSession(
         t('settings.sessions.impersonationEnded') ||
@@ -37,56 +39,55 @@ export function AccountSessionsSection({ email }: AccountSessionsSectionProps): 
       );
       return;
     }
-    // Clear both localStorage + sessionStorage so a session-only login leaves no
-    // stale shadow that would auto-log the user back in. Mirrors the shell's
-    // TopBar logout so behaviour is identical wherever the user signs out.
     clearAuthStorage();
     navigate('/login');
-  };
+  }
 
   return (
-    <div className="space-y-6">
-      {/* ── Sessions - real: current device + working sign-out. ─────────────── */}
-      <Card>
-        <div className="p-5 sm:p-6">
-          <SectionHeader
-            title={t('settings.sessions.title') || 'Active sessions'}
-            description={
-              t('settings.sessions.description') ||
-              'Where you’re currently signed in to the dashboard.'
-            }
-          />
+    <>
+      <SettingGroup title={t('settings.signedIn') || 'Signed in'}>
+        <SettingRow
+          label={t('settings.thisDevice') || 'This device'}
+          description={email || undefined}
+          badge={
+            <Badge tone="success" dot>
+              {t('settings.current') || 'Current'}
+            </Badge>
+          }
+          controlWidth="auto"
+        >
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => setConfirming(true)}
+            iconLeft={<LogOut aria-hidden />}
+          >
+            {t('settings.signOut') || 'Sign out'}
+          </Button>
+        </SettingRow>
 
-          <ul className="mt-4 overflow-hidden rounded-xl border border-[var(--ds-border)]">
-            <li className="flex items-center gap-3 bg-[var(--ds-bg-surface)] px-4 py-3">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
-                <Monitor size={18} aria-hidden="true" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[13px] font-medium text-[var(--ds-text)]">
-                  {t('settings.sessions.thisDevice') || 'This device'}
-                  {email ? (
-                    <span className="font-normal text-[var(--ds-text-subtle)]">
-                      {' · '}
-                      {email}
-                    </span>
-                  ) : null}
-                </p>
-              </div>
-              <StatusBadge tone="success" dot>
-                {t('settings.sessions.current') || 'Current'}
-              </StatusBadge>
-            </li>
-          </ul>
+        <SettingRow
+          label={t('settings.lostADevice') || 'Lost a device?'}
+          description={t('settings.rotatingTheWorkspaceApiKey') || 'Rotating the workspace API key ends every session.'}
+          controlWidth="auto"
+        >
+          {/* `secondary`, not `ghost`: it is the row's only control, and a
+              borderless grey link at the right edge of a settings row reads as
+              disabled text rather than as somewhere to go. */}
+          <Link to="/settings/developers" className={buttonClass('secondary', 'sm')}>
+            {t('settings.openDevelopers') || 'Open Developers'}
+          </Link>
+        </SettingRow>
+      </SettingGroup>
 
-          <div className="mt-4">
-            <Button variant="outline" onClick={handleSignOut}>
-              <LogOut size={16} aria-hidden="true" />
-              {t('settings.sessions.signOut') || 'Sign out'}
-            </Button>
-          </div>
-        </div>
-      </Card>
-    </div>
+      <ConfirmDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        title={t('settings.signOutOfThisDevice') || 'Sign out of this device?'}
+        description={t('settings.unsavedChangesAreLostAnd') || 'Unsaved changes are lost and live conversations go back to the queue.'}
+        confirmLabel="Sign out"
+        onConfirm={signOut}
+      />
+    </>
   );
 }

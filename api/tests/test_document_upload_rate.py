@@ -15,10 +15,17 @@ that one.
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
+from app.api import document_routes
+from app.api.auth import get_current_client_or_operator
+from app.core.rate_limit import limiter
 from app.db.models import PricingConfig
+from app.services import credit_service
 from app.services.credit_service import (
     get_document_upload_cost_for_size,
     invalidate_pricing_cache,
@@ -52,7 +59,7 @@ def _override(db, key: str, value: object) -> None:
 @pytest.mark.parametrize(
     ("words", "expected", "why"),
     [
-        (0, 1, "an empty doc still pays the per-file minimum"),
+        (0, 0, "a file with no extractable words puts nothing in the KB and is not charged"),
         (1, 1, "a one-word doc is one credit, not a fraction of one"),
         (249, 1, "still inside the first block"),
         (250, 1, "a whole block exactly, no rounding up onto a second credit"),
@@ -101,26 +108,174 @@ def test_a_zeroed_minimum_never_makes_an_upload_free(db):
     assert get_document_upload_cost_for_size(db, 1) == 1
 
 
-def test_the_advertised_rate_matches_the_charged_rate():
-    """Reads the UI's own copy and checks it states the rate we charge.
+def test_the_rate_is_served_to_the_client_not_reprinted_by_it(db):
+    """The advertised rate and the charged rate are the same value, once.
 
-    A comment saying "keep these in sync" is not a guard. The old bucket labels
-    drifted from the backend precisely because nothing read them.
+    This used to grep ``UsagePage.tsx`` for the string "1 credit per 250 words",
+    because the console printed the rate as prose and nothing tied the two
+    together — the five-bucket table it replaced had drifted from the backend
+    for exactly that reason. Pinning a literal across two repositories only
+    moves the drift into the test: the console rebuild dropped the sentence and
+    the guard failed, while the real defect was that a customer could no longer
+    see what an upload costs at all.
+
+    So the rate is now *served*. ``GET /credits/balance`` carries
+    ``document_upload_words_per_credit`` out of the same ``pricing_config`` key
+    ``get_document_upload_cost_for_size`` charges from, and the console renders
+    what it is given. There is one number, in one place, and a super-admin who
+    retunes it moves the price and the copy together.
+
+    What this test pins is that the value reaching the client is the value that
+    charges — including when it has been overridden, which is the case the old
+    grep could never have caught.
     """
-    import re
-    from pathlib import Path
+    from app.api.subscription_routes import _credit_costs_payload
 
-    source = Path(__file__).resolve().parents[2] / "app" / "src" / "features" / "workspace" / "UsagePage.tsx"
-    if not source.exists():  # pragma: no cover - the app tree is optional in some checkouts
-        pytest.skip("admin app source not present")
-
-    text = source.read_text()
-    stated = re.search(r"(\d+) credits? per ([\d,]+) words", text)
-    assert stated, "could not find the document-upload rate in the Usage page copy; did it move?"
-
-    credits = int(stated.group(1))
-    words = int(stated.group(2).replace(",", ""))
-    assert (credits, words) == (1, WORDS_PER_CREDIT), (
-        f"the Usage page advertises {credits} credit(s) per {words} words, but uploads are "
-        f"charged 1 per {WORDS_PER_CREDIT}"
+    served = _credit_costs_payload(db)
+    assert "document_upload_words_per_credit" in served, (
+        "GET /credits/balance no longer serves the document-upload rate; the console "
+        "cannot state what an upload costs without it"
     )
+    assert served["document_upload_words_per_credit"] == WORDS_PER_CREDIT
+
+    # An override moves both halves, which is the whole point of serving it.
+    _override(db, "credit_cost.document_upload_words_per_credit", 500)
+    assert _credit_costs_payload(db)["document_upload_words_per_credit"] == 500
+    # 2 credits for 1000 words at 1-per-500, plus the per-file floor.
+    assert get_document_upload_cost_for_size(db, 1000) == 2 + get_document_upload_cost_for_size(db, 1) - 1
+
+
+def test_a_broken_rate_override_is_never_served_as_free(db):
+    """A super-admin can save anything into the untyped JSONB ``value``.
+
+    Serving 0 or a negative rate would render in the console as "1 credit per 0
+    words" or worse be read as free, beside an action that still charges. The
+    payload must fall back to the shipped rate exactly as the deduction does.
+    """
+    from app.api.subscription_routes import _credit_costs_payload
+
+    for broken in (0, -1, "not a number", None):
+        _override(db, "credit_cost.document_upload_words_per_credit", broken)
+        assert _credit_costs_payload(db)["document_upload_words_per_credit"] == WORDS_PER_CREDIT
+
+
+def test_a_zeroed_floor_is_never_advertised_below_what_an_upload_charges(db):
+    """The floor the console prints is the floor the deduction applies.
+
+    ``credit_cost.document_upload`` is the per-file minimum and, like the rate,
+    it is untyped JSONB a super admin can save as ``0``.
+    ``get_document_upload_cost_for_size`` clamps it to at least 1 credit (see
+    ``test_a_zeroed_minimum_never_makes_an_upload_free``), but the balance
+    payload used to serve the raw config value beside it — so the console
+    advertised a free upload that ingestion still charged for. That is the same
+    price/charge divergence the rate above exists to prevent, one field over.
+    """
+    from app.api.subscription_routes import _credit_costs_payload
+
+    _override(db, "credit_cost.document_upload", 0)
+    served = _credit_costs_payload(db)["document_upload"]
+    # A one-word document is charged exactly the floor (one word cannot reach a
+    # whole block at any sane rate), so this reads the clamped value straight
+    # out of the charge path rather than restating the clamp. A ZERO-word file
+    # is not the floor case: it is not charged at all.
+    assert served == get_document_upload_cost_for_size(db, 1)
+    assert served == 1, "a zeroed floor must reach the console as the 1 credit it actually costs"
+
+
+@pytest.mark.parametrize("broken", [-3, None, "free", [0]])
+def test_an_unusable_floor_is_served_as_what_it_charges(db, broken):
+    from app.api.subscription_routes import _credit_costs_payload
+
+    _override(db, "credit_cost.document_upload", broken)
+    assert _credit_costs_payload(db)["document_upload"] == get_document_upload_cost_for_size(db, 1)
+
+
+def test_a_real_floor_override_moves_both_halves(db):
+    """The clamp must not flatten a legitimate super-admin price to 1."""
+    from app.api.subscription_routes import _credit_costs_payload
+
+    _override(db, "credit_cost.document_upload", 7)
+    assert _credit_costs_payload(db)["document_upload"] == 7
+    assert get_document_upload_cost_for_size(db, 1) == 7
+
+
+# ── The quote and the charge, on the same file ───────────────────────────────
+#
+# ``POST /documents/ingest/preview-cost`` is the price the customer is SHOWN,
+# on a real file, seconds before ``POST /documents/ingest`` takes it. The two
+# read the same helper, so this drives the quote route for real rather than
+# re-asserting the helper a third time.
+
+
+@contextmanager
+def _ctx(session):
+    yield session
+
+
+def _preview_client(db, monkeypatch) -> TestClient:
+    """A TestClient for the cost-quote route, past its auth and plan gates.
+
+    Entitlements and bot ownership have their own tests; what is under test
+    here is the number the route quotes.
+    """
+    monkeypatch.setattr(document_routes, "get_session", lambda: _ctx(db))
+    monkeypatch.setattr(document_routes, "_require_knowledge_management_access", lambda auth: None)
+    monkeypatch.setattr(document_routes, "_verify_bot_ownership", lambda bot_id, client_id: None)
+    # The route imports ``credit_service`` inside the function body, so the
+    # patch has to land on the module itself. The balance is only there so the
+    # widget can render "you have X"; it is not the number under test.
+    monkeypatch.setattr(credit_service, "get_balance", lambda db, client_id, bot_id=None: 10_000)
+
+    app = FastAPI()
+    app.state.limiter = limiter
+    app.include_router(document_routes.router)
+    app.dependency_overrides[get_current_client_or_operator] = lambda: {
+        "type": "client",
+        "entity": None,
+        "client_id": 1,
+        "operator_id": None,
+    }
+    return TestClient(app)
+
+
+def _quote(client: TestClient, name: str, body: bytes) -> dict:
+    resp = client.post("/ingest/preview-cost", files={"files": (name, body, "text/plain")})
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def test_a_file_with_no_words_is_quoted_what_it_is_charged(db, monkeypatch):
+    """Zero: the ingest route has never billed a zero-word file.
+
+    The quote used to answer the per-file floor for exactly that file — a shown
+    price and a charged price disagreeing inside one money surface, in the
+    customer's favour, which is still a defect: the confirm button said
+    "Upload for 1 credit" and the ledger moved by 0.
+    """
+    client = _preview_client(db, monkeypatch)
+    quoted = _quote(client, "empty.txt", b"   \n\n  ")
+
+    assert quoted["per_file"][0]["words"] == 0
+    assert quoted["total_credits"] == 0
+    # The charge path, on the same word count, from the same helper.
+    assert quoted["per_file"][0]["credits"] == get_document_upload_cost_for_size(db, 0)
+
+
+def test_a_real_file_is_quoted_what_it_is_charged(db, monkeypatch):
+    """And the floor still applies to a file that DID yield content."""
+    client = _preview_client(db, monkeypatch)
+    quoted = _quote(client, "short.txt", b"one two three")
+
+    assert quoted["per_file"][0]["words"] == 3
+    assert quoted["per_file"][0]["credits"] == get_document_upload_cost_for_size(db, 3) == 1
+    assert quoted["total_credits"] == 1
+
+
+def test_the_quote_tracks_a_super_admin_reprice(db, monkeypatch):
+    """A repriced floor moves the quote, not just the charge."""
+    _override(db, "credit_cost.document_upload", 4)
+    client = _preview_client(db, monkeypatch)
+
+    assert _quote(client, "short.txt", b"one two three")["total_credits"] == 4
+    # ...and the zero-word file is still free at any floor.
+    assert _quote(client, "empty.txt", b"")["total_credits"] == 0

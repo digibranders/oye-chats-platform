@@ -40,7 +40,8 @@ from app.config import (
     SUPPORT_EMAIL,
 )
 from app.services import email_design as ed
-from app.services.email_design import button, code_box, esc, h1, info_table, link, p, shell, strong
+from app.services._email_assets import ENVELOPE_ICON
+from app.services.email_design import button, code_box, esc, h1, info_table, link, p, pre_box, shell, strong
 
 logger = logging.getLogger(__name__)
 
@@ -899,6 +900,104 @@ def _format_money(currency: str, value: object) -> str:
     return f"{symbol}{rounded:,.2f}"
 
 
+def _grouped_quote_html(currency: str, line_items: list[dict], total: object) -> str:
+    """Render the priced quote as a document-style grid: an ITEM / QTY /
+    UNIT PRICE / AMOUNT table whose rows are grouped under each service name and
+    closed by a highlighted Total bar. Line items are the requirement rows from
+    ``quotation_routes.build_quotation_summary``. Table markup + inline styles so
+    it survives across email clients (no CSS grid, no external assets)."""
+    f = ed.FONT
+    groups: dict[str, list[dict]] = {}
+    order: list[str] = []
+    for item in line_items or []:
+        service_name = item.get("service_name") or "Service"
+        if service_name not in groups:
+            groups[service_name] = []
+            order.append(service_name)
+        groups[service_name].append(item)
+
+    head = (
+        f"font-family:{f};font-size:11px;font-weight:700;letter-spacing:0.07em;"
+        f"text-transform:uppercase;color:{ed.INK400};padding:0 0 9px 0;border-bottom:2px solid {ed.INK900};"
+    )
+    header = (
+        "<tr>"
+        f'<td width="42%" style="{head}width:42%;text-align:left;">Item</td>'
+        f'<td width="13%" style="{head}width:13%;text-align:left;padding-left:8px;">Qty</td>'
+        f'<td width="22%" style="{head}width:22%;text-align:left;padding-left:8px;">Unit price</td>'
+        f'<td width="23%" style="{head}width:23%;text-align:right;padding-right:16px;">Amount</td>'
+        "</tr>"
+    )
+
+    rows_html = ""
+    for service_name in order:
+        rows_html += (
+            "<tr>"
+            f'<td colspan="4" style="font-family:{f};font-size:11px;font-weight:700;letter-spacing:0.10em;'
+            f'text-transform:uppercase;color:{ed.ACCENT};padding:16px 0 8px 0;">{esc(service_name)}</td>'
+            "</tr>"
+        )
+        for item in groups[service_name]:
+            qty = item.get("quantity")
+            qty_str = esc(qty)
+            label = esc(item.get("label") or "Item")
+            unit_price = esc(_format_money(currency, item.get("price", 0)))
+            amount = esc(_format_money(currency, item.get("subtotal", 0)))
+            base = f"border-bottom:1px solid {ed.RULE};padding:11px 0;font-family:{f};font-size:14px;"
+            rows_html += (
+                "<tr>"
+                f'<td style="{base}color:{ed.INK900};font-weight:600;line-height:1.4;">{label}</td>'
+                f'<td style="{base}color:{ed.INK500};text-align:left;padding-left:8px;white-space:nowrap;">{qty_str}</td>'
+                f'<td style="{base}color:{ed.INK500};text-align:left;padding-left:8px;white-space:nowrap;">{unit_price}</td>'
+                f'<td style="{base}color:{ed.INK900};font-weight:600;text-align:right;'
+                f'padding-right:16px;white-space:nowrap;">{amount}</td>'
+                "</tr>"
+            )
+
+    # The Total is a row INSIDE the same fixed-layout table so its amount lands
+    # in the exact same 23% column as the line-item amounts (a separate table
+    # would not right-align to the same guide).
+    tint = f"background-color:{ed.ACCENT_TINT};border-top:2px solid {ed.ACCENT};"
+    total_row = (
+        "<tr>"
+        f'<td colspan="3" style="{tint}padding:14px 0 14px 16px;font-family:{f};font-size:16px;'
+        f'font-weight:700;color:{ed.INK900};">Total</td>'
+        f'<td style="{tint}padding:14px 16px 14px 0;font-family:{f};font-size:16px;font-weight:700;'
+        f'color:{ed.ACCENT};text-align:right;white-space:nowrap;">{esc(_format_money(currency, total))}</td>'
+        "</tr>"
+    )
+    return (
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
+        f'style="width:100%;table-layout:fixed;margin:6px 0 6px 0;border-collapse:collapse;">'
+        f"{header}{rows_html}{total_row}</table>"
+    )
+
+
+def _next_steps_callout(body: str) -> str:
+    """A green 'What happens next' card — an envelope badge beside a bold title
+    and a line of body copy. Table-based + a data-URI icon so it survives email
+    clients (no external fetch, no flexbox)."""
+    return (
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
+        'style="margin:0 0 18px 0;"><tr>'
+        '<td style="background-color:#f0fdf4;border:1px solid #dcfce7;border-radius:12px;padding:16px 18px;">'
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
+        '<td width="40" valign="middle" style="width:40px;vertical-align:middle;">'
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
+        '<td width="40" height="40" align="center" valign="middle" '
+        'style="width:40px;height:40px;background-color:#dcfce7;border-radius:100px;'
+        'text-align:center;vertical-align:middle;">'
+        f'<img src="{ENVELOPE_ICON}" width="20" height="20" alt="" style="display:block;border:0;margin:0 auto;">'
+        "</td></tr></table></td>"
+        '<td width="14" style="width:14px;font-size:0;line-height:0;">&nbsp;</td>'
+        '<td valign="middle" style="vertical-align:middle;">'
+        f'<p style="margin:0 0 3px 0;font-family:{ed.FONT};font-size:15px;font-weight:700;'
+        'color:#15803d;">What happens next</p>'
+        f'<p style="margin:0;font-family:{ed.FONT};font-size:14px;color:#166534;line-height:1.6;">{body}</p>'
+        "</td></tr></table></td></tr></table>"
+    )
+
+
 def send_quotation_visitor_email(
     to_email: str,
     company_name: str,
@@ -917,13 +1016,11 @@ def send_quotation_visitor_email(
     names = [esc(s) for s in (service_names or []) if s]
     services_line = ", ".join(names) if names else "the services you selected"
     inner = (
-        h1("Your quote request is in")
+        h1("We&rsquo;ve received your request")
         + p(f"Hi {esc(visitor_name) if visitor_name else 'there'},")
-        + p(
-            f"Thanks for your interest in {strong(safe_company)}. We&rsquo;ve received your "
-            f"request for a quote on {strong(services_line)}."
-        )
-        + ed.alert("Our team is preparing your quotation and will be in touch by email shortly.", "success")
+        + p(f"Thanks for your interest in {strong(safe_company)}.")
+        + p(f"We&rsquo;ve received your request for a quote for {strong(services_line)}.")
+        + _next_steps_callout("Our team is preparing your quotation and will be in touch by email shortly.")
         + p("You can reply directly to this email if you&rsquo;d like to add any details.")
     )
     send_email_async(
@@ -932,6 +1029,55 @@ def send_quotation_visitor_email(
         shell(
             subject=f"Your quote request with {company_name or BRAND_NAME}",
             preheader=f"Thanks {visitor_name or 'there'}. We&rsquo;re preparing your quote.",
+            inner=inner,
+            visitor=True,
+        ),
+        reply_to=reply_to,
+        sender_name=_branded_sender_name(company_name or BRAND_NAME),
+    )
+
+
+def send_quotation_document_email(
+    to_email: str,
+    company_name: str,
+    visitor_name: str | None,
+    currency: str,
+    line_items: list[dict],
+    total: object,
+    *,
+    reply_to: str | None = None,
+) -> None:
+    """Send the visitor their finalized quotation, ~10 min after the request.
+
+    Unlike the immediate "Your quote request" acknowledgement, this one carries
+    the full pricing: each selected service with its quantity, per-unit price
+    and subtotal, plus the grand total. The priced quote is rendered inline in
+    the email body.
+    """
+    safe_company = esc(company_name) if company_name else esc(BRAND_NAME)
+
+    inner = (
+        h1("Your quotation")
+        + p(f"Hi {esc(visitor_name) if visitor_name else 'there'},")
+        + p(
+            f"Thank you for your interest in {strong(safe_company)}. Here is the "
+            f"quotation for the requirements you selected."
+        )
+        + _grouped_quote_html(currency, line_items, total)
+        + (
+            f'<p style="margin:10px 0 0 0;font-family:{ed.FONT};font-size:13px;font-weight:700;'
+            f'color:#c2410c;line-height:1.6;">This is an indicative quotation, not a final quote. '
+            f"Prices may change once our team confirms the exact scope and details with you.</p>"
+        )
+        + p("Reply to this email if you have any questions or would like to proceed.", top=14)
+    )
+
+    send_email_async(
+        to_email,
+        f"Your quotation from {company_name or BRAND_NAME}",
+        shell(
+            subject=f"Your quotation from {company_name or BRAND_NAME}",
+            preheader=f"Your quotation from {company_name or BRAND_NAME} is ready.",
             inner=inner,
             visitor=True,
         ),
@@ -952,52 +1098,36 @@ def send_quotation_client_email(
 ) -> None:
     """Notify the client that a visitor completed a quote request.
 
-    Unlike the visitor email, this one carries the full itemised quote (line
-    items + quantities + subtotals + total), the per-service question answers
-    the visitor gave, and the visitor's contact info so the client can follow
-    up. ``reply_to`` should be the visitor's email so a reply lands straight in
+    Unlike the visitor email, this one carries the full itemised quote (each
+    chosen requirement grouped under its service, with quantities + subtotals +
+    total) and the visitor's contact info so the client can follow up.
+    ``reply_to`` should be the visitor's email so a reply lands straight in
     their inbox.
     """
     safe_bot = esc(bot_name)
     contact = contact or {}
 
-    # Money table: one row per service (name × qty → subtotal) + a bold total.
-    quote_rows: list[tuple[str, str]] = []
-    for item in line_items or []:
-        qty = item.get("quantity")
-        label = esc(item.get("name") or "Service")
-        if qty:
-            label = f"{label} &times; {esc(qty)}"
-        quote_rows.append((label, _format_money(currency, item.get("subtotal", 0))))
-    quote_rows.append(("Total", strong(_format_money(currency, total))))
-
-    # Per-service Q&A: only for services that actually collected answers, so a
-    # simple pick-and-quantity service adds no empty section.
-    answer_sections = ""
-    for item in line_items or []:
-        answer_rows = [
-            (esc(ans.get("question_text") or ans.get("question_id") or "Question"), esc(ans.get("answer")))
-            for ans in item.get("answers") or []
-            if (ans.get("answer") or "").strip()
-        ]
-        if answer_rows:
-            answer_sections += ed.section_label(esc(item.get("name") or "Service")) + info_table(answer_rows)
+    # Only surface contact fields the visitor actually provided — the quote
+    # flow captures just the email, so phone/company are usually empty and
+    # dangling "—" rows read as missing data rather than "not collected".
+    contact_rows: list[tuple[str, str]] = []
+    if contact.get("name"):
+        contact_rows.append(("Name", esc(contact.get("name"))))
+    if contact.get("email"):
+        contact_rows.append(("Email", _mailto(contact.get("email"))))
+    if contact.get("phone"):
+        contact_rows.append(("Phone", esc(contact.get("phone"))))
+    if contact.get("company"):
+        contact_rows.append(("Company", esc(contact.get("company"))))
+    if not contact_rows:
+        contact_rows.append(("Contact", "Not provided"))
 
     inner = (
         h1("New quote request")
         + p(f"A visitor on {strong(safe_bot)} just completed a quote request. Here&rsquo;s what they asked for.")
-        + ed.section_label("Quote")
-        + info_table(quote_rows, right=True)
-        + (ed.section_label("Their answers") + answer_sections if answer_sections else "")
+        + _grouped_quote_html(currency, line_items, total)
         + ed.section_label("Contact")
-        + info_table(
-            [
-                ("Name", esc(contact.get("name")) if contact.get("name") else "Unknown"),
-                ("Email", _mailto(contact.get("email"))),
-                ("Phone", esc(contact.get("phone"))),
-                ("Company", esc(contact.get("company"))),
-            ]
-        )
+        + info_table(contact_rows)
         + button("View lead in dashboard", f"{APP_URL}/leads")
     )
     send_email_async(
@@ -1117,6 +1247,83 @@ def send_operator_invite_email(
             preheader=f"Accept your invite to join {workspace_name}. Link expires in {expiry}.",
             inner=inner,
         ),
+    )
+
+
+# ── Install handoff ──────────────────────────────────────────────────────────
+
+
+def send_install_invite_email(
+    *,
+    to_email: str,
+    bot_name: str,
+    snippet: str,
+    script_origin: str,
+    api_origin: str,
+    attribution: bool,
+    requester_name: str | None,
+    reply_to: str,
+    platform_name: str | None = None,
+) -> None:
+    """Send a developer the one tag that puts a chatbot on the customer's site.
+
+    The buyer is very often not the installer: for an SMB the person who signs
+    up frequently cannot edit the website at all. This is the handoff, and it
+    carries everything the recipient needs to finish without a second email -
+    the snippet, where it goes, and the two Content-Security-Policy origins
+    that are the single most common reason a correct paste still shows nothing.
+
+    ``reply_to`` is the requesting customer, never our support inbox. The
+    recipient is a third party who never signed up with us, so a reply asking
+    "did you actually ask for this?" has to reach the colleague who did.
+
+    The snippet is built by the caller from the bot's OWN entitlement, never
+    accepted from a request body: nothing downstream re-checks a string a
+    customer has already pasted into their repository.
+    """
+    asker = esc(requester_name) if requester_name else "A colleague"
+    safe_bot = esc(bot_name)
+    where = (
+        f"It goes on every page of {esc(platform_name)}, in the shared layout or footer template."
+        if platform_name
+        else "It goes in the shared layout or footer template, so it loads site-wide."
+    )
+    inner = (
+        h1("Please add our chat widget to the website")
+        + p(
+            f"{asker} uses {esc(BRAND_NAME)} for the {strong(safe_bot)} chat assistant and has asked you to "
+            f"install it. Paste this immediately before the closing {esc('</body>')} tag."
+        )
+        + pre_box(snippet, label="Embed snippet")
+        + p(where)
+        + p(strong("Two things that catch people out:"), top=8)
+        + p(f"1. It must be in {esc('<body>')}, not {esc('<head>')}.")
+        + p(
+            "2. If the site sends a Content-Security-Policy header, it needs "
+            f"{strong(esc('script-src ' + script_origin))} and {strong(esc('connect-src ' + api_origin))}."
+        )
+        + (
+            p(
+                "The second line is a small visible &ldquo;Powered by OyeChats&rdquo; credit link. Please keep it "
+                "in the served HTML and do not hide it with CSS: a hidden link is a Google policy violation "
+                "against your own domain.",
+                top=8,
+            )
+            if attribution
+            else ""
+        )
+        + p(f"Questions? Just reply to this email and it goes straight back to {esc(reply_to)}.", top=8)
+    )
+    subject = f"Please add the {bot_name} chat widget to our website"
+    send_email_async(
+        to_email,
+        subject,
+        shell(
+            subject=subject,
+            preheader=f"One script tag to add before </body>. Sent by {requester_name or 'a colleague'}.",
+            inner=inner,
+        ),
+        reply_to=reply_to,
     )
 
 

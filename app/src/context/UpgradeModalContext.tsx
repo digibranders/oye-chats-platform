@@ -1,6 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useCallback, useContext, useMemo, useState, type ReactElement, type ReactNode } from 'react';
-import { UpgradeModal } from '../design-system/components/UpgradeModal';
+import { UpgradeModal } from './UpgradeModal';
 import { UPGRADE_INTENTS, type AddBotIntentParams, type UpgradeIntent, type UpgradeIntentKey } from './upgradeIntents';
 import type { FeatureKey } from '../types/domain';
 import { t as translateNow } from '../i18n/i18n';
@@ -21,9 +21,8 @@ export type { UpgradeIntent, UpgradeIntentKey, AddBotIntentParams };
 /**
  * UpgradeModalContext - the global trigger for the premium upsell dialog.
  *
- * Ported from the legacy `context/UpgradeModalContext.jsx` intent registry
- * (see `upgradeIntents.ts`) onto the new design system. Callers get a
- * one-line API:
+ * The intent registry lives in `upgradeIntents.ts` and the dialog it feeds in
+ * `UpgradeModal.tsx`, both beside this file. Callers get a one-line API:
  *
  *   const { openUpgradeModal } = useUpgradeModal();
  *   openUpgradeModal('add_bot', { current: bots.length, planName });

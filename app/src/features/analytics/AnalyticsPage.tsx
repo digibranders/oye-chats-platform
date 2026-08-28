@@ -1,543 +1,226 @@
-import { type ReactElement, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import {
-  Activity,
-  BarChart3,
-  Bot as BotIcon,
-  Lock,
-  MessageSquare,
-  RefreshCw,
-  Sparkles,
-  TriangleAlert,
-  Zap,
-} from 'lucide-react';
+import { useMemo, type ReactNode } from 'react';
+import { Link, Navigate, Route, Routes, useLocation, useSearchParams } from 'react-router-dom';
+import { BarChart3, RefreshCw } from 'lucide-react';
 import {
   Button,
   Card,
-  CardContent,
-  CardHeader,
+  CardBody,
   EmptyState,
-  InsightCard,
-  type InsightTone,
-  LockedFeatureCard,
-  MetricCard,
-  type MetricTrend,
-  PageContainer,
-  SectionHeader,
+  ErrorState,
+  LoadingRows,
+  NavTabs,
+  Page,
+  PageHeader,
   SegmentedControl,
-  Skeleton,
-  Tabs,
-  cn,
-} from '../../design-system';
+  buttonClass,
+} from '../../ui';
 import { useBotContext } from '../../context/BotContext';
-import { useEntitlements } from '../../hooks/useEntitlements';
-import { useUpgradeModal } from '../../context/UpgradeModalContext';
-import {
-  MOMENTUM_WINDOW_DAYS,
-  sliceTrend,
-  summarizeTrend,
-  TREND_RANGES,
-  type TrendRange,
-  weekOverWeekChange,
-} from './analytics-types';
-import { useWorkspaceAnalytics, type WorkspaceAnalytics } from './useWorkspaceAnalytics';
-import { MessageTrendChart } from './MessageTrendChart';
-import { TopQuestionsList } from './TopQuestionsList';
-import { LeadJourneyFunnel } from './LeadJourneyFunnel';
-import { SatisfactionBreakdown } from './SatisfactionBreakdown';
-import { LanguageBreakdown, TranslationUsage } from './LanguageBreakdown';
-import { FeedbackPanel } from '../feedback/FeedbackPanel';
-import { UnansweredQuestionsPanel } from './UnansweredQuestionsPanel';
-import { t as translateNow } from '../../i18n/i18n';
-import { formatNumber } from '../../i18n/formatters';
+import { ANALYTICS_BASE, ANALYTICS_TABS, DEFAULT_TAB, tabFromUrl, tabUrl } from './tabs';
+import { DEFAULT_RANGE, RANGE_OPTIONS, parseRange, resolveRange, type RangeKey } from './range';
+import { useAnalyticsRefresh, useLanguageBreakdown } from './useAnalyticsData';
+import { OverviewTab } from './OverviewTab';
+import { ConversationsTab } from './ConversationsTab';
+import { VisitorsTab } from './VisitorsTab';
+import { FeedbackTab } from './FeedbackTab';
+import { LanguagesTab } from './LanguagesTab';
 import { useTranslation } from '../../i18n/useTranslation';
 
-type AnalyticsTab = 'conversations' | 'leads' | 'satisfaction' | 'language' | 'feedback' | 'uaq';
-
-// @i18n-exempt: resolved at the render site from the tab key
-// (`analytics.tab.<key>`); the English here is that lookup's fallback.
-const TAB_ITEMS: ReadonlyArray<{ key: AnalyticsTab; label: string }> = [
-  { key: 'conversations', label: 'Conversations' },
-  { key: 'leads', label: 'Leads' },
-  { key: 'satisfaction', label: 'Satisfaction' },
-  { key: 'feedback', label: 'Feedback' },
-  { key: 'uaq', label: 'UAQ' },
-];
-
 /**
- * Shown only for an agent with multilingual on. For a single-language chatbot
- * the panel would be one "English 100%" row, which is noise rather than
- * insight, and on the "All agents" scope there is no single language config to
- * report against. Inserted before Feedback, beside the other per-agent views.
- */
-// @i18n-exempt: resolved at the render site from the tab key
-// (`analytics.tab.<key>`); the English here is that lookup's fallback.
-const LANGUAGE_TAB: { key: AnalyticsTab; label: string } = { key: 'language', label: 'Languages' };
-
-/**
- * Narrow the Tabs string key back to the AnalyticsTab union without casting.
+ * Analytics — one surface, one period.
  *
- * Must cover LANGUAGE_TAB as well as TAB_ITEMS. That tab is rendered from a
- * separate constant because it is conditional, and validating against
- * TAB_ITEMS alone made `onChange` reject its own key, so the tab rendered but
- * could never be selected.
+ * The page it replaces could not answer the question it existed for: how does
+ * this month compare with the last one. Every figure on it was all-time,
+ * because `?days=` has been supported by `/analytics/dashboard` and
+ * `/analytics/unanswered-questions` since they were written and was never once
+ * passed; the range control it did have changed a chart and nothing else, while
+ * the delta glued to the same tile stayed a fixed seven-day figure. Two more
+ * time controls lived inside individual cards, so three windows were on screen
+ * at once with nothing saying they disagreed.
+ *
+ * So the whole surface takes one range, from the URL, and every query on every
+ * tab is scoped by it. Journey used to be the exception the API forces — its
+ * endpoints take a calendar month and nothing else — but it is not a tab here
+ * any more; it has its own top-level page (`JourneyPage.tsx`, at `/journey`)
+ * with its own month picker, so this surface no longer has to special-case one
+ * tab's period control.
+ *
+ * The tab row is `NavTabs`, and each view is a real route. It was `Tabs` plus
+ * `navigate()`: a `role="tablist"` over things that change the URL, which
+ * `Tabs`' own docstring calls a promise the surface cannot keep. Making the
+ * query-string views into paths bought middle-click, cmd-click and
+ * open-in-new-tab on every view, and `aria-current="page"` in place of
+ * `aria-selected`.
+ *
+ * Sub-routing lives here rather than in `src/app/routes.tsx`, the same shape the
+ * super-admin console uses for its own record lists. One chunk, and — the reason
+ * that matters — each view takes `botId`, `range` and `month` as typed props
+ * instead of an `useOutletContext()` cast that no compiler checks.
  */
-const TAB_KEYS: ReadonlySet<string> = new Set([
-  ...TAB_ITEMS.map((item) => item.key),
-  LANGUAGE_TAB.key,
-]);
+export function AnalyticsPage() {
+  const { t } = useTranslation();
+  const { bots, selectedBot, loading: botsLoading, error: botsError, refreshBots } = useBotContext();
+  const [params, setParams] = useSearchParams();
+  const refresh = useAnalyticsRefresh();
 
-function isAnalyticsTab(key: string): key is AnalyticsTab {
-  return TAB_KEYS.has(key);
-}
+  const rangeKey = parseRange(params.get('range'));
+  // Resolved once per selection rather than per render: `resolveRange` reads
+  // the clock, and a window that moves between two renders makes two panels on
+  // the same page disagree about where it starts.
+  const range = useMemo(() => resolveRange(rangeKey), [rangeKey]);
 
-/**
- * Map a signed week-over-week percentage change onto a MetricCard trend
- * direction. The delta is labelled with its reference window (`· 7d`) so the
- * headline figure reads as a well-defined period-over-period comparison rather
- * than an unqualified percentage.
- */
-function trendFromChange(change: number | null): { delta?: string; trend?: MetricTrend } {
-  if (change === null) return {};
-  if (change === 0)
-    return {
-      delta:
-        translateNow('analytics.noChangeWindow', { days: MOMENTUM_WINDOW_DAYS }) ||
-        `No change · ${MOMENTUM_WINDOW_DAYS}d`,
-      trend: 'flat',
-    };
-  const sign = change > 0 ? '+' : '';
-  return {
-    delta: `${sign}${change}% · ${MOMENTUM_WINDOW_DAYS}d`,
-    trend: change > 0 ? 'up' : 'down',
-  };
-}
+  const botId = selectedBot?.id ?? null;
 
-/** A single derived headline insight, or null when there isn't enough signal. */
-function deriveInsight(
-  data: WorkspaceAnalytics,
-): { tone: InsightTone; title: string; body: string } | null {
-  const { totals, leads } = data;
+  // Whether the Languages tab is worth offering. Read from the same cached
+  // query the view itself uses, so showing the tab costs no extra request.
+  const { breakdown } = useLanguageBreakdown(botId, range.key);
+  const multilingual = breakdown?.multilingualEnabled === true;
 
-  if (totals.totalConversations === 0) return null;
-
-  if (leads.sql > 0) {
-    return {
-      tone: 'accent',
-      title:
-        translateNow(
-          leads.sql === 1 ? 'analytics.readyToBuyCapturedOne' : 'analytics.readyToBuyCapturedMany',
-          { count: formatNumber(leads.sql) },
-        ) || `${formatNumber(leads.sql)} ready-to-buy leads captured`,
-      body: translateNow('analytics.yourChatbotsAreTurningConversations') || 'Your chatbots are turning conversations into qualified pipeline. Review them in Leads to follow up.',
-    };
+  function setParam(key: string, value: string, fallback: string) {
+    const next = new URLSearchParams(params);
+    if (value === fallback) next.delete(key);
+    else next.set(key, value);
+    // Replaced rather than pushed: changing a filter is refining one view, and
+    // a reader who twiddles the range four times should not have to press Back
+    // four times to leave the page.
+    setParams(next, { replace: true });
   }
 
-  return null;
-}
-
-function LoadingState(): ReactElement {
-  return (
-    <div className="space-y-6" aria-busy="true">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {[0, 1, 2, 3].map((i) => (
-          <Skeleton key={i} className="h-[104px]" />
-        ))}
-      </div>
-      <Skeleton className="h-10 w-72" />
-      <Skeleton className="h-[360px]" />
-    </div>
-  );
-}
-
-function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }): ReactElement {
-  const { t } = useTranslation();
-  return (
-    <EmptyState
-      icon={TriangleAlert}
-      title={t('analytics.weCouldntLoadYourAnalytics') || 'We couldn’t load your analytics'}
-      description={message}
-      action={
-        <Button variant="primary" onClick={onRetry}>
-          <RefreshCw size={16} aria-hidden="true" />
-          {t('analytics.tryAgain') || 'Try again'}
-        </Button>
-      }
-    />
-  );
-}
-
-/**
- * AnalyticsPage - the workspace performance surface (route `/analytics`).
- * Answers one question: "How is my workspace performing?" It aggregates every
- * agent (no bot filter) into headline metrics, a message-volume trend, and
- * three progressive-disclosure tabs (Conversations · Leads · Satisfaction).
- */
-export function AnalyticsPage(): ReactElement {
-  const { t } = useTranslation();
-  const { bots, selectedBot, loading: botsLoading } = useBotContext();
-  const chatbotName = selectedBot?.name ?? (t('analytics.thisChatbot') || 'this chatbot');
-  // When the shell BotSwitcher is set to a specific agent, scope the whole
-  // page to that bot; when it's on "All agents" (`selectedBot === null`), fall
-  // back to workspace-aggregated across every agent.
-  // One period control for the page. It slices the message trend client-side
-  // AND scopes the language breakdown server-side, so a customer never has to
-  // reconcile two different notions of "last 30 days" on one screen.
-  const [range, setRange] = useState<TrendRange>('all');
-  const {
-    status,
-    data,
-    error,
-    refreshing,
-    reload,
-    language: languageData,
-    languageRefreshing,
-  } = useWorkspaceAnalytics(selectedBot?.id ?? null, range);
-  const [tab, setTab] = useState<AnalyticsTab>('conversations');
-  const { hasFeature } = useEntitlements();
-  const { openUpgradeModal } = useUpgradeModal();
-  // Leads is BANT-derived (Standard+). Free / Starter see a lock chip on the
-  // tab and the panel body swaps to the upgrade card.
-  // Satisfaction is CSAT gathered from live-chat post-chat ratings, so it
-  // travels with the `live_chat` feature (Starter and up). Only Free is
-  // locked here. Starter accumulates real ratings and should see them.
-  const leadsUnlocked = hasFeature('bant');
-  const satisfactionUnlocked = hasFeature('live_chat');
-
-  // Resolved server-side and delivered with the data, so the tab appears once
-  // the page has loaded rather than being guessed at from another source.
-  const showLanguage = languageData?.multilingualEnabled === true;
-
-  // Switching the shell's bot switcher to a single-language agent, or to
-  // "All agents", removes the Languages tab. The selected-tab state survives
-  // that, so without this the strip would show nothing selected above an empty
-  // body. Derived rather than corrected in an effect, so there is no flash of
-  // the broken state.
-  const activeTab: AnalyticsTab = tab === 'language' && !showLanguage ? 'conversations' : tab;
-
+  // The row's links carry the current filters, so following one never
+  // re-scopes the page under the reader.
   const tabItems = useMemo(
     () =>
-      (showLanguage
-        ? [...TAB_ITEMS.slice(0, TAB_ITEMS.length - 1), LANGUAGE_TAB, TAB_ITEMS[TAB_ITEMS.length - 1]]
-        : TAB_ITEMS
-      ).map((item) => {
-        const locked =
-          (item.key === 'leads' && !leadsUnlocked) ||
-          (item.key === 'satisfaction' && !satisfactionUnlocked);
-        if (!locked) return { key: item.key, label: translateNow(`analytics.tab.${item.key}`) || item.label };
-        return {
-          key: item.key,
-          label: (
-            <span className="inline-flex items-center gap-1.5">
-              <Lock
-                size={11}
-                strokeWidth={1.75}
-                aria-hidden="true"
-                className="text-[var(--ds-text-subtle)]"
-              />
-              {translateNow(`analytics.tab.${item.key}`) || item.label}
-            </span>
-          ),
-        };
-      }),
-    [leadsUnlocked, satisfactionUnlocked, showLanguage],
+      ANALYTICS_TABS.filter((entry) => !entry.conditional || multilingual).map((entry) => ({
+        to: tabUrl(entry.value, params),
+        label: entry.label,
+        end: entry.end,
+      })),
+    [params, multilingual],
   );
 
-  const trendWindow = useMemo(
-    () => (data ? sliceTrend(data.trend, range) : []),
-    [data, range],
+  const rangeControl = (
+    <SegmentedControl<RangeKey>
+      size="sm"
+      label={t('analytics.reportingPeriod') || 'Reporting period'}
+      items={RANGE_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
+      value={rangeKey}
+      onChange={(value) => setParam('range', value, DEFAULT_RANGE)}
+    />
   );
-  const trendSummary = useMemo(() => summarizeTrend(trendWindow), [trendWindow]);
 
-  const showLoading = botsLoading || status === 'loading';
-
-  const actions =
-    status === 'ready' ? (
-      <Button variant="outline" size="sm" onClick={reload} disabled={refreshing}>
-        <RefreshCw
-          size={15}
-          aria-hidden="true"
-          className={refreshing ? 'animate-spin' : undefined}
-        />
-        {refreshing ? t('analytics.refreshing') || 'Refreshing…' : t('analytics.refresh') || 'Refresh'}
+  const actions = (
+    <>
+      <div className="flex w-[19rem] justify-end">{rangeControl}</div>
+      {/* In the header, so it exists in every state. The old one was rendered
+          only once the page had already loaded, which is the one state in
+          which nobody needs it. */}
+      <Button size="sm" onClick={refresh} iconLeft={<RefreshCw aria-hidden />}>
+        {t('analytics.refresh') || 'Refresh'}
       </Button>
-    ) : undefined;
+    </>
+  );
 
-  // No agents at all → nothing to measure yet. Send them to create one.
-  if (!botsLoading && bots.length === 0) {
+  // The chatbot list is still in flight, so `botId` is null and every query on
+  // every tab is disabled — which used to render the whole page as a permanent
+  // skeleton, and a *failed* bot list as a permanent skeleton forever.
+  if (botsLoading) {
     return (
-      <PageContainer
-        title={t('analytics.analytics') || 'Analytics'}
-      >
-        <EmptyState
-          icon={BarChart3}
-          title={t('analytics.noPerformanceDataYet') || 'No performance data yet'}
-          description={t('analytics.createYourFirstAiChatbot') || 'Create your first AI chatbot and deploy it to start tracking conversations, leads, and satisfaction here.'}
-          action={
-            <Link
-              to="/agents"
-              className="inline-flex h-9 items-center gap-2 rounded-lg bg-[var(--ds-accent)] px-4 text-sm font-medium text-[var(--ds-accent-fg)] shadow-[var(--ds-shadow-sm)] transition-colors hover:bg-[var(--ds-accent-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
-            >
-              <BotIcon size={16} aria-hidden="true" />
-              {t('analytics.createAnAiChatbot') || 'Create an AI chatbot'}
-            </Link>
-          }
-        />
-      </PageContainer>
+      <Page width="wide">
+        <PageHeader title={t('analytics.analytics') || 'Analytics'} titleVisuallyHidden />
+        <Card>
+          <CardBody>
+            <LoadingRows rows={4} />
+          </CardBody>
+        </Card>
+      </Page>
     );
   }
 
-  const insight = data ? deriveInsight(data) : null;
-  // Momentum is a fixed 7d-vs-prior-7d figure over the full series, so it stays
-  // comparable no matter which range the user has selected below.
-  const messagesTrend = trendFromChange(data ? weekOverWeekChange(data.trend) : null);
+  if (botsError) {
+    return (
+      <Page width="wide">
+        <PageHeader title={t('analytics.analytics') || 'Analytics'} titleVisuallyHidden />
+        <Card>
+          <ErrorState
+            title={t('analytics.yourChatbotsCouldNotBe') || 'Your chatbots could not be loaded'}
+            description={t('analytics.analyticsIsScopedToOne') || 'Analytics is scoped to one chatbot, and the list of them did not arrive.'}
+            onRetry={() => void refreshBots()}
+          />
+        </Card>
+      </Page>
+    );
+  }
+
+  // No chatbots, so nothing has been measured yet. This is the one state that
+  // replaces the whole page rather than one panel.
+  if (bots.length === 0) {
+    return (
+      <Page width="wide">
+        <PageHeader title={t('analytics.analytics') || 'Analytics'} titleVisuallyHidden />
+        <Card>
+          <EmptyState
+            icon={BarChart3}
+            title={t('analytics.nothingMeasuredYet') || 'Nothing measured yet'}
+            description={t('analytics.createAChatbotAndPut') || 'Create a chatbot and put it on your site. Conversations, leads and visitor journeys all start appearing here within minutes of the first visitor.'}
+            action={
+              <Link to="/chatbots?new=1" className={buttonClass('primary', 'sm')}>
+                {t('analytics.createAChatbot') || 'Create a chatbot'}
+              </Link>
+            }
+          />
+        </Card>
+      </Page>
+    );
+  }
 
   return (
-    <PageContainer
-      title={t('analytics.analytics') || 'Analytics'}
-      description={t('analytics.howYourWholeWorkspaceIs') || 'How your whole workspace is performing across every AI chatbot.'}
-      actions={actions}
-    >
-      {showLoading ? (
-        <LoadingState />
-      ) : status === 'error' || !data ? (
-        <ErrorState message={error ?? (t('analytics.somethingWentWrong') || 'Something went wrong.')} onRetry={reload} />
-      ) : (
-        <>
-          {insight && (
-            <InsightCard tone={insight.tone} icon={Sparkles} title={insight.title} body={insight.body} />
-          )}
+    <Page width="wide">
+      {/* No description. The title says "Analytics", the tab row names the
+          views, the breadcrumb names the workspace, and the control that
+          states the period sits on the tab row's own line — a separate row
+          for it, above an otherwise-empty one, was the same fact restated a
+          fourth time with extra chrome around it.
 
-          <Tabs
-            tabs={tabItems}
-            value={activeTab}
-            onChange={(key) => {
-              if (!isAnalyticsTab(key)) return;
-              if (key === 'leads' && !leadsUnlocked) {
-                openUpgradeModal('view_qualification');
-                return;
-              }
-              if (key === 'satisfaction' && !satisfactionUnlocked) {
-                openUpgradeModal('view_qualification');
-                return;
-              }
-              setTab(key);
-            }}
-            ariaLabel={t('analytics.analyticsViews') || 'Analytics views'}
-          />
+          `toolbarBleed` runs the row's hairline to the edges of the content
+          area. Inside the gutter it starts 32px in and stops 32px short, which
+          reads as an underline on a paragraph rather than the division the
+          views sit on — the same call every `NavTabs` row in the super-admin
+          console makes. */}
+      <PageHeader
+        title={t('analytics.analytics') || 'Analytics'} titleVisuallyHidden
+        toolbarBleed
+        toolbar={<NavTabs label={t('analytics.analyticsViews') || 'Analytics views'} items={tabItems} trailing={actions} />}
+      />
 
-          {/* Conversations */}
-          {activeTab === 'conversations' && (
-            <div
-              role="tabpanel"
-              id="tabpanel-conversations"
-              aria-labelledby="tab-conversations"
-              tabIndex={0}
-              className="space-y-6 focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
-            >
-              <Card>
-                <CardHeader>
-                  <SectionHeader
-                    title={t('analytics.messageVolume') || 'Message volume'}
-                    description={t('analytics.dailyMessagesAcrossEveryChatbot') || 'Daily messages across every chatbot'}
-                    actions={
-                      <SegmentedControl
-                        options={TREND_RANGES.map((r) => ({
-                          ...r,
-                          label: t(`analytics.range.${r.value}`) || r.label,
-                        }))}
-                        value={range}
-                        onChange={setRange}
-                        ariaLabel={t('analytics.messageTrendTimeRange') || 'Message trend time range'}
-                      />
-                    }
-                  />
-                </CardHeader>
-                <CardContent className="pt-0">
-                  <div className="mb-4 grid grid-cols-3 gap-3">
-                    <MetricCard
-                      size="sm"
-                      label={t('analytics.messages') || 'Messages'}
-                      value={formatNumber(trendSummary.total)}
-                      icon={MessageSquare}
-                      delta={messagesTrend.delta}
-                      trend={messagesTrend.trend}
-                    />
-                    <MetricCard
-                      size="sm"
-                      label={t('analytics.dailyAverage') || 'Daily average'}
-                      value={formatNumber(trendSummary.dailyAverage)}
-                      icon={BarChart3}
-                    />
-                    <MetricCard
-                      size="sm"
-                      label={t('analytics.busiestDay') || 'Busiest day'}
-                      value={
-                        trendSummary.peak > 0
-                          ? `${formatNumber(trendSummary.peak)} · ${trendSummary.peakLabel}`
-                          : formatNumber(trendSummary.peak)
-                      }
-                      icon={Zap}
-                    />
-                  </div>
-                  {trendWindow.length === 0 || trendSummary.total === 0 ? (
-                    <EmptyState
-                      icon={Activity}
-                      title={t('analytics.noMessagesInThisRange') || 'No messages in this range'}
-                      description={t('analytics.tryAWiderTimeRange') || 'Try a wider time range, or come back once your chatbots have handled more conversations.'}
-                    />
-                  ) : (
-                    <MessageTrendChart points={trendWindow} />
-                  )}
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <SectionHeader
-                    title={t('analytics.topQuestions') || 'Top questions'}
-                    description={t('analytics.whatVisitorsAskYourChatbots') || 'What visitors ask your chatbots most'}
-                  />
-                </CardHeader>
-                <CardContent className="pt-0">
-                  <TopQuestionsList questions={data.topQuestions} />
-                </CardContent>
-              </Card>
-            </div>
-          )}
-
-          {/* Leads */}
-          {activeTab === 'leads' && (
-            <div
-              role="tabpanel"
-              id="tabpanel-leads"
-              aria-labelledby="tab-leads"
-              tabIndex={0}
-              className="space-y-6 focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
-            >
-              {leadsUnlocked ? (
-                <LeadJourneyFunnel botId={selectedBot?.id ?? null} />
-              ) : (
-                <LockedFeatureCard intent="view_qualification" />
-              )}
-            </div>
-          )}
-
-          {/* Satisfaction */}
-          {activeTab === 'satisfaction' && (
-            <div
-              role="tabpanel"
-              id="tabpanel-satisfaction"
-              aria-labelledby="tab-satisfaction"
-              tabIndex={0}
-              className="space-y-6 focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
-            >
-              {satisfactionUnlocked ? (
-                <Card>
-                  <CardHeader>
-                    <SectionHeader
-                      title={t('analytics.visitorSatisfaction') || 'Visitor satisfaction'}
-                      description={t('analytics.postChatRatingsFromLive') || 'Post-chat ratings from live conversations, across every chatbot'}
-                    />
-                  </CardHeader>
-                  <CardContent className="pt-0">
-                    <SatisfactionBreakdown ratings={data.ratings} />
-                  </CardContent>
-                </Card>
-              ) : (
-                <LockedFeatureCard intent="view_qualification" />
-              )}
-            </div>
-          )}
-
-          {/* Languages. While a period change is in flight the PREVIOUS period's
-              numbers are still on screen under the NEW period's label, so the
-              panel is dimmed and marked busy rather than reading as final. It
-              stays mounted so the panel never flashes to a skeleton. */}
-          {activeTab === 'language' && languageData && (
-            <div
-              role="tabpanel"
-              id="tabpanel-language"
-              aria-labelledby="tab-language"
-              tabIndex={0}
-              aria-busy={languageRefreshing}
-              className={cn(
-                'space-y-6 transition-opacity focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
-                languageRefreshing && 'opacity-60',
-              )}
-            >
-              <Card>
-                <CardHeader>
-                  <SectionHeader
-                    title={t('analytics.languages') || 'Languages'}
-                    description={
-                  t('analytics.languageMixDescription', { name: chatbotName }) ||
-                  `What visitors chat to ${chatbotName} in, and how each language performs`
-                }
-                    actions={
-                      // The SAME state the message trend uses, rendered here so
-                      // the control is reachable from the tab it affects. Not a
-                      // second selector: moving it on either tab moves it on both.
-                      <SegmentedControl
-                        options={TREND_RANGES.map((r) => ({
-                          ...r,
-                          label: t(`analytics.range.${r.value}`) || r.label,
-                        }))}
-                        value={range}
-                        onChange={setRange}
-                        ariaLabel={t('analytics.languageBreakdownTimeRange') || 'Language breakdown time range'}
-                      />
-                    }
-                  />
-                </CardHeader>
-                <CardContent className="pt-0">
-                  <LanguageBreakdown data={languageData} />
-                </CardContent>
-              </Card>
-
-              {languageData.operatorTranslationEnabled && (
-                <Card>
-                  <CardHeader>
-                    <SectionHeader
-                      title={t('analytics.translation') || 'Translation'}
-                      description={t('analytics.liveChatTranslatedBetweenYour') || 'Live chat translated between your visitors and your team'}
-                    />
-                  </CardHeader>
-                  <CardContent className="pt-0">
-                    <TranslationUsage data={languageData} />
-                  </CardContent>
-                </Card>
-              )}
-            </div>
-          )}
-
-          {/* Feedback */}
-          {activeTab === 'feedback' && (
-            <div
-              role="tabpanel"
-              id="tabpanel-feedback"
-              aria-labelledby="tab-feedback"
-              tabIndex={0}
-              className="focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
-            >
-              <FeedbackPanel agentId={selectedBot ? String(selectedBot.id) : undefined} />
-            </div>
-          )}
-
-          {/* UAQ (Unanswered Questions) */}
-          {tab === 'uaq' && (
-            <div
-              role="tabpanel"
-              id="tabpanel-uaq"
-              aria-labelledby="tab-uaq"
-              tabIndex={0}
-              className="space-y-6 focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
-            >
-              <UnansweredQuestionsPanel botId={selectedBot?.id ?? null} />
-            </div>
-          )}
-        </>
-      )}
-    </PageContainer>
+      <Routes>
+        <Route index element={<LegacyTabRedirect><OverviewTab botId={botId} range={range} /></LegacyTabRedirect>} />
+        <Route path="conversations" element={<ConversationsTab botId={botId} range={range} />} />
+        <Route path="visitors" element={<VisitorsTab botId={botId} range={range} />} />
+        <Route path="languages" element={<LanguagesTab botId={botId} range={range} />} />
+        <Route path="feedback" element={<FeedbackTab botId={botId} range={range} />} />
+        {/* An address under `/analytics` that names nothing is the section's
+            own index, not a 404 in the shell: the reader asked for analytics
+            and there is analytics to show them. */}
+        <Route path="*" element={<Navigate to={ANALYTICS_BASE} replace />} />
+      </Routes>
+    </Page>
   );
+}
+
+/**
+ * `?tab=` still resolves.
+ *
+ * The query string shipped this round, so it is in links, bookmarks and pasted
+ * messages. Rather than 404 or — worse — silently render Overview under a URL
+ * that asked for Feedback, the index view sends the reader to the real path and
+ * keeps every other parameter on the way. `replace`, so Back leaves the section
+ * instead of bouncing off the redirect.
+ */
+function LegacyTabRedirect({ children }: { children: ReactNode }) {
+  const [params] = useSearchParams();
+  const location = useLocation();
+  const requested = tabFromUrl(location.pathname, params);
+  if (requested !== DEFAULT_TAB || params.has('tab')) {
+    return <Navigate to={tabUrl(requested, params)} replace />;
+  }
+  return <>{children}</>;
 }

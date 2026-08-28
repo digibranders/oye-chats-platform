@@ -46,3 +46,32 @@ class TestExtractVisitorNameBareReply:
 
     def test_explicit_intro_still_works(self):
         assert _extract_visitor_name("my name is Priya", []) == "Priya"
+
+
+class TestCleanVisitorNameVerbPhraseFragments:
+    """Bug report: leads list filled with "Launching My", "Blocking Our",
+    "Becoming A" — the first two words of a sentence the visitor typed instead
+    of a name, not an actual name. A real two-word name never ends with a
+    possessive pronoun or article, so <word> + <possessive/article> must be
+    rejected the same way role words already are."""
+
+    def test_rejects_gerund_plus_pronoun(self):
+        for w in ["Launching My", "Blocking Our", "Becoming A", "Testing Your", "Building Their"]:
+            assert _clean_visitor_name(w) is None, w
+
+    def test_real_two_word_name_still_survives(self):
+        assert _clean_visitor_name("Sarah Khan") == "Sarah Khan"
+
+
+class TestExtractVisitorNameIntroPatternSentenceFragments:
+    """The generic intro anchors ("i'm", "it's", "this is") must not mistake the
+    next two words of an ordinary sentence for a self-introduction."""
+
+    def test_gerund_plus_pronoun_after_intro_anchor_not_captured(self):
+        assert _extract_visitor_name("im launching my new startup, can you help?", []) is None
+        assert _extract_visitor_name("it's blocking our workflow", []) is None
+        assert _extract_visitor_name("this is becoming a headache", []) is None
+
+    def test_genuine_intro_still_works(self):
+        assert _extract_visitor_name("this is Priya", []) == "Priya"
+        assert _extract_visitor_name("i'm Sarah Khan", []) == "Sarah Khan"

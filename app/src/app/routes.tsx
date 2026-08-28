@@ -1,242 +1,246 @@
-// @i18n-exempt-file: the `handle.crumb` labels below are route METADATA, read
-// by `shell/useBreadcrumbs`, which resolves each one from `app.crumb.<key>` at
-// render time. The English here is that lookup's fallback. This table is built
-// at import, before any locale exists, so it cannot resolve them itself.
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, type ReactNode } from 'react';
 import { createBrowserRouter, Navigate } from 'react-router-dom';
+import { Spinner } from '../ui';
 import { AppShell } from '../shell/AppShell';
 import { ProtectedLayout } from './ProtectedLayout';
 import { OperatorRouteGuard } from './OperatorRouteGuard';
+import { AgentScope } from './AgentScope';
+import { Moved, MovedAgent } from './Moved';
+import { LEGACY_AGENT_SEGMENTS, LEGACY_PATHS } from './redirects';
 
-// Admin 2.0 pages
-import { HomePage } from '../features/home/HomePage';
-import { AgentsPage } from '../features/agents/AgentsPage';
-import { AgentLayout } from '../features/agents/AgentLayout';
-import { OverviewPage } from '../features/agents/overview/OverviewPage';
-import { KnowledgePage } from '../features/agents/knowledge/KnowledgePage';
-import { ExperiencePage } from '../features/agents/experience/ExperiencePage';
-import { ChannelsPage } from '../features/agents/channels/ChannelsPage';
-import { QuotationPage } from '../features/agents/quotation/QuotationPage';
-import { AdvancedPage } from '../features/agents/advanced/AdvancedPage';
-import { InboxPage } from '../features/inbox/InboxPage';
-import { LeadsPage } from '../features/leads/LeadsPage';
-import { AnalyticsPage } from '../features/analytics/AnalyticsPage';
-import { JourneyPage } from '../features/analytics/JourneyPage';
-import { WorkspaceLayout } from '../features/workspace/WorkspaceLayout';
-import { GeneralPage } from '../features/workspace/GeneralPage';
-import { MembersPage } from '../features/workspace/MembersPage';
-import { BillingPage } from '../features/workspace/BillingPage';
-import { UsagePage } from '../features/workspace/UsagePage';
-import { ReportsPage } from '../features/workspace/ReportsPage';
-import { ApiKeysPage } from '../features/workspace/ApiKeysPage';
-import { IntegrationsPage } from '../features/workspace/IntegrationsPage';
-import { AffiliatePage } from '../features/affiliate/AffiliatePage';
-import { AffiliateInvite } from '../features/affiliate/AffiliateInvite';
-import { InviteAirlock } from '../features/workspace/InviteAirlock';
-import { SettingsPage } from '../features/settings';
-import { LegacyRedirect, LegacyKnowledgeRedirect } from './legacyRedirects';
+// Eager on purpose: the sign-in form is the most common cold entry into the
+// app, and making a signed-out visitor wait on a second round trip to see a
+// password field is the one place a split chunk is a straight loss.
+import Login from '../pages/Login';
 
-// Error surfaces - attached as `errorElement`s so route/render crashes render an
-// on-brand recovery UI instead of React Router's default developer screen.
 import { RootErrorBoundary } from './errors/RootErrorBoundary';
 import { PageErrorBoundary } from './errors/PageErrorBoundary';
 import { NotFoundPage } from './errors/NotFoundPage';
 
-// The pre-auth screens are lazy for the same reason Launch Studio is, and a
-// stronger one: a signed-in operator never renders the register form, and a
-// signed-out visitor never renders the dashboard. Keeping both in one chunk
-// made every user download the other's code. Splitting them also stops Phase
-// 7F's ~150 new strings landing in the initial bundle.
-const Login = lazy(() => import('../pages/Login'));
+/* The Suspense wrapper and the lazy helper below are route plumbing, not
+   exported components — this file's export is the router. */
+/* eslint-disable react-refresh/only-export-components */
+
+/**
+ * Every routed surface is split.
+ *
+ * The bundle was one 2.2MB chunk, so opening the sign-in page downloaded the
+ * billing tables, the journey diagram, Recharts, and the whole platform
+ * console. Splitting per route means a visitor pays for the screen they asked
+ * for; the shell, the guards and the error surfaces stay eager because they are
+ * on every path anyway.
+ *
+ * `named` exists because these modules export named components rather than
+ * defaults — the shape `React.lazy` wants — and writing the `.then` by hand
+ * thirty times is thirty chances to point one of them at the wrong export.
+ */
+function named<T, K extends keyof T>(loader: () => Promise<T>, key: K) {
+  return lazy(
+    () =>
+      loader().then((module) => ({
+        default: module[key] as unknown as React.ComponentType<Record<string, never>>,
+      })),
+  );
+}
+
 const Register = lazy(() => import('../pages/Register'));
 const VerifyEmail = lazy(() => import('../pages/VerifyEmail'));
 const ForgotPassword = lazy(() => import('../pages/ForgotPassword'));
 const OAuthCallback = lazy(() => import('../pages/OAuthCallback'));
 
-// Launch Studio is a one-time onboarding flow on a separate route - lazy-load it
-// so its layout + steps stay out of the initial bundle.
-const LaunchStudio = lazy(() =>
-  import('../features/launch-studio/LaunchStudio').then((m) => ({ default: m.LaunchStudio })),
-);
+const HomePage = named(() => import('../features/home/HomePage'), 'HomePage');
+const AgentsPage = named(() => import('../features/agents/AgentsPage'), 'AgentsPage');
+const OverviewPage = named(() => import('../features/agents/overview/OverviewPage'), 'OverviewPage');
+const KnowledgePage = named(() => import('../features/agents/knowledge/KnowledgePage'), 'KnowledgePage');
+const ExperiencePage = named(() => import('../features/agents/experience/ExperiencePage'), 'ExperiencePage');
+const ChannelsPage = named(() => import('../features/agents/channels/ChannelsPage'), 'ChannelsPage');
+const QuotationPage = named(() => import('../features/agents/quotation/QuotationPage'), 'QuotationPage');
+const QualificationPage = named(() => import('../features/agents/advanced/QualificationPage'), 'QualificationPage');
+const BehaviourPage = named(() => import('../features/agents/advanced/BehaviourPage'), 'BehaviourPage');
+const InboxPage = named(() => import('../features/inbox/InboxPage'), 'InboxPage');
+const LeadsPage = named(() => import('../features/leads/LeadsPage'), 'LeadsPage');
+const AnalyticsPage = named(() => import('../features/analytics/AnalyticsPage'), 'AnalyticsPage');
+const JourneyPage = named(() => import('../features/analytics/JourneyPage'), 'JourneyPage');
+const WorkspaceLayout = named(() => import('../features/workspace/WorkspaceLayout'), 'WorkspaceLayout');
+const GeneralPage = named(() => import('../features/workspace/GeneralPage'), 'GeneralPage');
+const MembersPage = named(() => import('../features/workspace/MembersPage'), 'MembersPage');
+const BillingPage = named(() => import('../features/workspace/BillingPage'), 'BillingPage');
+const UsagePage = named(() => import('../features/workspace/UsagePage'), 'UsagePage');
+const ReportsPage = named(() => import('../features/workspace/ReportsPage'), 'ReportsPage');
+const ApiKeysPage = named(() => import('../features/workspace/ApiKeysPage'), 'ApiKeysPage');
+const IntegrationsPage = named(() => import('../features/workspace/IntegrationsPage'), 'IntegrationsPage');
+const AffiliatePage = named(() => import('../features/affiliate/AffiliatePage'), 'AffiliatePage');
+const AffiliateInvite = named(() => import('../features/affiliate/AffiliateInvite'), 'AffiliateInvite');
+const InviteAirlock = named(() => import('../features/workspace/InviteAirlock'), 'InviteAirlock');
+const SettingsPage = named(() => import('../features/settings'), 'SettingsPage');
+const SetupPage = named(() => import('../onboarding/SetupPage'), 'SetupPage');
+const FirstRunPage = named(() => import('../onboarding/FirstRunPage'), 'FirstRunPage');
+const FirstChatPage = named(() => import('../onboarding/FirstChatPage'), 'FirstChatPage');
+const UiGallery = named(() => import('../dev/UiGallery'), 'UiGallery');
 
 /**
- * Route Architecture - the Admin Platform 2.0 information architecture.
- * The AI Agent is a first-class URL object: `/agents/:agentId/<tab>` (the six
- * tabs each answer one question). Launch Studio is a full-screen route OUTSIDE
- * the shell - temporary onboarding, never navigation.
+ * What a split route shows while its chunk arrives.
  *
- * Error handling: a pathless root layout owns the app-wide `errorElement`
- * (`RootErrorBoundary`) so a shell/provider crash or a public-page loader error
- * surfaces on-brand full-screen. In-shell pages sit under a pathless
- * `PageErrorBoundary` so a single page crash renders inside the shell - the
- * sidebar/top bar survive and the user can navigate away.
+ * A spinner and nothing else, deliberately: a skeleton here would be a guess at
+ * a layout the chunk has not described yet, and guessing wrong costs a layout
+ * jump on every navigation.
+ */
+function Route({ children }: { children: ReactNode }) {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-full min-h-64 items-center justify-center">
+          <Spinner className="h-5 w-5" />
+        </div>
+      }
+    >
+      {children}
+    </Suspense>
+  );
+}
+
+/**
+ * The console's routes.
+ *
+ * Two scopes, matching the rail: workspace destinations at the top level, and a
+ * chatbot's destinations under `/chatbots/:agentId`. `AgentScope` mounts the
+ * chatbot provider and renders nothing else — the rail carries the chatbot's
+ * navigation and the top bar names it, so the per-chatbot layout that used to
+ * render its own heading and tab row is gone.
+ *
+ * Error surfaces are attached as `errorElement`s: a shell or provider crash goes
+ * full-screen, while a single page crash renders inside the shell so the rail
+ * survives and the user can navigate away.
  */
 export const router = createBrowserRouter([
   {
     errorElement: <RootErrorBoundary />,
     children: [
-      // ── Public - reused legacy auth pages; no guard, no data providers ──
+      // Renders only the design system, so it needs no auth and no data
+      // providers — which is also what makes it usable as a smoke test.
       {
-        path: '/login',
+        path: '/dev/ui',
         element: (
-          <Suspense fallback={null}>
-            <Login />
-          </Suspense>
+          <Route>
+            <UiGallery />
+          </Route>
         ),
       },
-      {
-        path: '/register',
-        element: (
-          <Suspense fallback={null}>
-            <Register />
-          </Suspense>
-        ),
-      },
-      {
-        path: '/verify-email',
-        element: (
-          <Suspense fallback={null}>
-            <VerifyEmail />
-          </Suspense>
-        ),
-      },
-      {
-        path: '/forgot-password',
-        element: (
-          <Suspense fallback={null}>
-            <ForgotPassword />
-          </Suspense>
-        ),
-      },
-      {
-        path: '/auth/callback',
-        element: (
-          <Suspense fallback={null}>
-            <OAuthCallback />
-          </Suspense>
-        ),
-      },
-      { path: '/affiliate-invite', element: <AffiliateInvite /> },
-      // Team-invite airlock - public magic link; resolves the token and routes
-      // on auth state. Must stay OUTSIDE the ProtectedLayout guard so an
-      // invited (often signed-out) visitor can land and accept.
-      { path: '/invite/:token', element: <InviteAirlock /> },
 
-      // ── Authenticated area - token guard + reused Workspace/Bot/Crawl providers ──
+      // ── Public ────────────────────────────────────────────────────────────
+      { path: '/login', element: <Login /> },
+      { path: '/register', element: <Route><Register /></Route> },
+      { path: '/verify-email', element: <Route><VerifyEmail /></Route> },
+      { path: '/forgot-password', element: <Route><ForgotPassword /></Route> },
+      { path: '/auth/callback', element: <Route><OAuthCallback /></Route> },
+      { path: '/affiliate-invite', element: <Route><AffiliateInvite /></Route> },
+      // The team-invite airlock resolves a magic link and routes on auth state,
+      // so it must stay outside the guard: the invited visitor is usually
+      // signed out when they land.
+      { path: '/invite/:token', element: <Route><InviteAirlock /></Route> },
+
+      // ── Authenticated ─────────────────────────────────────────────────────
       {
         element: <ProtectedLayout />,
         children: [
           {
             path: '/',
             element: <AppShell />,
-            // A crash in the shell chrome itself escalates to the full-screen boundary.
+            // Shell or provider crash: full-screen, because there is no rail
+            // left to render into. The outer registration on the root route
+            // object catches what fails above this one.
             errorElement: <RootErrorBoundary />,
-            handle: { crumb: 'Home' },
             children: [
-              // Pathless layout: page-level crashes bubble here and render the
-              // in-shell PageErrorBoundary through the shell's <Outlet />, so the
-              // sidebar and top bar survive and the user can navigate away.
-              // `OperatorRouteGuard` also runs here so a plain operator can't
-              // deep-link into owner/admin-only sections - it redirects them to
-              // the live-chat console while owners/admins pass through.
               {
                 errorElement: <PageErrorBoundary />,
                 element: <OperatorRouteGuard />,
                 children: [
-                  { index: true, element: <HomePage /> },
+                  { index: true, element: <Route><HomePage /></Route> },
+                  { path: 'setup', element: <Route><SetupPage /></Route> },
 
-                  // ── AI Agents ──────────────────────────────────────────────
+                  // First run. Inside the shell, deliberately: the wizard this
+                  // replaces lived outside it, so a customer could hand over a
+                  // card on a screen structurally incapable of telling them
+                  // their last payment had failed.
+                  { path: 'welcome', element: <Route><FirstRunPage /></Route> },
+                  { path: 'welcome/:agentId', element: <Route><FirstChatPage /></Route> },
+
+                  // ── Chatbots ────────────────────────────────────────────
                   {
-                    path: 'agents',
-                    handle: { crumb: 'AI Chatbots' },
+                    path: 'chatbots',
                     children: [
-                      { index: true, element: <AgentsPage /> },
+                      { index: true, element: <Route><AgentsPage /></Route> },
                       {
                         path: ':agentId',
-                        handle: { crumb: 'Chatbot' },
-                        element: <AgentLayout />,
+                        element: <AgentScope />,
                         children: [
                           { index: true, element: <Navigate to="overview" replace /> },
-                          { path: 'overview', handle: { crumb: 'Overview' }, element: <OverviewPage /> },
-                          { path: 'knowledge', handle: { crumb: 'Knowledge' }, element: <KnowledgePage /> },
-                          { path: 'experience', handle: { crumb: 'Experience' }, element: <ExperiencePage /> },
-                          { path: 'channels', handle: { crumb: 'Channels' }, element: <ChannelsPage /> },
-                          // Per-agent Analytics tab removed - performance lives on the
-                          // agent-scoped workspace Analytics page. Redirect old links.
-                          { path: 'analytics', element: <Navigate to="../overview" replace /> },
-                          { path: 'quotation', handle: { crumb: 'Quotation' }, element: <QuotationPage /> },
-                          { path: 'advanced', handle: { crumb: 'Advanced' }, element: <AdvancedPage /> },
+                          { path: 'overview', element: <Route><OverviewPage /></Route> },
+                          { path: 'knowledge', element: <Route><KnowledgePage /></Route> },
+                          { path: 'experience', element: <Route><ExperiencePage /></Route> },
+                          { path: 'deploy', element: <Route><ChannelsPage /></Route> },
+                          // Qualification is promoted out of the technical tab:
+                          // it is a revenue surface, not a configuration corner.
+                          { path: 'qualification', element: <Route><QualificationPage /></Route> },
+                          // Quotation is a revenue surface too, and sits beside
+                          // Qualification for the same reason it was promoted
+                          // out of the technical tab.
+                          { path: 'quotation', element: <Route><QuotationPage /></Route> },
+                          { path: 'behaviour', element: <Route><BehaviourPage /></Route> },
                         ],
                       },
                     ],
                   },
 
-                  // ── Operations ─────────────────────────────────────────────
-                  { path: 'inbox', handle: { crumb: 'Inbox' }, element: <InboxPage /> },
-                  { path: 'leads', handle: { crumb: 'Leads' }, element: <LeadsPage /> },
-                  { path: 'journey', handle: { crumb: 'Journey' }, element: <JourneyPage /> },
-                  { path: 'analytics', handle: { crumb: 'Analytics' }, element: <AnalyticsPage /> },
+                  // ── Operations ──────────────────────────────────────────
+                  { path: 'inbox', element: <Route><InboxPage /></Route> },
+                  { path: 'leads', element: <Route><LeadsPage /></Route> },
+                  // Its own top-level page and its own single lazy chunk — not
+                  // nested under Analytics. It sat at `/analytics/journey` for a
+                  // while; see `REBUILD.md`'s Consolidations table for the full
+                  // history of why it moved there and why it moved back.
+                  { path: 'journey', element: <Route><JourneyPage /></Route> },
+                  // A splat, because Analytics owns its own views — the same
+                  // shape `platformRoutes` gives the super-admin record lists.
+                  { path: 'analytics/*', element: <Route><AnalyticsPage /></Route> },
 
-                  // ── Workspace ──────────────────────────────────────────────
+                  // ── Billing ─────────────────────────────────────────────
+                  { path: 'billing', element: <Route><BillingPage /></Route> },
+                  { path: 'billing/usage', element: <Route><UsagePage /></Route> },
+                  { path: 'billing/reports', element: <Route><ReportsPage /></Route> },
+
+                  // ── Settings ────────────────────────────────────────────
                   {
-                    path: 'workspace',
-                    handle: { crumb: 'Workspace' },
-                    element: <WorkspaceLayout />,
+                    path: 'settings',
+                    element: <Route><WorkspaceLayout /></Route>,
                     children: [
-                      { index: true, element: <Navigate to="general" replace /> },
-                      { path: 'general', handle: { crumb: 'General' }, element: <GeneralPage /> },
-                      { path: 'members', handle: { crumb: 'Members' }, element: <MembersPage /> },
-                      { path: 'billing', handle: { crumb: 'Billing' }, element: <BillingPage /> },
-                      { path: 'usage', handle: { crumb: 'Usage' }, element: <UsagePage /> },
-                      { path: 'reports', handle: { crumb: 'Reports' }, element: <ReportsPage /> },
-                      { path: 'api-keys', handle: { crumb: 'API Keys' }, element: <ApiKeysPage /> },
-                      { path: 'integrations', handle: { crumb: 'Integrations' }, element: <IntegrationsPage /> },
-                      { path: 'affiliate', handle: { crumb: 'Affiliate' }, element: <AffiliatePage /> },
+                      { index: true, element: <Navigate to="workspace" replace /> },
+                      { path: 'workspace', element: <Route><GeneralPage /></Route> },
+                      { path: 'team', element: <Route><MembersPage /></Route> },
+                      { path: 'integrations', element: <Route><IntegrationsPage /></Route> },
+                      { path: 'developers', element: <Route><ApiKeysPage /></Route> },
+                      { path: 'affiliate', element: <Route><AffiliatePage /></Route> },
                     ],
                   },
-                  // Old Workspace ▸ Settings and ▸ Security moved to the top-level
-                  // account pages - redirect so existing links/bookmarks keep working.
-                  { path: 'workspace/settings', element: <Navigate to="/settings" replace /> },
-                  { path: 'workspace/security', element: <Navigate to="/settings" replace /> },
 
-                  // ── Settings - bottom-anchored secondary nav, not an object tab ──
-                  { path: 'settings', handle: { crumb: 'Settings' }, element: <SettingsPage /> },
+                  // Your own account, distinct from the workspace's settings.
+                  { path: 'account', element: <Route><SettingsPage /></Route> },
 
-                  // Unknown routes get a real, in-shell 404 (sidebar/topbar survive).
+                  // ── Moved ───────────────────────────────────────────────
+                  // Declared as data in `redirects.ts`. Twenty-five lines of
+                  // this router were a rename table, and it was going to keep
+                  // growing.
+                  ...LEGACY_AGENT_SEGMENTS.map(([from, segment]) => ({
+                    path: from,
+                    element: <MovedAgent segment={segment} />,
+                  })),
+                  ...LEGACY_PATHS.map(([from, to]) => ({
+                    path: from,
+                    element: <Moved to={to} />,
+                  })),
+
                   { path: '*', element: <NotFoundPage /> },
                 ],
-              },
-            ],
-          },
-
-          // ── Legacy aliases ─────────────────────────────────────────────
-          // Pre-Admin-2.0 URLs still live in delivered emails, push-notification
-          // payloads and bookmarks, and used to render the in-shell 404. Alias
-          // them onto their new homes (query string + hash preserved) so those
-          // links keep working. Aliases only - never link here from inside the
-          // app. See `legacyRedirects.tsx` for who emits each path.
-          // Old Build Studio → Launch Studio onboarding.
-          { path: '/build', element: <LegacyRedirect to="/launch" /> },
-          // Old operator console → Inbox (labelled "Support" in the sidebar).
-          { path: '/support', element: <LegacyRedirect to="/inbox" /> },
-          // Billing and affiliate moved under Workspace.
-          { path: '/billing', element: <LegacyRedirect to="/workspace/billing" /> },
-          { path: '/affiliate', element: <LegacyRedirect to="/workspace/affiliate" /> },
-          // Knowledge became an agent tab - needs bot resolution.
-          { path: '/knowledge', element: <LegacyKnowledgeRedirect /> },
-
-          // Launch Studio - full-screen 8-step onboarding, OUTSIDE the app shell.
-          {
-            path: '/launch',
-            children: [
-              { index: true, element: <Navigate to="welcome" replace /> },
-              {
-                path: ':step',
-                element: (
-                  <Suspense fallback={null}>
-                    <LaunchStudio />
-                  </Suspense>
-                ),
               },
             ],
           },

@@ -101,12 +101,17 @@ def _session_bot(
 
 def _account_subscription(sub_id: int = 900) -> Subscription:
     """Account-level (pooled) subscription: ``bot_id`` is NULL."""
-    return Subscription(id=sub_id, client_id=1, plan_id=1, bot_id=None)
+    return Subscription(id=sub_id, client_id=1, plan_id=1, bot_id=None, status="active")
 
 
-def _bot_scoped_subscription(*, sub_id: int, bot_id: int) -> Subscription:
-    """Per-bot subscription: ``bot_id`` names the bot it funds."""
-    return Subscription(id=sub_id, client_id=1, plan_id=1, bot_id=bot_id)
+def _bot_scoped_subscription(*, sub_id: int, bot_id: int, status: str = "active") -> Subscription:
+    """Per-bot subscription: ``bot_id`` names the bot it funds.
+
+    ``status`` is stamped explicitly because these are transient instances (the
+    column default applies only at INSERT) and the resolver routes a DEAD
+    subscription to the pool - a live status is part of what "funds" means.
+    """
+    return Subscription(id=sub_id, client_id=1, plan_id=1, bot_id=bot_id, status=status)
 
 
 # ── 1. An account-level subscription pools EVERY bot under it ────────────────
@@ -281,3 +286,30 @@ def test_pre_resolved_attribute_wins_over_the_relationship():
     # ...but the pre-resolved account-level value overrides it.
     bot._subscription_bot_id = None
     assert resolve_bot_ledger_bot_id(bot) is None
+
+
+# ── A DEAD subscription must not keep routing to its isolated ledger ─────────
+#
+# P1 from the pooled-plan seam audit: nothing ever clears ``Bot.subscription_id``
+# when a per-bot subscription is cancelled (the advertised support flow for
+# moving an account onto a pooled tier), so a resolver keyed on scope alone
+# routed the bot to a dead, never-again-granted ledger forever - chat and
+# ingestion hit InsufficientCredits while the account pool sat full. A bot whose
+# own subscription is no longer live must fall back to whatever else funds it:
+# the account pool.
+
+
+@pytest.mark.parametrize("dead_status", ["canceled", "expired", "trial_expired", "paused"])
+def test_dead_bot_scoped_subscription_falls_back_to_the_pool_slow_path(dead_status: str):
+    sub = _bot_scoped_subscription(sub_id=905, bot_id=71, status=dead_status)
+    bot = _session_bot(bot_id=71, subscription=sub)
+
+    assert resolve_bot_ledger_bot_id(bot) is None
+
+
+@pytest.mark.parametrize("live_status", ["active", "trialing", "past_due"])
+def test_live_bot_scoped_subscription_keeps_the_isolated_ledger_slow_path(live_status: str):
+    sub = _bot_scoped_subscription(sub_id=906, bot_id=72, status=live_status)
+    bot = _session_bot(bot_id=72, subscription=sub)
+
+    assert resolve_bot_ledger_bot_id(bot) == 72

@@ -48,7 +48,7 @@ exist for backward-compat and the super-admin catalogue, but nothing sends throu
 
 ---
 
-## 2. Email Catalogue (28 distinct emails)
+## 2. Email Catalogue (30 distinct emails)
 
 Grouped by category. All emails render raw HTML in code (see above). Any `#NN` is the legacy Brevo template ID for reference only — it is **not** used to send.
 
@@ -287,14 +287,14 @@ Grouped by category. All emails render raw HTML in code (see above). Any `#NN` i
 | Trigger | `chat_routes.py:1039` — visitor opt-in / requests transcript at session close |
 | Metered | No |
 
-#### D7. Quotation — visitor confirmation
+#### D7. Quotation — visitor acknowledgement
 | | |
 |---|---|
 | Function | `send_quotation_visitor_email(to_email, company_name, visitor_name, service_names, reply_to)` |
 | Rendering | Raw HTML (visitor footer) |
 | Subject | `Your quote request with {company_name}` |
 | Audience | **Visitor** (auto-reply) |
-| Body | "We've received your request for a quote on {services}" — **no pricing** (the widget never shows visitors prices, so neither does this email) |
+| Body | "We've received your request for a quote on {services}" — **no pricing**. Sent **immediately** at accept; the priced document (D9) follows ~10 min later |
 | Trigger | `quotation_routes.py` — `POST /chat/quotation/accept` (visitor completes the quote flow) |
 | Metered | No |
 
@@ -307,6 +307,17 @@ Grouped by category. All emails render raw HTML in code (see above). Any `#NN` i
 | Audience | **Client** (bot's configured notification recipients) |
 | Body | Itemised line items (name × qty → subtotal) + total + visitor contact; `reply_to` is the visitor's email |
 | Trigger | `quotation_routes.py` — `POST /chat/quotation/accept` (visitor completes the quote flow) |
+| Metered | No |
+
+#### D9. Quotation — visitor document (priced PDF)
+| | |
+|---|---|
+| Function | `send_quotation_document_email(to_email, company_name, visitor_name, currency, line_items, total, pdf_bytes, reply_to)` |
+| Rendering | Raw HTML (itemised priced table, visitor footer). Delivered inline in the email body — no attachment |
+| Subject | `Your quotation from {company_name}` |
+| Audience | **Visitor** (auto-reply) |
+| Body | The finalised quote **with pricing**: each requirement grouped under its service (label × qty unit → subtotal) + total, rendered inline |
+| Trigger | `quotation_routes.py` — deferred `QUOTATION_EMAIL_DELAY_SECONDS` (~10 min) after `POST /chat/quotation/accept`, via ARQ `task_send_quotation_visitor_email` |
 | Metered | No |
 
 ### E. Affiliate / Partners (raw HTML — free)
@@ -345,6 +356,19 @@ Grouped by category. All emails render raw HTML in code (see above). Any `#NN` i
 
 ---
 
+#### G1. Install handoff to a developer
+| | |
+|---|---|
+| Function | `send_install_invite_email(to_email, bot_name, snippet, script_origin, api_origin, attribution, requester_name, reply_to, platform_name=None)` |
+| Subject | `Please add the {bot_name} chat widget to our website` |
+| Audience | The customer's **developer** — a third party who never signed up with us |
+| Body | The embed snippet, where it goes, and the two Content-Security-Policy origins the widget needs; plus the "keep the credit link" note when the plan carries attribution |
+| Trigger | `bot_routes.py` — `POST /bots/{bot_id}/install-invite`, from the Deploy page's "Email this to my developer" |
+| Metered | No |
+| Notes | `reply_to` is the **requesting customer**, never support: a recipient asking "did you actually ask for this?" must reach the colleague who did. Rate limited to 5/hour per client, because it mails an arbitrary address under our sending domain. |
+
+---
+
 ## 3. Cron-Triggered Emails (schedule reference)
 
 From `api/app/worker/settings.py` (`cron_jobs`) — server timezone:
@@ -363,10 +387,10 @@ From `api/app/worker/settings.py` (`cron_jobs`) — server timezone:
 
 ## 4. Summary
 
-- **28 distinct emails** across 6 categories: Auth (4), Trial lifecycle (5), Billing (8), Lead/Live-chat (8), Affiliate (2), Team (1).
+- **30 distinct emails** across 7 categories: Auth (4), Trial lifecycle (5), Billing (8), Lead/Live-chat (9), Affiliate (2), Team (1), Install handoff (1).
 - **All 19 render raw HTML in code** from the shared design system (`app/services/email_design.py`); no Brevo saved templates are used to send. Legacy template IDs 57–63 remain for reference only.
 - **Audiences:** customer/client, operator, and website **visitor** (transcript, visitor confirmation, missed callback).
-- **Attachments:** only invoices (C1) attach a file (the PDF).
+- **Attachments:** only invoices (C1) attach a file (the PDF). The quotation document (D9) is inline-only.
 - **All sends require `BREVO_API_KEY`** — otherwise skipped with a WARN log.
 - **No credit metering** — emails do not deduct credits (the unwired `meter_customer_email()` stub was removed; registry reports `metered: false`).
 - **Reply-To:** lead/live-chat emails forward the bot's `reply_to_email` and use a `"{BotName} via OyeChats"` sender so customers can reply directly.

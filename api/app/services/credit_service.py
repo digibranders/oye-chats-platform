@@ -26,6 +26,7 @@ Pricing (credit costs, top-up packs, kill switch) is read from the
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from datetime import UTC, datetime, timedelta
@@ -57,16 +58,28 @@ from app.db.models import Bot, CreditLedger, PricingConfig, Subscription
 _UNSET: object = object()
 
 
+# The statuses under which a subscription still FUNDS anything. Mirrors
+# ``auth._ACTIVE_SUBSCRIPTION_STATUSES`` / ``bot_routes._bot_has_live_subscription``:
+# ``past_due`` counts because dunning is a grace window, not a shut-off.
+_LIVE_SUBSCRIPTION_STATUSES: frozenset[str] = frozenset({"trialing", "active", "past_due"})
+
+
 def resolve_bot_ledger_bot_id(bot: Bot | None) -> int | None:
     """Decide which ledger bucket a bot's usage should drain.
 
     Returns ``bot.id`` (per-bot ledger) only when the subscription linked to
-    this bot is itself scoped to the bot (``subscription.bot_id == bot.id``).
-    Returns ``None`` (client pool) for:
+    this bot is itself scoped to the bot (``subscription.bot_id == bot.id``)
+    AND still live. Returns ``None`` (client pool) for:
     - legacy-pooled / Free bots
     - bots whose ``subscription_id`` is a convenience pointer set by the
       per-bot-billing migration but whose subscription still has
       ``bot_id = NULL``. Credits live in the client pool for those bots.
+    - bots whose own subscription is DEAD (canceled/expired/paused). Nothing
+      clears ``Bot.subscription_id`` on cancellation, so without the status
+      check a bot whose per-bot subscription was cancelled - the advertised
+      support flow for moving an account onto a pooled tier - kept draining a
+      dead, never-again-granted isolated ledger forever and hit
+      InsufficientCredits while the account pool sat full (seam-audit P1).
 
     Credit routing path:
     - ``get_current_bot()`` pre-resolves ``subscription.bot_id`` into
@@ -88,12 +101,36 @@ def resolve_bot_ledger_bot_id(bot: Bot | None) -> int | None:
     sub_bot_id = getattr(bot, "_subscription_bot_id", _UNSET)
     if sub_bot_id is _UNSET:
         # Slow path: bot was loaded with an active session (subscription_routes,
-        # billing endpoints). Lazy-load the relationship normally.
+        # billing endpoints). Lazy-load the relationship normally. The liveness
+        # judgement happens here; the fast path already had it applied by
+        # ``live_subscription_bot_id`` at pre-resolution time.
         sub = getattr(bot, "subscription", None)
-        sub_bot_id = getattr(sub, "bot_id", None) if sub is not None else None
+        if sub is None or sub.status not in _LIVE_SUBSCRIPTION_STATUSES:
+            return None
+        sub_bot_id = sub.bot_id
     if sub_bot_id != bot_pk:
         return None
     return bot_pk
+
+
+def live_subscription_bot_id(session: Session, subscription_id: int | None) -> int | None:
+    """``subscription.bot_id`` for ledger routing - ``None`` unless it is LIVE.
+
+    The auth layer (``get_current_bot`` and friends) stashes this on the bot as
+    ``_subscription_bot_id`` before expunging it, so the hot chat path routes
+    credits without a lazy-load. It must carry the same liveness judgement as
+    :func:`resolve_bot_ledger_bot_id`'s slow path: pre-resolving the scope of a
+    DEAD subscription would re-create the orphaned-ledger P1 on exactly the
+    path that spends the most credits.
+    """
+    if subscription_id is None:
+        return None
+    return session.scalar(
+        select(Subscription.bot_id).where(
+            Subscription.id == subscription_id,
+            Subscription.status.in_(_LIVE_SUBSCRIPTION_STATUSES),
+        )
+    )
 
 
 logger = logging.getLogger(__name__)
@@ -299,25 +336,65 @@ _DEFAULT_WORDS_PER_CREDIT = 250
 _MIN_DOCUMENT_UPLOAD_COST = 1
 
 
+def _coerce_credit_cost(raw: Any) -> int | None:
+    """Turn one raw ``pricing_config`` value into a chargeable credit count.
+
+    Returns ``None`` when the value cannot be read as a price, so the caller can
+    fail closed. ``pricing_config.value`` is untyped JSONB written by
+    ``PUT /superadmin/pricing-config/{key}``, so every one of these is reachable
+    from the pricing panel:
+
+    * ``None`` — a cleared field. NOT "free": a price nobody set is unknown.
+    * a negative — a typo'd sign. The previous ``max(int(raw), 0)`` turned this
+      into a FREE action, which is a revenue leak on the exact input this
+      helper exists to survive.
+    * a string or a list — ``int()`` RAISES on these, and this value is read by
+      ``GET /credits/balance`` as well as by the charge path, so the raise took
+      the Usage and Billing pages down for every customer in the platform.
+    * ``NaN`` / ``inf`` — ``float()`` accepts both and neither is a price.
+
+    A numeric string (``"3"``) is accepted: a JSON text field invites one, and
+    it states a price unambiguously. A fraction is rounded UP to a whole credit
+    — credits are whole units and a partial one is charged as one, matching
+    ``get_document_upload_cost_for_size``. Truncating 1.5 to 1 would have
+    undercharged silently.
+    """
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value) or value < 0:
+        return None
+    return math.ceil(value)
+
+
 def get_credit_cost(session: Session, action: str) -> int:
     """Return the credit cost for an action (e.g. ``'ai_chat'``, ``'url_scan'``).
 
-    Fails CLOSED: an unknown action or a non-numeric config value yields
-    ``_DEFAULT_CREDIT_COST`` (not 0/free) and is logged, so pricing gaps surface
-    as a charge rather than a silent free ride.
+    Fails CLOSED: an unknown action, or a config value that is not a usable
+    price, yields ``_DEFAULT_CREDIT_COST`` (not 0/free) and is logged, so
+    pricing gaps surface as a charge rather than a silent free ride. An
+    explicit ``0`` is honoured — that is a super admin deliberately making an
+    action free, not a malformed value. See :func:`_coerce_credit_cost`.
+
+    Every consumer of a per-action price goes through here, the charge path and
+    the read path that shows a customer what an action costs
+    (``subscription_routes._credit_costs_payload``) alike. That is what makes
+    the price shown and the price charged one value rather than two readings of
+    the same raw config with different clamping.
     """
     pricing = get_pricing(session)
     raw = pricing.get(f"credit_cost.{action}", _DEFAULT_CREDIT_COST)
-    try:
-        return max(int(raw), 0)
-    except (TypeError, ValueError):
+    cost = _coerce_credit_cost(raw)
+    if cost is None:
         logger.warning(
-            "credit_cost.%s is non-numeric (%r). Failing closed to %d",
+            "credit_cost.%s is not a usable price (%r). Failing closed to %d",
             action,
             raw,
             _DEFAULT_CREDIT_COST,
         )
         return _DEFAULT_CREDIT_COST
+    return cost
 
 
 def count_words(text: str) -> int:
@@ -327,40 +404,45 @@ def count_words(text: str) -> int:
     length. Punctuation attached to words counts as one word; hyphenated
     compounds count as one. Good enough for a 250-words-per-credit rate, where
     a 10-word imprecision moves the charge only on an exact multiple of 250.
-    Empty / whitespace-only input returns 0 (which prices at the per-file
-    minimum via ``get_document_upload_cost_for_size``; the ingest route skips
-    billing zero-word files outright).
+    Empty / whitespace-only input returns 0, which prices at 0 credits via
+    ``get_document_upload_cost_for_size``: nothing was extracted, so nothing
+    reaches the knowledge base and nothing is charged.
     """
     if not text:
         return 0
     return len(text.split())
 
 
-def get_document_upload_cost_for_size(session: Session, word_count: int) -> int:
-    """Return the credit cost for uploading a document of ``word_count`` words.
+def get_document_upload_floor(session: Session) -> int:
+    """The per-file MINIMUM an upload is charged, clamped to at least 1 credit.
 
-    One flat rate: ``ceil(words / rate)`` credits, where ``rate`` is
-    ``credit_cost.document_upload_words_per_credit`` (250. I.e. 1 credit per
-    250 words), never below the ``credit_cost.document_upload`` minimum. Both
-    keys are super-admin tunable from the pricing panel.
+    ``credit_cost.document_upload`` is an untyped JSONB value a super admin can
+    save as ``0``; a zeroed floor must not make uploads free, so the clamp is
+    part of the value rather than something each caller remembers to apply.
 
-    This replaced a five-bucket word-tier table. The buckets priced the same
-    idea in a shape that had to be restated (with EXCLUSIVE edges) in the
-    customer-facing table in ``UsagePage.tsx``, and the two drifted: every
-    bounded boundary advertised one price and charged the next bucket up, 3x
-    at 100 words. A single rate has no edges to restate.
-
-    Fails CLOSED: a missing or non-numeric rate falls back to the shipped 250
-    rather than to a divisor that would make an upload free.
+    Public because two consumers need the same number: the deduction path
+    (:func:`get_document_upload_cost_for_size`) and the read path that shows a
+    customer what an upload costs (``subscription_routes._credit_costs_payload``).
+    Serving the raw config value there while charging the clamped one is the
+    exact price/charge divergence this pair of helpers exists to prevent.
     """
-    word_count = max(int(word_count or 0), 0)
-    pricing = get_pricing(session)
+    return max(get_credit_cost(session, "document_upload"), _MIN_DOCUMENT_UPLOAD_COST)
 
-    # The floor is the per-file minimum, and it is a minimum of at least 1:
-    # a zeroed-out ``credit_cost.document_upload`` must not make uploads free.
-    minimum = max(get_credit_cost(session, "document_upload"), _MIN_DOCUMENT_UPLOAD_COST)
 
-    raw_rate = pricing.get(
+def get_document_upload_words_per_credit(session: Session, *, warn: bool = True) -> int:
+    """The upload rate in words per credit, clamped to a positive integer.
+
+    Fails CLOSED: a missing, non-numeric or non-positive
+    ``credit_cost.document_upload_words_per_credit`` falls back to the shipped
+    ``_DEFAULT_WORDS_PER_CREDIT`` rather than to a divisor that would make an
+    upload free (or raise ``ZeroDivisionError`` mid-ingest).
+
+    ``warn=False`` suppresses the log line for read-only callers. The deduction
+    path logs a bad value on every upload, which is where an operator should
+    see it; the balance endpoint polls, and repeating the same warning on every
+    poll would bury it.
+    """
+    raw_rate = get_pricing(session).get(
         "credit_cost.document_upload_words_per_credit",
         _DEFAULT_WORDS_PER_CREDIT,
     )
@@ -369,13 +451,51 @@ def get_document_upload_cost_for_size(session: Session, word_count: int) -> int:
     except (TypeError, ValueError):
         words_per_credit = 0
     if words_per_credit <= 0:
-        logger.warning(
-            "credit_cost.document_upload_words_per_credit is missing or not a positive "
-            "integer (%r). Falling back to %d words per credit",
-            raw_rate,
-            _DEFAULT_WORDS_PER_CREDIT,
-        )
+        if warn:
+            logger.warning(
+                "credit_cost.document_upload_words_per_credit is missing or not a positive "
+                "integer (%r). Falling back to %d words per credit",
+                raw_rate,
+                _DEFAULT_WORDS_PER_CREDIT,
+            )
         words_per_credit = _DEFAULT_WORDS_PER_CREDIT
+    return words_per_credit
+
+
+def get_document_upload_cost_for_size(session: Session, word_count: int) -> int:
+    """Return the credit cost for uploading a document of ``word_count`` words.
+
+    One flat rate: ``ceil(words / rate)`` credits, where ``rate`` is
+    ``credit_cost.document_upload_words_per_credit`` (250. I.e. 1 credit per
+    250 words), never below the ``credit_cost.document_upload`` minimum. Both
+    keys are super-admin tunable from the pricing panel, and both are read here
+    through the clamping accessors above, which is the same pair the balance
+    endpoint serves to the console: one source, both consumers.
+
+    This replaced a five-bucket word-tier table. The buckets priced the same
+    idea in a shape that had to be restated (with EXCLUSIVE edges) in the
+    customer-facing table in ``UsagePage.tsx``, and the two drifted: every
+    bounded boundary advertised one price and charged the next bucket up, 3x
+    at 100 words. A single rate has no edges to restate.
+
+    A file with NO extractable words costs 0, not the floor. The floor is the
+    minimum for storing content; a file that yielded none (an empty .txt, a
+    scanned PDF with no text layer, an extraction that failed) puts nothing in
+    the knowledge base and is not billed. The ingest route has always skipped
+    billing those, so the floor was quoted by ``POST /ingest/preview-cost``
+    for a file the very next request charged 0 for — a shown price and a
+    charged price disagreeing inside one money surface. The rule lives here, in
+    the one function both the quote and the charge call, rather than in an
+    ``if words > 0`` at each of them.
+
+    Fails CLOSED: a missing or non-numeric rate falls back to the shipped 250
+    rather than to a divisor that would make an upload free.
+    """
+    word_count = max(int(word_count or 0), 0)
+    if word_count == 0:
+        return 0
+    minimum = get_document_upload_floor(session)
+    words_per_credit = get_document_upload_words_per_credit(session)
 
     # Integer ceiling division, a partial block of words is a whole credit.
     charged = (word_count + words_per_credit - 1) // words_per_credit

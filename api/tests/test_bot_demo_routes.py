@@ -55,6 +55,13 @@ class TestBotDemoRoutes:
             name="Sales Assistant",
             website="https://example.com",
             is_active=True,
+            allowed_domains=[],
+            # No stored capture, so these fakes exercise the hero-page
+            # fallback. The capture path has its own tests below.
+            demo_screenshot_url=None,
+            demo_screenshot_status=None,
+            demo_screenshot_source_url=None,
+            demo_screenshot_captured_at=None,
         )
         session = MagicMock()
         session.execute.return_value = _ExecuteResult(bot)
@@ -132,6 +139,13 @@ class TestBotDemoRoutes:
             name="Sales Assistant",
             website="https://example.com",
             is_active=True,
+            allowed_domains=[],
+            # No stored capture, so these fakes exercise the hero-page
+            # fallback. The capture path has its own tests below.
+            demo_screenshot_url=None,
+            demo_screenshot_status=None,
+            demo_screenshot_source_url=None,
+            demo_screenshot_captured_at=None,
         )
         session = MagicMock()
         session.execute.return_value = _ExecuteResult(bot)
@@ -159,6 +173,13 @@ class TestBotDemoRoutes:
             name="Sales Assistant",
             website="https://example.com",
             is_active=True,
+            allowed_domains=[],
+            # No stored capture, so these fakes exercise the hero-page
+            # fallback. The capture path has its own tests below.
+            demo_screenshot_url=None,
+            demo_screenshot_status=None,
+            demo_screenshot_source_url=None,
+            demo_screenshot_captured_at=None,
         )
         session = MagicMock()
         session.execute.return_value = _ExecuteResult(bot)
@@ -181,6 +202,13 @@ class TestBotDemoRoutes:
             name="Sales Assistant",
             website="",
             is_active=True,
+            allowed_domains=[],
+            # No stored capture, so these fakes exercise the hero-page
+            # fallback. The capture path has its own tests below.
+            demo_screenshot_url=None,
+            demo_screenshot_status=None,
+            demo_screenshot_source_url=None,
+            demo_screenshot_captured_at=None,
         )
         session = MagicMock()
         session.execute.return_value = _ExecuteResult(bot)
@@ -202,6 +230,13 @@ class TestBotDemoRoutes:
             name="Sales Assistant",
             website="https://example.com",
             is_active=True,
+            allowed_domains=[],
+            # No stored capture, so these fakes exercise the hero-page
+            # fallback. The capture path has its own tests below.
+            demo_screenshot_url=None,
+            demo_screenshot_status=None,
+            demo_screenshot_source_url=None,
+            demo_screenshot_captured_at=None,
         )
         session = MagicMock()
         session.execute.return_value = _ExecuteResult(bot)
@@ -225,6 +260,13 @@ class TestBotDemoRoutes:
             name="Sales Assistant",
             website="https://example.com",
             is_active=True,
+            allowed_domains=[],
+            # No stored capture, so these fakes exercise the hero-page
+            # fallback. The capture path has its own tests below.
+            demo_screenshot_url=None,
+            demo_screenshot_status=None,
+            demo_screenshot_source_url=None,
+            demo_screenshot_captured_at=None,
         )
         session = MagicMock()
         session.execute.return_value = _ExecuteResult(bot)
@@ -247,6 +289,13 @@ class TestBotDemoRoutes:
             name="Sales Assistant",
             website="https://example.com",
             is_active=True,
+            allowed_domains=[],
+            # No stored capture, so these fakes exercise the hero-page
+            # fallback. The capture path has its own tests below.
+            demo_screenshot_url=None,
+            demo_screenshot_status=None,
+            demo_screenshot_source_url=None,
+            demo_screenshot_captured_at=None,
         )
         session = MagicMock()
         session.execute.return_value = _ExecuteResult(bot)
@@ -269,6 +318,13 @@ class TestBotDemoRoutes:
             name="Sales Assistant",
             website="",
             is_active=True,
+            allowed_domains=[],
+            # No stored capture, so these fakes exercise the hero-page
+            # fallback. The capture path has its own tests below.
+            demo_screenshot_url=None,
+            demo_screenshot_status=None,
+            demo_screenshot_source_url=None,
+            demo_screenshot_captured_at=None,
         )
         session = MagicMock()
         session.execute.return_value = _ExecuteResult(bot)
@@ -358,3 +414,170 @@ class TestPreviewSSRF:
         monkeypatch.setattr(httpx, "Client", _RedirectClient)
 
         assert bot_routes._check_iframe_allowed("https://example.com/") is False
+
+
+def _captured_bot(**overrides):
+    """A bot whose website has a fresh, usable capture stored."""
+    from datetime import UTC, datetime
+
+    base = dict(
+        id=7,
+        bot_key="bot-demo123",
+        name="Sales Assistant",
+        website="https://example.com",
+        is_active=True,
+        allowed_domains=[],
+        demo_screenshot_url="https://cdn.oyechats.com/demo-screenshots/7/abc.png",
+        demo_screenshot_status="ready",
+        demo_screenshot_source_url="https://example.com",
+        demo_screenshot_captured_at=datetime.now(UTC),
+    )
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def _wire(monkeypatch, bot):
+    """Point the route at ``bot`` and return the recorded growth events."""
+    from app.api import bot_routes
+
+    session = MagicMock()
+    session.execute.return_value = _ExecuteResult(bot)
+    added = []
+    session.add.side_effect = added.append
+    monkeypatch.setattr(bot_routes, "get_session", lambda: _session_context(session))
+    return added
+
+
+class TestDemoScreenshotPage:
+    """The demo link's whole purpose: show the customer's OWN site."""
+
+    def test_capture_renders_the_customers_site_not_the_hero_page(self, monkeypatch):
+        _wire(monkeypatch, _captured_bot())
+
+        response = TestClient(_build_test_client()).get("/demo/bot-demo123")
+
+        assert response.status_code == 200
+        assert "demo-screenshots/7/abc.png" in response.text
+        assert "example.com" in response.text
+        assert 'data-bot-key="bot-demo123"' in response.text
+        # The hero page's headline must not be what a shared link resolves to
+        # once we have a real picture of the customer's site.
+        assert "Try Sales Assistant on a live page." not in response.text
+
+    def test_falls_back_to_hero_when_no_capture(self, monkeypatch):
+        _wire(monkeypatch, _captured_bot(demo_screenshot_status=None, demo_screenshot_url=None))
+
+        response = TestClient(_build_test_client()).get("/demo/bot-demo123")
+
+        assert response.status_code == 200
+        assert "Try Sales Assistant on a live page." in response.text
+
+    def test_failed_capture_falls_back_rather_than_rendering_a_broken_image(self, monkeypatch):
+        _wire(monkeypatch, _captured_bot(demo_screenshot_status="failed"))
+
+        response = TestClient(_build_test_client()).get("/demo/bot-demo123")
+
+        assert "Try Sales Assistant on a live page." in response.text
+
+    def test_stale_capture_is_not_served(self, monkeypatch):
+        """Past the TTL the hero page is more honest than a screenshot of a
+        site design the customer may have replaced months ago."""
+        from datetime import UTC, datetime, timedelta
+
+        _wire(monkeypatch, _captured_bot(demo_screenshot_captured_at=datetime.now(UTC) - timedelta(days=365)))
+
+        response = TestClient(_build_test_client()).get("/demo/bot-demo123")
+
+        assert "Try Sales Assistant on a live page." in response.text
+
+    def test_capture_of_a_different_site_is_never_served(self, monkeypatch):
+        """A customer who changed their website must not be shown a current-
+        looking demo of their previous one."""
+        _wire(monkeypatch, _captured_bot(website="https://newsite.com"))
+
+        response = TestClient(_build_test_client()).get("/demo/bot-demo123")
+
+        assert "Try Sales Assistant on a live page." in response.text
+
+    def test_capture_is_preferred_when_the_site_refuses_framing(self, monkeypatch):
+        """`?url=` on a frame-blocking site should land on the capture, which
+        shows the same site and cannot be blocked, not on a generic page."""
+        from app.api import bot_routes
+
+        _wire(monkeypatch, _captured_bot())
+        monkeypatch.setattr(bot_routes, "_validate_preview_url", lambda u: u)
+        monkeypatch.setattr(bot_routes, "_check_iframe_allowed", lambda u: False)
+
+        response = TestClient(_build_test_client()).get("/demo/bot-demo123?url=https://example.com")
+
+        assert response.status_code == 200
+        assert "demo-screenshots/7/abc.png" in response.text
+
+
+class TestDemoUrlOwnership:
+    """`?url=` is unauthenticated and keyed on a PUBLIC bot key, so it must not
+    render arbitrary third-party sites under our own domain and branding."""
+
+    def test_foreign_url_is_refused(self, monkeypatch):
+        from app.api import bot_routes
+
+        _wire(monkeypatch, _captured_bot())
+        monkeypatch.setattr(bot_routes, "_validate_preview_url", lambda u: u)
+        monkeypatch.setattr(bot_routes, "_check_iframe_allowed", lambda u: True)
+
+        response = TestClient(_build_test_client()).get("/demo/bot-demo123?url=https://evil.example.net")
+
+        assert response.status_code == 400
+        assert "own website" in response.json()["detail"]
+
+    def test_own_site_is_allowed(self, monkeypatch):
+        from app.api import bot_routes
+
+        _wire(monkeypatch, _captured_bot())
+        monkeypatch.setattr(bot_routes, "_validate_preview_url", lambda u: u)
+        monkeypatch.setattr(bot_routes, "_check_iframe_allowed", lambda u: True)
+
+        response = TestClient(_build_test_client()).get("/demo/bot-demo123?url=https://example.com/pricing")
+
+        assert response.status_code == 200
+        assert "<iframe" in response.text
+
+    def test_www_variant_of_own_site_is_allowed(self, monkeypatch):
+        """Customers store whichever of apex/www they typed; both are the same
+        site to everyone except a string comparison."""
+        from app.api import bot_routes
+
+        _wire(monkeypatch, _captured_bot())
+        monkeypatch.setattr(bot_routes, "_validate_preview_url", lambda u: u)
+        monkeypatch.setattr(bot_routes, "_check_iframe_allowed", lambda u: True)
+
+        response = TestClient(_build_test_client()).get("/demo/bot-demo123?url=https://www.example.com")
+
+        assert response.status_code == 200
+        assert "<iframe" in response.text
+
+    def test_allow_listed_domain_is_permitted(self, monkeypatch):
+        from app.api import bot_routes
+
+        _wire(monkeypatch, _captured_bot(allowed_domains=["staging.example.org"]))
+        monkeypatch.setattr(bot_routes, "_validate_preview_url", lambda u: u)
+        monkeypatch.setattr(bot_routes, "_check_iframe_allowed", lambda u: True)
+
+        response = TestClient(_build_test_client()).get("/demo/bot-demo123?url=https://staging.example.org")
+
+        assert response.status_code == 200
+        assert "<iframe" in response.text
+
+    def test_empty_allow_list_does_not_fail_open(self, monkeypatch):
+        """`domain_check_enabled` fails open on an empty allow-list so a new
+        bot's widget still boots. Doing that HERE would reinstate the abuse
+        this guard exists to prevent."""
+        from app.api import bot_routes
+
+        _wire(monkeypatch, _captured_bot(website=None, allowed_domains=[]))
+        monkeypatch.setattr(bot_routes, "_validate_preview_url", lambda u: u)
+        monkeypatch.setattr(bot_routes, "_check_iframe_allowed", lambda u: True)
+
+        response = TestClient(_build_test_client()).get("/demo/bot-demo123?url=https://anything.example.net")
+
+        assert response.status_code == 400

@@ -1,355 +1,362 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type KeyboardEvent,
-  type ReactElement,
-} from 'react';
-import { Link } from 'react-router-dom';
-import {
-  MoreHorizontal,
-  ExternalLink,
-  Link2,
-  Pencil,
-  Trash2,
-  Loader2,
-  Check,
-  X,
-  ArrowRight,
-} from 'lucide-react';
-import { updateBot, deleteBot, getBotDemoUrl, trackDemoShareClick } from '../../services/api';
-import { type Bot } from '../../types/domain';
-import { cn } from '../../design-system';
-import { DeleteAgentDialog } from './DeleteAgentDialog';
-import { useTranslation } from '../../i18n/useTranslation';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { t as translateNow } from '../../i18n/i18n';
+import { useMutation } from '@tanstack/react-query';
+import { ExternalLink, KeyRound, Link2, MoreHorizontal, Pause, Pencil, Play, Trash2 } from 'lucide-react';
+import {
+  Alert,
+  Button,
+  ConfirmDialog,
+  Dialog,
+  Field,
+  Input,
+  MenuContent,
+  MenuItem,
+  MenuRoot,
+  MenuSeparator,
+  MenuTrigger,
+  buttonClass,
+  toast,
+  useClipboard,
+} from '../../ui';
+import { deleteBot, getBotDemoUrl, trackDemoShareClick, updateBot } from '../../services/api';
+import type { Bot } from '../../types/domain';
+import { useTranslation } from '../../i18n/useTranslation';
+
+const MAX_NAME_LENGTH = 50;
 
 export interface AgentActionsMenuProps {
-  /** The agent this menu operates on. */
   bot: Bot;
-  /** Called after a successful rename or delete so the list can re-fetch. */
+  /** Called after a successful rename or delete, so the list can refetch. */
   onChanged: () => void;
 }
 
-function messageFromError(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : translateNow('agents.somethingWentWrong') || 'Something went wrong.';
+/** Returns the reason the name is unusable, or `null` when it will do. */
+function validateAgentName(value: string, current: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return translateNow('agents.giveTheChatbotAName') || 'Give the chatbot a name.';
+  if (trimmed.length > MAX_NAME_LENGTH) return `Keep it to ${MAX_NAME_LENGTH} characters or fewer.`;
+  if (trimmed === current) return translateNow('agents.thatIsAlreadyItsName') || 'That is already its name.';
+  return null;
+}
+
+function messageFrom(cause: unknown): string {
+  return cause instanceof Error && cause.message
+    ? cause.message
+    : translateNow('agents.somethingWentWrongPleaseTry') || 'Something went wrong. Please try again.';
 }
 
 /**
- * AgentActionsMenu - the per-agent "⋯" menu shown on each tile.
+ * The per-chatbot "⋯" menu.
  *
- * Sits as an overlay sibling of the card's navigational link (never nested
- * inside it), so both remain independent, keyboard-operable controls. Offers
- * the portfolio-management actions ported from the legacy BotCard: open the
- * agent, view its live demo (getBotDemoUrl), rename inline (updateBot), and
- * delete with a two-step confirm (deleteBot). Closes on outside-click and Esc.
+ * Rebuilt on the system's own `Menu`, `Dialog` and `ConfirmDialog` rather than
+ * the hand-rolled popup it replaces, which had three defects that only showed
+ * up when something failed.
+ *
+ * It shared one `error` string between the menu and the delete dialog, so a
+ * rename that the server refused surfaced its message inside the delete
+ * confirmation — under a button that deletes a knowledge base. Rename and
+ * delete now own separate state and separate surfaces.
+ *
+ * Its `busy` flag was never released after a successful delete ("leave it set,
+ * the tile is about to unmount"), so if the refresh that follows failed, the
+ * dialog stayed stuck on "Deleting…" with dismissal blocked and no way out but
+ * a page reload. `ConfirmDialog` releases in a `finally`, unconditionally.
+ *
+ * And rename had no validation at all: an empty or whitespace-only name closed
+ * the editor silently, as if it had saved.
+ *
+ * Rename is a dialog rather than an inline field inside the menu because
+ * `role="menu"` obliges every child to be a `menuitem` — a text input inside
+ * one makes the whole popup unnavigable with a screen reader.
  */
-export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): ReactElement {
+export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  const [renaming, setRenaming] = useState(false);
-  const [renameValue, setRenameValue] = useState(bot.name);
+  const name = bot.name || `Chatbot ${bot.id}`;
+  const { state: clipboard, copy } = useClipboard();
+  /** What the last copy was of, so the toast can name it. */
+  const copied = useRef<'demo link' | 'chatbot key'>('demo link');
+
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [draftName, setDraftName] = useState(name);
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [renameError, setRenameError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [error, setError] = useState('');
 
-  const containerRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const renameInputRef = useRef<HTMLInputElement>(null);
-  // Which menu item to focus on the next open ('last' only when the user opened
-  // via ArrowUp on the trigger, per the WAI-ARIA menu-button pattern).
-  const pendingFocusRef = useRef<'first' | 'last'>('first');
-
-  // Close the menu and reset its transient sub-state. Done in the close handler
-  // (not an open→false effect) so we never run a setState-in-effect reset.
-  const closeMenu = useCallback((): void => {
-    setOpen(false);
-    setRenaming(false);
-    setCopied(false);
-    setError('');
-  }, []);
-
-  const focusMenuItem = useCallback((position: 'first' | 'last'): void => {
-    const items = containerRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]');
-    if (!items || items.length === 0) return;
-    (position === 'last' ? items[items.length - 1] : items[0]).focus();
-  }, []);
-
-  // While open: close on outside-click / Esc, and move focus into the menu so
-  // the roving arrow-key navigation is reachable immediately (WAI-ARIA menu
-  // button: activating the trigger focuses a menu item).
-  useEffect(() => {
-    if (!open) return undefined;
-    const focusTimer = window.setTimeout(() => {
-      focusMenuItem(pendingFocusRef.current);
-      pendingFocusRef.current = 'first';
-    }, 20);
-    const onPointerDown = (event: MouseEvent): void => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        closeMenu();
-      }
-    };
-    const onKeyDown = (event: globalThis.KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        closeMenu();
-        triggerRef.current?.focus();
-      }
-    };
-    document.addEventListener('mousedown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      window.clearTimeout(focusTimer);
-      document.removeEventListener('mousedown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [open, closeMenu, focusMenuItem]);
-
-  const startRename = (): void => {
-    setRenameValue(bot.name);
-    setError('');
-    setRenaming(true);
-    window.setTimeout(() => renameInputRef.current?.focus(), 20);
-  };
-
-  const commitRename = async (): Promise<void> => {
-    const trimmed = renameValue.trim();
-    if (!trimmed || trimmed === bot.name) {
-      setRenaming(false);
-      return;
-    }
-    setBusy(true);
-    setError('');
-    try {
-      await updateBot(bot.id, { name: trimmed });
-      closeMenu();
-      onChanged();
-    } catch (err) {
-      setError(messageFromError(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleDelete = async (): Promise<void> => {
-    setBusy(true);
-    setError('');
-    try {
-      await deleteBot(bot.id);
-      onChanged();
-      // onChanged() re-fetches and unmounts this tile; leave `busy` set and the
-      // dialog mounted so we don't fire a needless post-unmount state update.
-      return;
-    } catch (err) {
-      // Keep the dialog open so the operator sees why the delete failed.
-      setError(messageFromError(err));
-      setBusy(false);
-    }
-  };
-
-  // Roving focus between menu items with arrow keys.
-  const handleMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
-    event.preventDefault();
-    const items = Array.from(
-      containerRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [],
-    );
-    if (items.length === 0) return;
-    const currentIndex = items.indexOf(document.activeElement as HTMLElement);
-    let nextIndex: number;
-    if (event.key === 'Home') nextIndex = 0;
-    else if (event.key === 'End') nextIndex = items.length - 1;
-    else if (event.key === 'ArrowDown') nextIndex = (currentIndex + 1) % items.length;
-    else nextIndex = (currentIndex - 1 + items.length) % items.length;
-    items[nextIndex]?.focus();
-  };
-
-  const menuItemClass =
-    'flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-[13px] font-medium text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)] focus-visible:bg-[var(--ds-bg-hover)] focus-visible:outline-none';
   const demoUrl = bot.bot_key ? getBotDemoUrl(bot.bot_key) : null;
 
-  // Copy the shareable demo link and record the share (fire-and-forget: a failed
-  // analytics ping must never block the copy). The menu stays open so the
-  // "Copied" confirmation is visible; it resets when the menu closes.
-  const handleCopyDemo = async (): Promise<void> => {
-    if (!demoUrl) return;
-    try {
-      await navigator.clipboard.writeText(demoUrl);
-    } catch {
-      setError(t('agents.couldNotCopyCheckClipboard') || 'Could not copy - check clipboard permissions.');
+  const rename = useMutation({
+    mutationFn: (next: string) => updateBot(bot.id, { name: next }),
+  });
+
+  const remove = useMutation({
+    mutationFn: () => deleteBot(bot.id),
+  });
+
+  const [pauseOpen, setPauseOpen] = useState(false);
+  const [resumeOpen, setResumeOpen] = useState(false);
+
+  // `is_active` is optional on the list payload; only an explicit `false` means
+  // paused, so an older response never renders a chatbot as switched off.
+  const paused = bot.is_active === false;
+
+  const setActive = useMutation({
+    mutationFn: (next: boolean) => updateBot(bot.id, { is_active: next }),
+  });
+
+  const openRename = useCallback(() => {
+    setDraftName(name);
+    setNameError(null);
+    setRenameError(null);
+    setRenameOpen(true);
+  }, [name]);
+
+  const submitRename = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (rename.isPending) return;
+    const invalid = validateAgentName(draftName, name);
+    if (invalid) {
+      setNameError(invalid);
       return;
     }
-    setCopied(true);
-    setError('');
+    setNameError(null);
+    setRenameError(null);
+    try {
+      await rename.mutateAsync(draftName.trim());
+      setRenameOpen(false);
+      onChanged();
+      toast.success(`Renamed to ${draftName.trim()}`);
+    } catch (cause) {
+      // Stays on the page, beside the control that produced it: the user has to
+      // read this before they can proceed, which a toast does not guarantee.
+      setRenameError(messageFrom(cause));
+    }
+  };
+
+  const confirmDelete = async () => {
+    await remove.mutateAsync();
+    // Only reached when the delete actually succeeded — `ConfirmDialog` keeps
+    // itself open and shows the reason when this throws.
+    setDeleteOpen(false);
+    onChanged();
+    toast.success(`${name} deleted`);
+  };
+
+  /**
+   * Pause and resume are asymmetric, and the UI has to be too.
+   *
+   * Pausing is a straight write. Resuming re-runs the server's whole create
+   * gate — deactivating a chatbot frees its billing slot, so bringing it back
+   * is an admission decision that can be refused with a 402 when the plan has
+   * no room any more. Neither direction is flipped optimistically: the switch
+   * only moves once the server has said it moved, and a refusal is shown in
+   * the dialog that asked for it rather than as a toast the reader may miss.
+   */
+  const confirmPause = async () => {
+    await setActive.mutateAsync(false);
+    setPauseOpen(false);
+    onChanged();
+    toast.success(`${name} paused`);
+  };
+
+  const confirmResume = async () => {
+    await setActive.mutateAsync(true);
+    setResumeOpen(false);
+    onChanged();
+    toast.success(`${name} is answering again`);
+  };
+
+  /**
+   * Copying the demo link records a share. Fire-and-forget on purpose: a failed
+   * analytics ping must never turn a successful copy into an error. The event
+   * the backend records is `demo_share_clicked`, so the intent to share is the
+   * signal — not whether the browser's clipboard happened to cooperate.
+   */
+  const copyDemoLink = () => {
+    if (!demoUrl) return;
+    copied.current = 'demo link';
+    void copy(demoUrl);
     void trackDemoShareClick(bot.id).catch(() => undefined);
   };
 
+  /**
+   * The chatbot key, one menu item instead of a `CopyField` on every row.
+   *
+   * It used to be an 84px band on every card of the index — twelve mono strings
+   * the eye had to skip past to reach the one chatbot that needed attention. It
+   * is needed on Deploy, where the embed snippet already contains it, and here,
+   * once, for the support ticket that asks for it.
+   */
+  const copyBotKey = () => {
+    if (!bot.bot_key) return;
+    copied.current = 'chatbot key';
+    void copy(bot.bot_key);
+  };
+
+  // `navigator.clipboard` rejects on an insecure origin, without permission,
+  // and when the document is not focused, so the outcome is reported rather
+  // than assumed. The menu has closed by the time it settles, which is why this
+  // is a toast and not an inline message. The ref names *what* was copied: one
+  // clipboard hook now serves two items, and "Demo link copied" after copying a
+  // chatbot key is worse than no confirmation at all.
+  useEffect(() => {
+    if (clipboard === 'idle') return;
+    const what = copied.current;
+    if (clipboard === 'copied') {
+      toast.success(what === 'chatbot key' ? t('agents.chatbotKeyCopied') || 'Chatbot key copied' : t('agents.demoLinkCopied') || 'Demo link copied');
+    } else if (clipboard === 'failed') {
+      toast.error(`Could not copy the ${what}. Open it and copy it by hand.`);
+    }
+  }, [clipboard, t]);
+
   return (
-    <div ref={containerRef} className="relative z-10">
-      <button
-        ref={triggerRef}
-        type="button"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label={t('agents.actionsFor', { name: bot.name }) || `Actions for ${bot.name}`}
-        onClick={() => (open ? closeMenu() : setOpen(true))}
-        onKeyDown={(event) => {
-          if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
-          event.preventDefault();
-          const position = event.key === 'ArrowUp' ? 'last' : 'first';
-          if (open) {
-            focusMenuItem(position);
-          } else {
-            pendingFocusRef.current = position;
-            setOpen(true);
-          }
-        }}
-        className="flex h-8 w-8 items-center justify-center rounded-lg border border-transparent text-[var(--ds-text-subtle)] transition-colors hover:border-[var(--ds-border)] hover:bg-[var(--ds-bg-surface)] hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
-      >
-        <MoreHorizontal size={16} aria-hidden="true" />
-      </button>
-
-      {open && (
-        <div
-          role="menu"
-          aria-label={t('agents.actionsFor', { name: bot.name }) || `Actions for ${bot.name}`}
-          onKeyDown={handleMenuKeyDown}
-          className="absolute right-0 top-full z-20 mt-1.5 w-56 overflow-hidden rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] py-1.5 shadow-[var(--ds-shadow-lg)]"
+    <>
+      <MenuRoot>
+        <MenuTrigger
+          aria-label={`Actions for ${name}`}
+          className={buttonClass('ghost', 'icon-sm')}
         >
-          <Link
-            role="menuitem"
-            to={`/agents/${bot.id}/overview`}
-            className={menuItemClass}
-            onClick={closeMenu}
-          >
-            <ArrowRight size={15} className="text-[var(--ds-text-subtle)]" aria-hidden="true" />
-            {t('agents.openChatbot') || 'Open chatbot'}
-          </Link>
-
-          {demoUrl && (
-            <a
-              role="menuitem"
-              href={demoUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={menuItemClass}
-              onClick={closeMenu}
+          <MoreHorizontal aria-hidden className="h-4 w-4" />
+        </MenuTrigger>
+        <MenuContent>
+          {demoUrl ? (
+            <MenuItem
+              icon={<ExternalLink aria-hidden className="h-3.5 w-3.5" />}
+              onSelect={() => window.open(demoUrl, '_blank', 'noopener,noreferrer')}
             >
-              <ExternalLink size={15} className="text-[var(--ds-text-subtle)]" aria-hidden="true" />
-              {t('agents.viewDemo') || 'View demo'}
-            </a>
-          )}
-
-          {demoUrl && (
-            <button role="menuitem" type="button" className={menuItemClass} onClick={() => void handleCopyDemo()}>
-              {copied ? (
-                <Check size={15} className="text-[var(--ds-success)]" aria-hidden="true" />
-              ) : (
-                <Link2 size={15} className="text-[var(--ds-text-subtle)]" aria-hidden="true" />
-              )}
-              {copied ? t('agents.linkCopied') || 'Link copied' : t('agents.copyDemoLink') || 'Copy demo link'}
-            </button>
-          )}
-
-          <div className="my-1 border-t border-[var(--ds-border)]" />
-
-          {renaming ? (
-            <div className="px-3 py-2">
-              <label htmlFor={`rename-${bot.id}`} className="sr-only">
-                {t('agents.renameChatbot') || 'Rename chatbot'}
-              </label>
-              <input
-                id={`rename-${bot.id}`}
-                ref={renameInputRef}
-                value={renameValue}
-                maxLength={50}
-                disabled={busy}
-                onChange={(event) => setRenameValue(event.target.value)}
-                onKeyDown={(event) => {
-                  event.stopPropagation();
-                  if (event.key === 'Enter') {
-                    event.preventDefault();
-                    void commitRename();
-                  } else if (event.key === 'Escape') {
-                    event.preventDefault();
-                    setRenaming(false);
-                  }
-                }}
-                className="h-8 w-full rounded-md border border-[var(--ds-accent)] bg-[var(--ds-bg-surface)] px-2 text-[13px] text-[var(--ds-text)] outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
-              />
-              <div className="mt-2 flex items-center justify-end gap-1.5">
-                <button
-                  type="button"
-                  aria-label={t('agents.cancelRename') || 'Cancel rename'}
-                  disabled={busy}
-                  onClick={() => setRenaming(false)}
-                  className="flex h-7 w-7 items-center justify-center rounded-md bg-[var(--ds-bg-sunken)] text-[var(--ds-text-muted)] hover:bg-[var(--ds-border)] disabled:opacity-50"
-                >
-                  <X size={13} aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  aria-label={t('agents.saveName') || 'Save name'}
-                  disabled={busy}
-                  onClick={() => void commitRename()}
-                  className="flex h-7 w-7 items-center justify-center rounded-md bg-[var(--ds-accent)] text-[var(--ds-accent-fg)] hover:bg-[var(--ds-accent-hover)] disabled:opacity-60"
-                >
-                  {busy ? (
-                    <Loader2 size={13} className="animate-spin" aria-hidden="true" />
-                  ) : (
-                    <Check size={13} aria-hidden="true" />
-                  )}
-                </button>
-              </div>
-            </div>
+              {t('agents.openDemoPage') || 'Open demo page'}
+            </MenuItem>
+          ) : null}
+          {demoUrl ? (
+            <MenuItem
+              icon={<Link2 aria-hidden className="h-3.5 w-3.5" />}
+              onSelect={copyDemoLink}
+            >
+              {t('agents.copyDemoLink') || 'Copy demo link'}
+            </MenuItem>
+          ) : null}
+          {bot.bot_key ? (
+            <MenuItem
+              icon={<KeyRound aria-hidden className="h-3.5 w-3.5" />}
+              onSelect={copyBotKey}
+            >
+              {t('agents.copyChatbotKey') || 'Copy chatbot key'}
+            </MenuItem>
+          ) : null}
+          {demoUrl || bot.bot_key ? <MenuSeparator /> : null}
+          <MenuItem icon={<Pencil aria-hidden className="h-3.5 w-3.5" />} onSelect={openRename}>
+            {t('agents.rename') || 'Rename…'}
+          </MenuItem>
+          {paused ? (
+            <MenuItem
+              icon={<Play aria-hidden className="h-3.5 w-3.5" />}
+              onSelect={() => setResumeOpen(true)}
+            >
+              {t('agents.resumeChatbot') || 'Resume chatbot…'}
+            </MenuItem>
           ) : (
-            <button role="menuitem" type="button" className={menuItemClass} onClick={startRename}>
-              <Pencil size={15} className="text-[var(--ds-text-subtle)]" aria-hidden="true" />
-              {t('agents.rename') || 'Rename'}
-            </button>
+            <MenuItem
+              icon={<Pause aria-hidden className="h-3.5 w-3.5" />}
+              onSelect={() => setPauseOpen(true)}
+            >
+              {t('agents.pauseChatbot') || 'Pause chatbot…'}
+            </MenuItem>
           )}
-
-          <button
-            role="menuitem"
-            type="button"
-            className={cn(
-              menuItemClass,
-              'text-[var(--ds-danger)] hover:bg-[var(--ds-danger-soft)] focus-visible:bg-[var(--ds-danger-soft)]',
-            )}
-            onClick={() => {
-              setError('');
-              setDeleteOpen(true);
-              closeMenu();
-            }}
+          <MenuItem
+            destructive
+            icon={<Trash2 aria-hidden className="h-3.5 w-3.5" />}
+            onSelect={() => setDeleteOpen(true)}
           >
-            <Trash2 size={15} aria-hidden="true" />
             {t('agents.delete') || 'Delete…'}
-          </button>
+          </MenuItem>
+        </MenuContent>
+      </MenuRoot>
 
-          {error && (
-            <p className="px-3.5 pt-1.5 text-[12px] text-[var(--ds-danger)]" role="alert">
-              {error}
-            </p>
-          )}
-        </div>
-      )}
+      <Dialog
+        open={renameOpen}
+        onOpenChange={(open) => {
+          setRenameOpen(open);
+          if (!open) setRenameError(null);
+        }}
+        title={`Rename ${name}`}
+        size="sm"
+        dismissible={!rename.isPending}
+        footer={
+          <>
+            <Button variant="ghost" disabled={rename.isPending} onClick={() => setRenameOpen(false)}>
+              {t('agents.cancel') || 'Cancel'}
+            </Button>
+            <Button
+              variant="primary"
+              form={`rename-agent-${bot.id}`}
+              type="submit"
+              loading={rename.isPending}
+            >
+              {t('agents.saveName') || 'Save name'}
+            </Button>
+          </>
+        }
+      >
+        <form id={`rename-agent-${bot.id}`} onSubmit={(event) => void submitRename(event)}>
+          {/* The ambiguity is between two names, so it belongs on the field that
+              sets one of them — not as a dialog description a reader meets
+              before they know there is a second name at all. */}
+          <Field
+            label={t('agents.chatbotName') || 'Chatbot name'}
+            error={nameError}
+            hint={t('agents.internalOnlyVisitorsSeeThe') || 'Internal only — visitors see the display name in Experience.'}
+            required
+          >
+            <Input
+              value={draftName}
+              maxLength={MAX_NAME_LENGTH}
+              autoComplete="off"
+              disabled={rename.isPending}
+              onChange={(event) => {
+                setDraftName(event.target.value);
+                if (nameError) setNameError(null);
+              }}
+            />
+          </Field>
+          {renameError ? (
+            <Alert tone="danger" live className="mt-3">
+              {renameError}
+            </Alert>
+          ) : null}
+        </form>
+      </Dialog>
 
-      {deleteOpen && (
-        <DeleteAgentDialog
-          bot={bot}
-          open
-          busy={busy}
-          error={error}
-          onClose={() => {
-            if (busy) return;
-            setDeleteOpen(false);
-            setError('');
-          }}
-          onConfirm={() => void handleDelete()}
-        />
-      )}
-    </div>
+      <ConfirmDialog
+        open={pauseOpen}
+        onOpenChange={setPauseOpen}
+        title={`Pause ${name}?`}
+        // Two facts, one clause each. It was 83 words across two paragraphs, and
+        // a confirm dialog is read at the moment of highest impatience — nobody
+        // reached the second paragraph, which is where the consequence that
+        // actually costs money lived.
+        description={t('agents.itStopsAnsweringVisitorsImmediately') || 'It stops answering visitors immediately, and nothing is deleted. Pausing also frees its plan slot, so resuming has to pass the same check as a new chatbot.'}
+        confirmLabel="Pause chatbot"
+        onConfirm={confirmPause}
+      />
+
+      <ConfirmDialog
+        open={resumeOpen}
+        onOpenChange={setResumeOpen}
+        title={`Resume ${name}?`}
+        description={t('agents.itAnswersVisitorsAgainOn') || 'It answers visitors again on every site running its script, and counts against your plan from that moment. If the plan is full, nothing changes and we say so here.'}
+        confirmLabel="Resume chatbot"
+        onConfirm={confirmResume}
+      />
+
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title={`Delete ${name}?`}
+        description={t('agents.deletesTheChatbotEverythingIt') || 'Deletes the chatbot, everything it learned, every conversation and every lead. Sites running its script stop showing a chatbot.'}
+        confirmLabel="Delete chatbot"
+        confirmPhrase={name}
+        destructive
+        onConfirm={confirmDelete}
+      />
+    </>
   );
 }

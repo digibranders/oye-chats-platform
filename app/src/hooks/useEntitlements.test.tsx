@@ -44,6 +44,8 @@ function makeEntitlements(overrides: Partial<Entitlements> = {}): Entitlements {
       page_scraping: 100,
       documents: 50,
       chat_history_days: 90,
+      max_crawl_pages: 100,
+      max_crawl_depth: 3,
     },
     features: {
       live_chat: true,

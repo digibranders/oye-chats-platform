@@ -3,11 +3,9 @@ import {
   useEffect,
   useRef,
   useState,
-  type ChangeEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactElement,
 } from 'react';
-import { formatDate as i18nFormatDate } from '../../i18n/formatters';
 import { useLocation } from 'react-router-dom';
 import {
   AlertCircle,
@@ -24,22 +22,27 @@ import {
   Loader2,
   MessageSquare,
   MoreHorizontal,
-  RefreshCw,
   X,
   type LucideIcon,
 } from 'lucide-react';
 import {
+  Alert,
+  Badge,
+  type BadgeTone,
   Button,
   cn,
+  Dialog,
   EmptyState,
-  Modal,
+  ErrorState,
+  Field,
+  formatDate,
   Select,
   Skeleton,
-  StatusBadge,
   Tabs,
+  TabPanel,
   Textarea,
-  type StatusBadgeProps,
-} from '../../design-system';
+} from '../../ui';
+import { useFieldGroupProps } from '../../ui/primitives/fieldContext';
 import { useEntitlements } from '../../hooks/useEntitlements';
 import {
   getMyFeedback,
@@ -71,7 +74,7 @@ export interface FeedbackModalProps {
   highlightId?: number | null;
 }
 
-/** An attachment being composed on the Send tab - local until uploaded. */
+/** An attachment being composed on the Send tab — local until uploaded. */
 interface ComposeAttachment {
   readonly id: number;
   name: string;
@@ -107,39 +110,35 @@ const SEVERITIES: ReadonlyArray<{ id: FeedbackSeverityId; label: string }> = [
 
 const TYPE_LABELS: Record<string, string> = Object.fromEntries(TYPES.map((t) => [t.id, t.label]));
 const AREA_LABELS: Record<string, string> = Object.fromEntries(AREAS.map((a) => [a.id, a.label]));
-const SEVERITY_LABELS: Record<string, string> = Object.fromEntries(SEVERITIES.map((s) => [s.id, s.label]));
+const SEVERITY_LABELS: Record<string, string> = Object.fromEntries(
+  SEVERITIES.map((s) => [s.id, s.label]),
+);
 
-// @i18n-exempt: resolved at the render site from the status key
-// (`shell.feedbackModal.statuses.<status>`); the English here is that
-// lookup's fallback.
+/**
+ * No `accent` tone here on purpose — `Badge`'s own vocabulary deliberately has
+ * none. "In progress" is carried by the spinning `Loader2` inside the badge,
+ * not by a sixth colour.
+ */
 const STATUS_META: Record<
   PlatformFeedbackItem['status'],
-  { label: string; tone: NonNullable<StatusBadgeProps['tone']>; icon: LucideIcon; spin?: boolean }
+  { label: string; tone: BadgeTone; icon: LucideIcon; spin?: boolean }
 > = {
   open: { label: 'Open', tone: 'warning', icon: Clock },
-  in_progress: { label: 'In progress', tone: 'accent', icon: Loader2, spin: true },
+  in_progress: { label: 'In progress', tone: 'neutral', icon: Loader2, spin: true },
   resolved: { label: 'Resolved', tone: 'success', icon: CheckCircle2 },
   closed: { label: 'Closed', tone: 'neutral', icon: Archive },
 };
 
-const SEVERITY_TONE: Record<FeedbackSeverityId, NonNullable<StatusBadgeProps['tone']>> = {
+const SEVERITY_TONE: Record<FeedbackSeverityId, BadgeTone> = {
   low: 'neutral',
-  medium: 'accent',
+  medium: 'neutral',
   high: 'warning',
   critical: 'danger',
 };
 
-/** ISO timestamp → "Jul 16, 2026", or "" if absent/invalid. */
-function formatDate(iso: string | null): string {
-  if (!iso) return '';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '';
-  return i18nFormatDate(date, { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
 function MetaPill({ children }: { children: ReactElement | string }): ReactElement {
   return (
-    <span className="rounded-full bg-[var(--ds-bg-sunken)] px-2 py-0.5 text-[11px] text-[var(--ds-text-muted)]">
+    <span className="rounded-full bg-surface-sunken px-2 py-0.5 text-2xs text-text-secondary">
       {children}
     </span>
   );
@@ -150,6 +149,7 @@ function AttachmentThumbs({
 }: {
   attachments: PlatformFeedbackAttachment[] | null;
 }): ReactElement | null {
+  const { t } = useTranslation();
   if (!attachments?.length) return null;
   return (
     <div className="mt-3 flex flex-wrap gap-2">
@@ -159,8 +159,8 @@ function AttachmentThumbs({
           href={att.url}
           target="_blank"
           rel="noopener noreferrer"
-          title={att.name || translateNow('shell.attachment') || 'Attachment'}
-          className="relative h-16 w-16 shrink-0 overflow-hidden rounded-[var(--ds-radius-md)] border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)]"
+          title={att.name || t('shell.attachment') || 'Attachment'}
+          className="relative h-16 w-16 shrink-0 overflow-hidden rounded-md border border-border bg-surface-sunken"
         >
           <img src={att.url} alt={att.name || 'attachment'} className="h-full w-full object-cover" loading="lazy" />
         </a>
@@ -208,21 +208,13 @@ function MyFeedbackList({ highlightId }: MyFeedbackListProps): ReactElement {
   }
 
   if (error) {
-    return (
-      <div className="flex flex-col items-center justify-center py-14 text-center">
-        <AlertCircle size={22} className="text-[var(--ds-danger)]" aria-hidden="true" />
-        <p className="mt-3 text-sm text-[var(--ds-text-muted)]">{error}</p>
-        <Button variant="outline" size="sm" onClick={() => void load()} className="mt-4">
-          <RefreshCw size={13} aria-hidden="true" />
-          {t('settings.page.tryAgain') || 'Try again'}
-        </Button>
-      </div>
-    );
+    return <ErrorState size="panel" description={error} onRetry={() => void load()} />;
   }
 
   if (items.length === 0) {
     return (
       <EmptyState
+        size="panel"
         icon={Inbox}
         title={t('shell.feedbackModal.emptyTitle') || 'No feedback yet'}
         description={t('shell.onceYouSendFeedbackYoull') || 'Once you send feedback, you\'ll see its status and our response here.'}
@@ -239,62 +231,51 @@ function MyFeedbackList({ highlightId }: MyFeedbackListProps): ReactElement {
           <li
             key={item.id}
             className={cn(
-              'rounded-[var(--ds-radius-lg)] border bg-[var(--ds-bg-surface)] p-4',
-              highlightId === item.id ? 'border-[var(--ds-accent)] shadow-[0_0_0_1px_var(--ds-ring)]' : 'border-[var(--ds-border)]',
+              'rounded-lg border bg-surface p-4',
+              highlightId === item.id ? 'border-accent-500 shadow-[0_0_0_1px_var(--color-accent-500)]' : 'border-border',
             )}
           >
             <div className="flex items-start justify-between gap-3">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <StatusBadge tone={meta.tone}>
-                  <StatusIcon size={11} className={meta.spin ? 'animate-spin' : ''} aria-hidden="true" />
-                  {t(`shell.feedbackModal.statuses.${item.status}`) || meta.label}
-                </StatusBadge>
-                {item.type && (
-                  <MetaPill>
-                    {t(`shell.feedbackModal.types.${item.type}`) || TYPE_LABELS[item.type] || item.type}
-                  </MetaPill>
-                )}
-                {item.area && (
-                  <MetaPill>
-                    {t(`shell.feedbackModal.areas.${item.area}`) || AREA_LABELS[item.area] || item.area}
-                  </MetaPill>
-                )}
-                {item.severity && (
-                  <StatusBadge tone={SEVERITY_TONE[item.severity]}>
-                    {t(`shell.feedbackModal.severities.${item.severity}`) ||
-                      SEVERITY_LABELS[item.severity] ||
-                      item.severity}
-                  </StatusBadge>
-                )}
+                <Badge tone={meta.tone}>
+                  <StatusIcon aria-hidden className={cn('h-icon-sm w-icon-sm', meta.spin && 'animate-spin')} />
+                  {meta.label}
+                </Badge>
+                {item.type ? <MetaPill>{TYPE_LABELS[item.type] ?? item.type}</MetaPill> : null}
+                {item.area ? <MetaPill>{AREA_LABELS[item.area] ?? item.area}</MetaPill> : null}
+                {item.severity ? (
+                  <Badge tone={SEVERITY_TONE[item.severity]}>
+                    {SEVERITY_LABELS[item.severity] ?? item.severity}
+                  </Badge>
+                ) : null}
               </div>
-              <span className="shrink-0 text-[11px] tabular-nums text-[var(--ds-text-subtle)]">
+              <span className="figure shrink-0 text-2xs text-text-tertiary">
                 {formatDate(item.created_at)}
               </span>
             </div>
 
-            <p className="mt-3 whitespace-pre-wrap text-[13px] leading-relaxed text-[var(--ds-text)]">
+            <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-text-primary">
               {item.message}
             </p>
 
             <AttachmentThumbs attachments={item.attachments} />
 
-            {item.admin_response && (
-              <div className="mt-3 rounded-[var(--ds-radius-md)] border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] p-3">
-                <p className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--ds-accent-text)]">
-                  <MessageSquare size={11} aria-hidden="true" />
-                  {t('shell.feedbackModal.response') || 'Response from OyeChats'}
+            {item.admin_response ? (
+              <div className="mt-3 rounded-md border border-accent-500 bg-accent-50 p-3">
+                <p className="mb-1.5 flex items-center gap-1.5 text-2xs font-semibold uppercase tracking-eyebrow text-accent-700">
+                  <MessageSquare aria-hidden className="h-icon-sm w-icon-sm" />
+                  {t('shell.responseFromOyechats') || 'Response from OyeChats'}
                 </p>
-                <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-[var(--ds-text)]">
+                <p className="whitespace-pre-wrap text-sm leading-relaxed text-text-primary">
                   {item.admin_response}
                 </p>
-                {item.resolved_at && (
-                  <p className="mt-2 text-[11px] tabular-nums text-[var(--ds-text-subtle)]">
-                    {t('shell.feedbackModal.resolvedAt', { date: formatDate(item.resolved_at) }) ||
-                      `Resolved ${formatDate(item.resolved_at)}`}
+                {item.resolved_at ? (
+                  <p className="figure mt-2 text-2xs text-text-tertiary">
+                    Resolved {formatDate(item.resolved_at)}
                   </p>
-                )}
+                ) : null}
               </div>
-            )}
+            ) : null}
           </li>
         );
       })}
@@ -313,10 +294,119 @@ function buildContext(pathname: string, search: string, planName: string): Recor
 }
 
 /**
- * FeedbackModal - the admin → OyeChats product-feedback dialog (mandate DS
- * component, built on the `Modal` primitive). Two tabs: compose new feedback
- * (type/area/severity/message/screenshots) and track the status of feedback
- * already sent. Ported 1:1 in behavior from the legacy `components/FeedbackModal.jsx`.
+ * A required, initially-unselected choice of a handful of icon-and-word
+ * options — what `RadioCards` is for a longer sentence and `SegmentedControl`
+ * is for a filter that is always active. Neither fits a value that starts
+ * `null`, so this is the console's third radiogroup, built the same way as
+ * the other two: one tab stop, arrow keys inside it, and a real ARIA name it
+ * takes from the surrounding `Field`.
+ */
+function TypePicker({
+  value,
+  onChange,
+}: {
+  value: FeedbackTypeId | null;
+  onChange: (value: FeedbackTypeId) => void;
+}): ReactElement {
+  const group = useFieldGroupProps();
+  const refs = useRef<Array<HTMLButtonElement | null>>([]);
+  const focusIndex = Math.max(
+    TYPES.findIndex((t) => t.id === value),
+    0,
+  );
+
+  function focus(index: number): void {
+    const option = TYPES[index];
+    if (!option) return;
+    refs.current[index]?.focus();
+    onChange(option.id);
+  }
+
+  function onKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>, index: number): void {
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+      event.preventDefault();
+      focus((index + 1) % TYPES.length);
+    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      focus((index - 1 + TYPES.length) % TYPES.length);
+    }
+  }
+
+  return (
+    <div
+      role="radiogroup"
+      aria-labelledby={group['aria-labelledby']}
+      aria-describedby={group['aria-describedby']}
+      className="flex flex-wrap gap-2"
+    >
+      {TYPES.map((option, index) => {
+        const Icon = option.icon;
+        const selected = value === option.id;
+        return (
+          <button
+            key={option.id}
+            ref={(node) => {
+              refs.current[index] = node;
+            }}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            tabIndex={index === focusIndex ? 0 : -1}
+            onClick={() => onChange(option.id)}
+            onKeyDown={(event) => onKeyDown(event, index)}
+            className={cn(
+              'flex items-center gap-2 rounded-md border px-3.5 py-2.5 text-xs font-medium transition-colors',
+              selected
+                ? 'border-accent-500 bg-accent-50 text-text-primary shadow-[inset_0_0_0_1px_var(--color-accent-500)]'
+                : 'border-border-strong bg-surface text-text-secondary hover:bg-surface-hover',
+            )}
+          >
+            <Icon aria-hidden className={cn('h-icon-sm w-icon-sm', selected ? 'text-accent-600' : 'text-text-tertiary')} />
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** An optional, deselectable choice — click the selected pill again for "unset". */
+function SeverityPicker({
+  value,
+  onChange,
+}: {
+  value: FeedbackSeverityId | null;
+  onChange: (value: FeedbackSeverityId | null) => void;
+}): ReactElement {
+  return (
+    <div className="grid grid-cols-4 gap-2">
+      {SEVERITIES.map((option) => {
+        const selected = value === option.id;
+        return (
+          <button
+            key={option.id}
+            type="button"
+            aria-pressed={selected}
+            onClick={() => onChange(selected ? null : option.id)}
+            className={cn(
+              'h-control-md rounded-md border text-center text-xs font-medium transition-colors',
+              selected
+                ? 'border-accent-500 bg-accent-50 text-text-primary shadow-[inset_0_0_0_1px_var(--color-accent-500)]'
+                : 'border-border-strong bg-surface text-text-secondary hover:bg-surface-hover',
+            )}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * The admin → OyeChats product-feedback dialog. Two tabs: compose new
+ * feedback (type, area, severity, message, screenshots) and track feedback
+ * already sent.
  */
 export function FeedbackModal({
   open,
@@ -336,15 +426,14 @@ export function FeedbackModal({
   const [attachments, setAttachments] = useState<ComposeAttachment[]>([]);
   const [formError, setFormError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  // Mirror the latest attachments in a ref so the unmount-only cleanup effect
-  // revokes the URLs actually held at unmount - not the empty mount-render
-  // array it would otherwise close over (leaking every preview URL on a
-  // close-without-submit).
+  // Mirrors the latest attachments so the unmount-only cleanup effect revokes
+  // whatever is actually held at unmount, not the empty mount-render array it
+  // would otherwise close over — which leaked every preview URL on a
+  // close-without-submit.
   const attachmentsRef = useRef(attachments);
   attachmentsRef.current = attachments;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uidRef = useRef(0);
-  const typeButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   const addFiles = useCallback((files: FileList | File[] | null): void => {
     const incoming = Array.from(files ?? []);
@@ -396,11 +485,6 @@ export function FeedbackModal({
     });
   }, []);
 
-  const handleFileChange = (event: ChangeEvent<HTMLInputElement>): void => {
-    addFiles(event.target.files);
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  };
-
   // Paste-anywhere: a document-level listener active only while the modal is
   // open and on the compose tab catches screenshots regardless of focus.
   useEffect(() => {
@@ -410,7 +494,10 @@ export function FeedbackModal({
         .filter((item) => item.type.startsWith('image/'))
         .map((item) => item.getAsFile())
         .filter((file): file is File => file !== null)
-        .map((file, index) => new File([file], file.name || `screenshot_${Date.now()}_${index}.png`, { type: file.type }));
+        .map(
+          (file, index) =>
+            new File([file], file.name || `screenshot_${Date.now()}_${index}.png`, { type: file.type }),
+        );
       if (imageFiles.length > 0) {
         event.preventDefault();
         addFiles(imageFiles);
@@ -420,7 +507,7 @@ export function FeedbackModal({
     return () => document.removeEventListener('paste', onPaste);
   }, [open, activeTab, addFiles]);
 
-  // Revoke any object URLs still held when the modal unmounts. Reads through
+  // Revokes any object URLs still held when the modal unmounts. Reads through
   // the ref so it revokes whatever attachments exist at unmount, not the
   // mount-render snapshot.
   useEffect(
@@ -471,42 +558,18 @@ export function FeedbackModal({
     }
   };
 
-  const selectedTypeIndex = TYPES.findIndex((t) => t.id === type);
-  const typeFocusIndex = selectedTypeIndex >= 0 ? selectedTypeIndex : 0;
-
-  function focusType(index: number): void {
-    const option = TYPES[index];
-    if (!option) return;
-    typeButtonRefs.current[index]?.focus();
-    setType(option.id);
-  }
-
-  function handleTypeKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>, index: number): void {
-    const count = TYPES.length;
-    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
-      event.preventDefault();
-      focusType((index + 1) % count);
-    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
-      event.preventDefault();
-      focusType((index - 1 + count) % count);
-    }
-  }
-
-  const tabs = [
-    { key: 'send', label: t('shell.feedbackModal.tabSend') || 'Send feedback' },
-    { key: 'mine', label: t('shell.feedbackModal.tabMine') || 'My feedback' },
-  ] as const;
-
   const description =
     activeTab === 'send'
       ? t('shell.feedbackModal.descSend') || "We'd love to hear your thoughts and help us improve OyeChats."
       : t('shell.feedbackModal.descMine') || 'Track the status of feedback you’ve sent and read our responses.';
 
   return (
-    <Modal
+    <Dialog
       open={open}
-      onClose={onClose}
-      title={t('shell.feedbackModal.title') || 'Feedback'}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      title={t('shell.feedbackTitle') || 'Feedback'}
       description={description}
       size="md"
       footer={
@@ -515,18 +578,13 @@ export function FeedbackModal({
             <Button variant="ghost" onClick={onClose}>
               {t('common.cancel') || 'Cancel'}
             </Button>
-            <Button onClick={() => void handleSubmit()} disabled={!canSubmit}>
-              {isSubmitting ? (
-                <>
-                  <Loader2 size={14} className="animate-spin" aria-hidden="true" />
-                  {t('shell.feedback.sending') || 'Sending…'}
-                </>
-              ) : uploading ? (
+            <Button onClick={() => void handleSubmit()} disabled={!canSubmit} loading={isSubmitting}>
+              {uploading && !isSubmitting ? (
                 t('shell.uploading') || 'Uploading…'
               ) : (
                 <>
-                  {t('shell.feedbackModal.submit') || 'Send feedback'}
-                  <ArrowRight size={14} aria-hidden="true" />
+                  {t('shell.sendFeedback') || 'Send feedback'}
+                  <ArrowRight aria-hidden className="h-icon-sm w-icon-sm" />
                 </>
               )}
             </Button>
@@ -535,125 +593,39 @@ export function FeedbackModal({
       }
     >
       <Tabs
-        tabs={tabs}
+        label={t('shell.feedbackTitle') || 'Feedback'}
         value={activeTab}
-        onChange={(key) => setActiveTab(key as FeedbackTab)}
-        ariaLabel={t('shell.feedback.label') || 'Feedback'}
-        className="mb-5"
-      />
-
-      <div role="tabpanel" id={`tabpanel-${activeTab}`} aria-labelledby={`tab-${activeTab}`}>
-        {activeTab === 'send' ? (
+        onValueChange={(value) => setActiveTab(value as FeedbackTab)}
+        items={[
+          { value: 'send', label: t('shell.sendFeedback') || 'Send feedback' },
+          { value: 'mine', label: t('shell.myFeedback') || 'My feedback' },
+        ]}
+      >
+        <TabPanel value="send" className="pt-5">
           <div className="space-y-5">
-            {/* Type (required) */}
-            <div className="space-y-2.5">
-              <label className="block text-[13px] font-semibold text-[var(--ds-text)]">
-                {t('shell.feedbackModal.typeQuestion') || 'What type of feedback is this?'}{' '}
-                <span className="font-normal text-[var(--ds-text-subtle)]">
-                  {t('shell.feedbackModal.required') || '(required)'}
-                </span>
-              </label>
-              <div role="radiogroup" aria-label={t('shell.feedbackModal.typeLabel') || 'Feedback type'} className="flex flex-wrap gap-2">
-                {TYPES.map((option, index) => {
-                  const Icon = option.icon;
-                  const selected = type === option.id;
-                  const focusable = index === typeFocusIndex;
-                  return (
-                    <button
-                      key={option.id}
-                      ref={(node) => {
-                        typeButtonRefs.current[index] = node;
-                      }}
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      tabIndex={focusable ? 0 : -1}
-                      onClick={() => setType(option.id)}
-                      onKeyDown={(event) => handleTypeKeyDown(event, index)}
-                      className={cn(
-                        'flex items-center gap-2 rounded-[var(--ds-radius-lg)] border px-3.5 py-2.5 text-xs font-medium transition-colors',
-                        'focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
-                        selected
-                          ? 'border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] text-[var(--ds-text)]'
-                          : 'border-[var(--ds-border)] bg-[var(--ds-bg-surface)] text-[var(--ds-text-muted)] hover:bg-[var(--ds-bg-hover)]',
-                      )}
-                    >
-                      <Icon size={14} className={selected ? 'text-[var(--ds-accent-text)]' : 'text-[var(--ds-text-subtle)]'} aria-hidden="true" />
-                      {t(`shell.feedbackModal.types.${option.id}`) || option.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+            <Field label={t('shell.whatTypeOfFeedbackIs') || 'What type of feedback is this?'} required>
+              <TypePicker value={type} onChange={setType} />
+            </Field>
 
-            {/* Area (optional) */}
-            <div className="space-y-2">
-              <label htmlFor="fb-area" className="block text-[13px] font-semibold text-[var(--ds-text)]">
-                {t('shell.feedbackModal.area') || 'Area'}{' '}
-                <span className="font-normal text-[var(--ds-text-subtle)]">
-                  {t('shell.feedbackModal.optional') || '(optional)'}
-                </span>
-              </label>
+            <Field label={t('shell.area') || 'Area'} optional>
               <Select
-                id="fb-area"
+                label={t('shell.area') || 'Area'}
                 value={area}
-                onChange={(next) => setArea(next as FeedbackAreaId | '')}
-                placeholder={t('shell.feedbackModal.areaUnset') || 'Not sure / unspecified'}
-                options={[
-                  { value: '', label: t('shell.notSureUnspecified') || 'Not sure / unspecified' },
-                  ...AREAS.map((option) => ({
-                    value: option.id,
-                    label: t(`shell.feedbackModal.areas.${option.id}`) || option.label,
-                  })),
-                ]}
+                onValueChange={(next) => setArea(next as FeedbackAreaId | '')}
+                emptyOption="Not sure / unspecified"
+                options={AREAS.map((option) => ({ value: option.id, label: option.label }))}
               />
-            </div>
+            </Field>
 
-            {/* Severity (bug-only) */}
-            {type === 'bug' && (
-              <div className="space-y-2">
-                <label className="block text-[13px] font-semibold text-[var(--ds-text)]">
-                  {t('shell.feedbackModal.severity') || 'Severity'}{' '}
-                  <span className="font-normal text-[var(--ds-text-subtle)]">
-                    {t('shell.feedbackModal.optional') || '(optional)'}
-                  </span>
-                </label>
-                <div className="grid grid-cols-4 gap-2">
-                  {SEVERITIES.map((option) => {
-                    const selected = severity === option.id;
-                    return (
-                      <button
-                        key={option.id}
-                        type="button"
-                        aria-pressed={selected}
-                        onClick={() => setSeverity(selected ? null : option.id)}
-                        className={cn(
-                          'h-9 rounded-[var(--ds-radius-md)] border text-center text-[12px] font-medium transition-colors',
-                          'focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
-                          selected
-                            ? 'border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] text-[var(--ds-text)]'
-                            : 'border-[var(--ds-border)] bg-[var(--ds-bg-surface)] text-[var(--ds-text-muted)] hover:bg-[var(--ds-bg-hover)]',
-                        )}
-                      >
-                        {t(`shell.feedbackModal.severities.${option.id}`) || option.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
+            {type === 'bug' ? (
+              <Field label={t('shell.severity') || 'Severity'} optional>
+                <SeverityPicker value={severity} onChange={setSeverity} />
+              </Field>
+            ) : null}
 
-            {/* Message + attachments */}
-            <div className="space-y-2">
-              <label htmlFor="fb-message" className="block text-[13px] font-semibold text-[var(--ds-text)]">
-                {t('shell.feedbackModal.describe') || 'Describe your feedback'}{' '}
-                <span className="font-normal text-[var(--ds-text-subtle)]">
-                  {t('shell.feedbackModal.required') || '(required)'}
-                </span>
-              </label>
-              <div className="overflow-hidden rounded-[var(--ds-radius-lg)] border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] transition-colors focus-within:border-[var(--ds-accent)] focus-within:shadow-[0_0_0_1px_var(--ds-ring)]">
+            <Field label={t('shell.describeYourFeedback') || 'Describe your feedback'} required>
+              <div className="overflow-hidden rounded-md border border-border-strong bg-surface transition-colors focus-within:border-accent-500 focus-within:shadow-[0_0_0_1px_var(--color-accent-500)]">
                 <Textarea
-                  id="fb-message"
                   value={message}
                   onChange={(event) => setMessage(event.target.value)}
                   placeholder={
@@ -664,12 +636,15 @@ export function FeedbackModal({
                   autoFocus
                 />
 
-                <div className="space-y-2.5 border-t border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] px-4 py-2.5">
+                <div className="space-y-2.5 border-t border-border bg-surface-sunken px-4 py-2.5">
                   <div className="flex items-center gap-2">
                     <input
                       type="file"
                       ref={fileInputRef}
-                      onChange={handleFileChange}
+                      onChange={(event) => {
+                        addFiles(event.target.files);
+                        if (fileInputRef.current) fileInputRef.current.value = '';
+                      }}
                       accept="image/*"
                       multiple
                       className="hidden"
@@ -678,80 +653,74 @@ export function FeedbackModal({
                       type="button"
                       onClick={() => fileInputRef.current?.click()}
                       disabled={attachments.length >= MAX_ATTACHMENTS}
-                      className="inline-flex h-8 items-center gap-1.5 rounded-[var(--ds-radius-md)] px-2.5 text-[12px] text-[var(--ds-text-muted)] transition-colors hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)] disabled:cursor-not-allowed disabled:opacity-40"
-                      title={
-                    t('shell.feedbackModal.attachHint') ||
-                    'Attach screenshots or paste from clipboard (max 5, 10MB each)'
-                  }
+                      className="inline-flex h-control-sm items-center gap-1.5 rounded-md px-2.5 text-xs text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary disabled:cursor-not-allowed disabled:text-text-disabled disabled:hover:bg-transparent"
+                      title={t('shell.attachScreenshotsOrPasteFrom') || 'Attach screenshots or paste from clipboard (max 5, 10MB each)'}
                     >
-                      <ImagePlus size={15} aria-hidden="true" />
-                      {t('shell.feedbackModal.addScreenshot') || 'Add screenshot'}
+                      <ImagePlus aria-hidden className="h-icon-sm w-icon-sm" />
+                      {t('shell.addScreenshot') || 'Add screenshot'}
                     </button>
-                    <span className="text-[11px] text-[var(--ds-text-subtle)]">
-                      {t('shell.feedbackModal.orPasteFromClipboard') || 'or paste from clipboard'}
-                    </span>
+                    <span className="text-2xs text-text-tertiary">{t('shell.orPasteFromClipboard') || 'or paste from clipboard'}</span>
                   </div>
 
-                  {attachments.length > 0 && (
+                  {attachments.length > 0 ? (
                     <div className="flex flex-wrap gap-2">
                       {attachments.map((att) => (
                         <div
                           key={att.id}
-                          className="group relative h-16 w-16 overflow-hidden rounded-[var(--ds-radius-md)] border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)]"
+                          className="group relative h-16 w-16 overflow-hidden rounded-md border border-border bg-surface-sunken"
                         >
-                                          <img src={att.previewUrl} alt={att.name} className="h-full w-full object-cover" />
-                          {att.status === 'uploading' && (
-                            <div className="absolute inset-0 flex items-center justify-center bg-[var(--ds-overlay)]">
-                              <Loader2 size={16} className="animate-spin text-white" aria-hidden="true" />
+                          <img src={att.previewUrl} alt={att.name} className="h-full w-full object-cover" />
+                          {att.status === 'uploading' ? (
+                            <div className="absolute inset-0 flex items-center justify-center bg-overlay">
+                              <Loader2 aria-hidden className="h-icon-sm w-icon-sm animate-spin text-text-inverse" />
                             </div>
-                          )}
-                          {att.status === 'error' && (
+                          ) : null}
+                          {att.status === 'error' ? (
                             <div
-                              className="absolute inset-0 flex items-center justify-center bg-[var(--ds-danger-soft)]"
-                              title={t('shell.feedbackModal.uploadFailed') || 'Upload failed'}
+                              className="absolute inset-0 flex items-center justify-center bg-danger-tint"
+                              title={t('shell.uploadFailed') || 'Upload failed'}
                             >
-                              <AlertCircle size={16} className="text-[var(--ds-danger)]" aria-hidden="true" />
+                              <AlertCircle aria-hidden className="h-icon-sm w-icon-sm text-danger" />
                             </div>
-                          )}
+                          ) : null}
                           <button
                             type="button"
                             onClick={() => removeAttachment(att.id)}
                             aria-label={`Remove ${att.name}`}
-                            className="absolute right-0.5 top-0.5 rounded-full bg-black/60 p-0.5 text-white opacity-0 transition-opacity hover:bg-[var(--ds-danger)] group-hover:opacity-100"
+                            className="absolute right-0.5 top-0.5 rounded-full bg-ink/60 p-0.5 text-text-inverse opacity-0 transition-opacity hover:bg-danger group-hover:opacity-100"
                           >
-                            <X size={11} aria-hidden="true" />
+                            <X aria-hidden className="h-3 w-3" />
                           </button>
                         </div>
                       ))}
                     </div>
-                  )}
+                  ) : null}
                 </div>
               </div>
-            </div>
+            </Field>
 
-            {formError && (
-              <div className="flex items-center gap-2 rounded-[var(--ds-radius-lg)] border border-[var(--ds-danger)] bg-[var(--ds-danger-soft)] p-3 text-xs text-[var(--ds-danger)]">
-                <AlertCircle size={14} className="shrink-0" aria-hidden="true" />
-                <span>{formError}</span>
-              </div>
-            )}
+            {formError ? (
+              <Alert tone="danger" live>
+                {formError}
+              </Alert>
+            ) : null}
 
-            {/* Privacy note */}
             <div className="flex items-start gap-2.5 px-0.5">
-              <Info size={16} className="mt-0.5 shrink-0 text-[var(--ds-text-subtle)]" aria-hidden="true" />
-              <p className="text-xs leading-relaxed text-[var(--ds-text-muted)]">
-                {t('shell.feedbackModal.noSecrets') ||
-                'Don’t include passwords, API keys, or any sensitive information.'}
+              <Info aria-hidden className="mt-0.5 h-icon-sm w-icon-sm shrink-0 text-text-tertiary" />
+              <p className="text-xs leading-relaxed text-text-secondary">
+                {t('shell.dontIncludePasswordsApiKeys') || 'Don\'t include passwords, API keys, or any sensitive information.'}
                 <br />
                 {t('shell.feedbackModal.weAttach') ||
                 'We attach your current page, app version, plan, and browser to help us triage.'}
               </p>
             </div>
           </div>
-        ) : (
+        </TabPanel>
+
+        <TabPanel value="mine" className="pt-5">
           <MyFeedbackList highlightId={highlightId} />
-        )}
-      </div>
-    </Modal>
+        </TabPanel>
+      </Tabs>
+    </Dialog>
   );
 }

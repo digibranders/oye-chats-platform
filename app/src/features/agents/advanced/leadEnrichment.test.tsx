@@ -1,88 +1,43 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { LeadEnrichmentSection } from './LeadEnrichmentSection';
-import { parseSettings, toSettingsPayload } from './advanced.config';
 
 /**
- * The two metered-enrichment toggles, on the side of the wire that can
- * PERSIST a wrong value.
+ * The two metered enrichments, on the side of the wire that can PERSIST a wrong
+ * value.
  *
- * A review mutated both parses to `=== true` AND deleted
- * `company_lookup_enabled` from the save payload, and all 166 tests stayed
- * green. `features/agents/advanced/` had no test file at all. That is the
- * dangerous direction: the Advanced tab renders every switch OFF, the customer
- * edits an unrelated setting and hits Save, and the PATCH writes
- * `false, false`. A paying customer silently loses both paid enrichments and
- * nothing in lint, tsc, build or vitest says a word.
+ * A review once mutated both parses AND deleted `company_lookup_enabled` from
+ * the save payload, and every test stayed green — `features/agents/advanced/`
+ * had no test file at all. That is the dangerous direction: the page renders
+ * every switch off, the customer edits something unrelated, presses Save, and
+ * the PATCH writes `false, false`. A paying customer loses both paid
+ * enrichments and nothing in lint, tsc, build or vitest says a word.
+ *
+ * The parse and payload halves now live in `qualification.draft.test.ts`; this
+ * file covers what the control itself tells the customer.
  */
 
-vi.mock('../../../context/UpgradeModalContext', () => ({
-  useUpgradeModal: () => ({ openUpgradeModal: vi.fn() }),
-}));
-
-describe('advanced.config parsing of the enrichment toggles', () => {
-  it('reads an ABSENT field as OFF, matching the column default', () => {
-    /* `=== true`, not `!== false`. Both columns default OFF server-side, so an
-       older API build or a partial payload must read as "switched off".
-       Enrichment stays off until the customer explicitly opts in. */
-    const draft = parseSettings({});
-
-    expect(draft.emailVerificationEnabled).toBe(false);
-    expect(draft.companyLookupEnabled).toBe(false);
-  });
-
-  it('reads an explicit false as OFF', () => {
-    const draft = parseSettings({
-      email_verification_enabled: false,
-      company_lookup_enabled: false,
-    });
-
-    expect(draft.emailVerificationEnabled).toBe(false);
-    expect(draft.companyLookupEnabled).toBe(false);
-  });
-
-  it('reads an explicit true as ON', () => {
-    const draft = parseSettings({
-      email_verification_enabled: true,
-      company_lookup_enabled: true,
-    });
-
-    expect(draft.emailVerificationEnabled).toBe(true);
-    expect(draft.companyLookupEnabled).toBe(true);
-  });
-
-  it('keeps the two toggles independent', () => {
-    const draft = parseSettings({
-      email_verification_enabled: false,
-      company_lookup_enabled: true,
-    });
-
-    expect(draft.emailVerificationEnabled).toBe(false);
-    expect(draft.companyLookupEnabled).toBe(true);
-  });
-});
+const base = {
+  emailVerificationEnabled: true,
+  onToggleEmailVerification: vi.fn(),
+  emailVerificationPlanAllows: true,
+  companyLookupEnabled: true,
+  onToggleCompanyLookup: vi.fn(),
+  companyLookupPlanAllows: true,
+};
 
 describe('LeadEnrichmentSection', () => {
-  const base = {
-    emailVerificationEnabled: true,
-    onToggleEmailVerification: vi.fn(),
-    emailVerificationPlanAllows: true,
-    companyLookupEnabled: true,
-    onToggleCompanyLookup: vi.fn(),
-    companyLookupPlanAllows: true,
-  };
-
-  it('renders both enrichments as separate controls', () => {
+  it('renders both enrichments as separate switches', () => {
     render(<LeadEnrichmentSection {...base} />);
 
-    expect(screen.getByRole('switch', { name: /email verification/i })).toBeInTheDocument();
-    expect(screen.getByRole('switch', { name: /company lookup/i })).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: /Email verification/i })).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: /Company lookup/i })).toBeInTheDocument();
   });
 
   it('states the company-lookup charge as a CONDITION, not a flat price', () => {
-    /* Most visitors resolve to a consumer ISP and cost nothing. A bare
-       "10 credits" reads as 10 per visitor, which is what it would have been
-       before the charge moved behind a successful identification. */
+    /* Most visitors resolve to a consumer ISP and name no employer, and those
+       cost nothing. A bare "10 credits" reads as 10 per visitor. */
     render(<LeadEnrichmentSection {...base} />);
 
     expect(screen.getByText(/only when a company is found/i)).toBeInTheDocument();
@@ -91,42 +46,65 @@ describe('LeadEnrichmentSection', () => {
   it('disables a switch the plan does not include, and names the plan', () => {
     render(<LeadEnrichmentSection {...base} companyLookupPlanAllows={false} />);
 
-    expect(screen.getByRole('switch', { name: /company lookup/i })).toBeDisabled();
-    expect(screen.getByRole('switch', { name: /email verification/i })).not.toBeDisabled();
-    expect(screen.getByText(/Professional plan/i)).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: /Company lookup/i })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
+    expect(screen.getByRole('switch', { name: /Email verification/i })).not.toHaveAttribute(
+      'aria-disabled',
+    );
+    // The plan name alone, beside a disabled switch — `Badge` is
+    // `whitespace-nowrap`, so "the Standard and Professional plans" rendered as
+    // a ~290px unbreakable pill.
+    expect(screen.getByText('Professional')).toBeInTheDocument();
   });
 
-  it('toggling one does not touch the other', () => {
+  it('shows a locked switch as OFF without clearing the stored value', async () => {
+    /* On a plan without the feature the switch does nothing, so it reads off
+       whatever is stored. The stored value is left alone so it comes back
+       intact on upgrade — hence no callback fires. */
+    const onToggle = vi.fn();
+    render(
+      <LeadEnrichmentSection
+        {...base}
+        companyLookupEnabled
+        companyLookupPlanAllows={false}
+        onToggleCompanyLookup={onToggle}
+      />,
+    );
+
+    const locked = screen.getByRole('switch', { name: /Company lookup/i });
+    expect(locked).toHaveAttribute('aria-checked', 'false');
+    await userEvent.click(locked);
+    expect(onToggle).not.toHaveBeenCalled();
+  });
+
+  it('toggling one does not touch the other', async () => {
     const onEmail = vi.fn();
     const onCompany = vi.fn();
     render(
-      <LeadEnrichmentSection {...base} onToggleEmailVerification={onEmail} onToggleCompanyLookup={onCompany} />,
+      <LeadEnrichmentSection
+        {...base}
+        onToggleEmailVerification={onEmail}
+        onToggleCompanyLookup={onCompany}
+      />,
     );
 
-    screen.getByRole('switch', { name: /company lookup/i }).click();
+    await userEvent.click(screen.getByRole('switch', { name: /Company lookup/i }));
 
     expect(onCompany).toHaveBeenCalledTimes(1);
     expect(onEmail).not.toHaveBeenCalled();
   });
-});
 
-describe('the Advanced save payload', () => {
-  /* The parse tests above cover READING. This covers WRITING, which is the
-     direction that persists a wrong value: a review deleted
-     `company_lookup_enabled` from the payload and every test stayed green, so
-     a paying customer's enrichment would be silently switched off the next
-     time they saved anything at all.
+  it('is reachable and operable from the keyboard', async () => {
+    const onEmail = vi.fn();
+    render(<LeadEnrichmentSection {...base} onToggleEmailVerification={onEmail} />);
 
-     The payload was an inline object literal in the save handler. It is now a
-     pure function so this can assert it directly rather than scraping source. */
-  it('sends both enrichment toggles, matching the draft', () => {
-    const payload = toSettingsPayload({
-      ...parseSettings({}),
-      emailVerificationEnabled: false,
-      companyLookupEnabled: true,
-    });
+    const toggle = screen.getByRole('switch', { name: /Email verification/i });
+    toggle.focus();
+    await userEvent.keyboard(' ');
 
-    expect(payload.email_verification_enabled).toBe(false);
-    expect(payload.company_lookup_enabled).toBe(true);
+    expect(onEmail).toHaveBeenCalledTimes(1);
+    expect(onEmail.mock.calls[0][0]).toBe(false);
   });
 });

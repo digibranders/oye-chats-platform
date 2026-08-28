@@ -74,7 +74,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.cache import PREFIX, get_redis
-from app.db.models import Bot, Plan
+from app.db.models import Bot, Client, Plan
 from app.services.plan_service import (
     get_account_subscription,
     get_client_subscription,
@@ -858,6 +858,24 @@ def _compute(
         entitled_seats = max(included_seats, paid_seats)
         limits["operators"] = min(operator_ceiling, entitled_seats)
 
+    # Crawl page/depth caps ride in `plan.limits` already (enforced in
+    # `document_routes.py`), but were never exposed here, so the console had
+    # no way to tell a customer their cap before a crawl was rejected for
+    # hitting it. Read-only pass-through — no adjustment needed, unlike
+    # `operators`/`bots`, because there is no purchasable add-on for either.
+    limits["max_crawl_pages"] = (plan.limits or {}).get("max_crawl_pages", UNLIMITED)
+    limits["max_crawl_depth"] = (plan.limits or {}).get("max_crawl_depth", UNLIMITED)
+
+    # `bots` is the plan's included count; `Client.extra_bot_seats` is what
+    # was purchased on top of it (POST /subscription/bot-seats, mirroring how
+    # `operators` above adds `subscription.operator_quantity`). Unlimited
+    # (`UNLIMITED`) stays unlimited regardless of what was purchased — there
+    # is nothing to add extra seats on top of.
+    bots_limit = limits.get("bots")
+    if isinstance(bots_limit, int) and bots_limit != UNLIMITED:
+        client_row = db_session.get(Client, client_id)
+        extra_seats = int(getattr(client_row, "extra_bot_seats", 0) or 0) if client_row is not None else 0
+        limits["bots"] = bots_limit + extra_seats
     # ``branding_removable`` is an ADD-ON, never a plan inclusion. No tier
     # grants it (every seeded plan carries ``false``, and migration
     # j4e5f6a7b8c9 revoked the historical Standard/Professional/Enterprise

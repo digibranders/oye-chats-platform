@@ -232,6 +232,177 @@ class TestLeadStatsUnread:
         assert response.json()["unread"] == 0
 
 
+# ── ?days= trailing-window filter ────────────────────────────────────────────
+
+
+class TestDaysFilter:
+    """`days` narrows every count in the strip to a trailing window, scoped on
+    `created_at` (not `last_active_at` — see the note beside the filter in
+    `lead_routes.py`). Omitted, both routes stay all-time (asserted by every
+    other test in this file, which calls neither route with `?days=`)."""
+
+    def test_list_leads_applies_created_at_filter_when_days_given(self, monkeypatch):
+        from app.api import lead_routes
+
+        bot = SimpleNamespace(id=1, client_id=1, bant_enabled=False, bant_config=None)
+        rows = [(_make_session_row("s1", lead_viewed_at=None), 1)]
+
+        session = MagicMock()
+        # execute() order in list_leads: client_bot_ids → results → bots → lead_infos
+        _install_scalars_chain(session, [1], rows, [bot], [])
+        monkeypatch.setattr(lead_routes, "get_session", lambda: _session_context(session))
+
+        response = TestClient(_build_app(auth_override=_client_auth())).get("/leads?days=7")
+
+        assert response.status_code == 200
+        results_stmt = session.execute.call_args_list[1][0][0]
+        assert "chat_sessions.created_at >=" in str(results_stmt)
+
+    def test_list_leads_has_no_created_at_filter_by_default(self, monkeypatch):
+        from app.api import lead_routes
+
+        bot = SimpleNamespace(id=1, client_id=1, bant_enabled=False, bant_config=None)
+        rows = [(_make_session_row("s1", lead_viewed_at=None), 1)]
+
+        session = MagicMock()
+        _install_scalars_chain(session, [1], rows, [bot], [])
+        monkeypatch.setattr(lead_routes, "get_session", lambda: _session_context(session))
+
+        response = TestClient(_build_app(auth_override=_client_auth())).get("/leads")
+
+        assert response.status_code == 200
+        results_stmt = session.execute.call_args_list[1][0][0]
+        assert "chat_sessions.created_at >=" not in str(results_stmt)
+
+    def test_stats_applies_created_at_filter_to_sessions_and_unread_when_days_given(self, monkeypatch):
+        from app.api import lead_routes
+
+        bot = SimpleNamespace(id=1, client_id=1, bant_enabled=False, bant_config=None)
+        sessions = [_make_session_row("s1", lead_viewed_at=None)]
+
+        session = MagicMock()
+        # execute() order in lead_stats: client_bot_ids → sessions → bots → unread
+        _install_scalars_chain(session, [1], sessions, [bot], 1)
+        monkeypatch.setattr(lead_routes, "get_session", lambda: _session_context(session))
+
+        response = TestClient(_build_app(auth_override=_client_auth())).get("/leads/stats?days=30")
+
+        assert response.status_code == 200
+        sessions_stmt = session.execute.call_args_list[1][0][0]
+        unread_stmt = session.execute.call_args_list[3][0][0]
+        assert "chat_sessions.created_at >=" in str(sessions_stmt)
+        assert "chat_sessions.created_at >=" in str(unread_stmt)
+
+    def test_stats_free_plan_applies_created_at_filter_when_days_given(self, monkeypatch):
+        from app.api import lead_routes
+
+        monkeypatch.setattr(lead_routes, "is_lead_intelligence_enabled", lambda *_a, **_k: False)
+        session = MagicMock()
+        # execute() order in the free branch: client_bot_ids → total scalar → unread scalar
+        _install_scalars_chain(session, [1], 2, 1)
+        monkeypatch.setattr(lead_routes, "get_session", lambda: _session_context(session))
+
+        response = TestClient(_build_app(auth_override=_client_auth())).get("/leads/stats?days=7")
+
+        assert response.status_code == 200
+        total_stmt = session.execute.call_args_list[1][0][0]
+        unread_stmt = session.execute.call_args_list[2][0][0]
+        assert "chat_sessions.created_at >=" in str(total_stmt)
+        assert "chat_sessions.created_at >=" in str(unread_stmt)
+
+    def test_days_out_of_range_is_rejected(self, monkeypatch):
+        from app.api import lead_routes
+
+        session = MagicMock()
+        monkeypatch.setattr(lead_routes, "get_session", lambda: _session_context(session))
+
+        response = TestClient(_build_app(auth_override=_client_auth())).get("/leads?days=0")
+
+        assert response.status_code == 422
+
+    def test_list_leads_applies_both_bounds_for_a_custom_range(self, monkeypatch):
+        """Regression: `to_date` alone reached neither bound on `lead_stats`
+        until `_windowed()` unified how every statement in this file applies
+        `since`/`until` — this pins the `<=` half specifically, on `list_leads`."""
+        from app.api import lead_routes
+
+        bot = SimpleNamespace(id=1, client_id=1, bant_enabled=False, bant_config=None)
+        rows = [(_make_session_row("s1", lead_viewed_at=None), 1)]
+
+        session = MagicMock()
+        _install_scalars_chain(session, [1], rows, [bot], [])
+        monkeypatch.setattr(lead_routes, "get_session", lambda: _session_context(session))
+
+        response = TestClient(_build_app(auth_override=_client_auth())).get(
+            "/leads?from_date=2026-08-01&to_date=2026-08-20"
+        )
+
+        assert response.status_code == 200
+        results_stmt = str(session.execute.call_args_list[1][0][0])
+        assert "chat_sessions.created_at >=" in results_stmt
+        assert "chat_sessions.created_at <=" in results_stmt
+
+    def test_list_leads_rejects_from_date_after_to_date(self, monkeypatch):
+        from app.api import lead_routes
+
+        session = MagicMock()
+        # A caller with no bots short-circuits to an empty result before the
+        # window is ever resolved, which would mask this check — give the
+        # caller a bot so the malformed range is actually reached.
+        _install_scalars_chain(session, [1])
+        monkeypatch.setattr(lead_routes, "get_session", lambda: _session_context(session))
+
+        response = TestClient(_build_app(auth_override=_client_auth())).get(
+            "/leads?from_date=2026-08-20&to_date=2026-08-01"
+        )
+
+        assert response.status_code == 422
+
+    def test_stats_applies_both_bounds_for_a_custom_range(self, monkeypatch):
+        """The bug this pins: `lead_stats` computed `since` from `days` only
+        and never read `from_date`/`to_date` at all, so a UI-driven custom
+        range silently fell back to the workspace's all-time totals while
+        `list_leads`, given the identical query string, filtered correctly."""
+        from app.api import lead_routes
+
+        bot = SimpleNamespace(id=1, client_id=1, bant_enabled=False, bant_config=None)
+        sessions = [_make_session_row("s1", lead_viewed_at=None)]
+
+        session = MagicMock()
+        _install_scalars_chain(session, [1], sessions, [bot], 1)
+        monkeypatch.setattr(lead_routes, "get_session", lambda: _session_context(session))
+
+        response = TestClient(_build_app(auth_override=_client_auth())).get(
+            "/leads/stats?from_date=2026-08-01&to_date=2026-08-20"
+        )
+
+        assert response.status_code == 200
+        sessions_stmt = str(session.execute.call_args_list[1][0][0])
+        unread_stmt = str(session.execute.call_args_list[3][0][0])
+        for stmt in (sessions_stmt, unread_stmt):
+            assert "chat_sessions.created_at >=" in stmt
+            assert "chat_sessions.created_at <=" in stmt
+
+    def test_stats_free_plan_applies_both_bounds_for_a_custom_range(self, monkeypatch):
+        from app.api import lead_routes
+
+        monkeypatch.setattr(lead_routes, "is_lead_intelligence_enabled", lambda *_a, **_k: False)
+        session = MagicMock()
+        _install_scalars_chain(session, [1], 2, 1)
+        monkeypatch.setattr(lead_routes, "get_session", lambda: _session_context(session))
+
+        response = TestClient(_build_app(auth_override=_client_auth())).get(
+            "/leads/stats?from_date=2026-08-01&to_date=2026-08-20"
+        )
+
+        assert response.status_code == 200
+        total_stmt = str(session.execute.call_args_list[1][0][0])
+        unread_stmt = str(session.execute.call_args_list[2][0][0])
+        for stmt in (total_stmt, unread_stmt):
+            assert "chat_sessions.created_at >=" in stmt
+            assert "chat_sessions.created_at <=" in stmt
+
+
 # ── POST /leads/{session_id}/view ────────────────────────────────────────────
 
 

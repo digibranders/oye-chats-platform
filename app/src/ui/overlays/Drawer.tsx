@@ -1,0 +1,140 @@
+import { type ReactNode } from 'react';
+import { Dialog as BaseDialog } from '@base-ui/react/dialog';
+import { X } from 'lucide-react';
+import { cn } from '../lib/cn';
+import { Button } from '../primitives/Button';
+import {
+  OVERLAY_BODY,
+  OVERLAY_DESCRIPTION,
+  OVERLAY_EYEBROW,
+  OVERLAY_FOOTER,
+  OVERLAY_SCRIM,
+  OVERLAY_TITLE,
+  OverlayHeader,
+} from './overlayParts';
+import { useTranslation } from '../../i18n/useTranslation';
+
+export type DrawerWidth = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
+
+/**
+ * `xs` is 320px, and it is a real size rather than a smaller `sm`.
+ *
+ * It is the width of a pane — the inbox's visitor panel, the column picker, a
+ * filter list — and those panes exist at that width in the page already. A
+ * drawer holding one at `sm` (448) either stretches the pane's own layout or
+ * leaves 128px of empty gutter beside it, which is why two surfaces put a
+ * fixed-width `div` inside a drawer and let the drawer's padding double up.
+ */
+const WIDTHS: Record<DrawerWidth, string> = {
+  xs: 'sm:max-w-80',
+  sm: 'sm:max-w-md',
+  md: 'sm:max-w-lg',
+  lg: 'sm:max-w-2xl',
+  xl: 'sm:max-w-3xl',
+};
+
+export interface DrawerProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  title: string;
+  /** A short line above the title, naming the record's type. */
+  eyebrow?: ReactNode;
+  description?: string;
+  children: ReactNode;
+  footer?: ReactNode;
+  width?: DrawerWidth;
+  /**
+   * Drops the body's 20px padding, for a child that owns its own edges — a
+   * `DataTable seated`, a `SettingGroup`, a pane that already draws its own
+   * gutter. Without it that child is inset 20px from a panel it was built to
+   * reach, and its hairlines stop short of the drawer's border.
+   */
+  flush?: boolean;
+  dismissible?: boolean;
+  className?: string;
+}
+
+/**
+ * A right-hand overlay panel.
+ *
+ * A drawer rather than an inline expander for filters, column pickers and record
+ * detail. Expanding a panel in place pushes the table hundreds of pixels down
+ * and costs the reader the row they were looking at; a drawer covers the page
+ * instead of moving it, so closing it puts them back exactly where they were.
+ *
+ * Full width below `sm` — a 420px panel on a 375px phone is a modal with a
+ * useless gutter, so it simply becomes one, and it drops its radius at the same
+ * breakpoint because a full-bleed panel has no leading edge to round.
+ *
+ * **The leading edge is `--radius-xl`, 14px.** DESIGN.md §4 assigns modals and
+ * drawers 14 and this panel shipped flush square on every corner, which is one
+ * of the two things a review of the rendered pixels caught. The doc is right and
+ * the code was wrong: the three edges anchored to the viewport stay square, and
+ * the one edge that is actually a boundary between the panel and the page it
+ * covers is rounded. Header, body and footer come from `overlayParts`, so this
+ * and `Dialog` cannot drift again.
+ */
+export function Drawer({
+  open,
+  onOpenChange,
+  title,
+  eyebrow,
+  description,
+  children,
+  footer,
+  width = 'md',
+  flush = false,
+  dismissible = true,
+  className,
+}: DrawerProps) {
+  const { t } = useTranslation();
+  return (
+    <BaseDialog.Root
+      open={open}
+      onOpenChange={(next) => {
+        if (!dismissible && !next) return;
+        onOpenChange(next);
+      }}
+      disablePointerDismissal={!dismissible}
+    >
+      <BaseDialog.Portal>
+        <BaseDialog.Backdrop className={OVERLAY_SCRIM} />
+        <BaseDialog.Popup
+          className={cn(
+            'motion-slide-right fixed inset-y-0 right-0 z-[var(--z-overlay)] flex w-full flex-col',
+            'overflow-hidden border-l border-border bg-surface shadow-lg focus:outline-none',
+            'sm:rounded-l-xl',
+            WIDTHS[width],
+            className,
+          )}
+        >
+          <OverlayHeader
+            close={
+              dismissible ? (
+                <BaseDialog.Close
+                  render={
+                    <Button variant="ghost" size="icon-sm" aria-label={t('ds.close') || 'Close'}>
+                      <X aria-hidden />
+                    </Button>
+                  }
+                />
+              ) : null
+            }
+          >
+            {eyebrow ? <p className={OVERLAY_EYEBROW}>{eyebrow}</p> : null}
+            <BaseDialog.Title className={OVERLAY_TITLE}>{title}</BaseDialog.Title>
+            {description ? (
+              <BaseDialog.Description className={OVERLAY_DESCRIPTION}>
+                {description}
+              </BaseDialog.Description>
+            ) : null}
+          </OverlayHeader>
+
+          <div className={cn(OVERLAY_BODY, flush && 'p-0')}>{children}</div>
+
+          {footer ? <div className={OVERLAY_FOOTER}>{footer}</div> : null}
+        </BaseDialog.Popup>
+      </BaseDialog.Portal>
+    </BaseDialog.Root>
+  );
+}

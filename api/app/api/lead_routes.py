@@ -3,13 +3,14 @@
 import csv
 import io
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import desc, func, select, update
+from sqlalchemy.exc import IntegrityError
 
 from app.api.auth import get_current_client_or_operator
 from app.config import API_BASE_URL
@@ -17,7 +18,7 @@ from app.core.csv_safety import csv_safe_row
 from app.core.visitor_privacy import redact_visitor_ip
 from app.db.models import BANTSignal, Bot, ChatMessage, ChatSession, EmailSuppression, LeadInfo
 from app.db.session import get_session
-from app.schemas.validators import RowId, SessionId
+from app.schemas.validators import EmailAddress, RowId, SearchTerm, SessionId
 from app.services.email_design import esc, h1, p, shell
 from app.services.email_service import send_email_async
 from app.services.lead_service import build_lead_response
@@ -74,18 +75,88 @@ router = APIRouter(
 def _resolve_client_bot_ids(session, auth: dict, bot_id: int | None) -> list[int]:
     """Return the list of bot IDs this caller can act on.
 
-    If `bot_id` is provided, verify the caller owns it (raises 403 otherwise).
-    If not, return every bot owned by the caller's client.
+    Two boundaries, not one:
+
+    * **Tenant.** Only bots owned by ``auth["client_id"]``, the workspace owner.
+    * **Operator.** ``Operator.bot_id`` is a NOT NULL one-to-one binding, and
+      for an operator ``auth["client_id"]`` is the workspace OWNER's id — so
+      scoping on it alone hands an operator bound to bot A every bot in the
+      workspace. The rest of the product already treats that binding as a hard
+      boundary: ``bot_routes.list_bots`` filters to it because "operators must
+      not see or switch to other bots in the workspace", and
+      ``offline_message_routes.list_offline_messages`` scopes the visitor
+      contact details it serves the same way. Leads are the widest of those
+      three surfaces (name, email, phone, company, transcript, and a WRITE that
+      silences a bot's follow-ups), so it gets the same rule.
+
+    An explicit ``bot_id`` is verified against the resulting set, so a sibling
+    bot's id in the URL is a 403 rather than an escape hatch. Absent (defensive
+    only, the column is NOT NULL) an operator binding, the caller resolves to no
+    bots at all — the same fail-closed answer ``list_bots`` gives.
+
+    Not covered here: the owner's ``X-Acting-Role: operator`` self-operator hat,
+    which ``list_bots`` and the offline-message list both honour. That one is an
+    owner looking at their own workspace's data, so it is a UI-consistency gap
+    rather than a boundary, and it needs the header threaded through each route.
     """
     client_bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
+
+    if auth.get("type") == "operator":
+        # Fall back to the entity attribute when the resolver's cached
+        # ``bot_id`` isn't populated, mirroring ``list_bots`` / the
+        # offline-message list.
+        operator_bot_id = auth.get("bot_id") or getattr(auth.get("entity"), "bot_id", None)
+        client_bot_ids = [b for b in client_bot_ids if b == operator_bot_id]
+
     if bot_id is None:
         return client_bot_ids
-    owns_bot = session.execute(
-        select(Bot.id).where(Bot.id == bot_id, Bot.client_id == auth["client_id"])
-    ).scalar_one_or_none()
-    if not owns_bot:
+    if bot_id not in client_bot_ids:
         raise HTTPException(status_code=403, detail="Bot not found or access denied.")
     return [bot_id]
+
+
+def _resolve_window(
+    days: int | None, from_date: date | None, to_date: date | None
+) -> tuple[datetime | None, datetime | None]:
+    """The trailing-N-days preset and an explicit calendar range, as one
+    ``(since, until)`` pair on ``created_at`` — never ``last_active_at``, see
+    the note on the filter below.
+
+    An explicit ``from_date``/``to_date`` wins over ``days`` when both somehow
+    arrive: the UI's range control is one selection (a preset OR "Custom
+    range"), so this only matters for a hand-built query string, and the more
+    specific bound is the more likely intent. ``to_date`` is the last
+    INCLUDED day, so its bound is that day's last microsecond, not its
+    midnight — a naive ``<= to_date`` compares a `date` to a `datetime` and,
+    worse, would drop every lead captured after midnight on the end day.
+    """
+    if from_date is not None or to_date is not None:
+        if from_date is not None and to_date is not None and from_date > to_date:
+            raise HTTPException(status_code=422, detail="from_date must not be after to_date.")
+        since = datetime.combine(from_date, time.min, tzinfo=UTC) if from_date else None
+        until = datetime.combine(to_date, time.max, tzinfo=UTC) if to_date else None
+        return since, until
+    if days is not None:
+        return datetime.now(UTC) - timedelta(days=days), None
+    return None, None
+
+
+_DAYS_DESCRIPTION = "Restrict to leads captured in the trailing N days; omitted = all time."
+_FROM_DATE_DESCRIPTION = "Custom range start (YYYY-MM-DD), inclusive. Wins over `days` when given."
+_TO_DATE_DESCRIPTION = "Custom range end (YYYY-MM-DD), inclusive."
+
+
+def _windowed(stmt, since: datetime | None, until: datetime | None):
+    """Apply a `_resolve_window()` result to a `created_at`-filterable
+    statement. One helper for both bounds, so a future caller cannot repeat
+    the bug this one fixes: `lead_stats` applied `since` in three places and
+    `until` in none of them, so `?to_date=` silently did nothing to any of
+    the three figures it built."""
+    if since is not None:
+        stmt = stmt.where(ChatSession.created_at >= since)
+    if until is not None:
+        stmt = stmt.where(ChatSession.created_at <= until)
+    return stmt
 
 
 @router.get("")
@@ -94,24 +165,18 @@ def list_leads(
     tier: LeadTier | None = Query(None, description="unqualified|mql|sal|sql"),
     status: LeadTier | None = Query(None, description="backward-compat alias for tier"),
     min_score: int | None = Query(None, ge=0, le=100),
+    days: int | None = Query(None, ge=1, le=365, description=_DAYS_DESCRIPTION),
+    from_date: date | None = Query(None, description=_FROM_DATE_DESCRIPTION),
+    to_date: date | None = Query(None, description=_TO_DATE_DESCRIPTION),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
     auth: dict = Depends(get_current_client_or_operator),
 ):
     """List leads with BANT data, scores, and optional filters."""
     with get_session() as session:
-        # Get bot IDs for this client (always scoped to authenticated client)
-        client_bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
-        if bot_id:
-            # Verify the bot belongs to the authenticated client
-            owns_bot = session.execute(
-                select(Bot.id).where(Bot.id == bot_id, Bot.client_id == auth["client_id"])
-            ).scalar_one_or_none()
-            if not owns_bot:
-                raise HTTPException(status_code=403, detail="Bot not found or access denied.")
-            bot_ids = [bot_id]
-        else:
-            bot_ids = client_bot_ids
+        # The caller's bots: the workspace's for an owner, the ONE bound bot
+        # for an operator. See ``_resolve_client_bot_ids``.
+        bot_ids = _resolve_client_bot_ids(session, auth, bot_id)
 
         if not bot_ids:
             return {"leads": [], "total": 0, "page": page, "limit": limit}
@@ -124,6 +189,10 @@ def list_leads(
             .group_by(ChatSession.id)
             .order_by(desc(ChatSession.last_active_at))
         )
+        # `created_at`, not `last_active_at` — a lead captured 90 days ago
+        # that a visitor reopened yesterday must not count as "captured in
+        # the last 7 days" just because it is still active.
+        stmt = _windowed(stmt, *_resolve_window(days, from_date, to_date))
 
         results = session.execute(stmt).all()
 
@@ -190,20 +259,18 @@ def list_leads(
 @router.get("/stats")
 def lead_stats(
     bot_id: RowId | None = Query(None),
+    days: int | None = Query(None, ge=1, le=365, description=_DAYS_DESCRIPTION),
+    from_date: date | None = Query(None, description=_FROM_DATE_DESCRIPTION),
+    to_date: date | None = Query(None, description=_TO_DATE_DESCRIPTION),
     auth: dict = Depends(get_current_client_or_operator),
 ):
     """Aggregate lead stats: total, unqualified, MQL, SAL, and SQL counts."""
     with get_session() as session:
-        client_bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
-        if bot_id:
-            owns_bot = session.execute(
-                select(Bot.id).where(Bot.id == bot_id, Bot.client_id == auth["client_id"])
-            ).scalar_one_or_none()
-            if not owns_bot:
-                raise HTTPException(status_code=403, detail="Bot not found or access denied.")
-            bot_ids = [bot_id]
-        else:
-            bot_ids = client_bot_ids
+        bot_ids = _resolve_client_bot_ids(session, auth, bot_id)
+        # Every figure in the strip states the same window (`StatRow` requires
+        # it), so the window narrows every count below it, not just the
+        # headline total. See the identical `created_at` note in `list_leads`.
+        since, until = _resolve_window(days, from_date, to_date)
 
         if not is_lead_intelligence_enabled(auth["client_id"], session):
             # Free plan: total + unread keep the list header and sidebar badge
@@ -212,22 +279,23 @@ def lead_stats(
             total = 0
             unread = 0
             if bot_ids:
-                total = (
-                    session.execute(select(func.count(ChatSession.id)).where(ChatSession.bot_id.in_(bot_ids))).scalar()
-                    or 0
+                total_stmt = _windowed(
+                    select(func.count(ChatSession.id)).where(ChatSession.bot_id.in_(bot_ids)), since, until
                 )
-                unread = (
-                    session.execute(
-                        select(func.count(ChatSession.id)).where(
-                            ChatSession.bot_id.in_(bot_ids),
-                            ChatSession.lead_viewed_at.is_(None),
-                        )
-                    ).scalar()
-                    or 0
+                unread_stmt = _windowed(
+                    select(func.count(ChatSession.id)).where(
+                        ChatSession.bot_id.in_(bot_ids),
+                        ChatSession.lead_viewed_at.is_(None),
+                    ),
+                    since,
+                    until,
                 )
+                total = session.execute(total_stmt).scalar() or 0
+                unread = session.execute(unread_stmt).scalar() or 0
             return {"total": total, "unread": unread}
 
-        sessions = session.execute(select(ChatSession).where(ChatSession.bot_id.in_(bot_ids))).scalars().all()
+        sessions_stmt = _windowed(select(ChatSession).where(ChatSession.bot_id.in_(bot_ids)), since, until)
+        sessions = session.execute(sessions_stmt).scalars().all()
         bots = session.execute(select(Bot).where(Bot.id.in_(bot_ids))).scalars().all() if bot_ids else []
         bot_map = {bot.id: bot for bot in bots}
 
@@ -243,15 +311,15 @@ def lead_stats(
         # ix_chat_sessions_bot_id_lead_viewed_at (migration d4e5f6a7b8c9).
         unread = 0
         if bot_ids:
-            unread = (
-                session.execute(
-                    select(func.count(ChatSession.id)).where(
-                        ChatSession.bot_id.in_(bot_ids),
-                        ChatSession.lead_viewed_at.is_(None),
-                    )
-                ).scalar()
-                or 0
+            unread_stmt = _windowed(
+                select(func.count(ChatSession.id)).where(
+                    ChatSession.bot_id.in_(bot_ids),
+                    ChatSession.lead_viewed_at.is_(None),
+                ),
+                since,
+                until,
             )
+            unread = session.execute(unread_stmt).scalar() or 0
 
         total = len(sessions)
         return {
@@ -305,7 +373,7 @@ def mark_lead_viewed(
     Returns 204 (no body) so the frontend can fire-and-forget on drawer open.
     """
     with get_session() as session:
-        bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
+        bot_ids = _resolve_client_bot_ids(session, auth, None)
         if not bot_ids:
             raise HTTPException(status_code=404, detail="Lead not found")
 
@@ -369,16 +437,7 @@ def export_leads_csv(
                     ),
                 },
             )
-        client_bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
-        if bot_id:
-            owns_bot = session.execute(
-                select(Bot.id).where(Bot.id == bot_id, Bot.client_id == auth["client_id"])
-            ).scalar_one_or_none()
-            if not owns_bot:
-                raise HTTPException(status_code=403, detail="Bot not found or access denied.")
-            bot_ids = [bot_id]
-        else:
-            bot_ids = client_bot_ids
+        bot_ids = _resolve_client_bot_ids(session, auth, bot_id)
 
         results = session.execute(
             select(ChatSession, func.count(ChatMessage.id).label("msg_count"))
@@ -519,6 +578,162 @@ def export_leads_csv(
         )
 
 
+# ── Email suppressions ───────────────────────────────────────────────────────
+#
+# ``EmailSuppression`` is the permanent per-bot do-not-email list. Until now it
+# was written only by the public unsubscribe link and read only by Gate 3 in
+# ``send_manual_follow_up`` above, so a customer had no way to see who had
+# unsubscribed, or to notice that an address they expected to reach was
+# suppressed. These two endpoints expose it.
+#
+# There is deliberately **no DELETE**: the model's own docstring states a row is
+# never removed by application code. Re-enabling mail to someone who asked to
+# stop is a consent decision (this product's lawful basis under India's DPDP Act
+# is consent-only), not a CRUD operation.
+
+
+class CreateSuppressionRequest(BaseModel):
+    """Body for ``POST /leads/suppressions``.
+
+    Lets a customer honour an out-of-band "stop emailing me" (said on a call,
+    replied to the email, raised in a ticket) without waiting for the visitor
+    to click the unsubscribe link. Safe in every direction: the only thing it
+    can do is stop mail.
+    """
+
+    bot_id: RowId
+    email: EmailAddress
+    # The three values the model documents. ``unsubscribe`` is what a customer
+    # recording a manual opt-out means; the other two exist so a bounce or
+    # complaint imported by hand keeps its real provenance.
+    reason: Literal["unsubscribe", "hard_bounce", "spam_complaint"] = "unsubscribe"
+
+
+def _suppression_response(row: EmailSuppression, bot_names: dict[int, str]) -> dict:
+    return {
+        "id": row.id,
+        "bot_id": row.bot_id,
+        "bot_name": bot_names.get(row.bot_id),
+        "email": row.email,
+        "reason": row.reason,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+@router.get("/suppressions")
+def list_suppressions(
+    bot_id: RowId | None = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    search: SearchTerm | None = Query(None, description="Case-insensitive substring match on the email address"),
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """List the addresses suppressed for the bots this caller can act on.
+
+    SCOPING: ``EmailSuppression`` carries no ``client_id``, only ``bot_id``.
+    Every row returned here is therefore filtered through the caller's own bot
+    ids (``_resolve_client_bot_ids``, the same helper / same 403 ``list_leads``
+    uses) — the workspace's bots for an owner, the single bound bot for an
+    operator. Without that filter this endpoint would hand out other tenants'
+    visitors' email addresses, and, before the operator half of the helper
+    existed, a sibling bot's.
+    """
+    with get_session() as session:
+        bot_ids = _resolve_client_bot_ids(session, auth, bot_id)
+        if not bot_ids:
+            return {"suppressions": [], "total": 0, "page": page, "limit": limit}
+
+        conditions = [EmailSuppression.bot_id.in_(bot_ids)]
+        if search:
+            # ``ilike`` needs the wildcards escaped or a stray ``%`` in the
+            # search box would match every row.
+            escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            conditions.append(EmailSuppression.email.ilike(f"%{escaped}%", escape="\\"))
+
+        total = int(session.execute(select(func.count(EmailSuppression.id)).where(*conditions)).scalar_one() or 0)
+
+        rows = (
+            session.execute(
+                select(EmailSuppression)
+                .where(*conditions)
+                .order_by(desc(EmailSuppression.created_at), desc(EmailSuppression.id))
+                .offset((page - 1) * limit)
+                .limit(limit)
+            )
+            .scalars()
+            .all()
+        )
+
+        bot_names: dict[int, str] = {}
+        page_bot_ids = {row.bot_id for row in rows}
+        if page_bot_ids:
+            bot_names = dict(session.execute(select(Bot.id, Bot.name).where(Bot.id.in_(page_bot_ids))).all())
+
+        return {
+            "suppressions": [_suppression_response(row, bot_names) for row in rows],
+            "total": total,
+            "page": page,
+            "limit": limit,
+        }
+
+
+@router.post("/suppressions", status_code=201)
+def create_suppression(
+    body: CreateSuppressionRequest,
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Suppress an address for one of the caller's bots. Idempotent.
+
+    Same scoping as the list above: ``_resolve_client_bot_ids`` raises the 403
+    ``list_leads`` raises when ``bot_id`` is not one the caller can act on, so
+    nobody can seed a suppression on another workspace's bot — or, for an
+    operator, on a sibling bot in their own workspace. This is a write that
+    permanently silences that bot's follow-ups to an address.
+
+    The insert mirrors ``unsubscribe_routes._do_unsubscribe``: read-then-add,
+    with an ``IntegrityError`` rollback against ``uq_email_suppressions_bot_email``
+    so two concurrent calls both settle on "already suppressed" instead of
+    500ing.
+    """
+    with get_session() as session:
+        _resolve_client_bot_ids(session, auth, body.bot_id)
+
+        existing = session.execute(
+            select(EmailSuppression).where(
+                EmailSuppression.bot_id == body.bot_id,
+                EmailSuppression.email == body.email,
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            bot_name = session.execute(select(Bot.name).where(Bot.id == existing.bot_id)).scalar_one_or_none()
+            return _suppression_response(existing, {existing.bot_id: bot_name})
+
+        row = EmailSuppression(bot_id=body.bot_id, email=body.email, reason=body.reason)
+        try:
+            session.add(row)
+            session.commit()
+        except IntegrityError:
+            # Race: a concurrent unsubscribe click inserted it first. Already
+            # suppressed is the outcome we wanted, so re-read and return it.
+            session.rollback()
+            existing = session.execute(
+                select(EmailSuppression).where(
+                    EmailSuppression.bot_id == body.bot_id,
+                    EmailSuppression.email == body.email,
+                )
+            ).scalar_one_or_none()
+            if existing is None:
+                raise
+            bot_name = session.execute(select(Bot.name).where(Bot.id == existing.bot_id)).scalar_one_or_none()
+            return _suppression_response(existing, {existing.bot_id: bot_name})
+
+        session.refresh(row)
+        # PRIVACY: never log the address itself. It is visitor personal data.
+        logger.info("Suppression added | bot=%s | operator=%s", body.bot_id, auth.get("operator_id"))
+        bot_name = session.execute(select(Bot.name).where(Bot.id == row.bot_id)).scalar_one_or_none()
+        return _suppression_response(row, {row.bot_id: bot_name})
+
+
 @router.get("/{session_id}")
 def get_lead_detail(
     session_id: str,
@@ -526,7 +741,7 @@ def get_lead_detail(
 ):
     """Get full lead detail: BANT + contact info + chat history."""
     with get_session() as session:
-        bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
+        bot_ids = _resolve_client_bot_ids(session, auth, None)
 
         chat_session = session.execute(
             select(ChatSession).where(
@@ -606,66 +821,15 @@ def get_lead_detail(
                 for s in signals
             ]
 
-        # Attach the quotation-flow summary if the session went through it.
-        # We enrich the raw per-session state with names + subtotals resolved
-        # from the bot's current catalog so the operator sees a readable
-        # itemised quote instead of just ids. Falls back to id + qty when a
-        # service has since been deleted from the catalog.
-        quotation_state = getattr(chat_session, "quotation_state", None) or {}
-        if quotation_state:
-            services_by_id: dict[str, dict] = {}
-            currency = "INR"
-            if bot and isinstance(getattr(bot, "quotation_catalog", None), dict):
-                currency = (bot.quotation_catalog.get("currency") or "INR").upper()
-                for svc in bot.quotation_catalog.get("services") or []:
-                    if isinstance(svc, dict) and svc.get("id"):
-                        services_by_id[svc["id"]] = svc
+        # Attach the quotation-flow summary (itemised requirement lines + total,
+        # resolved against the bot's current catalog) if the session went
+        # through it. Uses the single ``build_quotation_summary`` helper so this
+        # surface reads identically to the operator session-details panel.
+        from app.api.quotation_routes import build_quotation_summary
 
-            selected_ids = list(quotation_state.get("selected_service_ids") or [])
-            answers = quotation_state.get("answers") or {}
-            quantities = quotation_state.get("quantities") or {}
-            line_items: list[dict] = []
-            total = 0.0
-            for sid in selected_ids:
-                svc = services_by_id.get(sid) or {}
-                unit_price = float(svc.get("price_per_unit") or 0)
-                qty = int(quantities.get(sid, svc.get("default_quantity") or 0) or 0)
-                subtotal = round(unit_price * qty, 2)
-                total += subtotal
-
-                svc_answers = answers.get(sid) or {}
-                question_defs = {q.get("id"): q for q in (svc.get("questions") or []) if isinstance(q, dict)}
-                answer_rows: list[dict] = []
-                for qid, value in svc_answers.items():
-                    q = question_defs.get(qid) or {}
-                    answer_rows.append(
-                        {
-                            "question_id": qid,
-                            "question_text": q.get("text") or qid,
-                            "answer": value,
-                        }
-                    )
-
-                line_items.append(
-                    {
-                        "service_id": sid,
-                        "name": svc.get("name") or sid,
-                        "unit_label": svc.get("unit_label") or "unit",
-                        "price_per_unit": unit_price,
-                        "quantity": qty,
-                        "subtotal": subtotal,
-                        "answers": answer_rows,
-                    }
-                )
-
-            lead["quotation"] = {
-                "status": quotation_state.get("status") or "idle",
-                "currency": currency,
-                "line_items": line_items,
-                "total": round(total, 2),
-                "activated_at": quotation_state.get("activated_at"),
-                "completed_at": quotation_state.get("completed_at"),
-            }
+        quotation_summary = build_quotation_summary(bot, chat_session)
+        if quotation_summary is not None:
+            lead["quotation"] = quotation_summary
 
         return lead
 
@@ -694,7 +858,7 @@ def send_manual_follow_up(
     confirm_override = bool(body and body.confirm_override)
 
     with get_session() as session:
-        bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
+        bot_ids = _resolve_client_bot_ids(session, auth, None)
 
         chat_session = session.execute(
             select(ChatSession).where(ChatSession.id == session_id, ChatSession.bot_id.in_(bot_ids))
@@ -767,7 +931,10 @@ def send_manual_follow_up(
         # Gate 4. Hard stop, no override.
         bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
         if bot and bot.followup_sending_paused:
-            raise HTTPException(status_code=423, detail="Sending is paused for this bot. Contact ops.")
+            raise HTTPException(
+                status_code=423,
+                detail="Follow-up sending is paused for this agent. Turn it back on in Settings to send this email.",
+            )
 
         unsubscribe_url = (
             f"{API_BASE_URL}/leads/unsubscribe?token={make_unsubscribe_token(chat_session.bot_id, lead_info.email)}"

@@ -58,6 +58,19 @@ export const VISITOR_INTELLIGENCE_SLUGS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Ladder tiers that include the quotation flow.
+ *
+ * Same shape as Visitor Intelligence, and for the same reason: it is sold on
+ * Professional, and Enterprise is Professional plus scale. Going through
+ * {@link planIncludes} rather than a bare set is what keeps rule 2 — a bespoke
+ * contract slug gets it, exactly as the server grants it.
+ */
+export const QUOTATION_SLUGS: ReadonlySet<string> = new Set([
+  'professional',
+  'enterprise',
+]);
+
+/**
  * Does `slug` include a feature granted to `ladderSlugs`?
  *
  * An empty or unknown-because-still-loading slug denies. That is deliberate:
@@ -77,6 +90,11 @@ export function planIncludes(slug: string | null | undefined, ladderSlugs: Reado
 /** True when this plan includes Reoon email verification. */
 export function planIncludesEmailVerification(slug: string | null | undefined): boolean {
   return planIncludes(slug, EMAIL_VERIFICATION_SLUGS);
+}
+
+/** True when this plan includes the visitor-facing quotation flow. */
+export function planIncludesQuotations(slug: string | null | undefined): boolean {
+  return planIncludes(slug, QUOTATION_SLUGS);
 }
 
 /** True when this plan includes the company lookup / Visitor Intelligence. */

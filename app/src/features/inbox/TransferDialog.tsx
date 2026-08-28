@@ -1,53 +1,96 @@
-import { useEffect, useState, type ReactElement } from 'react';
-import { ArrowRightLeft, Building2, User } from 'lucide-react';
-import { Button, Modal, Skeleton, cn } from '../../design-system';
+import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import {
+  Alert,
+  Button,
+  Dialog,
+  EmptyState,
+  LoadingRows,
+  RadioCards,
+  SearchField,
+  buttonClass,
+  toast,
+  type RadioCardItem,
+} from '../../ui';
 import { getDepartments, getOperators, transferChat } from '../../services/api';
 import type { Department, Operator } from '../../types/domain';
-import { initials } from './liveChatHelpers';
-// `translateNow` inside effects and async handlers: the hook's `t` changes
-// identity per locale, so capturing it there adds a dependency that would
-// re-run a data load on every language change. The module-level function is
-// stable and still resolves against the current locale when called.
-import { t as translateNow } from '../../i18n/i18n';
 import { useTranslation } from '../../i18n/useTranslation';
 
 export interface TransferDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   sessionId: string;
   visitorName: string;
-  /** Current owner - excluded from the operator target list. */
+  /** The current owner, excluded from the list — you cannot transfer to yourself. */
   currentOperatorId: number | null;
-  onClose: () => void;
-  /** Called after a successful transfer so the caller can drop the chat locally. */
+  /** Called after the transfer lands, so the caller can drop the conversation. */
   onTransferred: () => void;
 }
 
-type Target = { kind: 'operator'; id: number } | { kind: 'department'; id: number };
+/**
+ * A target, encoded so one radiogroup can hold both kinds.
+ *
+ * Two independent `role="radiogroup"`s held one value between them, which means
+ * both could read as checked to a screen reader — and neither implemented the
+ * arrow-key movement and roving tabindex the pattern requires, so walking past
+ * twelve operators cost twelve tab presses.
+ */
+type TargetValue = `op:${number}` | `dept:${number}`;
+
+function parseTarget(value: TargetValue): { to_operator_id: number } | { to_department_id: number } {
+  const [kind, id] = value.split(':');
+  return kind === 'op' ? { to_operator_id: Number(id) } : { to_department_id: Number(id) };
+}
+
+/** Online first, then whoever is carrying the least. */
+function byAvailability(a: Operator, b: Operator): number {
+  if (Boolean(a.is_online) !== Boolean(b.is_online)) return a.is_online ? -1 : 1;
+  return (a.active_chats ?? 0) - (b.active_chats ?? 0);
+}
+
+function operatorLoad(operator: Operator): string {
+  const active = operator.active_chats ?? 0;
+  return operator.max_concurrent_chats && operator.max_concurrent_chats > 0
+    ? `${active}/${operator.max_concurrent_chats} chats`
+    : `${active} chats`;
+}
 
 /**
- * TransferDialog - hand the active conversation to another online operator or a
- * department. Targets load from `getOperators` / `getDepartments`; the transfer
- * itself goes through the typed `transferChat` REST wrapper. The backend emits
- * `chat_transferred` over WS, which removes the chat from this operator's board.
+ * Hand this conversation to someone else.
+ *
+ * Operators are listed with their availability and current load, because
+ * "transfer to Priya" is a decision about whether Priya can actually take it —
+ * the previous dialog listed names alone, so a chat could be handed to someone
+ * who was offline or already at their concurrency limit, and the visitor waited
+ * in silence.
+ *
+ * One `RadioCards`, filtered by a search field: at thirty operators an
+ * unfiltered list in a scrolling dialog is a hunt while a visitor waits.
  */
 export function TransferDialog({
+  open,
+  onOpenChange,
   sessionId,
   visitorName,
   currentOperatorId,
-  onClose,
   onTransferred,
-}: TransferDialogProps): ReactElement {
+}: TransferDialogProps) {
   const { t } = useTranslation();
   const [operators, setOperators] = useState<Operator[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
-  const [target, setTarget] = useState<Target | null>(null);
+  const [target, setTarget] = useState<TargetValue | ''>('');
+  const [query, setQuery] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Mounted fresh each time the dialog opens (the parent renders it only while
-  // open), so the targets load once here - no synchronous setState in the effect.
   useEffect(() => {
+    if (!open) return;
     let active = true;
+    setLoading(true);
+    setError(null);
+    setTarget('');
+    setQuery('');
     Promise.all([getOperators(), getDepartments()])
       .then(([ops, depts]) => {
         if (!active) return;
@@ -55,8 +98,7 @@ export function TransferDialog({
         setDepartments(depts);
       })
       .catch(() => {
-        if (!active) return;
-        setError(translateNow('inbox.couldntLoadTransferTargets') || 'Couldn’t load transfer targets.');
+        if (active) setError(t('inbox.couldNotLoadThePeople') || 'Could not load the people and departments you can transfer to.');
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -64,135 +106,126 @@ export function TransferDialog({
     return () => {
       active = false;
     };
-  }, [sessionId]);
+  }, [open, sessionId, t]);
 
-  const eligibleOperators = operators.filter(
-    (op) => op.id !== currentOperatorId && op.is_active !== false && op.is_online,
+  const candidates = useMemo(
+    () =>
+      operators
+        .filter((operator) => operator.id !== currentOperatorId && operator.is_active !== false)
+        .sort(byAvailability),
+    [operators, currentOperatorId],
   );
 
-  const submit = async (): Promise<void> => {
+  const options = useMemo<RadioCardItem<TargetValue>[]>(() => {
+    const needle = query.trim().toLowerCase();
+    const matches = (name: string) => needle === '' || name.toLowerCase().includes(needle);
+    return [
+      ...candidates
+        .filter((operator) => matches(operator.name))
+        .map<RadioCardItem<TargetValue>>((operator) => ({
+          value: `op:${operator.id}`,
+          label: operator.name,
+          description: `${operator.is_online ? t('inbox.online') || 'Online' : t('inbox.offline') || 'Offline'} · ${operatorLoad(operator)}`,
+        })),
+      ...departments
+        .filter((department) => matches(department.name))
+        .map<RadioCardItem<TargetValue>>((department) => ({
+          value: `dept:${department.id}`,
+          label: department.name,
+          description: department.description ?? (t('inbox.aDepartmentNotOnePerson') || 'A department, not one person'),
+        })),
+    ];
+  }, [candidates, departments, query, t]);
+
+  const nobody = candidates.length === 0 && departments.length === 0;
+
+  async function submit(): Promise<void> {
     if (!target || submitting) return;
     setSubmitting(true);
     setError(null);
     try {
-      await transferChat(
-        sessionId,
-        target.kind === 'operator' ? { target_operator_id: target.id } : { target_department_id: target.id },
-      );
+      await transferChat(sessionId, parseTarget(target));
+      toast.success(t('inbox.conversationTransferred') || 'Conversation transferred', {
+        description: `${visitorName} is now with the person you chose.`,
+      });
       onTransferred();
+      onOpenChange(false);
     } catch (err) {
-      setError(
-        err instanceof Error ? (translateNow('inbox.transferFailedDetail', { reason: err.message }) || `Transfer failed: ${err.message}`) : t('inbox.transferFailedPleaseTryAgain') || 'Transfer failed. Please try again.',
-      );
+      setError(err instanceof Error ? `Could not transfer: ${err.message}` : t('inbox.couldNotTransferThisConversation') || 'Could not transfer this conversation.');
+    } finally {
       setSubmitting(false);
     }
-  };
-
-  const isSelected = (kind: Target['kind'], id: number): boolean =>
-    target?.kind === kind && target.id === id;
+  }
 
   return (
-    <Modal
-      open
-      onClose={onClose}
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
       title={t('inbox.transferConversation') || 'Transfer conversation'}
-      description={
-          t('inbox.handToOperator', { name: visitorName }) ||
-          `Hand ${visitorName} to an operator or department.`
-        }
-      size="sm"
+      description={`${visitorName} will be told they are being connected to someone else.`}
+      dismissible={!submitting}
       footer={
-        <div className="flex items-center justify-end gap-2">
-          <Button variant="ghost" size="sm" onClick={onClose} disabled={submitting}>
+        <>
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>
             {t('inbox.cancel') || 'Cancel'}
           </Button>
-          <Button size="sm" onClick={() => void submit()} disabled={!target || submitting}>
-            <ArrowRightLeft size={14} aria-hidden="true" />
-            {submitting ? t('inbox.transferring') || 'Transferring…' : t('inbox.transfer') || 'Transfer'}
+          <Button onClick={() => void submit()} disabled={!target || submitting} loading={submitting}>
+            {t('inbox.transfer') || 'Transfer'}
           </Button>
-        </div>
+        </>
       }
     >
+      {error ? (
+        <Alert tone="danger" className="mb-4">
+          {error}
+        </Alert>
+      ) : null}
+
       {loading ? (
-        <div className="space-y-2">
-          <Skeleton className="h-10 w-full rounded-lg" />
-          <Skeleton className="h-10 w-full rounded-lg" />
-          <Skeleton className="h-10 w-full rounded-lg" />
-        </div>
+        <LoadingRows rows={4} />
+      ) : nobody ? (
+        // One answer to one condition. It used to say both "Nobody else is set
+        // up as an operator yet" and "Invite a teammate from Settings → Team".
+        <EmptyState
+          size="panel"
+          title={t('inbox.nobodyToTransferTo') || 'Nobody to transfer to'}
+          description={t('inbox.inviteATeammateFromSettings') || 'Invite a teammate from Settings → Team, or create a department, before you can hand a conversation over.'}
+          action={
+            <Link to="/settings/team" className={buttonClass('primary', 'sm')}>
+              {t('inbox.inviteATeammate') || 'Invite a teammate'}
+            </Link>
+          }
+        />
       ) : (
-        <div className="space-y-4">
-          {error && (
-            <p role="alert" className="text-[13px] text-[var(--ds-danger)]">
-              {error}
-            </p>
-          )}
-
-          <div>
-            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
-              {t('inbox.onlineOperators') || 'Online operators'}
-            </p>
-            {eligibleOperators.length === 0 ? (
-              <p className="text-[13px] text-[var(--ds-text-muted)]">{t('inbox.noOtherOperatorsAreOnline') || 'No other operators are online right now.'}</p>
-            ) : (
-              <div className="space-y-1.5">
-                {eligibleOperators.map((op) => (
-                  <button
-                    key={op.id}
-                    type="button"
-                    onClick={() => setTarget({ kind: 'operator', id: op.id })}
-                    className={cn(
-                      'flex w-full items-center gap-2.5 rounded-[var(--ds-radius-lg)] border px-3 py-2 text-left transition-colors',
-                      isSelected('operator', op.id)
-                        ? 'border-[var(--ds-accent)] bg-[var(--ds-accent-soft)]'
-                        : 'border-[var(--ds-border)] bg-[var(--ds-bg-surface)] hover:bg-[var(--ds-bg-hover)]',
-                    )}
-                  >
-                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--ds-bg-sunken)] text-[11px] font-semibold text-[var(--ds-text-muted)]">
-                      {initials(op.name)}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[13px] font-medium text-[var(--ds-text)]">{op.name}</span>
-                      <span className="block text-[11px] text-[var(--ds-text-muted)]">
-                        {t('inbox.activeChats', { count: op.active_chats ?? 0 }) ||
-                          `${op.active_chats ?? 0} active`}
-                      </span>
-                    </span>
-                    <User size={14} className="text-[var(--ds-text-subtle)]" aria-hidden="true" />
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {departments.length > 0 && (
-            <div>
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
-                {t('inbox.departments') || 'Departments'}
-              </p>
-              <div className="space-y-1.5">
-                {departments.map((dept) => (
-                  <button
-                    key={dept.id}
-                    type="button"
-                    onClick={() => setTarget({ kind: 'department', id: dept.id })}
-                    className={cn(
-                      'flex w-full items-center gap-2.5 rounded-[var(--ds-radius-lg)] border px-3 py-2 text-left transition-colors',
-                      isSelected('department', dept.id)
-                        ? 'border-[var(--ds-accent)] bg-[var(--ds-accent-soft)]'
-                        : 'border-[var(--ds-border)] bg-[var(--ds-bg-surface)] hover:bg-[var(--ds-bg-hover)]',
-                    )}
-                  >
-                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--ds-bg-sunken)] text-[var(--ds-text-muted)]">
-                      <Building2 size={14} aria-hidden="true" />
-                    </span>
-                    <span className="truncate text-[13px] font-medium text-[var(--ds-text)]">{dept.name}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
+        <div className="space-y-3">
+          <SearchField
+            size="sm"
+            label={t('inbox.searchPeopleAndDepartments2') || 'Search people and departments'}
+            placeholder={t('inbox.searchPeopleAndDepartments') || 'Search people and departments…'}
+            value={query}
+            onValueChange={setQuery}
+          />
+          {options.length === 0 ? (
+            <EmptyState
+              size="inline"
+              title={t('inbox.nothingMatched') || 'Nothing matched'}
+              description={`No person or department matches “${query}”.`}
+              action={
+                <Button size="sm" variant="secondary" onClick={() => setQuery('')}>
+                  {t('inbox.clearSearch') || 'Clear search'}
+                </Button>
+              }
+            />
+          ) : (
+            <RadioCards<TargetValue>
+              label={t('inbox.transferTo') || 'Transfer to'}
+              items={options}
+              value={target as TargetValue}
+              onChange={setTarget}
+            />
           )}
         </div>
       )}
-    </Modal>
+    </Dialog>
   );
 }

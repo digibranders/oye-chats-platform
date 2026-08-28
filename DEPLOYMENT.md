@@ -7,10 +7,13 @@
 | Landing Page | `oyechats.com` · `www.oyechats.com` | Vercel | `oyechats-website` | Free |
 | Customer Admin Dashboard | `app.oyechats.com` | Vercel (monorepo, root = `app/`) | `oye-chats-platform` | Free |
 | Super Admin Console | `admin.oyechats.com` | Vercel (separate repo `digibranders/oyechats-admin`) | `superadmin` | Free |
-| Backend API | `api.oyechats.com` | DigitalOcean Droplet | — | $12/mo |
+| Backend API | `api.oyechats.com` | DigitalOcean Droplet (4 GB / 2 vCPU) | — | see DO billing |
 | Widget CDN | `cdn.oyechats.com` | Cloudflare R2 | — | ~$0 |
 | Database | (on droplet) | PostgreSQL 16 + pgvector | — | $0 (included) |
-| **Total** | | | | **~$12/mo** |
+
+> The droplet was upsized from the 2 GB / 1 vCPU box this file used to describe;
+> confirm the current line item in the DigitalOcean billing panel rather than
+> trusting a figure here, which is exactly how the old one went stale.
 
 ## GitHub Repos
 
@@ -37,7 +40,7 @@ cdn.oyechats.com      CNAME   <r2-public-domain>     # widget CDN
 
 ### 1.1 Provision
 - **Image**: Ubuntu 24.04 LTS
-- **Size**: 2GB RAM / 1 vCPU ($12/mo)
+- **Size**: 4 GB RAM / 2 vCPU, plus a 2 GB swapfile
 - **Region**: BLR (Bangalore) or closest to users
 - Add your SSH key during creation
 - **User**: root only (no additional users)
@@ -277,10 +280,15 @@ Set these in **GitHub → Settings → Secrets and variables → Actions**:
 | `DB_URL` | `postgresql://oyechats:<PASSWORD>@localhost:5432/oyechats` |
 | `GOOGLE_API_KEY` | Google Gemini API key (LiteLLM fallback) |
 | `OPENAI_API_KEY` | OpenAI API key (primary LLM) |
-| `CRAWL_PROVIDER` | `spider` to route crawling to Spider.cloud (managed, off-box Chromium); unset/anything else = local Playwright crawler |
-| `SPIDER_API_KEY` | Spider.cloud prepaid API key (required when `CRAWL_PROVIDER=spider`) |
+| `CRAWL_PROVIDER_PRIMARY` | Which scrape backend page fetches try first: `jina` (default) or `spider`. The other becomes the fallback. There is no local crawler; Playwright was removed and both providers render off-box |
+| `SPIDER_API_KEY` | Spider.cloud prepaid API key |
 | `SPIDER_REQUEST_MODE` | Spider engine: `smart` (default), `http`, or `chrome` |
-| `SPIDER_FALLBACK_TO_PLAYWRIGHT` | `true` (default) falls back to the local crawler if Spider errors |
+| `JINA_API_KEY` | Jina Reader key. Also used for demo-page screenshot capture |
+| `WIDGET_SCRIPT_URL` | Widget loader the hosted demo page embeds. Defaults to the production CDN; set per environment so a staging demo does not load the live widget build |
+| `DEMO_SCREENSHOT_ENABLED` | `true` (default) captures the customer's site as the demo-page backdrop |
+| `DEMO_SCREENSHOT_PROVIDER` | Capture backend tried first: `jina` (default) or `spider` |
+| `DEMO_SCREENSHOT_WAIT_SECONDS` | Render settle time before capture, default `30`. Raise if captures come back with blank bands where lazily loaded media belongs |
+| `DEMO_SCREENSHOT_TTL_DAYS` | Days a stored capture stays fresh, default `30`. Past this the next training run recaptures |
 | `CORS_ORIGINS` | `https://oyechats.com,https://www.oyechats.com,https://app.oyechats.com,https://admin.oyechats.com` |
 | `R2_KEY_ID` | Backblaze B2 key ID |
 | `R2_APPLICATION_KEY` | Backblaze B2 application key |

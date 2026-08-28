@@ -1,6 +1,6 @@
 /**
- * Upgrade-intent registry - the per-feature copy shown by the rich upgrade
- * modal (`design-system/components/UpgradeModal.tsx`).
+ * Upgrade-intent registry - the per-feature copy shown by the upgrade modal
+ * (`UpgradeModal.tsx`, beside this file).
  *
  * Ported VERBATIM from the legacy `context/UpgradeModalContext.jsx`
  * `UPGRADE_INTENTS` map (see `git show 75c2197~1:app/src/context/UpgradeModalContext.jsx`)

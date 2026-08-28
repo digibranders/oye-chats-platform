@@ -10,7 +10,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import func, select
 
 from app.config import PUSH_VISITOR_MSG_EMAIL_DEBOUNCE_SECONDS
-from app.core.origin_check import extract_hostname, is_origin_allowed
+from app.core.origin_check import extract_hostname, is_origin_allowed, origin_check_applies
 from app.db.models import Bot, ChatSession, Client, Operator
 from app.db.repository import add_chat_message, get_lead_info_by_session
 from app.db.session import get_session
@@ -307,13 +307,22 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
             return
         bot_id = bot.id
 
-        # Origin whitelist (parity with HTTP get_current_bot). Enforced only when
-        # the customer has opted in; otherwise we keep the previous behaviour so
-        # existing widgets continue to work.
-        if bot.domain_check_enabled:
+        # Origin whitelist (parity with HTTP ``get_current_bot``). Both
+        # transports ask ``origin_check_applies`` so they cannot diverge: the
+        # flag alone is not enough, an allowlist has to be configured too.
+        # ``create_bot`` defaults the flag ON (a caller can pass
+        # ``domain_check_enabled=false``, but nothing in the console does), and
+        # when the caller sends no explicit list it derives one from the
+        # customer's website alone, so a bot created without a website carries
+        # ``domain_check_enabled=True`` with ``allowed_domains=[]``. Enforcing
+        # that combination here (as this branch used to) closed every live-chat
+        # socket with 4403 under ``APP_ENV=production``, while HTTP chat on the
+        # same bot kept working.
+        allowed_domains = list(bot.allowed_domains or [])
+        if origin_check_applies(domain_check_enabled=bot.domain_check_enabled, allowed=allowed_domains):
             origin_header = ws.headers.get("origin") or ws.headers.get("referer")
             hostname = extract_hostname(origin_header)
-            if not is_origin_allowed(hostname, list(bot.allowed_domains or [])):
+            if not is_origin_allowed(hostname, allowed_domains):
                 logger.info(
                     "Widget WS rejected by origin check: bot_id=%s origin=%r hostname=%r",
                     bot_id,
@@ -669,6 +678,12 @@ def _resolve_operator_from_key(
     Returns ``(operator_id, operator_name, client_id, department_id, is_online,
     preferred_locale, avatar_url)`` or None if auth fails.
 
+    BOTH branches refuse a deactivated operator. That symmetry is the point:
+    each one sets ``is_online = True`` as a side effect, and the seat cap this
+    module enforces counts ``is_online`` with no ``is_active`` filter, so a
+    branch that skipped the check would hand a deactivated operator back both
+    their seat and their queue.
+
     ``preferred_locale`` (Phase 4) is carried here so ``connect_operator`` can
     cache it for the console's own language badge without a second query. It is
     NOT what drives translation targeting: that reads the DB per message, see
@@ -704,6 +719,20 @@ def _resolve_operator_from_key(
         operator = session.execute(
             select(Operator).where(Operator.client_id == client.id, Operator.role == "owner").limit(1)
         ).scalar_one_or_none()
+
+        if operator is not None and not operator.is_active:
+            # Same refusal the ``operator_key`` branch makes above, which this
+            # branch was missing. Without it, deactivation is not a control:
+            # ``PATCH /operators/{id} {"is_active": false}`` frees the seat and
+            # closes the socket, and then a reconnect with the CLIENT api key
+            # walks straight past it, sets ``is_online = True`` on the way, and
+            # re-occupies the seat that was just freed. Refusing here is what
+            # makes the deactivation stick.
+            #
+            # This does not lock an account out of its own console: the row is
+            # reactivated through ``PATCH /operators/{id}``, which authenticates
+            # with the client api key rather than through this socket.
+            return None
 
         if not operator:
             # bot_id is NOT NULL on operators (one operator, one bot. See

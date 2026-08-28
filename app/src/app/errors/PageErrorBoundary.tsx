@@ -1,18 +1,32 @@
-import { AlertTriangle, Home, RefreshCw } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { Link, useRouteError } from 'react-router-dom';
-import { PageContainer, buttonVariants } from '../../design-system';
+import {
+  Button,
+  Card,
+  CardBody,
+  CardHeader,
+  Measure,
+  Page,
+  PageHeader,
+  buttonClass,
+} from '../../ui';
 import { ErrorDetails } from './ErrorDetails';
 import { parseRouteError, useReportRouteError } from './parseRouteError';
 import { useTranslation } from '../../i18n/useTranslation';
 
 /**
- * PageErrorBoundary - the in-shell error surface for a single routed page.
+ * One page did not load. The rest of the console still works.
  *
- * Wired as the `errorElement` on the pathless layout that wraps every page
- * inside the app shell. Because it renders through the shell's `<Outlet />`, a
- * crash in one page (e.g. a `ReferenceError` while rendering Billing) leaves the
- * sidebar and top bar intact, so the user can simply navigate elsewhere instead
- * of losing the whole app.
+ * Wired as the `errorElement` on the pathless layout inside `AppShell`, so it
+ * renders through the shell's `<Outlet />`: the rail, the top bar and the
+ * chatbot switcher all survive a crash in a single routed page. That is the
+ * whole distinction from {@link RootErrorBoundary}, and the copy leans on it —
+ * "everything else still works" is only worth saying where it is true, and here
+ * it is, because the reader can see the navigation next to the sentence.
+ *
+ * Navigating away is therefore the primary way out, not reloading: a route
+ * change unmounts the boundary and re-renders the page from scratch, which is
+ * both faster and less destructive than throwing away the whole application.
  */
 export function PageErrorBoundary() {
   const { t } = useTranslation();
@@ -21,34 +35,57 @@ export function PageErrorBoundary() {
   const { status, title, description, detail } = parseRouteError(error);
 
   return (
-    <PageContainer>
-      <div className="mx-auto flex max-w-lg flex-col items-center rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-6 py-14 text-center">
-        <div className="mb-4 grid h-12 w-12 place-items-center rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400">
-          <AlertTriangle size={22} />
-        </div>
-        {status != null && (
-          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
-            {t('app.errorStatus', { status }) || `Error ${status}`}
-          </p>
-        )}
-        <h2 className="text-base font-semibold text-[var(--ds-text)]">{title}</h2>
-        <p className="mt-1.5 max-w-sm text-sm text-[var(--ds-text-muted)]">{description}</p>
-        <div className="mt-6 flex flex-col gap-2 sm:flex-row">
-          <button
-            type="button"
-            onClick={() => window.location.reload()}
-            className={buttonVariants({ variant: 'primary', size: 'sm' })}
-          >
-            <RefreshCw size={14} />
-            {t('app.tryAgain') || 'Try again'}
-          </button>
-          <Link to="/" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
-            <Home size={14} />
-            {t('app.backToHome') || 'Back to Home'}
-          </Link>
-        </div>
-        <ErrorDetails detail={detail} className="w-full" />
-      </div>
-    </PageContainer>
+    <Page>
+      <Measure width="reading">
+        <PageHeader
+          eyebrow={
+            status != null
+              ? t('app.errorStatus', { status }) || `Error ${status}`
+              : t('app.thisPage') || 'This page'
+          }
+          title={title}
+          description={description}
+          actions={
+            <>
+              <Link to="/" className={buttonClass('primary', 'md')}>
+                {t('app.goToHome') || 'Go to Home'}
+              </Link>
+              <Button
+                variant="secondary"
+                onClick={() => window.location.reload()}
+                iconLeft={<RefreshCw aria-hidden />}
+              >
+                {t('app.reloadThisPage') || 'Reload this page'}
+              </Button>
+            </>
+          }
+        />
+
+        <Card>
+          <CardHeader
+            title={t('app.everythingElseStillWorks') || 'Everything else still works'}
+            titleAs="h2"
+            description={
+              t('app.onlyThisPageFailed') ||
+              'Only this page failed. Your chatbots are still answering visitors.'
+            }
+          />
+          <CardBody>
+            <p className="text-base text-text-secondary">
+              {t('app.ifThisPageKeepsFailing') || 'If this page keeps failing, email'}{' '}
+              <a
+                href="mailto:developer@oyechats.com"
+                className="text-accent-600 underline underline-offset-2"
+              >
+                developer@oyechats.com
+              </a>{' '}
+              {t('app.withTheAddressInYourBrowser') ||
+                'with the address in your browser bar and what is under Technical details.'}
+            </p>
+            <ErrorDetails detail={detail} className="mt-4" />
+          </CardBody>
+        </Card>
+      </Measure>
+    </Page>
   );
 }

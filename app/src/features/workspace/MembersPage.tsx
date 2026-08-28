@@ -1,621 +1,321 @@
-import { type FormEvent, type ReactElement, useEffect, useMemo, useRef, useState } from 'react';
-import { formatDate as i18nFormatDate } from '../../i18n/formatters';
+import { useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { useMutation } from '@tanstack/react-query';
 import {
-  AlertTriangle,
-  Building2,
-  Check,
   Headphones,
-  Loader2,
-  Mail,
+  LogOut,
+  MoreHorizontal,
   Pencil,
   Plus,
+  Power,
   RotateCcw,
   Trash2,
-  Upload,
   UserPlus,
   Users,
-  UserRound,
-  X,
 } from 'lucide-react';
 import {
+  ABSENT,
+  Alert,
+  Avatar,
+  Badge,
   Button,
+  Card,
+  CardBody,
+  ConfirmDialog,
   DataTable,
   EmptyState,
-  FeedbackBanner,
-  Input,
-  LockedFeatureCard,
-  Modal,
-  PageContainer,
-  QuotaMeter,
-  SectionHeader,
-  Select,
-  Skeleton,
-  StatusBadge,
+  ErrorState,
+  LoadingRows,
+  LockedState,
+  MenuContent,
+  MenuItem,
+  MenuRoot,
+  MenuTrigger,
+  Meter,
+  Section,
+  Stack,
   Tabs,
-  Textarea,
-  useFeedback,
+  TabPanel,
+  Toolbar,
+  buttonClass,
+  formatNumber,
+  formatDate,
+  toast,
   type Column,
-} from '../../design-system';
+} from '../../ui';
 import {
   addSelfAsOperator,
-  createDepartment,
-  createOperatorInvite,
   deleteDepartment,
   deleteOperator,
-  getCurrentUser,
-  getDepartments,
-  getOperators,
-  listOperatorInvites,
-  removeOperatorAvatar,
+  removeSelfAsOperator,
   resendOperatorInvite,
   revokeOperatorInvite,
-  updateDepartment,
   updateOperator,
-  uploadOperatorAvatar,
 } from '../../services/api';
-import { BusinessHoursEditor, type BusinessHours } from './BusinessHoursEditor';
 import { useBotContext } from '../../context/BotContext';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { useEntitlements } from '../../hooks/useEntitlements';
-import { useUpgradeModal } from '../../context/UpgradeModalContext';
-import { type Department, type Operator, type OperatorInvite } from '../../types/domain';
-
-// ── Local helpers ────────────────────────────────────────────────────────────
+import type { Department, Operator, OperatorInvite } from '../../types/domain';
+import { canManageTeam, roleLabel, roleTone } from './roles';
+import {
+  AVAILABILITY_LABEL,
+  availability,
+  byPresenceThenName,
+  departmentName,
+  inviteExpired,
+  pendingInvitesFor,
+  rosterFor,
+  seatsUsed,
+  selfSeat,
+} from './teamModel';
+import { useTeamData } from './useTeamData';
+import { MemberDialog } from './MemberDialog';
+import { InviteDialog } from './InviteDialog';
+import { DepartmentDialog } from './DepartmentDialog';
+import { QueueSettingsCard } from './QueueSettingsCard';
 
 /**
- * Some legacy list endpoints return a `{ key: [...] }` envelope while others
- * return the bare array. Normalize both at this boundary so the page never
- * cares which shape the runtime hands back.
+ * Settings ▸ Team — who is in this workspace, and what each of them may do.
+ *
+ * Three questions, three tabs, all of them in the URL: the people on the
+ * roster, the invitations still outstanding, and the departments that group
+ * them. The console this replaces put invitations inside the people tab, where
+ * a pending invite looked like a member who had never come online.
+ *
+ * Every destructive act here confirms and says what it costs. The previous
+ * version had none: removing a teammate, deleting a department, revoking an
+ * invitation and promoting somebody to Owner were all one unguarded click.
  */
-function unwrapList<T>(value: unknown, key: string): T[] {
-  if (Array.isArray(value)) return value as T[];
-  if (value && typeof value === 'object') {
-    const inner = (value as Record<string, unknown>)[key];
-    if (Array.isArray(inner)) return inner as T[];
-  }
-  return [];
-}
 
-function toMessage(error: unknown, fallback: string): string {
-  if (error instanceof Error && error.message) return error.message;
-  return fallback;
-}
+type TabKey = 'people' | 'invitations' | 'departments' | 'routing';
 
-function formatDate(iso: string | null | undefined): string {
-  if (!iso) return '';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '';
-  // en-GB → DD/MM/YYYY, unambiguous for a primarily-Indian audience.
-  return i18nFormatDate(date, { day: 'numeric', month: 'short', year: 'numeric' });
-}
+const TAB_ITEMS = [
+  { value: 'people', label: 'People' },
+  { value: 'invitations', label: 'Invitations' },
+  { value: 'departments', label: 'Departments' },
+  { value: 'routing', label: 'Routing' },
+] as const;
 
-type RoleTone = 'accent' | 'info' | 'neutral';
-const ROLE_TONE: Record<string, RoleTone> = { owner: 'accent', admin: 'info', operator: 'neutral' };
-
-const INVITE_ROLES: ReadonlyArray<{ value: string; label: string }> = [
-  { value: 'operator', label: 'Operator' },
-  { value: 'admin', label: 'Admin' },
-];
-
-/** Fields an admin may change on another member. Name/email are self-only. */
-const EDITABLE_ROLES: ReadonlyArray<{ value: string; label: string }> = [
-  { value: 'operator', label: 'Operator' },
-  { value: 'admin', label: 'Admin' },
-  { value: 'owner', label: 'Owner' },
-];
-
-const labelClass = 'mb-1.5 block text-[12px] font-medium text-[var(--ds-text-muted)]';
-
-// ── Data loading state machine ───────────────────────────────────────────────
-
-interface TeamData {
-  operators: Operator[];
-  departments: Department[];
-  invites: OperatorInvite[];
-  currentUserId: number | null;
-  /** 'operator' when logged in via X-Operator-Key, 'client' via X-API-Key - decides
-   * how to match `currentUserId` against a roster row (see `isEditingSelf` below). */
-  currentUserKind: 'client' | 'operator' | null;
-}
-
-type LoadPhase =
-  | { readonly status: 'loading' }
-  | { readonly status: 'error'; readonly message: string }
-  | { readonly status: 'ready'; readonly data: TeamData };
-
-type TabKey = 'people' | 'departments';
-
-// ── Small presentational pieces ──────────────────────────────────────────────
-
-function Avatar({ name, avatarUrl }: { name: string; avatarUrl?: string | null }): ReactElement {
-  const initial = name.trim().charAt(0).toUpperCase() || '?';
+function isTab(value: string | null): value is TabKey {
   return (
-    <span
-      aria-hidden="true"
-      className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--ds-accent-soft)] text-[12px] font-bold text-[var(--ds-accent-text)]"
-    >
-      {avatarUrl ? (
-        <img src={avatarUrl} alt="" className="h-full w-full object-cover" />
-      ) : (
-        initial
-      )}
-    </span>
+    value === 'people' || value === 'invitations' || value === 'departments' || value === 'routing'
   );
 }
 
-function PresenceBadge({ online }: { online: boolean }): ReactElement {
-  return (
-    <StatusBadge tone={online ? 'success' : 'neutral'} dot>
-      {online ? 'Online' : 'Offline'}
-    </StatusBadge>
-  );
-}
+export function MembersPage() {
+  const [params, setParams] = useSearchParams();
+  const tab: TabKey = isTab(params.get('tab')) ? (params.get('tab') as TabKey) : 'people';
 
-// ── Page ─────────────────────────────────────────────────────────────────────
-
-/**
- * MembersPage - the Workspace ▸ Members surface. One job: answer
- * "Who is on my team?". Shows the roster (roles, presence, department),
- * pending invitations, and the departments that group members. Invite,
- * edit-role, remove, and department create/delete are wired against the
- * reused operator/department/invite backend.
- */
-export function MembersPage(): ReactElement {
-  const { selectedBot } = useBotContext();
+  const { selectedBot, bots } = useBotContext();
   const { currentRole } = useWorkspace();
-  // A member acting purely as an operator can't manage the team; owners/admins
-  // (and the solo-owner case where role is still null) can.
-  const canManage = currentRole !== 'operator';
-  const selectedBotId = selectedBot?.id ?? null;
+  const { isFree, limitFor, hasFeature } = useEntitlements();
 
-  const { isFree, limitFor, withinLimit } = useEntitlements();
-  const { openUpgradeModal } = useUpgradeModal();
-  const seatLimit = limitFor('operators');
+  // One resolution of "which chatbot is this page about", so the seat meter,
+  // the invite dialog and the queue settings can never disagree about it.
+  const routedBot = selectedBot ?? bots[0] ?? null;
+  const botId = routedBot?.id ?? null;
+  const botName = routedBot?.name ?? null;
+  const canManage = canManageTeam(currentRole);
 
-  const [phase, setPhase] = useState<LoadPhase>({ status: 'loading' });
-  const [refreshToken, setRefreshToken] = useState(0);
-  // Scoped to the selected agent's roster - drop the message the moment the
-  // agent changes so a stale confirmation never bleeds across contexts.
-  const { feedback, notify, dismiss } = useFeedback({ resetKey: selectedBotId });
-  const [tab, setTab] = useState<TabKey>('people');
+  const team = useTeamData(!isFree);
 
-  // Mirror the latest committed phase so the async loader can tell an initial
-  // load (nothing on screen yet) from a background refresh (roster already
-  // rendered) without depending on a stale closure.
-  const phaseRef = useRef(phase);
-  useEffect(() => {
-    phaseRef.current = phase;
-  }, [phase]);
-
-  // Invite form
-  const [inviteOpen, setInviteOpen] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState('operator');
-  const [inviteDept, setInviteDept] = useState('');
-  const [inviteBusy, setInviteBusy] = useState(false);
-
-  // Edit member
+  const [inviting, setInviting] = useState(false);
   const [editing, setEditing] = useState<Operator | null>(null);
-  const [editRole, setEditRole] = useState('operator');
-  const [editDept, setEditDept] = useState('');
-  const [editMaxChats, setEditMaxChats] = useState('3');
-  const [editBusy, setEditBusy] = useState(false);
+  const [removing, setRemoving] = useState<Operator | null>(null);
+  const [revoking, setRevoking] = useState<OperatorInvite | null>(null);
+  const [departmentDraft, setDepartmentDraft] = useState<Department | null | 'new'>(null);
+  const [deletingDepartment, setDeletingDepartment] = useState<Department | null>(null);
+  const [joining, setJoining] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const [deactivating, setDeactivating] = useState<Operator | null>(null);
+  const [reactivating, setReactivating] = useState<Operator | null>(null);
 
-  // Profile picture - optional, self-only (see `isEditingSelf` below).
-  const [avatarUploading, setAvatarUploading] = useState(false);
-  const [avatarError, setAvatarError] = useState('');
+  const roster = rosterFor(team.operators, botId).sort(byPresenceThenName);
+  const invites = pendingInvitesFor(team.invites, botId);
+  const used = seatsUsed(team.operators, botId);
+  const seatLimit = limitFor('operators');
+  const atSeatLimit = seatLimit >= 0 && used >= seatLimit;
+  const self = selfSeat(team.operators, team.clientId, botId);
 
-  // `editMaxChats` is the raw string from a number input: clearing it yields ''
-  // (Number('') === 0, an operator that can never be routed a live chat) and it
-  // does not enforce the documented [1, 20] cap. Parse + validate before we let
-  // the operator be saved.
-  const maxChats = Number.parseInt(editMaxChats, 10);
-  const maxChatsValid = Number.isInteger(maxChats) && maxChats >= 1 && maxChats <= 20;
+  const membersIn = (department: Department): number =>
+    team.operators.filter((operator) => operator.department_id === department.id).length;
 
-  // Row-level busy / confirm
-  const [removingId, setRemovingId] = useState<number | null>(null);
-  const [rowBusyId, setRowBusyId] = useState<number | null>(null);
-  const [selfBusy, setSelfBusy] = useState(false);
+  const invalidate = team.refetch;
 
-  // Departments
-  const [deptOpen, setDeptOpen] = useState(false);
-  const [deptName, setDeptName] = useState('');
-  const [deptDesc, setDeptDesc] = useState('');
-  const [deptBusy, setDeptBusy] = useState(false);
-  const [deptRemovingId, setDeptRemovingId] = useState<number | null>(null);
-  const [deptRowBusyId, setDeptRowBusyId] = useState<number | null>(null);
+  const remove = useMutation({
+    mutationFn: (operator: Operator) => deleteOperator(operator.id),
+    onSuccess: (_data, operator) => {
+      toast.success(`${operator.name || operator.email} removed from the team`);
+      setRemoving(null);
+      invalidate();
+    },
+  });
 
-  // Department edit (name + description + per-department business hours)
-  const [editingDept, setEditingDept] = useState<Department | null>(null);
-  const [editDeptName, setEditDeptName] = useState('');
-  const [editDeptDesc, setEditDeptDesc] = useState('');
-  const [editDeptHours, setEditDeptHours] = useState<BusinessHours | null>(null);
-  const [editDeptBusy, setEditDeptBusy] = useState(false);
-  const [editDeptError, setEditDeptError] = useState('');
+  /**
+   * Deactivate and reactivate are not symmetrical, and the dialogs say so.
+   *
+   * Deactivating always works: the server hands their live conversations back
+   * to the queue, drops their socket and frees the seat. Reactivating asks for
+   * a seat back, and `invite_service._require_seat_available` can refuse — so
+   * the roster is never flipped optimistically. `ConfirmDialog` keeps itself
+   * open and prints the server's reason when this rejects, which is the only
+   * honest way to render "we could not give them their seat back".
+   */
+  const setActive = useMutation({
+    mutationFn: ({ operator, active }: { operator: Operator; active: boolean }) =>
+      updateOperator(operator.id, { is_active: active }),
+    onSuccess: (_data, { operator, active }) => {
+      toast.success(
+        active
+          ? `${operator.name || operator.email} can answer conversations again`
+          : `${operator.name || operator.email} deactivated`,
+      );
+      setDeactivating(null);
+      setReactivating(null);
+      invalidate();
+    },
+  });
 
-  // Load / reload. No synchronous setState in the effect body - the first
-  // setState always follows an await, so `loading` is a genuine derived phase.
-  // Free-plan workspaces never issue this fetch - the page renders the
-  // upgrade teaser below instead, so there's no roster to load in the first
-  // place. Re-runs (and starts fetching) the moment `isFree` flips false.
-  useEffect(() => {
-    if (isFree) return;
-    let active = true;
-    void (async () => {
-      try {
-        const [opsRes, deptRes, inviteRes, user] = await Promise.all([
-          getOperators(),
-          getDepartments(),
-          // Non-fatal: operators without a client identity can't list invites.
-          listOperatorInvites('pending').catch(() => [] as OperatorInvite[]),
-          getCurrentUser().catch(() => null),
-        ]);
-        if (!active) return;
-        setPhase({
-          status: 'ready',
-          data: {
-            operators: unwrapList<Operator>(opsRes, 'operators'),
-            departments: unwrapList<Department>(deptRes, 'departments'),
-            invites: unwrapList<OperatorInvite>(inviteRes, 'invites'),
-            currentUserId: user ? user.id : null,
-            currentUserKind: (user?.kind as 'client' | 'operator' | undefined) ?? null,
-          },
-        });
-      } catch (error) {
-        if (!active) return;
-        // A background refresh (fired after a successful mutation) must not blow
-        // away the roster the user is already looking at. Only hard-fail to the
-        // full-page error state on the initial load / explicit retry; on a
-        // background flake keep the last-good data and surface the failure as a
-        // non-destructive banner.
-        if (phaseRef.current.status === 'ready') {
-          notify({
-            tone: 'error',
-            message: toMessage(
-              error,
-              'We couldn’t refresh your team - showing the last loaded data.',
-            ),
-          });
-        } else {
-          setPhase({
-            status: 'error',
-            message: toMessage(error, 'We couldn’t load your team. Please try again.'),
-          });
-        }
-      }
-    })();
-    return () => {
-      active = false;
-    };
-    // `notify` is a stable callback from useFeedback - listed to satisfy the
-    // exhaustive-deps rule without re-running the fetch.
-  }, [refreshToken, isFree, notify]);
+  const resend = useMutation({
+    mutationFn: (invite: OperatorInvite) => resendOperatorInvite(invite.id),
+    onSuccess: (_data, invite) => {
+      toast.success(`Invitation to ${invite.email} sent again`);
+      invalidate();
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : 'Could not resend that invitation.'),
+  });
 
-  const reload = (): void => setRefreshToken((token) => token + 1);
-  const retry = (): void => {
-    setPhase({ status: 'loading' });
-    reload();
-  };
+  const revoke = useMutation({
+    mutationFn: (invite: OperatorInvite) => revokeOperatorInvite(invite.id),
+    onSuccess: (_data, invite) => {
+      toast.success(`Invitation to ${invite.email} revoked`);
+      setRevoking(null);
+      invalidate();
+    },
+  });
 
-  const data = phase.status === 'ready' ? phase.data : null;
+  const join = useMutation({
+    mutationFn: () => {
+      if (botId == null) throw new Error('Pick a chatbot first.');
+      return addSelfAsOperator(botId);
+    },
+    onSuccess: () => {
+      toast.success('You are on the live-chat roster');
+      setJoining(false);
+      invalidate();
+    },
+  });
 
-  // Derived, bot-scoped rosters. Operators and invites are bound to a single
-  // bot; departments are workspace-level and shown in full.
-  const botOperators = useMemo(
-    () =>
-      data && selectedBotId
-        ? data.operators.filter((operator) => operator.bot_id === selectedBotId)
-        : [],
-    [data, selectedBotId],
-  );
+  const leave = useMutation({
+    mutationFn: () => removeSelfAsOperator(),
+    onSuccess: () => {
+      toast.success('You have left live chat');
+      setLeaving(false);
+      invalidate();
+    },
+  });
 
-  // Per-bot seat usage. Seats are allocated per agent - the plan's operator
-  // limit applies to each bot independently - so the meter and the invite gate
-  // count only the selected bot's operators. Switching bots shows that bot's
-  // own seat count. Mirrors the backend per-bot enforcement in
-  // invite_service._require_seat_available.
-  const seatsUsed = botOperators.length;
-  const atSeatLimit = !withinLimit('operators', seatsUsed);
-  const botInvites = useMemo(
-    () =>
-      data && selectedBotId
-        ? data.invites.filter((invite) => invite.bot_id === selectedBotId)
-        : [],
-    [data, selectedBotId],
-  );
-  const departments = data?.departments ?? [];
+  const removeDepartment = useMutation({
+    mutationFn: (department: Department) => deleteDepartment(department.id),
+    onSuccess: (_data, department) => {
+      toast.success(`Department “${department.name}” deleted`);
+      setDeletingDepartment(null);
+      invalidate();
+    },
+  });
 
-  const departmentName = (id: number | null | undefined): string =>
-    departments.find((department) => department.id === id)?.name ?? '-';
+  const mutationError = [
+    remove.error,
+    revoke.error,
+    join.error,
+    leave.error,
+    removeDepartment.error,
+  ]
+    .filter((error): error is Error => error instanceof Error)
+    .map((error) => error.message)[0];
 
-  // The current owner acting as an operator on the selected bot, if any.
-  const selfOperator = useMemo(() => {
-    if (!data || data.currentUserId == null) return null;
-    return botOperators.find((operator) => operator.linked_client_id === data.currentUserId) ?? null;
-  }, [data, botOperators]);
-  const showSelfCta = canManage && !!selectedBotId && data?.currentUserId != null && !selfOperator;
-
-  // Is the row currently open in the edit panel the logged-in user's own
-  // roster entry? An operator login's `currentUserId` IS the operator id
-  // (`/auth/me` returns `id=operator.id` for that branch); a client login's
-  // `currentUserId` is the Client id, matched instead via `linked_client_id`
-  // - the two id spaces are not interchangeable, so this must branch on
-  // `currentUserKind` rather than try either comparison unconditionally.
-  const isEditingSelf =
-    !!editing &&
-    !!data &&
-    data.currentUserId != null &&
-    (data.currentUserKind === 'operator'
-      ? editing.id === data.currentUserId
-      : editing.linked_client_id === data.currentUserId);
-
-  // ── Free-plan gate ───────────────────────────────────────────────────────
-  // Placed after every hook call (rules-of-hooks requires hooks to run
-  // unconditionally) but before any mutation/render logic: a Free workspace
-  // only ever sees the upgrade teaser for Members, never the roster, loading
-  // skeleton, or error state. Pairs with the fetch guard above, which never
-  // issues the roster request in the first place.
-  if (isFree) {
+  // ── Plan gate ─────────────────────────────────────────────────────────────
+  if (isFree || !hasFeature('live_chat')) {
     return (
-      <PageContainer
-        title="Operators"
-        description="Everyone who can see conversations and answer visitors in this workspace."
-      >
-        <div className="mx-auto w-full max-w-md py-12">
-          <LockedFeatureCard intent="view_team" icon={Users} />
-        </div>
-      </PageContainer>
+      <LockedState
+        title="Your plan does not include a team"
+        description="A paid plan adds teammates, roles, departments and opening hours."
+        action={
+          <Link to="/billing" className={buttonClass('primary', 'md')}>
+            See plans
+          </Link>
+        }
+        preview={<RosterPreview />}
+      />
     );
   }
 
-  // ── Mutations ──────────────────────────────────────────────────────────────
-
-  const handleInvite = async (event: FormEvent): Promise<void> => {
-    event.preventDefault();
-    if (!selectedBotId) return;
-    dismiss();
-    setInviteBusy(true);
-    try {
-      await createOperatorInvite({
-        email: inviteEmail.trim(),
-        botId: selectedBotId,
-        role: inviteRole,
-        departmentId: inviteDept ? Number(inviteDept) : null,
-      });
-      notify({ tone: 'success', message: `Invitation sent to ${inviteEmail.trim()}.` });
-      setInviteOpen(false);
-      setInviteEmail('');
-      setInviteRole('operator');
-      setInviteDept('');
-      reload();
-    } catch (error) {
-      notify({ tone: 'error', message: toMessage(error, 'Failed to send the invitation.') });
-    } finally {
-      setInviteBusy(false);
-    }
-  };
-
-  const handleResend = async (invite: OperatorInvite): Promise<void> => {
-    dismiss();
-    setRowBusyId(invite.id);
-    try {
-      await resendOperatorInvite(invite.id);
-      notify({ tone: 'success', message: `Invitation to ${invite.email} resent.` });
-      reload();
-    } catch (error) {
-      notify({ tone: 'error', message: toMessage(error, 'Failed to resend the invitation.') });
-    } finally {
-      setRowBusyId(null);
-    }
-  };
-
-  const handleRevoke = async (invite: OperatorInvite): Promise<void> => {
-    dismiss();
-    setRowBusyId(invite.id);
-    try {
-      await revokeOperatorInvite(invite.id);
-      notify({ tone: 'success', message: `Invitation to ${invite.email} revoked.` });
-      reload();
-    } catch (error) {
-      notify({ tone: 'error', message: toMessage(error, 'Failed to revoke the invitation.') });
-    } finally {
-      setRowBusyId(null);
-    }
-  };
-
-  const openEdit = (operator: Operator): void => {
-    setEditing(operator);
-    setEditRole(operator.role);
-    setEditDept(operator.department_id != null ? String(operator.department_id) : '');
-    setEditMaxChats(String(operator.max_concurrent_chats ?? 3));
-    setRemovingId(null);
-    setAvatarError('');
-  };
-
-  /** Patches one operator's `avatar_url` in both the open edit panel and the roster list. */
-  const patchOperatorAvatar = (operatorId: number, avatarUrl: string | null): void => {
-    setEditing((current) => (current && current.id === operatorId ? { ...current, avatar_url: avatarUrl } : current));
-    setPhase((current) =>
-      current.status === 'ready'
-        ? {
-            status: 'ready',
-            data: {
-              ...current.data,
-              operators: current.data.operators.map((operator) =>
-                operator.id === operatorId ? { ...operator, avatar_url: avatarUrl } : operator,
-              ),
-            },
-          }
-        : current,
+  // ── Forbidden ─────────────────────────────────────────────────────────────
+  if (team.forbidden || !canManage) {
+    return (
+      <LockedState
+        title="Only owners and admins can manage the team"
+        description="Your own profile and alerts are on your account page."
+        action={
+          <Link to="/account" className={buttonClass('primary', 'md')}>
+            Go to your account
+          </Link>
+        }
+      />
     );
-  };
+  }
 
-  const handleAvatarUpload = async (file: File): Promise<void> => {
-    if (!editing) return;
-    const operatorId = editing.id;
-    setAvatarUploading(true);
-    setAvatarError('');
-    try {
-      const { avatar_url } = await uploadOperatorAvatar(file);
-      patchOperatorAvatar(operatorId, avatar_url);
-      notify({ tone: 'success', message: 'Your profile picture has been updated.' });
-    } catch (error) {
-      setAvatarError(toMessage(error, 'Failed to upload profile picture.'));
-    } finally {
-      setAvatarUploading(false);
-    }
-  };
+  // ── Loading ───────────────────────────────────────────────────────────────
+  if (team.loading) {
+    return (
+      <Card>
+        <CardBody>
+          <LoadingRows rows={5} />
+        </CardBody>
+      </Card>
+    );
+  }
 
-  const handleAvatarRemove = async (): Promise<void> => {
-    if (!editing) return;
-    const operatorId = editing.id;
-    setAvatarUploading(true);
-    setAvatarError('');
-    try {
-      await removeOperatorAvatar();
-      patchOperatorAvatar(operatorId, null);
-      notify({ tone: 'success', message: 'Your profile picture has been removed.' });
-    } catch (error) {
-      setAvatarError(toMessage(error, 'Failed to remove profile picture.'));
-    } finally {
-      setAvatarUploading(false);
-    }
-  };
+  // ── Error ─────────────────────────────────────────────────────────────────
+  if (team.error) {
+    return (
+      <Card>
+        <ErrorState
+          title="We could not load your team"
+          description={team.error.message}
+          onRetry={invalidate}
+        />
+      </Card>
+    );
+  }
 
-  const handleSaveEdit = async (event: FormEvent): Promise<void> => {
-    event.preventDefault();
-    if (!editing || !maxChatsValid) return;
-    dismiss();
-    setEditBusy(true);
-    try {
-      await updateOperator(editing.id, {
-        role: editRole,
-        department_id: editDept ? Number(editDept) : null,
-        max_concurrent_chats: maxChats,
-      });
-      notify({ tone: 'success', message: `${editing.name} updated.` });
-      setEditing(null);
-      reload();
-    } catch (error) {
-      notify({ tone: 'error', message: toMessage(error, 'Failed to update this operator.') });
-    } finally {
-      setEditBusy(false);
-    }
-  };
-
-  const handleRemove = async (operator: Operator): Promise<void> => {
-    dismiss();
-    setRowBusyId(operator.id);
-    try {
-      await deleteOperator(operator.id);
-      notify({ tone: 'success', message: `${operator.name} removed from the team.` });
-      setRemovingId(null);
-      if (editing?.id === operator.id) setEditing(null);
-      reload();
-    } catch (error) {
-      notify({ tone: 'error', message: toMessage(error, 'Failed to remove this operator.') });
-    } finally {
-      setRowBusyId(null);
-    }
-  };
-
-  const handleSelfJoin = async (): Promise<void> => {
-    if (!selectedBotId) return;
-    dismiss();
-    setSelfBusy(true);
-    try {
-      await addSelfAsOperator(selectedBotId);
-      notify({ tone: 'success', message: 'You’re now taking live chats on this chatbot.' });
-      reload();
-    } catch (error) {
-      notify({ tone: 'error', message: toMessage(error, 'Failed to add you to the roster.') });
-    } finally {
-      setSelfBusy(false);
-    }
-  };
-
-  const handleCreateDept = async (event: FormEvent): Promise<void> => {
-    event.preventDefault();
-    dismiss();
-    setDeptBusy(true);
-    try {
-      await createDepartment({ name: deptName.trim(), description: deptDesc.trim() || null });
-      notify({ tone: 'success', message: `Department “${deptName.trim()}” created.` });
-      setDeptOpen(false);
-      setDeptName('');
-      setDeptDesc('');
-      reload();
-    } catch (error) {
-      notify({ tone: 'error', message: toMessage(error, 'Failed to create the department.') });
-    } finally {
-      setDeptBusy(false);
-    }
-  };
-
-  const openEditDept = (department: Department): void => {
-    dismiss();
-    setEditingDept(department);
-    setEditDeptName(department.name);
-    setEditDeptDesc(department.description ?? '');
-    setEditDeptHours((department.business_hours as BusinessHours | null) ?? null);
-    setEditDeptError('');
-  };
-
-  const handleUpdateDept = async (event: FormEvent): Promise<void> => {
-    event.preventDefault();
-    if (!editingDept) return;
-    const name = editDeptName.trim();
-    if (!name) {
-      setEditDeptError('A department name is required.');
-      return;
-    }
-    setEditDeptBusy(true);
-    setEditDeptError('');
-    try {
-      await updateDepartment(editingDept.id, {
-        name,
-        description: editDeptDesc.trim() || null,
-        // Persist hours only when the master toggle is on; otherwise clear to
-        // null ("always open") so the resolver short-circuits.
-        business_hours: editDeptHours && editDeptHours.enabled ? editDeptHours : null,
-      });
-      setEditingDept(null);
-      notify({ tone: 'success', message: `Department “${name}” updated.` });
-      reload();
-    } catch (error) {
-      setEditDeptError(toMessage(error, 'Failed to update the department.'));
-    } finally {
-      setEditDeptBusy(false);
-    }
-  };
-
-  const handleDeleteDept = async (department: Department): Promise<void> => {
-    dismiss();
-    setDeptRowBusyId(department.id);
-    try {
-      await deleteDepartment(department.id);
-      notify({ tone: 'success', message: `Department “${department.name}” deleted.` });
-      setDeptRemovingId(null);
-      reload();
-    } catch (error) {
-      notify({ tone: 'error', message: toMessage(error, 'Failed to delete the department.') });
-    } finally {
-      setDeptRowBusyId(null);
-    }
-  };
-
-  // ── Roster columns ───────────────────────────────────────────────────────────
-
-  const columns: Column<Operator>[] = [
+  const memberColumns: Column<Operator>[] = [
     {
       key: 'name',
-      header: 'Operator',
+      header: 'Member',
+      width: '17rem',
+      pinned: true,
+      sortable: (a, b) =>
+        (a.name || a.email).localeCompare(b.name || b.email, undefined, {
+          sensitivity: 'base',
+        }),
       render: (operator) => (
-        <div className="flex items-center gap-3">
-          <Avatar name={operator.name} avatarUrl={operator.avatar_url} />
+        <div className="flex min-w-0 items-center gap-2.5">
+          <Avatar name={operator.name || operator.email} size="sm" src={operator.avatar_url} />
           <div className="min-w-0">
-            <p className="truncate font-medium text-[var(--ds-text)]">{operator.name}</p>
-            <p className="truncate text-[12px] text-[var(--ds-text-subtle)]">{operator.email}</p>
+            {/* The "You" marker sits outside the truncating span. Inside it, the
+                one row the reader most needs to identify was the row whose
+                marker a long name truncated away. */}
+            <p className="flex min-w-0 items-baseline gap-1.5">
+              <span className="truncate font-medium text-text-primary">
+                {operator.name || operator.email}
+              </span>
+              {operator.linked_client_id === team.clientId ? (
+                <Badge tone="neutral">You</Badge>
+              ) : null}
+            </p>
+            <p className="truncate text-xs text-text-secondary">{operator.email}</p>
           </div>
         </div>
       ),
@@ -623,720 +323,642 @@ export function MembersPage(): ReactElement {
     {
       key: 'role',
       header: 'Role',
+      sortable: (a, b) => (a.role ?? '').localeCompare(b.role ?? ''),
       render: (operator) => (
-        <StatusBadge tone={ROLE_TONE[operator.role] ?? 'neutral'} className="capitalize">
-          {operator.role}
-        </StatusBadge>
+        <Badge tone={roleTone(operator.role)}>{roleLabel(operator.role)}</Badge>
       ),
     },
     {
-      key: 'department_id',
+      key: 'department',
       header: 'Department',
+      secondary: true,
+      sortable: (a, b) =>
+        (departmentName(team.departments, a.department_id) ?? '\uffff').localeCompare(
+          departmentName(team.departments, b.department_id) ?? '\uffff',
+        ),
       render: (operator) => (
-        <span className="text-[var(--ds-text-muted)]">{departmentName(operator.department_id)}</span>
+        <span className="text-text-secondary">
+          {departmentName(team.departments, operator.department_id) ?? ABSENT}
+        </span>
       ),
     },
     {
-      key: 'is_online',
-      header: 'Presence',
-      render: (operator) => <PresenceBadge online={!!operator.is_online} />,
+      key: 'availability',
+      header: 'Availability',
+      sortable: (a, b) =>
+        Number(availability(b) === 'online') - Number(availability(a) === 'online'),
+      // A `Badge`, not a `StatusDot`. `StatusDot` renders a 8px disc and puts
+      // its label in an `sr-only` span — correct in an avatar corner, wrong in a
+      // table column, where it produced a column of bare coloured dots whose
+      // meaning was invisible to everyone who can see them and unreadable to
+      // one in twelve who cannot separate the green from the grey.
+      render: (operator) => {
+        const state = availability(operator);
+        return (
+          <Badge tone={state === 'online' ? 'success' : 'neutral'} dot>
+            {AVAILABILITY_LABEL[state]}
+          </Badge>
+        );
+      },
     },
     {
-      key: 'active_chats',
-      header: 'Live chats',
+      key: 'load',
+      header: 'Live now',
       align: 'right',
+      secondary: true,
+      sortable: (a, b) => (a.active_chats ?? 0) - (b.active_chats ?? 0),
+      // `0 / 3` on every offline row states a capacity fact that is not
+      // currently meaningful and fills the column with noise on a roster where
+      // most people are offline. An absent value is `—`.
+      render: (operator) =>
+        availability(operator) === 'online' ? (
+          <span className="text-text-secondary">
+            {formatNumber(operator.active_chats ?? 0)}
+            <span className="text-text-tertiary">
+              {' / '}
+              {formatNumber(operator.max_concurrent_chats ?? 0)}
+            </span>
+          </span>
+        ) : (
+          <span className="text-text-tertiary">{ABSENT}</span>
+        ),
+    },
+    {
+      key: 'actions',
+      header: <span className="sr-only">Actions</span>,
+      align: 'right',
+      width: '3rem',
       render: (operator) => (
-        <span className="tabular-nums text-[var(--ds-text-muted)]">
-          {operator.active_chats ?? 0}
-          {operator.max_concurrent_chats ? ` / ${operator.max_concurrent_chats}` : ''}
-        </span>
+        <MenuRoot>
+          <MenuTrigger
+            aria-label={`Actions for ${operator.name || operator.email}`}
+            className={buttonClass('ghost', 'icon-sm')}
+          >
+            <MoreHorizontal aria-hidden />
+          </MenuTrigger>
+          <MenuContent>
+            <MenuItem icon={<Pencil aria-hidden />} onSelect={() => setEditing(operator)}>
+              Edit member
+            </MenuItem>
+            {operator.linked_client_id === team.clientId ? (
+              <MenuItem icon={<LogOut aria-hidden />} onSelect={() => setLeaving(true)}>
+                Leave live chat
+              </MenuItem>
+            ) : operator.is_active === false ? (
+              <MenuItem icon={<Power aria-hidden />} onSelect={() => setReactivating(operator)}>
+                Reactivate…
+              </MenuItem>
+            ) : (
+              <>
+                <MenuItem icon={<Power aria-hidden />} onSelect={() => setDeactivating(operator)}>
+                  Deactivate…
+                </MenuItem>
+                <MenuItem
+                  destructive
+                  icon={<Trash2 aria-hidden />}
+                  onSelect={() => setRemoving(operator)}
+                >
+                  Remove from team
+                </MenuItem>
+              </>
+            )}
+          </MenuContent>
+        </MenuRoot>
       ),
     },
   ];
 
-  if (canManage) {
-    columns.push({
-      key: 'id',
-      header: <span className="sr-only">Actions</span>,
-      align: 'right',
-      width: '7rem',
-      render: (operator) => (
-        <div className="flex items-center justify-end gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={`Edit ${operator.name}`}
-            onClick={() => openEdit(operator)}
-          >
-            <Pencil size={15} aria-hidden="true" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={`Remove ${operator.name}`}
-            onClick={() => {
-              setRemovingId(operator.id);
-              setEditing(null);
-            }}
-          >
-            <Trash2 size={15} aria-hidden="true" className="text-[var(--ds-danger)]" />
-          </Button>
+  const inviteColumns: Column<OperatorInvite>[] = [
+    {
+      key: 'email',
+      header: 'Invited',
+      pinned: true,
+      width: '16rem',
+      render: (invite) => (
+        <div className="min-w-0">
+          <p className="truncate font-medium text-text-primary">{invite.email}</p>
+          <p className="truncate text-xs text-text-secondary">
+            {invite.invited_by_name ? `Invited by ${invite.invited_by_name}` : 'Invited'}
+          </p>
         </div>
       ),
-    });
-  }
+    },
+    {
+      key: 'role',
+      header: 'Role',
+      render: (invite) => <Badge tone={roleTone(invite.role)}>{roleLabel(invite.role)}</Badge>,
+    },
+    {
+      // Two facts in one cell before this: a column headed Status rendered a
+      // date phrase, and an expired invitation was signalled by hue alone.
+      key: 'status',
+      header: 'Status',
+      render: (invite) =>
+        inviteExpired(invite.expires_at, Date.now()) ? (
+          <Badge tone="danger">Expired</Badge>
+        ) : (
+          <Badge tone="warning">Pending</Badge>
+        ),
+    },
+    {
+      key: 'expiry',
+      header: 'Expires',
+      type: 'text',
+      sortable: (a, b) =>
+        (Date.parse(a.expires_at ?? '') || 0) - (Date.parse(b.expires_at ?? '') || 0),
+      render: (invite) => (
+        <span className="figure text-text-secondary">
+          {invite.expires_at ? formatDate(invite.expires_at) : ABSENT}
+        </span>
+      ),
+    },
+    {
+      key: 'actions',
+      header: <span className="sr-only">Actions</span>,
+      align: 'right',
+      width: '10rem',
+      render: (invite) => (
+        <div className="flex items-center justify-end gap-1.5">
+          {/* Resend stays promoted — it is the common act — and Revoke moves
+              into the same row menu People and Departments use, so the reader
+              does not relearn where actions live on each tab. */}
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => resend.mutate(invite)}
+            loading={resend.isPending && resend.variables?.id === invite.id}
+            iconLeft={<RotateCcw aria-hidden />}
+          >
+            Resend
+          </Button>
+          <MenuRoot>
+            <MenuTrigger
+              aria-label={`Actions for the invitation to ${invite.email}`}
+              className={buttonClass('ghost', 'icon-sm')}
+            >
+              <MoreHorizontal aria-hidden />
+            </MenuTrigger>
+            <MenuContent>
+              <MenuItem
+                destructive
+                icon={<Trash2 aria-hidden />}
+                onSelect={() => setRevoking(invite)}
+              >
+                Revoke the invitation
+              </MenuItem>
+            </MenuContent>
+          </MenuRoot>
+        </div>
+      ),
+    },
+  ];
 
-  // ── Render ───────────────────────────────────────────────────────────────────
-
-  const canInvite = canManage && !!selectedBotId;
-
-  const handleInviteClick = (): void => {
-    // `atSeatLimit` is only ever true for a finite limit - `withinLimit`
-    // returns true for the unlimited (-1) sentinel - so the copy can assume a
-    // real seat count here.
-    if (atSeatLimit) {
-      openUpgradeModal('add_operator');
-      return;
-    }
-    setInviteOpen((open) => !open);
-  };
-
-  const pageActions = canInvite ? (
-    <Button onClick={handleInviteClick}>
-      <UserPlus size={16} aria-hidden="true" />
-      Invite operator
-    </Button>
-  ) : undefined;
+  const departmentColumns: Column<Department>[] = [
+    {
+      key: 'name',
+      header: 'Department',
+      pinned: true,
+      width: '20rem',
+      rowHeader: true,
+      sortable: (a, b) => a.name.localeCompare(b.name),
+      render: (department) => (
+        <div className="min-w-0">
+          <p className="truncate font-medium text-text-primary">{department.name}</p>
+          <p className="truncate text-xs text-text-secondary">{department.description || ABSENT}</p>
+        </div>
+      ),
+    },
+    {
+      key: 'members',
+      header: 'Members',
+      type: 'number',
+      sortable: (a, b) => membersIn(a) - membersIn(b),
+      render: (department) => formatNumber(membersIn(department)),
+    },
+    {
+      key: 'actions',
+      header: <span className="sr-only">Actions</span>,
+      align: 'right',
+      width: '3rem',
+      render: (department) => (
+        <MenuRoot>
+          <MenuTrigger
+            aria-label={`Actions for the ${department.name} department`}
+            className={buttonClass('ghost', 'icon-sm')}
+          >
+            <MoreHorizontal aria-hidden />
+          </MenuTrigger>
+          <MenuContent>
+            <MenuItem icon={<Pencil aria-hidden />} onSelect={() => setDepartmentDraft(department)}>
+              Edit department
+            </MenuItem>
+            <MenuItem
+              destructive
+              icon={<Trash2 aria-hidden />}
+              onSelect={() => setDeletingDepartment(department)}
+            >
+              Delete department
+            </MenuItem>
+          </MenuContent>
+        </MenuRoot>
+      ),
+    },
+  ];
 
   return (
-    <PageContainer
-      title="Operators"
-      description="Everyone who can see conversations and answer visitors in this workspace."
-      actions={pageActions}
-    >
-      {/* Seats used on the selected agent against the plan's per-bot operator limit. */}
-      {phase.status === 'ready' && selectedBotId && (
-        <div className="max-w-xs">
-          <QuotaMeter label="Seats on this chatbot" used={seatsUsed} limit={seatLimit} />
-        </div>
-      )}
+    <>
+      <Stack>
+        {/* A confirmation dialog surfaces its own failure inline and stays open,
+            so this only ever catches a failure that arrived after the dialog
+            closed. It sits above the tabs, not below the table: after a failed
+            remove on row 30 of a roster, an explanation under the table is off
+            screen. */}
+        {mutationError ? (
+          <Alert tone="danger" live title="That did not go through">
+            {mutationError}
+          </Alert>
+        ) : null}
 
-      {/* Live feedback for every mutation. */}
-      <FeedbackBanner feedback={feedback} onDismiss={dismiss} />
-
-      {phase.status === 'loading' && <LoadingState />}
-
-      {phase.status === 'error' && (
-        <EmptyState
-          icon={AlertTriangle}
-          title="Couldn’t load your team"
-          description={phase.message}
-          action={<Button onClick={retry}>Try again</Button>}
-        />
-      )}
-
-      {phase.status === 'ready' && (
-        <>
-          <Tabs
-            ariaLabel="Operators sections"
-            value={tab}
-            onChange={(key) => {
-              dismiss();
-              setTab(key as TabKey);
-            }}
-            tabs={[
-              { key: 'people', label: 'People' },
-              { key: 'departments', label: 'Departments' },
-            ]}
+        {/* Seats and your own seat are the table's header facts, not two peers
+            of it. As two cards they were 220px of chrome — one `Meter` and one
+            sentence each — before the reader reached the tab row. */}
+        <Toolbar className="justify-between gap-4 border-y border-border py-3">
+          <Meter
+            className="w-64"
+            label="Seats on this chatbot"
+            used={used}
+            limit={seatLimit}
+            unit="seats"
           />
+          <div className="flex flex-wrap items-center gap-3">
+            {/* No `StatusDot` here. It rendered an 8px disc with its sentence in
+                an `sr-only` span, so the toolbar carried a floating dot that
+                explained nothing — and the button beside it already says which
+                state you are in, in words that everyone can read.
 
-          {tab === 'people' && (
-            <div
-              role="tabpanel"
-              id="tabpanel-people"
-              aria-labelledby="tab-people"
-              tabIndex={0}
-              className="space-y-6 focus-visible:outline-none"
-            >
-              {/* Self-join: the owner opts into taking live chats themselves. */}
-              {showSelfCta && (
-                <div className="flex flex-col gap-4 rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-5 shadow-[var(--ds-shadow-sm)] sm:flex-row sm:items-center">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]">
-                    <Headphones size={20} aria-hidden="true" />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[14px] font-semibold text-[var(--ds-text)]">
-                      Handle live chats yourself
-                    </p>
-                    <p className="mt-0.5 text-[13px] text-[var(--ds-text-muted)]">
-                      Join the roster to take waiting conversations on{' '}
-                      {selectedBot?.name ?? 'this chatbot'} directly.
-                    </p>
-                  </div>
-                  <Button variant="outline" onClick={handleSelfJoin} disabled={selfBusy}>
-                    {selfBusy ? 'Adding…' : 'Take chats'}
-                  </Button>
-                </div>
-              )}
+                The owner's own seat. The console this replaces could put an
+                owner on the roster but never take them off —
+                `removeSelfAsOperator` existed in the API client and nothing
+                called it, so an owner who joined live chat was on it
+                permanently. */}
+            {self ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => setLeaving(true)}
+                iconLeft={<LogOut aria-hidden />}
+              >
+                Leave live chat
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => setJoining(true)}
+                disabled={atSeatLimit || botId == null}
+                iconLeft={<Headphones aria-hidden />}
+              >
+                Join live chat
+              </Button>
+            )}
+            <Button size="sm" onClick={() => setInviting(true)} iconLeft={<UserPlus aria-hidden />}>
+              Invite teammate
+            </Button>
+          </div>
+        </Toolbar>
 
-              {/* Invite form - progressive disclosure from the header button. */}
-              {inviteOpen && canInvite && (
-                <form
-                  onSubmit={handleInvite}
-                  className="rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-5 shadow-[var(--ds-shadow-sm)]"
-                >
-                  <SectionHeader
-                    title="Invite an operator"
-                    description="They’ll get an email with a link to join and set up their account."
-                  />
-                  <div className="mt-4 grid gap-4 sm:grid-cols-3">
-                    <div className="sm:col-span-1">
-                      <label htmlFor="invite-email" className={labelClass}>
-                        Email address
-                      </label>
-                      <Input
-                        id="invite-email"
-                        type="email"
-                        required
-                        autoFocus
-                        placeholder="operator@company.com"
-                        value={inviteEmail}
-                        onChange={(event) => setInviteEmail(event.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <label htmlFor="invite-role" className={labelClass}>
-                        Role
-                      </label>
-                      <Select
-                        id="invite-role"
-                        value={inviteRole}
-                        onChange={setInviteRole}
-                        options={INVITE_ROLES.map((role) => ({
-                          value: role.value,
-                          label: role.label,
-                        }))}
-                      />
-                    </div>
-                    <div>
-                      <label htmlFor="invite-dept" className={labelClass}>
-                        Department
-                      </label>
-                      <Select
-                        id="invite-dept"
-                        value={inviteDept}
-                        onChange={setInviteDept}
-                        placeholder="Any department"
-                        options={[
-                          { value: '', label: 'Any department' },
-                          ...departments.map((department) => ({
-                            value: String(department.id),
-                            label: department.name,
-                          })),
-                        ]}
-                      />
-                    </div>
-                  </div>
-                  <div className="mt-4 flex items-center justify-end gap-2">
-                    <Button type="button" variant="ghost" onClick={() => setInviteOpen(false)}>
-                      Cancel
-                    </Button>
-                    <Button type="submit" disabled={inviteBusy || !inviteEmail.trim()}>
-                      {inviteBusy ? 'Sending…' : 'Send invitation'}
-                    </Button>
-                  </div>
-                </form>
-              )}
-
-              {/* Pending invitations. */}
-              {botInvites.length > 0 && (
-                <section aria-label="Pending invitations" className="space-y-3">
-                  <SectionHeader title="Pending invitations" />
-                  <ul className="divide-y divide-[var(--ds-border)] overflow-hidden rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)]">
-                    {botInvites.map((invite) => (
-                      <li key={invite.id} className="flex items-center gap-3 px-4 py-3">
-                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
-                          <Mail size={15} aria-hidden="true" />
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-[13px] font-medium text-[var(--ds-text)]">
-                            {invite.email}
-                          </p>
-                          <p className="truncate text-[12px] text-[var(--ds-text-subtle)]">
-                            <span className="capitalize">{invite.role}</span>
-                            {invite.expires_at ? ` · Expires ${formatDate(invite.expires_at)}` : ''}
-                            {invite.resend_count > 0 ? ` · Resent ${invite.resend_count}×` : ''}
-                          </p>
-                        </div>
-                        {canManage && (
-                          <div className="flex shrink-0 items-center gap-1">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              aria-label={`Resend invitation to ${invite.email}`}
-                              disabled={rowBusyId === invite.id}
-                              onClick={() => handleResend(invite)}
-                            >
-                              <RotateCcw size={15} aria-hidden="true" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              aria-label={`Revoke invitation to ${invite.email}`}
-                              disabled={rowBusyId === invite.id}
-                              onClick={() => handleRevoke(invite)}
-                            >
-                              <X size={15} aria-hidden="true" className="text-[var(--ds-danger)]" />
-                            </Button>
-                          </div>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              )}
-
-              {/* Edit-member panel (progressive disclosure). */}
-              {editing && canManage && (
-                <form
-                  onSubmit={handleSaveEdit}
-                  className="rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-5 shadow-[var(--ds-shadow-sm)]"
-                >
-                  <SectionHeader
-                    title={`Edit ${editing.name}`}
-                    description="Change their role, department, or how many chats they can take at once."
-                  />
-
-                  {/* Profile picture - optional, and only the operator themselves can set
-                      their own (mirrors the name/email self-only rule above). */}
-                  {isEditingSelf && (
-                    <div className="mt-4 flex flex-col gap-3 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-4 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="flex items-center gap-3">
-                        <span
-                          aria-hidden="true"
-                          className="relative flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--ds-accent-soft)] text-[14px] font-semibold text-[var(--ds-accent-text)]"
-                        >
-                          {editing.avatar_url ? (
-                            <img src={editing.avatar_url} alt="" className="h-full w-full object-cover" />
-                          ) : (
-                            editing.name.trim().charAt(0).toUpperCase() || '?'
-                          )}
-                        </span>
-                        <div className="min-w-0">
-                          <p className="text-[13px] font-semibold text-[var(--ds-text)]">Profile picture</p>
-                          <p className="mt-0.5 text-[12px] text-[var(--ds-text-muted)]">
-                            Optional - shown to teammates and to visitors in live chat.
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 py-2 text-[13px] font-medium text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)]">
-                          {avatarUploading ? (
-                            <Loader2 size={14} className="animate-spin" aria-hidden="true" />
-                          ) : (
-                            <Upload size={14} aria-hidden="true" />
-                          )}
-                          {editing.avatar_url ? 'Replace' : 'Upload image'}
-                          <input
-                            type="file"
-                            accept="image/png,image/jpeg,image/jpg,image/webp"
-                            className="hidden"
-                            disabled={avatarUploading}
-                            onChange={(event) => {
-                              const file = event.target.files?.[0];
-                              event.target.value = '';
-                              if (file) void handleAvatarUpload(file);
-                            }}
-                          />
-                        </label>
-                        {editing.avatar_url && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            disabled={avatarUploading}
-                            onClick={() => void handleAvatarRemove()}
-                          >
-                            <Trash2 size={14} aria-hidden="true" />
-                            Remove
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                  {isEditingSelf && avatarError && (
-                    <p role="alert" className="mt-2 text-[12px] text-[var(--ds-danger)]">
-                      {avatarError}
-                    </p>
-                  )}
-
-                  <div className="mt-4 grid gap-4 sm:grid-cols-3">
-                    <div>
-                      <label htmlFor="edit-role" className={labelClass}>
-                        Role
-                      </label>
-                      <Select
-                        id="edit-role"
-                        value={editRole}
-                        onChange={setEditRole}
-                        options={EDITABLE_ROLES.map((role) => ({
-                          value: role.value,
-                          label: role.label,
-                        }))}
-                      />
-                    </div>
-                    <div>
-                      <label htmlFor="edit-dept" className={labelClass}>
-                        Department
-                      </label>
-                      <Select
-                        id="edit-dept"
-                        value={editDept}
-                        onChange={setEditDept}
-                        placeholder="No department"
-                        options={[
-                          { value: '', label: 'No department' },
-                          ...departments.map((department) => ({
-                            value: String(department.id),
-                            label: department.name,
-                          })),
-                        ]}
-                      />
-                    </div>
-                    <div>
-                      <label htmlFor="edit-max" className={labelClass}>
-                        Max concurrent chats
-                      </label>
-                      <Input
-                        id="edit-max"
-                        type="number"
-                        min={1}
-                        max={20}
-                        aria-invalid={!maxChatsValid}
-                        aria-describedby="edit-max-hint"
-                        value={editMaxChats}
-                        onChange={(event) => setEditMaxChats(event.target.value)}
-                      />
-                      <p
-                        id="edit-max-hint"
-                        className="mt-1.5 text-[12px] text-[var(--ds-text-subtle)]"
-                      >
-                        Between 1 and 20 chats at once.
-                      </p>
-                    </div>
-                  </div>
-                  <div className="mt-4 flex items-center justify-end gap-2">
-                    <Button type="button" variant="ghost" onClick={() => setEditing(null)}>
-                      Cancel
-                    </Button>
-                    <Button type="submit" disabled={editBusy || !maxChatsValid}>
-                      {editBusy ? 'Saving…' : (
-                        <>
-                          <Check size={16} aria-hidden="true" />
-                          Save changes
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                </form>
-              )}
-
-              {/* Remove-member confirmation. */}
-              {removingId != null && canManage && (() => {
-                const target = botOperators.find((operator) => operator.id === removingId);
-                if (!target) return null;
-                return (
-                  <div className="flex flex-col gap-3 rounded-xl border border-[var(--ds-danger)] bg-[var(--ds-danger-soft)] p-5 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="min-w-0">
-                      <p className="text-[14px] font-semibold text-[var(--ds-text)]">
-                        Remove {target.name}?
-                      </p>
-                      <p className="mt-0.5 text-[13px] text-[var(--ds-text-muted)]">
-                        Their active chats will be unassigned. This can’t be undone.
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <Button variant="ghost" onClick={() => setRemovingId(null)}>
-                        Cancel
-                      </Button>
-                      <Button
-                        variant="danger"
-                        disabled={rowBusyId === target.id}
-                        onClick={() => handleRemove(target)}
-                      >
-                        {rowBusyId === target.id ? 'Removing…' : 'Remove operator'}
-                      </Button>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* The roster. */}
-              {!selectedBotId ? (
+        <Tabs
+          label="Team sections"
+          items={TAB_ITEMS.map((item) => ({
+            ...item,
+            badge:
+              item.value === 'invitations' && invites.length > 0
+                ? formatNumber(invites.length)
+                : undefined,
+          }))}
+          value={tab}
+          onValueChange={(next) => {
+            const nextParams = new URLSearchParams(params);
+            nextParams.set('tab', next);
+            setParams(nextParams, { replace: true });
+          }}
+        >
+          <TabPanel value="people">
+            <DataTable
+              caption="Everyone who can answer conversations on this chatbot"
+              columns={memberColumns}
+              rows={roster}
+              rowKey={(operator) => String(operator.id)}
+              rowLabel={(operator) => operator.name || operator.email}
+              empty={
                 <EmptyState
-                  icon={UserRound}
-                  title="Pick a chatbot to see its team"
-                  description="Members are attached to a specific chatbot. Choose one from the switcher to view and manage its roster."
-                />
-              ) : (
-                <DataTable
-                  caption="Team members"
-                  columns={columns}
-                  rows={botOperators}
-                  rowKey={(operator) => operator.id}
-                  empty={
-                    <EmptyState
-                      className="border-0 py-6"
-                      icon={UserRound}
-                      title={`No operators on ${selectedBot?.name ?? 'this chatbot'} yet`}
-                      description="Invite an operator to help answer conversations."
-                      action={
-                        canInvite ? (
-                          <Button onClick={handleInviteClick}>
-                            <UserPlus size={16} aria-hidden="true" />
-                            Invite operator
-                          </Button>
-                        ) : undefined
-                      }
-                    />
+                  size="inline"
+                  title="Nobody on the roster yet"
+                  description="Invite a teammate to answer live conversations, or join the roster yourself."
+                  action={
+                    <Button onClick={() => setInviting(true)} size="sm">
+                      Invite a teammate
+                    </Button>
                   }
                 />
-              )}
-            </div>
-          )}
+              }
+              rowNoun="teammate"
+            />
+          </TabPanel>
 
-          {tab === 'departments' && (
-            <div
-              role="tabpanel"
-              id="tabpanel-departments"
-              aria-labelledby="tab-departments"
-              tabIndex={0}
-              className="space-y-6 focus-visible:outline-none"
+          <TabPanel value="invitations">
+            {team.invitesForbidden ? (
+              <Card>
+                <ErrorState
+                  size="panel"
+                  title="We could not load the invitations"
+                  description="Only owners and admins can see outstanding invitations. If that is you, try again."
+                  onRetry={invalidate}
+                />
+              </Card>
+            ) : (
+              <DataTable
+                caption="Invitations that have been sent but not yet accepted"
+                columns={inviteColumns}
+                rows={invites}
+                rowKey={(invite) => String(invite.id)}
+                rowLabel={(invite) => invite.email}
+                empty={
+                  <EmptyState
+                    size="inline"
+                    title="No invitations outstanding"
+                    description="Everyone you have invited has either accepted or been revoked."
+                    action={
+                      <Button size="sm" onClick={() => setInviting(true)}>
+                        Invite a teammate
+                      </Button>
+                    }
+                  />
+                }
+                rowNoun="invitation"
+                defaultSort={{ key: 'expiry', direction: 'asc' }}
+              />
+            )}
+          </TabPanel>
+
+          <TabPanel value="departments">
+            <Section
+              title="Departments"
+              description="Groups a conversation can be routed to, each with its own opening hours."
+              actions={
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setDepartmentDraft('new')}
+                  iconLeft={<Plus aria-hidden />}
+                >
+                  New department
+                </Button>
+              }
             >
-              <SectionHeader
-                title="Departments"
-                description="Group operators so conversations reach the right team."
-                actions={
-                  canManage ? (
-                    <Button variant="outline" onClick={() => setDeptOpen((open) => !open)}>
-                      <Plus size={16} aria-hidden="true" />
-                      New department
-                    </Button>
-                  ) : undefined
+              {/* A table, like the two sibling tabs. The hand-built `ul` here
+                  reimplemented `DataTable`'s row geometry at 20/14 against its
+                  16/10, so the three tabs' left text edges did not line up when
+                  you switched between them — and it had no sort. */}
+              <DataTable
+                caption="Departments a conversation can be routed to"
+                columns={departmentColumns}
+                rows={team.departments}
+                rowKey={(department) => String(department.id)}
+                rowLabel={(department) => department.name}
+                rowNoun="department"
+                empty={
+                  <EmptyState
+                    size="inline"
+                    title="No departments"
+                    description="Without departments every conversation goes to whoever is online."
+                    action={
+                      <Button size="sm" onClick={() => setDepartmentDraft('new')}>
+                        Create a department
+                      </Button>
+                    }
+                  />
                 }
               />
+            </Section>
+          </TabPanel>
 
-              {deptOpen && canManage && (
-                <form
-                  onSubmit={handleCreateDept}
-                  className="rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-5 shadow-[var(--ds-shadow-sm)]"
-                >
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div>
-                      <label htmlFor="dept-name" className={labelClass}>
-                        Name
-                      </label>
-                      <Input
-                        id="dept-name"
-                        required
-                        autoFocus
-                        placeholder="e.g. Sales"
-                        value={deptName}
-                        onChange={(event) => setDeptName(event.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <label htmlFor="dept-desc" className={labelClass}>
-                        Description <span className="text-[var(--ds-text-subtle)]">(optional)</span>
-                      </label>
-                      <Input
-                        id="dept-desc"
-                        placeholder="What this team handles"
-                        value={deptDesc}
-                        onChange={(event) => setDeptDesc(event.target.value)}
-                      />
-                    </div>
-                  </div>
-                  <div className="mt-4 flex items-center justify-end gap-2">
-                    <Button type="button" variant="ghost" onClick={() => setDeptOpen(false)}>
-                      Cancel
-                    </Button>
-                    <Button type="submit" disabled={deptBusy || !deptName.trim()}>
-                      {deptBusy ? 'Creating…' : 'Create department'}
-                    </Button>
-                  </div>
-                </form>
-              )}
-
-              {departments.length === 0 ? (
+          <TabPanel value="routing">
+            {routedBot ? (
+              <QueueSettingsCard bot={routedBot} onSaved={invalidate} />
+            ) : (
+              <Card>
                 <EmptyState
-                  icon={Building2}
-                  title="No departments yet"
-                  description="Create departments to organize operators by team, like Sales or Support."
+                  size="panel"
+                  icon={Users}
+                  title="No chatbot to route"
+                  description="Queue settings belong to a chatbot. Create one and its waiting rules appear here."
                 />
-              ) : (
-                <ul className="grid gap-3">
-                  {departments.map((department) => {
-                    const memberCount = (data?.operators ?? []).filter(
-                      (operator) => operator.department_id === department.id,
-                    ).length;
-                    const confirming = deptRemovingId === department.id;
-                    return (
-                      <li
-                        key={department.id}
-                        className="rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-4 shadow-[var(--ds-shadow-sm)]"
-                      >
-                        <div className="flex items-center gap-3">
-                          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
-                            <Building2 size={18} aria-hidden="true" />
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-[14px] font-semibold text-[var(--ds-text)]">
-                              {department.name}
-                            </p>
-                            {department.description && (
-                              <p className="truncate text-[12px] text-[var(--ds-text-subtle)]">
-                                {department.description}
-                              </p>
-                            )}
-                          </div>
-                          <span className="shrink-0 text-[12px] text-[var(--ds-text-muted)]">
-                            {memberCount} operator{memberCount === 1 ? '' : 's'}
-                          </span>
-                          {canManage && !confirming && (
-                            <div className="flex shrink-0 items-center gap-1">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                aria-label={`Edit ${department.name}`}
-                                onClick={() => openEditDept(department)}
-                              >
-                                <Pencil
-                                  size={15}
-                                  aria-hidden="true"
-                                  className="text-[var(--ds-text-subtle)]"
-                                />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                aria-label={`Delete ${department.name}`}
-                                onClick={() => setDeptRemovingId(department.id)}
-                              >
-                                <Trash2
-                                  size={15}
-                                  aria-hidden="true"
-                                  className="text-[var(--ds-danger)]"
-                                />
-                              </Button>
-                            </div>
-                          )}
-                        </div>
-                        {confirming && canManage && (
-                          <div className="mt-3 flex flex-col gap-3 border-t border-[var(--ds-border)] pt-3 sm:flex-row sm:items-center sm:justify-between">
-                            <p className="text-[13px] text-[var(--ds-text-muted)]">
-                              Delete “{department.name}”? Operators in it will be unassigned.
-                            </p>
-                            <div className="flex shrink-0 items-center gap-2">
-                              <Button variant="ghost" onClick={() => setDeptRemovingId(null)}>
-                                Cancel
-                              </Button>
-                              <Button
-                                variant="danger"
-                                disabled={deptRowBusyId === department.id}
-                                onClick={() => handleDeleteDept(department)}
-                              >
-                                {deptRowBusyId === department.id ? 'Deleting…' : 'Delete'}
-                              </Button>
-                            </div>
-                          </div>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
+              </Card>
+            )}
+          </TabPanel>
+        </Tabs>
+      </Stack>
 
-              {/* Edit department - name, description, and per-department hours. */}
-              <Modal
-                open={editingDept !== null}
-                onClose={() => setEditingDept(null)}
-                dismissible={!editDeptBusy}
-                size="lg"
-                title="Edit department"
-                description="Rename the team, update its description, and set when it’s available."
-                footer={
-                  <>
-                    <Button variant="ghost" onClick={() => setEditingDept(null)} disabled={editDeptBusy}>
-                      Cancel
-                    </Button>
-                    <Button type="submit" form="edit-dept-form" disabled={editDeptBusy || !editDeptName.trim()}>
-                      {editDeptBusy ? 'Saving…' : 'Save changes'}
-                    </Button>
-                  </>
-                }
-              >
-                <form id="edit-dept-form" onSubmit={(e) => void handleUpdateDept(e)} className="space-y-4">
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div>
-                      <label htmlFor="edit-dept-name" className={labelClass}>
-                        Name
-                      </label>
-                      <Input
-                        id="edit-dept-name"
-                        value={editDeptName}
-                        onChange={(e) => setEditDeptName(e.target.value)}
-                        placeholder="e.g. Sales"
-                        autoFocus
-                      />
-                    </div>
-                    <div>
-                      <label htmlFor="edit-dept-desc" className={labelClass}>
-                        Description <span className="text-[var(--ds-text-subtle)]">(optional)</span>
-                      </label>
-                      <Textarea
-                        id="edit-dept-desc"
-                        value={editDeptDesc}
-                        onChange={(e) => setEditDeptDesc(e.target.value)}
-                        placeholder="What this team handles"
-                        rows={2}
-                      />
-                    </div>
-                  </div>
-                  <div className="border-t border-[var(--ds-border)] pt-4">
-                    <BusinessHoursEditor
-                      value={editDeptHours}
-                      onChange={setEditDeptHours}
-                      disabled={editDeptBusy}
-                    />
-                  </div>
-                  {editDeptError && (
-                    <p role="alert" className="text-[12px] text-[var(--ds-danger)]">
-                      {editDeptError}
-                    </p>
-                  )}
-                </form>
-              </Modal>
-            </div>
-          )}
-        </>
-      )}
-    </PageContainer>
+      <InviteDialog
+        open={inviting}
+        onOpenChange={setInviting}
+        botId={botId}
+        botName={botName}
+        departments={team.departments}
+        callerRole={currentRole}
+        atSeatLimit={atSeatLimit}
+        onInvited={invalidate}
+      />
+
+      <MemberDialog
+        open={editing !== null}
+        onOpenChange={(open) => {
+          if (!open) setEditing(null);
+        }}
+        member={editing}
+        departments={team.departments}
+        callerRole={currentRole}
+        isSelf={editing?.linked_client_id === team.clientId}
+        onSaved={invalidate}
+      />
+
+      <DepartmentDialog
+        open={departmentDraft !== null}
+        onOpenChange={(open) => {
+          if (!open) setDepartmentDraft(null);
+        }}
+        department={departmentDraft === 'new' ? null : departmentDraft}
+        onSaved={invalidate}
+      />
+
+      <ConfirmDialog
+        open={removing !== null}
+        onOpenChange={(open) => {
+          if (!open) setRemoving(null);
+        }}
+        title={`Remove ${removing ? removing.name || removing.email : 'this person'}?`}
+        description="They lose access immediately and their seat is freed. Live conversations go back to the chatbot; past replies stay in the transcripts."
+        confirmLabel="Remove from team"
+        destructive
+        onConfirm={async () => {
+          if (removing) await remove.mutateAsync(removing);
+        }}
+      />
+
+      <ConfirmDialog
+        open={deactivating !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeactivating(null);
+        }}
+        title={`Deactivate ${deactivating ? deactivating.name || deactivating.email : 'this person'}?`}
+        description="They cannot sign in, their seat is freed, and live conversations go back to the queue. Nothing is deleted — you can reactivate them when a seat is free."
+        confirmLabel="Deactivate"
+        destructive
+        onConfirm={async () => {
+          if (deactivating)
+            await setActive.mutateAsync({
+              operator: deactivating,
+              active: false,
+            });
+        }}
+      />
+
+      <ConfirmDialog
+        open={reactivating !== null}
+        onOpenChange={(open) => {
+          if (!open) setReactivating(null);
+        }}
+        title={`Reactivate ${reactivating ? reactivating.name || reactivating.email : 'this person'}?`}
+        description={
+          <>
+            They can sign in and be handed conversations again. This takes one of this
+            chatbot&rsquo;s seats; if none is free nothing changes.
+          </>
+        }
+        confirmLabel="Reactivate"
+        onConfirm={async () => {
+          if (reactivating)
+            await setActive.mutateAsync({
+              operator: reactivating,
+              active: true,
+            });
+        }}
+      />
+
+      <ConfirmDialog
+        open={revoking !== null}
+        onOpenChange={(open) => {
+          if (!open) setRevoking(null);
+        }}
+        title={`Revoke the invitation to ${revoking?.email ?? ''}?`}
+        description="The link we emailed them stops working. You can invite the same address again."
+        confirmLabel="Revoke invitation"
+        destructive
+        onConfirm={async () => {
+          if (revoking) await revoke.mutateAsync(revoking);
+        }}
+      />
+
+      <ConfirmDialog
+        open={joining}
+        onOpenChange={setJoining}
+        title="Join the live-chat roster?"
+        description="You will be handed conversations and appear to visitors by name. This takes one of your plan's seats."
+        confirmLabel="Join live chat"
+        onConfirm={async () => {
+          await join.mutateAsync();
+        }}
+      />
+
+      <ConfirmDialog
+        open={leaving}
+        onOpenChange={setLeaving}
+        title="Leave the live-chat roster?"
+        description="You stop being routed new conversations and the seat is freed. Conversations you are already in finish normally, and you still own the workspace."
+        confirmLabel="Leave live chat"
+        onConfirm={async () => {
+          await leave.mutateAsync();
+        }}
+      />
+
+      <ConfirmDialog
+        open={deletingDepartment !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeletingDepartment(null);
+        }}
+        title={`Delete the ${deletingDepartment?.name ?? ''} department?`}
+        description="Its members stay on the team but lose their grouping, its hours are deleted, and its conversations go to whoever is online."
+        confirmLabel="Delete department"
+        destructive
+        onConfirm={async () => {
+          if (deletingDepartment) await removeDepartment.mutateAsync(deletingDepartment);
+        }}
+      />
+    </>
   );
 }
 
-// ── Loading skeleton ─────────────────────────────────────────────────────────
-
-function LoadingState(): ReactElement {
+/**
+ * Two rows of what a paid plan buys, behind the lock.
+ *
+ * `LockedState` takes a `preview` precisely so a customer can judge the upgrade,
+ * and this is the one screen in the console where the slot earns its existence:
+ * "a team" is not a thing anyone can picture, and a roster is.
+ */
+function RosterPreview() {
+  const rows = [
+    {
+      id: 1,
+      name: 'Priya Raman',
+      email: 'priya@acme.com',
+      role: 'admin',
+      online: true,
+    },
+    {
+      id: 2,
+      name: 'Sam Okafor',
+      email: 'sam@acme.com',
+      role: 'operator',
+      online: false,
+    },
+  ];
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, index) => (
-          <Skeleton key={index} className="h-24 rounded-xl" />
-        ))}
-      </div>
-      <Skeleton className="h-9 w-64 rounded-lg" />
-      <Skeleton className="h-64 w-full rounded-xl" />
-    </div>
+    <DataTable
+      caption="An example roster"
+      rows={rows}
+      rowKey={(row) => String(row.id)}
+      stickyHeader={false}
+      columns={[
+        {
+          key: 'name',
+          header: 'Member',
+          width: '17rem',
+          render: (row) => (
+            <div className="flex min-w-0 items-center gap-2.5">
+              <Avatar name={row.name} size="sm" />
+              <div className="min-w-0">
+                <p className="truncate font-medium text-text-primary">{row.name}</p>
+                <p className="truncate text-xs text-text-secondary">{row.email}</p>
+              </div>
+            </div>
+          ),
+        },
+        {
+          key: 'role',
+          header: 'Role',
+          render: (row) => <Badge tone={roleTone(row.role)}>{roleLabel(row.role)}</Badge>,
+        },
+        {
+          key: 'availability',
+          header: 'Availability',
+          render: (row) => (
+            <Badge tone={row.online ? 'success' : 'neutral'} dot>
+              {row.online ? 'Online' : 'Offline'}
+            </Badge>
+          ),
+        },
+      ]}
+    />
   );
 }

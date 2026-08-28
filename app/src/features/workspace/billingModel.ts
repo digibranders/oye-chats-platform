@@ -15,7 +15,6 @@
  * TODO(multi-currency): switch the price source once the USD rail ships.
  */
 
-import { formatCurrency, formatDate as i18nFormatDate, formatNumber } from '../../i18n/formatters';
 
 /**
  * Sentinel meaning "no limit" - mirrors `plan_entitlements_service.py::UNLIMITED`.
@@ -63,6 +62,21 @@ function toBool(value: unknown): boolean {
   return value === true;
 }
 
+/**
+ * A number that may legitimately be absent. Distinct from {@link toNumber},
+ * whose 0 default is correct for a quota but wrong for a price: "this plan has
+ * no USD column" and "this plan costs nothing" are different facts, and
+ * collapsing them prices a paid tier at $0.
+ */
+function toOptionalNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 // ── View-model shapes ────────────────────────────────────────────────────────
 
 export interface PlanView {
@@ -74,6 +88,15 @@ export interface PlanView {
   monthlyPriceMinor: number;
   /** Annual price in INR minor units (paise). */
   annualPriceMinor: number;
+  /**
+   * USD DISPLAY prices in cents, when the backend serves them. Never the charge:
+   * the rail debits the INR columns above. `null` when the plan row carries no
+   * USD figure, in which case a non-IN buyer's price is derived from the geo
+   * rate instead.
+   */
+  monthlyPriceUsdMinor: number | null;
+  annualPriceUsdMinor: number | null;
+  extraSeatPriceUsdMinor: number | null;
   creditsPerMonth: number;
   includedSeats: number;
   /** Per-extra-seat monthly price in INR minor units. */
@@ -120,6 +143,8 @@ export interface PlanView {
   features: Record<string, unknown>;
   /** Raw `limits` counters from the plan payload (max_crawl_pages, chat_history_days, …). `-1` = unlimited. */
   limits: Record<string, number>;
+  /** Per-credit charge once the monthly allowance is spent, in INR minor units. 0 = no overage billing. */
+  overageRateMinor: number;
 }
 
 export interface PromotionView {
@@ -163,6 +188,44 @@ export interface SubscriptionView {
 
 export type InvoiceKind = 'tax_invoice' | 'credit_note' | 'receipt' | 'legacy';
 
+export interface InvoiceTaxView {
+  /** Pre-tax value in minor units. */
+  taxableMinor: number;
+  /** Total GST in minor units (the sum of the three components below). */
+  totalTaxMinor: number;
+  /** Central GST, set only on an intra-state supply. */
+  cgstMinor: number;
+  /** State GST, set only on an intra-state supply. */
+  sgstMinor: number;
+  /** Integrated GST, set only on an inter-state supply. */
+  igstMinor: number;
+  /** Applied rate in basis points (1800 = 18%). */
+  rateBps: number;
+  /** HSN/SAC code printed on the document. */
+  hsnSac: string | null;
+  /** `intra_state` | `inter_state` | `export` as issued by the backend. */
+  supplyKind: string | null;
+  isExport: boolean;
+}
+
+/**
+ * Whether the customer can actually download this document right now.
+ *
+ * Three states, not two. `pdf_url` is populated by an ARQ render job, and the
+ * root `CLAUDE.md` documents a whole class of bug where that job silently never
+ * runs (a worker started without pango logs "PDF renderer unavailable" and the
+ * column stays null forever). A dead Download button is the wrong answer to
+ * both halves of that: a document issued a minute ago is still rendering, and
+ * one issued last week is not coming.
+ *
+ * `unavailable` is also the honest answer for a legacy row that never had a
+ * rendered PDF, and for every row while `INVOICE_EMAILS_ENABLED` is off - the
+ * backend nulls `pdf_url` under that kill switch (`subscription_routes.py`
+ * `list_invoices`), so "still preparing" would be a lie the moment the customer
+ * waits for it.
+ */
+export type InvoiceDocumentState = 'ready' | 'preparing' | 'unavailable';
+
 export interface InvoiceView {
   id: string;
   number: string | null;
@@ -171,9 +234,17 @@ export interface InvoiceView {
   currency: string;
   status: string;
   date: string | null;
+  /** Start of the service period this document covers. */
+  periodStart: string | null;
+  /** End of the service period this document covers. */
+  periodEnd: string | null;
+  paidAt: string | null;
   pdfUrl: string | null;
   invoiceUrl: string | null;
   description: string | null;
+  /** GST breakdown, or `null` on a row that carries no tax fields (legacy / shadow mode). */
+  tax: InvoiceTaxView | null;
+  document: InvoiceDocumentState;
 }
 
 export interface BillingAddress {
@@ -250,6 +321,9 @@ export function buildPlan(raw: unknown): PlanView | null {
     name: toText(record.name) || 'Free',
     monthlyPriceMinor,
     annualPriceMinor: toNumber(record.annual_price_cents),
+    monthlyPriceUsdMinor: toOptionalNumber(record.monthly_price_usd_cents),
+    annualPriceUsdMinor: toOptionalNumber(record.annual_price_usd_cents),
+    extraSeatPriceUsdMinor: toOptionalNumber(record.extra_seat_price_usd_cents),
     creditsPerMonth: toNumber(record.credits_per_month),
     includedSeats: toNumber(record.included_operator_seats),
     extraSeatPriceMinor: toNumber(record.extra_seat_price_cents),
@@ -262,6 +336,7 @@ export function buildPlan(raw: unknown): PlanView | null {
     sortOrder: toNumber(record.sort_order),
     features,
     limits: toNumberMap(record.limits),
+    overageRateMinor: toNumber(record.overage_rate_cents),
   };
 }
 
@@ -357,7 +432,61 @@ export function buildSubscription(raw: unknown): SubscriptionView {
 
 const INVOICE_KINDS: ReadonlySet<string> = new Set(['tax_invoice', 'credit_note', 'receipt']);
 
-export function buildInvoice(raw: unknown, index: number): InvoiceView {
+/**
+ * How long a freshly-issued document is allowed to still be rendering before we
+ * stop calling it "preparing" and admit it is not coming.
+ *
+ * The render is an ARQ job plus a five-minute reconciliation cron, so a couple
+ * of minutes of patience is honest and an hour of it is not. Fifteen minutes is
+ * comfortably past both and still inside the window where a customer who just
+ * paid would plausibly refresh.
+ */
+export const INVOICE_RENDER_GRACE_MS = 15 * 60 * 1000;
+
+function buildInvoiceTax(record: Record<string, unknown>): InvoiceTaxView | null {
+  // Presence of a rate OR of any component is what says this row carries a tax
+  // document at all. A legacy row (and every row while the customer-facing kill
+  // switch is off) has all of them null, and inventing a zero-rated breakdown
+  // for it would print "GST 0%" on an invoice that never had a GST line.
+  const hasTaxFields =
+    record.tax_rate_bps != null ||
+    record.total_tax_minor != null ||
+    record.taxable_value_minor != null;
+  if (!hasTaxFields) return null;
+  return {
+    taxableMinor: toNumber(record.taxable_value_minor),
+    totalTaxMinor: toNumber(record.total_tax_minor),
+    cgstMinor: toNumber(record.cgst_minor),
+    sgstMinor: toNumber(record.sgst_minor),
+    igstMinor: toNumber(record.igst_minor),
+    rateBps: toNumber(record.tax_rate_bps),
+    hsnSac: toOptionalText(record.hsn_sac),
+    supplyKind: toOptionalText(record.supply_kind),
+    isExport: toBool(record.is_export),
+  };
+}
+
+/**
+ * Resolve the download state of one invoice. Exported so the rule is testable
+ * without rendering a table.
+ *
+ * `now` is injected rather than read from the clock so a list formats against
+ * one instant and a test is not hostage to timing.
+ */
+export function invoiceDocumentState(
+  pdfUrl: string | null,
+  issuedAt: string | null,
+  now: number,
+  graceMs: number = INVOICE_RENDER_GRACE_MS,
+): InvoiceDocumentState {
+  if (pdfUrl) return 'ready';
+  if (!issuedAt) return 'unavailable';
+  const issued = new Date(issuedAt).getTime();
+  if (Number.isNaN(issued)) return 'unavailable';
+  return now - issued < graceMs ? 'preparing' : 'unavailable';
+}
+
+export function buildInvoice(raw: unknown, index: number, now: number = Date.now()): InvoiceView {
   const record = asRecord(raw) ?? {};
   const rawType = toText(record.invoice_type);
   const kind: InvoiceKind = INVOICE_KINDS.has(rawType) ? (rawType as InvoiceKind) : 'legacy';
@@ -373,6 +502,8 @@ export function buildInvoice(raw: unknown, index: number): InvoiceView {
   // instead of being indistinguishable from a charge. Other kinds keep the
   // magnitude (defensive against inconsistently-signed sources).
   const amountMagnitude = Math.abs(toNumber(record.amount_cents));
+  const date = toOptionalText(record.issued_at) ?? toOptionalText(record.created_at);
+  const pdfUrl = toOptionalText(record.pdf_url);
   return {
     id,
     number: toOptionalText(record.invoice_number),
@@ -380,10 +511,15 @@ export function buildInvoice(raw: unknown, index: number): InvoiceView {
     amountMinor: kind === 'credit_note' ? -amountMagnitude : amountMagnitude,
     currency: (toText(record.currency) || 'INR').toUpperCase(),
     status: toText(record.status) || 'issued',
-    date: toOptionalText(record.issued_at) ?? toOptionalText(record.created_at),
-    pdfUrl: toOptionalText(record.pdf_url),
+    date,
+    periodStart: toOptionalText(record.period_start),
+    periodEnd: toOptionalText(record.period_end),
+    paidAt: toOptionalText(record.paid_at),
+    pdfUrl,
     invoiceUrl: toOptionalText(record.invoice_url),
     description: toOptionalText(record.description),
+    tax: buildInvoiceTax(record),
+    document: invoiceDocumentState(pdfUrl, date, now),
   };
 }
 
@@ -424,19 +560,13 @@ export function buildBillingDetails(raw: unknown): BillingDetailsView {
  * amounts to keep plan prices clean ("₹949" not "₹949.00").
  */
 export function formatMoneyMinor(minorUnits: number, currency = 'INR'): string {
-  const major = minorUnits / 100;
+  // `safeCurrency` is a real ISO code carried by the data, never inferred from
+  // the UI language: a workspace billed in INR is billed in INR whatever
+  // language the dashboard is read in. The design-system formatter is what
+  // makes the digits and grouping follow the chosen locale, and it already
+  // degrades to a plain decimal on a code `Intl` refuses.
   const safeCurrency = /^[A-Z]{3}$/.test(currency) ? currency : 'INR';
-  try {
-    // `safeCurrency` is a real ISO code carried by the data; a workspace billed
-    // in INR is billed in INR whatever language the dashboard is read in.
-    return formatCurrency(major, safeCurrency, {
-      minimumFractionDigits: Number.isInteger(major) ? 0 : 2,
-      maximumFractionDigits: 2,
-    });
-  } catch {
-    // Unknown currency code → fall back to a plain number with the code.
-    return `${safeCurrency} ${formatNumber(major)}`;
-  }
+  return formatMoney(minorUnits, safeCurrency);
 }
 
 export function formatCredits(count: number): string {
@@ -541,12 +671,17 @@ export function maxAnnualSavingPercent(plans: readonly PlanView[]): number {
   );
 }
 
-export function formatDate(iso: string | null | undefined): string {
-  if (!iso) return '-';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '-';
-  return i18nFormatDate(date, { day: 'numeric', month: 'short', year: 'numeric' });
-}
+/**
+ * Dates render through the design system's formatter, not a local copy.
+ *
+ * Re-exported here only so the billing modules have one import for their
+ * formatting. An earlier version had its own `toLocaleDateString` call, which
+ * meant an absent date rendered as `-` on this surface and as the console's em
+ * dash everywhere else - and rule 10 is that every absent value is the same
+ * mark.
+ */
+import { formatDate, formatMoney, formatNumber } from '../../ui/lib/formatters';
+export { formatDate };
 
 export interface RenewalDisplay {
   caption: string;
@@ -579,23 +714,37 @@ export function getRenewalDisplay(
   };
 }
 
-export type BadgeTone = 'neutral' | 'accent' | 'success' | 'warning' | 'danger' | 'info';
+/**
+ * The design system's five tones. There is deliberately no `info`: an
+ * informational notice is neutral with an ink rule, and a blue one would have
+ * collided with the interactive accent (`DESIGN.md` §2.4).
+ */
+export type BadgeTone = 'neutral' | 'success' | 'warning' | 'danger' | 'plan';
 
-/** Map a subscription/invoice status string to a StatusBadge tone. */
+/**
+ * Map a subscription or invoice status onto a badge tone.
+ *
+ * `trialing` is `plan` rather than a status colour: a trial is an entitlement
+ * state, and brass is the reserved hue for exactly that. `paused` and
+ * `canceled` are NOT the same tone - a paused subscription can resume, a
+ * cancelled one has ended - so they get warning and neutral respectively.
+ * `pending` is an invoice we are still waiting to be paid, which is a warning;
+ * `issued` is a credit note, which is simply a record.
+ */
 export function statusTone(status: string): BadgeTone {
   switch (status) {
     case 'active':
     case 'paid':
       return 'success';
     case 'trialing':
-    case 'issued':
-      return 'info';
+      return 'plan';
     case 'past_due':
     case 'expired':
+    case 'trial_expired':
+    case 'failed':
       return 'danger';
     case 'paused':
-    case 'canceled':
-    case 'cancelled':
+    case 'pending':
       return 'warning';
     default:
       return 'neutral';
@@ -617,3 +766,360 @@ export const INVOICE_KIND_LABEL: Record<InvoiceKind, string> = {
   receipt: 'Receipt',
   legacy: 'Payment',
 };
+
+// ── Geo and the two currencies ───────────────────────────────────────────────
+
+/**
+ * The geo/currency profile from `GET /subscriptions/geo`.
+ *
+ * `displayCurrency` is what the customer should READ. It is not necessarily
+ * what Razorpay will DEBIT: the rail is INR-only today, so a buyer whose
+ * country resolves outside India sees USD over an INR charge. That divergence
+ * is a compliance fact, not a formatting detail, which is why every price this
+ * module produces carries both halves.
+ */
+export interface BillingGeoView {
+  /** ISO-2 billing country, or null when nothing has resolved one. */
+  country: string | null;
+  /**
+   * How the country was established. `stored` is an account fact the customer
+   * confirmed; `detected` is an IP signal that is display-grade ONLY and must
+   * never be echoed back into a money route as `billing_country`; `null` means
+   * unresolved, which the charge gate treats as domestic.
+   */
+  countrySource: 'stored' | 'detected' | null;
+  /** `INR` or `USD`. What prices are shown in. */
+  displayCurrency: string;
+  /** USD→INR rate used to derive a display price when a plan has no USD column. */
+  displayRate: number;
+  /** False when Razorpay is not wired, so no surface may offer a pay button. */
+  checkoutAvailable: boolean;
+  contactSalesEmail: string;
+}
+
+/** The currency Razorpay actually debits. One rail, and it is rupees. */
+export const CHARGE_CURRENCY = 'INR';
+
+export function buildGeo(raw: unknown): BillingGeoView {
+  const record = asRecord(raw);
+  const source = record ? toText(record.country_source) : '';
+  const rate = record ? toNumber(record.display_rate) : 0;
+  return {
+    country: record ? toOptionalText(record.country) : null,
+    countrySource: source === 'stored' || source === 'detected' ? source : null,
+    // Unknown resolves to the charge currency, never to USD. The opposite
+    // default was a live money bug: the top-up modal rendered $13/$50/$125
+    // while Razorpay debited ₹1,000/₹4,000/₹10,000.
+    displayCurrency: (record ? toText(record.display_currency) : '').toUpperCase() || CHARGE_CURRENCY,
+    displayRate: rate > 0 ? rate : 0,
+    checkoutAvailable: record ? record.checkout_available !== false : false,
+    contactSalesEmail: (record && toOptionalText(record.contact_sales_email)) || SALES_EMAIL,
+  };
+}
+
+export type BillingCycleKey = 'monthly' | 'annual';
+
+/**
+ * One plan price, told honestly.
+ *
+ * `displayMinor`/`displayCurrency` is what the customer reads.
+ * `chargeMinor`/`chargeCurrency` is what the gateway debits. When they differ,
+ * `converted` says whether the displayed figure was derived from a rate rather
+ * than read from a real USD price column - which matters because a derived
+ * figure moves with the rate and the charge does not.
+ */
+export interface PlanPriceView {
+  displayMinor: number;
+  displayCurrency: string;
+  chargeMinor: number;
+  chargeCurrency: string;
+  /** True when display and charge are not the same currency. */
+  crossCurrency: boolean;
+  /** True when the display figure came from a conversion rate, not a stored USD price. */
+  converted: boolean;
+}
+
+/**
+ * Resolve what to show and what will be charged for one plan at one cycle.
+ *
+ * The INR column is the source of truth for the charge in every branch - it is
+ * the amount the Razorpay mandate is created for. USD is display only: read
+ * from the plan's own `*_price_usd_cents` when the backend serves one, and
+ * otherwise derived from the geo rate so a non-IN buyer is never shown a rupee
+ * figure they cannot read. Either way the INR charge travels with it.
+ */
+export function resolvePlanPrice(
+  plan: PlanView,
+  cycle: BillingCycleKey,
+  geo: BillingGeoView | null,
+): PlanPriceView {
+  const chargeMinor = cycle === 'annual' ? plan.annualPriceMinor : plan.monthlyPriceMinor;
+  const usdMinorOverride =
+    cycle === 'annual' ? plan.annualPriceUsdMinor : plan.monthlyPriceUsdMinor;
+  const displayCurrency = (geo?.displayCurrency ?? CHARGE_CURRENCY).toUpperCase();
+  if (displayCurrency === CHARGE_CURRENCY) {
+    return {
+      displayMinor: chargeMinor,
+      displayCurrency: CHARGE_CURRENCY,
+      chargeMinor,
+      chargeCurrency: CHARGE_CURRENCY,
+      crossCurrency: false,
+      converted: false,
+    };
+  }
+  if (usdMinorOverride != null && usdMinorOverride > 0) {
+    return {
+      displayMinor: usdMinorOverride,
+      displayCurrency,
+      chargeMinor,
+      chargeCurrency: CHARGE_CURRENCY,
+      crossCurrency: true,
+      converted: false,
+    };
+  }
+  const rate = geo?.displayRate ?? 0;
+  // No usable rate means no honest conversion, so fall back to quoting the
+  // charge itself rather than inventing a number. A wrong price on a checkout
+  // surface is worse than an unfamiliar currency symbol.
+  if (rate <= 0) {
+    return {
+      displayMinor: chargeMinor,
+      displayCurrency: CHARGE_CURRENCY,
+      chargeMinor,
+      chargeCurrency: CHARGE_CURRENCY,
+      crossCurrency: false,
+      converted: false,
+    };
+  }
+  return {
+    displayMinor: Math.round(chargeMinor / rate),
+    displayCurrency,
+    chargeMinor,
+    chargeCurrency: CHARGE_CURRENCY,
+    crossCurrency: true,
+    converted: true,
+  };
+}
+
+/**
+ * The sentence that has to sit under a cross-currency price.
+ *
+ * Returns `null` when display and charge agree, so a domestic customer is not
+ * shown a disclaimer about a conversion that never happens. When they differ
+ * the charge amount is named in full: showing a converted price as if it were
+ * the charge is a compliance problem, not a nicety.
+ */
+export function chargeDisclosure(price: PlanPriceView): string | null {
+  if (!price.crossCurrency) return null;
+  const charged = formatMoneyMinor(price.chargeMinor, price.chargeCurrency);
+  return price.converted
+    ? `Charged as ${charged}. The ${price.displayCurrency} figure is an indication at today's rate; your card is debited in rupees.`
+    : `Charged as ${charged}. Payments settle on our Indian rupee rail.`;
+}
+
+// ── Plan allowances ──────────────────────────────────────────────────────────
+
+/**
+ * How many chatbots a plan entitles, as a phrase.
+ *
+ * `limits.bots` is `-1` for the unlimited (agency) tiers and the sentinel is
+ * never rendered as a number. A plan row that declares no `bots` quota at all
+ * is reported as unknown rather than as zero, matching the backend's own
+ * "this plan lost a term" logging path in `bot_routes._plan_bots_limit_allows`.
+ */
+export function formatAgentAllowance(plan: PlanView | null): string {
+  if (!plan) return 'Not set';
+  const quota = plan.limits.bots;
+  if (quota === undefined) return 'Not set';
+  if (quota === UNLIMITED_LIMIT) return 'Unlimited chatbots';
+  if (quota <= 0) return 'No chatbots included';
+  return `${quota} chatbot${quota === 1 ? '' : 's'}`;
+}
+
+/**
+ * The plan's overage rate per credit, or null when it charges none.
+ *
+ * Configured per plan (`Plan.overage_rate_cents`) and never shown until now, so
+ * a customer could exceed their allowance without knowing what the next credit
+ * would cost.
+ */
+export function formatOverageRate(overageRateMinor: number, currency = CHARGE_CURRENCY): string | null {
+  if (!Number.isFinite(overageRateMinor) || overageRateMinor <= 0) return null;
+  const major = overageRateMinor / 100;
+  const safeCurrency = /^[A-Z]{3}$/.test(currency) ? currency : CHARGE_CURRENCY;
+  try {
+    return `${new Intl.NumberFormat('en-IN', {
+      style: 'currency',
+      currency: safeCurrency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 4,
+    }).format(major)} per extra credit`;
+  } catch {
+    return `${safeCurrency} ${major} per extra credit`;
+  }
+}
+
+/** "7-day free trial" / null when the plan offers none. */
+export function formatTrialOffer(trialDays: number): string | null {
+  const days = Math.floor(trialDays);
+  return days > 0 ? `${days}-day free trial` : null;
+}
+
+// ── Dunning: the state a failed card puts a workspace in ─────────────────────
+
+/**
+ * Whether the gateway can still rescue this subscription.
+ *
+ * Tri-state on purpose, mirroring `GET /subscriptions/payment-recovery`:
+ * `true` means there is a hosted page to send the customer to, `false` means
+ * the mandate is terminal and a new subscription is the only way back, and
+ * `null` means we could not reach Razorpay to ask. `null` must never render as
+ * a dead button, and must never render as "your subscription is gone" - the
+ * customer is past due either way, and that part is locally known.
+ */
+export type RecoveryState = 'recoverable' | 'settled' | 'unknown';
+
+export interface DunningView {
+  pastDue: boolean;
+  recovery: RecoveryState;
+  /** Hosted Razorpay page that re-authorises the mandate. Present only when recoverable. */
+  recoveryUrl: string | null;
+  /** Days left in the grace window before the subscription expires to Free. */
+  daysLeft: number | null;
+  planName: string | null;
+}
+
+export function buildDunning(raw: unknown): DunningView {
+  const record = asRecord(raw);
+  const pastDue = record ? toBool(record.past_due) : false;
+  const recoverable = record ? record.recoverable : undefined;
+  const daysRaw = record ? record.days_left : null;
+  return {
+    pastDue,
+    recovery:
+      recoverable === true ? 'recoverable' : recoverable === false ? 'settled' : 'unknown',
+    recoveryUrl: record ? toOptionalText(record.recovery_url) : null,
+    daysLeft: typeof daysRaw === 'number' && Number.isFinite(daysRaw) ? daysRaw : null,
+    planName: record ? toOptionalText(record.plan_name) : null,
+  };
+}
+
+/**
+ * What the customer must be told when their card has failed.
+ *
+ * Three sentences, in this order: what happened, what happens next and when,
+ * and what they can do. The console had no dunning surface at all before this,
+ * so a customer whose card failed learned about it when their chatbot stopped
+ * answering.
+ */
+export function dunningMessage(dunning: DunningView): string {
+  const plan = dunning.planName ? `your ${dunning.planName} plan` : 'your plan';
+  const deadline =
+    dunning.daysLeft == null
+      ? `${plan} will be downgraded to Free when the grace period ends`
+      : dunning.daysLeft <= 0
+        ? `${plan} is being downgraded to Free now`
+        : `${plan} will be downgraded to Free in ${dunning.daysLeft} day${dunning.daysLeft === 1 ? '' : 's'}`;
+  const remedy =
+    dunning.recovery === 'recoverable'
+      ? 'Pay the outstanding amount to keep it.'
+      : dunning.recovery === 'settled'
+        ? 'This mandate can no longer be retried, so pick a plan again to restore it.'
+        : 'We could not reach the payment gateway to check whether it can be retried. Try again in a few minutes.';
+  return `We could not take your last payment. ${deadline}. ${remedy}`;
+}
+
+// ── Downgrade re-auth: past_due that is not a failed payment ─────────────────
+
+/**
+ * The grace row a paid→paid downgrade leaves behind.
+ *
+ * It reads `past_due` but nothing failed: the customer owes a one-time
+ * authorisation of the NEW, cheaper mandate. Rendering it in the dunning banner
+ * would tell a customer their payment was declined when it was not, and there
+ * is no mandate to build a recovery link from, so the two states are kept apart
+ * here exactly as the backend keeps them apart in `payment_recovery`.
+ */
+export interface ReauthView {
+  required: boolean;
+  targetPlanName: string | null;
+  graceUntil: string | null;
+  daysLeft: number | null;
+}
+
+export function buildReauth(raw: unknown): ReauthView | null {
+  const record = asRecord(raw);
+  if (!record || record.required !== true) return null;
+  const daysRaw = record.days_left;
+  return {
+    required: true,
+    targetPlanName: toOptionalText(record.target_plan_name),
+    graceUntil: toOptionalText(record.grace_until),
+    daysLeft: typeof daysRaw === 'number' && Number.isFinite(daysRaw) ? daysRaw : null,
+  };
+}
+
+// ── Cancellation: the consequence, stated in full ────────────────────────────
+
+export interface CancellationConsequence {
+  /** The date access actually ends. Null when the API has not told us one. */
+  endsAt: string | null;
+  /** Sentences to put in the confirm dialog, in reading order. */
+  lines: string[];
+}
+
+/**
+ * What cancelling actually does, with the real date.
+ *
+ * "This cannot be undone" is not a consequence. Cancelling here is scheduled,
+ * not immediate: the plan runs to the end of the period already paid for, the
+ * plan credit grant stops at that date, purchased top-up credits survive it
+ * because they were bought outright, and the workspace drops to Free rather
+ * than disappearing. Every one of those is something a customer would
+ * reasonably assume the other way round.
+ */
+export function cancellationConsequence(
+  subscription: Pick<SubscriptionView, 'currentPeriodEnd' | 'trialEnd' | 'status'>,
+  planName: string | null,
+  topupCreditsRemaining: number,
+): CancellationConsequence {
+  const endsAt = subscription.trialEnd ?? subscription.currentPeriodEnd;
+  const when = endsAt ? formatDate(endsAt) : null;
+  const plan = planName ?? 'your plan';
+  const lines: string[] = [];
+  lines.push(
+    when
+      ? `${plan} stays active until ${when}. You keep everything it includes until then, and you are not charged again.`
+      : `${plan} stays active until the end of the period you have already paid for, and you are not charged again.`,
+  );
+  lines.push(
+    when
+      ? `On ${when} the workspace drops to Free. Your monthly credit grant stops, and any unused plan credits are lost.`
+      : 'When it ends the workspace drops to Free. Your monthly credit grant stops, and any unused plan credits are lost.',
+  );
+  if (topupCreditsRemaining > 0) {
+    lines.push(
+      `Your ${formatCredits(topupCreditsRemaining)} purchased top-up credits are unaffected - you bought those outright and they stay in the workspace.`,
+    );
+  }
+  lines.push('Your chatbots, documents and conversations are kept. You can resubscribe at any time.');
+  return { endsAt, lines };
+}
+
+/**
+ * The HTTP status behind a rejected API call, when there was one.
+ *
+ * `buildApiError` stamps it onto the Error it throws, which is the only way a
+ * surface can tell "your plan does not include this" (403) apart from "we could
+ * not load this" (a network failure) - and those are two of the four states
+ * every surface owes its user.
+ */
+export function errorStatus(error: unknown): number | null {
+  const status = (error as { status?: unknown } | null)?.status;
+  return typeof status === 'number' ? status : null;
+}
+
+/** The user-facing message on a rejected API call, with a stated fallback. */
+export function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}

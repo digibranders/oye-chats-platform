@@ -1,4 +1,4 @@
-import type { SelectOption } from '../../../design-system';
+import type { ComboboxOption } from '../../../ui';
 
 /**
  * Country picker options for billing forms. Codes are ISO-3166 alpha-2 (what
@@ -34,9 +34,9 @@ function countryName(code: string): string {
   }
 }
 
-export const COUNTRY_OPTIONS: SelectOption[] = (() => {
+export const COUNTRY_OPTIONS: ComboboxOption<string>[] = (() => {
   const rest = ISO_COUNTRY_CODES.filter((c) => c !== 'IN')
-    .map((code) => ({ value: code, label: countryName(code), search: `${countryName(code)} ${code}` }))
+    .map((code) => ({ value: code, label: countryName(code), keywords: code }))
     .sort((a, b) => a.label.localeCompare(b.label));
-  return [{ value: 'IN', label: 'India', search: 'India IN' }, ...rest];
+  return [{ value: 'IN', label: 'India', keywords: 'IN' }, ...rest];
 })();

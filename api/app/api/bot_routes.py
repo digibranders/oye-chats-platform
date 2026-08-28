@@ -4,15 +4,24 @@ import logging
 import re
 import socket
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 from sqlalchemy import func, select, update
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.auth import (
     bot_subscription_status,
@@ -22,12 +31,20 @@ from app.api.auth import (
     require_active_subscription_for_workspace,
     require_verified_email_for_workspace,
 )
-from app.config import APP_URL, FRONTEND_URL, MARKETING_URL
-from app.core.cache import bot_config_key, cache_delete
-from app.core.origin_check import extract_hostname, normalize_domain_input
+from app.config import (
+    API_BASE_URL,
+    APP_URL,
+    DEMO_SCREENSHOT_ENABLED,
+    DEMO_SCREENSHOT_TTL_DAYS,
+    FRONTEND_URL,
+    MARKETING_URL,
+)
+from app.config import WIDGET_SCRIPT_URL as CONFIGURED_WIDGET_SCRIPT_URL
+from app.core.cache import PREFIX, bot_config_key, cache_delete, get_redis
+from app.core.origin_check import extract_hostname, is_origin_allowed, normalize_domain_input
 from app.core.rate_limit import limiter
 from app.core.ssrf import SSRFError, validate_public_url
-from app.db.models import Bot, BotGrowthEvent
+from app.db.models import ActivationEvent, Bot, BotGrowthEvent
 from app.db.repository import stamp_manual_avatar
 from app.db.session import get_session
 from app.schemas.validators import (
@@ -47,6 +64,7 @@ from app.schemas.validators import (
     bounded_list,
 )
 from app.services.brand_tone import BRAND_TONE_PRESETS, CUSTOM_PRESET, is_valid_preset_value, preset_text
+from app.services.email_service import send_install_invite_email
 from app.services.language_service import is_multilingual_enabled
 
 # Upper bound on per-bot domain list size. 50 covers every realistic case
@@ -194,23 +212,105 @@ _INTERNAL_WIDGET_HOSTS = {
 } | {"localhost", "127.0.0.1"}
 
 
-def _is_external_install_origin(request: Request) -> bool:
-    """True when a widget bootstrap comes from a real external site.
+# How long one bot suppresses further heartbeat writes.
+# ``GET /bots/settings/public`` runs on EVERY widget bootstrap, i.e. every page
+# view on every customer site, so an unthrottled touch would be one row write
+# per page view against a wide row with several JSONB columns. One hour keeps
+# "is this widget still live?" answerable to within an hour.
+_WIDGET_HEARTBEAT_TTL_SECONDS = 3600
 
-    The ``Origin`` header is the source of truth (``Referer`` is a fallback for
-    clients that omit it). A missing/opaque origin, or one of our own hosts,
-    returns False so we only stamp an install for a genuine customer embed. The
-    request's own host is excluded too, because the hosted demo/preview pages are
-    served by the API itself, a widget embedded there reports the API host as
-    its origin, which must not count as a customer install regardless of how the
+
+def _widget_heartbeat_key(bot_id: int) -> str:
+    """Throttle key for the hourly widget-liveness touch.
+
+    Keyed on the bot ALONE, deliberately. The obvious design keys it on
+    ``(bot_id, hostname)`` so a new origin is recorded within one page load,
+    but ``hostname`` comes from ``Origin``/``Referer``, this endpoint has no
+    rate limit of its own, and the bot key it authenticates with is public by
+    design. A loop sending a distinct forged ``Origin`` per request would then
+    take a fresh throttle slot every request: one row UPDATE per request on a
+    wide JSONB row, plus one Redis key per request pinned for an hour. The
+    throttle would hold only for honest clients, which is not a throttle.
+
+    The key's VALUE carries the hostname last recorded, so
+    :func:`_widget_heartbeat_due` can still spot a genuine origin change
+    without putting attacker-controlled bytes in a key name.
+    """
+    return f"{PREFIX}widget:seen:{bot_id}"
+
+
+def _widget_origin_change_key(bot_id: int) -> str:
+    """Budget key for the one extra write an origin CHANGE may earn per hour.
+
+    Also keyed on the bot alone, for the same reason. Without a budget the
+    change-detector would be the bypass all over again (every forged origin
+    differs from the stored one, so every request would "have changed"); with
+    it the worst case is 2 writes and 2 Redis keys per bot per hour no matter
+    how many origins are thrown at it, and an honest domain migration is still
+    visible within minutes instead of within the hour.
+    """
+    return f"{PREFIX}widget:seen:origin:{bot_id}"
+
+
+def _widget_heartbeat_due(redis, bot_id: int, hostname: str) -> bool:
+    """Has this bootstrap earned a ``widget_last_seen_at`` row write?
+
+    Two gates, both ``SET NX EX`` on per-bot keys, so the write rate is bounded
+    by the bot and never by the caller:
+
+    1. the hourly refresh slot (:func:`_widget_heartbeat_key`), whose value is
+       the hostname it was claimed with, and
+    2. a single per-hour allowance (:func:`_widget_origin_change_key`) for a
+       bootstrap whose hostname differs from that stored value.
+
+    Ceiling: 2 writes per bot per hour, 48/day, for any traffic pattern. The
+    stored hostname is read back from Redis rather than from
+    ``Bot.widget_last_origin`` on purpose: the ORM object here is frequently a
+    bot-config cache hit up to ``BOT_CONFIG_TTL`` old, and comparing against a
+    stale value would burn the change allowance every hour for a bot whose
+    origin never moved.
+    """
+    seen_key = _widget_heartbeat_key(bot_id)
+    if redis.set(seen_key, hostname, nx=True, ex=_WIDGET_HEARTBEAT_TTL_SECONDS):
+        return True
+    if redis.get(seen_key) == hostname:
+        return False
+    if not redis.set(_widget_origin_change_key(bot_id), "1", nx=True, ex=_WIDGET_HEARTBEAT_TTL_SECONDS):
+        return False
+    # Remember the new origin (and restart its hour) so the next bootstrap from
+    # it is a no-op rather than a second "changed" claim.
+    redis.set(seen_key, hostname, ex=_WIDGET_HEARTBEAT_TTL_SECONDS)
+    return True
+
+
+def _external_install_hostname(request: Request) -> str | None:
+    """The Origin/Referer hostname of a genuine customer widget bootstrap.
+
+    Returns ``None`` when this is not one. The ``Origin`` header is the source
+    of truth (``Referer`` is a fallback for clients that omit it). A
+    missing/opaque origin, or one of our own hosts, returns ``None`` so we only
+    record an install for a genuine customer embed. The request's own host is
+    excluded too, because the hosted demo/preview pages are served by the API
+    itself, a widget embedded there reports the API host as its origin, which
+    must not count as a customer install regardless of how the
     ``APP_URL``/``MARKETING_URL`` config resolves.
+
+    The hostname is returned rather than discarded because it is what
+    ``Bot.widget_last_origin`` stores. It is browser-forgeable and must stay
+    diagnostic: nothing may gate on it (embed enforcement is
+    ``allowed_domains`` + ``auth._enforce_bot_origin``).
     """
     origin = request.headers.get("origin") or request.headers.get("referer")
     hostname = extract_hostname(origin)
     if not hostname or hostname in _INTERNAL_WIDGET_HOSTS:
-        return False
+        return None
     self_host = extract_hostname(str(request.base_url))
-    return hostname != self_host
+    return None if hostname == self_host else hostname
+
+
+def _is_external_install_origin(request: Request) -> bool:
+    """True when a widget bootstrap comes from a real external site."""
+    return _external_install_hostname(request) is not None
 
 
 router = APIRouter(prefix="/bots", tags=["bots"])
@@ -301,6 +401,8 @@ def _require_bot_management_access(auth: dict) -> None:
 # been customised, so a PATCH resending them is a no-op and must not trip the
 # add-on guard: the Experience page saves its whole draft, unchanged fields
 # included.
+WIDGET_SCRIPT_URL = "https://cdn.oyechats.com/oyechats-widget.js"
+
 DEFAULT_BRANDING_TEXT = "Powered by OyeChats"
 DEFAULT_BRANDING_URL = "https://www.oyechats.com"
 
@@ -558,8 +660,34 @@ class UpdateBotRequest(BaseModel):
     # Live chat settings
     live_chat_enabled: bool | None = None
     operator_timeout_seconds: int | None = Field(None, ge=5, le=3600)
+    # Visitor disconnect grace period, seconds. Bounds mirror
+    # ``operator_timeout_seconds`` deliberately: both are live-chat timers and
+    # a customer should not have to learn two different ranges. Below 5s a
+    # timer fires faster than a normal tab switch or a mobile network blip;
+    # above an hour it is indistinguishable from "never". The column default is
+    # 120s, matching ``live_chat_service.DEFAULT_VISITOR_DISCONNECT_TIMEOUT``,
+    # and ``handle_visitor_disconnect`` really does read the column.
+    #
+    # ``operator_disconnect_timeout`` is deliberately ABSENT. The column and
+    # its 60s default exist, but ``live_chat_service._operator_disconnect_timeout``
+    # sleeps the class constant and never reads them, so exposing the field
+    # here would ship a setting that validates, persists and echoes back while
+    # changing nothing -- rendered next to a working peer, which is how a
+    # customer learns not to trust either. Add it back in the same change that
+    # teaches ``_operator_disconnect_timeout`` to look the value up.
+    visitor_disconnect_timeout: int | None = Field(None, ge=5, le=3600)
     live_chat_queue_timeout_seconds: int | None = Field(None, ge=5, le=600)
     live_chat_max_queue_size: int | None = Field(None, ge=1, le=100)
+    # Kill switch for the manual lead follow-up email. ``lead_routes``' Gate 4
+    # refuses with 423 while this is true, with no override.
+    followup_sending_paused: bool | None = None
+    # Pause / resume this chatbot. It hides the widget (``get_current_bot``
+    # refuses an inactive bot) but it is first of all the BILLING key -- see
+    # ``Bot.is_active`` and the gate in :func:`update_bot` -- so the
+    # false->true direction re-runs the create gate rather than writing
+    # straight through. ``GET /bots`` deliberately does NOT filter on it, so a
+    # paused bot stays visible to its owner and remains resumable.
+    is_active: bool | None = None
     # Business hours
     business_hours: BusinessHours | None = None
     # Feature flags / widget copy / widget tuning. These three are genuinely
@@ -694,14 +822,40 @@ class BotResponse(BaseModel):
     # Set once the embedded widget has been seen live on a real external site;
     # None until then. Drives the "widget installed" setup-checklist step.
     widget_installed_at: datetime | None = None
+    # Liveness heartbeat for that install, refreshed at most hourly per origin.
+    # None means "not seen since the heartbeat shipped" -- there is no backfill,
+    # so an older install reads None until its widget next bootstraps.
+    widget_last_seen_at: datetime | None = None
+    # Who the install briefing was last emailed to, and when. Drives the
+    # Deploy page's "already sent" state, which has to survive a reload and a
+    # change of device. None on both means it has never been sent.
+    dev_invite_email: str | None = None
+    dev_invite_sent_at: datetime | None = None
+    # Hostname of the most recent bootstrap. Browser-forgeable, so this is a
+    # support diagnostic ("which domain is it actually running on?") and never
+    # an authorisation input.
+    widget_last_origin: str | None = None
+    # State of the capture that backs the hosted demo page. The Deploy page
+    # reports this so the customer can tell "we are still taking the picture"
+    # from "we could not render your site" instead of wondering why their demo
+    # link shows a stand-in. None = never attempted.
+    demo_screenshot_status: str | None = None
+    demo_screenshot_captured_at: datetime | None = None
     # Durable per-bot ingestion ("trained") state, a persistent fact the UI can
     # read instead of racing the ephemeral /crawl/progress toast.
     last_crawl_status: str | None = None
     crawl_completed_at: datetime | None = None
     indexed_chunk_count: int = 0
     operator_timeout_seconds: int = 120
+    # Visitor disconnect grace period, seconds. Default mirrors the column.
+    # No ``operator_disconnect_timeout`` here: see ``UpdateBotRequest``, the
+    # column is not read by ``live_chat_service`` yet, so publishing it would
+    # invite the console to render a control that does nothing.
+    visitor_disconnect_timeout: int = 120
     live_chat_queue_timeout_seconds: int = 20
     live_chat_max_queue_size: int = 10
+    # Manual lead follow-up kill switch. Default FALSE, matching the column.
+    followup_sending_paused: bool = False
     business_hours: dict | None = None
     feature_flags: dict = {}
     language_config: dict = {}
@@ -833,12 +987,20 @@ def _bot_to_response(bot: Bot, request: Request, *, plan_slug: str = "free", pla
         email_visitor_confirmation=bot.email_visitor_confirmation,
         live_chat_enabled=bot.live_chat_enabled,
         widget_installed_at=bot.widget_installed_at,
+        widget_last_seen_at=bot.widget_last_seen_at,
+        dev_invite_email=bot.dev_invite_email,
+        dev_invite_sent_at=bot.dev_invite_sent_at,
+        widget_last_origin=bot.widget_last_origin,
+        demo_screenshot_status=bot.demo_screenshot_status,
+        demo_screenshot_captured_at=bot.demo_screenshot_captured_at,
         last_crawl_status=bot.last_crawl_status,
         crawl_completed_at=bot.crawl_completed_at,
         indexed_chunk_count=bot.indexed_chunk_count or 0,
         operator_timeout_seconds=bot.operator_timeout_seconds,
+        visitor_disconnect_timeout=bot.visitor_disconnect_timeout,
         live_chat_queue_timeout_seconds=bot.live_chat_queue_timeout_seconds,
         live_chat_max_queue_size=bot.live_chat_max_queue_size,
+        followup_sending_paused=bool(bot.followup_sending_paused),
         business_hours=bot.business_hours,
         feature_flags=bot.feature_flags or {},
         language_config=bot.language_config or {},
@@ -937,26 +1099,79 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
     open the widget will only get the configured ``offline_message``,
     the chat endpoint will not run RAG.
     """
-    # One-time "widget is live" detection. The first time the widget bootstraps
-    # from a real external site (not our dashboard preview / demo / localhost),
-    # stamp the bot so the Dashboard setup checklist can confirm the install
-    # without a user self-report. Best-effort and idempotent, the guarded
-    # UPDATE only matches while the column is NULL, and we invalidate the cached
-    # bot config so subsequent loads skip this path entirely. Never blocks the
-    # widget response.
-    if bot.widget_installed_at is None and _is_external_install_origin(request):
+    # ── Widget install detection + liveness heartbeat ──────────────────────
+    #
+    # This endpoint runs on EVERY widget bootstrap, i.e. every page view on
+    # every customer site, so both branches below are written around one
+    # constraint: they must not turn a read into a per-page-view row write.
+    #
+    # First-seen (below, ``widget_installed_at IS NULL``) keeps its original
+    # design: a DB-guarded ``UPDATE ... WHERE widget_installed_at IS NULL``
+    # that can match at most once in the bot's lifetime, followed by a
+    # ``cache_delete`` so subsequent loads read the stamped value and skip the
+    # branch. It deliberately does NOT depend on Redis: first-install detection
+    # is a one-off fact the setup checklist needs, and it must survive a Redis
+    # outage.
+    #
+    # The heartbeat is the opposite case, an update that WANTS to repeat, so it
+    # is throttled by ``_widget_heartbeat_due``: two Redis ``SET NX EX`` gates
+    # on PER-BOT keys, capping the write rate at 2/hour/bot for ANY traffic
+    # pattern. The throttle is deliberately not keyed on the request's
+    # hostname: that value is an attacker-supplied header on an endpoint with
+    # no rate limit of its own, so keying on it would let a loop of forged
+    # ``Origin`` values buy one row write (and one hour-long Redis key) per
+    # request. Redis fails CLOSED here. If ``get_redis()`` returns None we skip
+    # the write entirely rather than fall through to an unthrottled one,
+    # because a Redis outage turning into a write storm on the hottest endpoint
+    # in the product is far worse than an hour of stale telemetry. And it never
+    # calls ``cache_delete``: doing so would invalidate the bot config up to
+    # 48x/day/bot and hand the DB the read load the cache exists to absorb.
+    #
+    # Whole block is best-effort. Telemetry must never fail a widget bootstrap.
+    _origin_hostname = _external_install_hostname(request)
+    if _origin_hostname:
         try:
-            with get_session() as _install_session:
-                stamped = _install_session.execute(
-                    update(Bot)
-                    .where(Bot.id == bot.id, Bot.widget_installed_at.is_(None))
-                    .values(widget_installed_at=func.now())
-                ).rowcount
-                _install_session.commit()
-            if stamped:
-                cache_delete(bot_config_key(bot.bot_key))
+            if bot.widget_installed_at is None:
+                with get_session() as _install_session:
+                    stamped = _install_session.execute(
+                        update(Bot)
+                        .where(Bot.id == bot.id, Bot.widget_installed_at.is_(None))
+                        .values(
+                            widget_installed_at=func.now(),
+                            widget_last_seen_at=func.now(),
+                            widget_last_origin=_origin_hostname,
+                        )
+                    ).rowcount
+                    _install_session.commit()
+                if stamped:
+                    cache_delete(bot_config_key(bot.bot_key))
+                    # Claim the throttle slot the stamp just satisfied, so the
+                    # very next page load doesn't immediately re-touch the row.
+                    # Best-effort: no Redis simply means the heartbeat branch
+                    # is off anyway.
+                    _throttle = get_redis()
+                    if _throttle is not None:
+                        _throttle.set(
+                            _widget_heartbeat_key(bot.id),
+                            _origin_hostname,
+                            nx=True,
+                            ex=_WIDGET_HEARTBEAT_TTL_SECONDS,
+                        )
+            else:
+                _throttle = get_redis()
+                if _throttle is not None and _widget_heartbeat_due(_throttle, bot.id, _origin_hostname):
+                    with get_session() as _seen_session:
+                        _seen_session.execute(
+                            update(Bot)
+                            .where(Bot.id == bot.id)
+                            .values(
+                                widget_last_seen_at=func.now(),
+                                widget_last_origin=_origin_hostname,
+                            )
+                        )
+                        _seen_session.commit()
         except Exception:
-            logger.debug("widget install stamp skipped for bot_id=%s", getattr(bot, "id", None), exc_info=True)
+            logger.debug("widget install/heartbeat skipped for bot_id=%s", getattr(bot, "id", None), exc_info=True)
 
     # Construct backend file URL for relative logos
     logo_url = bot.bot_logo
@@ -1131,6 +1346,240 @@ def _build_public_cta_options(bot) -> dict:
     return cta_options
 
 
+def _demo_url_belongs_to_bot(bot: Bot, raw_url: str) -> bool:
+    """Is ``raw_url`` a site this bot is entitled to have previewed?
+
+    Accepts the bot's own ``website`` (with the usual apex/``www.``
+    equivalence) and anything on its configured ``allowed_domains``. Everything
+    else is refused.
+
+    The guard exists because ``/demo/{bot_key}`` is unauthenticated and its key
+    is public by design: it ships in every embed snippet and is printed on the
+    Deploy page. Without this, that key is all anyone needs to serve arbitrary
+    third-party content from an oyechats.com URL under a "Powered by OyeChats"
+    toolbar.
+
+    Note this is deliberately independent of ``domain_check_enabled``. That
+    flag governs whether the WIDGET refuses to boot on a foreign origin, and it
+    fails open on an empty allow-list so a new bot still works. Failing open
+    here would reinstate exactly the abuse this prevents, so an empty
+    allow-list simply means the bot's own website is the only previewable site.
+    """
+    host = extract_hostname(raw_url)
+    if not host:
+        return False
+    host = host.lower()
+
+    own_host = extract_hostname(bot.website) if bot.website else None
+    if not own_host and bot.website:
+        # ``website`` is very often stored as a bare hostname, which
+        # ``extract_hostname`` cannot read without a scheme.
+        own_host = extract_hostname(f"https://{bot.website.strip()}")
+    if own_host:
+        own_host = own_host.lower()
+        if host == own_host:
+            return True
+        # Apex and ``www.`` are the same site to everyone except a string
+        # comparison, and customers store whichever one they typed.
+        if host.removeprefix("www.") == own_host.removeprefix("www."):
+            return True
+
+    allowed = bot.allowed_domains or []
+    return is_origin_allowed(host, allowed)
+
+
+def _demo_capture_is_usable(bot: Bot) -> bool:
+    """Should the demo page render this bot's stored capture?
+
+    Staleness is checked here rather than only at capture time because the
+    capture is refreshed by training, and a bot that stopped being retrained
+    would otherwise show a screenshot of a site design its owner replaced
+    long ago. Past the TTL the hero page is the more honest answer, and the
+    next training run (or an explicit recapture) restores the real one.
+
+    A capture of a DIFFERENT site than the bot currently points at is never
+    usable, no matter how recent: that is the case where showing it would be
+    actively misleading rather than merely dated.
+    """
+    if not DEMO_SCREENSHOT_ENABLED or not bot.demo_screenshot_url:
+        return False
+    if bot.demo_screenshot_status != "ready":
+        return False
+
+    current = (bot.website or "").strip().lower().removeprefix("https://").removeprefix("http://").rstrip("/")
+    captured = (
+        (bot.demo_screenshot_source_url or "").strip().lower().removeprefix("https://").removeprefix("http://")
+    ).rstrip("/")
+    if current and captured and current.removeprefix("www.") != captured.removeprefix("www."):
+        return False
+
+    captured_at = bot.demo_screenshot_captured_at
+    if captured_at is None:
+        return False
+    if captured_at.tzinfo is None:
+        captured_at = captured_at.replace(tzinfo=UTC)
+    return captured_at > datetime.now(UTC) - timedelta(days=DEMO_SCREENSHOT_TTL_DAYS)
+
+
+def _widget_script_tag(bot_key: str) -> str:
+    """The demo page's own copy of the embed snippet.
+
+    Sourced from config rather than hardcoded to the production CDN: a local or
+    staging demo page used to load the LIVE widget build, so the one surface
+    whose whole job is showing what the customer will get was the one surface
+    that could not show a change before it shipped.
+    """
+    return f'<script src="{html.escape(CONFIGURED_WIDGET_SCRIPT_URL)}" data-bot-key="{html.escape(bot_key)}"></script>'
+
+
+def _build_screenshot_demo_page_html(bot: Bot, edit: bool = False) -> str:
+    """The customer's own website, captured, with the real widget live on top.
+
+    This is the demo page proper. The backdrop is a full-page capture of their
+    site stored on our CDN (see ``screenshot_service``), drawn inside light
+    browser chrome so nobody mistakes it for the live site, and the widget on
+    top is the real one loaded by bot key. Everything the visitor clicks in the
+    widget is real; the page behind it is a picture.
+
+    A capture rather than an iframe because roughly 40% of sites forbid framing
+    outright, and a demo that fails in front of a prospect is worse than no
+    demo. This is also what LiveChat does.
+    """
+    bot_name = html.escape(bot.name or "OyeChats")
+    shot_url = html.escape(bot.demo_screenshot_url or "")
+    source_url = bot.demo_screenshot_source_url or bot.website or ""
+    display_host = html.escape(urlparse(source_url).hostname or source_url or "your website")
+    safe_source = html.escape(source_url) if source_url.startswith(("http://", "https://")) else ""
+    visit_link = (
+        f'<a class="chrome-visit" href="{safe_source}" target="_blank" rel="noopener noreferrer">Open the real site</a>'
+        if safe_source
+        else ""
+    )
+    editor_bootstrap = _PREVIEW_EDITOR_BOOTSTRAP if edit else ""
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{bot_name} Demo | OyeChats</title>
+  <meta name="description" content="Try the {bot_name} assistant on {display_host}, powered by OyeChats." />
+  <meta name="robots" content="noindex" />
+  <style>
+    /*
+     * Scope every reset to the demo shell. Never touch #oyechats-widget-root
+     * or its children: the widget ships its own self-contained styles and
+     * renders into a shadow root.
+     */
+    .demo-shell, .demo-shell *, .demo-shell *::before, .demo-shell *::after {{
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }}
+    html, body {{
+      margin: 0;
+      padding: 0;
+      background: #eef2f7;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }}
+    .demo-shell {{ min-height: 100vh; }}
+    .chrome {{
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      height: 44px;
+      padding: 0 16px;
+      background: #f8fafc;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.1);
+    }}
+    .chrome-dots {{ display: flex; gap: 6px; flex-shrink: 0; }}
+    .chrome-dots i {{
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: #d7dee8;
+      display: block;
+    }}
+    .chrome-address {{
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      height: 28px;
+      padding: 0 12px;
+      border-radius: 999px;
+      background: #ffffff;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      color: #475569;
+      font-size: 12.5px;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }}
+    .chrome-lock {{ flex-shrink: 0; color: #64748b; font-size: 11px; }}
+    .chrome-tag {{
+      flex-shrink: 0;
+      padding: 3px 9px;
+      border-radius: 999px;
+      background: rgba(15, 109, 255, 0.1);
+      color: #0a56ca;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }}
+    .chrome-visit {{
+      flex-shrink: 0;
+      color: #475569;
+      font-size: 12px;
+      text-decoration: none;
+      white-space: nowrap;
+    }}
+    .chrome-visit:hover {{ color: #0f172a; text-decoration: underline; }}
+    .shot {{
+      display: block;
+      width: 100%;
+      height: auto;
+      /* The capture is a picture of a page, not an interactive one. Saying so
+         with the cursor is cheaper than a visitor discovering it by clicking. */
+      cursor: default;
+      user-select: none;
+    }}
+    .note {{
+      padding: 14px 16px 96px;
+      text-align: center;
+      color: #64748b;
+      font-size: 12.5px;
+      line-height: 1.6;
+    }}
+    @media (max-width: 640px) {{
+      .chrome-tag, .chrome-visit {{ display: none; }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="demo-shell">
+    <div class="chrome">
+      <div class="chrome-dots"><i></i><i></i><i></i></div>
+      <div class="chrome-address"><span class="chrome-lock">&#x1f512;</span>{display_host}</div>
+      <span class="chrome-tag">Demo</span>
+      {visit_link}
+    </div>
+    <img class="shot" src="{shot_url}" alt="A preview image of {display_host}" draggable="false" />
+    <p class="note">
+      This is a picture of {display_host}. The chat in the corner is live &mdash; open it and ask a question.
+    </p>
+  </div>
+  {editor_bootstrap}{_widget_script_tag(bot.bot_key)}
+</body>
+</html>
+"""
+
+
 def _build_demo_page_html(bot: Bot, edit: bool = False) -> str:
     bot_name = html.escape(bot.name or "OyeChats")
     website = (bot.website or "").strip()
@@ -1293,7 +1742,7 @@ def _build_demo_page_html(bot: Bot, edit: bool = False) -> str:
       </div>
     </section>
   </main>
-  {editor_bootstrap}<script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="{html.escape(bot.bot_key)}"></script>
+  {editor_bootstrap}{_widget_script_tag(bot.bot_key)}
 </body>
 </html>
 """
@@ -1390,7 +1839,6 @@ def _build_preview_page_html(bot: Bot, target_url: str, edit: bool = False) -> s
     from the parent frame. Typically the admin dashboard editor).
     """
     bot_name = html.escape(bot.name or "OyeChats")
-    bot_key = html.escape(bot.bot_key)
     masked_key = html.escape(_mask_bot_key(bot.bot_key))
     safe_url = html.escape(target_url)
     editor_bootstrap = _PREVIEW_EDITOR_BOOTSTRAP if edit else ""
@@ -1566,18 +2014,47 @@ def _build_preview_page_html(bot: Bot, target_url: str, edit: bool = False) -> s
       <p>This website doesn&rsquo;t allow being loaded inside a preview frame. The chat widget is still active &mdash; try it using the launcher in the bottom-right corner.</p>
     </div>
   </div>
-  {editor_bootstrap}<script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="{bot_key}"></script>
+  {editor_bootstrap}{_widget_script_tag(bot.bot_key)}
   <script>
     (function() {{
       var frame = document.getElementById('preview-frame');
       var fallback = document.getElementById('fallback');
       var shown = false;
+      var reported = false;
+
+      /*
+       * Report the INNER frame's fate to whoever embedded this page (the
+       * dashboard's preview dialog).
+       *
+       * This exists because the dialog used to infer "your site blocked
+       * embedding" from the widget's own `oyechats:preview-ready` message.
+       * The widget lives on THIS page, not on the customer's site, so it
+       * reports ready whether or not the site below it rendered, and the
+       * warning it was supposed to drive was effectively unreachable in
+       * exactly the case it was written for.
+       *
+       * Targeted at the referrer's origin rather than '*' so the state of a
+       * customer's site is not broadcast to any arbitrary embedder.
+       */
+      function report(ok) {{
+        if (reported) return;
+        reported = true;
+        try {{
+          if (window.parent === window) return;
+          var target = '*';
+          if (document.referrer) {{
+            try {{ target = new URL(document.referrer).origin; }} catch (e) {{ /* keep '*' */ }}
+          }}
+          window.parent.postMessage({{ type: 'oyechats:preview-site', ok: !!ok }}, target);
+        }} catch (e) {{ /* never let reporting break the preview */ }}
+      }}
 
       function showFallback() {{
         if (shown) return;
         shown = true;
         frame.style.display = 'none';
         fallback.classList.add('visible');
+        report(false);
       }}
 
       /*
@@ -1602,11 +2079,14 @@ def _build_preview_page_html(bot: Bot, target_url: str, edit: bool = False) -> s
             var body = (doc.body && doc.body.innerHTML) || '';
             if (url === 'about:blank' || body.trim() === '') {{
               showFallback();
+            }} else {{
+              report(true);
             }}
             return;
           }}
         }} catch(e) {{
           // Cross-origin: expected for external sites that DID load.
+          report(true);
         }}
       }});
 
@@ -1626,6 +2106,7 @@ def _build_preview_page_html(bot: Bot, target_url: str, edit: bool = False) -> s
           }}
         }} catch(e) {{
           // Cross-origin: site is loaded, all good.
+          report(true);
         }}
       }}, 8000);
     }})();
@@ -1647,7 +2128,32 @@ def get_bot_demo_page(
     url: str | None = Query(default=None, max_length=MAX_URL),
     edit: int = Query(default=0, ge=0, le=1),
 ):
-    """Render a shareable demo page, or an iframe-based preview when *url* is supplied.
+    """Render the hosted demo page for a bot.
+
+    Three renderings, in descending order of how much they look like the
+    customer's actual website:
+
+    1. **Live frame** (``?url=`` on a site that permits framing). The real site,
+       scrolling, with the widget over it. Only ever reached explicitly, and
+       only for the bot's OWN site. This is what the dashboard's preview dialog
+       asks for, where a blank frame is recoverable because the customer is
+       sitting in front of it.
+    2. **Captured site** (default, whenever a stored capture exists). A
+       full-page screenshot of the customer's site with the real widget live on
+       top. This is what a shared link resolves to, because it is the only
+       rendering that works for every customer: roughly 40% of sites forbid
+       framing, and a link sent to a prospect has to work the first time.
+    3. **Hero page** (last resort). A bot with no website, or none captured
+       yet. Honest about being a stand-in rather than dressed up as the
+       customer's site.
+
+    ``?url=`` is restricted to the bot's own website and allow-listed domains.
+    It is an unauthenticated route keyed on a PUBLIC bot key, so an unrestricted
+    parameter would let anyone render arbitrary third-party HTML on an
+    oyechats.com URL underneath our own branding: a ready-made phishing wrapper
+    borrowing our domain as the trust signal. A rejected URL is a 400 rather
+    than a silent downgrade, so a caller learns their request was refused
+    instead of wondering why the page ignored it.
 
     When ``edit=1`` is passed, the page enables a postMessage bridge so the
     embedding dashboard can drive widget appearance in real time.
@@ -1663,10 +2169,19 @@ def get_bot_demo_page(
 
         if url:
             _validate_preview_url(url)
+            if not _demo_url_belongs_to_bot(bot, url):
+                raise HTTPException(
+                    status_code=400,
+                    detail="This demo can only preview the chatbot's own website or an allowed domain.",
+                )
             if _check_iframe_allowed(url):
                 return HTMLResponse(content=_build_preview_page_html(bot, url, edit=edit_mode))
-            # Site blocks framing. Fall through to the hero demo page
-            # so the user still sees a working widget.
+            # The site refuses to be framed. The capture, if we have one, shows
+            # the same site and cannot be blocked, so prefer it over the hero
+            # page rather than dropping all the way to a generic stand-in.
+
+        if _demo_capture_is_usable(bot):
+            return HTMLResponse(content=_build_screenshot_demo_page_html(bot, edit=edit_mode))
         return HTMLResponse(content=_build_demo_page_html(bot, edit=edit_mode))
 
 
@@ -1772,12 +2287,18 @@ def list_bots(
                     email_visitor_confirmation=b.email_visitor_confirmation,
                     live_chat_enabled=b.live_chat_enabled,
                     widget_installed_at=b.widget_installed_at,
+                    widget_last_seen_at=b.widget_last_seen_at,
+                    dev_invite_email=b.dev_invite_email,
+                    dev_invite_sent_at=b.dev_invite_sent_at,
+                    widget_last_origin=b.widget_last_origin,
                     last_crawl_status=b.last_crawl_status,
                     crawl_completed_at=b.crawl_completed_at,
                     indexed_chunk_count=b.indexed_chunk_count or 0,
                     operator_timeout_seconds=b.operator_timeout_seconds,
+                    visitor_disconnect_timeout=b.visitor_disconnect_timeout,
                     live_chat_queue_timeout_seconds=b.live_chat_queue_timeout_seconds,
                     live_chat_max_queue_size=b.live_chat_max_queue_size,
+                    followup_sending_paused=bool(b.followup_sending_paused),
                     business_hours=b.business_hours,
                     feature_flags=b.feature_flags or {},
                     language_config=b.language_config or {},
@@ -1932,6 +2453,15 @@ def create_bot(
         # (a bespoke plan row missing the ``bots`` key resolves to a limit of 0
         # under ``limit_for``'s conservative default, which would otherwise
         # refuse that account its very first agent).
+        #
+        # Serialized against every other admission decision for this workspace
+        # (a concurrent create, or the resume gate in :func:`update_bot`) by the
+        # same workspace lock, because the count below is a plain
+        # ``SELECT count(*)`` and two racing callers would otherwise both see
+        # the same free slot. This is taken AFTER the same-site lookup above,
+        # so that read's own race is unchanged.
+        _lock_workspace_for_bot_admission(session, auth["client_id"])
+
         from app.services.plan_entitlements_service import can_client_add_new_bot
 
         decision = can_client_add_new_bot(auth["client_id"], session)
@@ -2316,6 +2846,83 @@ def track_demo_share_click(bot_id: int, auth=Depends(get_current_client_or_opera
         return {"success": True, "event_type": "demo_share_clicked"}
 
 
+@router.post("/{bot_id}/demo-screenshot")
+@limiter.limit("6/hour")
+def recapture_demo_screenshot(request: Request, bot_id: int, auth=Depends(get_current_client_or_operator)):
+    """Queue a fresh capture of this bot's website for its demo page.
+
+    Normally the capture rides along with training, which covers the case
+    nobody thinks about. This is the case they do think about: the customer
+    redesigned their site, or the first attempt failed, and they want the demo
+    link to be right before they send it.
+
+    Rate-limited per caller because each call spends a real render at the
+    crawl vendor, and the button is one click on a page a customer may sit on
+    while iterating. Deduplicated on a per-bot job id, so repeat clicks while
+    one is already queued collapse into that job rather than stacking.
+    """
+    _require_bot_management_access(auth)
+    with get_session() as session:
+        bot = _get_workspace_bot(session, bot_id, auth["client_id"])
+        if not DEMO_SCREENSHOT_ENABLED:
+            raise HTTPException(status_code=503, detail="Website previews are currently unavailable.")
+
+        from app.services.screenshot_service import normalize_site_url
+
+        target = normalize_site_url(bot.website)
+        if not target:
+            raise HTTPException(
+                status_code=400,
+                detail="Add this chatbot's website address before previewing it.",
+            )
+
+        # Reflect the queued state immediately. The Deploy page reads this
+        # field, and leaving it on its previous value would read as "nothing
+        # happened" for as long as the capture takes to start.
+        bot.demo_screenshot_status = "pending"
+        session.commit()
+        target_bot_id = bot.id
+
+    # Dispatch outside the session: the fallback path runs the capture on the
+    # background thread pool, and holding this request's session open across
+    # that hand-off buys nothing.
+    #
+    # ``WORKER_ENABLED`` defaults to false, and on that path the house
+    # convention is to run the work in-process rather than queue it (see
+    # document ingestion and lead-company resolution). Queueing regardless
+    # would leave this button setting "pending" against a queue nobody drains,
+    # and the card would promise a picture that never arrives.
+    from app.worker.enqueue import WORKER_ENABLED
+
+    try:
+        if WORKER_ENABLED:
+            from app.worker.enqueue import enqueue_sync
+
+            enqueue_sync(
+                "task_capture_demo_screenshot",
+                target_bot_id,
+                True,
+                _job_id=f"demo-screenshot:{target_bot_id}",
+            )
+        else:
+            from app.core.thread_pool import submit_background
+            from app.services.screenshot_service import refresh_bot_capture
+
+            submit_background(refresh_bot_capture, target_bot_id, True)
+    except Exception:
+        # Nothing is going to run, so the row must not be left claiming a
+        # capture is under way. Clearing it also restores the customer's retry.
+        logger.warning("could not dispatch a demo capture for bot %s", target_bot_id, exc_info=True)
+        with get_session() as session:
+            failed = session.get(Bot, target_bot_id)
+            if failed is not None:
+                failed.demo_screenshot_status = "failed"
+                session.commit()
+        raise HTTPException(status_code=503, detail="We could not start the preview. Try again in a moment.") from None
+
+    return {"success": True, "status": "pending", "website": target}
+
+
 @router.get("/{bot_id}/framework-presets")
 def get_framework_presets(bot_id: int, auth=Depends(get_current_client_or_operator)):
     with get_session() as session:
@@ -2417,6 +3024,104 @@ def get_seed_questions(
         return {"questions": questions}
 
 
+class InstallInviteRequest(BaseModel):
+    # The ONLY input. The snippet is built server-side from the bot's own
+    # entitlement: accepting one here would let a customer mail themselves a
+    # white-label snippet they have not paid for, and nothing downstream ever
+    # re-checks a string already pasted into their repository.
+    model_config = ConfigDict(extra="ignore")
+
+    email: EmailAddress
+
+
+def _attribution_anchor(bot_key: str) -> str:
+    """The crawlable "Powered by OyeChats" link that rides beside the tag.
+
+    Mirrors ``app/src/data/widgetEmbed.ts``. Kept in sync by hand, and safe to
+    interpolate for the same reason stated there: ``bot_key`` is matched against
+    an allowlist before it reaches the URL, so it cannot carry a quote or an
+    angle bracket into this markup.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", bot_key or ""):
+        raise HTTPException(status_code=422, detail="This chatbot's embed key is malformed.")
+    href = f"https://www.oyechats.com/?ref={bot_key}&utm_source=widget&utm_medium=referral"
+    css = "font-size:11px;color:inherit;opacity:0.7;text-decoration:none"
+    return f'<a href="{href}" rel="nofollow" style="{css}">{DEFAULT_BRANDING_TEXT}</a>'
+
+
+def _embed_snippet(bot_key: str, *, attribution: bool) -> str:
+    tag = f'<script src="{WIDGET_SCRIPT_URL}" data-bot-key="{bot_key}"></script>'
+    return f"{tag}\n{_attribution_anchor(bot_key)}" if attribution else tag
+
+
+@router.post("/{bot_id}/install-invite")
+@limiter.limit("5/hour")
+def send_install_invite(
+    bot_id: int,
+    body: InstallInviteRequest,
+    request: Request,
+    auth=Depends(get_current_client_or_operator),
+):
+    """Email the install briefing to whoever actually edits the website.
+
+    Replaces a ``mailto:`` link, which handed the briefing to the operating
+    system and lost sight of it: on a machine with no mail client configured
+    the button did nothing at all, and the product could never say whether a
+    developer had been told.
+
+    ``resent`` reports whether this address had already been mailed for this
+    bot. The console confirms before re-sending to the same person and sends
+    straight to a new one, because a second developer is a fresh handoff rather
+    than an accidental duplicate. It is never a block: the customer asked.
+
+    The rate limit is deliberately tight. This is an authenticated endpoint that
+    mails an arbitrary address, so it is attached to our sending domain's
+    reputation; five an hour is far more than a real handoff needs.
+    """
+    _require_bot_management_access(auth)
+    with get_session() as session:
+        bot = _get_workspace_bot(session, bot_id, auth["client_id"])
+
+        # Deny-by-default: an unresolved entitlement keeps the credit link in,
+        # which is the recoverable mistake. The reverse mails out a white-label
+        # snippet we cannot take back.
+        attribution = not _bot_has_branding_addon(session, bot.id)
+        snippet = _embed_snippet(bot.bot_key, attribution=attribution)
+
+        requester = auth["entity"]
+        reply_to = getattr(requester, "email", None)
+        if not reply_to:
+            raise HTTPException(status_code=422, detail="Your account has no email address to reply to.")
+
+        # Both sides are already case-folded by ``EmailAddress``; the lower()
+        # on the stored value guards rows written before that was true.
+        resent = (bot.dev_invite_email or "").lower() == body.email
+
+        send_install_invite_email(
+            to_email=body.email,
+            bot_name=bot.name,
+            snippet=snippet,
+            script_origin=urlparse(WIDGET_SCRIPT_URL).scheme + "://" + urlparse(WIDGET_SCRIPT_URL).netloc,
+            api_origin=API_BASE_URL,
+            attribution=attribution,
+            requester_name=getattr(requester, "name", None),
+            reply_to=reply_to,
+        )
+
+        bot.dev_invite_email = body.email
+        bot.dev_invite_sent_at = datetime.now(UTC)
+        session.add(
+            ActivationEvent(
+                client_id=auth["client_id"],
+                bot_id=bot.id,
+                event_type="install_invite_sent",
+            )
+        )
+        session.commit()
+
+        return {"email": bot.dev_invite_email, "sent_at": bot.dev_invite_sent_at, "resent": resent}
+
+
 @router.post("/{bot_id}/brand-tone/preview")
 @limiter.limit("15/minute")
 def preview_brand_tone(
@@ -2482,6 +3187,190 @@ def _reconcile_manual_overrides(bot: Bot, update_data: dict) -> None:
         bot.manual_field_overrides = sorted(overrides)
 
 
+def _bot_has_live_subscription(session, bot: Bot) -> bool:
+    """Is this chatbot funded by a live subscription *of its own*?
+
+    Both halves of that sentence are load-bearing, and the second one is the
+    trap. ``Bot.subscription_id`` is set by
+    ``razorpay_service._handle_subscription_activated`` when a per-bot mandate
+    authenticates, but it is ALSO a copy of the account-level subscription id
+    stamped onto legacy / pooled bots by the Phase 2 backfill. On those rows
+    the subscription itself has ``bot_id IS NULL``: it funds the workspace
+    under the plan's ``limits.bots`` quota, not this particular chatbot.
+
+    So a non-NULL FK does not mean "this bot is paid for". Two other readers of
+    the FK already know that and re-validate it exactly this way:
+    :func:`delete_bot` guards with ``sub.bot_id == bot.id`` (it must, or
+    cancelling one bot would cancel the customer's whole account subscription),
+    and ``credit_service.resolve_bot_ledger_bot_id`` returns ``None`` when
+    ``sub_bot_id != bot_pk`` so a pooled bot bills the client-level ledger.
+    This function is the third, and was the only one trusting the stamp
+    unchecked. Without that clause the reactivation short-circuit fires for
+    EVERY bot on a pooled account, which is exactly the bypass this gate exists
+    to close: pause bot A, create bot B (the gate sees a free slot), resume A
+    -> short-circuit -> two serving bots on one funding.
+
+    Pooled bots therefore deliberately return False and fall through to the
+    full gate rather than getting an ``is_legacy_pooled`` allowance. That is
+    the correct answer for them, not a penalty: their funding IS the
+    account-level plan, and the full gate is precisely the rule that asks
+    whether that plan still covers another active bot.
+    :func:`_plan_bots_limit_allows` reads ``limits.bots``, so a pooled bot on
+    an unlimited-agents plan resumes freely, while a pooled bot on a
+    ``bots: 1`` plan whose one slot is already serving is refused -- which is
+    what an explicit allowance would have wrongly let through.
+
+    Statuses match ``auth._ACTIVE_SUBSCRIPTION_STATUSES``: ``past_due`` still
+    counts, dunning is not the moment to also brick the customer's pause
+    button.
+    """
+    subscription_id = getattr(bot, "subscription_id", None)
+    if subscription_id is None:
+        return False
+    from app.db.models import Subscription
+
+    subscription = session.get(Subscription, subscription_id)
+    if subscription is None or subscription.bot_id != bot.id:
+        return False
+    return subscription.status in {"trialing", "active", "past_due"}
+
+
+def _lock_workspace_for_bot_admission(session, client_id: int) -> None:
+    """Serialize concurrent bot-admission decisions for one workspace.
+
+    Both admission gates -- :func:`create_bot`'s and
+    :func:`_require_reactivation_allowed`'s -- are read-then-write against a
+    plain ``SELECT count(*)`` of active bots. Two ``PATCH /bots/{id}
+    {"is_active": true}`` calls on two different paused bots (or a create
+    racing a resume) otherwise both read ``active_bot_count = 0`` and both
+    commit, which is the same over-allocation the gate is there to prevent.
+
+    ALWAYS the ``Client`` row, never a subscription. That is the whole point:
+    it is the one row every workspace is guaranteed to have exactly one of, so
+    which row gets locked cannot depend on data a concurrent transaction is
+    free to change.
+
+    An earlier version tried the seat gate's
+    ``invite_service._lock_active_subscription_for_workspace`` first and fell
+    back to ``Client`` only when it returned ``None`` (the Free account, which
+    is precisely where the one-bot limit bites). That is two statements with a
+    gap, and the choice between them is data-dependent, so it did not
+    serialize: caller A evaluates the subscription lookup on a workspace with
+    none and gets ``None``; before A reaches the fallback, a per-bot checkout
+    webhook INSERTs an active subscription and commits (an INSERT conflicts
+    with nothing A holds, because A holds nothing yet); A then locks the
+    ``Client`` row and counts, while caller B sees the new subscription, locks
+    the SUBSCRIPTION row and counts the same free slot. Two disjoint locks,
+    both callers admitted -- exactly the over-allocation this exists to stop.
+
+    Locking one unconditional row also keeps this out of any lock cycle: bot
+    admission takes ``Client`` and only ``Client``, the seat gate takes a
+    subscription and only a subscription, and no transaction holds both. Bots
+    and seats are separate quotas, so they do not need to serialize against
+    each other -- only against themselves. ``Client`` is the same row
+    ``knowledge_quota_service`` locks, for the same TOCTOU reason.
+
+    A non-Postgres bind degrades to unlocked, because locking is a Postgres
+    concept and most of this module's tests drive mocked sessions. A genuine
+    failure to ACQUIRE does not degrade: proceeding unlocked is the
+    over-allocation, so a lock timeout or deadlock surfaces as a 503 the caller
+    can retry rather than a silent double-admission.
+    """
+    bind = None
+    try:
+        bind = session.get_bind()
+    except Exception:  # pragma: no cover - a session with no resolvable bind
+        logger.warning("bot admission lock: no bind for client=%s. Proceeding unlocked", client_id, exc_info=True)
+        return
+    if bind is None or getattr(getattr(bind, "dialect", None), "name", None) != "postgresql":
+        return
+
+    from app.db.models import Client
+
+    try:
+        session.execute(select(Client).where(Client.id == client_id).with_for_update(of=Client)).scalar_one_or_none()
+    except SQLAlchemyError as exc:
+        # Deliberately NOT swallowed. See the docstring: the unlocked path is
+        # the bug this function exists to prevent, so a caller who could not be
+        # serialized is refused rather than admitted on a guess.
+        logger.warning("bot admission lock unavailable for client=%s", client_id, exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail="Could not check your plan limits just now. Please try again.",
+        ) from exc
+
+
+def _require_reactivation_allowed(session, bot: Bot, client_id: int) -> None:
+    """Gate a ``false -> true`` write to ``Bot.is_active``.
+
+    ``is_active`` is the billing key first and a visibility flag second: the
+    WIDGET read path filters it (``auth.get_current_bot`` refuses an inactive
+    bot, which is what makes a pause actually pause; the ``X-API-Key``
+    default-bot fallback below it 404s "No active bot found"), but the
+    OWNER-facing list does not -- :func:`list_bots` returns paused bots so
+    their owner can see and resume them. What makes this a gate rather than a
+    toggle is that ``plan_entitlements_service`` counts ONLY active bots in
+    both :func:`can_client_add_new_bot` and ``usage["bots"]``. So without it
+    the pause switch is a quota bypass: deactivate the funded chatbot, the gate
+    now sees zero active bots and lets a second one be created for free, then
+    reactivate the first. Two chatbots for one subscription, with nothing in
+    the data to show what happened.
+
+    The fix is to charge reactivation the same admission price as creation,
+    composed exactly as :func:`create_bot` composes it:
+
+    * :func:`can_client_add_new_bot` is the default rule (one free bot per
+      account, everything else needs its own subscription), and
+    * :func:`_plan_bots_limit_allows` is the widening for a plan whose
+      ``limits.bots`` quota already covers the account. That second clause is
+      not optional: the service alone answers ``must_subscribe`` even on an
+      unlimited-agents plan, so an Enterprise customer un-pausing their own
+      sixth agent would be refused by the service's answer alone.
+
+    The bot being reactivated is still inactive while both run, so it is not
+    counted against itself, exactly as a not-yet-created bot isn't.
+
+    A bot with its own live subscription short-circuits both: it is already
+    funded, so its owner may pause and resume it freely.
+
+    Raises the same 402 body ``create_bot`` raises, so the console's existing
+    upgrade prompt fires unchanged.
+    """
+    if _bot_has_live_subscription(session, bot):
+        return
+
+    # Serialize before counting. ``can_client_add_new_bot`` is a plain
+    # ``SELECT count(*)``, so without this two concurrent resumes on two
+    # different paused bots both read the same free slot and both commit.
+    _lock_workspace_for_bot_admission(session, client_id)
+
+    from app.services.plan_entitlements_service import can_client_add_new_bot
+
+    decision = can_client_add_new_bot(client_id, session)
+    if decision.allowed or _plan_bots_limit_allows(client_id, session, decision.active_bot_count):
+        return
+
+    logger.info(
+        "Reactivation of bot %s denied for client %s: %s active bots, no funding for another",
+        bot.id,
+        client_id,
+        decision.active_bot_count,
+    )
+    raise HTTPException(
+        status_code=402,
+        detail={
+            "error": decision.reason,
+            "metric": "bots",
+            "active_bot_count": decision.active_bot_count,
+            "must_subscribe": decision.must_subscribe,
+            "message": (
+                "Reactivating this chatbot needs its own paid subscription. "
+                "Upgrade or subscribe to bring it back online."
+            ),
+        },
+    )
+
+
 @router.patch("/{bot_id}")
 @impersonation_writable
 def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_client_or_operator)):
@@ -2529,6 +3418,22 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
                         # my money" belongs in the same category.
                         "email_verification_enabled",
                         "company_lookup_enabled",
+                        # Pausing/resuming the whole chatbot. Switching a
+                        # customer's widget OFF takes their site's support down
+                        # and is not "config that looks wrong"; switching it
+                        # back ON is a billing admission decision. Neither is
+                        # something a 30-minute support session should be able
+                        # to do on the customer's behalf.
+                        "is_active",
+                        # Re-arming outbound mail to the customer's visitors.
+                        # This column was platform-only until it became
+                        # customer-writable, so a support session could not
+                        # previously reach it at all. Turning a pause OFF sends
+                        # real email from the customer's domain to real people;
+                        # like the enrichment toggles above, "stop sending"
+                        # is a decision only the account holder gets to
+                        # reverse.
+                        "followup_sending_paused",
                     }
                     & update_data.keys()
                 )
@@ -2550,6 +3455,18 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
                         },
                     )
 
+            # ── Pause / resume admission control ──────────────────────
+            # Runs before anything is written so a refused reactivation
+            # leaves the row exactly as it was. ``None`` = the patch does not
+            # move the flag (absent, or set to the value already stored), in
+            # which case there is nothing to gate and nothing to invalidate.
+            is_active_transition: bool | None = None
+            if "is_active" in update_data:
+                requested_active = bool(update_data["is_active"])
+                if requested_active != bool(bot.is_active):
+                    is_active_transition = requested_active
+                    if requested_active:
+                        _require_reactivation_allowed(session, bot, auth["client_id"])
             # Branding-removal add-on guard. Hiding or re-labelling the
             # "Powered by OyeChats" badge is a paid add-on, not a plan
             # inclusion. ``GET /settings/public`` already forces the badge back
@@ -2677,6 +3594,21 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
             session.commit()
             # Invalidate cached bot config so widget picks up changes immediately
             cache_delete(bot_config_key(bot.bot_key))
+            if is_active_transition is not None:
+                # ``usage["bots"]`` and ``can_client_add_new_bot`` both count
+                # active bots, and the account entitlements are cached for 60s.
+                # Without this the usage meter keeps showing the paused bot (or
+                # keeps hiding a resumed one) for up to a minute, and the create
+                # gate reads the same stale number.
+                from app.services import plan_entitlements_service
+
+                plan_entitlements_service.invalidate(auth["client_id"])
+                logger.info(
+                    "Bot %s %s by workspace %s",
+                    bot_id,
+                    "reactivated" if is_active_transition else "deactivated",
+                    auth["client_id"],
+                )
             logger.info(f"Bot {bot_id} settings saved successfully by workspace {auth['client_id']}")
             return {"message": "Bot settings updated successfully"}
     except HTTPException:
@@ -2711,6 +3643,12 @@ class RecrawlStatusResponse(BaseModel):
     last_recrawl_at: str | None
     last_recrawl_status: str | None
     last_recrawl_summary: dict | None
+    # PAGES, not sources. `count(distinct document_name) where source='crawl'`,
+    # and a crawled page is one Document named by its own URL — so one website
+    # of 20 pages answers 20. The name predates the console and is kept because
+    # it is a published field, but it is what made the dashboard render "20
+    # trained websites" for a single site. The count itself is right: it is the
+    # same query `_load_crawl_urls_for_bot` runs to decide what to re-fetch.
     sources_count: int
     # Rolling window (newest first) of past auto-recrawl runs. Each entry:
     # ``{"ran_at": str, "status": str, "total": int, "unchanged": int,
@@ -2724,12 +3662,19 @@ class RecrawlUpdateRequest(BaseModel):
 
 
 def _load_recrawl_context(bot_id: int, client_id: int):
-    """Shared read: bot row, entitlements, and crawled-source count.
+    """Shared read: bot row, entitlements, and crawled-PAGE count.
 
     Kept as a helper so every recrawl route enforces the same tenant
     isolation (``bot.client_id == client_id``) and the same feature check
     path. Returns a ``(bot, entitlements, sources_count)`` tuple; raises
     404 if the bot isn't in the workspace.
+
+    ``sources_count`` counts distinct ``document_name``, and a crawled page is
+    one Document named by its own URL — so this is a count of PAGES, despite
+    the name. Deliberately the same query as
+    ``recrawl_service._load_crawl_urls_for_bot``: the figure the dashboard
+    shows has to be the set the weekly job will actually re-fetch, or it is
+    telling the customer about work that will not happen.
     """
     from sqlalchemy import func as sa_func
 

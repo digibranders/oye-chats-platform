@@ -41,6 +41,43 @@ export interface Bot {
   orb_color?: string | null;
   recommended_colors?: string[];
   widget_installed_at?: string | null;
+  /**
+   * Widget liveness heartbeat: the last time this chatbot's bundle bootstrapped
+   * on a real external page. Refreshed at most twice per bot per hour, so it is
+   * a coarse "still out there" signal, never a per-visit clock.
+   *
+   * `null` means "not seen since the heartbeat shipped" — there is no backfill —
+   * so a long-installed chatbot reads null until its widget next loads. Never
+   * render that as an outage.
+   */
+  widget_last_seen_at?: string | null;
+  /**
+   * Hostname of the most recent bootstrap. **Browser-forgeable, so diagnostic
+   * only**: it answers "which domain is it actually running on?" for a support
+   * conversation and must never gate anything. Enforcement is `allowed_domains`.
+   */
+  widget_last_origin?: string | null;
+  /**
+   * State of the screenshot that backs the hosted demo page.
+   *
+   * `null` = never attempted, `"pending"` = queued or capturing, `"ready"` = a
+   * usable capture is stored, `"failed"` = the site could not be rendered. The
+   * demo link falls back to a generic page for anything but `"ready"`, so this
+   * is what lets Deploy explain that instead of leaving the reader to guess.
+   */
+  demo_screenshot_status?: string | null;
+  /** When the stored capture was taken. Drives the staleness notice. */
+  demo_screenshot_captured_at?: string | null;
+  /**
+   * False while the chatbot is paused: the widget stops answering and the agent
+   * stops counting against the plan's active-bot allowance. Resuming re-runs the
+   * create gate server-side and can be refused.
+   */
+  is_active?: boolean;
+  /** Seconds a dropped visitor connection is held before the chat auto-closes. */
+  visitor_disconnect_timeout?: number;
+  /** True while the manual lead follow-up email is paused for this chatbot. */
+  followup_sending_paused?: boolean;
   crawl_completed_at?: string | null;
   last_crawl_status?: string | null;
   indexed_chunk_count?: number;
@@ -102,7 +139,9 @@ export type LimitKey =
   | 'leads'
   | 'page_scraping'
   | 'documents'
-  | 'chat_history_days';
+  | 'chat_history_days'
+  | 'max_crawl_pages'
+  | 'max_crawl_depth';
 
 /** Boolean/enum plan feature flags. */
 export type FeatureKey =
@@ -298,6 +337,61 @@ export interface LeadSignal {
  * A qualified/unqualified lead row from getLeads. ``tier`` and ``status`` are
  * the same value (status is a backward-compat alias). Scores are server-decayed.
  */
+/**
+ * One line a visitor put in their quote, priced against the bot's catalog at
+ * the moment the lead was read.
+ *
+ * Mirrors `QuoteLine` in `api/app/api/quotation_routes.py` field for field. The
+ * names are RESOLVED server-side from the catalog rather than stored on the
+ * session, so a service renamed or repriced after the chat shows its current
+ * identity. A service deleted from the catalog outright falls back to its id
+ * and a zero price - the line stays, because dropping it would silently change
+ * a total the visitor was quoted.
+ *
+ * A line is now one REQUIREMENT within a service, not one service: a visitor
+ * answering three questions about "Photography" produces three lines that share
+ * a `service_id` and `service_name` and differ by `requirement_id` and `label`.
+ * That is why `requirement_id` is the render key, not `service_id`, which is no
+ * longer unique across the list.
+ */
+export interface LeadQuotationLine {
+  service_id: string;
+  /** The parent service's display name, repeated on each of its lines. */
+  service_name: string;
+  /** Unique within a quote; the correct React key. */
+  requirement_id: string;
+  /** This line's own label, e.g. the requirement or the chosen option. */
+  label: string;
+  quantity: number;
+  /** Server default is an empty string, so treat it as optional in copy. */
+  unit_label: string;
+  price: number;
+  subtotal: number;
+}
+
+/**
+ * The quotation flow's outcome for one session. Present only when the session
+ * actually entered the flow; `status` distinguishes "never finished" from
+ * "declined", which are different facts about the same empty quote.
+ *
+ * Amounts here are MAJOR units in `currency` (rupees, not paise) — the catalog
+ * is authored in whole currency by the customer, unlike the billing rail.
+ */
+export interface LeadQuotation {
+  /**
+   * `QuotationStateOut` in quotation_routes.py emits
+   * `idle | selecting | choosing | quoting | complete | skipped`. `answering`
+   * is the pre-rename spelling of `choosing` and is kept because sessions
+   * persisted before that rename still carry it.
+   */
+  status: 'idle' | 'selecting' | 'choosing' | 'answering' | 'quoting' | 'complete' | 'skipped';
+  currency: string;
+  line_items: LeadQuotationLine[];
+  total: number;
+  activated_at: string | null;
+  completed_at: string | null;
+}
+
 export interface Lead {
   session_id: string;
   score: number;
@@ -329,6 +423,11 @@ export interface Lead {
    * Intelligence (Professional).
    */
   visitor_metadata?: Record<string, unknown> | null;
+  /**
+   * The quotation the visitor built, itemised. Detail response only, and only
+   * when the session reached the flow at all.
+   */
+  quotation?: LeadQuotation | null;
 }
 
 /** Paginated lead list envelope from getLeads. */
@@ -343,6 +442,12 @@ export interface LeadsResult {
 export interface LeadsQuery {
   status?: string;
   min_score?: number;
+  /** Trailing window in days, matching `/leads/stats`. Omitted = all time. */
+  days?: number;
+  /** Custom range start (`YYYY-MM-DD`), inclusive. Wins over `days` when both are sent. */
+  from_date?: string;
+  /** Custom range end (`YYYY-MM-DD`), inclusive. */
+  to_date?: string;
   page?: number;
   limit?: number;
 }

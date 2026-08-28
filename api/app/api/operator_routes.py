@@ -11,6 +11,7 @@ from sqlalchemy import func, or_, select, update
 
 from app.api.auth import get_current_bot, get_current_client_or_operator, impersonation_writable
 from app.api.bot_routes import BusinessHours
+from app.api.invite_routes import _map_invite_error
 from app.api.quotation_routes import build_quotation_summary
 from app.core.rate_limit import key_from_operator_credential, limiter
 from app.core.security import get_password_hash
@@ -42,8 +43,9 @@ from app.schemas.validators import (
 # Imported as a MODULE, not by value. The gate/charge/persist helpers and the
 # service singleton are all swapped in tests, and `from x import y` binds a
 # separate name that a monkeypatch on the module would never reach.
-from app.services import plan_entitlements_service
+from app.services import invite_service, plan_entitlements_service
 from app.services import translation_service as translation_svc
+from app.services.invite_service import InviteError
 from app.services.language_service import language_from_locale, normalize_locale
 from app.services.live_chat_service import manager
 from app.services.qualification_service import (
@@ -59,6 +61,45 @@ router = APIRouter(prefix="/operators", tags=["operators"])
 
 # The three roles ``_require_manager_role`` and the RBAC checks branch on.
 OperatorRole = Literal["owner", "admin", "operator"]
+
+
+def resolve_operator_seat_limit(db, client_id: int, bot_id: int | None) -> int:
+    """The operator allowance for the scope the roster is counted in.
+
+    The seat gate counts operators bound to ONE bot (each agent has its own
+    allowance), so the limit has to come from the subscription that funds that
+    bot. It used to come from ``get_entitlements(client_id, ...)`` — the ACCOUNT
+    view, which resolves through ``get_client_subscription`` and therefore
+    follows the highest-PRICED subscription across every scope. On a workspace
+    with per-bot subscriptions the two scopes disagree, and both directions are
+    real defects:
+
+    * Seats bought on a cheaper agent raised ``operator_quantity`` on THAT row
+      while the gate kept reading a pricier sibling's. The customer was billed
+      every month and the seats never appeared anywhere — nothing reconciles
+      that, because the seat mandate has a live, legitimate parent.
+    * One purchase on the priciest row raised the account limit, and since the
+      count is per-bot, every other agent silently gained the same capacity free.
+
+    ``get_bot_entitlements`` is the documented tool for gates that are
+    inherently per-bot: it follows the bot's own subscription and falls back to
+    the account-level one when the bot has none, which is exactly the funding
+    story for an agent with no subscription of its own.
+    """
+    return resolve_operator_seat_entitlements(db, client_id, bot_id).limit_for("operators")
+
+
+def resolve_operator_seat_entitlements(db, client_id: int, bot_id: int | None):
+    """The entitlements object behind :func:`resolve_operator_seat_limit`.
+
+    Separate because the 403 body also names ``plan_slug``, and resolving the
+    scope twice would risk the limit and the plan name disagreeing.
+    """
+    from app.services.plan_entitlements_service import get_bot_entitlements, get_entitlements
+
+    if bot_id is None:
+        return get_entitlements(client_id, db, include_usage=True)
+    return get_bot_entitlements(bot_id, db, include_usage=True)
 
 
 def _require_team_management_access(auth: dict) -> None:
@@ -146,6 +187,16 @@ class UpdateOperatorRequest(BaseModel):
     # Structurally validated by ``PushPreferencesModel`` on its own endpoint;
     # this legacy path only ever stores the blob, so bound it.
     notification_preferences: BoundedJsonObject | None = None
+    # Soft deactivate / reactivate a teammate.
+    #
+    # Deliberately NOT the same act as ``DELETE /operators/{id}``:
+    # ``ChatSession.assigned_operator_id`` is ``ON DELETE SET NULL``, so
+    # deleting the row erases "who handled this chat" from every historical
+    # conversation in the workspace. Flipping this flag frees the seat while
+    # leaving the audit trail intact, the same soft pattern
+    # ``transition_service.enforce_operator_ceiling`` (downgrade) and
+    # ``invite_service.accept_invite`` (re-invite) already use.
+    is_active: bool | None = None
     # ── Multilingual (Phase 4) ──
     # Languages this operator can handle unaided. A routing CAPABILITY that
     # decides which conversations Phase 5 will hand them, so it belongs on this
@@ -386,12 +437,12 @@ def create_operator(request: CreateOperatorRequest, auth=Depends(get_current_cli
     # ── Plan enforcement: live_chat feature + operator count limit ──
     # ``enforce_feature`` is the legacy gate; the new entitlements service
     # adds quantitative limit checks (e.g. Starter = 1 operator included).
-    from app.services.plan_entitlements_service import UNLIMITED, get_entitlements
+    from app.services.plan_entitlements_service import UNLIMITED
     from app.services.plan_service import enforce_feature
 
     with get_session() as db:
         enforce_feature(db, client_id, "live_chat")
-        entitlements = get_entitlements(client_id, db, include_usage=True)
+        entitlements = resolve_operator_seat_entitlements(db, client_id, request.bot_id)
         operator_limit = entitlements.limit_for("operators")
         if operator_limit != UNLIMITED:
             # Seats are per-bot: count only the operators already bound to the
@@ -491,6 +542,10 @@ async def update_operator(
         _prevent_role_escalation(auth, request.role)
     department_changed = False
     new_department_id = None
+    # Set when ``is_active`` actually flips, so the post-commit side effects
+    # (entitlements cache, WS eviction) only run on a real transition.
+    active_changed = False
+    deactivated = False
 
     with get_session() as session:
         operator = session.execute(
@@ -600,6 +655,58 @@ async def update_operator(
         if request.notification_preferences is not None:
             operator.notification_preferences = request.notification_preferences
 
+        # ── Soft deactivate / reactivate ──────────────────────────────────
+        # Its own block: neither direction is a plain column write. A
+        # no-op (sending the value the row already holds) falls through
+        # untouched so a full-object PATCH from the console never burns a
+        # seat check or evicts a live socket for nothing.
+        if request.is_active is not None and request.is_active != operator.is_active:
+            if request.is_active:
+                # Reactivation flips an inactive seat to active, so it
+                # consumes one of the plan's operator seats. Gate on the same
+                # ``SELECT ... FOR UPDATE`` helper ``POST /me/self-operator``
+                # and the invite-accept path use, so a reactivation racing an
+                # invite acceptance serialises on the workspace's
+                # subscription row instead of both slipping past the ceiling.
+                # Scoped to the operator's bot: seats are per-bot.
+                try:
+                    invite_service._require_seat_available(  # noqa: SLF001
+                        session, auth["client_id"], operator.bot_id
+                    )
+                except InviteError as err:
+                    raise _map_invite_error(err) from err
+                operator.is_active = True
+            else:
+                # Same self-guard as ``delete_operator``: an operator must
+                # not be able to lock themselves out of the workspace. The
+                # workspace owner's own self-operator row has its own exit,
+                # ``DELETE /me/self-operator``.
+                if is_self_edit:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="You cannot deactivate your own account.",
+                    )
+                # In-flight conversations are NOT re-queued here. They are
+                # handed over to ``manager.handle_operator_deactivated`` after
+                # the commit, which finds them by ``status == 'live'`` and moves
+                # DB rows and in-process queue state together. Clearing the rows
+                # here would hide the sessions from that call: it would see zero
+                # live sessions, never append them to ``manager.waiting_queue``
+                # and never drop ``manager.assignments``, leaving the visitor
+                # marked ``waiting`` in the DB but invisible to every operator.
+                operator.is_active = False
+                # Availability goes with it, in the same transaction. The
+                # WebSocket's concurrent-operator cap counts
+                # ``Operator.is_online`` with no ``is_active`` filter
+                # (``ws_routes`` seat check), so a deactivated operator left
+                # marked online keeps occupying a paid seat and can refuse a
+                # legitimate teammate's connect with ``seat_limit``. Nothing
+                # clears it later either: a deactivated operator cannot
+                # reconnect to set it again.
+                operator.is_online = False
+                deactivated = True
+            active_changed = True
+
         session.commit()
         # Capture name BEFORE the session context closes. Accessing
         # ``operator.name`` after the ``with`` block raises
@@ -608,9 +715,34 @@ async def update_operator(
         # pattern used in ``delete_operator`` below.
         operator_name = operator.name
 
+    # Seat usage changed. Without this the freed seat stays invisible for the
+    # entitlements cache TTL and the customer is told to upgrade for a seat
+    # they just freed (and a reactivation would not show as consumed).
+    if active_changed:
+        plan_entitlements_service.invalidate(auth["client_id"])
+
     # Update operator's department in WS manager without triggering reconnect
     if department_changed:
         await manager.update_operator_department(operator_id, new_department_id)
+
+    # A deactivated operator must not keep an open console socket: the operator
+    # WS handlers never re-read ``is_active``, so an open connection would still
+    # accept chats and send messages after the seat was revoked. This closes it
+    # and immediately re-queues the operator's in-flight conversations — no
+    # grace period, because an inactive operator cannot reconnect.
+    #
+    # Deliberately non-fatal. The seat change is already committed and the API
+    # contract is "the operator is deactivated"; a live-chat teardown failure
+    # must not turn that into a 500 that invites the caller to retry an
+    # already-applied change. It is logged loudly instead.
+    if deactivated:
+        try:
+            await manager.handle_operator_deactivated(operator_id)
+        except Exception:
+            logger.exception(
+                "Failed to release live sessions for deactivated operator %s",
+                operator_id,
+            )
 
     return {"success": True, "message": f"Operator '{operator_name}' updated."}
 

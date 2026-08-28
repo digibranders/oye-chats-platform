@@ -1,5 +1,5 @@
 import { type ReactElement } from 'react';
-import { cn } from '../../../design-system';
+import { cn } from '../../../ui';
 import { useCurrency } from '../../../context/CurrencyContext';
 import { TAX_NOTE_USD, safeTaxRateBps, taxNoteInr } from './taxCopy';
 
@@ -50,7 +50,7 @@ export function TaxNote({ className }: TaxNoteProps): ReactElement | null {
   if (rateBps === 0 && isInr) return null;
 
   return (
-    <p className={cn('text-[13px] text-[var(--ds-text-muted)]', className)}>
+    <p className={cn('text-sm text-text-secondary', className)}>
       {rateBps > 0 ? taxNoteInr(rateBps) : TAX_NOTE_USD}
     </p>
   );

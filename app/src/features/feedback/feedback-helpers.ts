@@ -17,23 +17,30 @@
 import { csvField } from '../../lib/csvSafe';
 import { formatDate } from '../../i18n/formatters';
 import { downloadCsv } from '../../lib/downloadCsv';
+import { csvFilename } from '../analytics/exportCsv';
 
-import { type DateRange, type FeedbackFilter, type FeedbackItem } from './types';
+import { type FeedbackFilter, type FeedbackItem } from './types';
 
 const DAY_MS = 86_400_000;
 
-/** Days represented by each date-range option. `all` has no cutoff. */
-const DATE_RANGE_DAYS: Record<DateRange, number> = { '7d': 7, '30d': 30, all: 0 };
-
-/** Keep only items within `range` of "now". `all` is a no-op passthrough. */
-export function filterByDateRange(
+/**
+ * Keep only the ratings left inside the page's reporting window.
+ *
+ * Takes the window's start instant rather than a range key of its own, because
+ * the key belongs to Analytics: `resolveRange` reads the clock once per
+ * selection so every panel on the page measures from the same instant, and a
+ * helper that re-derived the cutoff from `Date.now()` would quietly drift away
+ * from the header's label between renders. `null` is all of history, and is a
+ * passthrough. Named to match `filterVisitorsToWindow`, which does the same job
+ * for the visitors tab.
+ */
+export function filterToWindow(
   items: readonly FeedbackItem[],
-  range: DateRange,
+  since: Date | null,
 ): FeedbackItem[] {
-  const days = DATE_RANGE_DAYS[range];
-  if (!days) return [...items];
-  const cutoff = new Date(Date.now() - days * DAY_MS);
-  return items.filter((item) => new Date(item.created_at) >= cutoff);
+  if (since === null) return [...items];
+  const cutoff = since.getTime();
+  return items.filter((item) => new Date(item.created_at).getTime() >= cutoff);
 }
 
 /** Keep only items matching the All / Positive / Negative filter tab. */
@@ -76,8 +83,8 @@ const TREND_DAYS = 14;
 
 /**
  * Daily positive-rate trend, bucketed by calendar day, ordered oldest-first and
- * capped to the most recent 14 buckets. `days` scopes the source set the same
- * way the date-filter segmented control does (0 = all).
+ * capped to the most recent 14 buckets. `days` scopes the source set to the
+ * page's reporting window; `0` is all of history.
  *
  * Buckets are sorted by their own timestamp rather than left in the order the
  * items arrived, which is the whole correctness argument here. The list this is
@@ -210,7 +217,15 @@ export function buildFeedbackCsv(items: readonly FeedbackItem[]): string {
   return [header.map((value) => csvField(value)).join(','), ...rows].join('\n');
 }
 
-/** Download the feedback log as a CSV (there is no server export endpoint). */
-export function exportFeedbackCsv(items: readonly FeedbackItem[]): void {
-  downloadCsv(buildFeedbackCsv(items), 'feedback.csv');
+/**
+ * Download the feedback log as a CSV (there is no server export endpoint).
+ *
+ * The filename carries the window the rows were taken from, via the same
+ * `csvFilename` every other export on Analytics uses. A file called
+ * `feedback.csv` sitting in a downloads folder next to last month's is
+ * indistinguishable from it, and this panel no longer owns its own period to
+ * name it after.
+ */
+export function exportFeedbackCsv(items: readonly FeedbackItem[], windowLabel: string): void {
+  downloadCsv(buildFeedbackCsv(items), csvFilename('feedback', windowLabel));
 }

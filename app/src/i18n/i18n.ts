@@ -20,7 +20,7 @@
  * -----------------
  * No dictionary is imported statically, and English is never loaded at
  * runtime. Every call site carries its own inline English default
- * (`t('nav.home') || 'Home'`), so English already exists in the component that
+ * (`t('app.crumb.home') || 'Home'`), so English already exists in the component
  * renders it. Loading `locales/en.ts` on top of that would ship every string
  * twice to every user, and would make "English output is unchanged" an
  * assertion rather than something structurally true.
@@ -172,9 +172,23 @@ export function setLocale(next: string | null | undefined): void {
   });
 }
 
-/** Fetch a dictionary without switching to it, to avoid a flash of English. */
-export function preloadDictionary(locale: string): Promise<boolean> {
-  return ensureDictionary(locale);
+/**
+ * Fetch a dictionary without switching to it, to avoid a flash of English.
+ *
+ * MUST notify when the fetch lands. `I18nProvider` calls this on mount for a
+ * RESTORED preference, at which point the tree has already painted English
+ * because the dictionary was not in memory yet. Without the notify the flash
+ * never ends: the chunk arrives, `t()` would resolve, and nothing re-renders,
+ * so a reader who picked Hindi and reloaded sat looking at an English
+ * dashboard until some unrelated state change happened to flush the tree.
+ *
+ * `setLocale` already does this for an in-session switch, which is why the
+ * language picker appeared to work and a reload appeared not to.
+ */
+export async function preloadDictionary(locale: string): Promise<boolean> {
+  const loaded = await ensureDictionary(locale);
+  if (loaded && baseLanguage(currentLocale) === baseLanguage(locale)) notify();
+  return loaded;
 }
 
 /** Subscribe to locale changes. Returns an unsubscribe function. */
@@ -222,7 +236,7 @@ export function template(key: string): string | null {
  * Returns **null** on a miss, never the key path. That is what makes the
  * `t('a.b') || 'English'` idiom work: a missing key falls through to the
  * caller's inline English. Returning the key instead would put raw strings
- * like "nav.home" in front of users AND make every `|| 'English'` in the
+ * like "app.crumb.home" in front of users AND make every `|| 'English'` in the
  * codebase unreachable dead code. The widget shipped the key-returning
  * variant first and had exactly that bug.
  */
@@ -259,6 +273,16 @@ export function t(key: string, params?: Record<string, unknown>): string | null 
 }
 
 /** Test-only reset. Not referenced by application code. */
+/**
+ * Drop loaded dictionaries but keep the active locale.
+ *
+ * Reproduces the cold-load state a full reset cannot: the reader's language is
+ * known from storage, and its dictionary has not arrived yet.
+ */
+export function __clearDictionariesForTests(): void {
+  for (const lang of Object.keys(dictionaries)) delete dictionaries[lang];
+}
+
 export function __resetI18nForTests(): void {
   currentLocale = DEFAULT_UI_LOCALE;
   version = 0;

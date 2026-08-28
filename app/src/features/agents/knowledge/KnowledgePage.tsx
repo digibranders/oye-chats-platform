@@ -1,728 +1,588 @@
+import { useCallback, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
-  type ReactElement,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
-import {
-  BookOpen,
-  FileText,
-  Globe,
-  Sparkles,
-  Trash2,
-} from 'lucide-react';
-import {
+  Alert,
   Button,
-  EmptyState,
-  PageContainer,
-  QuotaMeter,
-  SectionHeader,
+  Card,
+  CardBody,
+  CardHeader,
+  Columns,
+  ErrorState,
+  LockedState,
+  Page,
+  PageHeader,
   Skeleton,
-  StatusBadge,
-} from '../../../design-system';
-import { DataTable, type Column } from '../../../design-system/components/DataTable';
+  Stack,
+  StatRow,
+  buttonClass,
+  formatDate,
+  formatNumber,
+} from '../../../ui';
+import { deleteDocument } from '../../../services/api';
 import { useAgent } from '../../../context/AgentContext';
-import { useCrawl } from '../../../context/CrawlContext';
-import type { StartCrawlOptions } from '../../../context/CrawlContext';
-import { useUpgradeModal } from '../../../context/UpgradeModalContext';
+import { useCrawl, type StartCrawlOptions } from '../../../context/CrawlContext';
 import { useEntitlements } from '../../../hooks/useEntitlements';
-import { getDocuments, getDocumentPages, deleteDocument, getKnowledgeState } from '../../../services/api';
-import type { KnowledgeSource, SourcePage } from '../../../types/domain';
-import { PagesDrawer } from '../../launch-studio/PagesDrawer';
-import { AddKnowledgePanel } from './AddKnowledgePanel';
-
-import { AutoRecrawlCard } from './AutoRecrawlCard';
-import { RecrawlMenu } from './RecrawlMenu';
-import { RecrawlDiffModal } from './RecrawlDiffModal';
+import { agentHealth } from '../../home/agentHealth';
+import type { Bot, KnowledgeSource } from '../../../types/domain';
+import { AgentHealthStrip } from '../AgentHealthStrip';
+import { AddKnowledgePanel } from './add/AddKnowledgePanel';
+import { AutoRetrainCard } from './AutoRetrainCard';
+import { KnowledgeGapsCard } from './KnowledgeGapsCard';
+import { PagesDrawer } from './PagesDrawer';
+import { RecrawlDialog } from './RecrawlDialog';
+import { SourcesTable } from './SourcesTable';
+import { errorMessage, fetchRecrawlDiff, isPlanLocked } from './knowledge-api';
 import {
-  asApiError,
+  allowanceOf,
+  canUseDeltaRecrawl,
   crawlUrlFor,
-  fetchRecrawlDiff,
+  orderedUrlsForRecrawl,
+  parseGapWindow,
+  gapWindowParam,
   rootDomainOf,
+  summarise,
+  type GapWindow,
+  type SourceKind,
   type RecrawlDiff,
   type RecrawlMode,
-} from './recrawl-api';
-import {
-  formatRelativeDate,
-  isUrlSource,
-  lastUpdatedIso,
-  totalWebsitePages,
-  unitLabelOf,
-} from './knowledge-utils';
+} from './knowledge-model';
+import { useKnowledgeData } from './useKnowledgeData';
 import { useTranslation } from '../../../i18n/useTranslation';
-import { t as translateNow } from '../../../i18n/i18n';
 
 /**
- * Plan slugs that unlock delta ("updated pages only") recrawl. Mirrors
- * `plan_service._DELTA_RECRAWL_PLAN_SLUGS`, which is a bare membership test.
- * NOT the `planIncludes` ladder in `lib/planGates`, whose rule 2 hands an
- * unrecognised (bespoke) slug the feature. A bespoke contract slug gets a full
- * recrawl here exactly as the server gives it one, so the UI can't promise a
- * cheaper crawl than the API will run.
+ * A chatbot's knowledge.
+ *
+ * It answers one question first — **what can this chatbot actually answer?** —
+ * and only then what was last done to it. That order is the correction the page
+ * it replaces needed most: it led with a plan-limits panel, and it rendered a
+ * source's state as a hardcoded green "Ready" badge on every row regardless of
+ * anything the server said.
+ *
+ * **Two panes, because the loop on this page is two-way.** The customer looks at
+ * what the chatbot has read, decides what is missing, and adds it — and the
+ * panel that adds sat *above* the table of what exists, roughly 600px away, so
+ * the loop was a scroll each way and on a chatbot with fifteen sources the
+ * table's first row was below the fold on every visit. Sources take the wide
+ * column; the add panel is a form, and a form at 896px puts its label a screen
+ * from its control.
+ *
+ * **"What your plan includes" is gone from here.** It was 70 lines and ~260px of
+ * a full-width card describing *workspace-wide* allowances on a *per-chatbot*
+ * page, with a "See plans" link that appeared twice inside the same card — and
+ * the add panel stated the same document quota twice more, so a customer on this
+ * page read it four times. The three quotas are `Meter`s inside the add panel
+ * now, in the flow that is actually about to spend them; the workspace-wide view
+ * of them belongs under `/billing`.
+ *
+ * Four things this closes that the backend has always supported and no screen
+ * ever showed: the ingestion job behind an upload (`GET /ingest/status/{id}`,
+ * which had no client function at all), the window on the knowledge-gap list,
+ * the knowledge-base character quota, and the crawl allowance — stated before a
+ * crawl is started rather than as a 403 after one fails.
  */
-const DELTA_RECRAWL_SLUGS: ReadonlySet<string> = new Set([
-  'standard',
-  'professional',
-  'enterprise',
-]);
-
-/**
- * KnowledgePage - the agent's "Knowledge" tab. Answers one question: *what does
- * my AI know?* It lists every learned source (websites + documents), summarises
- * coverage, and lets the user add or remove knowledge. All crawl lifecycle is
- * owned by the shared CrawlContext; this page reads it and refreshes when a
- * crawl finishes.
- */
-export function KnowledgePage(): ReactElement {
+export function KnowledgePage() {
   const { t } = useTranslation();
-  const { agent, loading: agentLoading } = useAgent();
-  const agentId = agent?.id ?? null;
-  const agentName = agent?.name ?? null;
+  const { agent, loading, error, refresh } = useAgent();
+
+  if (agent) {
+    // Keyed on the chatbot, so switching remounts rather than rendering one
+    // chatbot's sources under another's name for a frame.
+    return <KnowledgeContent key={agent.id} agent={agent} />;
+  }
+
+  if (loading) {
+    return (
+      <Page width="wide">
+        <PageHeader title={t('agents.knowledge') || 'Knowledge'} />
+        <Stack>
+          <Card>
+            <CardBody className="flex items-center gap-3">
+              <Skeleton className="h-5 w-24" />
+              <Skeleton className="h-4 w-64" />
+            </CardBody>
+          </Card>
+          <Card>
+            <CardBody className="grid grid-cols-2 gap-6 lg:grid-cols-4">
+              {Array.from({ length: 4 }, (_, index) => (
+                <div key={index} className="space-y-2">
+                  <Skeleton className="h-3 w-20" />
+                  <Skeleton className="h-6 w-16" />
+                </div>
+              ))}
+            </CardBody>
+          </Card>
+        </Stack>
+      </Page>
+    );
+  }
+
+  if (error?.status === 403) {
+    return (
+      <Page width="wide">
+        <PageHeader title={t('agents.knowledge') || 'Knowledge'} />
+        <LockedState
+          title={t('agents.thisChatbotIsNotYours') || 'This chatbot is not yours to see'}
+          description={t('agents.askAnOwnerOrAdmin') || 'Ask an owner or admin of this workspace for access.'}
+          action={
+            <Link to="/chatbots" className={buttonClass('secondary', 'md')}>
+              {t('agents.backToYourChatbots') || 'Back to your chatbots'}
+            </Link>
+          }
+        />
+      </Page>
+    );
+  }
+
+  return (
+    <Page width="wide">
+      <PageHeader title={t('agents.knowledge') || 'Knowledge'} />
+      <Card>
+        <ErrorState
+          title={error ? t('agents.weCouldNotLoadThis') || 'We could not load this chatbot' : t('agents.chatbotNotFound') || 'Chatbot not found'}
+          description={
+            error
+              ? error.message || t('agents.somethingWentWrongWhileLoading') || 'Something went wrong while loading this workspace.'
+              : t('agents.thisChatbotDoesNotExist2') || 'This chatbot does not exist in this workspace.'
+          }
+          onRetry={() => void refresh()}
+        />
+      </Card>
+    </Page>
+  );
+}
+
+function KnowledgeContent({ agent }: { agent: Bot }) {
+  const { t } = useTranslation();
+  const [params, setParams] = useSearchParams();
+  const gapWindow = parseGapWindow(params.get('gaps'));
+  // The source search and type filter live in the URL for the same reason the
+  // chatbot list's do: "open Knowledge, filter to documents" should be a link.
+  const sourceQuery = params.get('q') ?? '';
+  const sourceKindParam = params.get('kind');
+  const sourceKind: SourceKind =
+    sourceKindParam === 'websites' || sourceKindParam === 'documents' ? sourceKindParam : 'all';
+  const { entitlements, limitFor, planSlug, planName, loading: planLoading } = useEntitlements();
   const { crawl, startCrawl } = useCrawl();
-  const { entitlements, limitFor, withinLimit, planSlug } = useEntitlements();
-  const { openUpgradeModal } = useUpgradeModal();
+  const knowledge = useKnowledgeData(agent.id, gapWindow);
+  const { refresh: refreshAgent } = useAgent();
 
-  // Delta ("updated pages only") re-crawl is a Standard+ perk. The menu still
-  // surfaces the option to lower tiers for discoverability; clicks route to the
-  // upgrade flow instead of the diff endpoint. The backend re-enforces the gate.
-  // Every paid tier from Standard up must be listed or it is wrongly shown an
-  // upgrade badge for a mode its own API already runs. Enterprise especially:
-  // it is the agency tier with pooled credits across many client sites, so
-  // falling back to a full recrawl would re-embed and charge for every page of
-  // every site on the plan sold with the largest ingestion volume.
-  const canUseDeltaRecrawl = DELTA_RECRAWL_SLUGS.has(planSlug);
-
-  const [sources, setSources] = useState<KnowledgeSource[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-  // True when a plan lapse to Free deactivated this bot's knowledge (there are
-  // inactive chunks). Drives the "re-crawl / upgrade to reactivate" banner. A
-  // brand-new Free bot has no inactive chunks, so it never shows.
-  const [knowledgeDeactivated, setKnowledgeDeactivated] = useState(false);
-
-  const refreshKnowledgeState = useCallback(async (): Promise<void> => {
-    if (agentId == null) {
-      setKnowledgeDeactivated(false);
-      return;
-    }
-    try {
-      const state = await getKnowledgeState(agentId);
-      setKnowledgeDeactivated(Boolean(state?.deactivated));
-    } catch {
-      // Non-fatal: the banner is a nudge, never block the page on it.
-    }
-  }, [agentId]);
-
-  // ── Re-crawl lifecycle ────────────────────────────────────────────
-  const [recrawlLoadingFor, setRecrawlLoadingFor] = useState<string | null>(null);
-  const [recrawlDiff, setRecrawlDiff] = useState<RecrawlDiff | null>(null);
-  const [recrawlDiffError, setRecrawlDiffError] = useState<string | null>(null);
-  const [recrawlStarting, setRecrawlStarting] = useState(false);
-  // Bumped when a crawl finishes so AutoRecrawlCard reloads its last-run summary.
-  const [recrawlReloadToken, setRecrawlReloadToken] = useState(0);
-
-  const [pagesBySource, setPagesBySource] = useState<Record<string, SourcePage[]>>({});
   const [drawerSource, setDrawerSource] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState<string | null>(null);
+  // ── Re-crawl ─────────────────────────────────────────────────────────────
+  const [recrawl, setRecrawl] = useState<{
+    sourceName: string;
+    mode: RecrawlMode;
+    diff: RecrawlDiff | null;
+    loading: boolean;
+    previewError: string | null;
+    planLocked: boolean;
+    starting: boolean;
+    startError: string | null;
+  } | null>(null);
 
-  // Tracks the currently-active agent so in-flight fetches issued for a previous
-  // agent can detect they're stale and skip writing to state.
-  const activeAgentIdRef = useRef<number | null>(agentId);
-  // Row name whose delete-trigger should regain focus after a cancelled confirm.
-  const restoreFocusRef = useRef<string | null>(null);
-  // Live map of each row's delete-trigger button, for focus restoration.
-  const deleteTriggerRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const sources = knowledge.sources.data;
+  const summary = useMemo(() => summarise(sources), [sources]);
+  const health = agentHealth(agent);
+  const indexed = Number(agent.indexed_chunk_count ?? 0);
 
-  // Re-fetch WITHOUT clearing the current list, so mutations update in place
-  // instead of flashing the whole table back to a skeleton.
-  const refresh = useCallback(async (): Promise<void> => {
-    if (agentId == null) return;
-    const requestedFor = agentId;
-    try {
-      const data = await getDocuments(agentId);
-      // Drop the result if the user switched agents while this was in flight.
-      if (activeAgentIdRef.current !== requestedFor) return;
-      setSources(data ?? []);
-      void refreshKnowledgeState();
-    } catch (err) {
-      if (activeAgentIdRef.current !== requestedFor) return;
-      setActionError(
-        err instanceof Error ? err.message : translateNow('agents.weCouldntRefreshYourKnowledge') || 'We couldn\'t refresh your knowledge sources.',
-      );
-    }
-  }, [agentId, refreshKnowledgeState]);
-
-  // Initial / agent-switch load. The reset lives inside the async task (not the
-  // effect body) so no state is set synchronously during the effect.
-  useEffect(() => {
-    activeAgentIdRef.current = agentId;
-    if (agentId == null) return;
-    let cancelled = false;
-    const load = async (): Promise<void> => {
-      setSources(null);
-      setLoadError(null);
-      setActionError(null);
-      try {
-        const data = await getDocuments(agentId);
-        if (!cancelled) {
-          setSources(data ?? []);
-          void refreshKnowledgeState();
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setLoadError(
-            err instanceof Error ? err.message : translateNow('agents.weCouldntLoadWhatYour') || 'We couldn\'t load what your AI knows.',
-          );
-        }
-      }
-    };
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [agentId, refreshKnowledgeState]);
-
-  // When a crawl for THIS agent reaches a terminal state, pull the fresh source
-  // list so newly-learned pages appear.
-  const crawlOwned = crawl.botId === null || crawl.botId === agentId;
+  const crawlOwned = crawl.botId === null || crawl.botId === agent.id;
   const crawlRunning = crawlOwned && (crawl.status === 'running' || crawl.status === 'cancelling');
-  useEffect(() => {
-    if (!crawlOwned) return;
-    if (crawl.status === 'done' || crawl.status === 'cancelled') {
-      void refresh();
-      // Surface the fresh last-run summary in the auto-recrawl card.
-      setRecrawlReloadToken((n) => n + 1);
-    }
-  }, [crawl.status, crawlOwned, refresh]);
+  /**
+   * The site being read right now, so its row in the table can say "Training"
+   * instead of reporting whatever it held when the run started.
+   */
+  const crawlingDomain =
+    crawlRunning && crawl.rootUrl ? rootDomainOf(crawl.rootUrl) : null;
 
-  // ── Re-crawl actions ──────────────────────────────────────────────
-  const closeRecrawlModal = useCallback((): void => {
-    setRecrawlDiff(null);
-    setRecrawlDiffError(null);
-  }, []);
-
-  // Fetch the pre-recrawl diff for a source, then open the cost-preview modal.
-  // On a plan-gated delta request we route to the upgrade flow; on a soft
-  // failure we still open the modal so the user can proceed without the preview.
-  const requestRecrawl = useCallback(
-    async (name: string, mode: RecrawlMode): Promise<void> => {
-      if (agentId == null) return;
-      const crawlUrl = crawlUrlFor(name);
-      const replaceSource = rootDomainOf(name);
-      setRecrawlLoadingFor(name);
-      setActionError(null);
-      setRecrawlDiff(null);
-      setRecrawlDiffError(null);
-      try {
-        const data = await fetchRecrawlDiff(crawlUrl, replaceSource, agentId, mode);
-        setRecrawlDiff({ mode, docName: name, crawlUrl, replaceSource, ...data });
-      } catch (err) {
-        const apiErr = asApiError(err);
-        const detail = typeof apiErr.detail === 'object' ? apiErr.detail : undefined;
-        if (
-          apiErr.status === 403 &&
-          detail?.error === 'feature_not_available' &&
-          detail?.feature === 'delta_recrawl'
-        ) {
-          openUpgradeModal({
-            title: translateNow('agents.updatedPagesOnlyReTrain') || 'Updated-pages-only re-train',
-            description:
-              translateNow('agents.reTrainingOnlyThePages') || 'Re-training only the pages that changed is available on the Standard plan. Upgrade to unlock it.',
-          });
-          return;
-        }
-        if (apiErr.status === 429) {
-          setActionError(
-            translateNow('agents.tooManyTrainingRequestsPlease') || 'Too many training requests - please wait a few minutes before training again.',
-          );
-          return;
-        }
-        // Network/auth failure - still let the user proceed with a plain confirm.
-        setRecrawlDiff({
-          mode,
-          docName: name,
-          crawlUrl,
-          replaceSource,
-          sitemapTotal: 0,
-          unchanged: 0,
-          newPages: 0,
-          removedPages: 0,
-          unchangedUrls: [],
-          newUrls: [],
-          removedUrls: [],
-          costPerPage: 1,
-          creditsRequiredFull: 0,
-          balance: 0,
-          exceedsBalance: false,
-          capped: true,
-        });
-        setRecrawlDiffError(
-          apiErr.message ??
-            (typeof apiErr.detail === 'string' ? apiErr.detail : translateNow('agents.weCouldntPreviewTheChanges') || 'We couldn\'t preview the changes.'),
-        );
-      } finally {
-        setRecrawlLoadingFor(null);
-      }
+  const setParam = useCallback(
+    (key: string, value: string | null) => {
+      setParams(
+        (current) => {
+          const updated = new URLSearchParams(current);
+          if (value === null || value === '') updated.delete(key);
+          else updated.set(key, value);
+          return updated;
+        },
+        { replace: true },
+      );
     },
-    [agentId, openUpgradeModal],
+    [setParams],
   );
 
-  // Confirm the previewed re-crawl. Prefer the diff's exact URL list (more
-  // reliable + faster than re-running the recursive crawler) unless the diff
-  // was capped/truncated/errored, in which case the backend re-discovers.
-  const confirmRecrawl = useCallback(async (): Promise<void> => {
-    const diff = recrawlDiff;
-    if (diff == null || agentId == null) return;
-
-    // Guard (money): a full re-crawl where discovery SUCCEEDED but found zero
-    // pages (HTTP 200, sitemap_total=0) means the sitemap was temporarily
-    // unavailable - we don't know the site's page set, and with force_reingest
-    // this would silently re-scrape+re-bill every stale stored URL. Refuse.
-    // Mirrors the modal's block; this is the non-UI safety net. The explicit
-    // preview-failure path (recrawlDiffError set) is exempt: it deliberately
-    // proceeds with ordered_urls omitted so the backend re-discovers. Delta is
-    // unaffected - it reconciles against stored URLs at ingest time.
-    if (diff.mode === 'full' && diff.sitemapTotal === 0 && recrawlDiffError === null) {
-      setActionError(
-        translateNow('agents.noPagesDiscoveredTheSites') || 'No pages discovered - the site\'s sitemap may be temporarily unavailable; try again shortly.',
+  const setGapWindow = useCallback(
+    (next: GapWindow) => {
+      setParams(
+        (current) => {
+          const updated = new URLSearchParams(current);
+          updated.set('gaps', gapWindowParam(next));
+          return updated;
+        },
+        { replace: true },
       );
-      return;
-    }
+    },
+    [setParams],
+  );
 
-    // The preview buckets are capped at 500 URLs while the counts are full, so
-    // if either bucket was truncated the union is only a partial slice of the
-    // real crawl set. Passing a partial list as authoritative would silently
-    // skip every page beyond the cap (under-refresh). In that case - or when
-    // discovery itself was capped - omit ordered_urls so the backend re-crawls
-    // the whole site by discovery (an empty/omitted list means "crawl all").
-    const listsTruncated =
-      diff.newUrls.length < diff.newPages || diff.unchangedUrls.length < diff.unchanged;
-    const orderedUrls =
-      diff.capped || listsTruncated
-        ? null
-        : Array.from(new Set([...diff.newUrls, ...diff.unchangedUrls])).filter(Boolean);
-    setRecrawlStarting(true);
-    setActionError(null);
+  // Depends on `refreshAll`, never on the whole `knowledge` object: that object
+  // is rebuilt on every render, so a callback keyed on it would change identity
+  // every render — and this one is passed to children that call it from an
+  // effect, which turns a changing identity into a refetch loop.
+  const { refreshAll } = knowledge;
+  const refreshEverything = useCallback(() => {
+    // The chatbot record too: the passage count and the health line read the
+    // `Bot`, not the source list, so refetching sources alone left a stale
+    // "nothing to answer from" on screen that no amount of clicking could clear.
+    void refreshAgent();
+    refreshAll();
+  }, [refreshAgent, refreshAll]);
+
+  const usage = entitlements.usage as Record<string, number | undefined>;
+  const limits = entitlements.limits as unknown as Record<string, number | undefined>;
+
+  const documentAllowance = allowanceOf(usage.documents ?? summary.documents, limitFor('documents'));
+  // `page_scraping` usage is never populated server-side (see `_build_usage`),
+  // so it is derived from this chatbot's own crawled pages.
+  const pageAllowance = allowanceOf(summary.websitePages, limitFor('page_scraping'));
+  // `knowledge_characters` is in the entitlements payload — both the plan limit
+  // and a real usage counter — but not in the `LimitKey` union, which lives
+  // outside this surface. Read through a widened view rather than pretending
+  // the key does not exist.
+  //
+  // An ABSENT limit is `null`, never zero. The server treats a missing plan
+  // limit as deny-by-default, but "we do not know your allowance" and "your
+  // allowance is spent" are different sentences, and only one of them is true
+  // here — telling a customer their knowledge base is full because a plan row
+  // is missing a key is the kind of lie that gets a support ticket.
+  const characterLimit = limits.knowledge_characters;
+  const characterAllowance =
+    typeof characterLimit === 'number'
+      ? allowanceOf(usage.knowledge_characters ?? 0, characterLimit)
+      : null;
+
+  const requestRecrawl = useCallback(
+    async (source: KnowledgeSource, mode: RecrawlMode) => {
+      setActionError(null);
+      if (mode === 'delta' && !canUseDeltaRecrawl(planSlug)) {
+        setRecrawl({
+          sourceName: source.name,
+          mode,
+          diff: null,
+          loading: false,
+          previewError: null,
+          planLocked: true,
+          starting: false,
+          startError: null,
+        });
+        return;
+      }
+
+      const crawlUrl = crawlUrlFor(source.name);
+      const replaceSource = rootDomainOf(source.name);
+      setRecrawl({
+        sourceName: source.name,
+        mode,
+        diff: null,
+        loading: true,
+        previewError: null,
+        planLocked: false,
+        starting: false,
+        startError: null,
+      });
+
+      try {
+        const data = await fetchRecrawlDiff(crawlUrl, replaceSource, agent.id, mode);
+        setRecrawl((current) =>
+          current === null
+            ? current
+            : {
+                ...current,
+                loading: false,
+                diff: { ...data, mode, sourceName: source.name, crawlUrl, replaceSource },
+              },
+        );
+      } catch (cause) {
+        if (isPlanLocked(cause, 'delta_recrawl')) {
+          setRecrawl((current) =>
+            current === null ? current : { ...current, loading: false, planLocked: true },
+          );
+          return;
+        }
+        // The preview is a courtesy, not a gate: a network hiccup must not be
+        // the reason a customer cannot refresh their own website. We proceed
+        // with an empty, explicitly-capped diff so the backend rediscovers the
+        // site itself, and we say plainly that the counts are unknown.
+        setRecrawl((current) =>
+          current === null
+            ? current
+            : {
+                ...current,
+                loading: false,
+                previewError: errorMessage(cause, t('agents.weCouldNotCompareThe') || 'We could not compare the pages.'),
+                diff: {
+                  mode,
+                  sourceName: source.name,
+                  crawlUrl,
+                  replaceSource,
+                  sitemapTotal: 0,
+                  existingTotal: 0,
+                  unchanged: 0,
+                  newPages: 0,
+                  removedPages: 0,
+                  unchangedUrls: [],
+                  newUrls: [],
+                  removedUrls: [],
+                  costPerPage: 1,
+                  balance: 0,
+                  capped: true,
+                  headPartial: false,
+                  planMax: -1,
+                },
+              },
+        );
+      }
+    },
+    [agent.id, planSlug, t],
+  );
+
+  const confirmRecrawl = useCallback(async () => {
+    const current = recrawl;
+    if (current?.diff == null) return;
+    const { diff } = current;
+    setRecrawl({ ...current, starting: true, startError: null });
     try {
-      const opts: StartCrawlOptions = {
+      const orderedUrls = orderedUrlsForRecrawl(diff);
+      const options: StartCrawlOptions = {
         url: diff.crawlUrl,
-        botId: agentId,
-        botName: agentName,
-        // NOTE: JS-rendering mode isn't persisted on the source record
-        // (KnowledgeSource carries no per-source JS flag, and we may only edit
-        // files under features/agents/knowledge/), so a SPA source originally
-        // crawled with useJs:true re-crawls HTTP-only here and may return empty.
-        // Carry the flag through once the source record exposes it.
+        botId: agent.id,
+        botName: agent.name ?? null,
+        // A source record carries no per-source JavaScript flag, so a site
+        // originally trained with JS rendering re-trains HTTP-only here. Named
+        // rather than hidden: it is the difference between a full refresh and
+        // an empty one on a single-page site.
         useJs: false,
         replaceSource: diff.replaceSource,
         mode: diff.mode,
-        orderedUrls: orderedUrls && orderedUrls.length > 0 ? orderedUrls : null,
+        orderedUrls,
         expectedNewPages: diff.mode === 'delta' ? diff.newPages : null,
       };
-      await startCrawl(opts);
-      closeRecrawlModal();
-    } catch (err) {
-      setActionError(
-        err instanceof Error ? err.message : translateNow('agents.weCouldntStartTheRe') || 'We couldn\'t start the re-train. Please try again.',
+      await startCrawl(options);
+      setRecrawl(null);
+    } catch (cause) {
+      setRecrawl((state) =>
+        state === null
+          ? state
+          : {
+              ...state,
+              starting: false,
+              startError: errorMessage(cause, t('agents.weCouldNotStartThe3') || 'We could not start the re-train. Please try again.'),
+            },
       );
-    } finally {
-      setRecrawlStarting(false);
     }
-  }, [recrawlDiff, recrawlDiffError, agentId, agentName, startCrawl, closeRecrawlModal]);
+  }, [recrawl, agent.id, agent.name, startCrawl, t]);
 
-  const handleGetCredits = useCallback((): void => {
-    closeRecrawlModal();
-    openUpgradeModal({
-      title: translateNow('agents.notEnoughCredits') || 'Not enough credits',
-      description: translateNow('agents.upgradeYourPlanOrBuy') || 'Upgrade your plan or buy a top-up to run this full re-train.',
-    });
-  }, [closeRecrawlModal, openUpgradeModal]);
-
-  const openPages = useCallback(
-    async (source: string): Promise<void> => {
-      setDrawerSource(source);
-      // A cached entry (even an empty array) means we loaded successfully - skip
-      // the refetch. A failed load leaves the key unset so reopening retries.
-      if (agentId == null || pagesBySource[source]) return;
-      try {
-        const res = await getDocumentPages(source, agentId);
-        setPagesBySource((prev) => ({ ...prev, [source]: res.pages ?? [] }));
-      } catch (err) {
-        // Leave the key unset so reopening the drawer retries the fetch, and
-        // surface the failure instead of silently showing an empty list.
-        setActionError(
-          err instanceof Error ? err.message : translateNow('agents.weCouldntLoadThisSources') || 'We couldn\'t load this source\'s pages.',
-        );
-      }
-    },
-    [agentId, pagesBySource],
-  );
-
-  const handleDelete = useCallback(
-    async (name: string): Promise<void> => {
-      if (agentId == null) return;
-      setDeleting(name);
+  const removeSource = useCallback(
+    async (source: KnowledgeSource) => {
       setActionError(null);
       try {
-        await deleteDocument(name, agentId);
-        setSources((prev) => (prev ? prev.filter((s) => s.name !== name) : prev));
-      } catch (err) {
+        await deleteDocument(source.name, agent.id);
+        refreshEverything();
+      } catch (cause) {
         setActionError(
-          err instanceof Error ? err.message : translateNow('agents.weCouldntRemoveThisSource') || 'We couldn\'t remove this source. Please try again.',
+          errorMessage(cause, t('agents.weCouldNotRemoveThat') || 'We could not remove that source. Nothing has been deleted.'),
         );
-      } finally {
-        setDeleting(null);
-        setConfirmingDelete(null);
       }
     },
-    [agentId],
+    [agent.id, refreshEverything, t],
   );
 
-  // When a delete confirmation is cancelled, its Remove/Cancel buttons unmount;
-  // return focus to that row's trigger so it doesn't fall to <body>.
-  useEffect(() => {
-    if (confirmingDelete !== null) return;
-    const pending = restoreFocusRef.current;
-    if (pending === null) return;
-    restoreFocusRef.current = null;
-    deleteTriggerRefs.current.get(pending)?.focus();
-  }, [confirmingDelete]);
-
-  const cancelConfirm = useCallback((name: string): void => {
-    restoreFocusRef.current = name;
-    setConfirmingDelete(null);
-  }, []);
-
-  const stats = useMemo(() => {
-    const list = sources ?? [];
-    const websites = list.filter((s) => isUrlSource(s.name)).length;
-    const documents = list.length - websites;
-    return {
-      total: list.length,
-      websites,
-      documents,
-      websitePages: totalWebsitePages(list),
-      lastUpdated: formatRelativeDate(lastUpdatedIso(list)),
-    };
-  }, [sources]);
-
-  // ── Plan quotas ──────────────────────────────────────────────────
-  // `documents` is a usage-populated key (backend counts uploaded files) -
-  // prefer it, falling back to what this page already loaded. `page_scraping`
-  // is NOT populated server-side, so "used" is always derived from the sum of
-  // this agent's crawled page counts (`stats.websitePages`) - never fabricated.
-  const documentsUsed = entitlements.usage.documents ?? stats.documents;
-  const documentsLimit = limitFor('documents');
-  const documentsAtLimit = !withinLimit('documents', documentsUsed);
-
-  const pagesUsed = stats.websitePages;
-  const pagesLimit = limitFor('page_scraping');
-  const pagesAtLimit = !withinLimit('page_scraping', pagesUsed);
-
-  const columns = useMemo<Column<KnowledgeSource>[]>(
-    () => [
-      {
-        key: 'name',
-        header: translateNow('agents.source') || 'Source',
-        render: (row) => <SourceCell source={row} />,
-      },
-      {
-        // Display-only column - the real field is unused; `render` supplies the cell.
-        key: 'doc_page_count',
-        header: translateNow('agents.type') || 'Type',
-        width: '8rem',
-        render: (row) => (
-          <span className="text-[var(--ds-text-muted)]">
-            {isUrlSource(row.name) ? translateNow('agents.website') || 'Website' : translateNow('agents.document') || 'Document'}
-          </span>
-        ),
-      },
-      {
-        key: 'page_count',
-        header: translateNow('agents.size') || 'Size',
-        width: '8rem',
-        render: (row) => (
-          <span className="tabular-nums text-[var(--ds-text-muted)]">{unitLabelOf(row)}</span>
-        ),
-      },
-      {
-        key: 'ingested_at',
-        header: translateNow('agents.added') || 'Added',
-        width: '9rem',
-        render: (row) => (
-          <span className="text-[var(--ds-text-subtle)]">{formatRelativeDate(row.ingested_at)}</span>
-        ),
-      },
-      {
-        // Display-only column for row actions.
-        key: 'chunk_count',
-        header: translateNow('agents.actions') || 'Actions',
-        align: 'right',
-        width: '13rem',
-        render: (row) =>
-          confirmingDelete === row.name ? (
-            <div
-              role="group"
-              aria-label={translateNow('agents.confirmRemoving', { name: row.name }) || `Confirm removing ${row.name}`}
-              className="flex items-center justify-end gap-2"
-            >
-              <Button
-                variant="danger"
-                size="sm"
-                autoFocus
-                onClick={() => void handleDelete(row.name)}
-                disabled={deleting === row.name}
-              >
-                {deleting === row.name ? translateNow('agents.removing') || 'Removing…' : translateNow('agents.remove') || 'Remove'}
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => cancelConfirm(row.name)}>
-                {translateNow('agents.cancel') || 'Cancel'}
-              </Button>
-            </div>
-          ) : (
-            <div className="flex items-center justify-end gap-1">
-              {isUrlSource(row.name) && (
-                <>
-                  <Button variant="ghost" size="sm" onClick={() => void openPages(row.name)}>
-                    {translateNow('agents.viewPages') || 'View pages'}
-                  </Button>
-                  <RecrawlMenu
-                    canUseDelta={canUseDeltaRecrawl}
-                    loading={recrawlLoadingFor === row.name}
-                    disabled={crawlRunning}
-                    onFullRecrawl={() => void requestRecrawl(row.name, 'full')}
-                    onDeltaRecrawl={() => void requestRecrawl(row.name, 'delta')}
-                    onUpgrade={() =>
-                      openUpgradeModal({
-                        title: translateNow('agents.updatedPagesOnlyReTrain') || 'Updated-pages-only re-train',
-                        description:
-                          translateNow('agents.reTrainingOnlyThePages') || 'Re-training only the pages that changed is available on the Standard plan. Upgrade to unlock it.',
-                      })
-                    }
-                  />
-                </>
-              )}
-              <Button
-                ref={(el) => {
-                  if (el) deleteTriggerRefs.current.set(row.name, el);
-                  else deleteTriggerRefs.current.delete(row.name);
-                }}
-                variant="ghost"
-                size="icon"
-                aria-label={`Remove ${row.name}`}
-                onClick={() => setConfirmingDelete(row.name)}
-              >
-                <Trash2 size={16} aria-hidden="true" />
-              </Button>
-            </div>
-          ),
-      },
-    ],
-    [
-      confirmingDelete,
-      deleting,
-      handleDelete,
-      openPages,
-      cancelConfirm,
-      canUseDeltaRecrawl,
-      recrawlLoadingFor,
-      crawlRunning,
-      requestRecrawl,
-      openUpgradeModal,
-    ],
-  );
-
-  // ── Render ────────────────────────────────────────────────────────
-  const loading = agentLoading || (agentId != null && sources === null && loadError === null);
-
-  return (
-    <PageContainer>
-      {loading ? (
-        <LoadingState />
-      ) : loadError ? (
-        <EmptyState
-          icon={BookOpen}
-          title={t('agents.weCouldntLoadYourKnowledge') || 'We couldn\'t load your knowledge'}
-          description={loadError}
+  if (knowledge.sources.forbidden) {
+    return (
+      <Page width="wide">
+        <PageHeader title={t('agents.knowledge') || 'Knowledge'} />
+        <LockedState
+          title={t('agents.thisChatbotsKnowledgeIsNot') || 'This chatbot\'s knowledge is not yours to see'}
+          description={t('agents.askAnOwnerOrAdmin') || 'Ask an owner or admin of this workspace for access.'}
           action={
-            <Button variant="outline" onClick={() => void refresh()}>
-              {t('agents.tryAgain') || 'Try again'}
-            </Button>
+            <Link to="/chatbots" className={buttonClass('secondary', 'md')}>
+              {t('agents.backToYourChatbots') || 'Back to your chatbots'}
+            </Link>
           }
         />
-      ) : agentId == null ? (
-        <EmptyState
-          icon={BookOpen}
-          title={t('agents.chatbotNotFound') || 'Chatbot not found'}
-          description={t('agents.weCouldntFindThisChatbot') || 'We couldn\'t find this chatbot. Pick a chatbot from the list and try again.'}
-        />
-      ) : (
-        <div className="space-y-6">
-          {knowledgeDeactivated && (
-            <div
-              className="flex items-start gap-3 rounded-2xl border border-[var(--ds-info)] bg-[var(--ds-info-soft)] p-4"
-              role="status"
-            >
-              <span
-                className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--ds-info)] text-white"
-                aria-hidden="true"
-              >
-                <Sparkles size={16} />
-              </span>
-              <div className="min-w-0">
-                <p className="text-[14px] font-semibold text-[var(--ds-text)]">
-                  {t('agents.yourKnowledgeIsPausedOn') || 'Your knowledge is paused on Free'}
-                </p>
-                <p className="mt-0.5 text-[13px] leading-relaxed text-[var(--ds-text-muted)]">
-                  {t('agents.knowledgePausedExplanation') ||
-                    'Your assistant kept its data but stopped answering from it when your plan moved to Free. Re-crawl your website or upload documents below to reactivate it on Free. Upgrade to restore all of your previous knowledge instantly.'}
-                </p>
-              </div>
-            </div>
-          )}
+      </Page>
+    );
+  }
 
-<section aria-labelledby="knowledge-quotas-heading" className="space-y-3">
-            <SectionHeader
-              title={
-                <span id="knowledge-quotas-heading">{t('agents.planLimits') || 'Plan limits'}</span>
-              }
-              description={t('agents.howMuchOfYourPlans') || 'How much of your plan\'s knowledge capacity is in use.'}
-            />
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1">
-                <QuotaMeter label={t('agents.documents') || 'Documents'} used={documentsUsed} limit={documentsLimit} />
-                {/* The `documents` limit is workspace-scoped, so this count spans
-                    every agent - not just the rows visible on this agent's page. */}
-                <p className="text-[11px] text-[var(--ds-text-subtle)]">
-                  {t('agents.acrossAllChatbotsInYour') || 'Across all chatbots in your workspace'}
-                </p>
-              </div>
-              <div className="space-y-1">
-                <QuotaMeter label={t('agents.websitePages') || 'Website pages'} used={pagesUsed} limit={pagesLimit} />
-                <p className="text-[11px] text-[var(--ds-text-subtle)]">{t('agents.thisChatbot') || 'This chatbot'}</p>
-              </div>
-            </div>
-          </section>
+  return (
+    <Page width="wide">
+      <PageHeader
+        title={t('agents.knowledge') || 'Knowledge'}
+        actions={
+          // `loading` carries both the spinner and `aria-busy`. The hand-rolled
+          // `animate-spin` it replaces froze at 0° under reduced motion.
+          <Button loading={knowledge.refreshing} onClick={refreshEverything}>
+            {t('agents.refresh') || 'Refresh'}
+          </Button>
+        }
+      />
 
-          {actionError && (
-            <div
-              role="alert"
-              className="rounded-lg border border-[var(--ds-danger-soft)] bg-[var(--ds-danger-soft)] px-4 py-3 text-[13px] text-[var(--ds-danger)]"
-            >
-              {actionError}
-            </div>
-          )}
-
-          <section aria-labelledby="knowledge-sources-heading" className="space-y-4">
-            <SectionHeader
-              title={
-                <span id="knowledge-sources-heading">{t('agents.sources') || 'Sources'}</span>
-              }
-              description={t('agents.websitesAndDocumentsYourAi') || 'Websites and documents your AI has learned from.'}
-            />
-            {stats.total === 0 ? (
-              <EmptyState
-                icon={BookOpen}
-                title={t('agents.yourAiHasntLearnedAnything') || 'Your AI hasn\'t learned anything yet'}
-                description={t('agents.addYourFirstWebsiteOr') || 'Add your first website or document below. As soon as it\'s processed, your AI can answer questions about it.'}
-              />
-            ) : (
-              <DataTable
-                columns={columns}
-                rows={sources ?? []}
-                rowKey={(row) => row.name}
-                caption={t('agents.yourAisKnowledgeSources') || 'Your AI\'s knowledge sources'}
-              />
-            )}
-          </section>
-
-          <AddKnowledgePanel
-            agentId={agentId}
-            agentName={agent?.name ?? 'your chatbot'}
-            agentWebsite={agent?.website ?? null}
-            existingSources={sources ?? []}
-            onChanged={refresh}
-            isEmpty={stats.total === 0}
-            documentsLocked={documentsAtLimit}
-            pagesLocked={pagesAtLimit}
-          />
-
-          <AutoRecrawlCard
-            botId={agentId}
-            reloadToken={recrawlReloadToken}
-            onUpgrade={() =>
-              openUpgradeModal({
-                title: t('agents.weeklyAutoRetrain') || 'Weekly auto-retrain',
-                description:
-                  t('agents.automaticallyRefreshYourTrainedWebsites') || 'Automatically refresh your trained websites every week on the Standard plan. Upgrade to enable it.',
-              })
+      <Stack>
+        {/* A paused knowledge base and a failed delete are page-scope facts, not
+            bands inside a card that has no header to name them. */}
+        {knowledge.state.data.deactivated ? (
+          <Alert
+            tone="plan"
+            title={t('agents.thisKnowledgeIsPaused') || 'This knowledge is paused'}
+            action={
+              <Link to="/billing" className={buttonClass('secondary', 'sm')}>
+                {t('agents.seePlans') || 'See plans'}
+              </Link>
             }
-          />
-        </div>
-      )}
+          >
+            <span className="figure">{formatNumber(knowledge.state.data.inactive_count)}</span>{' '}
+            passages stopped being used when your plan moved to Free. Add one new source to
+            reactivate them, or move to a paid plan to restore everything.
+          </Alert>
+        ) : null}
+        {actionError ? (
+          <Alert tone="danger" live>
+            {actionError}
+          </Alert>
+        ) : null}
 
-      {recrawlDiff && (
-        <RecrawlDiffModal
+        <AgentHealthStrip agent={agent} health={health} />
+
+        <Card>
+          <CardHeader size="sm" title={t('agents.whatItKnows') || 'What it knows'} titleAs="h2" />
+          <CardBody flush>
+            <StatRow
+              period="Right now"
+              label={t('agents.knowledgeHeld') || 'Knowledge held'}
+              columns={4}
+              items={[
+                {
+                  label: t('agents.passages') || 'Passages',
+                  value: indexed > 0 ? formatNumber(indexed) : undefined,
+                  size: 'lg',
+                  empty: t('agents.nothingIndexed') || 'Nothing indexed',
+                },
+                {
+                  label: t('agents.sources') || 'Sources',
+                  value: summary.total > 0 ? formatNumber(summary.total) : undefined,
+                  period: `${formatNumber(summary.websites)} websites · ${formatNumber(summary.documents)} documents`,
+                  size: 'lg',
+                  loading: knowledge.sources.loading,
+                },
+                {
+                  label: t('agents.websitePages') || 'Website pages',
+                  value: summary.websitePages > 0 ? formatNumber(summary.websitePages) : undefined,
+                  period: t('agents.readFromYourSites') || 'Read from your sites',
+                  size: 'lg',
+                  loading: knowledge.sources.loading,
+                },
+                {
+                  label: t('agents.lastTrained') || 'Last trained',
+                  value: summary.lastIngestedAt ? formatDate(summary.lastIngestedAt) : undefined,
+                  period: t('agents.mostRecentSourceAdded') || 'Most recent source added',
+                  size: 'lg',
+                  loading: knowledge.sources.loading,
+                },
+              ]}
+            />
+          </CardBody>
+        </Card>
+
+        {/* See what it has read, then add to it. Both live in the primary
+            column because both are the page's job; the rail holds what you
+            only read (the gaps) and what you configure once (the schedule).
+
+            Adding used to be the rail. Measured at 1440 on a chatbot with no
+            sources, the rail carried 1,032px against the main column's 455 —
+            69% of the page in a 384px gutter, leaving ~590px of dead space
+            beside it, and widening the window only grew that gap because the
+            rail is a fixed 24rem. The page's own empty state says "Train it on
+            your website, or upload a document" while the control that does
+            exactly that sat in the narrow column and an empty table took the
+            wide one. */}
+        <Columns
+          asideWidth="md"
+          asideLabel="Knowledge management"
+          main={
+            <Stack>
+              <Card>
+                <CardHeader size="sm" title={t('agents.sources') || 'Sources'} titleAs="h2" />
+                <CardBody flush>
+                  <SourcesTable
+                    sources={sources}
+                    loading={knowledge.sources.loading}
+                    error={knowledge.sources.error}
+                    onRetry={knowledge.sources.retry}
+                    canUseDelta={canUseDeltaRecrawl(planSlug)}
+                    busySource={recrawl?.loading ? recrawl.sourceName : null}
+                    crawlRunning={crawlRunning}
+                    crawlingDomain={crawlingDomain}
+                    query={sourceQuery}
+                    onQueryChange={(next) => setParam('q', next)}
+                    kind={sourceKind}
+                    onKindChange={(next) => setParam('kind', next === 'all' ? null : next)}
+                    onViewPages={(source) => setDrawerSource(source.name)}
+                    onRecrawl={(source, mode) => void requestRecrawl(source, mode)}
+                    onDelete={removeSource}
+                  />
+                </CardBody>
+              </Card>
+
+              <AddKnowledgePanel
+                agentId={agent.id}
+                agentName={agent.name ?? 'this chatbot'}
+                agentWebsite={agent.website ?? null}
+                sources={sources}
+                documentAllowance={documentAllowance}
+                pageAllowance={pageAllowance}
+                characterAllowance={characterAllowance}
+                planName={planName}
+                planLoading={planLoading}
+                empty={summary.total === 0}
+                onChanged={refreshEverything}
+              />
+            </Stack>
+          }
+          aside={
+            <Stack>
+              <KnowledgeGapsCard
+                section={knowledge.gaps}
+                window={gapWindow}
+                onWindowChange={setGapWindow}
+              />
+
+              <AutoRetrainCard agentId={agent.id} section={knowledge.autoRetrain} planName={planName} />
+            </Stack>
+          }
+        />
+      </Stack>
+
+      <PagesDrawer
+        sourceName={drawerSource}
+        agentId={agent.id}
+        onClose={() => setDrawerSource(null)}
+      />
+
+      {recrawl ? (
+        <RecrawlDialog
           open
-          diff={recrawlDiff}
-          error={recrawlDiffError}
-          starting={recrawlStarting}
+          onOpenChange={(open) => {
+            if (!open) setRecrawl(null);
+          }}
+          sourceName={recrawl.sourceName}
+          diff={recrawl.diff}
+          loading={recrawl.loading}
+          previewError={recrawl.previewError}
+          planLocked={recrawl.planLocked}
+          starting={recrawl.starting}
+          startError={recrawl.startError}
           onConfirm={() => void confirmRecrawl()}
-          onGetCredits={handleGetCredits}
-          onClose={closeRecrawlModal}
         />
-      )}
-
-      {drawerSource && (
-        <PagesDrawer
-          source={drawerSource}
-          pages={pagesBySource[drawerSource] ?? []}
-          onClose={() => setDrawerSource(null)}
-        />
-      )}
-    </PageContainer>
-  );
-}
-
-// ── Local presentational helpers ────────────────────────────────────
-
-function SourceCell({ source }: { source: KnowledgeSource }): ReactElement {
-  const { t } = useTranslation();
-  const isWebsite = isUrlSource(source.name);
-  return (
-    <div className="flex items-center gap-3">
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
-        {isWebsite ? <Globe size={15} aria-hidden="true" /> : <FileText size={15} aria-hidden="true" />}
-      </span>
-      <div className="flex min-w-0 items-center gap-2">
-        <span
-          className="truncate text-[13px] font-medium text-[var(--ds-text)]"
-          title={source.name}
-        >
-          {source.name}
-        </span>
-        <StatusBadge tone="success" dot>
-          {t('agents.ready') || 'Ready'}
-        </StatusBadge>
-      </div>
-    </div>
-  );
-}
-
-function LoadingState(): ReactElement {
-  return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <Skeleton key={i} className="h-[92px] w-full rounded-xl" />
-        ))}
-      </div>
-      <Skeleton className="h-24 w-full rounded-xl" />
-      <Skeleton className="h-64 w-full rounded-xl" />
-    </div>
+      ) : null}
+    </Page>
   );
 }

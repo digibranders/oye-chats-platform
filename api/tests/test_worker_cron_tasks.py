@@ -48,6 +48,7 @@ def _trial_sub(
     plan_name: str = "Starter",
     canceled_at: datetime | None = None,
     cancel_reason: str | None = None,
+    gateway_cancel_executed_at: datetime | None = None,
 ) -> SimpleNamespace:
     """Lightweight Subscription stand-in.
 
@@ -68,6 +69,13 @@ def _trial_sub(
         plan=SimpleNamespace(name=plan_name) if plan_name else None,
         canceled_at=canceled_at,
         cancel_reason=cancel_reason,
+        # Read by ``transition_service.execute_gateway_cancellation``, which the
+        # past-due expiry cron now calls to retire the mandate. None means "the
+        # gateway cancel has not run", which is the state every one of these
+        # fixtures is in.
+        gateway_cancel_executed_at=gateway_cancel_executed_at,
+        razorpay_plan_id=None,
+        bot_id=None,
     )
 
 
@@ -88,6 +96,7 @@ class _FakeSession:
         self._subs = subs
         self._owners = owners or {}
         self.commit_calls = 0
+        self.rollback_calls = 0
         self.deleted: list = []
 
     def __enter__(self):
@@ -120,6 +129,13 @@ class _FakeSession:
 
     def commit(self):
         self.commit_calls += 1
+
+    def rollback(self):
+        # The past-due expiry cron rolls back a failed gateway cancel so the
+        # expiry itself still commits. Counted, not ignored: a test that cannot
+        # see the rollback cannot tell "the cancel failed and was contained"
+        # from "the cancel never ran".
+        self.rollback_calls += 1
 
 
 # ── task_expire_trials ──────────────────────────────────────────────────────

@@ -15,7 +15,7 @@ import { mockBackend } from './mockBackend';
  */
 
 async function openLanguageTab(page: import('@playwright/test').Page): Promise<void> {
-  await page.goto('/agents/1/experience');
+  await page.goto('/chatbots/1/experience');
   await expect(page.getByRole('tab', { name: 'Branding' })).toBeVisible({ timeout: 20_000 });
   await page.getByRole('tab', { name: /Language/ }).click();
   await expect(page.getByText('Supported languages', { exact: true })).toBeVisible();
@@ -72,7 +72,12 @@ test.describe('Language picker', () => {
     await openLanguageTab(page);
 
     await expect(page.getByLabel('Remove Urdu (Pakistan)')).toBeVisible();
-    const notice = page.getByRole('status', { name: /without a translated widget/i });
+    // The live region carries its heading as content, not as an accessible
+    // name, so it is filtered by text rather than named. Filtering also keeps
+    // it apart from the save-state status in the same view.
+    const notice = page
+      .getByRole('status')
+      .filter({ hasText: /A language without a translated widget/i });
     await expect(notice).toBeVisible();
     await expect(notice).toContainText(/not translated into Urdu/i);
   });

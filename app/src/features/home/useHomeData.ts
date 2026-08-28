@@ -1,193 +1,174 @@
-/**
- * useHomeData - loads the workspace-wide Home view.
- *
- * The reused endpoints (getDashboardStats / getLeadStats / getTopQuestions /
- * getFeedbackData) are all per-bot, so we fan out across every agent and
- * aggregate client-side. Inbox messages (getOfflineMessages) are already
- * workspace-wide. Loading is DERIVED (no `data` and no `error` ⇒ loading), and
- * no state is written synchronously inside the effect - the fetch resolves
- * first, matching the codebase pattern.
- *
- * TODO(perf): this issues ~4×N + 1 requests. Replace with a single server-side
- * `/dashboard/overview` aggregate endpoint once available on the API.
- */
-import { useCallback, useEffect, useState } from 'react';
-import {
-  getBots,
-  getDashboardStats,
-  getFeedbackData,
-  getLeadStats,
-  getOfflineMessages,
-  getOperators,
-  getTopQuestions,
-} from '../../services/api';
-import type { Bot, TopQuestion } from '../../types/domain';
-import type { FeedbackItem } from '../feedback/types';
-import {
-  aggregateTotals,
-  buildActivity,
-  mergeTopQuestions,
-  summarizeAgent,
-  toText,
-  type FeedbackBucket,
-  type HomeData,
-  type OfflineActivityInput,
-} from './home-data';
 import { t as translateNow } from '../../i18n/i18n';
+import { useQueries, useQuery } from '@tanstack/react-query';
+import { getDashboardStats, getLeadStats, getLeads, getOfflineMessages } from '../../services/api';
+import { useBotContext } from '../../context/BotContext';
+import { keys } from '../../query/keys';
+import { agentHealth, type AgentHealth } from './agentHealth';
+import type { TrendDirection } from '../../ui';
+import type { Bot, Lead } from '../../types/domain';
 
-export interface UseHomeDataResult {
-  loading: boolean;
-  error: string | null;
-  data: HomeData | null;
-  reload: () => void;
+export interface HomeAgent {
+  bot: Bot;
+  health: AgentHealth;
+  conversations: number;
+  /** This row's figure is still in flight. The page does not wait for it. */
+  conversationsLoading: boolean;
 }
 
-interface Fetched {
-  data: HomeData | null;
-  error: string | null;
-}
-
-const EMPTY: HomeData = {
-  agents: [],
-  totals: {
-    conversations: 0,
-    messages: 0,
-    leads: 0,
-    hotLeads: 0,
-    successRate: 0,
-  },
-  topQuestions: [],
-  activity: [],
-  unreadMessages: 0,
-};
+/** The window every figure on Home covers, stated once by the `StatRow`. */
+export const HOME_WINDOW_DAYS = 30;
 
 /**
- * Fetch + aggregate every data source the Home page needs.
+ * How many recent leads the activity card shows.
  *
- * When `scopedBotId` is a number, the page is scoped to that single agent (one
- * call per endpoint). When it's null, the shell is on "All agents" and Home
- * fans out across every bot and aggregates client-side.
+ * Six, because `Columns` requires the aside to be the shorter track and six rows
+ * is what keeps it under the work column at the page's ordinary shape. It is a
+ * *sample* with a link to the rest, not a list — the card's header goes to
+ * `/leads`, which is where an unbounded one belongs.
+ *
+ * Sliced here as well as sent as `limit`. A card whose height is decided by
+ * whatever the server felt like returning is not a layout: the endpoint honours
+ * `limit` today, and the first time it does not the aside grows past the fold
+ * and takes the page's bottom edge with it.
  */
-async function loadHomeData(scopedBotId: number | null): Promise<HomeData> {
-  const allBots = await getBots();
-  if (allBots.length === 0) return EMPTY;
+const RECENT_LIMIT = 6;
 
-  // Narrow the fan-out to the selected agent when the shell BotSwitcher has
-  // one chosen; otherwise keep the workspace-wide aggregate behaviour. Falling
-  // back to `allBots` when the id is stale (deleted / just switched workspaces)
-  // avoids rendering an empty dashboard on the transition.
-  const scopedBot = scopedBotId != null ? allBots.find((b) => b.id === scopedBotId) : null;
-  const bots: Bot[] = scopedBot ? [scopedBot] : allBots;
-
-  // Operator seats are per-bot (see MembersPage). Fetch the workspace roster
-  // once and tally active operators per agent so the plan-usage meter can scope
-  // "Members" to the selected agent. Non-fatal: a failure leaves the tally empty
-  // (0 seats shown) rather than blanking the dashboard.
-  const operatorsByBot = new Map<number, number>();
-  try {
-    const opsRes: unknown = await getOperators();
-    const rows: Array<{ bot_id?: number | null }> = Array.isArray(opsRes)
-      ? (opsRes as Array<{ bot_id?: number | null }>)
-      : Array.isArray((opsRes as { operators?: unknown })?.operators)
-        ? (opsRes as { operators: Array<{ bot_id?: number | null }> }).operators
-        : [];
-    for (const op of rows) {
-      if (typeof op.bot_id === 'number') {
-        operatorsByBot.set(op.bot_id, (operatorsByBot.get(op.bot_id) ?? 0) + 1);
-      }
-    }
-  } catch {
-    // Supplementary data only. Keep the dashboard rendering without seat tallies.
-  }
-
-  // Per-agent fan-out. Each call is independently resilient so one bad agent
-  // can't blank the whole dashboard.
-  const perAgent = await Promise.all(
-    bots.map(async (bot: Bot) => {
-      const [stats, leads, questions, feedback] = await Promise.all([
-        getDashboardStats(bot.id).catch(() => null),
-        getLeadStats(bot.id).catch(() => null),
-        getTopQuestions(bot.id).catch((): TopQuestion[] => []),
-        getFeedbackData(bot.id).catch((): FeedbackItem[] => []),
-      ]);
-      return { bot, stats, leads, questions, feedback };
-    }),
-  );
-
-  // Two separate reads: the activity feed only needs the most recent page,
-  // while the "unread" count must reflect EVERY new message - counting unread
-  // rows within the capped activity page would silently cap the badge at that
-  // page size. `status=new` is the backend's unread state (read/replied both
-  // stamp read_at), and the envelope's `total` is the filtered server-side
-  // count, so it stays accurate no matter how many are unread. Both reads
-  // honour the current scope via `bot_id` when a single agent is active.
-  const scopeParams: Record<string, unknown> = scopedBot ? { bot_id: scopedBot.id } : {};
-  const [offlineResult, unreadResult] = await Promise.all([
-    getOfflineMessages({ ...scopeParams, limit: 10 }).catch(() => ({ messages: [], total: 0, page: 1 })),
-    getOfflineMessages({ ...scopeParams, status: 'new', limit: 1 }).catch(() => ({ messages: [], total: 0, page: 1 })),
-  ]);
-
-  const agents = perAgent.map(({ bot, stats, leads }) =>
-    summarizeAgent({ bot, stats, leads, operators: operatorsByBot.get(bot.id) ?? 0 }),
-  );
-  const totals = aggregateTotals(agents);
-
-  const topQuestions = mergeTopQuestions(perAgent.map(({ questions }) => questions));
-
-  const feedbackBuckets: FeedbackBucket[] = perAgent.map(({ bot, feedback }) => ({
-    botName: bot.name,
-    items: feedback,
-  }));
-  const offline: OfflineActivityInput[] = offlineResult.messages.map((msg) => ({
-    visitorName: toText(msg.visitor_name),
-    message: toText(msg.message_body),
-    botName: toText(msg.bot_name),
-    createdAt: toText(msg.created_at),
-  }));
-  const activity = buildActivity(feedbackBuckets, offline);
-  const unreadMessages = unreadResult.total;
-
-  return { agents, totals, topQuestions, activity, unreadMessages };
+export interface HomeDelta {
+  value: string;
+  direction: TrendDirection;
+  label: string;
 }
 
-export function useHomeData(botId: number | null = null): UseHomeDataResult {
-  const [reloadKey, setReloadKey] = useState(0);
-  const [result, setResult] = useState<Fetched>({ data: null, error: null });
+/**
+ * The change between this window and the one before it.
+ *
+ * `null` when there is nothing to compare against — a workspace in its first
+ * month has no previous thirty days, and an arrow drawn from zero would read as
+ * infinite growth. A figure with no honest comparison ships without one.
+ */
+function delta(current: number, previous: number): HomeDelta | null {
+  if (previous <= 0) return null;
+  const change = Math.round(((current - previous) / previous) * 100);
+  return {
+    value: `${change > 0 ? '+' : ''}${change}%`,
+    direction: change > 0 ? 'up' : change < 0 ? 'down' : 'flat',
+    label:
+      translateNow('home.vsPreviousDays', { count: HOME_WINDOW_DAYS })
+      || `vs previous ${HOME_WINDOW_DAYS} days`,
+  };
+}
 
-  const reload = useCallback(() => {
-    // Reset to the loading state from an event handler (never inside the effect).
-    setResult({ data: null, error: null });
-    setReloadKey((key) => key + 1);
-  }, []);
+function conversationsIn(data: Record<string, unknown> | undefined): number {
+  return Number(data?.total_conversations ?? 0);
+}
 
-  useEffect(() => {
-    // On scope change the previously-loaded data briefly stays on screen while
-    // the new scope's fetch runs - mirrors `useWorkspaceAnalytics` and keeps
-    // this effect strictly post-await (no synchronous `setState`, per the
-    // codebase's `react-hooks/set-state-in-effect` rule).
-    let cancelled = false;
-    void (async () => {
-      try {
-        const data = await loadHomeData(botId);
-        if (!cancelled) setResult({ data, error: null });
-      } catch (err) {
-        if (!cancelled) {
-          setResult({
-            data: null,
-            error: err instanceof Error ? err.message : translateNow('home.somethingWentWrongLoadingYour') || 'Something went wrong loading your dashboard.',
-          });
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [reloadKey, botId]);
+/**
+ * Everything Home needs, in as few requests as the API allows.
+ *
+ * The dashboard it replaces fanned out roughly `4N + 1` requests — four per
+ * chatbot plus the list — and its own source carried a TODO admitting it. This
+ * asks for per-chatbot statistics once per chatbot and nothing else, and every
+ * response is cached and shared with the pages that need the same numbers, so
+ * navigating Home → a chatbot → Home does not refetch any of it.
+ *
+ * **The headline figures do not come from the fan-out.** They are two
+ * workspace-level roll-ups — `/analytics/dashboard` with no `bot_id`, once for
+ * the trailing thirty days and once for sixty — which is what makes the
+ * conversation figure both *anchored to a window* and *comparable to the window
+ * before it*. Summing the per-chatbot responses could only ever produce an
+ * unanchored all-time counter with nothing to compare it against.
+ *
+ * **`loading` covers the chatbot list and nothing else.** It used to be
+ * `some(isPending)` across the fan-out, so a twenty-chatbot workspace held the
+ * whole page in a skeleton until its slowest per-chatbot request landed. Each
+ * row now resolves its own figure and says so.
+ *
+ * A failing statistics call yields `null` rather than zero. The previous version
+ * caught the error and coerced it to `0`, so a broken chatbot rendered as a
+ * quiet chatbot with no traffic and the headline totals silently understated
+ * the workspace.
+ */
+export function useHomeData() {
+  const { bots, loading: botsLoading, error: botsError, refreshBots } = useBotContext();
+
+  const statQueries = useQueries({
+    queries: bots.map((bot) => ({
+      queryKey: keys.analytics.dashboard(bot.id, null),
+      queryFn: () => getDashboardStats(bot.id),
+      staleTime: 60_000,
+    })),
+  });
+
+  const currentWindow = useQuery({
+    queryKey: keys.analytics.dashboard(null, HOME_WINDOW_DAYS),
+    queryFn: () => getDashboardStats(undefined, HOME_WINDOW_DAYS),
+    staleTime: 60_000,
+  });
+
+  const priorWindow = useQuery({
+    queryKey: keys.analytics.dashboard(null, HOME_WINDOW_DAYS * 2),
+    queryFn: () => getDashboardStats(undefined, HOME_WINDOW_DAYS * 2),
+    staleTime: 60_000,
+  });
+
+  const leadStats = useQuery({
+    queryKey: keys.leads.stats(null, null),
+    queryFn: () => getLeadStats(),
+    staleTime: 60_000,
+    retry: false,
+  });
+
+  const offline = useQuery({
+    queryKey: keys.inbox.offline({ status: 'new', limit: 1 }),
+    queryFn: () => getOfflineMessages({ status: 'new', limit: 1 }),
+    staleTime: 30_000,
+    retry: false,
+  });
+
+  // The events half of the page. A 403 here is a plan boundary, not a fault, so
+  // it retries nothing and the card simply does not render.
+  const recent = useQuery({
+    queryKey: keys.leads.list({ botId: null, page: 1, limit: RECENT_LIMIT }),
+    queryFn: () => getLeads(undefined, { page: 1, limit: RECENT_LIMIT }),
+    staleTime: 60_000,
+    retry: false,
+  });
+
+  const agents: HomeAgent[] = bots.map((bot, index) => ({
+    bot,
+    health: agentHealth(bot),
+    conversations: Number(statQueries[index]?.data?.total_conversations ?? 0),
+    conversationsLoading: statQueries[index]?.isPending ?? false,
+  }));
+
+  // A partial failure is reported as a partial failure. Rolling it into the
+  // totals is what let a broken chatbot read as a quiet one.
+  const statsIncomplete = statQueries.some((query) => query.isError);
+
+  const conversations = conversationsIn(currentWindow.data);
+  const previousConversations = Math.max(conversationsIn(priorWindow.data) - conversations, 0);
+  const live = agents.filter((agent) => agent.health.state === 'live').length;
 
   return {
-    loading: result.data === null && result.error === null,
-    error: result.error,
-    data: result.data,
-    reload,
+    agents,
+    loading: botsLoading,
+    error: botsError,
+    statsIncomplete,
+    retry: refreshBots,
+    windowDays: HOME_WINDOW_DAYS,
+    conversations,
+    conversationsLoading: currentWindow.isPending,
+    conversationsDelta:
+      currentWindow.isPending || priorWindow.isPending ? null : delta(conversations, previousConversations),
+    qualifiedLeads: Number(leadStats.data?.qualified ?? leadStats.data?.total ?? 0),
+    leadsLocked: leadStats.isError,
+    leadsLoading: leadStats.isPending,
+    unreadMessages: Number(offline.data?.total ?? 0),
+    unreadLoading: offline.isPending,
+    live,
+    needsAttention: agents.filter((agent) => agent.health.needsAttention),
+    recentLeads: ((recent.data?.leads ?? []) as Lead[]).slice(0, RECENT_LIMIT),
+    recentLoading: recent.isPending,
+    recentAvailable: !recent.isError,
   };
 }

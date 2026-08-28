@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildOutcomes,
   deriveDropOffTotal,
   dropOffTooltip,
   filterEmptyDescription,
@@ -136,9 +137,9 @@ describe('isFilterableOutcome', () => {
 
 describe('outcomeLabel', () => {
   it('maps known outcome ids to their card labels', () => {
-    expect(outcomeLabel('meeting_booked')).toBe('Book Meeting');
-    expect(outcomeLabel('handoff_requested')).toBe('Live Chat');
-    expect(outcomeLabel('offline_message_sent')).toBe('Offline Message');
+    expect(outcomeLabel('meeting_booked')).toBe('Meeting booked');
+    expect(outcomeLabel('handoff_requested')).toBe('Live chat');
+    expect(outcomeLabel('offline_message_sent')).toBe('Offline message');
     expect(outcomeLabel('exit')).toBe('Drop-off');
   });
 
@@ -170,7 +171,7 @@ describe('filterEmptyDescription', () => {
         startPage: null,
         hasTrackedJourneys: true,
       }),
-    ).toBe('No tracked journeys are attributed to Live Chat in this window.');
+    ).toBe('No tracked journeys are attributed to Live chat in this window.');
   });
 
   it('mentions the starting page when both filters are active', () => {
@@ -180,7 +181,7 @@ describe('filterEmptyDescription', () => {
         startPage: '/pricing',
         hasTrackedJourneys: true,
       }),
-    ).toBe('No tracked journeys are attributed to Book Meeting in this window starting on /pricing.');
+    ).toBe('No tracked journeys are attributed to Meeting booked in this window starting on /pricing.');
   });
 
   it('reports an unmatched starting-page filter on its own', () => {
@@ -193,5 +194,65 @@ describe('filterEmptyDescription', () => {
     expect(
       filterEmptyDescription({ outcome: null, startPage: null, hasTrackedJourneys: true }),
     ).toBe('No tracked journeys match the current filters.');
+  });
+});
+
+/**
+ * The two journey panels used to compute drop-off separately, from different
+ * inputs, so two cards a few pixels apart could report different totals with
+ * nothing reconciling them. `buildOutcomes` is now the only thing that decides
+ * what the outcome column says, and both panels render what it returns.
+ */
+describe('buildOutcomes', () => {
+  const summary = {
+    sessions_with_journey: 100,
+    meeting_booked: 10,
+    handoff_requested: 5,
+    offline_message_sent: 5,
+    sessions_no_activity: 60,
+    sessions_browsed_no_conversion: 20,
+    leads_captured: 12,
+  };
+
+  it('reports every bucket with its share of tracked journeys', () => {
+    const outcomes = buildOutcomes({ summary, postChat: { sessions_with_post_chat_activity: 20 } });
+    expect(outcomes.map((outcome) => outcome.id)).toEqual([
+      'meeting_booked',
+      'handoff_requested',
+      'offline_message_sent',
+      'kept_browsing',
+      'exit',
+    ]);
+    expect(outcomes[0].share).toBeCloseTo(0.1);
+    expect(outcomes.find((outcome) => outcome.id === 'exit')?.sessions).toBe(60);
+  });
+
+  it('only lets the three attributed outcomes be used as a filter', () => {
+    const outcomes = buildOutcomes({ summary, postChat: { sessions_with_post_chat_activity: 20 } });
+    expect(outcomes.filter((outcome) => outcome.filterable).map((outcome) => outcome.id)).toEqual([
+      'meeting_booked',
+      'handoff_requested',
+      'offline_message_sent',
+    ]);
+    // Drop-off and "kept browsing" have no path attribution behind them, so
+    // they say why rather than offering a filter that would return nothing.
+    expect(outcomes.find((outcome) => outcome.id === 'exit')?.note).toBeTruthy();
+  });
+
+  it('omits "kept browsing" rather than estimating it on an older API build', () => {
+    const { sessions_browsed_no_conversion: _omitted, ...older } = summary;
+    const outcomes = buildOutcomes({
+      summary: older,
+      postChat: { sessions_with_post_chat_activity: 20 },
+    });
+    expect(outcomes.some((outcome) => outcome.id === 'kept_browsing')).toBe(false);
+  });
+
+  it('has no share to report when nothing was tracked', () => {
+    const outcomes = buildOutcomes({
+      summary: { ...summary, sessions_with_journey: 0 },
+      postChat: { sessions_with_post_chat_activity: 0 },
+    });
+    expect(outcomes.every((outcome) => outcome.share === null)).toBe(true);
   });
 });

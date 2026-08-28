@@ -262,13 +262,14 @@ PUSH_VISITOR_MSG_EMAIL_DEBOUNCE_SECONDS = int(_env("PUSH_VISITOR_MSG_EMAIL_DEBOU
 # ─────────────────────────────────────────────────────────────────────────────
 # Quotation flow
 # ─────────────────────────────────────────────────────────────────────────────
-# Delay (seconds) between a visitor accepting a quote and the confirmation /
-# notification emails going out. The product spec asks for a 5-minute grace
-# window so a visitor who immediately keeps chatting (or who accepts and then
-# has more to add) isn't emailed the instant they click. Deferred durably via
-# ARQ; see quotation_routes._schedule_quotation_emails. Set to 0 to send
-# immediately.
-QUOTATION_EMAIL_DELAY_SECONDS = int(_env("QUOTATION_EMAIL_DELAY_SECONDS", "300"))
+# Delay (seconds) before the visitor's "Your quotation" document email (the one
+# carrying the itemised pricing inline in the body) is sent. The visitor's
+# "Your quote request" acknowledgement and the owner notification both fire
+# immediately at accept; only the priced document is held back by this window so
+# the visitor gets a brief "we're preparing it" beat before the quote lands.
+# Product spec asks for 10 minutes. Deferred durably via ARQ; see
+# quotation_routes._schedule_quotation_emails. Set to 0 to send immediately.
+QUOTATION_EMAIL_DELAY_SECONDS = int(_env("QUOTATION_EMAIL_DELAY_SECONDS", "600"))
 
 WEB_PUSH_ENABLED = bool(VAPID_PUBLIC_KEY and (VAPID_PRIVATE_KEY or VAPID_PRIVATE_KEY_FILE))
 # Expo relays to FCM/APNs using credentials Expo holds on our behalf, so it
@@ -665,6 +666,69 @@ JINA_FETCH_CONCURRENCY = int(_env("JINA_FETCH_CONCURRENCY", "5"))
 # other one becomes the fallback. Env default only, the super-admin Models &
 # RAG page overrides it at runtime via pricing_config (crawl.provider_primary).
 CRAWL_PROVIDER_PRIMARY = _env("CRAWL_PROVIDER_PRIMARY", "jina").strip().lower()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Hosted demo page (`GET /demo/{bot_key}`)
+# ─────────────────────────────────────────────────────────────────────────────
+# The widget loader the hosted demo page embeds. This has to be configurable
+# per environment: the demo page previously hardcoded the production CDN, so a
+# local or staging demo silently exercised the LIVE widget build rather than
+# the one being worked on. The Deploy page's own snippet already resolves per
+# environment; this keeps the demo page honest with it.
+WIDGET_SCRIPT_URL = _env("WIDGET_SCRIPT_URL", "https://cdn.oyechats.com/oyechats-widget.js")
+
+# Capture a screenshot of the customer's own site and serve it as the demo
+# page's backdrop, with the real widget live on top. This is what makes the
+# shared demo link show THEIR website instead of a generic hero page, and it is
+# the only technique that works for every customer: roughly 40% of sites refuse
+# to be framed (`X-Frame-Options` / CSP `frame-ancestors`), and headless
+# capture is not subject to either.
+DEMO_SCREENSHOT_ENABLED = _env("DEMO_SCREENSHOT_ENABLED", "true").strip().lower() in ("1", "true", "yes")
+# Which capture backend to try first: "jina" or "spider". The other is the
+# fallback, and a capture only fails once both have refused. Both are already
+# integrated for crawling, so this adds no vendor.
+#
+# Jina leads, matching ``CRAWL_PROVIDER_PRIMARY`` above: page fetching already
+# defaults to Reader, so the provider with the most operational history against
+# real customer sites is the one that renders them here too. The trade is one
+# extra hop, because Reader answers with the URL of a hosted image while
+# Spider returns the bytes. That costs capture time only, not serving time:
+# either way the bytes end up on our own CDN, so the demo page never depends on
+# the provider once a capture exists.
+DEMO_SCREENSHOT_PROVIDER = _env("DEMO_SCREENSHOT_PROVIDER", "jina").strip().lower()
+# Per-capture wall-clock budget (seconds) for OUR http call. A cold full-page
+# capture of a JavaScript-heavy homepage routinely takes several seconds, which
+# is exactly why capture happens on the worker and never on the demo page's
+# request path. Must stay comfortably above DEMO_SCREENSHOT_WAIT_SECONDS.
+DEMO_SCREENSHOT_TIMEOUT = int(_env("DEMO_SCREENSHOT_TIMEOUT", "120"))
+
+# How long the renderer is told to keep settling the page before it shoots.
+#
+# Worth being precise about what this does and does not fix, because the two
+# look identical in a screenshot (a blank band) and have different causes:
+#
+#   FIXED by waiting: lazily-loaded media. Below-the-fold images are still
+#   in flight when a fast renderer fires. Measured on fynix.digital, the
+#   "Trusted by" logo grid was blank at the default and fully painted at 30s.
+#
+#   NOT fixed by waiting: sections revealed on scroll (IntersectionObserver,
+#   AOS, Framer Motion). A full-page capture extends the document but never
+#   scrolls through it, so those observers never fire and the content stays at
+#   opacity 0 no matter how long we wait. Confirmed across fresh uncached
+#   renders of oyechats.com and fynix.digital at both settings.
+#
+# Fixing the second class needs a renderer that scrolls the page before
+# capturing, which neither Reader nor Spider exposes. Raising this value is
+# still worth it for the first class, and costs only worker seconds on a job
+# that already runs off the request path.
+DEMO_SCREENSHOT_WAIT_SECONDS = int(_env("DEMO_SCREENSHOT_WAIT_SECONDS", "30"))
+# How long a capture stays fresh. Past this a retrain recaptures, so a demo
+# link never shows a site design its owner replaced months ago.
+DEMO_SCREENSHOT_TTL_DAYS = int(_env("DEMO_SCREENSHOT_TTL_DAYS", "30"))
+# Hard ceiling on a stored capture. A full-page screenshot of a long homepage
+# is legitimately a few MB; anything past this is a runaway render and is
+# dropped rather than pushed to the CDN.
+DEMO_SCREENSHOT_MAX_BYTES = int(_env("DEMO_SCREENSHOT_MAX_BYTES", str(12 * 1024 * 1024)))
 
 # ── Streaming crawl ingestion ────────────────────────────────────────────────
 # Overlap the embed+ingest phase with the scrape phase: as pages come back from

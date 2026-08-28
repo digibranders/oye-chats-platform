@@ -163,8 +163,13 @@ function phaseFor(relPath) {
  *     named only by `vite.config.js` (`test.setupFiles`).
  */
 function reachableFromEntry() {
-  const entry = path.join(SRC, 'main.jsx');
-  if (!fs.existsSync(entry)) return null;
+  // Resolved across extensions rather than pinned: this returns null when the
+  // entry is missing, so a rename would silently reclassify every reachable
+  // string as unreachable instead of failing.
+  const entry = ['main.tsx', 'main.jsx']
+    .map((f) => path.join(SRC, f))
+    .find((f) => fs.existsSync(f));
+  if (!entry) return null;
   const seen = new Set();
   const resolveSpec = (from, spec) => {
     if (!spec.startsWith('.')) return null;

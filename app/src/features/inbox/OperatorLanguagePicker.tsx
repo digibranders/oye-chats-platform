@@ -1,28 +1,27 @@
-import { useId, useMemo, useState, type ReactElement } from 'react';
-import { Languages, Loader2 } from 'lucide-react';
-import { Select, type SelectOption } from '../../design-system';
+import { useMemo, useState } from 'react';
+import { useMutation } from '@tanstack/react-query';
+import { Info } from 'lucide-react';
+import { Select, Spinner, Tooltip, type SelectOption } from '../../ui';
 import { setMyLanguage } from '../../services/api';
 import { useLocaleCatalog } from '../../hooks/useLocaleCatalog';
 import { useTranslation } from '../../i18n/useTranslation';
-import { t as translateNow } from '../../i18n/i18n';
 
 /**
- * Sets the operator's own live-chat working language.
+ * The language this operator reads live chat in.
  *
- * Incoming visitor messages are translated INTO this language and the
- * operator's replies are translated FROM it. "Don't translate" clears the
- * preference, which means every message renders in the language it was
- * written in.
+ * Visitor messages are translated INTO it and replies are translated back OUT
+ * of it, so it is the one setting that decides what an operator actually sees
+ * in the thread. "Do not translate" clears it, and every message renders in
+ * the language it was written in.
  *
- * This is a PERSONAL preference, not workspace configuration, which is why it
- * lives beside the availability toggle (the other per-operator control) rather
- * than under Workspace settings, and why the API behind it is self-service
- * (`PUT /operators/me/language`) rather than the team-management route.
+ * A PERSONAL preference, not workspace configuration — which is why it sits in
+ * the inbox beside the availability control rather than under Settings, and
+ * why the endpoint behind it is self-service (`PUT /operators/me/language`)
+ * rather than the team-management route an admin uses.
  *
- * The options are the locales the operator's BOT supports, sent by
- * `GET /operators/me/language` (Phase 5A). Offering the whole platform
- * catalogue, as this control originally did, let an operator pick a language
- * no visitor of theirs can write in: they would then see untranslated
+ * The options are the languages this operator's CHATBOT supports, not the
+ * platform catalogue. Offering the catalogue let an operator pick a language
+ * no visitor of theirs can write in; they would then read untranslated
  * originals with nothing on screen explaining why.
  */
 export function OperatorLanguagePicker({
@@ -31,88 +30,88 @@ export function OperatorLanguagePicker({
   onChange,
   disabled,
 }: {
-  /** Current preferred locale, or null when unset. */
+  /** The current preference, or null when unset. */
   value: string | null;
-  /** Locales this operator's bot supports. Empty means "Don't translate" only. */
+  /** Locales this operator's chatbot supports. Empty leaves only "Do not translate". */
   availableLocales: string[];
-  /** Called with the saved locale (null when cleared) so the thread re-renders. */
+  /** Called with the SAVED locale, so the thread re-renders against it. */
   onChange: (locale: string | null) => void;
   disabled?: boolean;
-}): ReactElement {
+}) {
   const { t } = useTranslation();
-  const selectId = useId();
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const { labelFor, localeNameFor } = useLocaleCatalog();
+  const [error, setError] = useState<string | null>(null);
 
-  // A preference the bot no longer supports stays SELECTED and is flagged.
-  // Dropping it would silently change what this operator reads - re-selecting
-  // is a decision for them to make, not a side effect of an admin editing the
-  // bot's supported languages.
+  // A preference the chatbot no longer supports stays SELECTED, and says so.
+  // Dropping it would silently change what this operator reads as a side
+  // effect of an admin editing the chatbot's languages; re-selecting is their
+  // decision to make.
   const orphaned = value !== null && !availableLocales.includes(value);
 
   const options = useMemo<SelectOption[]>(() => {
-    // "Don't translate" is the null value and stays first: reading messages as
-    // written is the default, not an opt-out hidden at the bottom of a list.
-    const rows: SelectOption[] = [{ value: '', label: 'Don\u2019t translate' }];
+    // Reading messages as written is the default, not an opt-out buried at the
+    // bottom of the list, so it stays first.
+    const rows: SelectOption[] = [{ value: '', label: t('inbox.doNotTranslate') || 'Do not translate' }];
     if (orphaned && value !== null) {
-      rows.push({
-        value,
-        label:
-          translateNow('inbox.localeNoLongerOffered', { language: localeNameFor(value) }) ||
-          `${localeNameFor(value)} (no longer offered)`,
-      });
+      rows.push({ value, label: `${localeNameFor(value) ?? value} (no longer offered)` });
     }
     for (const locale of availableLocales) {
       rows.push({ value: locale, label: localeNameFor(locale) ?? locale });
     }
     return rows;
-  }, [availableLocales, orphaned, value, localeNameFor]);
+  }, [availableLocales, orphaned, value, localeNameFor, t]);
 
-  const handleChange = async (next: string): Promise<void> => {
-    const locale = next || null;
-    setSaving(true);
-    setError(null);
-    try {
-      const res = await setMyLanguage(locale);
-      // Trust the SERVER's normalised value ("hi_in" -> "hi-IN"), not the raw
-      // option, so what the UI shows is what translation will actually key on.
-      onChange(res?.preferred_locale ?? null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t('inbox.couldNotSaveYourLanguage') || 'Could not save your language.');
-    } finally {
-      setSaving(false);
-    }
-  };
+  const save = useMutation({
+    mutationFn: async (next: string) => setMyLanguage(next || null),
+    onSuccess: (result) => {
+      setError(null);
+      // The SERVER's normalised tag ("hi_in" becomes "hi-IN"), not the raw
+      // option, so what is shown is what translation will key on.
+      onChange(result?.preferred_locale ?? null);
+    },
+    onError: (cause) => {
+      setError(cause instanceof Error ? cause.message : t('inbox.couldNotSaveYourLanguage') || 'Could not save your language.');
+    },
+  });
+
+  const hint = value
+    ? `Visitor messages are translated into ${labelFor(value) ?? value}.`
+    : t('inbox.messagesShowInTheLanguage') || 'Messages show in the language they were written in.';
 
   return (
-    <div className="flex flex-col items-end gap-1">
-      <div className="flex items-center gap-2">
-        <Languages size={14} className="text-[var(--ds-text-muted)]" aria-hidden="true" />
-        <label htmlFor={selectId} className="sr-only">
-          {t('inbox.readLiveChatIn') || 'Read live chat in'}
-        </label>
-        <div className="w-52">
-          <Select
-            id={selectId}
-            value={value ?? ''}
-            onChange={(next) => void handleChange(next)}
-            options={options}
-            disabled={disabled || saving}
-            aria-label={t('inbox.readLiveChatIn') || 'Read live chat in'}
-          />
-        </div>
-        {saving && <Loader2 size={13} className="animate-spin text-[var(--ds-text-muted)]" aria-hidden="true" />}
-      </div>
+    <div className="flex items-center gap-2">
+      {/* `Field` stacks label, control and hint on three lines — right for a
+          settings form, wrong for a row in the inbox's own status strip. Same
+          shape as the "Month" label beside Journey's own picker: a small
+          label the control's own `aria-label` already carries for
+          assistive tech, so this span is decoration, not a second name for
+          screen readers to hear. */}
+      <span aria-hidden className="text-xs text-text-tertiary">
+        {t('inbox.readLiveChatIn') || 'Read live chat in'}
+      </span>
+      <Select
+        size="sm"
+        label={t('inbox.readLiveChatIn') || 'Read live chat in'}
+        value={value ?? ''}
+        options={options}
+        disabled={disabled || save.isPending}
+        onValueChange={(next) => save.mutate(next)}
+      />
+      {save.isPending ? <Spinner size="sm" label={t('inbox.savingYourLanguage') || 'Saving your language'} /> : null}
       {error ? (
-        <p className="text-[12px] text-[var(--ds-danger)]">{error}</p>
+        <span className="text-xs text-danger" role="alert">
+          {error}
+        </span>
       ) : (
-        <p className="text-[11px] text-[var(--ds-text-subtle)]">
-          {value
-            ? t('inbox.messagesTranslatedInto', { language: labelFor(value) }) ||
-              `Visitor messages are translated into ${labelFor(value)}.`
-            : t('inbox.messagesShowInTheirOriginal') || 'Messages show in their original language.'}
-        </p>
+        <Tooltip content={hint}>
+          <button
+            type="button"
+            aria-label={hint}
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-xs text-text-tertiary hover:text-text-primary"
+          >
+            <Info aria-hidden className="h-icon-sm w-icon-sm" />
+          </button>
+        </Tooltip>
       )}
     </div>
   );

@@ -2158,6 +2158,87 @@ def _release_idempotency_key(session: Session, event_id: str | None) -> None:
 # record per refused MANDATE, however many doors (webhook + verify-reconcile,
 # or a redelivery) hit the same refusal.
 _POOLED_SCOPE_DEAD_LETTER_PREFIX = "pooled-plan-scope-refusal:"
+_UNKNOWN_PLAN_DEAD_LETTER_PREFIX = "unknown-plan-refusal:"
+_ORPHANED_HANDLE_DEAD_LETTER_PREFIX = "orphaned-checkout-handle:"
+
+
+def dead_letter_orphaned_checkout_handle(
+    *,
+    razorpay_sub_id: str,
+    client_id: int | None,
+    context: str,
+) -> None:
+    """Durable record of a superseded checkout handle whose gateway cancel FAILED.
+
+    The tolerant supersede paths (``pending_checkout_service``, per-agent
+    checkout and the upgrade twin) deliberately proceed with the purchase when
+    the cancel of the old handle fails - refusing would block a customer who is
+    trying to pay over a handle they already abandoned. But the caller then
+    overwrites the marker, so an ERROR log was the only remaining trace that
+    the old handle is STILL AUTHORIZABLE at Razorpay and charges if the
+    customer ever reopens that stale checkout. Same doctrine as the pooled-
+    scope refusal: the log is not enough on its own; the orphan lands in the
+    dead-letter list ops already triages. Best-effort, like every synthetic
+    dead-letter - a failure to record must never fail the purchase it rides on.
+    """
+    _dead_letter_synthetic(
+        dedup_key=f"{_ORPHANED_HANDLE_DEAD_LETTER_PREFIX}{razorpay_sub_id}",
+        event_type="subscription.superseded",
+        context={
+            "razorpay_subscription_id": razorpay_sub_id,
+            "client_id": client_id,
+            "supersede_context": context,
+        },
+        body={},
+        error=(
+            f"MANUAL CANCELLATION REQUIRED. Superseded checkout handle {razorpay_sub_id} "
+            f"(client {client_id}, {context}) could not be cancelled at Razorpay before its "
+            "replacement was minted. The handle is STILL AUTHORIZABLE and will charge if the "
+            "customer reopens that stale checkout (re-auth email, back button, an old tab). "
+            "Cancel it at the gateway."
+        ),
+    )
+
+
+def _dead_letter_unknown_plan_refusal(
+    *,
+    razorpay_sub_id: str,
+    client_id: int | None,
+    plan_id: int | None,
+    payment_id: str | None,
+    event_id: str | None,
+    sub_entity: dict[str, Any],
+) -> None:
+    """Record an activation whose notes name a Plan row that does not exist.
+
+    Same contract as :func:`_dead_letter_pooled_scope_refusal`: the customer
+    HAS been charged, the refusal is deterministic (retries cannot fix a
+    dangling ``oyechats_plan_id``), so the charge is ACKed into the dead-letter
+    list ops already watches instead of dying on the subscriptions FK as a 5xx
+    that burns the provider's whole retry window.
+    """
+    _dead_letter_synthetic(
+        dedup_key=f"{_UNKNOWN_PLAN_DEAD_LETTER_PREFIX}{razorpay_sub_id}",
+        event_type="subscription.activated",
+        context={
+            "razorpay_subscription_id": razorpay_sub_id,
+            "razorpay_payment_id": payment_id,
+            "provider_event_id": event_id,
+            "client_id": client_id,
+            "plan_id": plan_id,
+        },
+        body={"subscription": sub_entity},
+        error=(
+            "MANUAL RECONCILIATION REQUIRED (replay will not help. This row has no signed "
+            f"body). Razorpay subscription {razorpay_sub_id} for client {client_id} names "
+            f"plan_id={plan_id} in its notes, but no such Plan row exists, so the activation "
+            "cannot be persisted (the subscriptions.plan_id FK would reject it). No local "
+            f"subscription was created and no credits were granted. The customer HAS been "
+            f"charged (payment {payment_id}). Restore or correct the plan row, then re-run "
+            "reconciliation (the idempotency key was released, so the event can be "
+            "reprocessed)."
+        ),
+    )
 
 
 def _dead_letter_pooled_scope_refusal(
@@ -3114,6 +3195,35 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
             )
             return "missing notes; cannot create subscription"
 
+        # The notes named a plan; it must actually EXIST before anything else is
+        # decided. Every arm below either checks this plan's shape (the pooled
+        # sink guard) or INSERTs a row carrying its id, and the FK on
+        # ``subscriptions.plan_id`` makes a dangling id a guaranteed
+        # IntegrityError - a 5xx on a deterministic failure, retried by the
+        # provider to no effect, with no dead-letter row and a burned
+        # idempotency key. Refuse it the way the pooled guard refuses: record
+        # the charge for ops, release the key, ACK.
+        plan_row = session.get(Plan, plan_id)
+        if plan_row is None:
+            logger.error(
+                "REFUSING activation of Razorpay subscription %s (client %s): notes name plan_id=%s "
+                "but no such Plan row exists. The customer HAS been charged. No local subscription "
+                "was created; recorded in failed_webhooks.",
+                razorpay_sub_id,
+                client_id,
+                plan_id,
+            )
+            _dead_letter_unknown_plan_refusal(
+                razorpay_sub_id=razorpay_sub_id,
+                client_id=client_id,
+                plan_id=plan_id,
+                payment_id=(_extract_payment_entity(payload) or {}).get("id"),
+                event_id=event_id,
+                sub_entity=sub_entity,
+            )
+            _release_idempotency_key(session, event_id)
+            return "unknown plan id in notes; subscription NOT created"
+
         # Per-bot billing branch: this subscription funds one new Bot row
         # rather than replacing the client's existing subscription. Skip
         # the "cancel sibling subscriptions" sweep so the client can hold
@@ -3226,9 +3336,11 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
         #    reprocess (verify-reconcile, or a redelivery) after the mandate is
         #    re-scoped or the plan corrected.
         if mints_new_bot or resume_bot_id is not None:
-            # ``plan_id`` is non-NULL here, the missing-notes return above.
-            candidate_plan = session.get(Plan, plan_id)
-            if candidate_plan is not None and plan_entitlements_service.plan_grants_unlimited_bots(candidate_plan):
+            # ``plan_row`` resolved (and verified non-NULL) right after the
+            # missing-notes return above, so the guard can never be skipped by
+            # an unresolvable plan.
+            candidate_plan = plan_row
+            if plan_entitlements_service.plan_grants_unlimited_bots(candidate_plan):
                 refused_bot = "new" if mints_new_bot else resume_bot_id
                 logger.error(
                     "REFUSING bot-scoped activation of pooled plan %s (id=%s) on Razorpay subscription %s "
@@ -3316,7 +3428,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
             # defer the gateway cancels to the end of the handler, mirroring how
             # the seat-carry below is already ordered "last, after every fail-prone
             # DB write".
-            superseded_gateway_cancels: list[tuple[Subscription, str | None]] = []
+            superseded_gateway_cancels: list[tuple[Subscription, str | None, str | None]] = []
             for old in existing:
                 seat_addon_id = old.seat_addon_subscription_id
                 if seat_addon_id:
@@ -3364,7 +3476,25 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
                 # retention marker so the hard-delete cron can never see the
                 # row again even if the status flip is somehow reverted.
                 old.data_retention_until = None
-                superseded_gateway_cancels.append((old, seat_addon_id))
+                # The branding add-on is a THIRD mandate on this row. The
+                # deferred cancel and the scheduled-downgrade cutover both
+                # retire it; this sweep never did, so an UPGRADE left it live
+                # and debiting while the replacement row below carries
+                # ``branding_addon_active = False`` — which is what the
+                # entitlement resolver reads. The customer lost the badge
+                # removal the instant they upgraded and kept paying for it.
+                #
+                # Retired, not carried, matching the downgrade path's documented
+                # choice: re-minting an add-on whose mandate has not been
+                # re-authorized would hand out the entitlement unbilled, and
+                # re-buying is one click. The local pointers are cleared now;
+                # the gateway cancel is deferred with the others below.
+                branding_addon_id = old.branding_addon_subscription_id
+                if branding_addon_id:
+                    old.branding_addon_subscription_id = None
+                    old.branding_addon_active = False
+                    old.branding_addon_pending = False
+                superseded_gateway_cancels.append((old, seat_addon_id, branding_addon_id))
 
         # ``notes.prev_razorpay_subscription_id`` is set by the upgrade /
         # scheduled-promotion paths so we can recognise this is a transition
@@ -3658,7 +3788,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
         # old UPI mandate is STILL LIVE, so we re-stamp a distinct reason
         # (queryable for reconcile) and log at ERROR. Residual commit-time orphans
         # are swept by the reconcile jobs, same as the seat carry above.
-        for old, seat_addon_id in superseded_gateway_cancels:
+        for old, seat_addon_id, branding_addon_id in superseded_gateway_cancels:
             if old.razorpay_subscription_id and old.razorpay_subscription_id != razorpay_sub_id:
                 try:
                     # A future-``start_at`` replacement does not bill until the
@@ -3693,6 +3823,30 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
                         client_id,
                         razorpay_sub_id,
                         exc_info=True,
+                    )
+            if branding_addon_id:
+                try:
+                    cancel_branding_addon_by_id(branding_addon_id)
+                except Exception:
+                    # Local pointers are already cleared, so the only remaining
+                    # record of the live mandate is this line plus the orphan
+                    # sweep — which cannot see it either, the parent is now
+                    # canceled. Log loudly and dead-letter it.
+                    logger.error(
+                        "Branding add-on cancel FAILED for superseded subscription %s (branding "
+                        "add-on %s, client %s) at activation of %s, the old branding mandate is "
+                        "STILL LIVE at Razorpay and will keep debiting the customer. Needs manual "
+                        "reconciliation.",
+                        old.razorpay_subscription_id,
+                        branding_addon_id,
+                        client_id,
+                        razorpay_sub_id,
+                        exc_info=True,
+                    )
+                    dead_letter_orphaned_checkout_handle(
+                        razorpay_sub_id=branding_addon_id,
+                        client_id=client_id,
+                        context=f"branding add-on of superseded subscription {old.id}",
                     )
 
         logger.info(
@@ -4677,11 +4831,21 @@ def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
 
     inv = session.execute(select(Invoice).where(Invoice.razorpay_payment_id == payment_id)).scalars().first()
     if inv is None:
-        logger.warning("refund event for unknown razorpay payment %s", payment_id)
+        # The invoice may simply not exist YET: its ``subscription.charged`` can
+        # still be in Razorpay's retry window while ops refunds from the
+        # dashboard. Nothing was persisted here, so the dedup key MUST be
+        # released — keeping it burned makes the clawback unreachable forever,
+        # because ``refund.processed`` delegates to this same function and every
+        # replay short-circuits on "already clawed back". The customer would
+        # keep both the credits and their money, and no reconcile job covers it.
+        logger.warning("refund event for unknown razorpay payment %s. Releasing the dedup key", payment_id)
+        _release_idempotency_key(session, f"refund:{refund_id}")
         return f"Payment {payment_id} not found locally"
 
     charge_minor = int(inv.amount_cents or 0)
     if charge_minor <= 0:
+        # Same reasoning: nothing clawed, so nothing to protect against.
+        _release_idempotency_key(session, f"refund:{refund_id}")
         return f"Invoice {inv.id} has no recorded charge amount"
 
     # Reverse credits from the SAME ledger scope and grant type the payment
@@ -4899,7 +5063,12 @@ def _handle_dispute_lost(session: Session, payload: dict[str, Any]) -> str:
         return f"Dispute {dispute_id} already clawed back"
     inv = _invoice_for_payment(session, payment_id)
     if inv is None:
-        logger.warning("dispute.lost for unknown razorpay payment %s", payment_id)
+        # Nothing clawed, so the dedup key must not stay burned — same reasoning
+        # as the refund path: Razorpay has already withdrawn the funds, and a
+        # burned key makes the clawback unreachable by redelivery or replay.
+        logger.warning("dispute.lost for unknown razorpay payment %s. Releasing the dedup key", payment_id)
+        if dispute_id:
+            _release_idempotency_key(session, f"dispute_lost:{dispute_id}")
         return f"Payment {payment_id} not found locally"
     charge_minor = int(inv.amount_cents or 0)
     dispute_minor = int(dispute.get("amount") or charge_minor)

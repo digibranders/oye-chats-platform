@@ -1,286 +1,477 @@
-import { useCallback, type ReactElement, type ReactNode } from 'react';
+import { useCallback } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
-  AlertCircle,
-  CheckCircle2,
-  MessagesSquare,
-  RefreshCw,
-  Star,
-  Users,
-  type LucideIcon,
-} from 'lucide-react';
-import {
+  Alert,
+  Badge,
   Button,
   Card,
-  EmptyState,
-  PageContainer,
-  SectionHeader,
+  CardBody,
+  CardHeader,
+  CardSection,
+  Columns,
+  CopyField,
+  ErrorState,
+  Grid,
+  LockedState,
+  Page,
+  PageHeader,
+  PropertyGrid,
+  SegmentedControl,
   Skeleton,
-} from '../../../design-system';
-import { MetricCard } from '../../../design-system/components/MetricCard';
+  Stack,
+  StatRow,
+  buttonClass,
+  formatDate,
+  formatNumber,
+  formatPercent,
+} from '../../../ui';
 import { useAgent } from '../../../context/AgentContext';
-import { type Bot } from '../../../types/domain';
-import { deriveAgentHealth } from './agent-health';
-import { useOverviewData, type AgentStats } from './overview-data';
-import { HealthHero } from './HealthHero';
-import { AgentSnapshotCards } from './AgentSnapshotCards';
+import { agentPath } from '../../../shell/nav';
+import { agentHealth } from '../../home/agentHealth';
+import type { Bot } from '../../../types/domain';
+import { AgentHealthStrip } from '../AgentHealthStrip';
+import {
+  RANGE_OPTIONS,
+  parseRange,
+  rangeLabel,
+  useOverviewData,
+  type RangeDays,
+  type Section as DataSection,
+} from './overview-data';
+import { ActivityChart } from './ActivityChart';
 import { TopQuestions } from './TopQuestions';
 import { useTranslation } from '../../../i18n/useTranslation';
-import { formatNumber } from '../../../i18n/formatters';
-
-interface MetricDef {
-  readonly key: keyof AgentStats;
-  readonly label: string;
-  readonly icon: LucideIcon;
-  readonly format: (stats: AgentStats) => ReactNode;
-}
 
 /**
- * The four headline Mission Control metrics.
- * Replaces total messages with resolution rate and average rating for honest quality read.
+ * A chatbot's Overview.
  *
- * A module constant, so the labels here are the English fallback; `MetricGrid`
- * resolves each one from its key. `format` runs per render, so it can localize
- * its numbers directly.
+ * It answers, in order: is this chatbot healthy, how much work is it doing, is
+ * anyone sharing it, and what is it being asked. Everything else is a link to
+ * the page that owns it.
+ *
+ * **It is a grid, not a stack.** It was seven full-width blocks in a 1440px
+ * column, four of which held two or three tiles — so a three-tile card was about
+ * 40% ink and 60% empty right margin, and the fold at 1080p landed inside the
+ * activity chart with the install state, the chatbot key and the ratings all
+ * below it. Four rows now: the verdict, one figure strip, the chart beside the
+ * question list, and three record cards. Everything above the chart fits a
+ * 1024px fold.
+ *
+ * Five things the page it replaces got wrong, closed here.
+ *
+ * It rendered **two `h1`s** — the agent layout's chatbot name plus the page's
+ * own title. That layout is gone: the rail names the chatbot and the top bar
+ * breadcrumbs it, so this page owns exactly one heading, from `PageHeader`.
+ *
+ * Its fourth card was labelled **"7-day performance" and read all-time values**,
+ * because no period was ever passed. The range is a control now, it is in the
+ * URL, and every figure states the window it actually covers — once, on the
+ * strip, with the two that have no window saying so themselves.
+ *
+ * **Not one figure carried a comparison**, so the page was a receipt rather than
+ * an instrument: nothing told the reader whether 412 conversations was good. The
+ * two figures that have a previous window now carry a delta.
+ *
+ * Its "View analytics" link pointed at `/agents/:id/analytics`, a route that
+ * redirected back to the page the link was on. The deep dive is `/analytics`.
+ *
+ * And a failed section rendered a dead card with no way to retry it, while the
+ * page-level retry called the narrow refetch that left the chatbot record stale.
+ * Every section here retries itself; the page-level Refresh reloads the chatbot
+ * record too.
  */
-// @i18n-exempt: resolved at the render site by `MetricGrid`, which looks up
-// `agents.metric.<key>`; the labels here are that lookup's English fallback.
-const METRICS: readonly MetricDef[] = [
-  {
-    key: 'activeUsers',
-    label: 'Active visitors',
-    icon: Users,
-    format: (s) => formatNumber(s.activeUsers),
-  },
-  {
-    key: 'totalConversations',
-    label: 'Conversations',
-    icon: MessagesSquare,
-    format: (s) => formatNumber(s.totalConversations),
-  },
-  {
-    key: 'resolutionRate',
-    label: 'Resolution rate',
-    icon: CheckCircle2,
-    format: (s) =>
-      s.resolutionRate === null || s.resolutionRate === undefined
-        ? '-'
-        : `${formatNumber(s.resolutionRate)}%`,
-  },
-  {
-    key: 'averageRating',
-    label: 'Average rating',
-    icon: Star,
-    format: (s) =>
-      s.averageRating === null || s.averageRating === undefined
-        ? '-'
-        : `${formatNumber(s.averageRating)} / 5`,
-  },
-];
 
-/** Four-up grid of headline metrics. */
-function MetricGrid({ stats }: { readonly stats: AgentStats }): ReactElement {
+/** A section that failed, with the way back. */
+function SectionError({ section, title }: { section: DataSection<unknown>; title: string }) {
   const { t } = useTranslation();
+  if (!section.error) return null;
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      {METRICS.map((metric) => (
-        <MetricCard
-          key={metric.key}
-          label={t(`agents.metric.${metric.key}`) || metric.label}
-          icon={metric.icon}
-          value={metric.format(stats)}
-        />
-      ))}
-    </div>
-  );
-}
-
-/** Placeholder tiles shown during the first metrics load. */
-function MetricGridSkeleton(): ReactElement {
-  return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      {METRICS.map((metric) => (
-        <Card key={metric.key} className="p-5">
-          <Skeleton className="h-4 w-24" />
-          <Skeleton className="mt-3 h-7 w-16" />
-        </Card>
-      ))}
-    </div>
-  );
-}
-
-/** Inline, retryable error surface for the metrics fetch. */
-function MetricsError({
-  message,
-  onRetry,
-}: {
-  readonly message: string;
-  readonly onRetry: () => void;
-}): ReactElement {
-  const { t } = useTranslation();
-  return (
-    <Card className="p-6">
-      <EmptyState
-        icon={AlertCircle}
-        title={t('agents.couldntLoadYourMetrics') || 'Couldn’t load your metrics'}
-        description={message}
+    <CardSection>
+      <Alert
+        tone="danger"
+        title={title}
         action={
-          <Button variant="outline" size="sm" onClick={onRetry}>
-            <RefreshCw size={15} aria-hidden="true" />
+          <Button size="sm" onClick={section.retry}>
             {t('agents.tryAgain') || 'Try again'}
           </Button>
         }
-      />
-    </Card>
+      >
+        {section.error}
+      </Alert>
+    </CardSection>
   );
 }
 
-/** Neutral placeholder for a section whose data failed to load. */
-function SectionUnavailable(): ReactElement {
+function OverviewContent({ agent }: { agent: Bot }) {
   const { t } = useTranslation();
-  return (
-    <Card className="p-6">
-      <EmptyState
-        icon={AlertCircle}
-        title={t('agents.couldntLoadThisSection') || 'Couldn’t load this section'}
-        description={t('agents.refreshToTryLoadingThis') || 'Refresh to try loading this data again.'}
-      />
-    </Card>
-  );
-}
-
-/**
- * OverviewContent - Mission Control layout for an agent.
- */
-function OverviewContent({ agent }: { readonly agent: Bot }): ReactElement {
-  const { t } = useTranslation();
-  const health = deriveAgentHealth(agent);
-  const { status, isRefetching, stats, activity, questions, details, error, refetch } =
-    useOverviewData(agent.id);
+  const [params, setParams] = useSearchParams();
+  const days = parseRange(params.get('days'));
   const { refresh: refreshAgent } = useAgent();
-  const agentBasePath = `/agents/${agent.id}`;
-  const isInitialLoading = status === 'loading';
-  const isBusy = isInitialLoading || isRefetching;
+  const { figures, deltas, activity, questions, ratings, resolution, refreshing, refreshAll } =
+    useOverviewData(agent.id, days);
+
+  const health = agentHealth(agent);
+  const indexed = Number(agent.indexed_chunk_count ?? 0);
+  const installed = Boolean(agent.widget_installed_at);
+
+  const setDays = useCallback(
+    (next: RangeDays) => {
+      setParams(
+        (current) => {
+          const updated = new URLSearchParams(current);
+          updated.set('days', String(next));
+          return updated;
+        },
+        { replace: true },
+      );
+    },
+    [setParams],
+  );
 
   /**
-   * Refresh everything this page shows. The health hero and the knowledge
-   * snapshot read the agent record itself (`indexed_chunk_count`,
-   * `last_crawl_status`), not the metrics payload - so refetching metrics alone
-   * left a stale "Nothing learned yet" on screen that no amount of clicking
-   * could clear.
+   * Refresh everything this page shows.
+   *
+   * Including the chatbot record — the health strip, the knowledge figure and
+   * the install state all read the `Bot`, not the analytics payload, so
+   * refetching metrics alone left a stale "nothing to answer from" on screen
+   * that no amount of clicking could clear. That trap was documented in the code
+   * it replaces and then wired to the wrong callback anyway.
    */
-  const refreshAll = useCallback(() => {
+  const refreshEverything = useCallback(() => {
     void refreshAgent();
-    refetch();
-  }, [refreshAgent, refetch]);
+    refreshAll();
+  }, [refreshAgent, refreshAll]);
 
   return (
-    <PageContainer
-      title={t('agents.overview') || 'Overview'}
-      description={t('agents.missionControlDashboardForYour') || 'Mission Control dashboard for your AI chatbot health, knowledge, channels, and performance.'}
-      actions={
-        <Button variant="outline" size="sm" onClick={refreshAll} disabled={isBusy}>
-          <RefreshCw
-            size={15}
-            aria-hidden="true"
-            className={isBusy ? 'animate-spin' : undefined}
-          />
-          {t('agents.refresh') || 'Refresh'}
-        </Button>
-      }
-    >
-      <HealthHero health={health} agentBasePath={agentBasePath} />
-
-      {status === 'error' && error ? (
-        <MetricsError message={error} onRetry={refetch} />
-      ) : stats ? (
-        <MetricGrid stats={stats} />
-      ) : (
-        <MetricGridSkeleton />
-      )}
-
-      <AgentSnapshotCards
-        agent={agent}
-        details={details}
-        stats={stats}
-        activity={activity}
-        agentBasePath={agentBasePath}
+    <Page width="wide">
+      <PageHeader
+        title={t('agents.overview') || 'Overview'}
+        actions={
+          <>
+            <SegmentedControl
+              label={t('agents.reportingPeriod') || 'Reporting period'}
+              value={String(days)}
+              onChange={(value) => setDays(parseRange(value))}
+              items={RANGE_OPTIONS.map((option) => ({
+                value: String(option),
+                label: `${option} days`,
+              }))}
+            />
+            {/* `Button loading` carries the spinner AND `aria-busy`. The
+                hand-rolled `animate-spin` it replaces froze at 0° under
+                `prefers-reduced-motion` and announced nothing at all. */}
+            <Button loading={refreshing} onClick={refreshEverything}>
+              {t('agents.refresh') || 'Refresh'}
+            </Button>
+          </>
+        }
       />
 
-      <section className="space-y-4" aria-labelledby="overview-questions-heading">
-        <SectionHeader
-          title={
-            <span id="overview-questions-heading">
-              {t('agents.topQuestions') || 'Top questions'}
+      <Stack>
+        <AgentHealthStrip
+          agent={agent}
+          health={health}
+          aside={
+            // "Right now" belongs beside the verdict, not inside a card stamped
+            // with a 30-day window.
+            <span className="text-xs text-text-secondary">
+              <span className="figure font-medium text-text-primary">
+                {formatNumber(figures.data.activeVisitors)}
+              </span>{' '}
+              {t('agents.chattingRightNow') || 'chatting right now'}
             </span>
           }
-          description={t('agents.whatVisitorsAskYourAi2') || 'What visitors ask your AI most.'}
         />
-        {isInitialLoading ? (
-          <Card className="space-y-4 p-6">
-            {[0, 1, 2, 3].map((row) => (
-              <Skeleton key={row} className="h-9 w-full" />
-            ))}
+
+        <Card>
+          {/* No eyebrow. `StatRow` states the window itself, in a caption under
+              the strip it belongs to — an eyebrow above the card repeated it, so
+              one card said "Last 30 days" twice, 100px apart, about the same
+              four numbers. */}
+          <CardHeader
+            title={t('agents.performance') || 'Performance'}
+            titleAs="h2"
+            actions={
+              <Link to="/analytics" className={buttonClass('ghost', 'sm')}>
+                {t('agents.fullAnalytics') || 'Full analytics'}
+              </Link>
+            }
+          />
+          <CardBody flush>
+            <StatRow
+              period={rangeLabel(days)}
+              label={t('agents.conversationVolume') || 'Conversation volume'}
+              columns={4}
+              items={[
+                {
+                  label: t('agents.conversations') || 'Conversations',
+                  value: formatNumber(figures.data.conversations),
+                  size: 'lg',
+                  delta: deltas.conversations ?? undefined,
+                  loading: figures.loading,
+                },
+                {
+                  label: t('agents.messages') || 'Messages',
+                  value: formatNumber(figures.data.messages),
+                  size: 'lg',
+                  delta: deltas.messages ?? undefined,
+                  loading: figures.loading,
+                },
+                {
+                  label: t('agents.resolutionRate') || 'Resolution rate',
+                  value:
+                    resolution.data.rate === null
+                      ? undefined
+                      : formatPercent(resolution.data.rate / 100),
+                  // The endpoint takes no window, so this tile states its own.
+                  period: t('agents.allTime') || 'All time',
+                  size: 'lg',
+                  empty: resolution.loading ? undefined : t('agents.notRatedYet') || 'Not rated yet',
+                  loading: resolution.loading,
+                },
+                {
+                  label: t('agents.averageRating') || 'Average rating',
+                  value:
+                    ratings.data.average === null
+                      ? undefined
+                      : `${formatNumber(ratings.data.average)} / 5`,
+                  period: t('agents.allTime') || 'All time',
+                  size: 'lg',
+                  empty: ratings.loading ? undefined : t('agents.notRatedYet') || 'Not rated yet',
+                  loading: ratings.loading,
+                },
+              ]}
+            />
+          </CardBody>
+          <SectionError section={figures} title={t('agents.weCouldNotLoadThese') || 'We could not load these figures'} />
+          <SectionError section={resolution} title={t('agents.weCouldNotLoadThe5') || 'We could not load the resolution rate'} />
+          <SectionError section={ratings} title={t('agents.weCouldNotLoadThe4') || 'We could not load the ratings'} />
+        </Card>
+
+        {/* The chart and the ranked list are one answer — what visitors did, and
+            what they asked — so they share a row rather than sitting 700px
+            apart with five blocks between them. */}
+        <Columns
+          asideWidth="md"
+          asideLabel="Top questions"
+          main={
+            <Card>
+              {/* The chart is trimmed to the selected range client-side, so it
+                  states that range. Its neighbour states "All time", because
+                  `/analytics/top-questions` takes no window at all — two cards
+                  in one row, each honest about a different one. */}
+              <CardHeader eyebrow={rangeLabel(days)} title={t('agents.activity') || 'Activity'} titleAs="h2" />
+              <CardBody>
+                <ActivityChart section={activity} days={days} />
+              </CardBody>
+            </Card>
+          }
+          aside={
+            <Card className="h-full">
+              <CardHeader eyebrow="All time" title={t('agents.topQuestions') || 'Top questions'} titleAs="h2" />
+              <TopQuestions section={questions} />
+            </Card>
+          }
+        />
+
+        <Grid cols={3}>
+          <Card className="flex flex-col">
+            <CardHeader
+              size="sm"
+              title={t('agents.knowledge') || 'Knowledge'}
+              titleAs="h2"
+              actions={
+                <Link to={agentPath(agent.id, 'knowledge')} className={buttonClass('ghost', 'sm')}>
+                  {t('agents.manage') || 'Manage'}
+                </Link>
+              }
+            />
+            <CardBody>
+              <PropertyGrid
+                items={[
+                  {
+                    label: t('agents.passages') || 'Passages',
+                    value:
+                      indexed > 0 ? <span className="figure">{formatNumber(indexed)}</span> : undefined,
+                    note: t('agents.thePiecesThisChatbotSearches') || 'The pieces this chatbot searches when it answers.',
+                  },
+                  {
+                    label: t('agents.lastTrained') || 'Last trained',
+                    value: agent.crawl_completed_at ? (
+                      <span className="figure">{formatDate(agent.crawl_completed_at)}</span>
+                    ) : undefined,
+                  },
+                ]}
+              />
+            </CardBody>
           </Card>
-        ) : status === 'error' ? (
-          <SectionUnavailable />
-        ) : (
-          <TopQuestions questions={questions} />
-        )}
-      </section>
-    </PageContainer>
+
+          <Card className="flex flex-col">
+            <CardHeader
+              size="sm"
+              title={t('agents.deployment') || 'Deployment'}
+              titleAs="h2"
+              actions={
+                <Link to={agentPath(agent.id, 'deploy')} className={buttonClass('ghost', 'sm')}>
+                  {t('agents.manage') || 'Manage'}
+                </Link>
+              }
+            />
+            <CardBody>
+              {/* The chatbot key is a fourth fact, not a block with its own
+                  eyebrow under a list that already had a label treatment. */}
+              <PropertyGrid
+                items={[
+                  {
+                    label: t('agents.websiteWidget') || 'Website widget',
+                    value: (
+                      <Badge tone={installed ? 'success' : 'neutral'} dot>
+                        {installed ? t('agents.installed') || 'Installed' : t('agents.notInstalled') || 'Not installed'}
+                      </Badge>
+                    ),
+                  },
+                  { label: t('agents.website') || 'Website', value: agent.website || undefined },
+                  {
+                    label: t('agents.firstSeenLive') || 'First seen live',
+                    value: agent.widget_installed_at ? (
+                      <span className="figure">{formatDate(agent.widget_installed_at)}</span>
+                    ) : undefined,
+                  },
+                  {
+                    label: t('agents.chatbotKey2') || 'Chatbot key',
+                    value: agent.bot_key ? (
+                      <CopyField value={agent.bot_key} label={t('agents.chatbotKey') || 'chatbot key'} compact />
+                    ) : undefined,
+                  },
+                ]}
+              />
+            </CardBody>
+          </Card>
+
+          <Card className="flex flex-col">
+            <CardHeader size="sm" title={t('agents.demoShares') || 'Demo shares'} titleAs="h2" />
+            <CardBody>
+              <PropertyGrid
+                items={[
+                  {
+                    label: t('agents.linksShared') || 'Links shared',
+                    value: (
+                      <span className="figure">{formatNumber(figures.data.demoShares)}</span>
+                    ),
+                  },
+                  {
+                    label: t('agents.demosOpened') || 'Demos opened',
+                    value: <span className="figure">{formatNumber(figures.data.demoOpens)}</span>,
+                  },
+                  {
+                    label: t('agents.openRate') || 'Open rate',
+                    value:
+                      figures.data.demoOpenRate === null ? undefined : (
+                        <span className="figure">
+                          {formatPercent(figures.data.demoOpenRate / 100)}
+                        </span>
+                      ),
+                  },
+                ]}
+              />
+            </CardBody>
+          </Card>
+        </Grid>
+      </Stack>
+    </Page>
   );
 }
 
-/** Skeleton shown while the agent itself is resolving from context. */
-function OverviewSkeleton(): ReactElement {
+/** Shown while the chatbot itself is still resolving from the URL. */
+function OverviewSkeleton() {
   const { t } = useTranslation();
   return (
-    <PageContainer title={t('agents.overview') || 'Overview'}>
-      <Card className="p-6">
-        <div className="flex gap-5">
-          <Skeleton className="h-14 w-14 rounded-2xl" />
-          <div className="flex-1 space-y-3">
-            <Skeleton className="h-6 w-52" />
-            <Skeleton className="h-4 w-full max-w-md" />
-          </div>
-        </div>
-      </Card>
-      <Card className="p-6">
-        <div className="space-y-3">
-          <Skeleton className="h-6 w-48" />
-          <Skeleton className="h-4 w-full" />
-        </div>
-      </Card>
-      <MetricGridSkeleton />
-    </PageContainer>
+    <Page width="wide">
+      <PageHeader title={t('agents.overview') || 'Overview'} />
+      <Stack>
+        <Card>
+          <CardBody className="flex items-center gap-3">
+            <Skeleton className="h-5 w-24" />
+            <Skeleton className="h-4 w-64" />
+          </CardBody>
+        </Card>
+        <Card>
+          <CardBody className="grid grid-cols-2 gap-6 lg:grid-cols-4">
+            {Array.from({ length: 4 }, (_, index) => (
+              <div key={index} className="space-y-2">
+                <Skeleton className="h-3 w-20" />
+                <Skeleton className="h-6 w-16" />
+              </div>
+            ))}
+          </CardBody>
+        </Card>
+        <Columns
+          asideWidth="md"
+          main={
+            <Card>
+              <CardBody>
+                <Skeleton className="h-56" />
+              </CardBody>
+            </Card>
+          }
+          aside={
+            <Card>
+              <CardBody>
+                <Skeleton className="h-56" />
+              </CardBody>
+            </Card>
+          }
+        />
+      </Stack>
+    </Page>
   );
 }
 
-export function OverviewPage(): ReactElement {
+export function OverviewPage() {
   const { t } = useTranslation();
-  const { agent, loading, error } = useAgent();
+  const { agent, loading, error, refresh } = useAgent();
 
   if (agent) {
+    // Keyed on the chatbot, so switching to another one remounts rather than
+    // rendering one chatbot's numbers under another's name for a frame.
     return <OverviewContent key={agent.id} agent={agent} />;
   }
 
-  if (loading) {
-    return <OverviewSkeleton />;
+  if (loading) return <OverviewSkeleton />;
+
+  // A 403 and a missing chatbot are different answers, and offering both at once
+  // asked the reader to guess which one they got.
+  if (error?.status === 403) {
+    return (
+      <Page width="wide">
+        <PageHeader title={t('agents.overview') || 'Overview'} />
+        <LockedState
+          title={t('agents.thisChatbotIsNotYours') || 'This chatbot is not yours to see'}
+          description={t('agents.askAnOwnerOrAdmin') || 'Ask an owner or admin of this workspace for access.'}
+          action={
+            <Link to="/chatbots" className={buttonClass('secondary', 'md')}>
+              {t('agents.backToYourChatbots') || 'Back to your chatbots'}
+            </Link>
+          }
+        />
+      </Page>
+    );
   }
 
   return (
-    <PageContainer title={t('agents.overview') || 'Overview'}>
-      <Card className="p-6">
-        <EmptyState
-          icon={AlertCircle}
-          title={error ? t('agents.couldntLoadThisChatbot') || 'Couldn’t load this chatbot' : t('agents.chatbotNotFound') || 'Chatbot not found'}
+    <Page width="wide">
+      <PageHeader title={t('agents.overview') || 'Overview'} />
+      <Card>
+        <ErrorState
+          title={error ? t('agents.weCouldNotLoadThis') || 'We could not load this chatbot' : t('agents.chatbotNotFound') || 'Chatbot not found'}
           description={
             error
-              ? t('agents.somethingWentWrongLoadingThis') || 'Something went wrong loading this chatbot. Please refresh the page.'
-              : t('agents.thisChatbotDoesntExistOr') || 'This chatbot doesn’t exist or you don’t have access to it.'
+              ? error.message || t('agents.somethingWentWrongWhileLoading') || 'Something went wrong while loading this workspace.'
+              : t('agents.thisChatbotDoesNotExist2') || 'This chatbot does not exist in this workspace.'
           }
+          onRetry={() => void refresh()}
         />
       </Card>
-    </PageContainer>
+    </Page>
   );
 }

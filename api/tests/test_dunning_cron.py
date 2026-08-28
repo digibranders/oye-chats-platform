@@ -306,3 +306,158 @@ def test_the_quoted_amount_is_the_gross_that_was_actually_debited(db, monkeypatc
     assert "10,747.44" in seen["amount"], seen["amount"]
     # The base is still named, so the figure reconciles against the plan row.
     assert "9,108" in seen["amount"], seen["amount"]
+
+
+# ── The mandate must die with the subscription ───────────────────────────────
+#
+# Expiry used to flip ``status`` and deactivate the knowledge base while leaving
+# the Razorpay mandate LIVE and merely halted. Halted is inside
+# ``RECOVERABLE_GATEWAY_STATES``, so the suspension email rendered a working
+# "recover your subscription" button — and if the customer pressed it (or
+# Razorpay's own retry finally succeeded) the charge was captured, an invoice
+# was written, and ``_handle_subscription_charged`` refused to reactivate an
+# expired row. Money in, zero service, recovery only by a manual refund.
+
+
+def test_expiry_cancels_the_gateway_mandate(db, monkeypatch):
+    from app.services import transition_service
+    from app.worker import tasks
+
+    monkeypatch.setattr(tasks, "_dunning_send", lambda *a, **kw: True)
+    cancelled: list[tuple[int, bool]] = []
+
+    def _fake_cancel(session, sub, *, at_period_end=True):
+        cancelled.append((sub.id, at_period_end))
+        sub.gateway_cancel_executed_at = datetime.now(UTC)
+        return True
+
+    monkeypatch.setattr(transition_service, "execute_gateway_cancellation", _fake_cancel)
+
+    sub = _past_due_sub(db, days_ago=99, email="expire-cancels@test.dev")
+    db.commit()
+    sub_id = sub.id
+
+    tasks._expire_past_due_cycle(db)
+
+    assert cancelled, "the dunning expiry must retire the mandate, not leave it live and chargeable"
+    assert cancelled[0][0] == sub_id
+    # IMMEDIATE, not at cycle end: the period has already elapsed unpaid, and a
+    # cycle-end cancel leaves Razorpay free to keep retrying until then.
+    assert cancelled[0][1] is False
+
+
+def test_expiry_survives_a_failed_gateway_cancel(db, monkeypatch):
+    """The state change is load-bearing; the gateway call is not. A Razorpay
+    outage must never leave a customer entitled to a plan they stopped paying
+    for — same doctrine as the suspension email."""
+    from app.services import razorpay_service, transition_service
+    from app.worker import tasks
+
+    monkeypatch.setattr(tasks, "_dunning_send", lambda *a, **kw: True)
+
+    def _boom(session, sub, *, at_period_end=True):
+        raise razorpay_service.RazorpayBillingError("gateway down")
+
+    monkeypatch.setattr(transition_service, "execute_gateway_cancellation", _boom)
+
+    sub = _past_due_sub(db, days_ago=99, email="expire-cancel-fails@test.dev")
+    db.commit()
+    sub_id = sub.id
+
+    assert tasks._expire_past_due_cycle(db) == 1
+
+    db.rollback()
+    from app.db.models import Subscription as _Sub
+
+    fresh = db.get(_Sub, sub_id)
+    assert fresh.status == "expired"
+
+
+# ── The figure in a dunning email is the one the customer compares against
+#    their bank statement, so it must be the amount actually attempted ────────
+#
+# ``_dunning_send`` honoured only the CYCLE axis. The admin at-risk queue has
+# honoured all three (cycle, rail, standing referral discount) since
+# ``_cycle_at_risk_minor``; the customer-facing email did not. So a discounted
+# subscriber was quoted the full list price (roughly double their real debit),
+# and a USD-rail subscriber was quoted the INR column. A wrong number is what
+# makes a dunning email read as phishing — the opposite of its purpose.
+#
+# Both consumers now share one implementation: ``dunning_service.cycle_charge_minor``.
+
+
+def _priced_plan(**overrides):
+    from app.db.models import Plan as _P
+
+    defaults = dict(
+        name="Standard",
+        slug="std-cycle-charge",
+        monthly_price_cents=94900,
+        annual_price_cents=949000,
+        monthly_price_usd_cents=1900,
+        annual_price_usd_cents=19000,
+    )
+    defaults.update(overrides)
+    return _P(**defaults)
+
+
+def test_cycle_charge_follows_the_billing_cycle():
+    from app.services.dunning_service import cycle_charge_minor
+
+    plan = _priced_plan()
+    assert cycle_charge_minor(plan, "monthly", "INR") == 94900
+    assert cycle_charge_minor(plan, "annual", "INR") == 949000
+
+
+def test_cycle_charge_follows_the_rail():
+    from app.services.dunning_service import cycle_charge_minor
+
+    plan = _priced_plan()
+    assert cycle_charge_minor(plan, "monthly", "USD") == 1900
+    assert cycle_charge_minor(plan, "annual", "USD") == 19000
+
+
+def test_cycle_charge_applies_a_standing_discount_the_way_the_gateway_does():
+    from app.services.dunning_service import cycle_charge_minor
+
+    plan = _priced_plan()
+    # Mirrors resolve_discounted_plan: base - floor(base × bps / 10000).
+    assert cycle_charge_minor(plan, "monthly", "INR", discount_bps=5000) == 94900 - 47450
+
+
+def test_cycle_charge_reports_a_broken_price_as_unknown_not_zero():
+    """A missing price must not print "₹0.00 failed" at a customer who is about
+    to lose a real cycle."""
+    from app.services.dunning_service import cycle_charge_minor
+
+    assert cycle_charge_minor(_priced_plan(annual_price_usd_cents=None), "annual", "USD") is None
+    assert cycle_charge_minor(_priced_plan(annual_price_cents=0), "annual", "INR") is None
+    assert cycle_charge_minor(None, "monthly", "INR") is None
+
+
+def test_the_dunning_email_quotes_the_shared_calculation(db, monkeypatch):
+    """`_dunning_send` must route through it rather than re-deriving the price
+    from the INR columns alone."""
+    from app.services import dunning_service, email_service
+    from app.worker import tasks
+
+    captured: dict = {}
+    monkeypatch.setattr(email_service, "send_payment_failed_email", lambda to, **kw: captured.update(kw) or True)
+    seen: list = []
+
+    def _spy(plan, billing_cycle, currency, discount_bps=0):
+        seen.append((billing_cycle, currency, discount_bps))
+        return 50000
+
+    monkeypatch.setattr(dunning_service, "cycle_charge_minor", _spy)
+
+    sub = _past_due_sub(db, days_ago=0, email="dun-shared@test.dev")
+    sub.billing_cycle = "annual"
+    db.flush()
+    owner = db.get(Client, sub.client_id)
+
+    tasks._dunning_send("failed_0", owner=owner, sub=sub, plan_name="Standard", days_left=7, rate_bps=1800)
+
+    assert seen, "the email must price the cycle through the shared helper"
+    assert seen[0][0] == "annual"
+    assert "500" in captured.get("amount", ""), captured

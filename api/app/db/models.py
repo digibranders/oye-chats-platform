@@ -300,6 +300,11 @@ class Bot(Base):
     # computed but nothing passed verification (show only the open input).
     seed_questions = Column(JSONB, nullable=True)
 
+    # Kill switch for the manual lead follow-up email (``POST
+    # /leads/{id}/followup``, Gate 4). While true the route refuses with 423
+    # and no override exists. Historically platform-side only, with no writer
+    # outside a super-admin/DB edit; it is now customer-writable through
+    # ``PATCH /bots/{id}`` so the account that owns the mailbox owns the pause.
     followup_sending_paused = Column(Boolean, default=False, server_default="false")
     # Durable per-bot ingestion ("trained") state. Lets the frontend read a
     # persistent fact instead of racing the ephemeral, client-scoped
@@ -437,7 +442,27 @@ class Bot(Base):
     # Live chat settings
     live_chat_enabled = Column(Boolean, default=True, server_default="true", nullable=False)
     operator_timeout_seconds = Column(Integer, default=120, server_default="120", nullable=False)
-    # Configurable timeouts for visitor/operator disconnect grace periods
+    # Per-bot grace periods, in seconds, for the two live-chat disconnect
+    # timers. Only ONE of them is a customer-facing setting.
+    #
+    # ``visitor_disconnect_timeout`` IS read at runtime:
+    # ``live_chat_service.handle_visitor_disconnect`` prefers it over
+    # ``DEFAULT_VISITOR_DISCONNECT_TIMEOUT`` (120s, the same number as this
+    # column's default) before auto-closing an abandoned chat. It is therefore
+    # customer-writable through ``PATCH /bots/{id}``, bounded 5..3600 at the
+    # API boundary to match ``operator_timeout_seconds``.
+    #
+    # ``operator_disconnect_timeout`` is NOT read by anything:
+    # ``live_chat_service._operator_disconnect_timeout`` sleeps the class
+    # constant ``DEFAULT_OPERATOR_DISCONNECT_TIMEOUT`` (60s, again this
+    # column's default) and never looks the column up. It is consequently NOT
+    # exposed on ``UpdateBotRequest``/``BotResponse``: a setting that validates,
+    # persists and echoes back while changing nothing teaches customers that
+    # the settings page is decorative. Wiring belongs in ``live_chat_service``
+    # (``_operator_disconnect_timeout`` already receives ``operator_id``; one
+    # ``Operator`` -> ``Bot`` lookup yields the value, mirroring how
+    # ``handle_visitor_disconnect`` reads its peer), and the API fields go back
+    # in the same change.
     visitor_disconnect_timeout = Column(Integer, default=120, server_default="120", nullable=False)
     operator_disconnect_timeout = Column(Integer, default=60, server_default="60", nullable=False)
     business_hours = Column(sqlalchemy.JSON, nullable=True)  # e.g. {"mon":{"start":"09:00","end":"17:00"}, ...}
@@ -561,6 +586,109 @@ class Bot(Base):
     # actually live without a user self-report. NULL = never seen installed.
     widget_installed_at = Column(DateTime(timezone=True), nullable=True)
 
+    # Who the install briefing was last emailed to, and when. The Deploy page's
+    # "Email this to my developer" was a ``mailto:`` link, so the product could
+    # never know whether anything was sent; these two make "already sent to X on
+    # Y" a fact that survives a reload and a change of device.
+    #
+    # Only the most recent send is kept. Re-sending to the SAME address is what
+    # the console confirms before spending, so the last recipient is the only
+    # one it has to compare against; a second developer is a new handoff, not a
+    # duplicate. NULL on both = never sent.
+    dev_invite_email = Column(String, nullable=True)
+    dev_invite_sent_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Liveness heartbeat for the same install, refreshed by the public settings
+    # endpoint. ``widget_installed_at`` answers "did they ever finish the
+    # install"; these two answer "is it still running, and where", which is the
+    # question every allow-list support ticket actually asks.
+    #
+    # NULL is a real state on both: "not seen since this shipped". There is no
+    # backfill, so an install stamped before these columns existed reads NULL
+    # until its widget next bootstraps.
+    #
+    # Write rate is throttled in ``bot_routes._widget_heartbeat_due`` by two
+    # Redis ``SET NX EX`` gates on PER-BOT keys: at most 2 UPDATEs per bot per
+    # hour (an hourly refresh plus one allowance for a changed origin), and
+    # none at all when Redis is unreachable. That matters because the endpoint
+    # runs on every widget bootstrap, i.e. every page view on every customer
+    # site. The throttle is NOT keyed on the origin, because the origin is an
+    # attacker-supplied header on an endpoint whose bot key is public, and a
+    # per-origin key would let a loop of forged ``Origin`` values buy one row
+    # write and one hour-long Redis key per request.
+    widget_last_seen_at = Column(DateTime(timezone=True), nullable=True)
+    # The Origin/Referer hostname of the most recent bootstrap.
+    #
+    # SECURITY: browser-forgeable. ``Origin`` is only trustworthy coming from a
+    # real browser; any HTTP client can send whatever it likes, and the bot key
+    # that authenticates the write is public by design (it ships in the embed
+    # snippet), so anyone holding it can put an arbitrary string here. Support
+    # must read this as a HINT about which domain an agent appears to run on,
+    # never as proof that it does. This column is therefore DIAGNOSTIC ONLY and
+    # must never gate anything, in particular it must never be consulted for
+    # embed-origin enforcement, which belongs to ``allowed_domains`` /
+    # ``domain_check_enabled`` and its own check in
+    # ``auth._enforce_bot_origin``.
+    #
+    # Length is bounded upstream, not here: ``origin_check.extract_hostname``
+    # returns None for anything over 253 characters (the DNS presentation-form
+    # cap), so no oversized value reaches this column. That bound is load-
+    # bearing rather than tidy -- this value rides into the bot-config Redis
+    # entry that every widget bootstrap reads, and ``urlparse`` will happily
+    # call five kilobytes of junk a hostname.
+    widget_last_origin = Column(String, nullable=True)
+
+    # ── Hosted demo page backdrop ────────────────────────────────────────────
+    #
+    # A screenshot of the customer's OWN site, captured on the worker during
+    # training and served as the backdrop of `GET /demo/{bot_key}` with the
+    # real widget live on top. Without it the demo link can only show a
+    # generic hero page, which is what the customer complains about when they
+    # send that link to a prospect.
+    #
+    # Why a stored capture rather than framing the live site: roughly 40% of
+    # sites set `X-Frame-Options` or a CSP `frame-ancestors` that forbids
+    # framing, and the population that buys this product skews higher than that
+    # average. A headless capture is subject to neither. It also keeps the
+    # demo page's request path free of a multi-second third-party render.
+    #
+    # `demo_screenshot_url` is a public CDN URL (R2). NULL means no usable
+    # capture, and the route falls back to the hero page rather than rendering
+    # a broken image.
+    demo_screenshot_url = Column(String, nullable=True)
+    # When the stored capture was taken. Drives staleness: past
+    # DEMO_SCREENSHOT_TTL_DAYS the next training run recaptures, so a demo link
+    # never shows a site design its owner replaced months ago.
+    demo_screenshot_captured_at = Column(DateTime(timezone=True), nullable=True)
+    # The URL actually captured. Kept because `website` can change after the
+    # capture: comparing the two is what tells "this screenshot is of the site
+    # they still have" from "this screenshot is of their previous site", which
+    # a timestamp alone cannot answer.
+    demo_screenshot_source_url = Column(String, nullable=True)
+    # Capture lifecycle, for the Deploy page to report honestly rather than
+    # leaving the customer to guess why their site is not showing:
+    # NULL = never attempted, "pending" = queued or running, "ready" = usable
+    # capture stored, "failed" = the provider could not render the page.
+    demo_screenshot_status = Column(String, nullable=True)
+
+    # Is this chatbot serving, and is it billable? Both, and the billing half is
+    # the one that surprises people: ``plan_entitlements_service`` counts only
+    # ``is_active`` bots in both ``can_client_add_new_bot`` and
+    # ``usage["bots"]``, so deactivating FREES A BILLING SLOT. That is why the
+    # false→true transition in ``bot_routes.update_bot`` re-runs the full create
+    # gate rather than writing the column straight through.
+    #
+    # On the read side the split is asymmetric, and intentionally so. The
+    # VISITOR-facing paths filter it: ``auth.get_current_bot`` refuses an
+    # inactive bot (this is what makes a pause actually pause), the
+    # ``X-API-Key`` default-bot fallback next to it 404s "No active bot found",
+    # and ``bot_routes.get_bot_demo_page`` 404s the public demo page. The
+    # OWNER-facing surfaces do NOT filter: ``GET /bots`` keeps a paused bot
+    # visible to the account that owns it so it can be resumed, and
+    # ``subscription_routes.get_credit_balance`` deliberately does not filter
+    # either -- a paused agent with its own subscription is still billed and
+    # still holds an expiring balance, so hiding its card hid live money. See
+    # the argument at that function.
     is_active = Column(sqlalchemy.Boolean, default=True, server_default="true", nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

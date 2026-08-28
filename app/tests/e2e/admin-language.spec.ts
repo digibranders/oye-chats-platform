@@ -15,42 +15,42 @@ import { expect, test, type Page } from '@playwright/test';
 
 import { mockBackend } from './mockBackend';
 
-const SETTINGS = '/settings';
+const ACCOUNT = '/account';
 
-async function openAppearance(page: Page): Promise<void> {
-  await page.goto(SETTINGS);
+async function openAccount(page: Page): Promise<void> {
+  await page.goto(ACCOUNT);
   await expect(page.getByRole('radio', { name: 'हिन्दी' })).toBeVisible({ timeout: 20_000 });
 }
 
 test.describe('Dashboard language selector', () => {
   test('offers English and Hindi, and starts on English', async ({ page }) => {
     await mockBackend(page);
-    await openAppearance(page);
+    await openAccount(page);
 
     await expect(page.getByRole('radio', { name: 'English' })).toBeVisible();
     await expect(page.getByRole('radio', { name: 'हिन्दी' })).toBeVisible();
     // English is the default, so the English original must be on screen.
-    await expect(page.getByText('Appearance', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Your account', level: 1 })).toBeVisible();
   });
 
   test('switching to Hindi replaces the English chrome', async ({ page }) => {
     await mockBackend(page);
-    await openAppearance(page);
+    await openAccount(page);
 
     await page.getByRole('radio', { name: 'हिन्दी' }).click();
 
     // PRESENT: the translated copy.
-    await expect(page.getByText('रूप', { exact: true })).toBeVisible();
-    await expect(page.getByText('थीम', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'आपका खाता', level: 1 })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'भाषा', exact: true, level: 2 })).toBeVisible();
     // ABSENT: the English originals it replaced. This is the assertion that
     // catches a half-translated screen.
-    await expect(page.getByText('Appearance', { exact: true })).toHaveCount(0);
-    await expect(page.getByText('Theme', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Your account', level: 1 })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Language', exact: true, level: 2 })).toHaveCount(0);
   });
 
   test('the sidebar follows, so nav is not left in the previous language', async ({ page }) => {
     await mockBackend(page);
-    await openAppearance(page);
+    await openAccount(page);
 
     // Scoped by ROLE, not by accessible name. The sidebar landmark's own label
     // is itself localized, so scoping by "Primary navigation" stops matching
@@ -66,45 +66,45 @@ test.describe('Dashboard language selector', () => {
 
   test('the choice survives a reload', async ({ page }) => {
     await mockBackend(page);
-    await openAppearance(page);
+    await openAccount(page);
     await page.getByRole('radio', { name: 'हिन्दी' }).click();
-    await expect(page.getByText('रूप', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'आपका खाता', level: 1 })).toBeVisible();
 
     await page.reload();
 
-    await expect(page.getByText('रूप', { exact: true })).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByText('Appearance', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'आपका खाता', level: 1 })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole('heading', { name: 'Your account', level: 1 })).toHaveCount(0);
   });
 
   test('switching back restores English exactly', async ({ page }) => {
     await mockBackend(page);
-    await openAppearance(page);
+    await openAccount(page);
 
     await page.getByRole('radio', { name: 'हिन्दी' }).click();
-    await expect(page.getByText('रूप', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'आपका खाता', level: 1 })).toBeVisible();
 
     await page.getByRole('radio', { name: 'English' }).click();
 
-    await expect(page.getByText('Appearance', { exact: true })).toBeVisible();
-    await expect(page.getByText('रूप', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Your account', level: 1 })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'आपका खाता', level: 1 })).toHaveCount(0);
   });
 
   test('the group is reachable and operable by keyboard', async ({ page }) => {
     await mockBackend(page);
-    await openAppearance(page);
+    await openAccount(page);
 
-    // Only the checked option is in the tab order, matching the Theme and
-    // Contrast groups; arrow keys move AND select, like native radios.
+    // Only the checked option is in the tab order; arrow keys move AND
+    // select, like native radios.
     await page.getByRole('radio', { name: 'English' }).focus();
     await page.keyboard.press('ArrowDown');
 
     await expect(page.getByRole('radio', { name: 'हिन्दी' })).toBeFocused();
-    await expect(page.getByText('रूप', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'आपका खाता', level: 1 })).toBeVisible();
   });
 
   test('sets document lang, and never flips direction for an LTR language', async ({ page }) => {
     await mockBackend(page);
-    await openAppearance(page);
+    await openAccount(page);
 
     await page.getByRole('radio', { name: 'हिन्दी' }).click();
 
@@ -129,32 +129,37 @@ test.describe('Dashboard language selector', () => {
       return route.fulfill({ json: { preferred_locale: null, available: [] } });
     });
 
-    await openAppearance(page);
+    await openAccount(page);
     await page.getByRole('radio', { name: 'हिन्दी' }).click();
-    await expect(page.getByText('रूप', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'आपका खाता', level: 1 })).toBeVisible();
 
     expect(operatorLanguageWrites).toEqual([]);
   });
 
   test('the inbox chrome follows the language too', async ({ page }) => {
     await mockBackend(page);
-    await openAppearance(page);
+    await openAccount(page);
     await page.getByRole('radio', { name: 'हिन्दी' }).click();
-    await expect(page.getByText('रूप', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'आपका खाता', level: 1 })).toBeVisible();
 
     await page.goto('/inbox');
 
-    // PRESENT: the localized tab strip. ABSENT: the English it replaced.
-    await expect(page.getByRole('tab', { name: 'संदेश' })).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByRole('tab', { name: 'Messages' })).toHaveCount(0);
-    await expect(page.getByRole('tab', { name: 'Live chat' })).toHaveCount(0);
+    // PRESENT: the localized inbox chrome. ABSENT: the English it replaced.
+    // The console opens straight onto the conversation list, so the page
+    // heading and the list's own heading are what carry the language here.
+    await expect(page.getByRole('heading', { name: 'इनबॉक्स', level: 1 })).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(page.getByRole('heading', { name: 'Inbox', level: 1 })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'बातचीत', level: 2 })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Conversations', level: 2 })).toHaveCount(0);
   });
 
   test('stores the locale per device, not on the server', async ({ page }) => {
     await mockBackend(page);
-    await openAppearance(page);
+    await openAccount(page);
     await page.getByRole('radio', { name: 'हिन्दी' }).click();
-    await expect(page.getByText('रूप', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'आपका खाता', level: 1 })).toBeVisible();
 
     const stored = await page.evaluate(() => window.localStorage.getItem('oc_ui_locale'));
     expect(stored).toBe('hi-IN');

@@ -1,0 +1,1291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OyeChats — System Infrastructure & Dependency Specification</title>
+
+  <!-- Google Fonts: Inter, Plus Jakarta Sans, Fira Code -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet" />
+
+  <style>
+    :root {
+      --bg-base: #090d16;
+      --bg-surface: #111827;
+      --bg-card: #1f293d;
+      --bg-card-hover: #26334d;
+      --border-color: #2e3d59;
+      --border-highlight: #3b82f6;
+
+      --text-main: #f3f4f6;
+      --text-muted: #9ca3af;
+      --text-dim: #6b7280;
+
+      --accent-blue: #3b82f6;
+      --accent-cyan: #06b6d4;
+      --accent-purple: #8b5cf6;
+      --accent-emerald: #10b981;
+      --accent-amber: #f59e0b;
+      --accent-rose: #f43f5e;
+
+      --badge-paid-bg: rgba(244, 63, 94, 0.15);
+      --badge-paid-border: rgba(244, 63, 94, 0.4);
+      --badge-paid-text: #fb7185;
+
+      --badge-free-bg: rgba(16, 185, 129, 0.15);
+      --badge-free-border: rgba(16, 185, 129, 0.4);
+      --badge-free-text: #34d399;
+
+      --badge-payg-bg: rgba(245, 158, 11, 0.15);
+      --badge-payg-border: rgba(245, 158, 11, 0.4);
+      --badge-payg-text: #fbbf24;
+
+      --badge-infra-bg: rgba(59, 130, 246, 0.15);
+      --badge-infra-border: rgba(59, 130, 246, 0.4);
+      --badge-infra-text: #60a5fa;
+
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 16px;
+      --shadow-glow: 0 0 25px rgba(59, 130, 246, 0.15);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background-color: var(--bg-base);
+      color: var(--text-main);
+      line-height: 1.6;
+      padding-bottom: 80px;
+    }
+
+    /* Code Typography */
+    code, pre, .mono {
+      font-family: 'Fira Code', monospace;
+    }
+
+    h1, h2, h3, h4, .font-heading {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+    }
+
+    /* Container */
+    .container {
+      max-width: 1380px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* Top Banner / Header */
+    header {
+      background: linear-gradient(180deg, rgba(17, 24, 39, 0.95) 0%, rgba(9, 13, 22, 0.8) 100%);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border-color);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      padding: 20px 0;
+    }
+
+    .header-inner {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .brand-title {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-logo {
+      width: 40px;
+      height: 40px;
+      background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      color: #fff;
+      font-size: 20px;
+      box-shadow: var(--shadow-glow);
+    }
+
+    .brand-title h1 {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      color: #ffffff;
+    }
+
+    .brand-title span {
+      color: var(--text-muted);
+      font-size: 13px;
+      font-weight: 400;
+      display: block;
+    }
+
+    .header-controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .search-box {
+      position: relative;
+      width: 320px;
+    }
+
+    .search-box input {
+      width: 100%;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 10px 16px 10px 40px;
+      border-radius: var(--radius-md);
+      font-size: 14px;
+      outline: none;
+      transition: all 0.2s ease;
+    }
+
+    .search-box input:focus {
+      border-color: var(--accent-blue);
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+    }
+
+    .search-box svg {
+      position: absolute;
+      left: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 18px;
+      height: 18px;
+      color: var(--text-dim);
+    }
+
+    /* Sub-nav / Quick Filters */
+    .filter-bar {
+      margin-top: 24px;
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 8px;
+    }
+
+    .filter-btn {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.2s ease;
+    }
+
+    .filter-btn:hover {
+      color: var(--text-main);
+      border-color: var(--text-dim);
+    }
+
+    .filter-btn.active {
+      background: var(--accent-blue);
+      color: #ffffff;
+      border-color: var(--accent-blue);
+    }
+
+    /* Summary Stats Grid */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin: 28px 0 36px 0;
+    }
+
+    .stat-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 20px;
+      transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+
+    .stat-card:hover {
+      border-color: var(--border-highlight);
+      transform: translateY(-2px);
+    }
+
+    .stat-card .label {
+      font-size: 12px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-weight: 600;
+    }
+
+    .stat-card .value {
+      font-size: 28px;
+      font-weight: 800;
+      color: var(--text-main);
+      margin: 6px 0 2px 0;
+      font-family: 'Plus Jakarta Sans', sans-serif;
+    }
+
+    .stat-card .subtext {
+      font-size: 12px;
+      color: var(--accent-emerald);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    /* Content Section Styling */
+    .section-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: #ffffff;
+      margin: 40px 0 16px 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .section-title .icon-tag {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: rgba(59, 130, 246, 0.15);
+      color: var(--accent-blue);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+    }
+
+    /* Cards Grid */
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+
+    .card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: all 0.2s ease;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card:hover {
+      border-color: var(--border-highlight);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 12px;
+    }
+
+    .card-name {
+      font-size: 16px;
+      font-weight: 700;
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card-version {
+      font-family: 'Fira Code', monospace;
+      font-size: 12px;
+      color: var(--accent-cyan);
+      background: rgba(6, 182, 212, 0.1);
+      padding: 2px 8px;
+      border-radius: 4px;
+      border: 1px solid rgba(6, 182, 212, 0.2);
+    }
+
+    .card-desc {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 16px;
+      flex-grow: 1;
+    }
+
+    .card-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-top: 12px;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      font-size: 12px;
+    }
+
+    /* Badges */
+    .badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .badge-paid {
+      background: var(--badge-paid-bg);
+      border: 1px solid var(--badge-paid-border);
+      color: var(--badge-paid-text);
+    }
+
+    .badge-free {
+      background: var(--badge-free-bg);
+      border: 1px solid var(--badge-free-border);
+      color: var(--badge-free-text);
+    }
+
+    .badge-payg {
+      background: var(--badge-payg-bg);
+      border: 1px solid var(--badge-payg-border);
+      color: var(--badge-payg-text);
+    }
+
+    .badge-infra {
+      background: var(--badge-infra-bg);
+      border: 1px solid var(--badge-infra-border);
+      color: var(--badge-infra-text);
+    }
+
+    /* Professional Data Table */
+    .table-container {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      overflow-x: auto;
+      margin-bottom: 32px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 13px;
+    }
+
+    th {
+      background: #172033;
+      color: var(--text-muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 0.5px;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    td {
+      padding: 14px 18px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      color: var(--text-main);
+      vertical-align: middle;
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .tech-pill {
+      font-family: 'Fira Code', monospace;
+      font-size: 12px;
+      color: var(--accent-purple);
+      background: rgba(139, 92, 246, 0.1);
+      padding: 3px 8px;
+      border-radius: 4px;
+      border: 1px solid rgba(139, 92, 246, 0.2);
+    }
+
+    /* Callout Box */
+    .callout {
+      background: rgba(59, 130, 246, 0.08);
+      border-left: 4px solid var(--accent-blue);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      padding: 16px 20px;
+      margin: 20px 0;
+      font-size: 13px;
+      color: var(--text-main);
+    }
+
+    .callout strong {
+      color: var(--accent-blue);
+    }
+
+    /* Sub-app Header */
+    .repo-banner {
+      background: linear-gradient(90deg, #1e293b 0%, #0f172a 100%);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 16px 20px;
+      margin: 28px 0 16px 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .repo-banner h3 {
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .repo-path {
+      font-family: 'Fira Code', monospace;
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+
+    /* Footer */
+    footer {
+      margin-top: 60px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border-color);
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 13px;
+    }
+
+    /* Hidden element utility for search filtering */
+    .hidden {
+      display: none !important;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header Section -->
+  <header>
+    <div class="container header-inner">
+      <div class="brand-title">
+        <div class="brand-logo">O</div>
+        <div>
+          <h1>OyeChats Dependency & Infrastructure Specification</h1>
+          <span>Complete Technical Inventory • Paid/Free Services • System Packages & Hosting Specification</span>
+        </div>
+      </div>
+
+      <div class="header-controls">
+        <div class="search-box">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+          </svg>
+          <input type="text" id="searchInput" placeholder="Search services, packages, infra..." onkeyup="filterItems()" />
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div class="container">
+
+    <!-- Category Filter Bar -->
+    <div class="filter-bar">
+      <button class="filter-btn active" onclick="setFilter('all', this)">All Specs</button>
+      <button class="filter-btn" onclick="setFilter('infra', this)">Hosting & Infrastructure</button>
+      <button class="filter-btn" onclick="setFilter('external-paid', this)">Paid External Services</button>
+      <button class="filter-btn" onclick="setFilter('external-free', this)">Free / Freemium APIs</button>
+      <button class="filter-btn" onclick="setFilter('python-api', this)">Backend API (Python)</button>
+      <button class="filter-btn" onclick="setFilter('frontend-apps', this)">Frontend Web Apps (React/Next)</button>
+      <button class="filter-btn" onclick="setFilter('mobile-app', this)">Mobile App (Expo)</button>
+      <button class="filter-btn" onclick="setFilter('cli-tool', this)">CLI Tool</button>
+      <button class="filter-btn" onclick="setFilter('env-vars', this)">Environment Variables</button>
+    </div>
+
+    <!-- Summary Stats Bar -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="label">Total System Projects</div>
+        <div class="value">7</div>
+        <div class="subtext">API, Web App, Super Admin, Widget, Site, Mobile, CLI</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="label">Fixed Infra Cost</div>
+        <div class="value">$12<span style="font-size: 14px; font-weight: normal;">/mo</span></div>
+        <div class="subtext">DigitalOcean 2GB + Free Vercel/CDN</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="label">External Integrated APIs</div>
+        <div class="value">10</div>
+        <div class="subtext">LLMs, Scrapers, Payments, Sentry, Storage</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="label">Backend Python Packages</div>
+        <div class="value">36</div>
+        <div class="subtext">FastAPI, LiteLLM, SQLAlchemy, Redis</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="label">NPM JavaScript Packages</div>
+        <div class="value">85+</div>
+        <div class="subtext">React 19, Next 16, Vite 8, Tailwind v4</div>
+      </div>
+    </div>
+
+    <!-- SECTION 1: HOSTING & INFRASTRUCTURE -->
+    <div class="content-section" data-category="infra">
+      <div class="section-title">
+        <div class="icon-tag">☁️</div>
+        <h2>1. Hosting & Infrastructure Architecture</h2>
+      </div>
+
+      <div class="callout">
+        <strong>Architecture Philosophy:</strong> OyeChats uses a hybrid cloud model designed for ultra-low fixed operating costs (~$12/month). Core backend APIs, vector database, and background task processing run on a dedicated DigitalOcean droplet, while frontend sub-apps are hosted on Vercel's global edge CDN, and chat widget IIFE scripts are served globally from Cloudflare R2 CDN.
+      </div>
+
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Component / Service</th>
+              <th>Provider & Tier</th>
+              <th>Public Domain / Endpoint</th>
+              <th>Target Sub-App</th>
+              <th>Est. Cost</th>
+              <th>Technical Details & Role</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>API & Worker Server</strong></td>
+              <td>DigitalOcean Droplet<br/><span class="tech-pill">Ubuntu 24.04 LTS</span></td>
+              <td><code>api.oyechats.com</code></td>
+              <td><code>oye-chats-platform/api</code></td>
+              <td><span class="badge badge-paid">$12.00 / mo</span></td>
+              <td>2GB RAM / 1 vCPU (Bangalore Region). Runs Python 3.11 FastAPI backend, Gunicorn/Uvicorn, ARQ Background Worker, PostgreSQL 16 + pgvector, Redis, Nginx reverse proxy & Certbot SSL.</td>
+            </tr>
+            <tr>
+              <td><strong>Primary Vector & Relational DB</strong></td>
+              <td>PostgreSQL 16 + pgvector<br/><span class="tech-pill">Self-Hosted on Droplet</span></td>
+              <td><code>localhost:5432/oyechats</code></td>
+              <td><code>oye-chats-platform/api</code></td>
+              <td><span class="badge badge-free">$0.00 (Included)</span></td>
+              <td>Stores client accounts, bot definitions, chat sessions, vector embeddings (768-dim / 1536-dim HNSW vector indexes for RAG search), and billing records.</td>
+            </tr>
+            <tr>
+              <td><strong>Cache & Task Queue</strong></td>
+              <td>Redis 7<br/><span class="tech-pill">Self-Hosted on Droplet</span></td>
+              <td><code>localhost:6379/0</code></td>
+              <td><code>oye-chats-platform/api</code></td>
+              <td><span class="badge badge-free">$0.00 (Included)</span></td>
+              <td>In-memory rate limiting (slowapi), session caching, operator live chat WebSocket message bus, and ARQ async worker queue.</td>
+            </tr>
+            <tr>
+              <td><strong>Customer Admin SPA Hosting</strong></td>
+              <td>Vercel Cloud<br/><span class="tech-pill">Vite / React 19 SPA</span></td>
+              <td><code>app.oyechats.com</code></td>
+              <td><code>oye-chats-platform/app</code></td>
+              <td><span class="badge badge-free">Free Tier</span></td>
+              <td>Global edge CDN distribution for the customer management dashboard. Automated CI/CD git push deploys from <code>main</code> branch.</td>
+            </tr>
+            <tr>
+              <td><strong>Super Admin Console Hosting</strong></td>
+              <td>Vercel Cloud<br/><span class="tech-pill">Next.js 16 SSR/SSG</span></td>
+              <td><code>admin.oyechats.com</code></td>
+              <td><code>oyechats-admin</code></td>
+              <td><span class="badge badge-free">Free Tier</span></td>
+              <td>Host platform super-admin dashboard for client management, telemetry overview, global metrics, and system log monitoring.</td>
+            </tr>
+            <tr>
+              <td><strong>Marketing Landing Site</strong></td>
+              <td>Vercel Cloud<br/><span class="tech-pill">Next.js 16 (App Router)</span></td>
+              <td><code>oyechats.com</code><br/><code>www.oyechats.com</code></td>
+              <td><code>oyechats-website</code></td>
+              <td><span class="badge badge-free">Free Tier</span></td>
+              <td>High-performance marketing site rebuilt on the Voltage Paper design system with optimized SEO, AEO, dynamic animations, and signup flows.</td>
+            </tr>
+            <tr>
+              <td><strong>Chat Widget CDN & Backup Storage</strong></td>
+              <td>Cloudflare R2<br/><span class="tech-pill">S3-Compatible Object Storage</span></td>
+              <td><code>cdn.oyechats.com</code></td>
+              <td><code>oye-chats-platform/widget</code></td>
+              <td><span class="badge badge-payg">~$0.00 (Free 10GB)</span></td>
+              <td>Delivers embeddable chat widget script <code>oyechats-widget.js</code> and stylesheet globally with zero egress fees. Also stores automated nightly DB backups.</td>
+            </tr>
+            <tr>
+              <td><strong>DNS & SSL Management</strong></td>
+              <td>Cloudflare DNS & Let's Encrypt</td>
+              <td><code>*.oyechats.com</code></td>
+              <td>All Repositories</td>
+              <td><span class="badge badge-free">Free Tier</span></td>
+              <td>DNS routing, Cloudflare DDoS protection, automatic TLS 1.3 certificate renewals via Certbot.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+
+    <!-- SECTION 2: EXTERNAL PAID SERVICES -->
+    <div class="content-section" data-category="external-paid">
+      <div class="section-title">
+        <div class="icon-tag">💳</div>
+        <h2>2. Paid External Commercial Services & APIs</h2>
+      </div>
+
+      <div class="cards-grid">
+
+        <div class="card" data-search="openai gpt-4o gpt-4o-mini text-embedding-3-small llm ai rag">
+          <div>
+            <div class="card-header">
+              <div class="card-name">OpenAI API</div>
+              <span class="badge badge-paid">Paid API</span>
+            </div>
+            <div class="card-desc">
+              Primary Large Language Model (LLM) for RAG chatbot responses, text generation, sales lead BANT qualification extraction, and semantic embeddings (<code>text-embedding-3-small</code>).
+            </div>
+          </div>
+          <div class="card-footer">
+            <span>Model: <code>gpt-4o-mini</code> / <code>gpt-4o</code></span>
+            <span>Usage-based pricing</span>
+          </div>
+        </div>
+
+        <div class="card" data-search="google gemini 2.5 flash embedding 001 llm fallback">
+          <div>
+            <div class="card-header">
+              <div class="card-name">Google Gemini API</div>
+              <span class="badge badge-payg">Freemium / PAYG</span>
+            </div>
+            <div class="card-desc">
+              Primary off-box vector embedding provider (<code>gemini-embedding-001</code>, 768-dim) and secondary high-speed failover LLM (<code>gemini-2.5-flash</code>) via LiteLLM abstraction.
+            </div>
+          </div>
+          <div class="card-footer">
+            <span>Model: <code>gemini-2.5-flash</code></span>
+            <span>Free Tier + Pay-As-You-Go</span>
+          </div>
+        </div>
+
+        <div class="card" data-search="jina reader api r.jina.ai scraping web crawler markdown extraction primary paid credits">
+          <div>
+            <div class="card-header">
+              <div class="card-name">Jina Reader API</div>
+              <span class="badge badge-paid">Paid API</span>
+            </div>
+            <div class="card-desc">
+              Primary default URL-to-Markdown Web Scraping API (<code>r.jina.ai</code>). Paid API credits enable high-concurrency RPM throughput during website documentation RAG ingestion crawls (<code>CRAWL_PROVIDER_PRIMARY="jina"</code>).
+            </div>
+          </div>
+          <div class="card-footer">
+            <span>Endpoint: <code>r.jina.ai</code></span>
+            <span>Prepaid API Credits</span>
+          </div>
+        </div>
+
+        <div class="card" data-search="spider cloud scraping web crawler playwright extraction secondary">
+          <div>
+            <div class="card-header">
+              <div class="card-name">Spider.cloud API</div>
+              <span class="badge badge-paid">Prepaid / PAYG</span>
+            </div>
+            <div class="card-desc">
+              Secondary managed web crawler engine used by the backend ingestion pipeline for high-speed JS-rendered scraping when configured.
+            </div>
+          </div>
+          <div class="card-footer">
+            <span>Endpoint: <code>api.spider.cloud</code></span>
+            <span>Prepaid API Credits</span>
+          </div>
+        </div>
+
+        <div class="card" data-search="razorpay payments subscriptions billing tax invoice upi cards active">
+          <div>
+            <div class="card-header">
+              <div class="card-name">Razorpay Billing Gateway</div>
+              <span class="badge badge-paid">Paid Gateway</span>
+            </div>
+            <div class="card-desc">
+              Primary payment gateway processing platform customer subscriptions, automated payment link generation, INR/USD recurring card charges, UPI/NetBanking transactions, webhooks, and tax compliance.
+            </div>
+          </div>
+          <div class="card-footer">
+            <span>SDK: <code>razorpay</code> Python</span>
+            <span>~2% per transaction</span>
+          </div>
+        </div>
+
+        <div class="card" data-search="cloudflare r2 storage documents pdf upload cdn">
+          <div>
+            <div class="card-header">
+              <div class="card-name">Cloudflare R2 Storage</div>
+              <span class="badge badge-payg">Free 10GB / PAYG</span>
+            </div>
+            <div class="card-desc">
+              S3-compatible object storage for customer-uploaded document assets (PDF, DOCX, TXT), operator chat attachments, generated HTML/PDF invoices, and automated nightly DB backups. Zero egress fees.
+            </div>
+          </div>
+          <div class="card-footer">
+            <span>Bucket: <code>oyechats-cdn</code></span>
+            <span>$0 Egress / $0.015/GB</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+
+    <!-- SECTION 3: FREE & FREEMIUM SERVICES -->
+    <div class="content-section" data-category="external-free">
+      <div class="section-title">
+        <div class="icon-tag">⚡</div>
+        <h2>3. Free & Freemium External Integrations</h2>
+      </div>
+
+      <div class="cards-grid">
+
+        <div class="card" data-search="betterstack better uptime monitoring health status incident alerts">
+          <div>
+            <div class="card-header">
+              <div class="card-name">Better Stack Uptime</div>
+              <span class="badge badge-free">Free Tier</span>
+            </div>
+            <div class="card-desc">
+              External synthetic health monitoring and uptime tracking for API, web apps, and CDN endpoints (<code>api.oyechats.com</code>, <code>app.oyechats.com</code>) with instant incident alerting.
+            </div>
+          </div>
+          <div class="card-footer">
+            <span>Role: Uptime & Health Check</span>
+            <span>3-minute check intervals</span>
+          </div>
+        </div>
+
+        <div class="card" data-search="sentry error tracking logs exception monitoring">
+          <div>
+            <div class="card-header">
+              <div class="card-name">Sentry Error Monitoring</div>
+              <span class="badge badge-free">Free Developer Tier</span>
+            </div>
+            <div class="card-desc">
+              Real-time error tracking and performance profiling across Python FastAPI backend, Customer Admin SPA, and embeddable Chat Widget bundle.
+            </div>
+          </div>
+          <div class="card-footer">
+            <span>SDKs: <code>sentry-sdk</code>, <code>@sentry/react</code></span>
+            <span>5,000 events / mo</span>
+          </div>
+        </div>
+
+        <div class="card" data-search="langfuse llm tracing prompt telemetry observability">
+          <div>
+            <div class="card-header">
+              <div class="card-name">Langfuse Observability</div>
+              <span class="badge badge-free">Free Cloud Tier</span>
+            </div>
+            <div class="card-desc">
+              LLM call tracing, token usage logging, latency monitoring, and feedback correlation (linking user thumbs-up/down directly to prompt traces).
+            </div>
+          </div>
+          <div class="card-footer">
+            <span>SDK: <code>langfuse</code></span>
+            <span>50,000 observations / mo</span>
+          </div>
+        </div>
+
+        <div class="card" data-search="brevo sendinblue email notification reset verification">
+          <div>
+            <div class="card-header">
+              <div class="card-name">Brevo Email Delivery</div>
+              <span class="badge badge-free">Free Tier</span>
+            </div>
+            <div class="card-desc">
+              Transactional email delivery platform for user signup verification, password resets, team operator invitations, and critical billing notices.
+            </div>
+          </div>
+          <div class="card-footer">
+            <span>Protocol: REST / SMTP</span>
+            <span>300 emails / day free</span>
+          </div>
+        </div>
+
+        <div class="card" data-search="google oauth sign in auth client id login">
+          <div>
+            <div class="card-header">
+              <div class="card-name">Google OAuth 2.0</div>
+              <span class="badge badge-free">Free</span>
+            </div>
+            <div class="card-desc">
+              Social authentication provider allowing customer admin dashboard users to sign up and log in using "Sign in with Google".
+            </div>
+          </div>
+          <div class="card-footer">
+            <span>Google Cloud Console</span>
+            <span>Free unlimited logins</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+
+    <!-- SECTION 4: PYTHON BACKEND API PACKAGES -->
+    <div class="content-section" data-category="python-api">
+      <div class="section-title">
+        <div class="icon-tag">🐍</div>
+        <h2>4. Backend API Dependencies (Python 3.11 • <code>oye-chats-platform/api</code>)</h2>
+      </div>
+
+      <div class="callout">
+        <strong>Package Manager:</strong> Managed via <code>uv</code> (Astral). Configured in <code>pyproject.toml</code> with lockfile <code>uv.lock</code>. Dependencies strictly run under Python 3.11.0.
+      </div>
+
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Package Name</th>
+              <th>Version / Spec</th>
+              <th>Category</th>
+              <th>Purpose & Integration Role</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>fastapi</code></td>
+              <td><code>^0.116.0</code></td>
+              <td><span class="tech-pill">Web Framework</span></td>
+              <td>High-performance ASGI framework handling all platform REST endpoints, CORS, dependency injection, and streaming SSE responses.</td>
+            </tr>
+            <tr>
+              <td><code>uvicorn[standard]</code></td>
+              <td><code>^0.30.0</code></td>
+              <td><span class="tech-pill">ASGI Server</span></td>
+              <td>Lightning-fast ASGI web server workers running FastAPI under Gunicorn supervision.</td>
+            </tr>
+            <tr>
+              <td><code>gunicorn</code></td>
+              <td><code>^22.0.0</code></td>
+              <td><span class="tech-pill">Process Manager</span></td>
+              <td>Production WSGI/ASGI HTTP worker process manager for systemd deployment.</td>
+            </tr>
+            <tr>
+              <td><code>sqlalchemy</code></td>
+              <td><code>^2.0.0</code></td>
+              <td><span class="tech-pill">Database ORM</span></td>
+              <td>SQL toolkit and Object Relational Mapper for PostgreSQL database interactions.</td>
+            </tr>
+            <tr>
+              <td><code>alembic</code></td>
+              <td><code>^1.13.0</code></td>
+              <td><span class="tech-pill">DB Migrations</span></td>
+              <td>Database schema migration tracking and schema evolution management.</td>
+            </tr>
+            <tr>
+              <td><code>psycopg2-binary</code></td>
+              <td><code>^2.9.0</code></td>
+              <td><span class="tech-pill">Postgres Driver</span></td>
+              <td>Low-level C-optimized PostgreSQL database adapter.</td>
+            </tr>
+            <tr>
+              <td><code>pgvector</code></td>
+              <td><code>^0.3.0</code></td>
+              <td><span class="tech-pill">Vector Database</span></td>
+              <td>PostgreSQL pgvector extension integration for high-speed HNSW vector similarity search.</td>
+            </tr>
+            <tr>
+              <td><code>litellm</code></td>
+              <td><code>1.89.4</code></td>
+              <td><span class="tech-pill">LLM Gateway</span></td>
+              <td>Unified API wrapper abstraction layer connecting OpenAI, Google Gemini, and fallbacks.</td>
+            </tr>
+            <tr>
+              <td><code>openai</code></td>
+              <td><code>^1.0.0</code></td>
+              <td><span class="tech-pill">AI Client</span></td>
+              <td>Official OpenAI API client for direct LLM generation and embeddings.</td>
+            </tr>
+            <tr>
+              <td><code>langchain-text-splitters</code></td>
+              <td><code>^0.2.0</code></td>
+              <td><span class="tech-pill">RAG Ingestion</span></td>
+              <td>Text chunking, recursive token splitting, and document preprocessing for vector indexing.</td>
+            </tr>
+            <tr>
+              <td><code>flashrank</code></td>
+              <td><code>^0.2.9</code></td>
+              <td><span class="tech-pill">Neural Reranker</span></td>
+              <td>Ultra-fast local neural cross-encoder model for re-ranking retrieved RAG vector context chunks.</td>
+            </tr>
+            <tr>
+              <td><code>pydantic</code> / <code>pydantic-settings</code></td>
+              <td><code>^2.0.0</code></td>
+              <td><span class="tech-pill">Validation</span></td>
+              <td>Data validation, request/response serialization, and environment configuration management.</td>
+            </tr>
+            <tr>
+              <td><code>redis[hiredis]</code></td>
+              <td><code>^5.0.0</code></td>
+              <td><span class="tech-pill">Cache / Bus</span></td>
+              <td>C-accelerated Redis client for rate-limiting, session cache, and operator WebSocket Pub/Sub.</td>
+            </tr>
+            <tr>
+              <td><code>arq</code></td>
+              <td><code>^0.26.0</code></td>
+              <td><span class="tech-pill">Async Worker</span></td>
+              <td>Redis-based async job queue worker for website crawling, doc embedding, and email dispatch.</td>
+            </tr>
+            <tr>
+              <td><code>slowapi</code></td>
+              <td><code>^0.1.9</code></td>
+              <td><span class="tech-pill">Rate Limiting</span></td>
+              <td>Per-bot key and per-IP endpoint rate limiting middleware powered by Redis.</td>
+            </tr>
+            <tr>
+              <td><code>weasyprint</code></td>
+              <td><code>^63.0.0</code></td>
+              <td><span class="tech-pill">PDF Rendering</span></td>
+              <td>Renders HTML/CSS templates into PDF invoices. <em>(Requires system <code>libpango-1.0-0</code>)</em>.</td>
+            </tr>
+            <tr>
+              <td><code>pypdf</code> / <code>python-docx</code></td>
+              <td><code>^6.13.3 / ^1.0.0</code></td>
+              <td><span class="tech-pill">Doc Extraction</span></td>
+              <td>Extracts plain text content from uploaded PDF manuals and Word documents.</td>
+            </tr>
+            <tr>
+              <td><code>trafilatura</code> / <code>beautifulsoup4</code></td>
+              <td><code>^2.0.0 / ^4.14.3</code></td>
+              <td><span class="tech-pill">HTML Parsing</span></td>
+              <td>Clean text extraction, noise reduction, and metadata scraping from web page HTML.</td>
+            </tr>
+            <tr>
+              <td><code>razorpay</code></td>
+              <td><code>^1.4.2</code></td>
+              <td><span class="tech-pill">Payments</span></td>
+              <td>Official Razorpay SDK for subscription billing, order creation, and signature validation.</td>
+            </tr>
+            <tr>
+              <td><code>sentry-sdk[fastapi]</code></td>
+              <td><code>^2.0.0</code></td>
+              <td><span class="tech-pill">Observability</span></td>
+              <td>Automated backend error capturing, trace context, and performance profiling.</td>
+            </tr>
+            <tr>
+              <td><code>langfuse</code></td>
+              <td><code>^4.0.0</code></td>
+              <td><span class="tech-pill">LLM Tracing</span></td>
+              <td>Sends LLM execution traces, token usage metrics, and prompt evaluations to Langfuse.</td>
+            </tr>
+            <tr>
+              <td><code>bcrypt</code> / <code>python-jose</code></td>
+              <td><code>^4.0.0 / ^3.5.0</code></td>
+              <td><span class="tech-pill">Security</span></td>
+              <td>Password hashing (Bcrypt) and JWT token generation/validation for API security.</td>
+            </tr>
+            <tr>
+              <td><code>pywebpush</code></td>
+              <td><code>^2.0.0</code></td>
+              <td><span class="tech-pill">Web Push</span></td>
+              <td>VAPID web push notification payload encryption and delivery to operator browsers.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+
+    <!-- SECTION 5: FRONTEND WEB SUB-APPS -->
+    <div class="content-section" data-category="frontend-apps">
+      <div class="section-title">
+        <div class="icon-tag">💻</div>
+        <h2>5. Frontend Web Sub-Apps & Packages</h2>
+      </div>
+
+      <!-- Customer Web App -->
+      <div class="repo-banner">
+        <h3>Customer Web App / Admin Dashboard</h3>
+        <span class="repo-path">oye-chats-platform/app • React 19 + Vite 8 • app.oyechats.com</span>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Package</th>
+              <th>Version</th>
+              <th>Role</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>react</code> / <code>react-dom</code></td><td><code>^19.2.0</code></td><td>Core UI library rendering modern React 19 components.</td></tr>
+            <tr><td><code>react-router-dom</code></td><td><code>^7.13.1</code></td><td>Client-side single-page app routing and URL navigation.</td></tr>
+            <tr><td><code>@tanstack/react-table</code></td><td><code>^8.21.3</code></td><td>Headless table state engine for document lists, chat history, and lead tables.</td></tr>
+            <tr><td><code>recharts</code></td><td><code>^2.15.0</code></td><td>Interactive dashboard data visualization charts (analytics, chat volumes).</td></tr>
+            <tr><td><code>framer-motion</code></td><td><code>^12.38.0</code></td><td>Smooth UI page transitions, modal animations, and dynamic micro-interactions.</td></tr>
+            <tr><td><code>lucide-react</code></td><td><code>^0.577.0</code></td><td>Modern, clean icon set matching the Voltage Paper aesthetic.</td></tr>
+            <tr><td><code>axios</code></td><td><code>^1.18.1</code></td><td>Promise-based HTTP client for API communications with <code>api.oyechats.com</code>.</td></tr>
+            <tr><td><code>tailwindcss</code> / <code>@tailwindcss/vite</code></td><td><code>^4.2.1</code></td><td>Utility-first CSS framework (v4 engine with zero-config Vite integration).</td></tr>
+            <tr><td><code>@sentry/react</code></td><td><code>^10.45.0</code></td><td>Client-side browser exception monitoring and user session recording.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Chat Widget -->
+      <div class="repo-banner">
+        <h3>Embeddable Chat Widget Bundle</h3>
+        <span class="repo-path">oye-chats-platform/widget • IIFE JavaScript Bundle</span>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Package</th>
+              <th>Version</th>
+              <th>Role & Size Constraint</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>react</code> / <code>react-dom</code></td><td><code>^19.2.0</code></td><td>Bundled React 19 runtime for Shadow DOM isolation on host sites.</td></tr>
+            <tr><td><code>axios</code></td><td><code>1.14.0</code></td><td>Lightweight HTTP client for fetching bot settings & streaming SSE chat responses.</td></tr>
+            <tr><td><code>react-markdown</code></td><td><code>^10.1.0</code></td><td>Renders markdown responses from LLMs safely inside the chat window.</td></tr>
+            <tr><td><code>@size-limit/file</code></td><td><code>^12.1.0</code></td><td>Enforces strict bundle size limits: <strong>Loader &lt; 8KB, App Entry &lt; 12KB, Vendor &lt; 67KB</strong>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Super Admin -->
+      <div class="repo-banner">
+        <h3>Super Admin Console</h3>
+        <span class="repo-path">oyechats-admin • Next.js 16</span>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Package</th>
+              <th>Version</th>
+              <th>Role</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>next</code> / <code>react</code></td><td><code>16.3.0 / 19.2.4</code></td><td>Fullstack server-rendered Next.js framework for platform administrative tools.</td></tr>
+            <tr><td><code>@tanstack/react-query</code></td><td><code>^5.100.5</code></td><td>Server state management, caching, background polling, and mutation hooks.</td></tr>
+            <tr><td><code>react-hook-form</code> / <code>zod</code></td><td><code>^7.74 / ^4.3.6</code></td><td>Form state handling and strict schema type validation.</td></tr>
+            <tr><td><code>date-fns</code></td><td><code>^4.1.0</code></td><td>Modern date utility library for telemetry range formatting.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Marketing Website -->
+      <div class="repo-banner">
+        <h3>Marketing & Sales Website</h3>
+        <span class="repo-path">oyechats-website • Next.js 16</span>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Package</th>
+              <th>Version</th>
+              <th>Role</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>next</code> / <code>react</code></td><td><code>16.2.1 / 19.2.4</code></td><td>High-performance SSG marketing landing page hosted on Vercel.</td></tr>
+            <tr><td><code>motion</code></td><td><code>^12.42.2</code></td><td>Hardware-accelerated scroll animations and landing page reveals.</td></tr>
+            <tr><td><code>simple-icons</code></td><td><code>^16.25.0</code></td><td>SVG brand icons for tech integrations (WordPress, Shopify, React, etc.).</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+
+
+    <!-- SECTION 6: MOBILE APP -->
+    <div class="content-section" data-category="mobile-app">
+      <div class="section-title">
+        <div class="icon-tag">📱</div>
+        <h2>6. Mobile App Dependencies (Expo 57 • <code>oyechats-mobile-app</code>)</h2>
+      </div>
+
+      <div class="callout">
+        <strong>Cross-Platform Mobile Engine:</strong> Built with Expo 57 and React Native 0.86.2, enabling live chat operators to respond to customer inquiries and manage bot metrics on iOS and Android.
+      </div>
+
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Package Name</th>
+              <th>Version</th>
+              <th>Category</th>
+              <th>Native Mobile Function</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>expo</code> / <code>expo-router</code></td><td><code>~57.0.11</code></td><td><span class="tech-pill">Core Framework</span></td><td>File-based routing, native module bridge, and runtime engine.</td></tr>
+            <tr><td><code>react-native</code></td><td><code>0.86.2</code></td><td><span class="tech-pill">Native Bridge</span></td><td>Cross-platform iOS and Android UI primitives.</td></tr>
+            <tr><td><code>@tanstack/react-query</code></td><td><code>^5.101.4</code></td><td><span class="tech-pill">Data Fetching</span></td><td>Async cache persister with offline request queuing for poor network coverage.</td></tr>
+            <tr><td><code>zustand</code></td><td><code>^5.0.14</code></td><td><span class="tech-pill">State Mgmt</span></td><td>Lightweight client state store for operator status, session state, and auth tokens.</td></tr>
+            <tr><td><code>nativewind</code> / <code>tailwindcss</code></td><td><code>^4.2.6 / 3.4</code></td><td><span class="tech-pill">Styling</span></td><td>Tailwind CSS styling engine compiled to native React Native style sheets.</td></tr>
+            <tr><td><code>react-native-reanimated</code></td><td><code>^4.5.1</code></td><td><span class="tech-pill">Animations</span></td><td>Smooth 60fps UI gestures and layout transitions running on native UI thread.</td></tr>
+            <tr><td><code>@gorhom/bottom-sheet</code></td><td><code>^5.2.14</code></td><td><span class="tech-pill">UI Component</span></td><td>Native interactive bottom modal sheets for operator quick-responses and handoff actions.</td></tr>
+            <tr><td><code>expo-notifications</code></td><td><code>^57.0.9</code></td><td><span class="tech-pill">Push Alerts</span></td><td>Background push notifications when visitors request live chat handoff.</td></tr>
+            <tr><td><code>expo-secure-store</code></td><td><code>~57.0.1</code></td><td><span class="tech-pill">Security</span></td><td>Encrypted storage for operator auth tokens using Keychain (iOS) & KeyStore (Android).</td></tr>
+            <tr><td><code>expo-file-system</code> / <code>expo-sharing</code></td><td><code>~57.0.2</code></td><td><span class="tech-pill">Media Assets</span></td><td>Local file caching, attachment downloads, and document sharing.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+
+    <!-- SECTION 7: CLI TOOL -->
+    <div class="content-section" data-category="cli-tool">
+      <div class="section-title">
+        <div class="icon-tag">⌨️</div>
+        <h2>7. Terminal CLI Tool Dependencies (<code>oyechats-cli</code>)</h2>
+      </div>
+
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Package / Spec</th>
+              <th>Version</th>
+              <th>Target Engine</th>
+              <th>Role</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>node</code></td><td><code>&gt;=18.17</code></td><td>Node.js Engine</td><td>Runtime environment for terminal execution.</td></tr>
+            <tr><td><code>typescript</code></td><td><code>^5.7.0</code></td><td>Dev Tooling</td><td>Strict static typing and compilation to <code>dist/index.js</code> executable.</td></tr>
+            <tr><td><code>eslint</code></td><td><code>^9.39.5</code></td><td>Linter</td><td>ECMAScript code quality and syntax enforcement.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+
+    <!-- SECTION 8: ENVIRONMENT VARIABLES & SECRET MANAGEMENT -->
+    <div class="content-section" data-category="env-vars">
+      <div class="section-title">
+        <div class="icon-tag">🔑</div>
+        <h2>8. Master Environment Variable Checklist</h2>
+      </div>
+
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Variable Key</th>
+              <th>Target Service</th>
+              <th>Scope</th>
+              <th>Description & Security Level</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>DB_URL</code></td><td>FastAPI Backend</td><td>Production / Dev</td><td>PostgreSQL connection string with password & pgvector setup. <strong>(Secret)</strong></td></tr>
+            <tr><td><code>OPENAI_API_KEY</code></td><td>LiteLLM Gateway</td><td>Production / Dev</td><td>OpenAI API secret key for LLM generation and embeddings. <strong>(Secret)</strong></td></tr>
+            <tr><td><code>GOOGLE_API_KEY</code></td><td>LiteLLM / Gemini</td><td>Production / Dev</td><td>Google Gemini API key for fallback LLM & <code>gemini-embedding-001</code>. <strong>(Secret)</strong></td></tr>
+            <tr><td><code>SPIDER_API_KEY</code></td><td>Crawling Pipeline</td><td>Production</td><td>Spider.cloud API key for high-speed documentation crawling. <strong>(Secret)</strong></td></tr>
+            <tr><td><code>JINA_API_KEY</code> / <code>JINA_FALLBACK_ENABLED</code></td><td>Crawling Pipeline</td><td>Production / Dev</td><td>Jina Reader API key & fallback trigger for web scraping (<code>r.jina.ai</code>). <strong>(Secret)</strong></td></tr>
+            <tr><td><code>R2_KEY_ID</code> / <code>R2_APPLICATION_KEY</code></td><td>Cloud Storage</td><td>Production</td><td>Cloudflare R2 S3 access credentials for document uploads & backups. <strong>(Secret)</strong></td></tr>
+            <tr><td><code>REDIS_URL</code></td><td>ARQ & Limiter</td><td>Production / Dev</td><td>Redis loopback connection string (<code>redis://localhost:6379/0</code>).</td></tr>
+            <tr><td><code>SENTRY_DSN</code></td><td>Sentry SDK</td><td>Production</td><td>Sentry error ingestion DSN URL.</td></tr>
+            <tr><td><code>LANGFUSE_SECRET_KEY</code> / <code>PUBLIC_KEY</code></td><td>Langfuse Cloud</td><td>Production / Dev</td><td>LLM observability trace keypair.</td></tr>
+            <tr><td><code>GOOGLE_CLIENT_ID</code> / <code>SECRET</code></td><td>OAuth 2.0</td><td>Production</td><td>Google Sign-In web application OAuth credentials. <strong>(Secret)</strong></td></tr>
+            <tr><td><code>VITE_API_URL</code></td><td>Admin SPA & Widget</td><td>Build-time</td><td>Public backend URL endpoint (e.g., <code>https://api.oyechats.com</code>).</td></tr>
+            <tr><td><code>NEXT_PUBLIC_API_URL</code></td><td>Super Admin & Web</td><td>Build-time</td><td>Public API URL endpoint for Next.js web applications.</td></tr>
+            <tr><td><code>EXPO_PUBLIC_API_URL</code></td><td>Mobile App</td><td>Mobile Build</td><td>Backend API gateway endpoint for Expo mobile app runtime.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer>
+      <p>OyeChats Engineering Documentation • Generated August 2026 • Maintained by Core Architecture Team</p>
+    </footer>
+
+  </div>
+
+  <!-- Interactive Search & Filtering JS Script -->
+  <script>
+    function setFilter(category, btnElement) {
+      // Update active button
+      document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+      btnElement.classList.add('active');
+
+      const sections = document.querySelectorAll('.content-section');
+      sections.forEach(section => {
+        if (category === 'all' || section.getAttribute('data-category') === category) {
+          section.classList.remove('hidden');
+        } else {
+          section.classList.add('hidden');
+        }
+      });
+    }
+
+    function filterItems() {
+      const query = document.getElementById('searchInput').value.toLowerCase().trim();
+      const cards = document.querySelectorAll('.card');
+      const tableRows = document.querySelectorAll('tbody tr');
+
+      if (!query) {
+        cards.forEach(card => card.classList.remove('hidden'));
+        tableRows.forEach(row => row.classList.remove('hidden'));
+        return;
+      }
+
+      cards.forEach(card => {
+        const text = (card.getAttribute('data-search') || '') + ' ' + card.innerText.toLowerCase();
+        if (text.includes(query)) {
+          card.classList.remove('hidden');
+        } else {
+          card.classList.add('hidden');
+        }
+      });
+
+      tableRows.forEach(row => {
+        const text = row.innerText.toLowerCase();
+        if (text.includes(query)) {
+          row.classList.remove('hidden');
+        } else {
+          row.classList.add('hidden');
+        }
+      });
+    }
+  </script>
+</body>
+</html>

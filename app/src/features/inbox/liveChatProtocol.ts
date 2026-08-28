@@ -1,3 +1,5 @@
+import type { LeadQuotation } from '../../types/domain';
+
 /**
  * liveChatProtocol - the operator ⇄ backend WebSocket contract.
  *
@@ -142,23 +144,14 @@ export interface SessionDetails {
     phone: string | null;
     company: string | null;
   } | null;
-  /** The quotation the visitor built with the bot before this handoff, if any. */
-  quotation: {
-    status: string;
-    currency: string;
-    line_items: Array<{
-      service_id: string;
-      name: string;
-      unit_label: string;
-      price_per_unit: number;
-      quantity: number;
-      subtotal: number;
-      answers: Array<{ question_id: string; question_text: string; answer: string }>;
-    }>;
-    total: number;
-    activated_at: string | null;
-    completed_at: string | null;
-  } | null;
+  /**
+   * The quotation the visitor built with the chatbot before this handoff.
+   *
+   * The same shape the lead record carries, and deliberately the same TYPE:
+   * it is one server payload, built by one helper in `lead_routes.py`, and two
+   * hand-maintained copies of it would drift the moment a field is added.
+   */
+  quotation: LeadQuotation | null;
 }
 
 // ── Inbound WS messages (discriminated union on `type`) ───────────────────────
@@ -371,4 +364,20 @@ export function reconnectDelay(attempt: number): number {
 /** Heartbeat cadence - tighter when the tab is visible, looser when hidden. */
 export function heartbeatInterval(visible: boolean): number {
   return visible ? 25000 : 50000;
+}
+
+/**
+ * How a conversation left the board.
+ *
+ * `chat_transferred` and `chat_closed` used to share one branch and one outcome
+ * — the conversation simply vanished — so an operator who handed a visitor to a
+ * colleague got no confirmation that it had landed anywhere, and the
+ * `transferred_to` field the protocol has always carried was never read.
+ */
+export interface SessionEnding {
+  reason: 'closed' | 'transferred';
+  /** The receiving operator or department, when the server names one. */
+  transferredTo: string | null;
+  /** Local receipt time, for ordering the "recently ended" list. */
+  at: number;
 }

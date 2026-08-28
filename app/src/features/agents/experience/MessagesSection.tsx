@@ -1,229 +1,462 @@
-import { type ReactElement, useId } from 'react';
+import { type ReactElement, useCallback, useRef, useState } from 'react';
+import { t as translateNow } from '../../../i18n/i18n';
+import { Link } from 'react-router-dom';
+import { ChevronDown, ChevronUp, Plus, Sparkles, Trash2 } from 'lucide-react';
 import {
-  AlignHorizontalDistributeCenter,
-  AlignVerticalDistributeCenter,
-  Plus,
-  Trash2,
-} from 'lucide-react';
-import { Button, Input, SectionHeader, cn } from '../../../design-system';
-import { type ExperienceDraft, type SuggestionsLayout, FIELD_LIMITS } from './types';
+  Alert,
+  Badge,
+  Button,
+  Card,
+  CardBody,
+  CardHeader,
+  EmptyState,
+  Field,
+  Input,
+  SegmentedControl,
+  Textarea,
+  Tooltip,
+  Well,
+  buttonClass,
+} from '../../../ui';
+import { useEntitlements } from '../../../hooks/useEntitlements';
 import { CustomCopyNotice } from './CustomCopyNotice';
+import { errorMessage, fetchSuggestedQuestions } from './experience-api';
+import {
+  LIMITS,
+  PLACEHOLDERS,
+  type DraftErrors,
+  type ExperienceDraft,
+  type SuggestionsLayout,
+} from './experience-model';
 import { useTranslation } from '../../../i18n/useTranslation';
 
-export interface MessagesSectionProps {
-  draft: ExperienceDraft;
-  /** True when the bot has multilingual on; shows the custom-copy notice. */
-  multilingual?: boolean;
-  onChange: (patch: Partial<ExperienceDraft>) => void;
-}
+/**
+ * Everything the widget says, before the chatbot has said anything.
+ *
+ * The starter questions are the part with real history. The chatbot generates a
+ * set of questions it can demonstrably answer, the server caches them on the
+ * record the first time they are computed, and `POST
+ * /bots/{id}/seed-questions` returns that same cached list for the life of the
+ * chatbot unless `force` is passed — which no client ever did. So a customer
+ * whose questions were generated on day one, from a half-crawled site, was
+ * stuck with them. They are proposals here: generate a fresh set, take the ones
+ * that fit, then edit and order them like any other line of copy.
+ */
 
-// @i18n-exempt: resolved at the render site from the option id
-// (`agents.layout.<id>`); the English here is that lookup's fallback.
-const LAYOUT_OPTIONS: { id: SuggestionsLayout; label: string; icon: typeof AlignHorizontalDistributeCenter }[] = [
-  { id: 'horizontal', label: 'Horizontal', icon: AlignHorizontalDistributeCenter },
-  { id: 'vertical', label: 'Vertical', icon: AlignVerticalDistributeCenter },
+const LAYOUTS: readonly { value: SuggestionsLayout; label: string }[] = [
+  { value: 'horizontal', label: 'Side by side' },
+  { value: 'vertical', label: 'Stacked' },
 ];
 
-/** Small labelled text field used across the Messages section. */
-function Field({
-  label,
-  hint,
-  value,
-  onChange,
-  placeholder,
-  maxLength,
-}: {
-  label: string;
-  hint: string;
-  value: string;
-  onChange: (value: string) => void;
-  placeholder: string;
-  maxLength?: number;
-}): ReactElement {
-  const id = useId();
-  const hintId = useId();
+/**
+ * "Leave it empty for the default" was said nine times on this tab, and it had
+ * to be: every one of these fields shows a placeholder that *is* the shipped
+ * default, and `Input` paints a placeholder in `--color-text-disabled`. Nine
+ * fields, no way to tell which you had customised without clicking into each.
+ *
+ * The rule is stated once on the card now, and the state is marked beside the
+ * field's label, in `Field`'s trailing slot.
+ *
+ * It used to live in `Input`'s, which is *inside* the field — and a conditional
+ * affix there changes the input's element tree, so React remounted the element
+ * on the first keystroke and took the caret with it. The workaround was to
+ * render the badge always and set `invisible` on it, which reserved a hole for
+ * something that is usually not there. `Field trailing` is outside the control,
+ * so the badge can simply not be rendered when it does not apply.
+ *
+ * Every field on this tab is the card's own width, and none of them carries a
+ * width class. Five of the nine used to be `max-w-sm` with no rule behind which
+ * — one right edge at 384 and another at 638, alternating down a single column.
+ */
+function defaultMark(value: string) {
+  if (value.trim().length > 0) return undefined;
   return (
-    <div className="space-y-1.5">
-      <label htmlFor={id} className="block text-[13px] font-medium text-[var(--ds-text)]">
-        {label}
-      </label>
-      <Input
-        id={id}
-        value={value}
-        placeholder={placeholder}
-        maxLength={maxLength}
-        aria-describedby={hintId}
-        onChange={(e) => onChange(e.target.value)}
-      />
-      <p id={hintId} className="text-[11px] text-[var(--ds-text-subtle)]">
-        {hint}
-      </p>
-    </div>
+    <Badge tone="neutral" size="sm">
+      {translateNow('agents.default') || 'Default'}
+    </Badge>
   );
 }
 
-/**
- * MessagesSection - the visitor-facing copy shown before and during a chat: the
- * welcome greeting, subtitle, quick-action prompts (with a horizontal/vertical
- * layout choice), and the input placeholder. Mirrors the fields the shipped
- * widget reads from `widget_messages`.
- */
-export function MessagesSection({ draft, onChange, multilingual = false }: MessagesSectionProps): ReactElement {
-  const { t } = useTranslation();
-  const { quickActions, suggestionsLayout } = draft;
+export interface MessagesSectionProps {
+  draft: ExperienceDraft;
+  errors: DraftErrors;
+  agentId: number | null;
+  readOnly: boolean;
+  onChange: (patch: Partial<ExperienceDraft>) => void;
+}
 
-  const setAction = (index: number, value: string): void => {
-    onChange({ quickActions: quickActions.map((s, i) => (i === index ? value : s)) });
-  };
-  const addAction = (): void => {
-    onChange({ quickActions: [...quickActions, ''] });
-  };
-  const removeAction = (index: number): void => {
-    onChange({ quickActions: quickActions.filter((_, i) => i !== index) });
-  };
+export function MessagesSection({
+  draft,
+  errors,
+  agentId,
+  readOnly,
+  onChange,
+}: MessagesSectionProps): ReactElement {
+  const { t } = useTranslation();
+  const { hasFeature } = useEntitlements();
+  const liveChatIncluded = hasFeature('live_chat');
+
+  const [suggestions, setSuggestions] = useState<string[] | null>(null);
+  const [suggesting, setSuggesting] = useState(false);
+  const [suggestError, setSuggestError] = useState<string | null>(null);
+  const rowRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  const { quickActions } = draft;
+
+  const setActions = useCallback(
+    (next: string[], focusIndex?: number): void => {
+      onChange({ quickActions: next });
+      if (focusIndex !== undefined) {
+        // Rows are keyed by position, so a move swaps the values under two
+        // stable inputs rather than moving the DOM. Focus has to follow the
+        // value, or the row the user just moved is no longer the one they are
+        // on — which makes a second press move a different question.
+        window.requestAnimationFrame(() => rowRefs.current[focusIndex]?.focus());
+      }
+    },
+    [onChange],
+  );
+
+  const move = useCallback(
+    (from: number, to: number): void => {
+      if (to < 0 || to >= quickActions.length) return;
+      const next = quickActions.slice();
+      const [row] = next.splice(from, 1);
+      next.splice(to, 0, row);
+      setActions(next, to);
+    },
+    [quickActions, setActions],
+  );
+
+  const suggest = useCallback(async (): Promise<void> => {
+    if (agentId === null || suggesting) return;
+    setSuggesting(true);
+    setSuggestError(null);
+    try {
+      // The first press takes whatever the chatbot already has; pressing again
+      // is an explicit ask for a new set, which is the only thing that gets past
+      // the server's cache.
+      const regenerate = suggestions !== null;
+      setSuggestions(await fetchSuggestedQuestions(agentId, regenerate));
+    } catch (cause) {
+      setSuggestError(
+        errorMessage(cause, t('agents.weCouldNotComeUp') || 'We could not come up with questions just now. Please try again.'),
+      );
+    } finally {
+      setSuggesting(false);
+    }
+  }, [agentId, suggesting, suggestions, t]);
+
+  const unusedSuggestions = (suggestions ?? []).filter(
+    (question) => !quickActions.some((action) => action.trim() === question.trim()),
+  );
+  const atLimit = quickActions.length >= LIMITS.quickActions;
 
   return (
-    <div className="space-y-8">
-      {/* Every field on this tab is customer-authored copy that overrides the
-          translated defaults, so the notice sits above all of them. */}
-      <CustomCopyNotice multilingual={multilingual} />
+    <div className="flex flex-col gap-6">
+      {/* Above the fields, not under them: it changes what the customer is
+          about to write, so it has to be read before they write it. */}
+      <CustomCopyNotice multilingual={draft.multilingualEnabled} />
 
-      <section className="space-y-5">
-        <SectionHeader
-          title={t('agents.widgetIdentity') || 'Widget identity'}
-          description={t('agents.theNameShownInThe') || 'The name shown in the widget header and the tooltip beside the launcher button.'}
+      <Card>
+        <CardHeader
+          eyebrow="Identity"
+          titleAs="h2"
+          title={t('agents.whatYourChatbotIsCalled') || 'What your chatbot is called'}
         />
-        <Field
-          label={t('agents.displayName') || 'Display name'}
-          hint={t('agents.shownInTheWidgetHeader') || 'Shown in the widget header - also your chatbot\'s name across the dashboard.'}
-          value={draft.displayName}
-          maxLength={FIELD_LIMITS.displayName}
-          placeholder={t('agents.eGAcmeAssistant') || 'e.g. Acme Assistant'}
-          onChange={(v) => onChange({ displayName: v })}
-        />
-        <Field
-          label={t('agents.launcherText') || 'Launcher text'}
-          hint={t('agents.theTooltipShownNextTo') || 'The tooltip shown next to the launcher button before the chat opens.'}
-          value={draft.launcherName}
-          maxLength={FIELD_LIMITS.launcherName}
-          // @i18n-exempt: the WIDGET's default, shown so the operator knows what
-          // their visitors get if this is left blank. Translating it would promise
-          // one sentence and render another.
-          placeholder="Have Questions?"
-          onChange={(v) => onChange({ launcherName: v })}
-        />
-      </section>
+        <CardBody className="flex flex-col gap-5">
+          <Field label={t('agents.displayName') || 'Display name'} error={errors.displayName ?? null} required>
+            <Input
+              value={draft.displayName}
+              maxLength={LIMITS.displayName}
+              disabled={readOnly}
+              placeholder={t('agents.acmeAssistant') || 'Acme Assistant'}
+              onChange={(event) => onChange({ displayName: event.target.value })}
+            />
+          </Field>
+          <Field
+            label={t('agents.launcherText') || 'Launcher text'}
+            hint={t('agents.besideTheClosedLauncher') || 'Beside the closed launcher.'}
+            trailing={defaultMark(draft.launcherName)}
+          >
+            <Input
+              value={draft.launcherName}
+              maxLength={LIMITS.launcherName}
+              disabled={readOnly}
+              placeholder={PLACEHOLDERS.launcherName}
+              onChange={(event) => onChange({ launcherName: event.target.value })}
+            />
+          </Field>
+        </CardBody>
+      </Card>
 
-      <section className="space-y-5 border-t border-[var(--ds-border)] pt-6">
-        <SectionHeader
-          title={t('agents.welcomeScreen') || 'Welcome screen'}
-          description={t('agents.theGreetingVisitorsSeeThe') || 'The greeting visitors see the moment the chat opens.'}
+      <Card>
+        <CardHeader
+          eyebrow="Welcome"
+          titleAs="h2"
+          title={t('agents.theFirstThingAVisitor') || 'The first thing a visitor reads'}
         />
-        <Field
-          label={t('agents.greeting') || 'Greeting'}
-          hint={t('agents.theHeadlineThatWelcomesVisitors') || 'The headline that welcomes visitors.'}
-          value={draft.welcomeGreeting}
-          // @i18n-exempt: the widget's own default. See launcher text above.
-          placeholder="Hi there, how can I help you today?"
-          onChange={(v) => onChange({ welcomeGreeting: v })}
-        />
-        <Field
-          label={t('agents.subtitle') || 'Subtitle'}
-          hint={t('agents.aShortLineOfContext') || 'A short line of context under the greeting.'}
-          value={draft.welcomeSubtitle}
-          // @i18n-exempt: the widget's own default. See launcher text above.
-          placeholder="Ask me anything - I answer from your knowledge base."
-          onChange={(v) => onChange({ welcomeSubtitle: v })}
-        />
-      </section>
+        <CardBody className="flex flex-col gap-5">
+          <Field label={t('agents.greeting') || 'Greeting'} trailing={defaultMark(draft.welcomeGreeting)}>
+            <Input
+              value={draft.welcomeGreeting}
+              maxLength={LIMITS.welcomeGreeting}
+              disabled={readOnly}
+              placeholder={PLACEHOLDERS.welcomeGreeting}
+              onChange={(event) => onChange({ welcomeGreeting: event.target.value })}
+            />
+          </Field>
+          <Field label={t('agents.subtitle') || 'Subtitle'} trailing={defaultMark(draft.welcomeSubtitle)}>
+            <Input
+              value={draft.welcomeSubtitle}
+              maxLength={LIMITS.welcomeSubtitle}
+              disabled={readOnly}
+              placeholder={PLACEHOLDERS.welcomeSubtitle}
+              onChange={(event) => onChange({ welcomeSubtitle: event.target.value })}
+            />
+          </Field>
+          <Field label={t('agents.messageBoxPlaceholder') || 'Message box placeholder'} trailing={defaultMark(draft.inputPlaceholder)}>
+            <Input
+              value={draft.inputPlaceholder}
+              maxLength={LIMITS.inputPlaceholder}
+              disabled={readOnly}
+              placeholder={PLACEHOLDERS.inputPlaceholder}
+              onChange={(event) => onChange({ inputPlaceholder: event.target.value })}
+            />
+          </Field>
+        </CardBody>
+      </Card>
 
-      <section className="space-y-4 border-t border-[var(--ds-border)] pt-6">
-        <SectionHeader
-          title={t('agents.quickActions') || 'Quick actions'}
-          description={t('agents.tappablePromptsThatGiveVisitors') || 'Tappable prompts that give visitors a head start. Leave empty to hide them.'}
+      <Card>
+        <CardHeader
+          eyebrow="Starter questions"
+          titleAs="h2"
+          title={t('agents.questionsAVisitorCanTap') || 'Questions a visitor can tap'}
+          description={t('agents.shownUnderTheGreeting') || 'Shown under the greeting.'}
           actions={
-            <div
-              role="group"
-              aria-label={t('agents.quickActionLayout') || 'Quick-action layout'}
-              className="inline-flex overflow-hidden rounded-lg border border-[var(--ds-border)]"
-            >
-              {LAYOUT_OPTIONS.map(({ id, label: fallbackLabel, icon: Icon }) => {
-                const label = t(`agents.layout.${id}`) || fallbackLabel;
-                const active = suggestionsLayout === id;
-                return (
-                  <button
-                    key={id}
-                    type="button"
-                    aria-pressed={active}
-                    aria-label={`${label} layout`}
-                    title={`${label} layout`}
-                    onClick={() => onChange({ suggestionsLayout: id })}
-                    className={cn(
-                      'flex h-8 items-center gap-1.5 px-2.5 text-[12px] font-medium transition-colors',
-                      active
-                        ? 'bg-[var(--ds-accent)] text-[var(--ds-accent-fg)]'
-                        : 'bg-[var(--ds-bg-surface)] text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',
-                    )}
-                  >
-                    <Icon size={14} />
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
+            <SegmentedControl
+              items={LAYOUTS}
+              value={draft.suggestionsLayout}
+              onChange={(suggestionsLayout) => onChange({ suggestionsLayout })}
+              label={t('agents.starterQuestionLayout') || 'Starter question layout'}
+              size="sm"
+            />
           }
         />
-
-        <div className="space-y-2">
+        <CardBody className="flex flex-col gap-4">
           {quickActions.length === 0 ? (
-            <p className="rounded-lg border border-dashed border-[var(--ds-border)] px-3 py-4 text-[13px] text-[var(--ds-text-subtle)]">
-              {t('agents.noQuickActionsYetAdd') || 'No quick actions yet. Add a few common questions to guide visitors.'}
-            </p>
+            <EmptyState
+              size="inline"
+              flush
+              title={t('agents.noStarterQuestionsYet') || 'No starter questions yet'}
+            />
           ) : (
-            quickActions.map((action, index) => (
-              // Rows are only appended/removed (never reordered), so a positional
-              // key is stable enough and avoids threading synthetic row ids.
-              <div key={index} className="flex items-center gap-2">
-                <Input
-                  value={action}
-                  aria-label={t('agents.quickActionLabel', { n: index + 1 }) || `Quick action ${index + 1}`}
-                  placeholder={t('agents.quickActionLabel', { n: index + 1 }) || `Quick action ${index + 1}`}
-                  onChange={(e) => setAction(index, e.target.value)}
-                />
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label={
-                    t('agents.removeQuickActionLabel', { n: index + 1 }) ||
-                    `Remove quick action ${index + 1}`
-                  }
-                  onClick={() => removeAction(index)}
-                  className="shrink-0 hover:text-[var(--ds-danger)]"
-                >
-                  <Trash2 size={16} />
-                </Button>
-              </div>
-            ))
+            <ul className="flex flex-col gap-2">
+              {quickActions.map((action, index) => (
+                // Positional keys are correct here: reordering swaps the values
+                // under stable rows, and focus is moved to match (see `move`).
+                <li key={index} className="flex items-center gap-2">
+                  <Input
+                    ref={(node) => {
+                      rowRefs.current[index] = node;
+                    }}
+                    value={action}
+                    maxLength={LIMITS.quickAction}
+                    disabled={readOnly}
+                    aria-label={`Starter question ${index + 1}`}
+                    placeholder={t('agents.eGHowMuchDoes') || 'e.g. How much does it cost?'}
+                    onChange={(event) =>
+                      setActions(
+                        quickActions.map((row, i) => (i === index ? event.target.value : row)),
+                      )
+                    }
+                  />
+                  <Tooltip content="Move up">
+                    <Button
+                      variant="ghost"
+                      size="icon-md"
+                      disabled={readOnly || index === 0}
+                      aria-label={`Move starter question ${index + 1} up`}
+                      onClick={() => move(index, index - 1)}
+                    >
+                      <ChevronUp aria-hidden />
+                    </Button>
+                  </Tooltip>
+                  <Tooltip content="Move down">
+                    <Button
+                      variant="ghost"
+                      size="icon-md"
+                      disabled={readOnly || index === quickActions.length - 1}
+                      aria-label={`Move starter question ${index + 1} down`}
+                      onClick={() => move(index, index + 1)}
+                    >
+                      <ChevronDown aria-hidden />
+                    </Button>
+                  </Tooltip>
+                  <Tooltip content="Remove">
+                    <Button
+                      variant="ghost"
+                      size="icon-md"
+                      disabled={readOnly}
+                      aria-label={`Remove starter question ${index + 1}`}
+                      onClick={() =>
+                        setActions(quickActions.filter((_, i) => i !== index))
+                      }
+                    >
+                      <Trash2 aria-hidden />
+                    </Button>
+                  </Tooltip>
+                </li>
+              ))}
+            </ul>
           )}
-        </div>
 
-        <Button variant="outline" size="sm" onClick={addAction}>
-          <Plus size={15} />
-          {t('agents.addQuickAction') || 'Add quick action'}
-        </Button>
-      </section>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={readOnly || atLimit}
+              onClick={() => setActions([...quickActions, ''], quickActions.length)}
+            >
+              <Plus aria-hidden />
+              {t('agents.addAQuestion') || 'Add a question'}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              loading={suggesting}
+              disabled={readOnly || agentId === null}
+              iconLeft={<Sparkles aria-hidden />}
+              onClick={() => void suggest()}
+            >
+              {suggestions === null ? t('agents.suggestQuestions') || 'Suggest questions' : t('agents.suggestDifferentQuestions') || 'Suggest different questions'}
+            </Button>
+            {atLimit ? (
+              <span className="text-xs text-text-secondary">
+                {LIMITS.quickActions} is as many as the window fits.
+              </span>
+            ) : null}
+          </div>
 
-      <section className="space-y-4 border-t border-[var(--ds-border)] pt-6">
-        <SectionHeader title={t('agents.chatInput') || 'Chat input'} description={t('agents.thePlaceholderShownInThe') || 'The placeholder shown in the message box.'} />
-        <Field
-          label={t('agents.inputPlaceholder') || 'Input placeholder'}
-          hint={t('agents.hintTextInsideTheMessage') || 'Hint text inside the message field.'}
-          value={draft.inputPlaceholder}
-          // @i18n-exempt: the widget's own default. See launcher text above.
-          placeholder="Write a message…"
-          onChange={(v) => onChange({ inputPlaceholder: v })}
+          {suggestError ? (
+            <Alert tone="danger" title={t('agents.noSuggestionsThisTime') || 'No suggestions this time'} live>
+              {suggestError}
+            </Alert>
+          ) : null}
+
+          {suggestions !== null && !suggesting ? (
+            unusedSuggestions.length > 0 ? (
+              <Well className="flex flex-col gap-2">
+                <p className="text-xs text-text-secondary">
+                  Questions your chatbot can already answer from what it has read. Add the ones that
+                  fit — you can reword them afterwards.
+                </p>
+                <ul className="flex flex-wrap gap-2">
+                  {unusedSuggestions.map((question) => (
+                    <li key={question}>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={readOnly || atLimit}
+                        onClick={() => setActions([...quickActions, question])}
+                      >
+                        <Plus aria-hidden />
+                        {question}
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </Well>
+            ) : (
+              <p className="text-xs text-text-secondary" role="status">
+                {suggestions.length === 0
+                  ? t('agents.theChatbotCouldNotFind') || 'The chatbot could not find a question it was confident answering. Add more to its knowledge and try again.'
+                  : t('agents.everySuggestionIsAlreadyIn') || 'Every suggestion is already in your list.'}
+              </p>
+            )
+          ) : null}
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader
+          eyebrow="Other wording"
+          titleAs="h2"
+          title={t('agents.theRestOfTheWidgets') || 'The rest of the widget\'s copy'}
+          description={t('agents.leaveAFieldEmptyFor') || 'Leave a field empty for our wording.'}
         />
-      </section>
+        <CardBody className="flex flex-col gap-5">
+          <Field label={t('agents.greetingBubble') || 'Greeting bubble'} trailing={defaultMark(draft.greetingMessage)}>
+            <Input
+              value={draft.greetingMessage}
+              maxLength={LIMITS.greetingMessage}
+              disabled={readOnly}
+              placeholder={PLACEHOLDERS.greetingMessage}
+              onChange={(event) => onChange({ greetingMessage: event.target.value })}
+            />
+          </Field>
+
+          <Field label={t('agents.offlineBanner') || 'Offline banner'} hint={t('agents.whenNobodyIsAvailable2') || 'When nobody is available.'}>
+            <Textarea
+              rows={2}
+              value={draft.offlineBanner}
+              maxLength={LIMITS.offlineBanner}
+              disabled={readOnly}
+              placeholder={PLACEHOLDERS.offlineBanner}
+              onChange={(event) => onChange({ offlineBanner: event.target.value })}
+            />
+          </Field>
+
+          {liveChatIncluded ? (
+            <>
+              <Field label={t('agents.liveChatButton') || 'Live chat button'} trailing={defaultMark(draft.liveChatLabel)}>
+                <Input
+                  value={draft.liveChatLabel}
+                  maxLength={LIMITS.liveChatLabel}
+                  disabled={readOnly}
+                  placeholder={PLACEHOLDERS.liveChatLabel}
+                  onChange={(event) => onChange({ liveChatLabel: event.target.value })}
+                />
+              </Field>
+              <Field
+                label={t('agents.ratingPrompt') || 'Rating prompt'}
+                hint={t('agents.askedOnceALiveConversation') || 'Asked once a live conversation ends.'}
+                trailing={defaultMark(draft.ratingPrompt)}
+              >
+                <Input
+                  value={draft.ratingPrompt}
+                  maxLength={LIMITS.ratingPrompt}
+                  disabled={readOnly}
+                  placeholder={PLACEHOLDERS.ratingPrompt}
+                  onChange={(event) => onChange({ ratingPrompt: event.target.value })}
+                />
+              </Field>
+              <Field
+                label={t('agents.endChatButton') || 'End-chat button'}
+                hint={t('agents.handsTheConversationBackTo') || 'Hands the conversation back to the chatbot.'}
+                trailing={defaultMark(draft.endChatLabel)}
+              >
+                <Input
+                  value={draft.endChatLabel}
+                  maxLength={LIMITS.endChatLabel}
+                  disabled={readOnly}
+                  placeholder={PLACEHOLDERS.endChatLabel}
+                  onChange={(event) => onChange({ endChatLabel: event.target.value })}
+                />
+              </Field>
+            </>
+          ) : (
+            <Well className="flex flex-wrap items-center justify-between gap-3">
+              <p className="min-w-0 text-prose text-text-secondary">
+                {t('agents.threeMoreLinesAppearWith') || 'Three more lines appear with live chat.'}
+              </p>
+              <Link to="/billing" className={buttonClass('secondary', 'sm')}>
+                {t('agents.comparePlans') || 'Compare plans'}
+              </Link>
+            </Well>
+          )}
+        </CardBody>
+      </Card>
     </div>
   );
 }

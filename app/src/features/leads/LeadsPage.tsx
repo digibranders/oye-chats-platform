@@ -1,840 +1,996 @@
-/**
- * LeadsPage - "Who are my qualified leads?"
- *
- * One job: surface the people who chatted with your AI, ranked by how ready
- * they are to buy, with a one-glance pipeline summary up top and a click-to-open
- * detail drawer. All qualification jargon is translated to plain language
- * (see {@link leadModel}); BANT/MQL only survives as a power-user tooltip.
- *
- * Data comes from the reused backend via {@link useLeads} (list + tier summary +
- * funnel) and {@link useLeadDetail} (drawer). Loading is derived from a status
- * enum, and every state - loading, empty, error, ready - is explained on screen.
- */
-import { type ReactElement, useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
   BadgeCheck,
-  Bell,
-  ChevronRight,
+  Bot as BotIcon,
+  CheckCheck,
   Download,
-  Lock,
-  MessageSquare,
+  Info,
+  MailX,
+  MoreHorizontal,
   Users,
-  X,
 } from 'lucide-react';
 import {
+  ABSENT,
+  Alert,
+  Avatar,
+  Badge,
   Button,
+  Card,
+  CardBody,
+  ConfirmDialog,
+  DataTable,
+  DatePicker,
   EmptyState,
-  PageContainer,
+  LockedState,
+  MenuContent,
+  MenuItem,
+  MenuRoot,
+  MenuTrigger,
+  Page,
+  PageHeader,
+  SearchField,
   Select,
-  Skeleton,
+  Stack,
+  StatRow,
+  Toolbar,
+  Tooltip,
+  BUTTON_ICON_SLOT,
+  buttonClass,
   cn,
-} from '../../design-system';
-// MetricCard + DataTable are Foundation-phase components not yet re-exported
-// from the design-system barrel (the orchestrator wires those exports), so we
-// import them from their module paths directly.
-import { DataTable, type Column } from '../../design-system/components/DataTable';
+  formatNumber,
+  formatRelative,
+  type Column,
+  type SortState,
+} from '../../ui';
 import { useBotContext } from '../../context/BotContext';
 import { useEntitlements } from '../../hooks/useEntitlements';
 import { useSelectedBotPlanSlug } from '../../hooks/useSelectedBotPlanSlug';
-import { useUpgradeModal } from '../../context/UpgradeModalContext';
+import { planIncludesVisitorIntelligence } from '../../lib/planGates';
 import { downloadCsv } from '../../lib/downloadCsv';
-import { exportLeadsCsv, markAllLeadsViewed, markLeadViewed } from '../../services/api';
-import { type Lead } from '../../types/domain';
+import { exportLeadsCsv } from '../../services/api';
+import type { Lead } from '../../types/domain';
 import { buildSelectedLeadsCsv } from './leadsCsv';
-import { useLeads } from './useLeads';
-import { useLeadDetail } from './useLeadDetail';
+import { LEADS_PAGE_SIZE, useLeads } from './useLeads';
 import { useLeadAnnotations } from './useLeadAnnotations';
-import { LeadDetailDrawer } from './LeadDetailDrawer';
+import { LeadDrawer } from './LeadDrawer';
+import { SuppressionsDrawer } from './SuppressionsDrawer';
 import {
-  type ContactFilter,
-  type TierKey,
+  LEADS_RANGE_OPTIONS,
+  MIN_SCORE_OPTIONS,
+  hasActiveFilters,
+  hasClientRefinement,
+  leadsRangeLabel,
+  leadsRangeWindow,
+  readLeadsUrl,
+  writeLeadsUrl,
+  type LeadsRangeKey,
+  type LeadsUrlState,
+} from './leadsUrl';
+import {
   TIER_META,
   TIER_ORDER,
   companyDisplay,
-  filterLeads,
-  formatDateTime,
+  compareLeads,
   formatLocation,
-  humanizeDimension,
+  hasIntelligence,
   leadDisplayName,
-  leadInitials,
   normalizeTier,
+  orderedDimensions,
+  refineLeads,
+  type ContactFilter,
+  type TierKey,
 } from './leadModel';
-import { planIncludesVisitorIntelligence } from '../../lib/planGates';
-import { t as translateNow } from '../../i18n/i18n';
 import { useTranslation } from '../../i18n/useTranslation';
-import { formatNumber } from '../../i18n/formatters';
 
-// @i18n-exempt: resolved at the render site from the option value
-// (`leads.filter.<value>`); the English here is that lookup's fallback.
-const CONTACT_FILTER_OPTIONS: ReadonlyArray<{ value: ContactFilter; label: string }> = [
+/**
+ * Leads — "who asked about buying, and how ready did they sound?"
+ *
+ * The densest surface in the product after the inbox, and the one the audit
+ * found leaning hardest on the browser: it pulled a 200-row slice, ran every
+ * filter and sort over that slice, and printed the truncated count as though it
+ * were the workspace's total. The API has supported `tier`, `min_score`, `page`
+ * and `limit` the whole time.
+ *
+ * **The table owns its paging.** `DataTable` takes `page`, `onPageChange` and
+ * `rowCount`, and this page hand-rolled a `<nav>` of Previous/Next buttons
+ * twenty lines below one that already had them — which cost more than
+ * duplication. Because `page` was never passed, the table did not know it was
+ * server-paged, so it happily sorted fifty rows out of nine thousand and
+ * presented the result as "sorted by score".
+ *
+ * **The division of labour is a property of the API, not a paragraph.** Tier and
+ * minimum score are the server's, applied across every lead. Search and lead
+ * type are the browser's, applied to the rows on screen — so while either is
+ * active this stops claiming to be page 3 of 128 and reports what it is actually
+ * showing. The page used to explain that split in two lines of body copy; it is
+ * now one tooltip on one glyph, where a reader who wonders can find it.
+ */
+
+const CONTACT_OPTIONS: ReadonlyArray<{ value: ContactFilter; label: string }> = [
+  { value: 'all', label: 'Everyone' },
   { value: 'named', label: 'Named leads' },
   { value: 'anonymous', label: 'Anonymous only' },
-  { value: 'all', label: 'Everyone' },
 ];
 
-/** How the lead table is ordered. Exposed via the "Sort by" control. */
-// @i18n-exempt: resolved at the render site from the option value
-// (`leads.filter.<value>`); the English here is that lookup's fallback.
-const SORT_OPTIONS = [
-  { value: 'recent', label: 'Latest activity' },
-  { value: 'quality', label: 'BANT' },
-] as const;
-type SortKey = (typeof SORT_OPTIONS)[number]['value'];
+const TIER_OPTIONS = [
+  { value: '', label: 'Any quality' },
+  ...TIER_ORDER.map((tier) => ({ value: tier, label: TIER_META[tier].label })),
+];
 
-/** Epoch ms of a lead's last activity; undated/invalid sinks to 0 so it sorts last. */
-function leadActivityTime(lead: Lead): number {
-  const parsed = lead.last_active_at ? Date.parse(lead.last_active_at) : NaN;
-  return Number.isFinite(parsed) ? parsed : 0;
-}
+const SCORE_OPTIONS = [
+  { value: '', label: 'Any score' },
+  ...MIN_SCORE_OPTIONS.map((score) => ({ value: String(score), label: `Score ${score}+` })),
+];
 
-/** Comparator per sort key. Every option has a stable secondary tiebreak. */
-function leadComparator(sortBy: SortKey): (a: Lead, b: Lead) => number {
-  if (sortBy === 'quality') {
-    return (a, b) =>
-      TIER_ORDER.indexOf(normalizeTier(b.status)) - TIER_ORDER.indexOf(normalizeTier(a.status)) ||
-      b.score - a.score;
-  }
-  // 'recent' (default): most recent chat first, higher score breaks ties.
-  return (a, b) => leadActivityTime(b) - leadActivityTime(a) || b.score - a.score;
-}
-
+/** What each filter actually reaches. One tooltip, not two lines. */
+const SCOPE_NOTE = `Quality, score and date filter every lead. Search and lead type filter the ${LEADS_PAGE_SIZE} rows on this page.`;
 
 /**
- * Canonical B-A-N-T display order. The backend emits a bot's framework
- * dimensions in its own order (e.g. need/timeline/authority/budget); we surface
- * them in Budget → Authority → Need → Timeline order so the chips always read
- * "BANT". Dimensions outside this set (MEDDIC/CHAMP frameworks) sort after the
- * BANT four, keeping their original relative order (Array#sort is stable).
+ * A deliverability verdict beside an email.
+ *
+ * Renders nothing when `is_valid_email` is absent: the field only exists on
+ * plans with Visitor Intelligence, and `null` there means "not checked yet"
+ * rather than "bad". Only a definitive verdict earns a mark, so the column
+ * never implies a judgement the backend did not make.
  */
-const BANT_ORDER: readonly string[] = ['budget', 'authority', 'need', 'timeline'];
-
-function bantOrderIndex(key: string): number {
-  const index = BANT_ORDER.indexOf(key.toLowerCase());
-  return index === -1 ? BANT_ORDER.length : index;
-}
-
-/**
- * BantSignal - the at-a-glance qualification cell: one small chip per framework
- * dimension (Budget / Authority / Need / Timeline for a BANT bot, or the bot's
- * real dimensions for MEDDIC/CHAMP). A chip turns green once that dimension is
- * "accepted" - i.e. the AI captured a positive signal for it (score > 0);
- * un-assessed dimensions stay a quiet neutral. This restores the "which boxes
- * has this lead ticked?" read the table used to give, in place of the single
- * plain-language quality pill (the tier still drives the top filters, the sort,
- * and the detail drawer's verdict).
- */
-function BantSignal({ lead }: { lead: Lead }): ReactElement {
+function EmailVerdict({ isValid }: { isValid?: boolean | null }) {
   const { t } = useTranslation();
-  const dimensions = Object.entries(lead.bant ?? {}).sort(
-    ([a], [b]) => bantOrderIndex(a) - bantOrderIndex(b),
+  if (isValid !== true && isValid !== false) return null;
+  const label = isValid
+    ? t('leads.emailVerifiedAsDeliverable') || 'Email verified as deliverable'
+    : t('leads.emailFailedValidationAndCannot') || 'Email failed validation and cannot be contacted';
+  return (
+    <span role="img" aria-label={label} className="inline-flex shrink-0">
+      {isValid ? (
+        <BadgeCheck aria-hidden className="h-icon-sm w-icon-sm text-success" />
+      ) : (
+        <AlertCircle aria-hidden className="h-icon-sm w-icon-sm text-danger" />
+      )}
+    </span>
   );
+}
+
+/**
+ * Which boxes this lead has ticked, as one chip per dimension.
+ *
+ * An even earlier version of this column was four to five tinted WORD chips —
+ * `Budget` `Authority` `Need` `Timeline` — which wrapped to two lines the
+ * moment the framework was MEDDIC, so no two rows in the column were the same
+ * height. A single fraction replaced it for exactly that reason. This restores
+ * the "which boxes has this lead ticked?" read at a glance, without the
+ * original defect: each chip is a fixed 20px box holding one INITIAL, never a
+ * word, so nothing in it can wrap regardless of how many dimensions the bot's
+ * framework has or how long their names are. The full names and what the
+ * visitor actually said still live in the one tooltip over the row, and in the
+ * detail drawer.
+ */
+function QualificationCell({ lead }: { lead: Lead }) {
+  const { t } = useTranslation();
+  const dimensions = orderedDimensions(lead);
   if (dimensions.length === 0) {
-    return <span className="text-[12px] text-[var(--ds-text-subtle)]">-</span>;
+    return <span className="text-text-tertiary">{ABSENT}</span>;
   }
   return (
-    <div className="flex items-center gap-1" role="group" aria-label={t('leads.qualificationSignals') || 'Qualification signals'}>
-      {dimensions.map(([key, dim]) => {
-        const accepted = (dim?.score ?? 0) > 0;
-        const label = humanizeDimension(key);
-        return (
+    <Tooltip
+      content={
+        <ul>
+          {dimensions.map((dimension) => (
+            <li key={dimension.key}>
+              {dimension.label}: {dimension.captured ? (dimension.value ?? 'captured') : 'nothing yet'}
+            </li>
+          ))}
+        </ul>
+      }
+    >
+      <div
+        role="group"
+        aria-label={t('leads.qualificationSignals') || 'Qualification signals'}
+        className="inline-flex items-center gap-1"
+      >
+        {dimensions.map((dimension) => (
           <span
-            key={key}
-            title={`${label}: ${dim?.value || t('leads.notCaptured') || 'Not captured'}`}
-            aria-label={`${label}: ${accepted ? 'captured' : 'not captured'}`}
+            key={dimension.key}
+            aria-label={`${dimension.label}: ${dimension.captured ? 'captured' : 'not captured'}`}
             className={cn(
-              'flex h-5 w-5 items-center justify-center rounded text-[9px] font-bold uppercase',
-              accepted
-                ? 'bg-[var(--ds-success-soft)] text-[var(--ds-success)]'
-                : 'bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]',
+              'flex h-5 w-5 shrink-0 items-center justify-center rounded-xs text-2xs font-bold uppercase',
+              dimension.captured
+                ? 'bg-success-tint text-success'
+                : 'bg-surface-sunken text-text-tertiary',
             )}
           >
-            {label.charAt(0)}
+            {dimension.label.charAt(0)}
           </span>
-        );
-      })}
-    </div>
+        ))}
+      </div>
+    </Tooltip>
   );
 }
 
 /**
- * EmailValidityMark - a one-glance deliverability marker beside a lead's email.
+ * The row's identity cell.
  *
- * Renders NOTHING when `is_valid_email` is absent: the field is only present
- * on plans that include Visitor Intelligence, and `null` there legitimately
- * means "not checked yet" rather than "bad". Only a definitive verdict earns
- * a mark, so the column never implies a judgement the backend didn't make.
+ * Built entirely from `span`s, because `DataTable` wraps the first cell in the
+ * button that activates the row and a `<button>` may only contain phrasing
+ * content — a `div` or a `ul` in there is invalid, whatever the browser makes
+ * of it in practice.
+ *
+ * One line, not three. It was a 32px avatar beside a name, an email and a wrap
+ * of tag chips — about 76px against the 44px row token, so a 1080p screen
+ * showed nine leads where Attio shows twenty-four. Unread is weight, not a blue
+ * pip: blue means interactive in this system, and a selected unread row had
+ * accent as its ground *and* accent as its status mark.
  */
-function EmailValidityMark({ isValid }: { isValid?: boolean | null }): ReactElement | null {
-  const { t } = useTranslation();
-  if (isValid === true) {
-    return (
-      <BadgeCheck
-        size={12}
-        aria-label={t('leads.emailVerifiedAsDeliverable') || 'Email verified as deliverable'}
-        className="shrink-0 text-[var(--ds-success)]"
-      />
-    );
-  }
-  if (isValid === false) {
-    return (
-      <AlertCircle
-        size={12}
-        aria-label={t('leads.emailFailedValidationCannotBe') || 'Email failed validation - cannot be contacted'}
-        className="shrink-0 text-[var(--ds-danger)]"
-      />
-    );
-  }
-  return null;
-}
-
-/**
- * LockedValue - a Free-plan stand-in for a paid lead-intelligence cell
- * (quality score, location). The column stays VISIBLE so Free users see the
- * feature exists; the value is replaced by a lock affordance that opens the
- * upgrade modal instead of the real data.
- */
-function LockedValue({ onUpgrade }: { onUpgrade: () => void }): ReactElement {
-  const { t } = useTranslation();
+function LeadCell({ lead }: { lead: Lead }) {
+  const email = lead.contact?.email;
   return (
-    <button
-      type="button"
-      title={t('leads.upgradeToUnlock') || 'Upgrade to unlock'}
-      aria-label={t('leads.upgradeToUnlock') || 'Upgrade to unlock'}
-      onClick={(event) => {
-        event.stopPropagation();
-        onUpgrade();
-      }}
-      className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] font-medium text-[var(--ds-text-subtle)] transition-colors hover:text-[var(--ds-accent-text)]"
-    >
-      <Lock size={12} aria-hidden="true" />
-      {t('leads.locked') || 'Locked'}
-    </button>
+    <span className="flex items-center gap-2">
+      <Avatar name={leadDisplayName(lead)} size="sm" />
+      <span className={cn('shrink-0 truncate', lead.unread && 'font-semibold')}>
+        {leadDisplayName(lead)}
+      </span>
+      {email ? (
+        <>
+          <span className="min-w-0 truncate text-xs text-text-secondary">{email}</span>
+          <EmailVerdict isValid={lead.contact?.is_valid_email} />
+        </>
+      ) : null}
+      {lead.unread ? <span className="sr-only">Not opened yet</span> : null}
+    </span>
   );
 }
 
-/** The metric row; only shown once stats resolve. */
-export function LeadsPage(): ReactElement {
+export function LeadsPage() {
   const { t } = useTranslation();
-  const { selectedBot, bots, loading: botsLoading } = useBotContext();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const state = useMemo(() => readLeadsUrl(searchParams), [searchParams]);
+
+  // The functional form so this callback never depends on the state it reads —
+  // otherwise every URL change gives the toolbar new handlers and re-renders it.
+  const update = useCallback(
+    (patch: Partial<LeadsUrlState>, options?: { replace?: boolean }) => {
+      setSearchParams((previous) => writeLeadsUrl(readLeadsUrl(previous), patch), {
+        replace: options?.replace ?? false,
+      });
+    },
+    [setSearchParams],
+  );
+
+  const { bots, selectedBot, loading: botsLoading } = useBotContext();
   const botId = selectedBot?.id;
-  const { isFree, hasFeature } = useEntitlements();
-  const bantUnlocked = hasFeature('bant');
-  // Per-agent, matching the backend gate. `null` while resolving. Hold the
-  // gate closed rather than flashing paid UI we'd then have to take away.
-  const selectedBotPlanSlug = useSelectedBotPlanSlug();
-  const visitorIntelligenceUnlocked =
-    selectedBotPlanSlug !== null && planIncludesVisitorIntelligence(selectedBotPlanSlug);
-  const { openUpgradeModal } = useUpgradeModal();
+  const { isFree } = useEntitlements();
+  const planSlug = useSelectedBotPlanSlug();
+  // Per agent, matching the backend gate. `null` while the chatbot resolves, so
+  // the gate is held closed rather than flashing paid UI we would take away.
+  const visitorIntelligence = planSlug !== null && planIncludesVisitorIntelligence(planSlug);
 
-  // Free-plan workspaces never get the list - the backend's `/leads` route
-  // 403s for them. `useLeads` takes `enabled: false` so it never issues that
-  // doomed request; a Free user (including one who deep-links `/leads`) sees
-  // the upgrade teaser below instead of a broken fetch.
-  const {
-    status,
-    leads,
-    stats,
-    error,
-    reload,
-    markViewedLocal,
-    markAllReadLocal,
-  } = useLeads(botId);
-
+  const rangeWindow = leadsRangeWindow(state);
+  const leads = useLeads({
+    botId,
+    tier: state.tier,
+    minScore: state.minScore,
+    days: rangeWindow.days,
+    from: rangeWindow.from,
+    to: rangeWindow.to,
+    page: state.page,
+  });
   const annotations = useLeadAnnotations();
 
-  const [tierFilter, setTierFilter] = useState<TierKey | null>(null);
-  const [contactFilter, setContactFilter] = useState<ContactFilter>('all');
-  const [query, setQuery] = useState('');
-  const [sortBy, setSortBy] = useState<SortKey>('recent');
+  /**
+   * Whether the paid lead-intelligence layer is present.
+   *
+   * Read off the response first: the server *deletes* score, tier, BANT and
+   * location for Free rather than nulling them, so their absence is the fact.
+   * The plan flag is only the answer before any lead has arrived.
+   */
+  const intelligenceLocked =
+    leads.leads.length > 0 ? !leads.leads.some(hasIntelligence) : isFree;
 
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
-  // Which face the drawer opens on: the full lead profile ('detail', row click)
-  // or the conversation only ('chat', the row's "View chat" button).
-  const [drawerView, setDrawerView] = useState<'detail' | 'chat'>('detail');
-  const detailData = useLeadDetail(selectedSessionId);
-
-  // Bulk-select for "Export selected". Keyed by session id so a selection
-  // survives re-sorts and filter changes; stale ids are simply never matched.
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
-
-  const [isExporting, setIsExporting] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
-
-  // Filter, then order by the chosen sort key (default: most recent chat first).
-  // filterLeads returns a fresh array, so sorting in place never mutates the
-  // source `leads` state.
-  const filtered = useMemo(
-    () =>
-      filterLeads(leads, { tier: tierFilter, contact: contactFilter, query }).sort(
-        leadComparator(sortBy),
-      ),
-    [leads, tierFilter, contactFilter, query, sortBy],
+  const rows = useMemo(
+    () => refineLeads(leads.leads, { contact: state.contact, query: state.query }),
+    [leads.leads, state.contact, state.query],
   );
 
-  const hasUnread = useMemo(() => leads.some((lead) => lead.unread === true), [leads]);
+  const refined = hasClientRefinement(state);
+  /**
+   * Sorting is offered only when the whole result set is on screen.
+   *
+   * `GET /leads` takes no sort parameter, so a comparator here can only order
+   * the fifty rows this page happens to hold. That is honest when those fifty
+   * *are* the result — one page of results, or a client-refined subset of one —
+   * and a lie the moment there is a second page. `DataTable` refuses to draw an
+   * affordance it cannot honour, so the columns simply stop declaring one.
+   */
+  const sortable = refined || leads.total <= LEADS_PAGE_SIZE;
 
-  const allFilteredSelected =
-    filtered.length > 0 && filtered.every((lead) => selectedIds.has(lead.session_id));
+  // ── Selection ─────────────────────────────────────────────────────────────
+  // Scoped to what is on screen. The version this replaces kept a selection
+  // across filter and page changes, so "3 selected" could mean three rows the
+  // user could no longer see, with no way to review them before exporting.
+  //
+  // `query` is deliberately NOT in the scope. `SearchField` debounces at 200ms,
+  // so with it in here one keystroke silently discarded a selection the user had
+  // built by hand — the reset is right, doing it mid-typing was not.
+  const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
+  const scope = `${botId ?? 'all'}|${state.tier}|${state.minScore}|${state.range}|${state.rangeFrom}|${state.rangeTo}|${state.page}|${state.contact}`;
+  const [selectionScope, setSelectionScope] = useState(scope);
+  if (selectionScope !== scope) {
+    setSelectionScope(scope);
+    setSelected(new Set());
+  }
 
-  const toggleSelect = useCallback((sessionId: string): void => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(sessionId)) next.delete(sessionId);
-      else next.add(sessionId);
-      return next;
-    });
-  }, []);
+  const [confirmMarkAll, setConfirmMarkAll] = useState(false);
+  const [suppressionsOpen, setSuppressionsOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
-  const toggleSelectAll = useCallback((): void => {
-    setSelectedIds((prev) => {
-      const everySelected =
-        filtered.length > 0 && filtered.every((lead) => prev.has(lead.session_id));
-      if (everySelected) return new Set();
-      return new Set(filtered.map((lead) => lead.session_id));
-    });
-  }, [filtered]);
+  const openLead = state.openLead;
+  const markRead = leads.markRead;
+  useEffect(() => {
+    if (openLead) markRead(openLead);
+  }, [openLead, markRead]);
 
-  const clearSelection = useCallback((): void => setSelectedIds(new Set()), []);
+  const handleSort = useCallback(
+    (sort: SortState | null) => update({ sort }, { replace: true }),
+    [update],
+  );
 
-  const handleExportSelected = useCallback((): void => {
-    const chosen = leads.filter((lead) => selectedIds.has(lead.session_id));
+  const handleExportSelected = useCallback(() => {
+    const chosen = leads.leads.filter((lead) => selected.has(lead.session_id));
     if (chosen.length === 0) return;
-    const csv = buildSelectedLeadsCsv(chosen, annotations.tagsFor);
-    downloadCsv(csv, `selected-leads-${chosen.length}.csv`);
-    setSelectedIds(new Set());
-  }, [leads, selectedIds, annotations]);
+    downloadCsv(
+      buildSelectedLeadsCsv(chosen, annotations.tagsFor),
+      `oyechats-leads-selected-${chosen.length}.csv`,
+    );
+  }, [annotations.tagsFor, leads.leads, selected]);
 
-  const markSeen = useCallback(
-    (lead: Lead): void => {
-      if (lead.unread) {
-        markViewedLocal(lead.session_id);
-        // Fire-and-forget: the badge already updated optimistically.
-        void markLeadViewed(lead.session_id).catch(() => undefined);
-      }
-    },
-    [markViewedLocal],
-  );
+  const handleMarkSelectedRead = useCallback(() => {
+    selected.forEach((sessionId) => markRead(sessionId));
+    setSelected(new Set());
+  }, [markRead, selected]);
 
-  // Row click → full lead profile (no transcript). "View chat" → transcript only.
-  // On plans without BANT (Free / Starter) the detail drawer's core value
-  // (dimension breakdown, signal evidence, tier verdict) is empty, so we
-  // route the click to the qualification upgrade modal instead of opening
-  // a hollow drawer. The "View chat" button (`openChat`) stays wired so
-  // Starter can still reach the transcript, which is not gated.
-  const openLead = useCallback(
-    (lead: Lead): void => {
-      if (!bantUnlocked) {
-        openUpgradeModal('view_qualification');
-        return;
-      }
-      setDrawerView('detail');
-      setSelectedSessionId(lead.session_id);
-      markSeen(lead);
-    },
-    [bantUnlocked, openUpgradeModal, markSeen],
-  );
-
-  const openChat = useCallback(
-    (lead: Lead): void => {
-      setDrawerView('chat');
-      setSelectedSessionId(lead.session_id);
-      markSeen(lead);
-    },
-    [markSeen],
-  );
-
-  async function handleExport(): Promise<void> {
-    setIsExporting(true);
-    setActionError(null);
+  // The failure belongs beside the control that produced it (DESIGN.md §6.8).
+  // It used to render as the first child of the page's `Stack` — left-aligned
+  // and full width, about 300px from the top-right button that caused it — so
+  // it goes through the header's own toolbar slot instead. Not a toast: the
+  // `Toaster` is not mounted at the app root, so a toast here would be silence.
+  async function handleExportAll(): Promise<void> {
+    setExporting(true);
+    setExportError(null);
     try {
       await exportLeadsCsv(botId);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : t('leads.exportFailedPleaseTryAgain') || 'Export failed. Please try again.');
-    } finally {
-      setIsExporting(false);
-    }
-  }
-
-  async function handleMarkAllRead(): Promise<void> {
-    if (!hasUnread) return;
-    markAllReadLocal();
-    setActionError(null);
-    try {
-      await markAllLeadsViewed(botId);
-    } catch (err) {
-      setActionError(
-        err instanceof Error ? err.message : t('leads.couldNotMarkLeadsAs') || 'Could not mark leads as read. Refreshing…',
+    } catch (error) {
+      setExportError(
+        error instanceof Error ? error.message : t('leads.theExportCouldNotBe') || 'The export could not be produced.',
       );
-      reload();
+    } finally {
+      setExporting(false);
     }
   }
 
-  const columns: Column<Lead>[] = useMemo(
-    () => {
-      const all: Column<Lead>[] = [
+  const columns = useMemo<Column<Lead>[]>(() => {
+    const base: Column<Lead>[] = [
       {
-        key: 'select',
-        header: (
-          <input
-            type="checkbox"
-            checked={allFilteredSelected}
-            onChange={toggleSelectAll}
-            aria-label={translateNow('leads.selectAllLeadsInView') || 'Select all leads in view'}
-            className="h-4 w-4 cursor-pointer accent-[var(--ds-accent)] align-middle"
-          />
-        ),
-        width: '2.5rem',
-        cellClassName: 'py-0',
-        render: (lead) => (
-          <input
-            type="checkbox"
-            checked={selectedIds.has(lead.session_id)}
-            onChange={() => toggleSelect(lead.session_id)}
-            onClick={(event) => event.stopPropagation()}
-            aria-label={`Select ${leadDisplayName(lead)}`}
-            className="h-4 w-4 cursor-pointer accent-[var(--ds-accent)] align-middle"
-          />
-        ),
+        key: 'lead',
+        header: t('leads.lead') || 'Lead',
+        rowHeader: true,
+        // Pinned, because this table is wider than the card that holds it and
+        // there is no honest way to make it narrower. Eight columns came to
+        // 1,383px against 1,126 at 1440 and 966 at 1280, so Messages and Last
+        // active sat off the right edge — and the identity column scrolled away
+        // with them, leaving rows of scores with nobody's name against them.
+        // Trimming the declared widths (below) buys back 257px, which is the
+        // whole overflow at 1440 and most of it at 1280; the rest scrolls, with
+        // the name anchored and `DataTable`'s pinned-edge shadow marking it.
+        //
+        // `fit` was the other candidate and is wrong here: it is for a table in
+        // a narrow column, and forcing eight columns into 966px cut every
+        // visitor's name to "Amara (" — losing the tail of the thing the row is
+        // *about*, which is worse than scrolling to reach a message count.
+        pinned: true,
+        sortable: sortable ? compareLeads.name : undefined,
+        render: (lead) => <LeadCell lead={lead} />,
       },
       {
-        key: 'contact',
-        header: translateNow('leads.lead') || 'Lead',
+        key: 'tags',
+        header: t('leads.tags') || 'Tags',
+        secondary: true,
+        width: '5rem',
         render: (lead) => {
           const tags = annotations.tagsFor(lead.session_id);
+          if (tags.length === 0) return <span className="text-text-tertiary">{ABSENT}</span>;
           return (
-            <div className="flex items-center gap-3">
-              <span
-                aria-hidden="true"
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--ds-bg-sunken)] text-[11px] font-semibold text-[var(--ds-text-muted)]"
-              >
-                {leadInitials(lead)}
-              </span>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  {lead.unread && (
-                    <span
-                      className="h-2 w-2 shrink-0 rounded-full bg-[var(--ds-accent)]"
-                      aria-label={translateNow('leads.newLead') || 'New lead'}
-                    />
-                  )}
-                  <span
-                    className={cn(
-                      'truncate text-[13px]',
-                      lead.unread ? 'font-semibold text-[var(--ds-text)]' : 'text-[var(--ds-text)]',
-                    )}
-                  >
-                    {leadDisplayName(lead)}
-                  </span>
-                </div>
-                {lead.contact?.email && (
-                  <p className="flex items-center gap-1 truncate text-[12px] text-[var(--ds-text-subtle)]">
-                    <span className="truncate">{lead.contact.email}</span>
-                    <EmailValidityMark isValid={lead.contact.is_valid_email} />
-                  </p>
-                )}
-                {tags.length > 0 && (
-                  <ul className="mt-1 flex flex-wrap gap-1" aria-label={translateNow('leads.tags') || 'Tags'}>
-                    {tags.slice(0, 3).map((tag) => (
-                      <li
-                        key={tag}
-                        className="inline-flex max-w-[8rem] items-center truncate rounded-full bg-[var(--ds-accent-soft)] px-2 py-0.5 text-[10px] font-medium text-[var(--ds-accent-text)]"
-                      >
-                        {tag}
-                      </li>
-                    ))}
-                    {tags.length > 3 && (
-                      <li className="inline-flex items-center text-[10px] font-medium text-[var(--ds-text-subtle)]">
-                        +{tags.length - 3}
-                      </li>
-                    )}
-                  </ul>
-                )}
-              </div>
-            </div>
-          );
-        },
-      },
-      {
-        key: 'company',
-        header: translateNow('leads.company') || 'Company',
-        // The domain is derived free of charge from the lead's email
-        // (`email_domain_service.extract_company_domain`). Personal-provider
-        // addresses correctly yield nothing, so an em-dash here means
-        // "consumer email", not "lookup failed". `companyDisplay` prefers the
-        // resolved name ("Infosys Limited") when the paid lookup found one;
-        // this column showed the bare domain either way, so the enrichment
-        // the customer pays for was invisible in the view they scan.
-        render: (lead) => {
-          const company = companyDisplay(lead.contact);
-          if (!company) {
-            return <span className="text-[12px] text-[var(--ds-text-subtle)]">&mdash;</span>;
-          }
-          const title = company.secondary ? `${company.value} (${company.secondary})` : company.value;
-          return (
-            <span
-              title={title}
-              className="block max-w-[12rem] truncate text-[12px] text-[var(--ds-text)]"
-            >
-              {company.value}
+            <span className="flex items-center gap-1">
+              <span className="sr-only">{t('leads.yourPrivateTags') || 'Your private tags:'} </span>
+              {tags.slice(0, 2).map((tag) => (
+                <Badge key={tag}>{tag}</Badge>
+              ))}
+              {tags.length > 2 ? (
+                <span className="figure text-xs text-text-tertiary">+{tags.length - 2}</span>
+              ) : null}
             </span>
           );
         },
       },
       {
-        key: 'status',
-        header: <span className="text-[var(--ds-success)]">{translateNow('leads.bant') || 'BANT'}</span>,
-        // BANT scoring is a Standard+ feature (`hasFeature('bant')`). On Free
-        // AND Starter the RAG pipeline skips extraction, so the dimension
-        // pills would render as four blank neutrals. Worse than an honest
-        // lock. Route the click straight to the qualification upgrade.
-        render: (lead) =>
-          !bantUnlocked ? (
-            <LockedValue onUpgrade={() => openUpgradeModal('view_qualification')} />
-          ) : (
-            <BantSignal lead={lead} />
-          ),
+        key: 'company',
+        header: t('leads.company') || 'Company',
+        secondary: true,
+        width: '9rem',
+        sortable: sortable ? compareLeads.company : undefined,
+        // The domain is derived free of charge from the captured email address.
+        // Personal-provider addresses correctly yield nothing, so an em dash
+        // here means "consumer email", not "the lookup failed".
+        render: (lead) => {
+          const company = companyDisplay(lead.contact);
+          if (!company) return <span className="text-text-tertiary">{ABSENT}</span>;
+          return <span className="text-text-primary">{company.value}</span>;
+        },
+      },
+    ];
+
+    if (!intelligenceLocked) {
+      base.push(
+        {
+          key: 'quality',
+          header: t('leads.quality') || 'Quality',
+          width: '10rem',
+          sortable: sortable ? compareLeads.score : undefined,
+          render: (lead) => {
+            const tier = TIER_META[normalizeTier(lead.status)];
+            return (
+              <span className="flex items-center gap-2">
+                <Tooltip content={`${tier.hint} (${tier.code})`}>
+                  <span className="inline-flex">
+                    <Badge tone={tier.tone}>{tier.label}</Badge>
+                  </span>
+                </Tooltip>
+                <span className="figure text-xs text-text-secondary">{lead.score}</span>
+              </span>
+            );
+          },
+        },
+        {
+          key: 'qualification',
+          header: t('leads.qualified') || 'Qualified',
+          secondary: true,
+          align: 'center',
+          // 4rem, not 6: the cell is a `4/4` chip about 34px wide, so 96px was
+          // 30px of air in a table that did not have 23px to give.
+          width: '4rem',
+          render: (lead) => <QualificationCell lead={lead} />,
+        },
+        {
+          key: 'location',
+          header: t('leads.location') || 'Location',
+          secondary: true,
+          width: '6rem',
+          render: (lead) => {
+            const location = formatLocation(lead.location);
+            return location === 'Unknown' ? (
+              <span className="text-text-tertiary">{ABSENT}</span>
+            ) : (
+              <span className="text-text-secondary">{location}</span>
+            );
+          },
+        },
+      );
+    }
+
+    base.push(
+      {
+        key: 'chats',
+        header: t('leads.messages') || 'Messages',
+        type: 'number',
+        width: '5rem',
+        secondary: true,
+        sortable: sortable ? compareLeads.chats : undefined,
+        render: (lead) => (lead.chats ? formatNumber(lead.chats) : ABSENT),
       },
       {
-        key: 'view_chat',
-        header: translateNow('leads.chat') || 'Chat',
-        render: (lead) => (
-          <button
-            type="button"
-            onClick={(event) => {
-              // Stop the row's onRowClick from double-firing; the button opens
-              // the same lead drawer (which carries the full chat transcript).
-              event.stopPropagation();
-              openChat(lead);
-            }}
-            className="inline-flex items-center gap-1.5 rounded-md border border-[var(--ds-border)] px-2.5 py-1 text-[12px] font-medium text-[var(--ds-text-muted)] transition-colors hover:border-[var(--ds-border-strong)] hover:text-[var(--ds-text)]"
-          >
-            <MessageSquare size={13} aria-hidden="true" />
-            {translateNow('leads.viewChat') || 'View chat'}
-          </button>
-        ),
+        // Left-aligned and set in Inter. `align: 'right'` makes `DataTable` set
+        // the cell as a figure, and "3 days ago" is a phrase — right-aligned
+        // monospace prose with tabular figures reads as a broken number column.
+        key: 'last_active',
+        header: t('leads.lastActive') || 'Last active',
+        width: '7rem',
+        sortable: sortable ? compareLeads.lastActive : undefined,
+        render: (lead) => formatRelative(lead.last_active_at),
       },
-      {
-        key: 'location',
-        header: translateNow('leads.location') || 'Location',
-        render: (lead) =>
-          isFree ? (
-            <LockedValue onUpgrade={() => openUpgradeModal('view_leads')} />
-          ) : (
-            <span className="text-[12px] text-[var(--ds-text-muted)]">{formatLocation(lead.location)}</span>
-          ),
-      },
-      {
-        key: 'last_active_at',
-        header: translateNow('leads.lastActive') || 'Last active',
-        render: (lead) => (
-          <span className="whitespace-nowrap text-[12px] text-[var(--ds-text-subtle)]">
-            {formatDateTime(lead.last_active_at)}
-          </span>
-        ),
-      },
-      {
-        key: 'session_id',
-        header: '',
-        align: 'right',
-        width: '3rem',
-        render: () => (
-          <ChevronRight
-            size={16}
-            className="text-[var(--ds-text-subtle)]"
-            aria-hidden="true"
-          />
-        ),
-      },
-      ];
-      // Free tier keeps every column VISIBLE, the Quality/Location cells
-      // render a locked affordance (see their `render`), and the row opens a
-      // locked lead-detail drawer. Nothing is hidden; the paid bits are gated.
-      return all;
-    },
-    [
-      allFilteredSelected,
-      selectedIds,
-      toggleSelect,
-      toggleSelectAll,
-      annotations,
-      openChat,
-      isFree,
-      bantUnlocked,
-      openUpgradeModal,
-    ],
-  );
+    );
+
+    return base;
+  // `t` changes identity with the locale: the column headers built above are
+  // resolved at call time, so without it the table would keep whatever
+  // language it first mounted in.
+  }, [annotations, intelligenceLocked, sortable, t]);
 
   // ── Guards ────────────────────────────────────────────────────────────────
-  // Free plan now reaches Leads too, with a reduced surface: the list hides the
-  // quality/location columns (see `columns`) and rows open the conversation
-  // (`openChat`) instead of the full lead-intelligence drawer.
-  if (botsLoading && bots.length === 0) {
-    return (
-      <PageContainer title={t('leads.leads') || 'Leads'}>
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-24 w-full" />
-          ))}
-        </div>
-        <Skeleton className="h-64 w-full" />
-      </PageContainer>
-    );
-  }
 
   if (!botsLoading && bots.length === 0) {
     return (
-      <PageContainer title={t('leads.leads') || 'Leads'}>
-        <EmptyState
-          icon={Users}
-          title={t('leads.noLeadsYet') || 'No leads yet'}
-          description={t('leads.createYourFirstAiChatbot') || 'Create your first AI chatbot and add it to your site. Every visitor who chats becomes a lead here - ranked by how ready they are to buy.'}
-        />
-      </PageContainer>
+      <Page width="wide">
+        <PageHeader title={t('leads.leads') || 'Leads'} titleVisuallyHidden />
+        <Card>
+          <EmptyState
+            icon={BotIcon}
+            title={t('leads.noChatbotsYet') || 'No chatbots yet'}
+            description={t('leads.everyoneWhoChatsWithYour') || 'Everyone who chats with your chatbot appears here.'}
+            action={
+              <Link to="/chatbots?new=1" className={buttonClass('primary', 'sm')}>
+                {t('leads.createYourFirstChatbot') || 'Create your first chatbot'}
+              </Link>
+            }
+          />
+        </Card>
+      </Page>
     );
   }
 
-  const exportAction = (
-    <Button
-      variant="outline"
-      onClick={() => void handleExport()}
-      disabled={isExporting || leads.length === 0}
-    >
-      <Download size={16} aria-hidden="true" />
-      {/* Export ignores the active table filters - it always emits the full
-          server-side lead set for the agent, so the label says so explicitly. */}
-      {isExporting ? t('leads.exporting') || 'Exporting…' : t('leads.exportAllLeads') || 'Export all leads'}
-    </Button>
-  );
+  if (leads.locked) {
+    return (
+      <Page width="wide">
+        <PageHeader title={t('leads.leads') || 'Leads'} titleVisuallyHidden />
+        <LockedLeads />
+      </Page>
+    );
+  }
+
+  const filtered = hasActiveFilters(state);
+  // While a browser-side refinement is active the rows on screen are no longer
+  // "the server's page N", so the table stops reporting the server's total and
+  // reports what it is actually showing. Anything else is the count lying.
+  const serverPaged = !refined;
 
   return (
-    <PageContainer
-      title={t('leads.leads') || 'Leads'}
-      actions={
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" onClick={() => void handleMarkAllRead()} disabled={!hasUnread}>
-            <Bell size={16} aria-hidden="true" />
-            {t('leads.markAllRead') || 'Mark all read'}
-          </Button>
-          {exportAction}
-        </div>
-      }
-    >
-      {actionError && (
-        <div
-          role="alert"
-          className="flex items-center gap-2 rounded-lg border border-[var(--ds-danger)] bg-[var(--ds-danger-soft)] px-4 py-3 text-[13px] text-[var(--ds-danger)]"
-        >
-          <AlertCircle size={16} aria-hidden="true" />
-          {actionError}
-        </div>
-      )}
+    <Page width="wide">
+      <PageHeader
+        title={t('leads.leads') || 'Leads'} titleVisuallyHidden
+        toolbar={
+          exportError ? (
+            <Alert tone="danger" live title={t('leads.theExportFailed') || 'The export failed'}>
+              {exportError}
+            </Alert>
+          ) : undefined
+        }
+      />
 
-      {status === 'loading' && (
-        <>
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <Skeleton key={i} className="h-24 w-full" />
-            ))}
-          </div>
-          <Skeleton className="h-72 w-full" />
-        </>
-      )}
+      <Stack>
+        {intelligenceLocked ? (
+          <Alert
+            tone="plan"
+            title={t('leads.leadScoringIsIncludedOn') || 'Lead scoring is included on Starter and above'}
+            action={
+              <Link to="/billing" className={buttonClass('secondary', 'sm')}>
+                {t('leads.seePlans') || 'See plans'}
+              </Link>
+            }
+          >
+            {t('leads.scoresQualificationLocationAndCsv') || 'Scores, qualification, location and CSV export are on Starter and above.'}
+          </Alert>
+        ) : null}
 
-      {status === 'error' && (
-        <EmptyState
-          icon={AlertCircle}
-          title={t('leads.weCouldntLoadYourLeads') || 'We couldn\'t load your leads'}
-          description={error ?? (t('leads.somethingWentWrongPleaseTry') || 'Something went wrong. Please try again.')}
-          action={
-            <Button variant="outline" onClick={reload}>
-              {t('leads.tryAgain') || 'Try again'}
-            </Button>
-          }
-        />
-      )}
+        {/* The summary the page owes the reader before any row is scanned. The
+            window is stated once, by `StatRow`'s own caption — now the same
+            `range` the toolbar's date filter picked, not a hardcoded "All
+            time" — so nothing else on this card needs to restate it. No title
+            bar above it either — "Pipeline" named a thing "Leads, Qualified,
+            Ready to buy…" already say for themselves, and it was 40px of
+            chrome standing between the breadcrumb and the first real number. */}
+        <Card>
+          <CardBody flush>
+            <StatRow
+              label={t('leads.leadPipeline') || 'Lead pipeline'}
+              period={leadsRangeLabel(state)}
+              columns={5}
+              loading={leads.loading}
+              items={[
+                {
+                  label: t('leads.leads') || 'Leads',
+                  value: leads.stats ? formatNumber(leads.stats.total) : undefined,
+                  size: 'lg',
+                },
+                {
+                  label: t('leads.qualified') || 'Qualified',
+                  value:
+                    leads.stats?.qualified === undefined
+                      ? undefined
+                      : formatNumber(leads.stats.qualified),
+                },
+                {
+                  label: t('leads.readyToBuy') || 'Ready to buy',
+                  value: leads.stats?.sql === undefined ? undefined : formatNumber(leads.stats.sql),
+                  tone: leads.stats?.sql ? 'success' : 'neutral',
+                },
+                {
+                  label: t('leads.averageScore') || 'Average score',
+                  value:
+                    leads.stats?.avgScore === undefined
+                      ? undefined
+                      : `${formatNumber(Math.round(leads.stats.avgScore))}/100`,
+                },
+                {
+                  label: t('leads.notOpened') || 'Not opened',
+                  value: leads.stats ? formatNumber(leads.stats.unread) : undefined,
+                  tone: leads.stats?.unread ? 'warning' : 'neutral',
+                },
+              ]}
+            />
+          </CardBody>
+        </Card>
 
-      {status === 'ready' && stats && (
-        <>
-          {/* Filters */}
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <div
-              role="group"
-              aria-label={t('leads.filterByLeadQuality') || 'Filter by lead quality'}
-              className="flex flex-wrap items-center gap-1.5"
-            >
+        <div>
+          {/* Each control is boxed to a width. Both `SearchField` and `Select`
+              wrap themselves in a `w-full` element, so dropped straight into a
+              wrapping flex row every one of them would claim its own line. */}
+          <Toolbar sticky>
+            <div className="w-full sm:w-64">
+              <SearchField
+                label={t('leads.searchTheLeadsOnThis') || 'Search the leads on this page'}
+                placeholder={t('leads.nameEmailCompany') || 'Name, email, company…'}
+                value={state.query}
+                onValueChange={(query) => update({ query }, { replace: true })}
+              />
+            </div>
+            {/* Disabled rather than clickable-but-refused. The tier chips this
+                replaces were `aria-disabled` and still fired their upgrade modal,
+                so arrowing through the filter row was a keyboard trap. */}
+            <div className="w-40">
+              <Select
+                label={t('leads.filterByQuality') || 'Filter by quality'}
+                value={state.tier ?? ''}
+                options={TIER_OPTIONS}
+                disabled={intelligenceLocked}
+                onValueChange={(value) => update({ tier: (value || null) as TierKey | null })}
+              />
+            </div>
+            <div className="w-36">
+              <Select
+                label={t('leads.filterByMinimumScore') || 'Filter by minimum score'}
+                value={state.minScore === null ? '' : String(state.minScore)}
+                options={SCORE_OPTIONS}
+                disabled={intelligenceLocked}
+                onValueChange={(value) => update({ minScore: value ? Number(value) : null })}
+              />
+            </div>
+            <div className="w-36">
+              <Select
+                label={t('leads.filterByDateCaptured') || 'Filter by date captured'}
+                value={state.range}
+                options={LEADS_RANGE_OPTIONS}
+                onValueChange={(value) => {
+                  const range = value as LeadsRangeKey;
+                  // A stale from/to survives only while staying on 'custom'
+                  // — switching to a preset and back should not resurrect a
+                  // bound the reader picked in some earlier visit.
+                  update(range === 'custom' ? { range } : { range, rangeFrom: null, rangeTo: null });
+                }}
+              />
+            </div>
+            {state.range === 'custom' ? (
+              <>
+                <div className="w-40">
+                  <DatePicker
+                    label={t('leads.fromDate') || 'From date'}
+                    value={state.rangeFrom}
+                    onValueChange={(rangeFrom) => update({ rangeFrom })}
+                    max={state.rangeTo ?? undefined}
+                    clearable
+                  />
+                </div>
+                <div className="w-40">
+                  <DatePicker
+                    label={t('leads.toDate') || 'To date'}
+                    value={state.rangeTo}
+                    onValueChange={(rangeTo) => update({ rangeTo })}
+                    min={state.rangeFrom ?? undefined}
+                    clearable
+                  />
+                </div>
+              </>
+            ) : null}
+            <div className="w-40">
+              <Select
+                label={t('leads.filterByLeadType') || 'Filter by lead type'}
+                value={state.contact}
+                options={CONTACT_OPTIONS}
+                onValueChange={(value) => update({ contact: value as ContactFilter })}
+              />
+            </div>
+            <Tooltip content={SCOPE_NOTE}>
               <button
                 type="button"
-                aria-pressed={tierFilter === null}
-                onClick={() => setTierFilter(null)}
-                className={cn(
-                  'rounded-full px-3 py-1.5 text-[12px] font-medium transition-colors',
-                  tierFilter === null
-                    ? 'bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]'
-                    : 'text-[var(--ds-text-muted)] hover:bg-[var(--ds-bg-hover)]',
-                )}
+                aria-label={t('leads.whatTheseFiltersCover') || 'What these filters cover'}
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-xs text-text-tertiary hover:text-text-primary"
               >
-                {t('leads.all') || 'All'}
+                <Info aria-hidden className="h-icon-sm w-icon-sm" />
               </button>
-              {TIER_ORDER.map((key) => {
-                // Without BANT (Free / Starter) the whole tier axis is moot:
-                // no lead is ever scored, so every chip either shows the
-                // full list or an empty list. Lock all four and route to the
-                // qualification upgrade modal so the row honestly reads as
-                // "not on this plan" instead of a broken filter.
-                const locked = !bantUnlocked;
-                const active = tierFilter === key;
-                return (
-                  <button
-                    key={key}
-                    type="button"
-                    aria-pressed={active}
-                    aria-disabled={locked || undefined}
-                    onClick={() =>
-                      locked
-                        ? openUpgradeModal('view_qualification')
-                        : setTierFilter(active ? null : key)
-                    }
-                    className={cn(
-                      'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-medium transition-colors',
-                      active && !locked
-                        ? 'bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]'
-                        : locked
-                          ? 'text-[var(--ds-text-subtle)] hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text-muted)]'
-                          : 'text-[var(--ds-text-muted)] hover:bg-[var(--ds-bg-hover)]',
-                    )}
+            </Tooltip>
+            {filtered ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  update({ query: '', contact: 'all', tier: null, minScore: null, range: 'all', rangeFrom: null, rangeTo: null, page: 1 })
+                }
+              >
+                {t('leads.clearFilters') || 'Clear filters'}
+              </Button>
+            ) : null}
+            {/* Was `PageHeader`'s `actions` — its own row, above this one, with
+                nothing else in it once the page's title stopped repeating the
+                breadcrumb. This is the row it belongs on: the one other
+                page-scoped control already lives on. */}
+            <div className="ml-auto">
+              <MenuRoot>
+                <MenuTrigger
+                  aria-label={t('leads.leadActions') || 'Lead actions'}
+                  className={buttonClass('secondary', 'icon-md', BUTTON_ICON_SLOT['icon-md'])}
+                >
+                  <MoreHorizontal aria-hidden />
+                </MenuTrigger>
+                <MenuContent>
+                  <MenuItem
+                    icon={<Download aria-hidden className="h-icon-sm w-icon-sm" />}
+                    disabled={intelligenceLocked || leads.total === 0 || exporting}
+                    onSelect={() => void handleExportAll()}
                   >
-                    {locked && (
-                      <Lock size={11} strokeWidth={1.75} aria-hidden="true" />
-                    )}
-                    {t(`leads.tier.${key}`) || TIER_META[key].label}
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="flex flex-1 items-center gap-2 sm:justify-end">
-              <label htmlFor="lead-search" className="sr-only">
-                {t('leads.searchLeads') || 'Search leads'}
-              </label>
-              <input
-                id="lead-search"
-                type="search"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder={t('leads.searchNameEmailCompany') || 'Search name, email, company…'}
-                className="h-9 w-full rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 text-[13px] text-[var(--ds-text)] outline-none transition-colors placeholder:text-[var(--ds-text-subtle)] focus-visible:border-[var(--ds-accent)] focus-visible:shadow-[0_0_0_1px_var(--ds-ring)] sm:max-w-xs"
-              />
-              <label htmlFor="lead-contact-filter" className="sr-only">
-                {t('leads.filterByLeadType') || 'Filter by lead type'}
-              </label>
-              <Select
-                id="lead-contact-filter"
-                value={contactFilter}
-                onChange={(next) => setContactFilter(next as ContactFilter)}
-                className="h-9 w-auto shrink-0 text-[13px]"
-                options={CONTACT_FILTER_OPTIONS.map((option) => ({
-                  value: option.value,
-                  label: t(`leads.filter.${option.value}`) || option.label,
-                }))}
-              />
-              <label htmlFor="lead-sort" className="sr-only">
-                {t('leads.sortLeadsBy') || 'Sort leads by'}
-              </label>
-              <Select
-                id="lead-sort"
-                value={sortBy}
-                onChange={(next) => setSortBy(next as SortKey)}
-                className="h-9 w-auto shrink-0 text-[13px]"
-                options={SORT_OPTIONS.map((option) => ({
-                  value: option.value,
-                  label: t(`leads.filter.${option.value}`) || option.label,
-                }))}
-              />
-            </div>
-          </div>
-
-          {/* Result count - makes any active filter visible so a narrowed
-              table never reads as data loss against the headline totals. */}
-          <p className="text-[12px] text-[var(--ds-text-subtle)]" aria-live="polite">
-            {filtered.length === leads.length
-              ? `${formatNumber(leads.length)} ${leads.length === 1 ? 'lead' : 'leads'}`
-              : t('leads.showingOfLeads', {
-                    shown: formatNumber(filtered.length),
-                    total: formatNumber(leads.length),
-                  }) || `Showing ${formatNumber(filtered.length)} of ${formatNumber(leads.length)} leads`}
-          </p>
-
-          {/* Bulk-action bar - appears only with a live selection. Exports the
-              ticked rows to a CSV built client-side (tags included). */}
-          {selectedIds.size > 0 && (
-            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] px-4 py-2.5">
-              <span className="text-[13px] font-medium text-[var(--ds-accent-text)]">
-                {t('leads.selectedCount', { count: selectedIds.size }) ||
-                  `${selectedIds.size} selected`}
-              </span>
-              <div className="ml-auto flex items-center gap-2">
-                <Button variant="outline" size="sm" onClick={handleExportSelected}>
-                  <Download size={15} aria-hidden="true" />
-                  {t('leads.exportSelected') || 'Export selected'}
-                </Button>
-                <Button variant="ghost" size="sm" onClick={clearSelection}>
-                  <X size={15} aria-hidden="true" />
-                  {t('leads.clear') || 'Clear'}
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {/* Table */}
-          <DataTable
-            columns={columns}
-            rows={filtered}
-            rowKey={(lead) => lead.session_id}
-            caption={t('leads.leadsCapturedByYourAi') || 'Leads captured by your AI chatbots'}
-            pageSize={20}
-            onRowClick={openLead}
-            empty={
-              leads.length === 0 ? (
-                <div className="space-y-1 py-6">
-                  <p className="text-[14px] font-medium text-[var(--ds-text)]">{t('leads.noLeadsYet') || 'No leads yet'}</p>
-                  <p className="text-[13px] text-[var(--ds-text-muted)]">
-                    {t('leads.asSoonAsVisitorsStart') || 'As soon as visitors start chatting with your AI, they\'ll show up here.'}
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-2 py-6">
-                  <p className="text-[13px] text-[var(--ds-text-muted)]">
-                    {t('leads.noLeadsMatchTheseFilters') || 'No leads match these filters.'}
-                  </p>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setTierFilter(null);
-                      setContactFilter('all');
-                      setQuery('');
-                    }}
+                    {t('leads.exportAllLeads') || 'Export all leads'}
+                  </MenuItem>
+                  {/* Disabled only when there is genuinely nothing unread.
+                      `stats === null` is also the state when the stats request
+                      *failed*, and disabling on that rendered a permanently dead
+                      command with no reason given — where the action is idempotent
+                      and costs nothing to offer. */}
+                  <MenuItem
+                    icon={<CheckCheck aria-hidden className="h-icon-sm w-icon-sm" />}
+                    disabled={leads.stats?.unread === 0}
+                    onSelect={() => setConfirmMarkAll(true)}
                   >
-                    {t('leads.clearFilters') || 'Clear filters'}
+                    {t('leads.markAllRead') || 'Mark all read'}
+                  </MenuItem>
+                  <MenuItem
+                    icon={<MailX aria-hidden className="h-icon-sm w-icon-sm" />}
+                    onSelect={() => setSuppressionsOpen(true)}
+                  >
+                    {t('leads.unsubscribes') || 'Unsubscribes'}
+                  </MenuItem>
+                </MenuContent>
+              </MenuRoot>
+            </div>
+          </Toolbar>
+
+          <div className="mt-3">
+            <DataTable
+              caption={t('leads.leadsCapturedByYourChatbots') || 'Leads captured by your chatbots'}
+              columns={columns}
+              rows={rows}
+              rowKey={(lead) => lead.session_id}
+              rowLabel={leadDisplayName}
+              rowNoun="lead"
+              loading={leads.loading || botsLoading}
+              error={leads.error ? leads.error.message : null}
+              onRetry={leads.retry}
+              sort={state.sort}
+              onSortChange={handleSort}
+              pageSize={LEADS_PAGE_SIZE}
+              page={serverPaged ? state.page : undefined}
+              onPageChange={serverPaged ? (page) => update({ page }) : undefined}
+              rowCount={serverPaged ? leads.total : undefined}
+              // No `stickyOffset`. `DataTable` wraps its own table in an
+              // `overflow-auto` box, so that box — not the page — is what the
+              // header sticks to, and a 3.25rem offset there is not "clear the
+              // toolbar", it is "sit 52px down from the top of the table". The
+              // rendered result was a 52px empty band at the top of the card
+              // with the column heads floating over the first row of leads
+              // (thead at y=454 against a first row at y=446). The toolbar it
+              // was trying to clear scrolls with the page and never overlaps
+              // this header at all.
+              selectedKeys={selected}
+              onSelectionChange={setSelected}
+              bulkActions={
+                <>
+                  <Tooltip content="Your private tags are included.">
+                    <span className="inline-flex">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        iconLeft={<Download aria-hidden />}
+                        onClick={handleExportSelected}
+                      >
+                        {t('leads.exportSelection') || 'Export selection'}
+                      </Button>
+                    </span>
+                  </Tooltip>
+                  <Button size="sm" variant="secondary" onClick={handleMarkSelectedRead}>
+                    {t('leads.markRead') || 'Mark read'}
                   </Button>
-                </div>
-              )
-            }
-          />
-        </>
-      )}
+                </>
+              }
+              onRowClick={(lead) => update({ openLead: lead.session_id, tab: 'profile' })}
+              empty={
+                filtered ? (
+                  <EmptyState
+                    size="inline"
+                    title={t('leads.noLeadsMatchTheseFilters') || 'No leads match these filters'}
+                    description={t('leads.tryAWiderQualityOr') || 'Try a wider quality or score filter.'}
+                    action={
+                      <Button
+                        size="sm"
+                        onClick={() =>
+                          update({ query: '', contact: 'all', tier: null, minScore: null, range: 'all', rangeFrom: null, rangeTo: null, page: 1 })
+                        }
+                      >
+                        {t('leads.clearFilters') || 'Clear filters'}
+                      </Button>
+                    }
+                  />
+                ) : (
+                  <EmptyState
+                    size="inline"
+                    icon={Users}
+                    title={t('leads.noLeadsYet') || 'No leads yet'}
+                    description={t('leads.visitorsAppearHereAsSoon') || 'Visitors appear here as soon as they start a conversation.'}
+                  />
+                )
+              }
+            />
+          </div>
+        </div>
+      </Stack>
 
-      {selectedSessionId !== null && (
-        <LeadDetailDrawer
-          data={detailData}
-          view={drawerView}
-          locked={isFree}
-          visitorIntelligenceUnlocked={visitorIntelligenceUnlocked}
-          onClose={() => setSelectedSessionId(null)}
-          annotations={annotations.controllerFor(selectedSessionId)}
-        />
-      )}
-    </PageContainer>
+      <LeadDrawer
+        sessionId={state.openLead}
+        tab={state.tab}
+        onTabChange={(tab) => update({ tab }, { replace: true })}
+        onClose={() => update({ openLead: null, tab: 'profile' })}
+        intelligenceLocked={intelligenceLocked}
+        visitorIntelligence={visitorIntelligence}
+        annotations={annotations}
+      />
+
+      <SuppressionsDrawer
+        open={suppressionsOpen}
+        onOpenChange={setSuppressionsOpen}
+        botId={botId ?? null}
+        bots={bots}
+      />
+
+      <ConfirmDialog
+        open={confirmMarkAll}
+        onOpenChange={setConfirmMarkAll}
+        title={t('leads.markEveryLeadAsRead') || 'Mark every lead as read?'}
+        description={
+          <>
+            Clears the unread mark on{' '}
+            <span className="figure">{formatNumber(leads.stats?.unread ?? 0)}</span> leads, on every
+            page. Cannot be undone.
+          </>
+        }
+        confirmLabel="Mark all read"
+        onConfirm={async () => {
+          await leads.markAllRead();
+          setConfirmMarkAll(false);
+        }}
+      />
+    </Page>
+  );
+}
+
+/**
+ * The plan wall, with the product behind it.
+ *
+ * `LockedState` renders its preview `inert`, so it is a picture of the feature
+ * rather than the feature. The preview is the real `DataTable` with three
+ * fixture rows: asking somebody to buy a surface they have never seen is how the
+ * previous locked pages worked, and an approximation of the table is a worse
+ * argument than the table.
+ */
+function LockedLeads() {
+  const { t } = useTranslation();
+  return (
+    <LockedState
+      title={t('leads.leadsAreNotIncludedOn') || 'Leads are not included on your plan'}
+      description={t('leads.everyVisitorScoredOnHow') || 'Every visitor scored on how ready they sounded to buy, with the conversation attached.'}
+      action={
+        <Link to="/billing" className={buttonClass('primary', 'md')}>
+          {t('leads.seePlans') || 'See plans'}
+        </Link>
+      }
+      preview={<LockedPreview />}
+    />
+  );
+}
+
+interface PreviewRow {
+  session_id: string;
+  name: string;
+  company: string | null;
+  tier: TierKey;
+  score: number;
+  lastActive: string;
+}
+
+const PREVIEW_ROWS: readonly PreviewRow[] = [
+  {
+    session_id: 'p1',
+    name: 'Priya Raman',
+    company: 'infosys.com',
+    tier: 'sql',
+    score: 84,
+    lastActive: '2 hours ago',
+  },
+  {
+    session_id: 'p2',
+    name: 'Tom Whitfield',
+    company: 'northwind.co.uk',
+    tier: 'sal',
+    score: 61,
+    lastActive: 'Yesterday',
+  },
+  {
+    session_id: 'p3',
+    name: 'Anonymous visitor',
+    company: null,
+    tier: 'mql',
+    score: 38,
+    lastActive: '3 days ago',
+  },
+];
+
+const PREVIEW_COLUMNS: Column<PreviewRow>[] = [
+  {
+    key: 'lead',
+    header: 'Lead',
+    rowHeader: true,
+    render: (row) => (
+      <span className="flex items-center gap-2">
+        <Avatar name={row.name} size="sm" />
+        <span className="truncate">{row.name}</span>
+      </span>
+    ),
+  },
+  {
+    key: 'company',
+    header: 'Company',
+    width: '12rem',
+    render: (row) =>
+      row.company ?? <span className="text-text-tertiary">{ABSENT}</span>,
+  },
+  {
+    key: 'quality',
+    header: 'Quality',
+    width: '11rem',
+    render: (row) => (
+      <span className="flex items-center gap-2">
+        <Badge tone={TIER_META[row.tier].tone}>{TIER_META[row.tier].label}</Badge>
+        <span className="figure text-xs text-text-secondary">{row.score}</span>
+      </span>
+    ),
+  },
+  {
+    key: 'last_active',
+    header: 'Last active',
+    width: '10rem',
+    render: (row) => row.lastActive,
+  },
+];
+
+function LockedPreview() {
+  const { t } = useTranslation();
+  return (
+    <div className="p-cell">
+      <DataTable
+        caption={t('leads.whatTheLeadsTableLooks') || 'What the leads table looks like'}
+        columns={PREVIEW_COLUMNS}
+        rows={PREVIEW_ROWS}
+        rowKey={(row) => row.session_id}
+        rowNoun="lead"
+        // Invented rows behind a plan lock. Counting them would report the size
+        // of the illustration as though it were the size of the reader's data.
+        countSummary={false}
+      />
+    </div>
   );
 }

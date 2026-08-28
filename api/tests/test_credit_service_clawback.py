@@ -1131,3 +1131,80 @@ def test_withheld_stamp_never_overwrites_a_funded_invoice(db):
     fresh = db.execute(select(Invoice).where(Invoice.razorpay_payment_id == "pay_funded_2")).scalars().first()
     assert fresh is not None
     assert fresh.kind == "withheld_charge"
+
+
+# ── The refund/dispute dedup key must not be burned before the work happens ──
+#
+# ``_handle_refund_created`` records ``refund:{id}`` and only THEN looks up the
+# invoice. When the invoice is not there yet (its ``subscription.charged`` is
+# still being retried, and ops refunded from the dashboard meanwhile) the
+# handler ACKed with the key burned, so the clawback could never run: every
+# later ``refund.processed`` — which delegates to this same function — and every
+# superadmin replay short-circuits on "already clawed back". The customer keeps
+# a full allowance AND their money, and no reconcile job covers it.
+#
+# Nothing was persisted on that path, so the key must be RELEASED, exactly as
+# the pooled-plan sink refusal does.
+
+
+def test_refund_for_an_unknown_payment_releases_its_dedup_key(db):
+    client = _client(db, n=91)
+    bot = _bot(db, client, key="bot-claw-late")
+    credit_service.grant_topup(db, client.id, 500, bot_id=bot.id)
+    db.commit()
+
+    # The invoice has not landed yet: the refund arrives first.
+    rzp._handle_refund_created(db, _refund_payload("pay_late_invoice", 3999, refund_id="rf_late"))
+    db.commit()
+    assert _balances(db, client.id, bot.id) == 500, "nothing to claw yet"
+
+    # The charge finally materialises (webhook redelivery).
+    db.add(
+        Invoice(
+            client_id=client.id,
+            subscription_id=None,
+            bot_id=bot.id,
+            amount_cents=3999,
+            currency="inr",
+            status="paid",
+            razorpay_payment_id="pay_late_invoice",
+        )
+    )
+    db.commit()
+
+    # The SAME refund, redelivered as refund.processed, must now claw.
+    rzp._handle_refund_created(db, _refund_payload("pay_late_invoice", 3999, refund_id="rf_late"))
+    db.commit()
+    assert _balances(db, client.id, bot.id) == 0, "the redelivered refund must claw once the invoice exists"
+
+
+def test_dispute_lost_for_an_unknown_payment_releases_its_dedup_key(db):
+    client = _client(db, n=92)
+    bot = _bot(db, client, key="bot-claw-disp")
+    credit_service.grant_topup(db, client.id, 500, bot_id=bot.id)
+    db.commit()
+
+    payload = {
+        "payment": {"entity": {"id": "pay_late_dispute"}},
+        "dispute": {"entity": {"id": "disp_late", "payment_id": "pay_late_dispute", "amount": 3999}},
+    }
+    rzp._handle_dispute_lost(db, payload)
+    db.commit()
+    assert _balances(db, client.id, bot.id) == 500
+
+    db.add(
+        Invoice(
+            client_id=client.id,
+            subscription_id=None,
+            bot_id=bot.id,
+            amount_cents=3999,
+            currency="inr",
+            status="paid",
+            razorpay_payment_id="pay_late_dispute",
+        )
+    )
+    db.commit()
+
+    rzp._handle_dispute_lost(db, payload)
+    db.commit()
+    assert _balances(db, client.id, bot.id) == 0, "the redelivered dispute must claw once the invoice exists"

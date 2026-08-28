@@ -1,277 +1,267 @@
-/**
- * VisitorIntelligenceSection - the Professional-only company/threat signal
- * + validated-email display inside the lead detail drawer, plus the manual
- * "Send Follow-up" action.
- *
- * Unlike `LeadInsights` (whose sections simply omit themselves when their
- * data is absent), this section is itself gated: on Free/Starter/Standard
- * it renders a compact locked teaser instead of the fields, since the data
- * genuinely doesn't exist in the API response on those plans (see
- * `build_lead_response`'s `include_visitor_intelligence` parameter).
- */
-import { type ReactElement, useState } from 'react';
-import { AlertTriangle, Building2, CheckCircle2, Lock, Mail, Send, Shield, XCircle } from 'lucide-react';
-import { Button, StatusBadge } from '../../design-system';
-import { useUpgradeModal } from '../../context/UpgradeModalContext';
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Send } from 'lucide-react';
+import { Alert, Badge, Button, ConfirmDialog, LockedState, Tooltip, buttonClass } from '../../ui';
 import { sendLeadFollowUp } from '../../services/api';
-import { type LeadDetail } from './useLeadDetail';
+import type { Lead } from '../../types/domain';
+import { LeadSection } from './LeadSection';
 import { useTranslation } from '../../i18n/useTranslation';
 
-function asRecord(v: unknown): Record<string, unknown> {
-  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+/**
+ * The Professional-only network and email signal, plus the manual follow-up.
+ *
+ * Unlike `LeadInsights`, whose sections omit themselves when their data is
+ * absent, this one is itself gated: on Free, Starter and Standard the fields do
+ * not exist in the API response at all (`build_lead_response`'s
+ * `include_visitor_intelligence`), so a locked panel is the honest rendering.
+ *
+ * The follow-up button now confirms. It sends a real email to a real person on
+ * a single click, and it did so with no confirmation and no way back.
+ */
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
-function asString(v: unknown): string | null {
-  return typeof v === 'string' && v.trim() ? v : null;
-}
-
-function SectionTitle({ children }: { children: string }): ReactElement {
-  return (
-    <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-muted)]">
-      <Shield size={13} aria-hidden="true" />
-      {children}
-    </h3>
-  );
-}
-
-/** Compact locked teaser shown in place of the section on non-Professional plans. */
-function LockedTeaser(): ReactElement {
-  const { t } = useTranslation();
-  const { openUpgradeModal } = useUpgradeModal();
-  return (
-    <section className="space-y-3">
-      <SectionTitle>{t('leads.networkRisk') || 'Network & risk'}</SectionTitle>
-      <button
-        type="button"
-        onClick={() => openUpgradeModal('view_visitor_intelligence')}
-        className="flex w-full items-center gap-3 rounded-xl border border-dashed border-[var(--ds-border)] p-4 text-left transition-colors hover:border-[var(--ds-border-strong)]"
-      >
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
-          <Lock size={16} aria-hidden="true" />
-        </span>
-        <span className="min-w-0">
-          <span className="block text-[13px] font-medium text-[var(--ds-text)]">
-            {t('leads.networkSignalEmailValidityAre') || 'Network signal & email validity are locked'}
-          </span>
-          <span className="block text-[12px] text-[var(--ds-text-subtle)]">
-            {t('leads.upgradeToProfessionalToSee') || 'Upgrade to Professional to see this and send a manual follow-up.'}
-          </span>
-        </span>
-      </button>
-    </section>
-  );
+function asText(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
 /**
- * The IP signal, read from the flattened shape `ip_intel_service` produces
- * (`company_name` / `company_domain` / `company_type` / `asn_org`, plus the
- * risk booleans). It is namespaced under `visitor_metadata.ip_intel` because
- * that column is shared with the operator console's user-agent fields.
+ * Is there anything worth rendering in this IP signal?
+ *
+ * Kept apart from the component because a component returning `null` is still a
+ * truthy element to its caller, so `<CompanySignal/> ?? fallback` would never
+ * show the fallback.
  */
-/** Is there anything worth rendering in this IP signal? Kept separate from the
- * component so the caller can pick between the signal and its empty state, a
- * component that returns `null` is still a truthy JSX element to the caller,
- * so `<CompanySignal/> ?? fallback` would silently never show the fallback. */
-function hasCompanySignal(intel: Record<string, unknown>): boolean {
+function hasNetworkSignal(intel: Record<string, unknown>): boolean {
   return Boolean(
-    asString(intel.company_name) ||
-      asString(intel.asn_org) ||
+    asText(intel.company_name) ||
+      asText(intel.asn_org) ||
       intel.is_vpn === true ||
       intel.is_proxy === true ||
       intel.is_tor === true,
   );
 }
 
-function CompanySignal({ intel }: { intel: Record<string, unknown> }): ReactElement | null {
-  const { t } = useTranslation();
-  const companyName = asString(intel.company_name);
-  const companyDomain = asString(intel.company_domain);
-  const asnOrg = asString(intel.asn_org);
-  const isVpn = intel.is_vpn === true || intel.is_proxy === true || intel.is_tor === true;
+function NetworkSignal({ intel }: { intel: Record<string, unknown> }) {
+  const company = asText(intel.company_name);
+  const domain = asText(intel.company_domain);
+  const asn = asText(intel.asn_org);
+  const masked = intel.is_vpn === true || intel.is_proxy === true || intel.is_tor === true;
 
-  if (!hasCompanySignal(intel)) return null;
-
-  // `company_name` now arrives already filtered: the API strips it for every
-  // hosting range, ISP range, carrier brand and subnet label, so anything that
-  // reaches this component is a range someone can actually be employed by.
-  // `ip_intel_service.fetch_ip_intel` is the ONLY sanctioned writer of
-  // `visitor_metadata.ip_intel`. Anything else writing that key must apply
-  // the same gates, or this component starts asserting something it cannot
-  // back up. (An alembic backfill was a second, unfiltered writer until it was
-  // made to share the gates.)
-  // That is why there is no longer an "is this really an employer?" test here
-  //, the old inline disclaimer was deciding, in the UI, a question the API
-  // now answers. Two DIFFERENT things are rendered, never one thing hedged:
-  // a company, or the network that routed them.
+  // `company_name` arrives already filtered: the API strips it for every
+  // hosting range, ISP range and carrier brand, so anything reaching here is a
+  // range somebody could actually be employed by. Two different things are
+  // rendered — a company, or the network that routed them — never one hedged.
+  // Not a box. The drawer is the surface; a section here is a heading and a
+  // hairline, and this one already sits under both.
   return (
-    <div className="space-y-2 rounded-xl border border-[var(--ds-border)] p-4">
-      {companyName ? (
-        <div className="flex items-start gap-2.5 text-[13px] text-[var(--ds-text)]">
-          <Building2 size={15} className="mt-0.5 shrink-0 text-[var(--ds-text-subtle)]" aria-hidden="true" />
-          <span className="min-w-0">
-            <span className="block break-words font-medium">{companyName}</span>
-            {companyDomain && (
-              <span className="block break-all text-[12px] text-[var(--ds-text-subtle)]">{companyDomain}</span>
-            )}
-            <span className="mt-1 block text-[11px] text-[var(--ds-text-subtle)]">
-              {t('leads.derivedFromVisitorNetwork') || 'Derived from the visitor’s network, not a confirmed employer.'}
-            </span>
-          </span>
+    <div className="space-y-2">
+      {company ? (
+        <div>
+          <Tooltip content="Derived from the visitor’s network. Not a confirmed employer.">
+            <p className="inline-block cursor-default text-base font-medium text-text-primary">
+              {company}
+            </p>
+          </Tooltip>
+          {domain ? <p className="break-all text-xs text-text-secondary">{domain}</p> : null}
         </div>
-      ) : asnOrg ? (
-        <p className="text-[12px] text-[var(--ds-text-subtle)]">
-          {t('leads.connectingVia') || 'Connecting via'} <span className="text-[var(--ds-text)]">{asnOrg}</span>
+      ) : asn ? (
+        <p className="text-prose text-text-secondary">
+          Connecting via <span className="text-text-primary">{asn}</span>
         </p>
       ) : null}
-      {isVpn && (
-        <div className="flex items-start gap-2 text-[12px]">
-          <AlertTriangle size={13} className="mt-0.5 shrink-0 text-[var(--ds-warning)]" aria-hidden="true" />
-          <span className="text-[var(--ds-warning)]">
-            {t('leads.connectingViaVpnProxyCompany') || 'Connecting via VPN/proxy. Company signal is unreliable'}
-          </span>
-        </div>
-      )}
+      {masked ? <Alert tone="warning">VPN or proxy — signal unreliable.</Alert> : null}
     </div>
   );
 }
 
-function EmailValidityBadge({ isValid, score }: { isValid: boolean | null | undefined; score: number | null | undefined }): ReactElement | null {
-  const { t } = useTranslation();
-  if (isValid === null || isValid === undefined) {
-    return (
-      <div className="flex items-center gap-2 text-[12px] text-[var(--ds-text-subtle)]">
-        <Mail size={13} aria-hidden="true" />
-        {t('leads.emailNotYetValidated') || 'Email not yet validated'}
-      </div>
-    );
-  }
-  return (
-    <div className="flex items-center gap-2">
-      {isValid ? (
-        <StatusBadge tone="success">
-          <CheckCircle2 size={12} aria-hidden="true" className="mr-1 inline" />
-          {t('leads.deliverable') || 'Deliverable'}{typeof score === 'number' ? ` · ${score}/100` : ''}
-        </StatusBadge>
-      ) : (
-        <StatusBadge tone="danger">
-          <XCircle size={12} aria-hidden="true" className="mr-1 inline" />
-          {t('leads.notConfirmedDeliverable') || 'Not confirmed deliverable'}
-        </StatusBadge>
-      )}
-    </div>
-  );
-}
-
-interface FollowUpActionProps {
+function FollowUp({ sessionId, isValidEmail, email }: {
   sessionId: string;
-  /** Reoon's verdict: true = deliverable, false = known junk, null/undefined = never checked. */
+  /** Reoon's verdict: true deliverable, false known junk, null never checked. */
   isValidEmail: boolean | null | undefined;
-}
-
-/** The manual "Send Follow-up" button, the only send path in this system;
- * there is no automatic/timed send anywhere.
- *
- * The button is ALWAYS rendered (unless there is literally no address to
- * send to). It previously returned nothing whenever `is_valid_email` wasn't
- * exactly `true`, which silently hid the feature on every lead captured
- * before validation existed. Indistinguishable, to the operator, from the
- * feature being broken. A disabled button with a reason is honest; an
- * invisible one is not.
- *
- * Server-side gates remain authoritative and can still reject the click:
- * 409 (cooldown, or an unvalidated address) offers a one-click confirmed
- * retry; 400/403/423 are terminal and surface as a plain error. */
-function FollowUpAction({ sessionId, isValidEmail }: FollowUpActionProps): ReactElement {
+  email: string;
+}) {
   const { t } = useTranslation();
-  const [state, setState] = useState<'idle' | 'sending' | 'sent' | 'error' | 'confirm'>('idle');
+  const [confirming, setConfirming] = useState(false);
+  const [state, setState] = useState<'idle' | 'sent' | 'error' | 'needs-override' | 'paused'>(
+    'idle',
+  );
   const [message, setMessage] = useState<string | null>(null);
 
-  const blockedByValidation = isValidEmail === false;
+  const blocked = isValidEmail === false;
 
-  async function send(confirmOverride: boolean): Promise<void> {
-    setState('sending');
+  async function send(override: boolean): Promise<void> {
     setMessage(null);
     try {
-      await sendLeadFollowUp(sessionId, confirmOverride);
+      await sendLeadFollowUp(sessionId, override);
       setState('sent');
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : t('leads.couldNotSendTheFollow') || 'Could not send the follow-up.';
-      const status = (err as { status?: number } | undefined)?.status;
-      // 409 is the server's "are you sure?", a cooldown that hasn't elapsed,
-      // or an address Reoon never got to validate. Both are recoverable with
-      // an explicit confirm, so offer that instead of a dead end.
-      setState(status === 409 ? 'confirm' : 'error');
+      setConfirming(false);
+    } catch (cause) {
+      const detail = cause instanceof Error ? cause.message : t('leads.theFollowUpCouldNot') || 'The follow-up could not be sent.';
+      const status = (cause as { status?: number } | undefined)?.status;
+      // 409 is the server asking "are you sure?" — a cooldown that has not
+      // elapsed, or an address validation never reached. Both are recoverable
+      // with an explicit second confirmation, so offer it rather than a dead end.
+      //
+      // 423 is Gate 4: follow-ups are paused for the whole chatbot. There is no
+      // override for it and retrying is pointless, so it gets its own state
+      // that names the switch instead of offering a "Send anyway" that the
+      // server would refuse identically.
+      setState(status === 409 ? 'needs-override' : status === 423 ? 'paused' : 'error');
       setMessage(detail);
+      setConfirming(false);
     }
   }
 
+  if (state === 'sent') {
+    return (
+      <Alert tone="success" live>
+        Follow-up sent to {email}.
+      </Alert>
+    );
+  }
+
+  // The caveats are the button's tooltip, not three stacked paragraphs about one
+  // email address.
+  const caveat = blocked
+    ? t('leads.failedValidation') || 'Failed validation'
+    : isValidEmail !== true
+      ? t('leads.notValidatedYouWillConfirm') || 'Not validated — you will confirm'
+      : null;
+
   return (
     <div className="space-y-2">
-      <Button
-        size="sm"
-        variant="outline"
-        disabled={state === 'sending' || state === 'sent' || blockedByValidation}
-        onClick={() => void send(false)}
-      >
-        <Send size={14} aria-hidden="true" />
-        {state === 'sending' ? t('leads.sending') || 'Sending…' : state === 'sent' ? t('leads.followUpSent') || 'Follow-up sent' : t('leads.sendFollowUpEmail') || 'Send follow-up email'}
-      </Button>
+      {/* Always rendered unless there is no address at all. An earlier version
+          hid it whenever `is_valid_email` was not exactly `true`, which made the
+          feature invisible on every lead captured before validation existed —
+          indistinguishable, to the operator, from it being broken. */}
+      {caveat ? (
+        <Tooltip content={caveat}>
+          <span className="inline-flex">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={blocked}
+              iconLeft={<Send aria-hidden />}
+              onClick={() => setConfirming(true)}
+            >
+              {t('leads.sendAFollowUpEmail2') || 'Send a follow-up email'}
+            </Button>
+          </span>
+        </Tooltip>
+      ) : (
+        <Button
+          variant="secondary"
+          size="sm"
+          iconLeft={<Send aria-hidden />}
+          onClick={() => setConfirming(true)}
+        >
+          {t('leads.sendAFollowUpEmail2') || 'Send a follow-up email'}
+        </Button>
+      )}
 
-      {blockedByValidation && (
-        <p className="text-[12px] text-[var(--ds-text-subtle)]">
-          {t('leads.thisAddressFailedEmailValidation') || 'This address failed email validation, so it can’t be contacted.'}
-        </p>
-      )}
-      {!blockedByValidation && isValidEmail !== true && state === 'idle' && (
-        <p className="text-[12px] text-[var(--ds-text-subtle)]">
-          {t('leads.emailNotValidated') || 'This address hasn’t been validated. You’ll be asked to confirm.'}
-        </p>
-      )}
+      {state === 'needs-override' && message ? (
+        <Alert
+          tone="warning"
+          live
+          action={
+            <Button size="sm" variant="secondary" onClick={() => void send(true)}>
+              {t('leads.sendAnyway') || 'Send anyway'}
+            </Button>
+          }
+        >
+          {message}
+        </Alert>
+      ) : null}
+      {state === 'paused' && message ? (
+        <Alert tone="warning" live title={t('leads.followUpsArePausedFor') || 'Follow-ups are paused for this chatbot'}>
+          {message} Turn them back on under Behaviour → Lead follow-up emails.
+        </Alert>
+      ) : null}
+      {state === 'error' && message ? (
+        <Alert tone="danger" live>
+          {message}
+        </Alert>
+      ) : null}
 
-      {state === 'confirm' && message && (
-        <div className="space-y-1.5">
-          <p className="text-[12px] text-[var(--ds-warning)]">{message}</p>
-          <Button size="sm" variant="ghost" onClick={() => void send(true)}>
-            {t('leads.sendAnyway') || 'Send anyway'}
-          </Button>
-        </div>
-      )}
-      {state === 'error' && message && <p className="text-[12px] text-[var(--ds-danger)]">{message}</p>}
+      <ConfirmDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        title={t('leads.sendAFollowUpEmail') || 'Send a follow-up email?'}
+        description={
+          <>
+            This sends a real email to <strong>{email}</strong> now. It cannot be recalled, and the
+            visitor did not ask for it.
+          </>
+        }
+        confirmLabel="Send it"
+        onConfirm={() => send(false)}
+      />
     </div>
   );
 }
 
 export function VisitorIntelligenceSection({
-  detail,
+  lead,
   unlocked,
 }: {
-  detail: LeadDetail;
+  lead: Lead;
   unlocked: boolean;
-}): ReactElement {
+}) {
   const { t } = useTranslation();
-  if (!unlocked) return <LockedTeaser />;
+  if (!unlocked) {
+    return (
+      <LeadSection title={t('leads.networkAndEmail') || 'Network and email'}>
+        <LockedState
+          size="inline"
+          title={t('leads.includedOnTheProfessionalPlan') || 'Included on the Professional plan'}
+          description={t('leads.companyFromTheVisitorsNetwork') || 'Company from the visitor\'s network, email deliverability, and one-click follow-up.'}
+          action={
+            <Link to="/billing" className={buttonClass('secondary', 'sm')}>
+              {t('leads.seePlans') || 'See plans'}
+            </Link>
+          }
+        />
+      </LeadSection>
+    );
+  }
 
-  // IP intel lives under a namespaced key. `visitor_metadata` itself is a
-  // shared blob (the operator console stores user-agent fields alongside).
-  const intel = asRecord(asRecord(detail.visitor_metadata).ip_intel);
-  const isValidEmail = detail.contact?.is_valid_email;
-  const emailScore = detail.contact?.email_score;
-  const email = detail.contact?.email;
+  // IP intel lives under a namespaced key: `visitor_metadata` is a shared blob
+  // that the operator console also writes user-agent fields into.
+  const intel = asRecord(asRecord(lead.visitor_metadata).ip_intel);
+  const email = lead.contact?.email ?? null;
+  const isValidEmail = lead.contact?.is_valid_email;
+  const emailScore = lead.contact?.email_score;
 
   return (
-    <section className="space-y-3">
-      <SectionTitle>{t('leads.networkRisk') || 'Network & risk'}</SectionTitle>
-      <div className="space-y-3">
-        {hasCompanySignal(intel) ? (
-          <CompanySignal intel={intel} />
-        ) : (
-          <p className="rounded-xl border border-[var(--ds-border)] p-4 text-[12px] text-[var(--ds-text-subtle)]">
-            {t('leads.noNetworkDetailsResolvedFor') || 'No network details resolved for this visitor.'}
-          </p>
-        )}
-        {email && <EmailValidityBadge isValid={isValidEmail} score={emailScore} />}
-        {email && <FollowUpAction sessionId={detail.session_id} isValidEmail={isValidEmail} />}
-      </div>
-    </section>
+    <LeadSection title={t('leads.networkAndEmail') || 'Network and email'}>
+      {hasNetworkSignal(intel) ? (
+        <NetworkSignal intel={intel} />
+      ) : (
+        <p className="text-prose text-text-secondary">{t('leads.noNetworkDetailsResolved') || 'No network details resolved.'}</p>
+      )}
+
+      {email ? (
+        // One row: the verdict and the action about one address, on one line —
+        // they used to be a badge, a button 8px under it, and up to two more
+        // hint paragraphs under that.
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          {isValidEmail === true ? (
+            <Badge tone="success">
+              Deliverable{typeof emailScore === 'number' ? ` · ${emailScore}/100` : ''}
+            </Badge>
+          ) : isValidEmail === false ? (
+            <Badge tone="danger">{t('leads.notDeliverable') || 'Not deliverable'}</Badge>
+          ) : (
+            <Badge>{t('leads.notValidatedYet') || 'Not validated yet'}</Badge>
+          )}
+          <FollowUp sessionId={lead.session_id} isValidEmail={isValidEmail} email={email} />
+        </div>
+      ) : null}
+    </LeadSection>
   );
 }

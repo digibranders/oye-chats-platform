@@ -132,6 +132,40 @@ def _precompute_seed_questions(bot_id: int | None) -> None:
         logger.warning("seed-question precompute failed for bot %s (non-fatal)", bot_id, exc_info=True)
 
 
+def _queue_demo_screenshot(bot_id: int | None) -> None:
+    """Queue a capture of the bot's site for its hosted demo page.
+
+    Fired after a successful crawl because that is the moment we know the site
+    is reachable and renders, and because the customer is about to go looking
+    for something to show. The work deduplicates on a per-bot job id so a burst
+    of recrawls cannot queue a pile of redundant captures, and skips entirely
+    when the stored capture is still fresh.
+
+    Falls back to the background thread pool when the worker is disabled,
+    matching document ingestion and lead-company resolution. ``WORKER_ENABLED``
+    defaults to false, so without this branch the capture would never happen at
+    all in the configuration most developers actually run.
+
+    Best-effort: a queue that is down must never fail a crawl that succeeded.
+    """
+    if not bot_id:
+        return
+    try:
+        from app.worker.enqueue import WORKER_ENABLED
+
+        if WORKER_ENABLED:
+            from app.worker.enqueue import enqueue_sync
+
+            enqueue_sync("task_capture_demo_screenshot", bot_id, _job_id=f"demo-screenshot:{bot_id}")
+        else:
+            from app.core.thread_pool import submit_background
+            from app.services.screenshot_service import refresh_bot_capture
+
+            submit_background(refresh_bot_capture, bot_id)
+    except Exception:
+        logger.warning("failed to queue demo screenshot for bot %s (non-fatal)", bot_id, exc_info=True)
+
+
 # Path keywords used to auto-detect a "services" page from a freshly crawled site,
 # in priority order. Matched against the URL path only (not querystring), so a
 # blog post titled "our services" doesn't accidentally win.
@@ -990,6 +1024,11 @@ async def run_full_crawl(
             # step reads a cached value instead of paying LLM + embedding latency
             # live. Skipped for a no-content crawl. There's nothing to seed from.
             _precompute_seed_questions(bot_id)
+            # Capture the site for the hosted demo page while we are already
+            # here and already know the site renders. The task itself skips a
+            # capture that is still fresh, so a retrain of an unchanged site
+            # costs nothing.
+            _queue_demo_screenshot(bot_id)
 
         # Drop an in-app notification so the user sees the result in the bell
         # even if they navigated away. Best-effort, never fail the crawl on it.

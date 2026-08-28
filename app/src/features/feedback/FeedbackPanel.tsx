@@ -1,160 +1,328 @@
-import { type ReactElement, useMemo, useState } from 'react';
-import { Download, MessageSquare, RefreshCw, TriangleAlert } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Download, MessageSquareHeart, X } from 'lucide-react';
 import {
+  Alert,
+  Badge,
   Button,
+  Card,
+  CardBody,
+  CardHeader,
   EmptyState,
-  SegmentedControl,
-  type SegmentedOption,
-  Skeleton,
-} from '../../design-system';
+  ErrorState,
+  Grid,
+  LoadingBars,
+  LoadingRows,
+  Stack,
+  StatRow,
+  Toolbar,
+  buttonClass,
+  formatNumber,
+} from '../../ui';
+import { agentPath } from '../../shell/nav';
+import { errorMessage } from '../analytics/useAnalyticsData';
+import type { ResolvedRange } from '../analytics/range';
 import { FeedbackFilterTabs } from './FeedbackFilterTabs';
+import { FeedbackList } from './FeedbackList';
+import { FeedbackTrendChart } from './FeedbackTrendChart';
+import { TopDownvotedQuestions } from './TopDownvotedQuestions';
 import {
   buildTopDownvoted,
   buildTrend,
   computeStats,
   exportFeedbackCsv,
-  filterByDateRange,
   filterItems,
+  filterToWindow,
   normalizeQuestionKey,
 } from './feedback-helpers';
-import { FeedbackList } from './FeedbackList';
-import { FeedbackTrendChart } from './FeedbackTrendChart';
-import { TopDownvotedQuestions } from './TopDownvotedQuestions';
-import { type DateRange, type FeedbackFilter } from './types';
+import { type FeedbackFilter } from './types';
 import { useFeedback } from './useFeedback';
 
-/** Days represented by each date-range option, for `buildTrend`'s `days` argument. */
-const RANGE_DAYS: Record<DateRange, number> = { '7d': 7, '30d': 30, all: 0 };
-
-/** The date windows the panel offers, as `SegmentedControl` options. */
-const RANGES: readonly SegmentedOption<DateRange>[] = [
-  { value: '7d', label: '7d' },
-  { value: '30d', label: '30d' },
-  { value: 'all', label: 'All' },
-];
-
-function LoadingState(): ReactElement {
-  return (
-    <div className="space-y-6" aria-busy="true">
-      <Skeleton className="h-20" />
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <Skeleton className="h-48" />
-        <Skeleton className="h-48" />
-      </div>
-      <Skeleton className="h-10 w-64" />
-      <Skeleton className="h-24" />
-      <Skeleton className="h-24" />
-    </div>
-  );
-}
-
-function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }): ReactElement {
-  return (
-    <EmptyState
-      icon={TriangleAlert}
-      title="We couldn’t load feedback"
-      description={message}
-      action={
-        <Button variant="primary" onClick={onRetry}>
-          <RefreshCw size={16} aria-hidden="true" />
-          Try again
-        </Button>
-      }
-    />
-  );
-}
-
 export interface FeedbackPanelProps {
-  /** Scope to one agent's feedback. Omitted ⇒ workspace-wide (every agent). */
-  agentId?: string;
+  /** The chatbot whose ratings these are. `null` while the agent list resolves. */
+  botId: number | null;
+  /**
+   * The reporting window, resolved once for the whole Analytics page.
+   *
+   * A prop, not state. This panel used to own a private 7d/30d/All segmented
+   * control — the last competing time vocabulary on `/analytics` — so the page
+   * header could read "Last 90 days" while the card under it counted a
+   * fortnight, and nothing on screen admitted the two disagreed.
+   */
+  range: ResolvedRange;
 }
 
 /**
- * FeedbackPanel - the itemized thumbs-up/down feedback log: date filter, CSV
- * export, summary bar, satisfaction trend, top-downvoted questions, and an
- * expandable All/Positive/Negative list. Restyled 1:1 port of the legacy
- * `pages/Feedback.jsx`, shared between the workspace Analytics page and the
- * per-agent Analytics tab.
+ * Were the answers any good?
+ *
+ * Every visitor thumb, in one place: the helpful share over the window, how it
+ * moved day by day, the questions that keep getting a thumbs-down, and the
+ * exchanges themselves. The order is the argument — the share is the headline,
+ * the repeat offenders are what you act on, and the log is the evidence.
+ *
+ * The last two sit **side by side**, because they are one thing read against
+ * the other: pick a question on the left, read its exchanges on the right.
+ * Stacked full-width in a 1,376px column they were a screen apart, which is why
+ * choosing a question used to smooth-scroll the whole viewport down to a card
+ * the reader could not see — a jump that is unnecessary once they are adjacent.
+ *
+ * **Not plan-gated, so there is no locked state.** `/analytics/feedback` carries
+ * no entitlement check — it can answer, 404 on an unowned chatbot, or 500, and
+ * that is the whole set. A lock rendered on a 403 would therefore be a wall in
+ * front of data the customer already has, and would name a tier that does not
+ * gate anything; the same argument `SatisfactionPanel` makes for the ratings
+ * summary next door. A refusal is an error here, and is rendered as one.
  */
-export function FeedbackPanel({ agentId }: FeedbackPanelProps): ReactElement {
-  const { items, loading, error, refresh } = useFeedback(agentId);
-  const [dateRange, setDateRange] = useState<DateRange>('all');
+export function FeedbackPanel({ botId, range }: FeedbackPanelProps) {
+  const { items, loading, error, refetch } = useFeedback(botId);
   const [filter, setFilter] = useState<FeedbackFilter>('all');
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [selectedQuestion, setSelectedQuestion] = useState<string | null>(null);
 
-  const dateFiltered = useMemo(() => filterByDateRange(items, dateRange), [items, dateRange]);
-  const stats = useMemo(() => computeStats(dateFiltered), [dateFiltered]);
-  const trend = useMemo(
-    () => buildTrend(items, RANGE_DAYS[dateRange]),
-    [items, dateRange],
-  );
-  const topDownvoted = useMemo(() => buildTopDownvoted(dateFiltered), [dateFiltered]);
-  const filtered = useMemo(() => filterItems(dateFiltered, filter), [dateFiltered, filter]);
+  const inWindow = useMemo(() => filterToWindow(items, range.since), [items, range.since]);
+  const stats = useMemo(() => computeStats(inWindow), [inWindow]);
+  const trend = useMemo(() => buildTrend(inWindow, range.days ?? 0), [inWindow, range.days]);
+  const topDownvoted = useMemo(() => buildTopDownvoted(inWindow), [inWindow]);
+  const visible = useMemo(() => filterItems(inWindow, filter), [inWindow, filter]);
 
-  function jumpToQuestion(question: string): void {
+  /**
+   * Select a ranked question, and show the exchanges behind it.
+   *
+   * Switches the filter to the unhelpful ones first, because the match is
+   * always a negative rating and leaving the filter on "Helpful" would select a
+   * row that is not rendered. It does **not** move the viewport: the log is the
+   * card beside this one now, and scrolling the page to it lost the reader
+   * their place for no gain.
+   */
+  function selectQuestion(question: string) {
     const key = normalizeQuestionKey(question);
-    const match = dateFiltered.find(
+    const match = inWindow.find(
       (item) => item.feedback !== 1 && normalizeQuestionKey(item.question) === key,
     );
     if (!match) return;
+    setSelectedQuestion(question);
     setFilter('negative');
     setExpandedId(match.message_id);
-    requestAnimationFrame(() => {
-      document
-        .querySelector(`[data-feedback-id="${match.message_id}"]`)
-        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    });
   }
 
-  if (error) {
-    return <ErrorState message={error} onRetry={refresh} />;
+  function clearQuestion() {
+    setSelectedQuestion(null);
+    setExpandedId(null);
   }
 
-  if (loading) {
-    return <LoadingState />;
-  }
-
-  if (items.length === 0) {
+  // Only when there is nothing to show. With ratings already in hand a failed
+  // refetch must not blow the panel away — it says so in place, below.
+  if (error && items.length === 0) {
     return (
-      <EmptyState
-        icon={MessageSquare}
-        title="No feedback yet"
-        description="Your users haven't rated any chatbot responses yet. Ratings will appear here once they use the thumbs up/down buttons."
-      />
+      <Card>
+        <ErrorState
+          title="Ratings could not be loaded"
+          description={errorMessage(error, 'The request for answer ratings failed.')}
+          onRetry={refetch}
+        />
+      </Card>
     );
   }
 
+  const helpfulShare = stats.total > 0 ? `${stats.rate}%` : undefined;
+  const nothingEver = !loading && items.length === 0;
+  const shown = selectedQuestion
+    ? visible.filter(
+        (item) => normalizeQuestionKey(item.question) === normalizeQuestionKey(selectedQuestion),
+      )
+    : visible;
+
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <SegmentedControl
-          options={RANGES}
-          value={dateRange}
-          onChange={setDateRange}
-          ariaLabel="Feedback date range"
+    <Stack>
+      {/* Ratings in hand and the refetch failed: every figure below is stale
+          and nothing else on screen would admit it. */}
+      {error ? (
+        <Alert
+          tone="warning"
+          action={
+            <Button size="sm" onClick={refetch}>
+              Try again
+            </Button>
+          }
+        >
+          These ratings may be out of date — the last refresh did not come back.
+        </Alert>
+      ) : null}
+
+      <Card>
+        <CardHeader
+          eyebrow="Satisfaction"
+          title="Were the answers helpful?"
+          titleAs="h2"
+          // No window in the description. `StatRow` states it once, in its own
+          // caption under the four figures it anchors, so appending it here
+          // printed the same string twice within 90px of itself.
+          description="Thumbs visitors left on individual answers"
         />
-        <Button variant="outline" size="sm" onClick={() => exportFeedbackCsv(filtered)}>
-          <Download size={13} aria-hidden="true" />
-          Export CSV
-        </Button>
-      </div>
+        <CardBody flush>
+          <StatRow
+            label="Answer ratings"
+            period={range.label}
+            columns={3}
+            loading={loading}
+            items={[
+              {
+                label: 'Helpful share',
+                value: helpfulShare,
+                hint: 'Of the answers visitors rated',
+                tone: stats.total === 0 ? 'neutral' : stats.rate >= 70 ? 'success' : 'warning',
+              },
+              {
+                label: 'Rated answers',
+                value: stats.total > 0 ? formatNumber(stats.total) : undefined,
+              },
+              {
+                label: 'Marked unhelpful',
+                value: stats.total > 0 ? formatNumber(stats.negative) : undefined,
+                tone: stats.negative > 0 ? 'danger' : 'neutral',
+              },
+            ]}
+          />
+        </CardBody>
+        <CardBody>
+          <FeedbackTrendChart
+            points={trend}
+            rangeLabel={range.label}
+            overallRate={stats.rate}
+            loading={loading}
+          />
+        </CardBody>
+      </Card>
 
-      {(trend.length > 1 || topDownvoted.length > 0) && (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          {trend.length > 1 && <FeedbackTrendChart points={trend} />}
-          {topDownvoted.length > 0 && (
-            <TopDownvotedQuestions items={topDownvoted} onSelect={jumpToQuestion} />
+      {/* Stretched, not `align="start"`. `Grid` says `start` is wrong for a row
+          of panels, and here it was the difference between a shared bottom edge
+          and a 920px hole down the left column — the log's own list is bounded
+          now (see `FeedbackList`), so the two are within a card-header of each
+          other rather than a screen apart. */}
+      <Grid cols={2} gap="section">
+        <Card>
+          <CardHeader
+            eyebrow="Priorities"
+            title="Fix these first"
+            titleAs="h2"
+            // Short enough that "Add knowledge" stays in the header's action
+            // slot. At the full sentence the description and the button came to
+            // 585px in a 512px header, so `CardHeader` wrapped the button onto
+            // its own row at the *left* while Export on the card beside it sat
+            // top-right — two panels in one `Grid`, two action placements.
+            description="Most often marked unhelpful. Pick one to filter the log."
+            actions={
+              // Every row's next action is "add a document" or "fix the
+              // answer", and both live in the knowledge base. Without this the
+              // journey was: read a question here, switch scope to the chatbot,
+              // open Knowledge, search for the gap.
+              botId != null ? (
+                <Link
+                  to={agentPath(botId, 'knowledge')}
+                  className={buttonClass('secondary', 'sm')}
+                >
+                  Add knowledge
+                </Link>
+              ) : undefined
+            }
+          />
+          {loading ? (
+            <CardBody flush>
+              <LoadingBars rows={5} />
+            </CardBody>
+          ) : topDownvoted.length === 0 ? (
+            <EmptyState
+              size="panel"
+              title={nothingEver ? 'Nothing rated unhelpful yet' : 'Nothing rated unhelpful in this period'}
+              description={
+                nothingEver
+                  ? 'When a visitor thumbs-down an answer, the question that produced it collects here so you can fix it in your knowledge base.'
+                  : 'No answer was marked unhelpful in this window. Widen the period to see older ones.'
+              }
+            />
+          ) : (
+            <CardBody flush>
+              <TopDownvotedQuestions
+                items={topDownvoted}
+                selected={selectedQuestion}
+                onSelect={selectQuestion}
+              />
+            </CardBody>
           )}
-        </div>
-      )}
+        </Card>
 
-      <FeedbackFilterTabs stats={stats} value={filter} onChange={setFilter} />
-
-      <FeedbackList
-        items={filtered}
-        expandedId={expandedId}
-        onToggle={(id) => setExpandedId((current) => (current === id ? null : id))}
-      />
-    </div>
+        <Card>
+          <CardHeader
+            eyebrow="Log"
+            title="Every rated answer"
+            titleAs="h2"
+            description={`${range.label.toLowerCase()}`}
+            actions={
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={shown.length === 0}
+                onClick={() => exportFeedbackCsv(shown, range.label)}
+                iconLeft={<Download aria-hidden />}
+              >
+                Export
+              </Button>
+            }
+          />
+          {/* The filter is a control *over the body*, not a header action, so it
+              sits between the header and the list rather than reading as a peer
+              of Export. */}
+          <Toolbar className="border-b border-border px-cell py-2">
+            <FeedbackFilterTabs stats={stats} value={filter} onChange={setFilter} />
+            {selectedQuestion ? (
+              <span className="ml-auto flex min-w-0 items-center gap-1">
+                <Badge tone="ink" className="min-w-0">
+                  {selectedQuestion}
+                </Badge>
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  aria-label="Clear the question filter"
+                  onClick={clearQuestion}
+                >
+                  <X aria-hidden />
+                </Button>
+              </span>
+            ) : null}
+          </Toolbar>
+          {loading ? (
+            <CardBody>
+              <LoadingRows rows={6} />
+            </CardBody>
+          ) : shown.length === 0 ? (
+            <EmptyState
+              size="panel"
+              icon={MessageSquareHeart}
+              title={
+                nothingEver
+                  ? 'No answers rated yet'
+                  : inWindow.length === 0
+                    ? 'Nothing rated in this period'
+                    : 'Nothing matches this filter'
+              }
+              description={
+                nothingEver
+                  ? 'Visitors can rate any answer with a thumbs up or down in the chat widget. Once they start, every rating lands here with the question that produced it.'
+                  : inWindow.length === 0
+                    ? 'Visitors have rated answers, but none in this window. Try a wider reporting period.'
+                    : 'No rated answer matches the filter you picked. Switch back to All to see the rest.'
+              }
+            />
+          ) : (
+            <FeedbackList
+              key={`${filter}:${selectedQuestion ?? ''}`}
+              items={shown}
+              expandedId={expandedId}
+              onToggle={(id) => setExpandedId((current) => (current === id ? null : id))}
+            />
+          )}
+        </Card>
+      </Grid>
+    </Stack>
   );
 }

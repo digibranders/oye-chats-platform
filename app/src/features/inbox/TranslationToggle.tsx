@@ -1,16 +1,17 @@
-import { useState, type ReactElement } from 'react';
-import { Languages, Loader2 } from 'lucide-react';
-import { cn } from '../../design-system';
+import { useState } from 'react';
+import { Languages } from 'lucide-react';
+import { Spinner, cn } from '../../ui';
 import { useLocaleCatalog } from '../../hooks/useLocaleCatalog';
 import { useTranslation } from '../../i18n/useTranslation';
 
 /**
- * Per-message original/translated control shown under a bubble.
+ * Original or translation, under one bubble.
  *
- * Three states, because "no translation" and "translation failed" are
- * different things to an operator: one means the message was already in their
- * language, the other means the provider was down and there is something to
- * retry.
+ * Three states, because "nothing to translate" and "translation failed" are
+ * different facts to an operator: one means the message was already in their
+ * language, the other means the provider did not answer and there is something
+ * to retry. Collapsing them into a single silent absence is what made a broken
+ * translation pipeline invisible in the thread.
  */
 export function TranslationToggle({
   isTranslated,
@@ -20,23 +21,23 @@ export function TranslationToggle({
   onRetry,
   className,
 }: {
-  /** True when the bubble is currently rendering a translation. */
+  /** The bubble is currently rendering a translation. */
   isTranslated: boolean;
-  /** True when the operator has chosen to see the original. */
+  /** The operator has asked to see the original. */
   showOriginal: boolean;
-  /** Language the original was written in. */
+  /** The language the original was written in. */
   sourceLanguage: string | null | undefined;
   onToggle: () => void;
-  /** Present only when a translation was expected but is not available. */
+  /** Set only when a translation was expected and is not there. */
   onRetry?: () => Promise<void> | void;
   className?: string;
-}): ReactElement | null {
+}) {
   const { t } = useTranslation();
   const [retrying, setRetrying] = useState(false);
   const { labelFor } = useLocaleCatalog();
   const label = labelFor(sourceLanguage);
 
-  const handleRetry = async (): Promise<void> => {
+  async function retry() {
     if (!onRetry || retrying) return;
     setRetrying(true);
     try {
@@ -44,19 +45,22 @@ export function TranslationToggle({
     } finally {
       setRetrying(false);
     }
-  };
+  }
 
   if (onRetry) {
     return (
-      <span className={cn('inline-flex items-center gap-1.5 text-[11px] text-[var(--ds-text-subtle)]', className)}>
-        <span>{t('inbox.translationUnavailable') || 'Translation unavailable'}</span>
+      <span className={cn('inline-flex items-center gap-1.5 text-2xs text-text-tertiary', className)}>
+        {t('inbox.translationUnavailable') || 'Translation unavailable'}
         <button
           type="button"
-          onClick={() => void handleRetry()}
+          onClick={() => void retry()}
           disabled={retrying}
-          className="inline-flex items-center gap-1 underline underline-offset-2 hover:text-[var(--ds-text)] disabled:opacity-60"
+          // The disabled state is a token, never an opacity: dimming this
+          // 11px line by 0.6 takes it under 3:1 on its own ground, and the
+          // whole point of the retry is that it can be read and reached.
+          className="inline-flex items-center gap-1 underline underline-offset-2 hover:text-text-primary disabled:cursor-not-allowed disabled:text-text-disabled disabled:no-underline"
         >
-          {retrying ? <Loader2 size={11} className="animate-spin" aria-hidden="true" /> : null}
+          {retrying ? <Spinner size="sm" label={null} /> : null}
           {retrying ? t('inbox.translating') || 'Translating' : t('inbox.retry') || 'Retry'}
         </button>
       </span>
@@ -71,15 +75,17 @@ export function TranslationToggle({
       type="button"
       onClick={onToggle}
       className={cn(
-        'inline-flex items-center gap-1 text-[11px] text-[var(--ds-text-subtle)]',
-        'underline underline-offset-2 hover:text-[var(--ds-text)]',
+        'inline-flex items-center gap-1 text-2xs text-text-tertiary',
+        'underline underline-offset-2 hover:text-text-primary',
         className,
       )}
     >
-      <Languages size={11} aria-hidden="true" />
-      {showOriginal ? t('inbox.viewTranslation') || 'View translation' : label
-            ? t('inbox.viewOriginalIn', { language: label }) || `View original (${label})`
-            : t('inbox.viewOriginal') || 'View original'}
+      <Languages aria-hidden className="h-3 w-3" />
+      {showOriginal
+        ? t('inbox.viewTranslation') || 'View translation'
+        : label
+          ? `View original (${label})`
+          : t('inbox.viewOriginal') || 'View original'}
     </button>
   );
 }

@@ -1,186 +1,357 @@
-import { type ReactElement } from 'react';
-import { AlertCircle, Loader2, Lock } from 'lucide-react';
-import { Button, Card, SectionHeader } from '../../../design-system';
-import { useBrandingAddon } from '../../workspace/billing/useBrandingAddon';
-import { ColorField } from '../../launch-studio/customize/ColorField';
-import { AvatarPicker } from '../../launch-studio/customize/AvatarPicker';
-import { Toggle } from '../advanced/controls';
-import { type ExperienceDraft } from './types';
+import { type ReactElement, useCallback, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Bot, Trash2 } from 'lucide-react';
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  CardBody,
+  CardHeader,
+  Field,
+  FileDrop,
+  Input,
+  LoadingRows,
+  SegmentedControl,
+  Spinner,
+  Switch,
+  buttonClass,
+  validateUrl,
+} from '../../../ui';
+import PremiumOrb from './PremiumOrb';
+import { useEntitlements } from '../../../hooks/useEntitlements';
+import { ColorField } from './ColorField';
+import { NON_TEXT_CONTRAST_MIN, TEXT_CONTRAST_MIN } from './contrast';
+import { AVATAR_ACCEPT, AVATAR_HINT, MAX_AVATAR_BYTES, validateAvatarFile } from './avatarRules';
+import { errorMessage, uploadAvatar } from './experience-api';
+import {
+  DEFAULT_PRIMARY_COLOR,
+  WIDGET_ON_PRIMARY,
+  WIDGET_SURFACE,
+  WIDGET_TEXT,
+} from './widgetTheme';
+import type { AvatarType, DraftErrors, ExperienceDraft, ExperienceMeta } from './experience-model';
 import { useTranslation } from '../../../i18n/useTranslation';
+
+/**
+ * What the widget looks like: its two colours, its face, and its credit line.
+ *
+ * The colour fields do not just take a hex — they state the contrast each
+ * choice produces against the surfaces the widget actually paints, because
+ * these values end up in front of the customer's own visitors and "it looked
+ * fine on my monitor" is how an unreadable brand ships. See `ColorField`.
+ *
+ * **The credit line is configured here, once.** Its on/off switch was on this
+ * page and its wording and URL were on Deploy, under a card with the same title
+ * and a near-identical 40-word alert — so a customer who switched the badge off
+ * here still saw "Change the wording", linking to Deploy, for a badge that was
+ * now hidden. Both halves are gated on the same `branding_removable`
+ * entitlement, so both halves live in one card.
+ */
+
+const AVATAR_TYPES: readonly { value: AvatarType; label: string }[] = [
+  { value: 'upload', label: 'Image' },
+  { value: 'orb', label: 'Orb' },
+  { value: 'mascot', label: 'Icon' },
+];
 
 export interface BrandingSectionProps {
   draft: ExperienceDraft;
+  meta: ExperienceMeta;
+  errors: DraftErrors;
+  readOnly: boolean;
+  /** The chatbot whose subscription the branding add-on would ride on. */
+  agentId: number | null;
   onChange: (patch: Partial<ExperienceDraft>) => void;
-  /** The agent being edited - scopes the branding add-on to its subscription. */
-  botId: number | null;
-  /** Quick-pick colours (website-extracted recommendations + presets). */
-  swatches: string[];
-  /** True while an avatar upload is in flight. */
-  uploading: boolean;
-  /** Non-null when the last upload failed. */
-  uploadError: string | null;
-  onUpload: (file: File) => void;
-  /** True when the previewed avatar matches what's currently live in production. */
-  avatarIsLive: boolean;
 }
 
-/**
- * BrandingSection - the widget's visual identity: brand + user-message colours
- * and the avatar (photo / orb / mascot). Presentational; all state lives in the
- * parent draft so the live preview stays in lockstep.
- */
 export function BrandingSection({
   draft,
+  meta,
+  errors,
+  readOnly,
+  agentId,
   onChange,
-  botId,
-  swatches,
-  uploading,
-  uploadError,
-  onUpload,
-  avatarIsLive,
 }: BrandingSectionProps): ReactElement {
   const { t } = useTranslation();
-  // Branding removal is a paid add-on, not a plan tier, so the locked state
-  // sells the add-on here rather than routing to the plan-upgrade modal.
-  const {
-    active: canRemoveBranding,
-    busy,
-    loading: addonLoading,
-    priceLabel,
-    error: addonError,
-    notice: addonNotice,
-    awaitingActivation,
-    purchase,
-  } = useBrandingAddon({ botId });
-  const purchasing = busy || awaitingActivation;
+  const { hasFeature, loading: entitlementsLoading } = useEntitlements();
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  const canRemoveBranding = hasFeature('branding_removable');
+
+  // Colours the crawl pulled off the customer's own site come first: they are
+  // the only swatches here that are actually *their* brand.
+  const swatches = meta.recommendedColors.slice(0, 6);
+
+  const brandingUrlError = draft.brandingUrl.trim()
+    ? validateUrl(draft.brandingUrl.trim())
+    : null;
+
+  const handleFiles = useCallback(
+    async (files: File[]): Promise<void> => {
+      const file = files[0];
+      if (!file) return;
+      const reason = validateAvatarFile(file);
+      if (reason) {
+        setUploadError(reason);
+        return;
+      }
+      setUploading(true);
+      setUploadError(null);
+      try {
+        const url = await uploadAvatar(file);
+        onChange({ botLogo: url, avatarType: 'upload' });
+      } catch (cause) {
+        setUploadError(errorMessage(cause, t('agents.thatImageCouldNotBe2') || 'That image could not be uploaded. Please try again.'));
+      } finally {
+        setUploading(false);
+      }
+    },
+    [onChange, t],
+  );
 
   return (
-    <div className="space-y-8">
-      <section className="space-y-5">
-        <SectionHeader
-          title={t('agents.colours') || 'Colours'}
-          description={t('agents.matchTheWidgetToYour') || 'Match the widget to your brand. These drive the launcher, avatar and message bubbles.'}
-        />
-        <div className="grid gap-6 sm:grid-cols-2">
+    <div className="flex flex-col gap-6">
+      <Card>
+        <CardHeader eyebrow="Colour" titleAs="h2" title={t('agents.yourTwoWidgetColours') || 'Your two widget colours'} />
+        <CardBody className="flex flex-col gap-6">
           <ColorField
             label={t('agents.brandColour') || 'Brand colour'}
+            hint={t('agents.theLauncherTheSendButton') || 'The launcher, the send button and the icon avatar are painted with it.'}
             value={draft.primaryColor}
-            onChange={(c) => onChange({ primaryColor: c })}
+            onChange={(primaryColor) => onChange({ primaryColor })}
             swatches={swatches}
+            error={errors.primaryColor ?? null}
+            disabled={readOnly}
+            pairs={[
+              {
+                foreground: WIDGET_ON_PRIMARY,
+                background: draft.primaryColor,
+                label: t('agents.whiteIconsOnItLauncher') || 'White icons on it — launcher, send button',
+                min: NON_TEXT_CONTRAST_MIN,
+              },
+              {
+                foreground: draft.primaryColor,
+                background: WIDGET_SURFACE,
+                label: t('agents.itAsTextOnThe') || 'It as text on the chat window',
+                min: TEXT_CONTRAST_MIN,
+              },
+            ]}
           />
+
           <ColorField
             label={t('agents.visitorMessageColour') || 'Visitor message colour'}
+            hint={t('agents.theBackgroundOfEveryMessage') || 'The background of every message the visitor sends.'}
             value={draft.userBubbleColor}
-            onChange={(c) => onChange({ userBubbleColor: c })}
+            onChange={(userBubbleColor) => onChange({ userBubbleColor })}
             swatches={swatches}
+            error={errors.userBubbleColor ?? null}
+            disabled={readOnly}
+            pairs={[
+              {
+                foreground: WIDGET_TEXT,
+                background: draft.userBubbleColor,
+                label: t('agents.theirOwnWordsOnIt') || 'Their own words on it',
+                min: TEXT_CONTRAST_MIN,
+              },
+            ]}
           />
-        </div>
-      </section>
+        </CardBody>
+      </Card>
 
-      <section className="space-y-4 border-t border-[var(--ds-border)] pt-6">
-        <SectionHeader
-          title={t('agents.avatar') || 'Avatar'}
-          description={t('agents.theFaceOfYourChatbot') || 'The face of your chatbot - a photo, a glowing orb, or a friendly mascot.'}
-        />
-        <AvatarPicker
-          avatarType={draft.avatarType}
-          orbColor={draft.orbColor}
-          botLogo={draft.botLogo}
-          botLogoSource={draft.botLogoSource}
-          primaryColor={draft.primaryColor}
-          uploading={uploading}
-          swatches={swatches}
-          onChangeType={(t) => onChange({ avatarType: t })}
-          onChangeOrbColor={(c) => onChange({ orbColor: c })}
-          onUpload={onUpload}
-          onRemoveLogo={() => onChange({ botLogo: null })}
-          avatarIsLive={avatarIsLive}
-        />
-        {uploadError && (
-          <p role="alert" className="text-[12px] text-[var(--ds-danger)]">
-            {uploadError}
-          </p>
-        )}
-      </section>
-
-      <section className="space-y-4 border-t border-[var(--ds-border)] pt-6">
-        <Card className="p-4">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex min-w-0 items-start gap-3">
-              {!canRemoveBranding && (
+      <Card>
+        <CardHeader eyebrow="Avatar" titleAs="h2" title={t('agents.theFaceOfYourChatbot') || 'The face of your chatbot'} />
+        <CardBody className="flex flex-col gap-5">
+          <div className="flex flex-wrap items-start gap-6">
+            {/* No console hairline round it: the widget's own launcher draws the
+                avatar in a 48px circle with no border, so a ring here would show
+                the customer something their visitors never see. */}
+            <span
+              aria-hidden
+              className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-full"
+            >
+              {draft.avatarType === 'orb' ? (
+                <PremiumOrb color={draft.orbColor || draft.primaryColor || DEFAULT_PRIMARY_COLOR} size={64} />
+              ) : draft.avatarType === 'upload' && draft.botLogo ? (
+                <img src={draft.botLogo} alt="" className="h-full w-full object-cover" />
+              ) : (
                 <span
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]"
-                  aria-hidden="true"
+                  className="flex h-full w-full items-center justify-center"
+                  style={{ backgroundColor: draft.primaryColor || DEFAULT_PRIMARY_COLOR }}
                 >
-                  <Lock size={15} />
+                  <Bot aria-hidden className="h-7 w-7" color={WIDGET_ON_PRIMARY} />
                 </span>
               )}
-              <div className="min-w-0">
-                <p className="text-[14px] font-medium text-[var(--ds-text)]">{t('agents.removeBranding') || 'Remove branding'}</p>
-                <p className="mt-0.5 text-[12px] leading-relaxed text-[var(--ds-text-subtle)]">
-                  {canRemoveBranding
-                    ? t('agents.hideThePoweredByOyechats') || 'Hide the “Powered by OyeChats” footer from the widget.'
-                    : priceLabel === null
-                      ? t('agents.brandingAddOnHidesTheFooterNoPrice') ||
-                        'The branding removal add-on hides the “Powered by OyeChats” footer.'
-                      : t('agents.brandingAddOnHidesTheFooter', { price: priceLabel }) ||
-                        `The ${priceLabel}/mo branding add-on hides the “Powered by OyeChats” footer.`}
-                </p>
-              </div>
-            </div>
-            {canRemoveBranding ? (
-              <Toggle
-                checked={!draft.showBranding}
-                onChange={(hide) => onChange({ showBranding: !hide })}
-                label={t('agents.removeOyechatsBrandingFromThe') || 'Remove OyeChats branding from the widget'}
+            </span>
+            <div className="min-w-0 flex-1">
+              <SegmentedControl
+                items={AVATAR_TYPES}
+                value={draft.avatarType}
+                onChange={(avatarType) => onChange({ avatarType })}
+                label={t('agents.avatarStyle') || 'Avatar style'}
               />
+              {meta.botLogoSource === 'derived' && draft.botLogo ? (
+                <p className="mt-2.5 text-xs text-text-secondary">
+                  {t('agents.takenFromYourSitesFavicon') || 'Taken from your site’s favicon.'}
+                </p>
+              ) : null}
+            </div>
+          </div>
+
+          {draft.avatarType === 'upload' ? (
+            <div className="flex flex-col gap-3">
+              <FileDrop
+                label={t('agents.uploadAnImage') || 'Upload an image'}
+                hint={AVATAR_HINT}
+                accept={AVATAR_ACCEPT}
+                maxSizeBytes={MAX_AVATAR_BYTES}
+                maxFiles={1}
+                multiple={false}
+                disabled={readOnly || uploading}
+                onFiles={(files) => void handleFiles(files)}
+              />
+              {uploadError ? (
+                <Alert tone="danger" title={t('agents.thatImageCouldNotBe') || 'That image could not be used'} live>
+                  {uploadError}
+                </Alert>
+              ) : null}
+              {/* One line under the drop zone, and only when there is something
+                  to say. It used to be four separate status surfaces for one
+                  upload; the last of them read "No image yet." under an empty
+                  drop zone beside a preview already showing the fallback face —
+                  three ways of saying nothing, on the state where the panel is
+                  emptiest. */}
+              {uploading || draft.botLogo ? (
+                <div className="flex items-center gap-2 text-xs text-text-secondary">
+                  {uploading ? (
+                    <span className="flex items-center gap-2" role="status">
+                      <Spinner />
+                      {t('agents.uploading') || 'Uploading…'}
+                    </span>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={readOnly}
+                      onClick={() => onChange({ botLogo: null })}
+                      iconLeft={<Trash2 aria-hidden />}
+                    >
+                      {t('agents.remove') || 'Remove'}
+                    </Button>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {draft.avatarType === 'orb' ? (
+            <ColorField
+              label={t('agents.orbColour') || 'Orb colour'}
+              hint={t('agents.leaveItEmptyToFollow') || 'Leave it empty to follow your brand colour.'}
+              value={draft.orbColor || draft.primaryColor}
+              onChange={(orbColor) => onChange({ orbColor })}
+              swatches={swatches}
+              error={errors.orbColor ?? null}
+              disabled={readOnly}
+              pairs={[
+                {
+                  foreground: draft.orbColor || draft.primaryColor,
+                  background: WIDGET_SURFACE,
+                  label: t('agents.theOrbAgainstTheChat') || 'The orb against the chat window',
+                  min: NON_TEXT_CONTRAST_MIN,
+                },
+              ]}
+            />
+          ) : null}
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader
+          eyebrow="Attribution"
+          titleAs="h2"
+          title={t('agents.theCreditLineInThe') || 'The credit line in the chat window'}
+          description={t('agents.oneSmallLineAtThe') || 'One small line at the bottom of the open chat.'}
+          actions={
+            draft.showBranding ? (
+              <Badge tone="neutral">{t('agents.shown') || 'Shown'}</Badge>
             ) : (
-              <Button
-                variant="outline"
-                size="sm"
-                className="shrink-0"
-                onClick={() => void purchase()}
-                disabled={purchasing || addonLoading || priceLabel === null}
-              >
-                {purchasing
-                  ? t('agents.working') || 'Working…'
-                  : priceLabel === null
-                    ? t('agents.addBrandingRemoval') || 'Add branding removal'
-                    : t('agents.addBrandingAddOnForPrice', { price: priceLabel }) ||
-                      `Add for ${priceLabel}/mo`}
-              </Button>
-            )}
-          </div>
-
-          {!canRemoveBranding && (
-            <p className="mt-3 text-[11px] leading-relaxed text-[var(--ds-text-subtle)]">
-              {t('agents.brandingAddOnRecurringNote') ||
-                'A recurring charge on top of your plan. A secure checkout opens to authorise it, and you can cancel it any time on the Billing page.'}
-            </p>
-          )}
-
-          {/* The entitlement is granted by the payment webhook, not by the
-              purchase call, so the wait is announced rather than left silent. */}
-          <div aria-live="polite">
-            {awaitingActivation && (
-              <p className="mt-3 flex items-center gap-2 text-[12px] text-[var(--ds-text-muted)]">
-                <Loader2 size={13} aria-hidden="true" className="animate-spin text-[var(--ds-text-subtle)]" />
-                {t('agents.switchingBrandingRemovalOn') || 'Switching branding removal on…'}
+              // Not `success`: hiding a credit line is a preference, not a
+              // healthy state, and success is reserved for installed / live /
+              // trained.
+              <Badge tone="neutral">{t('agents.hidden') || 'Hidden'}</Badge>
+            )
+          }
+        />
+        <CardBody className="flex flex-col gap-4">
+          {entitlementsLoading ? (
+            <LoadingRows rows={2} />
+          ) : !canRemoveBranding ? (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="min-w-0 text-prose text-text-secondary">
+                {/* An ADD-ON, not a plan inclusion. No tier grants it, so
+                    "Standard and above" sent customers to compare plans for
+                    something no plan on that page would give them. */}
+                Rewording or removing it is a paid add-on on any plan. It currently reads{' '}
+                <span className="font-medium text-text-primary">
+                  {meta.brandingText || t('agents.poweredByOyechats') || 'Powered by OyeChats'}
+                </span>
+                .
               </p>
-            )}
-            {addonNotice && !awaitingActivation && (
-              <p className="mt-3 text-[12px] text-[var(--ds-text-muted)]">{addonNotice}</p>
-            )}
-          </div>
-
-          {addonError && (
-            <p role="alert" className="mt-3 flex items-start gap-1.5 text-[12px] text-[var(--ds-danger)]">
-              <AlertCircle size={13} aria-hidden="true" className="mt-0.5 shrink-0" />
-              {addonError}
-            </p>
+              {/* A link, not an inline checkout. Buying it needs the charge
+                  currency and the Razorpay mandate, and wiring those in here
+                  would make a chatbot-settings tab refuse to render without
+                  the billing context. The add-on card on Billing owns the
+                  money path; this surface explains why it is worth it. */}
+              <Link
+                to={agentId === null ? '/billing' : `/billing?scope=${agentId}`}
+                className={buttonClass('primary', 'sm')}
+              >
+                {t('agents.addItInBilling') || 'Add it in Billing'}
+              </Link>
+            </div>
+          ) : (
+            <>
+              <Switch
+                label={t('agents.showTheCreditLine') || 'Show the credit line'}
+                checked={draft.showBranding}
+                disabled={readOnly}
+                onCheckedChange={(showBranding) => onChange({ showBranding })}
+              />
+              {draft.showBranding ? (
+                // `max-w-pair`, the same cap the labelled `Switch` above draws
+                // itself at. Without it the two inputs ran 38px past the switch's
+                // right edge, so one card had two right margins. `Grid cols={2}`
+                // never went two-up in this column anyway — it is 638px wide, and
+                // the ramp's two-column step is 768.
+                <div className="grid max-w-pair gap-4">
+                  <Field label={t('agents.wording') || 'Wording'} error={errors.brandingText ?? null}>
+                    <Input
+                      value={draft.brandingText}
+                      disabled={readOnly}
+                      placeholder={t('agents.poweredByOyechats') || 'Powered by OyeChats'}
+                      onChange={(event) => onChange({ brandingText: event.target.value })}
+                    />
+                  </Field>
+                  <Field label={t('agents.whereItLinksTo') || 'Where it links to'} error={brandingUrlError}>
+                    <Input
+                      value={draft.brandingUrl}
+                      inputMode="url"
+                      spellCheck={false}
+                      autoComplete="off"
+                      disabled={readOnly}
+                      placeholder="https://www.oyechats.com"
+                      onChange={(event) => onChange({ brandingUrl: event.target.value })}
+                      className="figure"
+                    />
+                  </Field>
+                </div>
+              ) : null}
+            </>
           )}
-        </Card>
-      </section>
+        </CardBody>
+      </Card>
     </div>
   );
 }

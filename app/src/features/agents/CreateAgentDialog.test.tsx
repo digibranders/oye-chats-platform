@@ -15,7 +15,7 @@
  * through the real 402 → pricing-step transition and assert on what the list
  * actually renders.
  */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CreateAgentDialog } from './CreateAgentDialog';
@@ -64,7 +64,7 @@ function submitNameStep(): void {
     <MemoryRouter>
       <CreateAgentDialog
         open
-        onClose={vi.fn()}
+        onOpenChange={vi.fn()}
         onCreated={vi.fn()}
         onCheckoutComplete={vi.fn()}
         gate={{ kind: 'requires_plan', agentCount: 1, agentLimit: 1 }}
@@ -76,10 +76,16 @@ function submitNameStep(): void {
   fireEvent.click(screen.getByRole('button', { name: /continue to plans/i }));
 }
 
-/** Drive the dialog from the name step to a rendered plan list. */
+/**
+ * Drive the dialog from the name step to a rendered plan list.
+ *
+ * The list is a `RadioCards` radiogroup now, not a `<ul>` of `aria-pressed`
+ * buttons: five mutually-exclusive options announced as five independent
+ * toggles and took five tab stops.
+ */
 async function openPricingStep(): Promise<void> {
   submitNameStep();
-  await waitFor(() => expect(screen.getByRole('list', { name: /available plans/i })).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByRole('radiogroup', { name: 'Plan' })).toBeInTheDocument());
 }
 
 describe('CreateAgentDialog plan filter', () => {
@@ -154,7 +160,10 @@ describe('CreateAgentDialog plan filter', () => {
 
     await openPricingStep();
 
-    const selected = screen.getAllByRole('button', { pressed: true });
+    // Scoped to the plan group: the billing-cycle `SegmentedControl` above it
+    // is a radiogroup too, and its selected segment is also a checked radio.
+    const group = screen.getByRole('radiogroup', { name: 'Plan' });
+    const selected = within(group).getAllByRole('radio', { checked: true });
     expect(selected).toHaveLength(1);
     expect(selected[0]).toHaveTextContent('Professional');
   });
@@ -167,7 +176,7 @@ describe('CreateAgentDialog plan filter', () => {
     submitNameStep();
 
     await waitFor(() => expect(screen.getByText(/no plans are available right now/i)).toBeInTheDocument());
-    expect(screen.queryByRole('list', { name: /available plans/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('radiogroup', { name: 'Plan' })).not.toBeInTheDocument();
     expect(screen.queryByText('Enterprise')).not.toBeInTheDocument();
   });
 });

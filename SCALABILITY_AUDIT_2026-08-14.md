@@ -39,6 +39,8 @@ Neither is a problem *today*. Both must be addressed before onboarding meaningfu
 | Uptime / restarts | 48 days; **NRestarts=0**; 1 worker-timeout ever | `systemctl`, `journalctl` |
 
 > ⚠️ **Doc drift:** `DEPLOYMENT.md` states "2 GB RAM / 1 vCPU". The live box is **2 vCPU / 4 GB** — it was upsized. Capacity math below uses the live values.
+>
+> **Resolved 2026-08-27.** `DEPLOYMENT.md` now states 4 GB / 2 vCPU, re-verified against the live box (`free -h`: 3.8 GiB total, 2 GB swapfile; `nproc`: 2). This audit's numbers were right and are unchanged.
 
 ### Why one worker (this is deliberate, not an oversight)
 

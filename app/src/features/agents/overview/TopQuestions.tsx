@@ -1,79 +1,70 @@
-import { type ReactElement } from 'react';
-import { formatNumber } from '../../../i18n/formatters';
-import { MessageSquare } from 'lucide-react';
-import { Card, EmptyState, cn } from '../../../design-system';
-import { type TopQuestion } from '../../../types/domain';
+import {
+  Alert,
+  Button,
+  CardBody,
+  RankedBars,
+  formatNumber,
+} from '../../../ui';
+import type { TopQuestion } from '../../../types/domain';
+import type { Section } from './overview-data';
 import { useTranslation } from '../../../i18n/useTranslation';
 
-export interface TopQuestionsProps {
-  readonly questions: readonly TopQuestion[];
-  readonly className?: string;
-}
+/** How many questions the panel shows beside the activity chart. */
+const TOP_N = 6;
 
 /**
- * TopQuestions - a ranked list of what visitors ask most, each with a volume
- * bar scaled to the top question. Answers "what are people actually coming to
- * my AI for?" at a glance. Shows an empty state before any traffic.
+ * What visitors ask most.
+ *
+ * A ranked list rather than a chart: the question text is the content, and a bar
+ * chart of eight long strings spends its whole width on labels.
+ *
+ * It is `RankedBars`, which DESIGN.md's addenda introduce by name for exactly
+ * this surface. The version it replaces hand-drew the same row — label,
+ * proportional bar, mono count — and painted the bar `bg-accent-500`, the
+ * interactive blue the token file reserves for links, focus and selection, on a
+ * bar nothing can click.
+ *
+ * `/analytics/top-questions` takes no window parameter, so this is all-time and
+ * the card says so. Trimming it client-side is not possible here: the endpoint
+ * returns questions already aggregated, with no dates to trim by.
  */
-export function TopQuestions({ questions, className }: TopQuestionsProps): ReactElement {
+export function TopQuestions({ section }: { section: Section<TopQuestion[]> }) {
   const { t } = useTranslation();
-  if (questions.length === 0) {
+  if (section.error) {
     return (
-      <Card className={cn('p-6', className)}>
-        <EmptyState
-          icon={MessageSquare}
-          title={t('agents.noQuestionsYet') || 'No questions yet'}
-          description={t('agents.theQuestionsVisitorsAskYour') || 'The questions visitors ask your AI most often will show up here.'}
-        />
-      </Card>
+      <CardBody>
+        <Alert
+          tone="danger"
+          title={t('agents.weCouldNotLoadThe6') || 'We could not load the top questions'}
+          action={
+            <Button size="sm" onClick={section.retry}>
+              {t('agents.tryAgain') || 'Try again'}
+            </Button>
+          }
+        >
+          {section.error}
+        </Alert>
+      </CardBody>
     );
   }
 
-  const maxCount = questions[0]?.count || 1;
-
   return (
-    <Card className={cn('divide-y divide-[var(--ds-border)]', className)}>
-      <ol>
-        {questions.map((item, index) => {
-          const barWidth = Math.max((item.count / maxCount) * 100, 4);
-          return (
-            <li
-              key={`${item.question}-${index}`}
-              className="flex items-center gap-4 px-5 py-3.5 first:pt-5 last:pb-5"
-            >
-              <span
-                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--ds-bg-sunken)] text-[12px] font-bold text-[var(--ds-text-muted)]"
-                aria-hidden="true"
-              >
-                {index + 1}
-              </span>
-              <div className="min-w-0 flex-1">
-                <p
-                  className="truncate text-[13px] font-medium text-[var(--ds-text)]"
-                  title={item.question}
-                >
-                  {item.question}
-                </p>
-                <div
-                  className="mt-1.5 h-1 overflow-hidden rounded-full bg-[var(--ds-bg-sunken)]"
-                  aria-hidden="true"
-                >
-                  <div
-                    className="h-full rounded-full bg-[var(--ds-accent)]"
-                    style={{ width: `${barWidth}%` }}
-                  />
-                </div>
-              </div>
-              <span className="shrink-0 text-[13px] font-semibold text-[var(--ds-text-muted)]">
-                {formatNumber(item.count)}
-                <span className="ml-1 text-[11px] font-medium uppercase tracking-wide text-[var(--ds-text-subtle)]">
-                  {item.count === 1 ? 'ask' : 'asks'}
-                </span>
-              </span>
-            </li>
-          );
-        })}
-      </ol>
-    </Card>
+    <RankedBars
+      label={t('agents.mostAskedQuestionsAllTime') || 'Most asked questions, all time'}
+      loading={section.loading}
+      loadingRows={TOP_N}
+      emptyTitle="Nothing asked yet"
+      items={section.data.slice(0, TOP_N).map((item, index) => ({
+        id: `${item.question}-${index}`,
+        label: item.question,
+        value: item.count,
+        display: (
+          <>
+            {formatNumber(item.count)}
+            <span className="ml-1 text-text-tertiary">{item.count === 1 ? 'ask' : 'asks'}</span>
+          </>
+        ),
+      }))}
+    />
   );
 }

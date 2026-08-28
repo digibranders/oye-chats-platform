@@ -1,32 +1,60 @@
-import { type ReactElement } from 'react';
-import { AlertCircle, EyeOff, Loader2 } from 'lucide-react';
-import { Button, Card, CardContent, StatusBadge } from '../../../design-system';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { EyeOff } from 'lucide-react';
+import { Alert, Badge, Button, Card, CardBody, CardHeader, PurchaseDialog } from '../../../ui';
 import { useBrandingAddon } from './useBrandingAddon';
 import { TaxNote } from './TaxNote';
 
 export interface BrandingAddonCardProps {
-  /** Agent whose subscription carries the add-on. `null` targets the account. */
+  /** The chatbot whose subscription carries the add-on. `null` targets the account. */
   botId: number | null;
-  /** True while the workspace is on a paid plan. The add-on requires one. */
+  /** The workspace is on a paid plan. The add-on rides on one. */
   hasPaidPlan: boolean;
-  /** Bubbles a settled purchase or cancellation up to the page notice region. */
+  /** Bubbles a settled purchase or cancellation up to the page's notice region. */
   onSettled: (message: string) => void;
 }
 
 /**
- * BrandingAddonCard - buy or cancel the branding-removal add-on.
+ * Buy or cancel branding removal.
  *
- * Sits beside {@link SeatManager} on Billing ▸ Overview because it is the same
- * kind of object: a recurring charge that rides on the subscription rather than
- * a plan tier you switch to. It states the price before the button, as the seat
- * controls do, and never claims the entitlement itself - the hook waits for the
- * activation webhook and only then says the badge is gone.
+ * It sits with the seat controls rather than among the plan cards because it is
+ * the same kind of object: a recurring charge riding on the subscription, not a
+ * tier you switch to. Branding removal is deliberately NOT a plan inclusion —
+ * no seeded tier grants it, and `plan_entitlements_service` overwrites the flag
+ * unconditionally — so a customer on any paid plan buys it here or not at all.
+ *
+ * **The buy path runs through a `PurchaseDialog`, not straight to checkout.**
+ * The button used to open the Razorpay sheet on the first click, with no
+ * statement of what was about to be charged and no moment of arrival once it
+ * was. Now the customer confirms the recurring charge first, pays on the
+ * gateway that opens over the dialog, and lands back on the same dialog as it
+ * congratulates them — the card behind it flips to Active at the same time.
+ *
+ * **The card never claims the entitlement itself.** The hook waits for the
+ * `subscription.activated` webhook and only then reports the badge gone, so the
+ * dialog's `activating` phase holds the gap between payment and activation
+ * honestly rather than showing an unlocked state the next page load takes away.
  */
-export function BrandingAddonCard({
-  botId,
-  hasPaidPlan,
-  onSettled,
-}: BrandingAddonCardProps): ReactElement {
+export function BrandingAddonCard({ botId, hasPaidPlan, onSettled }: BrandingAddonCardProps) {
+  const [dialogOpen, setDialogOpen] = useState(false);
+  // Read the latest open state from inside the settle callback without making
+  // that callback churn on every toggle.
+  const dialogOpenRef = useRef(dialogOpen);
+  useEffect(() => {
+    dialogOpenRef.current = dialogOpen;
+  }, [dialogOpen]);
+
+  const handleSettled = useCallback(
+    (message: string) => {
+      // A purchase settles inside the dialog, which shows its own
+      // congratulations; a page toast on top would announce the same thing
+      // twice, one of them under the modal scrim. A cancellation has no dialog,
+      // so it still bubbles up to the page.
+      if (dialogOpenRef.current) return;
+      onSettled(message);
+    },
+    [onSettled],
+  );
+
   const {
     active,
     loading,
@@ -36,93 +64,114 @@ export function BrandingAddonCard({
     error,
     notice,
     awaitingActivation,
+    phase,
     purchase,
     cancel,
-  } = useBrandingAddon({ botId, onSettled });
-
+    reset,
+  } = useBrandingAddon({ botId, onSettled: handleSettled });
   const working = busy || awaitingActivation;
   // No price yet means the charge currency is still resolving. Quoting one now
   // could name a currency the rail will not debit, so the card waits.
   const priceReady = priceLabel !== null;
 
+  function openPurchase() {
+    // Clear any prior notice/error and reset the flow to `confirm` before the
+    // dialog mounts, so a reopen never flashes a stale success or failure.
+    reset();
+    setDialogOpen(true);
+  }
+
+  function handleDialogOpenChange(next: boolean) {
+    // Belt-and-braces: `PurchaseDialog` already hides its close control during
+    // the waiting phases, but the header X and Escape route through here too,
+    // and money must never be left mid-flight behind a closed dialog.
+    if (!next && (phase === 'processing' || phase === 'activating')) return;
+    setDialogOpen(next);
+  }
+
   return (
     <Card>
-      <CardContent className="flex flex-col gap-4 py-5">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-start gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-bg-subtle)] text-[var(--ds-text-muted)]">
-              <EyeOff size={18} aria-hidden="true" />
-            </span>
-            <div className="min-w-0">
-              <p className="flex items-center gap-2 text-[15px] font-semibold text-[var(--ds-text)]">
-                Remove OyeChats branding
-                {active && (
-                  <StatusBadge tone="success">Active</StatusBadge>
-                )}
-              </p>
-              <p className="text-[13px] text-[var(--ds-text-muted)]">
-                {priceReady
-                  ? `${priceLabel}/mo add-on${priceIncludesTax ? ', GST included' : ''}. `
-                  : ''}
-                {active
-                  ? 'The “Powered by OyeChats” badge is hidden on your widget.'
-                  : 'Hides the “Powered by OyeChats” badge on your widget.'}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex shrink-0 items-center gap-2 self-start sm:self-auto">
+      <CardHeader
+        title="Remove OyeChats branding"
+        titleAs="h2"
+        description={
+          active
+            ? 'The “Powered by OyeChats” badge is hidden on your widget.'
+            : 'Hides the “Powered by OyeChats” badge on your widget.'
+        }
+        actions={
+          <>
+            {active ? <Badge tone="success">Active</Badge> : null}
             {active ? (
-              <Button variant="ghost" onClick={() => void cancel()} disabled={working}>
-                {busy ? 'Working…' : 'Cancel add-on'}
+              <Button variant="secondary" size="sm" loading={busy} disabled={working} onClick={() => void cancel()}>
+                Cancel add-on
               </Button>
             ) : (
               <Button
-                variant="outline"
-                onClick={() => void purchase()}
-                disabled={working || loading || !priceReady || !hasPaidPlan}
-                title={hasPaidPlan ? undefined : 'The add-on requires a paid plan.'}
+                variant="primary"
+                size="sm"
+                loading={loading}
+                disabled={loading || !priceReady || !hasPaidPlan}
+                onClick={openPurchase}
+                iconLeft={<EyeOff aria-hidden />}
               >
-                {working ? 'Working…' : priceReady ? `Add for ${priceLabel}/mo` : 'Add branding removal'}
+                {priceReady ? `Add for ${priceLabel}/mo` : 'Add branding removal'}
               </Button>
             )}
-          </div>
-        </div>
-
-        <p className="text-[12px] leading-relaxed text-[var(--ds-text-subtle)]">
+          </>
+        }
+      />
+      <CardBody className="space-y-3">
+        <p className="text-sm text-text-secondary">
           {hasPaidPlan
-            ? 'This is a recurring charge on top of your plan, billed via Razorpay until you cancel. A secure checkout opens to authorise the payment mandate.'
+            ? 'A recurring charge on top of your plan, billed through Razorpay until you cancel.'
             : 'The add-on rides on a paid subscription. Choose a plan first, then add it here.'}
         </p>
 
-        {/* Only where the card actually quotes a BASE price. Without a paid
-            plan, or before the charge currency resolves, no figure is shown and
-            a tax note would qualify nothing. Once the server has quoted the
-            gross, the figure above is already the amount payable and this note
-            would contradict it. */}
-        {hasPaidPlan && priceReady && !priceIncludesTax && <TaxNote className="-mt-2" />}
-
-        {/* Aria-live so the wait for the activation webhook is announced rather
-            than leaving a customer who has just paid staring at a static card. */}
+        {/* The purchase's own notice and error live inside the dialog while it is
+            open; here the card only carries what the dialog cannot — the result
+            of a cancellation, and a settled message once the dialog has closed. */}
         <div aria-live="polite">
-          {awaitingActivation && (
-            <p className="flex items-center gap-2 text-[12px] text-[var(--ds-text-muted)]">
-              <Loader2 size={13} aria-hidden="true" className="animate-spin text-[var(--ds-text-subtle)]" />
-              Switching branding removal on…
-            </p>
-          )}
-          {notice && !awaitingActivation && (
-            <p className="text-[12px] text-[var(--ds-text-muted)]">{notice}</p>
-          )}
+          {!dialogOpen && notice ? <p className="text-sm text-text-secondary">{notice}</p> : null}
         </div>
 
-        {error && (
-          <p role="alert" className="flex items-start gap-1.5 text-[12px] text-[var(--ds-danger)]">
-            <AlertCircle size={13} aria-hidden="true" className="mt-0.5 shrink-0" />
+        {!dialogOpen && error ? (
+          <Alert tone="danger" live>
             {error}
-          </p>
-        )}
-      </CardContent>
+          </Alert>
+        ) : null}
+      </CardBody>
+
+      <PurchaseDialog
+        open={dialogOpen}
+        onOpenChange={handleDialogOpenChange}
+        phase={phase}
+        title="Remove OyeChats branding"
+        summary={
+          <div className="space-y-2 text-prose text-text-secondary">
+            <p>
+              Hides the “Powered by OyeChats” badge on your widget. A recurring charge on your
+              subscription, billed through Razorpay until you cancel. A secure checkout opens to
+              authorise the mandate.
+            </p>
+            {priceReady ? (
+              <p className="text-base font-semibold text-text-primary">{priceLabel}/mo</p>
+            ) : null}
+            {/* Only where a BASE price is shown. Once the server has quoted the
+                gross, the figure IS the amount payable and this note would
+                contradict it. */}
+            {priceReady && !priceIncludesTax ? <TaxNote /> : null}
+          </div>
+        }
+        confirmLabel="Continue to secure checkout"
+        onConfirm={() => void purchase()}
+        notice={notice ?? undefined}
+        activatingMessage="Payment received. Switching branding removal on…"
+        doneTitle="Branding removed"
+        doneMessage={notice ?? 'The “Powered by OyeChats” badge is gone from your widget.'}
+        error={error}
+        onRetry={() => void purchase()}
+      />
     </Card>
   );
 }

@@ -1,547 +1,614 @@
-import { type ReactElement } from 'react';
-import { formatNumber } from '../../i18n/formatters';
-import { Link } from 'react-router-dom';
+import { useMemo, useState } from 'react';
+import { Link, Navigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { ArrowRight, Bot as BotIcon, Plus, X } from 'lucide-react';
 import {
-  Activity as ActivityIcon,
-  AlertTriangle,
-  ArrowRight,
-  BarChart3,
-  CheckCircle2,
-  Inbox,
-  MessageSquare,
-  Plus,
-  Radio,
-  RefreshCw,
-  Sparkles,
-  Target,
-  ThumbsDown,
-  ThumbsUp,
-  Users,
-  type LucideIcon,
-} from 'lucide-react';
-import {
-  BotAvatar,
+  ABSENT,
+  Avatar,
+  Badge,
   Button,
   Card,
+  CardBody,
+  CardHeader,
+  CardSection,
+  Columns,
+  DataTable,
   EmptyState,
-  LockedFeatureCard,
-  PageContainer,
-  PlanBadge,
-  QuotaMeter,
-  SectionHeader,
-  Skeleton,
-} from '../../design-system';
-import { MetricCard } from '../../design-system/components/MetricCard';
-import { InsightCard, type InsightCardProps } from '../../design-system/components/InsightCard';
-import { ActionCard, type ActionCardProps } from '../../design-system/components/ActionCard';
-import { AgentCard } from '../../design-system/components/AgentCard';
-import { ActivityTimeline, type ActivityItem } from '../../design-system/components/ActivityTimeline';
-import { DataTable, type Column } from '../../design-system/components/DataTable';
-import { QuickAction } from '../../design-system/components/QuickAction';
-import { useEntitlements } from '../../hooks/useEntitlements';
-import type { Bot, TopQuestion } from '../../types/domain';
-import {
-  firstName,
-  formatRelativeTime,
-  formatToday,
-  greeting,
-  type ActivityEntry,
-  type ActivityKind,
-  type HomeData,
-} from './home-data';
-import { useHomeData } from './useHomeData';
-import { useBotContext } from '../../context/BotContext';
-import { getAuthItem } from '../../utils/authStorage';
-import { getImpersonationProfile } from '../../utils/impersonation';
-// `translateNow` in pure helpers: these are not components, so a hook is
-// illegal here. The module-level function is stable and resolves against the
-// active locale at call time, which is what these need.
-import { t as translateNow } from '../../i18n/i18n';
+  ErrorState,
+  Page,
+  PageHeader,
+  StatRow,
+  StatusDot,
+  BUTTON_ICON_SLOT,
+  buttonClass,
+  formatNumber,
+  formatRelative,
+  type Column,
+} from '../../ui';
+import { agentPath } from '../../shell/nav';
+import { greeting } from './greeting';
+import { AgentAvatar } from '../agents/AgentAvatar';
+import { useSetupChecklist } from '../../onboarding/useSetupChecklist';
+import { wantsEmptyHome } from '../../onboarding/firstRun';
+import { useWorkspace } from '../../context/WorkspaceContext';
+import { leadDisplayName } from '../leads/leadModel';
+import type { Lead } from '../../types/domain';
+import { useHomeData, type HomeAgent } from './useHomeData';
+import { getCurrentUser } from '../../services/api';
+import { keys } from '../../query/keys';
 import { useTranslation } from '../../i18n/useTranslation';
-
-// ── Small presentation helpers ───────────────────────────────────────────────
-
-function formatCount(value: number): string {
-  return formatNumber(Math.round(value));
-}
-
-function formatPercent(value: number): string {
-  const clamped = Math.max(0, Math.min(100, value));
-  return `${Math.round(clamped)}%`;
-}
-
-const ACTIVITY_VISUALS: Record<ActivityKind, { icon: LucideIcon; tone: ActivityItem['tone'] }> = {
-  'positive-feedback': { icon: ThumbsUp, tone: 'success' },
-  'negative-feedback': { icon: ThumbsDown, tone: 'danger' },
-  message: { icon: Inbox, tone: 'info' },
-};
-
-function toActivityItems(entries: ActivityEntry[]): ActivityItem[] {
-  return entries.map((entry) => {
-    const visual = ACTIVITY_VISUALS[entry.kind];
-    return {
-      id: entry.id,
-      icon: visual.icon,
-      tone: visual.tone,
-      title: entry.title,
-      meta: entry.meta ?? undefined,
-      time: formatRelativeTime(entry.iso),
-    };
-  });
-}
-
-interface Recommendation extends Pick<ActionCardProps, 'title' | 'description' | 'icon' | 'cta'> {
-  key: string;
-  to: string;
-}
+import { Trans } from '../../i18n/Trans';
 
 /**
- * Build up to three "next best action" cards from the current state. Priority:
- * unblock broken agents → train → deploy → work leads/inbox → grow. There is
- * always at least one, so the section never renders empty.
- */
-function buildRecommendations(data: HomeData, agentScoped: boolean): Recommendation[] {
-  const recs: Recommendation[] = [];
-
-  // Follow up on hot leads - the primary operational nudge, shown when any exist.
-  if (agentScoped && data.totals.hotLeads > 0) {
-    recs.push({
-      key: 'leads',
-      icon: Target,
-      title:
-        translateNow(
-          data.totals.hotLeads === 1 ? 'home.followUpHotLeadOne' : 'home.followUpHotLeadMany',
-          { count: formatCount(data.totals.hotLeads) },
-        ) ||
-        `Follow up on ${formatCount(data.totals.hotLeads)} hot lead${data.totals.hotLeads === 1 ? '' : 's'}`,
-      description: translateNow('home.highIntentVisitorsAreWaiting') || 'High-intent visitors are waiting. Review and reach out while they’re warm.',
-      to: '/leads',
-      cta: translateNow('home.viewLeads') || 'View leads',
-    });
-  }
-
-  return recs;
-}
-
-/** Headline observation for the aside, derived from workspace health. */
-function buildHealthInsight(data: HomeData): {
-  title: string;
-  body: string;
-  tone: InsightCardProps['tone'];
-  icon: LucideIcon;
-} {
-  const readyToDeploy = data.agents.filter((agent) => agent.trained && !agent.installed).length;
-
-  if (readyToDeploy > 0) {
-    return {
-      icon: Radio,
-      tone: 'info',
-      title:
-        translateNow(
-          readyToDeploy === 1 ? 'home.readyToGoLiveOne' : 'home.readyToGoLiveMany',
-          { count: formatCount(readyToDeploy) },
-        ) || `${formatCount(readyToDeploy)} chatbots are ready to go live`,
-      body: translateNow('home.addTheWidgetToYour') || 'Add the widget to your website to start capturing real conversations.',
-    };
-  }
-  if (data.totals.conversations === 0) {
-    return {
-      icon: Sparkles,
-      tone: 'accent',
-      title: translateNow('home.yourChatbotsAreReady') || 'Your chatbots are ready',
-      body: translateNow('home.shareATestLinkOr') || 'Share a test link or add the widget to your site to see your first conversations.',
-    };
-  }
-  return {
-    icon: CheckCircle2,
-    tone: 'success',
-    title: translateNow('home.everythingLooksHealthy') || 'Everything looks healthy',
-    body: translateNow('home.yourChatbotsAreLiveAnd') || 'Your chatbots are live and answering questions. Keep an eye on the metrics below.',
-  };
-}
-
-// ── Loading / error / empty scaffolds ────────────────────────────────────────
-
-function HomeSkeleton(): ReactElement {
-  const { t } = useTranslation();
-  return (
-    <div className="space-y-6" aria-busy="true" aria-live="polite">
-      <span className="sr-only">{t('home.loadingYourDashboard') || 'Loading your dashboard…'}</span>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {[0, 1, 2, 3].map((i) => (
-          <Card key={i} className="p-5">
-            <Skeleton className="h-3 w-24" />
-            <Skeleton className="mt-4 h-7 w-20" />
-          </Card>
-        ))}
-      </div>
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="space-y-4 lg:col-span-2">
-          <Skeleton className="h-4 w-32" />
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {[0, 1].map((i) => (
-              <Card key={i} className="p-5">
-                <Skeleton className="h-9 w-9 rounded-lg" />
-                <Skeleton className="mt-3 h-4 w-28" />
-                <Skeleton className="mt-4 h-10 w-full" />
-              </Card>
-            ))}
-          </div>
-        </div>
-        <div className="space-y-4">
-          <Skeleton className="h-4 w-40" />
-          <Card className="p-5">
-            <Skeleton className="h-24 w-full" />
-          </Card>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-interface HomeErrorProps {
-  message: string;
-  onRetry: () => void;
-}
-
-function HomeError({ message, onRetry }: HomeErrorProps): ReactElement {
-  const { t } = useTranslation();
-  return (
-    <EmptyState
-      icon={AlertTriangle}
-      title={t('home.weCouldntLoadYourDashboard') || 'We couldn’t load your dashboard'}
-      description={message}
-      action={
-        <Button variant="outline" onClick={onRetry}>
-          <RefreshCw size={15} aria-hidden="true" />
-          {t('home.tryAgain') || 'Try again'}
-        </Button>
-      }
-    />
-  );
-}
-
-function HomeEmpty(): ReactElement {
-  const { t } = useTranslation();
-  return (
-    <EmptyState
-      icon={Sparkles}
-      title={t('home.createYourFirstAiChatbot') || 'Create your first AI chatbot'}
-      description={t('home.setUpAChatbotTrain') || 'Set up a chatbot, train it on your content and add it to your website. We’ll guide you through every step.'}
-      action={
-        <Link
-          to="/launch"
-          className="inline-flex h-9 items-center gap-2 rounded-lg bg-[var(--ds-accent)] px-4 text-sm font-medium text-[var(--ds-accent-fg)] shadow-[var(--ds-shadow-sm)] transition-colors hover:bg-[var(--ds-accent-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
-        >
-          <Plus size={15} aria-hidden="true" />
-          {t('home.getStarted') || 'Get started'}
-        </Link>
-      }
-    />
-  );
-}
-
-/**
- * PlanUsageCard - a compact plan-and-capacity glance for a single agent: the
- * workspace's plan badge plus usage-populated limit meters (see `useEntitlements`
- * foundation notes; `credits`, `page_scraping`, `chat_history_days` are NOT
- * populated by the backend `usage` map, so they're deliberately left off this
- * summary rather than shown with a fabricated "used" count). Free workspaces get
- * a subtle upgrade nudge into Workspace ▸ Billing.
+ * Home is today's work, not a dashboard.
  *
- * Always agent-scoped: Members (operator seats are per-bot) and Documents are
- * scoped to `selectedBot`, matching the rest of Home and the per-bot seat model
- * on the Members page. The card is only mounted when an agent is selected, on
- * "All agents" the account-wide meters read as unactionable over-limit red bars,
- * so Home hides it and plan capacity lives in Workspace ▸ Billing instead.
+ * The page it replaces opened with four all-time counters over no stated period
+ * and a "Recommended next steps" section whose only branch fired when a
+ * workspace already had hot leads — so the single most important activation
+ * surface in the product rendered an empty div for exactly the users who needed
+ * it. Numbers are here, but they are not the point and they are not first.
+ *
+ * **It is a grid, not a scroll.** It was five full-width bands stacked down one
+ * column — a setup card, three identical warning alerts, a strip of four
+ * numbers, a fake table and two link tiles — so the first product figure sat a
+ * thousand pixels below the fold. Now: one hairline-divided figure strip across
+ * the top, then two tracks. The left track is *work* — what is broken, and how
+ * every chatbot is doing. The right rail is *state* — what is left to set up and
+ * what came in. That is Stripe's Home, and it is the shape this page always
+ * wanted.
+ *
+ * **Each fact is stated on exactly one of the two tracks.** The first cut said
+ * everything twice: "Nothing to answer from" appeared as a row in *Needs
+ * attention* and again as the status badge of the same chatbot in the table
+ * forty pixels below it, each with its own "Add knowledge" button. The table
+ * carries the *state*, because a state is a column value and a healthy chatbot
+ * needs one too; the attention list carries the *consequence and the fix*,
+ * because that is the one thing a status badge cannot say.
+ *
+ * **`Columns` requires `main` to be the taller track**, and the first cut had it
+ * backwards — the aside ran 785px past the bottom of the work column at 1440,
+ * because it held an uncapped lead list and two link tiles that only repeated
+ * rail rows. Recent leads is now a bounded sample with a way to the rest, and
+ * the tiles are gone.
  */
-function PlanUsageCard({
-  selectedBot,
-  data,
-}: {
-  selectedBot: Bot;
-  data: HomeData;
-}): ReactElement {
-  const { t } = useTranslation();
-  const { isFree, planName, limitFor } = useEntitlements();
 
-  // Pull this agent's per-bot counts from the loaded roster; fall back to 0s if
-  // the roster row isn't present yet.
-  const agent = data.agents.find((a) => a.bot.id === selectedBot.id) ?? null;
-  const membersUsed = agent?.operators ?? 0;
-  const documentsUsed = agent?.documents ?? 0;
+
+/**
+ * The name to greet somebody by, or `null` to greet them without one.
+ *
+ * First token only: "Good afternoon, Gaurav", not the full legal name the
+ * account happens to hold. Capitalised because the stored value is whatever
+ * they typed at sign-up — the account menu renders "gaurav" faithfully, which
+ * is right for an identity row and wrong in the middle of a sentence.
+ *
+ * An email is not a name. `AccountMenu` falls back to the email when the name
+ * is blank, which is correct for a row whose job is "which account is this";
+ * greeting somebody as "Good afternoon, gaurav@fynix.digital" is not. There is
+ * no name in that case, so the greeting simply does without one.
+ */
+function firstName(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.includes('@')) return null;
+  const first = trimmed.split(/\s+/)[0];
+  if (!first) return null;
+  // `toUpperCase` on a script without case (Devanagari, CJK) is a no-op, so
+  // this is safe for every name, not only Latin ones.
+  return first.charAt(0).toUpperCase() + first.slice(1);
+}
+
+/** Per workspace, so dismissing it on one does not dismiss it on another. */
+function setupDismissalKey(workspaceId: number | null): string {
+  return `oyechats_home_setup_dismissed_${workspaceId ?? 'default'}`;
+}
+
+function readDismissed(key: string): boolean {
+  try {
+    return window.localStorage.getItem(key) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export function HomePage() {
+  const { t } = useTranslation();
+  // Computed once. In the render body it changed on any unrelated re-render, so
+  // the page's own byline could flip from "Good afternoon" to "Good evening"
+  // while somebody was typing somewhere else on the screen.
+  const hello = useMemo(() => greeting(new Date()), []);
+  const greetingText = t(hello.key) || hello.text;
+  // The same cached `/auth/me` the account menu reads, so putting a name in
+  // the greeting costs no extra request — `keys.session.me()` is already warm
+  // by the time Home paints.
+  const { data: me } = useQuery({
+    queryKey: keys.session.me(),
+    queryFn: getCurrentUser,
+    staleTime: 5 * 60_000,
+  });
+  const name = firstName(me?.name);
+  const home = useHomeData();
+  const setup = useSetupChecklist();
+  const { currentWorkspaceId } = useWorkspace();
+
+  const dismissKey = setupDismissalKey(currentWorkspaceId);
+  const [setupDismissed, setSetupDismissed] = useState(() => readDismissed(dismissKey));
+
+  const hasAgents = home.agents.length > 0;
+
+  // A workspace with no chatbot has nothing on this page but zeros. Send it to
+  // the first run instead — and decide that here, from server state, rather than
+  // guessing at the end of sign-up: a routing guess made on a registration
+  // response is wrong for anyone who created an account days ago and is only now
+  // getting round to it. The guard is off unless the list actually loaded, so a
+  // failed fetch shows the error rather than pretending the account is new.
+  //
+  // "Skip for now" on the first run sets a flag for the session, and that flag
+  // wins: the redirect used to be unconditional, so the empty Home below this
+  // was unreachable code and the rail's Home item silently bounced.
+  if (!home.loading && !home.error && !hasAgents && !wantsEmptyHome()) {
+    return <Navigate to="/welcome" replace />;
+  }
+
+  const showSetup = !setup.complete && !setup.loading && !setupDismissed;
 
   return (
-    <Card className="space-y-5 p-5">
-      <SectionHeader
-        title={t('home.planUsage') || 'Plan & usage'}
-        description={t('home.usageFor', { name: selectedBot.name }) || `Usage for ${selectedBot.name}`}
-        actions={<PlanBadge planName={planName} />}
+    <Page width="wide">
+      <PageHeader
+        // The greeting IS this page's heading, and it is deliberately no
+        // longer a 22px "Home" hidden behind an 11px uppercase byline. An
+        // earlier pass moved the greeting into the eyebrow on the grounds
+        // that "Good afternoon" is a heading that names no page — true of a
+        // bare time-of-day string, and not true once it carries the person's
+        // name: "Good afternoon, Gaurav" identifies a personal dashboard the
+        // way every console this is measured against does. The page's own
+        // name is not lost, it is in the shell's breadcrumb, which is the
+        // component whose job that is. Rendering 28px semibold text that
+        // merely LOOKS like a heading while the real `h1` stayed hidden
+        // would have been the worse of the two options.
+        title={
+          <span className="flex min-w-0 flex-wrap items-center gap-x-2">
+            <span className="min-w-0 truncate">
+              {/* The name is the customer's own text and is never translated;
+                  only the greeting around it is. */}
+              {name ? `${greetingText}, ${name}` : greetingText}
+            </span>
+            {/* Decoration. A screen reader should hear the greeting, not
+                "sun behind cloud" appended to it. */}
+            <span aria-hidden className="shrink-0">
+              {hello.emoji}
+            </span>
+          </span>
+        }
+        titleSize="display"
+        actions={
+          <Link
+            to="/chatbots?new=1"
+            className={buttonClass('primary', 'md', BUTTON_ICON_SLOT.md)}
+          >
+            <Plus aria-hidden />
+            {t('home.newChatbot') || 'New chatbot'}
+          </Link>
+        }
       />
 
-      <div className="space-y-4">
-        <QuotaMeter label={t('home.members') || 'Members'} used={membersUsed} limit={limitFor('operators')} />
-        <QuotaMeter label={t('home.documents') || 'Documents'} used={documentsUsed} limit={limitFor('documents')} />
-      </div>
+      {home.error ? (
+        <Card>
+          <ErrorState
+            title={t('home.weCouldNotLoadYour') || 'We could not load your workspace'}
+            description={home.error.message}
+            onRetry={() => void home.retry()}
+          />
+        </Card>
+      ) : (
+        <>
+          {/* The figures, anchored to one window and compared to the one before
+              it. The window is stated once, by `StatRow`'s own caption — this
+              header used to restate it on the right, so the card printed
+              "Last 30 days" twice, sixteen pixels apart, the moment the strip
+              learned to say it itself. A tile whose window genuinely differs
+              still states its own. */}
+          <Card className="mb-6">
+            <CardHeader size="sm" title={t('home.workspace') || 'Workspace'} titleAs="h2" />
+            <CardBody flush>
+              <StatRow
+                label={t('home.workspaceAtAGlance') || 'Workspace at a glance'}
+                period={
+                  t('home.lastNDays', { count: home.windowDays })
+                  || `Last ${home.windowDays} days`
+                }
+                items={[
+                  {
+                    label: t('home.conversations') || 'Conversations',
+                    value: formatNumber(home.conversations),
+                    delta: home.conversationsDelta ?? undefined,
+                    size: 'lg',
+                    loading: home.conversationsLoading,
+                  },
+                  {
+                    label: t('home.qualifiedLeads') || 'Qualified leads',
+                    value: home.leadsLocked ? undefined : formatNumber(home.qualifiedLeads),
+                    period: t('home.allTime') || 'All time',
+                    hint: home.leadsLocked ? t('home.onStarterAndAbove') || 'On Starter and above' : undefined,
+                    loading: home.leadsLoading,
+                  },
+                  {
+                    label: t('home.unreadMessages') || 'Unread messages',
+                    value: formatNumber(home.unreadMessages),
+                    period: t('home.rightNow') || 'Right now',
+                    tone: home.unreadMessages > 0 ? 'warning' : 'neutral',
+                    loading: home.unreadLoading,
+                  },
+                  {
+                    label: t('home.chatbotsLive') || 'Chatbots live',
+                    value: `${home.live}/${home.agents.length}`,
+                    period: t('home.rightNow') || 'Right now',
+                    loading: home.loading,
+                  },
+                ]}
+              />
+            </CardBody>
+            {home.statsIncomplete ? (
+              <CardSection className="text-xs text-text-secondary">
+                {t('home.someChatbotsDidNotReport') || 'Some chatbots did not report — totals are low.'}
+              </CardSection>
+            ) : null}
+          </Card>
 
-      {isFree && (
-        <Link
-          to="/workspace/billing"
-          className="flex items-center justify-between gap-2 rounded-lg border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] px-3.5 py-2.5 text-[13px] font-medium text-[var(--ds-accent-text)] transition-colors hover:bg-[var(--ds-accent-soft)]/80"
-        >
-          <span>{t('home.freePlanUpgrade') || 'You’re on the Free plan - upgrade for more capacity'}</span>
-          <ArrowRight size={14} aria-hidden="true" className="shrink-0" />
-        </Link>
+          <Columns
+            /* 18rem, not 24. `md` needs a 1024px page container, which a 1280
+               laptop — the commonest desktop width there is — does not have
+               after the rail and the gutter, so Home stacked to a single 2.5-fold
+               column on it while 1440 got the grid. `sm` engages at 896 and the
+               aside holds nothing wider than a name and a timestamp. */
+            asideWidth="sm"
+            asideLabel="Setup and recent activity"
+            main={
+              <div className="flex flex-col gap-6">
+                <NeedsAttention agents={home.needsAttention} />
+                <AgentTable agents={home.agents} loading={home.loading} hasAgents={hasAgents} />
+              </div>
+            }
+            aside={
+              <div className="flex flex-col gap-6">
+                {showSetup ? (
+                  <SetupCard
+                    done={setup.done}
+                    total={setup.total}
+                    steps={setup.steps}
+                    onDismiss={() => {
+                      setSetupDismissed(true);
+                      try {
+                        window.localStorage.setItem(dismissKey, 'true');
+                      } catch {
+                        /* private mode: it stays dismissed for this session */
+                      }
+                    }}
+                  />
+                ) : null}
+                {home.recentAvailable ? (
+                  <RecentActivity leads={home.recentLeads} loading={home.recentLoading} />
+                ) : null}
+              </div>
+            }
+          />
+        </>
       )}
+    </Page>
+  );
+}
+
+/**
+ * What is broken, as a list of named chatbots.
+ *
+ * One card of hairline rows, not one `<Alert>` per chatbot. Four unhealthy
+ * chatbots used to be four stacked tinted blocks — about 280px of warning ground
+ * repeating almost the same sentence four times — where `Alert` is documented
+ * for something the reader must read *in order to proceed*. A list of objects is
+ * not that; it is a list.
+ */
+function NeedsAttention({ agents }: { agents: readonly HomeAgent[] }) {
+  const { t } = useTranslation();
+  if (agents.length === 0) return null;
+
+  return (
+    <Card>
+      <CardHeader
+        title={t('home.needsAttention') || 'Needs attention'}
+        titleAs="h2"
+        actions={<Badge tone="danger">{agents.length}</Badge>}
+      />
+      <ul data-card-band>
+        {agents.map(({ bot, health }) => (
+          <li
+            key={bot.id}
+            className="flex min-h-row-compact flex-wrap items-center gap-x-3 gap-y-1 border-t border-border px-cell py-2 first:border-t-0"
+          >
+            <StatusDot size="sm" tone={health.tone} label={health.label} />
+            <Link
+              to={agentPath(bot.id, 'overview')}
+              className="min-w-0 flex-1 truncate text-base font-medium text-text-primary underline-offset-2 hover:underline"
+            >
+              {bot.name ?? `Chatbot ${bot.id}`}
+            </Link>
+            {/* `aria-hidden`: the dot beside it already carries this word for
+                assistive tech, and reading it twice per row is noise. */}
+            {/* The *consequence*, not the state. The state is a column in the
+                table below — `health.label` on both surfaces printed "Nothing
+                to answer from" six times on one screen, three of them beside a
+                button that already said what to do about it. This row answers
+                the question the badge does not: what is it costing me? */}
+            <span className="shrink-0 text-xs text-text-secondary">{health.detail}</span>
+            {health.action ? (
+              <Link
+                to={agentPath(bot.id, health.action.segment)}
+                className={buttonClass('secondary', 'sm')}
+              >
+                {health.action.label}
+              </Link>
+            ) : null}
+          </li>
+        ))}
+      </ul>
     </Card>
   );
 }
 
-// ── Page ─────────────────────────────────────────────────────────────────────
-
-// @i18n-exempt: resolved at the render site from the column key
-// (`home.column.<key>`); the headers here are that lookup's English fallback.
-const TOP_QUESTION_COLUMNS: Column<TopQuestion>[] = [
-  {
-    key: 'question',
-    header: 'Question',
-    render: (row) => <span className="text-[var(--ds-text)]">{row.question}</span>,
-  },
-  {
-    key: 'count',
-    header: 'Times asked',
-    align: 'right',
-    width: '8rem',
-    render: (row) => (
-      <span className="font-semibold text-[var(--ds-text)]">{formatCount(row.count)}</span>
-    ),
-  },
-];
-
 /**
- * HomePage - the workspace's daily operational overview. Answers "How is my
- * business doing today?" across every agent: headline KPIs, agent health, the
- * questions visitors ask most, recommended next steps, and a live activity feed.
+ * Every chatbot, as a real table.
+ *
+ * It was a flex row faking columns with `w-20` for the chat count and an empty
+ * `w-[6.5rem]` spacer standing in for a button — a width picked to match one
+ * label, so "Retry training" and "Install it" left the right edge ragged and no
+ * two rows agreed on where the status began. `DataTable` gives it real columns,
+ * the four states, the row count and a keyboard path.
  */
-export function HomePage(): ReactElement {
-  const { t } = useTranslation();
-  // Home mirrors the shell BotSwitcher: a specific agent narrows the whole
-  // dashboard to that bot; "All agents" (null) keeps the workspace-wide
-  // aggregate that this page has historically shown.
-  const { selectedBot } = useBotContext();
-  const { data, loading, error, reload } = useHomeData(selectedBot?.id ?? null);
-
-  const now = new Date();
-  // A first-person salutation with a wave addresses the HUMAN, not the company.
-  // This used to render `currentWorkspaceName` (i.e. `company_name`), greeting
-  // "Gaurav" as "Good afternoon, Fynix 👋".
-  //
-  // Fallback chain: impersonated account's name → `admin_name` (written at
-  // login/register/OAuth; there is no in-app rename, so it cannot go stale) →
-  // no name at all. It deliberately never falls back to the workspace name.
-  // The impersonation profile comes first so a super-admin in a support session
-  // sees the account holder's name rather than their own.
-  const personName = getImpersonationProfile()?.name ?? getAuthItem('admin_name');
-  const greetingName = firstName(personName);
-  const nameLabel = greetingName ? `, ${greetingName}` : '';
-  const headerActions = (
-    <div className="hidden items-center gap-2 sm:flex">
-      <QuickAction icon={BarChart3} label={t('home.analytics') || 'Analytics'} to="/analytics" />
-      <QuickAction icon={Plus} label={t('home.newChatbot') || 'New chatbot'} to="/agents" />
-    </div>
-  );
-
-  return (
-    <PageContainer
-      title={
-        <>
-          {greeting(now)}
-          {nameLabel}
-          <span
-            className="ml-2 inline-block origin-[70%_70%] hover:animate-wave"
-            role="img"
-            aria-label={t('home.wavingHand') || 'waving hand'}
-          >
-            👋
-          </span>
-        </>
-      }
-      description={
-        t('home.headerSubtitle', { date: formatToday(now) }) ||
-        `${formatToday(now)} · Here’s how your workspace is doing today.`
-      }
-      actions={headerActions}
-      width="wide"
-    >
-      {loading ? (
-        <HomeSkeleton />
-      ) : error ? (
-        <HomeError message={error} onRetry={reload} />
-      ) : !data || data.agents.length === 0 ? (
-        <HomeEmpty />
-      ) : (
-        <HomeContent data={data} selectedBot={selectedBot} />
-      )}
-    </PageContainer>
-  );
-}
-
-function HomeContent({
-  data,
-  selectedBot,
+function AgentTable({
+  agents,
+  loading,
+  hasAgents,
 }: {
-  data: HomeData;
-  selectedBot: Bot | null;
-}): ReactElement {
+  agents: readonly HomeAgent[];
+  loading: boolean;
+  hasAgents: boolean;
+}) {
   const { t } = useTranslation();
-  const insight = buildHealthInsight(data);
-  const recommendations = buildRecommendations(data, selectedBot != null);
-  const activityItems = toActivityItems(data.activity);
-  const { hasFeature } = useEntitlements();
+  const columns = useMemo<Column<HomeAgent>[]>(
+    () => [
+      {
+        key: 'chatbot',
+        header: t('home.chatbot') || 'Chatbot',
+        rowHeader: true,
+        render: ({ bot }) => (
+          <span className="flex items-center gap-2.5">
+            <AgentAvatar agent={bot} size="sm" />
+            <span className="min-w-0">
+              <Link
+                to={agentPath(bot.id, 'overview')}
+                className="block truncate font-medium text-text-primary underline-offset-2 hover:underline"
+              >
+                {bot.name ?? `Chatbot ${bot.id}`}
+              </Link>
+            </span>
+          </span>
+        ),
+      },
+      {
+        key: 'website',
+        header: t('home.website') || 'Website',
+        secondary: true,
+        width: '11rem',
+        render: ({ bot }) =>
+          bot.website ? (
+            <span className="text-text-secondary">{bot.website}</span>
+          ) : (
+            <span className="text-text-tertiary">{ABSENT}</span>
+          ),
+      },
+      {
+        // 13rem, because "Nothing to answer from" is the longest label
+        // `agentHealth` produces and a `fit` table ellipsises rather than
+        // scrolls — at 11rem the status this card exists to report read
+        // "Nothing to answer from …".
+        key: 'status',
+        header: t('home.status') || 'Status',
+        width: '13rem',
+        render: ({ health }) => (
+          <Badge tone={health.tone} dot>
+            {health.label}
+          </Badge>
+        ),
+      },
+      {
+        key: 'chats',
+        header: t('home.chats') || 'Chats',
+        type: 'number',
+        width: '5rem',
+        render: (agent) =>
+          agent.conversationsLoading ? ABSENT : formatNumber(agent.conversations),
+      },
+    ],
+    // `t` changes identity with the locale, so the headers below are rebuilt on
+    // a language switch. Without it they would keep whatever language the table
+    // first mounted in.
+    [t],
+  );
 
   return (
-    <div className="space-y-8">
-      {/* KPI row - scalar snapshots. No trend deltas: the API returns point-in-
-          time totals, so a trend arrow here would be fabricated. */}
-      <section aria-label={t('home.keyMetrics') || 'Key metrics'}>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <MetricCard
-            label={t('home.conversations') || 'Conversations'}
-            value={formatCount(data.totals.conversations)}
-            icon={MessageSquare}
-          />
-          <MetricCard label={t('home.messages') || 'Messages'} value={formatCount(data.totals.messages)} icon={BarChart3} />
-          <MetricCard
-            label={t('home.qualifiedLeads') || 'Qualified leads'}
-            value={formatCount(data.totals.leads)}
-            icon={Users}
-          />
-          <MetricCard
-            label={t('home.answerSuccessRate') || 'Answer success rate'}
-            value={formatPercent(data.totals.successRate)}
-            icon={CheckCircle2}
-          />
-        </div>
-      </section>
-
-      <div className="grid gap-8 lg:grid-cols-3">
-        {/* Main column - agents + what people ask */}
-        <div className="space-y-8 lg:col-span-2">
-          <section aria-label={t('home.yourChatbots') || 'Your chatbots'} className="space-y-4">
-            <SectionHeader
-              title={t('home.yourChatbots') || 'Your chatbots'}
-              description={t('home.healthAndActivityAcrossEvery') || 'Health and activity across every AI chatbot in this workspace.'}
-              actions={
-                <Link
-                  to="/agents"
-                  className="text-[13px] font-medium text-[var(--ds-accent-text)] hover:underline"
-                >
-                  {t('home.viewAll') || 'View all'}
+    <Card as="section">
+      <CardHeader
+        title={t('home.yourChatbots') || 'Your chatbots'}
+        titleAs="h2"
+        actions={
+          hasAgents ? (
+            <Link to="/chatbots" className={buttonClass('ghost', 'sm')}>
+              {t('home.seeAll') || 'See all'}
+            </Link>
+          ) : undefined
+        }
+      />
+      <CardBody flush>
+        <DataTable
+          seated
+          fit
+          caption={t('home.yourChatbotsAndHowEach') || 'Your chatbots and how each one is doing'}
+          columns={columns}
+          rows={agents}
+          rowKey={(agent) => String(agent.bot.id)}
+          rowNoun="chatbot"
+          loading={loading}
+          empty={
+            <EmptyState
+              size="inline"
+              icon={BotIcon}
+              title={t('home.noChatbotsYet') || 'No chatbots yet'}
+              description={t('home.pointOneAtYourWebsite') || 'Point one at your website and it will start reading.'}
+              action={
+                <Link to="/welcome" className={buttonClass('primary', 'sm')}>
+                  {t('home.createYourFirstChatbot') || 'Create your first chatbot'}
                 </Link>
               }
             />
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              {data.agents.map((agent) => (
-                <AgentCard
-                  key={agent.bot.id}
-                  name={agent.bot.name}
-                  avatarSlot={<BotAvatar bot={agent.bot} size={40} radius="lg" />}
-                  status={{ label: agent.health.label, tone: agent.health.tone }}
-                  to={`/agents/${agent.bot.id}/overview`}
-                  metrics={[
-                    { label: t('home.conversations') || 'Conversations', value: formatCount(agent.conversations) },
-                    { label: t('home.leads') || 'Leads', value: formatCount(agent.leads) },
-                  ]}
-                />
-              ))}
-            </div>
-          </section>
+          }
+        />
+      </CardBody>
+    </Card>
+  );
+}
 
-          <section aria-label={t('home.mostAskedQuestions') || 'Most asked questions'} className="space-y-4">
-            <SectionHeader
-              title={t('home.whatVisitorsAskMost') || 'What visitors ask most'}
-              description={t('home.theQuestionsYourChatbotsHear') || 'The questions your chatbots hear the most, across all conversations.'}
+/**
+ * The first two open steps, in the rail.
+ *
+ * Dismissible, and that is the point: "Capture your first lead" completes on its
+ * own or never, so for a workspace with no traffic this card was permanent
+ * furniture at the top of the landing page. The rail's progress ring is the
+ * permanent home for setup and stays either way.
+ */
+function SetupCard({
+  done,
+  total,
+  steps,
+  onDismiss,
+}: {
+  done: number;
+  total: number;
+  steps: ReturnType<typeof useSetupChecklist>['steps'];
+  onDismiss: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <Card>
+      <CardHeader
+        size="sm"
+        title={
+          <>
+            <Trans
+              k="home.finishSetup"
+              fallback="Finish getting set up · {done} of {total}"
+              values={{
+                done: <span className="figure">{done}</span>,
+                total: <span className="figure">{total}</span>,
+              }}
             />
-            <DataTable
-              columns={TOP_QUESTION_COLUMNS.map((col) => ({
-                ...col,
-                header: t(`home.column.${col.key}`) || col.header,
-              }))}
-              rows={data.topQuestions}
-              rowKey={(row) => row.question}
-              caption={t('home.mostFrequentlyAskedQuestionsAnd') || 'Most frequently asked questions and how many times each was asked'}
-              empty={
-                <span className="text-[13px] text-[var(--ds-text-muted)]">
-                  {t('home.noQuestionsYetTheyllAppear') || 'No questions yet - they’ll appear here once visitors start chatting.'}
+          </>
+        }
+        titleAs="h2"
+        actions={
+          <Button variant="ghost" size="icon-xs" aria-label={t('home.hideSetup') || 'Hide setup'} onClick={onDismiss}>
+            <X aria-hidden />
+          </Button>
+        }
+      />
+      <ul data-card-band>
+        {steps
+          .filter((step) => !step.done)
+          .slice(0, 2)
+          .map((step) => (
+            <li key={step.id} className="border-t border-border first:border-t-0">
+              <Link
+                to={step.to}
+                className="flex min-h-row items-center gap-3 px-cell py-2 transition-colors hover:bg-surface-hover"
+              >
+                <span className="min-w-0 flex-1 truncate text-base font-medium text-text-primary">
+                  {step.label}
                 </span>
-              }
-            />
-          </section>
-        </div>
+                <ArrowRight aria-hidden className="h-icon-md w-icon-md shrink-0 text-text-tertiary" />
+              </Link>
+            </li>
+          ))}
+      </ul>
+      <CardSection className="py-2">
+        <Link to="/setup" className={buttonClass('link', 'sm')}>
+          {t('home.seeAllSteps') || 'See all steps'}
+        </Link>
+      </CardSection>
+    </Card>
+  );
+}
 
-        {/* Aside - plan usage, health insight, next steps, live activity */}
-        <div className="space-y-8">
-          {/* Plan & usage is scoped to a single agent. On "All agents"
-              (selectedBot null) it's hidden: the account-wide Agents/Members
-              meters read as over-limit red bars that alarm without being
-              actionable here. Plan capacity lives in Workspace ▸ Billing. */}
-          {selectedBot && (
-            <section aria-label={t('home.planAndUsage') || 'Plan and usage'}>
-              <PlanUsageCard selectedBot={selectedBot} data={data} />
-            </section>
-          )}
-
-          {!hasFeature('bant') && (
-            <section aria-label={t('home.leadQualification') || 'Lead qualification'}>
-              <LockedFeatureCard intent="view_qualification" icon={Target} />
-            </section>
-          )}
-
-          <section aria-label={t('home.recommendedNextSteps') || 'Recommended next steps'} className="space-y-4">
-            <InsightCard
-              icon={insight.icon}
-              tone={insight.tone}
-              title={insight.title}
-              body={insight.body}
-            />
-            <div className="space-y-3">
-              {recommendations.map((rec) => (
-                <ActionCard
-                  key={rec.key}
-                  icon={rec.icon}
-                  title={rec.title}
-                  description={rec.description}
-                  cta={rec.cta}
-                  to={rec.to}
-                />
-              ))}
-            </div>
-          </section>
-
-          {/* Recent activity is agent-scoped. On "All agents" it aggregates
-              cross-agent feedback/messages that read as noise here, so Home
-              hides it, it returns when a single agent is selected. */}
-          {selectedBot && (
-            <section aria-label={t('home.recentActivity') || 'Recent activity'} className="space-y-4">
-              <SectionHeader title={t('home.recentActivity') || 'Recent activity'} description={t('home.feedbackAndNewMessages') || 'Feedback and new messages.'} />
-              {activityItems.length > 0 ? (
-                <Card className="p-5">
-                  <ActivityTimeline items={activityItems} />
-                </Card>
-              ) : (
-                <Card className="flex items-center gap-3 p-5">
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
-                    <ActivityIcon size={15} aria-hidden="true" />
-                  </span>
-                  <p className="text-[13px] text-[var(--ds-text-muted)]">
-                    {t('home.noActivityYetFeedbackAnd') || 'No activity yet. Feedback and visitor messages will show up here.'}
-                  </p>
-                </Card>
-              )}
-            </section>
-          )}
-        </div>
-      </div>
-    </div>
+/**
+ * What actually happened, which nothing on this page said before.
+ *
+ * Home showed *state* — counts and health — and no events at all, so an operator
+ * opening it thirty times a day had no reason to look at it twice. Each row deep
+ * links into the lead's own drawer.
+ */
+function RecentActivity({ leads, loading }: { leads: readonly Lead[]; loading: boolean }) {
+  const { t } = useTranslation();
+  return (
+    <Card as="section">
+      <CardHeader
+        size="sm"
+        title={t('home.recentLeads') || 'Recent leads'}
+        titleAs="h2"
+        actions={
+          leads.length > 0 ? (
+            <Link to="/leads" className={buttonClass('ghost', 'sm')}>
+              {t('home.seeAll') || 'See all'}
+            </Link>
+          ) : undefined
+        }
+      />
+      {loading ? (
+        <CardBody className="text-xs text-text-secondary">{t('home.loading') || 'Loading…'}</CardBody>
+      ) : leads.length === 0 ? (
+        <CardBody>
+          <EmptyState
+            size="inline"
+            title={t('home.nothingYet') || 'Nothing yet'}
+            description={t('home.visitorsAppearHereAsSoon') || 'Visitors appear here as soon as they start a conversation.'}
+          />
+        </CardBody>
+      ) : (
+        <ul data-card-band>
+          {leads.map((lead) => (
+            <li
+              key={lead.session_id}
+              // This band is the card's LAST child, so the final row's hover
+              // fill sits in the card's own rounded bottom corners — square,
+              // opaque, and outside the border's arc. `CardFooter` carries
+              // `rounded-b-inner-flush` for exactly this reason (its comment
+              // records the "hairline sliver … outside the border's arc" it
+              // fixed); this is the same defect, only visible on hover, which
+              // is why it outlived it. The radius is the card's 10 minus its
+              // 1px border, and the clip is what makes the fill respect it.
+              className="border-t border-border first:border-t-0 last:overflow-hidden last:rounded-b-inner-flush"
+            >
+              <Link
+                to={`/leads?lead=${encodeURIComponent(lead.session_id)}`}
+                className="flex min-h-row-compact items-center gap-2.5 px-cell py-1.5 transition-colors hover:bg-surface-hover"
+              >
+                <Avatar name={leadDisplayName(lead)} size="xs" />
+                <span className="min-w-0 flex-1 truncate text-sm text-text-primary">
+                  {leadDisplayName(lead)}
+                </span>
+                <span className="shrink-0 text-xs text-text-tertiary">
+                  {formatRelative(lead.last_active_at)}
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   );
 }

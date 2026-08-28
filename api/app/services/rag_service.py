@@ -3406,6 +3406,36 @@ _NON_NAME_COMMON_WORDS = frozenset(
 # itself not a name.
 _LEADING_ARTICLES = frozenset({"the", "a", "an"})
 
+# Words that can TRAIL a two-token candidate and make it clearly not a name
+# ("launching my", "blocking our", "becoming a"). These come from the generic
+# intro anchors ("i'm", "it's", "this is") matching the first two words of an
+# ordinary sentence rather than a self-introduction. A visitor's real two-word
+# name never ends in a possessive pronoun or article, so <word> + <this> is a
+# sentence fragment, not a name. Bug report: leads list filled with "Launching
+# My", "Blocking Our", "Becoming A".
+_TRAILING_NON_NAME_WORDS = frozenset(
+    {
+        "my",
+        "our",
+        "your",
+        "his",
+        "her",
+        "their",
+        "its",
+        "mine",
+        "ours",
+        "yours",
+        "theirs",
+        "me",
+        "us",
+        "him",
+        "them",
+        "a",
+        "an",
+        "the",
+    }
+)
+
 # Explicit mid-chat rename requests ("rename it to Jason", "change my name to
 # Jason", "actually I'm Jason"). Kept separate from intros so we only ever
 # OVERWRITE a stored name on a clear request, never on a stray word.
@@ -3434,6 +3464,8 @@ def _clean_visitor_name(raw: str) -> str | None:
     if not 1 <= len(tokens) <= 2:
         return None
     lowered = [t.lower() for t in tokens]
+    if len(lowered) == 2 and lowered[1] in _TRAILING_NON_NAME_WORDS:
+        return None
     # Drop a single leading article so "the manager" / "a customer" reduce to
     # the role word for the check below.
     core = lowered[1:] if len(lowered) == 2 and lowered[0] in _LEADING_ARTICLES else lowered
