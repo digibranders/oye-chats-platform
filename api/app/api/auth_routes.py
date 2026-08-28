@@ -576,7 +576,18 @@ def _build_trial_payload(session, client_id: int) -> "TrialStatePayload | None":
         .scalars()
         .first()
     )
-    if bought is not None and (bought.trial_emails_sent or {}).get("trial_conversion_granted"):
+    if (
+        bought is not None
+        and (bought.trial_emails_sent or {}).get("trial_conversion_granted")
+        # Only BEFORE the first charge. The marker is written once and never
+        # cleared, and ``last_granted_period_end`` rolls forward on every
+        # renewal, so those two alone stay true forever: a customer who bought
+        # mid-trial in September would still be told in March that their plan
+        # "starts in 29 days", with the Upgrade action suppressed. Razorpay
+        # writes ``current_period_start`` at the first debit, so its absence is
+        # exactly the window this state describes.
+        and bought.current_period_start is None
+    ):
         starts = bought.last_granted_period_end
         if starts is not None and starts.tzinfo is None:
             starts = starts.replace(tzinfo=UTC)

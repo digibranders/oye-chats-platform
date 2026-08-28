@@ -54,6 +54,7 @@ from app.services.plan_service import (
     has_used_trial,
     lock_client_for_billing,
 )
+from app.services.razorpay_service import TRIAL_CONVERSION_NOTE
 from app.services.seller_profile_service import charge_tax_rate_bps
 
 logger = logging.getLogger(__name__)
@@ -251,8 +252,6 @@ def _resolve_provider() -> str:
 # Mandate lead time for eMandate / UPI pre-debit notification. A first debit
 # scheduled sooner than this is one the gateway will not honour quietly.
 _TRIAL_DEFER_FLOOR = timedelta(hours=48)
-
-TRIAL_CONVERSION_NOTE = "oyechats_trial_conversion"
 
 
 def resolve_trial_defer_at(
@@ -2589,13 +2588,36 @@ def change_plan(
             )
             return reused
 
+        # Branch 3 is the branch a MID-TRIAL BUYER actually reaches. The console
+        # treats a trialing subscription as an active one and routes plan picks
+        # to /change-plan rather than /checkout, and the trial row carries no
+        # gateway mandate, so branches 2a and 2b (which both require one) fall
+        # through to here. Without the deferral the customer is charged today
+        # and loses the free days they were promised, and the mandate carries no
+        # conversion note, so it gets neither the grant at authentication nor
+        # the forfeit protection that balances it.
+        trial_defer_at: int | None = None
+        trial_notes: dict[str, str] | None = None
+        if sub is not None and sub.status == "trialing" and route_bot_id is None:
+            defer_at = resolve_trial_defer_at(trial_end=sub.trial_end, promo_start_at=None)
+            if defer_at is not None:
+                trial_defer_at = int(defer_at.timestamp())
+                trial_notes = {TRIAL_CONVERSION_NOTE: "1"}
+
         try:
             if route_bot_id is not None:
                 result = razorpay_service.create_bot_resubscription(
                     session, client, new_plan, bot_id=route_bot_id, billing_cycle=billing_cycle
                 )
             else:
-                result = razorpay_service.create_subscription(session, client, new_plan, billing_cycle)
+                result = razorpay_service.create_subscription(
+                    session,
+                    client,
+                    new_plan,
+                    billing_cycle,
+                    start_at=trial_defer_at,
+                    extra_notes=trial_notes,
+                )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except razorpay_service.RazorpayBillingError as exc:

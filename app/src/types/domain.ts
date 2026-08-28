@@ -126,6 +126,28 @@ export interface CurrentUser {
   kind?: string;
   /** Operator role (owner | admin | operator) when `kind === 'operator'`. */
   role?: string | null;
+  /**
+   * The account's trial snapshot, or absent when there is no trial UI to show.
+   * The server decides that; see `_build_trial_payload` in `auth_routes.py`.
+   */
+  trial?: TrialState | null;
+}
+
+/**
+ * What `/auth/me` reports about the account's trial.
+ *
+ * `paid_plan_starts_at` is the mid-trial-purchase case: the customer has bought,
+ * their entitlements are already live, and the first debit waits for the trial
+ * to run out. When it is set, the surfaces say "{Plan} starts in N days" rather
+ * than counting down to a deadline the customer has already dealt with.
+ */
+export interface TrialState {
+  status: string;
+  trial_end_at?: string | null;
+  days_remaining?: number | null;
+  credits_granted?: number | null;
+  paid_plan_starts_at?: string | null;
+  paid_plan_name?: string | null;
 }
 
 /**

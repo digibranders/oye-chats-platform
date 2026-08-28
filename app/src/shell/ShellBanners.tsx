@@ -1,4 +1,5 @@
 import { ImpersonationBanner } from './ImpersonationBanner';
+import { TrialBanner } from './TrialBanner';
 
 /**
  * Shell-level banners.
@@ -21,5 +22,13 @@ import { ImpersonationBanner } from './ImpersonationBanner';
  * stand on one left edge.
  */
 export function ShellBanners() {
-  return <ImpersonationBanner />;
+  return (
+    <>
+      <ImpersonationBanner />
+      {/* Below the impersonation bar: an impersonated session is a fact about
+          WHO is looking, which outranks a fact about the account they are
+          looking at. */}
+      <TrialBanner />
+    </>
+  );
 }

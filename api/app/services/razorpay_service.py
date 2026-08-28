@@ -3734,12 +3734,18 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
 
                 grant_period_end = current_free_period_end(local.promo_free_until)
             # Mid-trial purchase: Razorpay sends no current period for a
-            # deferred start, so key this grant on ``start_at`` itself. That is
-            # the moment the first real charge lands, and keying there is what
-            # makes the ``subscription.charged`` at ``start_at`` a no-op instead
-            # of a second month of credits.
+            # deferred start, so derive the one the FIRST CHARGE will carry.
+            # That charge arrives with ``current_start = start_at`` and
+            # ``current_end = start_at + interval``, so the marker has to be the
+            # END of that period, not ``start_at`` itself. Keyed on ``start_at``
+            # the marker sat a whole interval behind what the charge presents,
+            # far outside ``_PERIOD_KEY_TOLERANCE``, and the day-14 debit reset
+            # and re-granted a second full allowance.
             if grant_period_end is None and is_trial_conversion:
-                grant_period_end = _entity_future_start(sub_entity)
+                deferred_start = _entity_future_start(sub_entity)
+                if deferred_start is not None:
+                    cycle = (local.billing_cycle if local else None) or notes.get("billing_cycle") or "monthly"
+                    grant_period_end = add_months(deferred_start, 12 if cycle == "annual" else 1)
             if is_trial_conversion and local is not None:
                 # One-shot marker in the JSONB slot this domain already uses,
                 # not a new column. It is what tells the cancellation handler
@@ -4285,13 +4291,23 @@ def _was_unbilled_trial_conversion(local: Subscription) -> bool:
     """True for a mid-trial purchase cancelled before it ever took a payment.
 
     Two facts, both local: the row was granted credits at authentication on the
-    strength of a deferred mandate, and no invoice was ever captured against it.
-    The marker lives in the ``trial_emails_sent`` JSONB, the slot this domain
+    strength of a deferred mandate, and its first debit has not happened. The
+    marker lives in the ``trial_emails_sent`` JSONB, the slot this domain
     already uses for one-shot markers, rather than in a new column.
+
+    "Not billed" is ``current_period_start is None``, NOT the absence of a paid
+    invoice, and the difference matters in both directions. A refund flips an
+    invoice's status to ``refunded``, so a customer billed for months who takes
+    a partial refund and then cancels would have no ``paid`` invoice left and
+    would be wrongly stripped of their credits and downgraded. And the verify
+    endpoint writes a ``paid`` Invoice from the authorisation transaction the
+    checkout modal returns, so a deferred mandate can look billed from the
+    moment of purchase, which would disable this guard entirely. Razorpay writes
+    ``current_period_start`` at the first real debit and nowhere else.
     """
     if not (local.trial_emails_sent or {}).get(TRIAL_CONVERSION_GRANT_MARKER):
         return False
-    return not any(inv.status == "paid" for inv in (local.invoices or []))
+    return local.current_period_start is None
 
 
 def _forfeit_and_convert_to_free(session: Session, local: Subscription) -> None:
@@ -4302,6 +4318,7 @@ def _forfeit_and_convert_to_free(session: Session, local: Subscription) -> None:
     ``get_balance_breakdown`` attributes correctly) and a fresh anniversary
     period on the Free plan so the renewal cron can grant month two.
     """
+    from app.services import plan_entitlements_service
     from app.services.plan_service import get_plan_by_slug
 
     free_plan = get_plan_by_slug(session, "free")
@@ -4330,6 +4347,10 @@ def _forfeit_and_convert_to_free(session: Session, local: Subscription) -> None:
     session.add(replacement)
     session.flush()
     credit_service.grant_for_subscription(session, replacement)
+    # The account just lost a paid tier. Every other status-changing path here
+    # drops the cache; without it the downgraded account keeps the purchased
+    # plan's limits and features for the 60s TTL.
+    plan_entitlements_service.invalidate(local.client_id)
     logger.info(
         "Client %s cancelled a trial conversion before its first charge: unspent credits forfeited "
         "and the account converted to Free",

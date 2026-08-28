@@ -195,7 +195,10 @@ vi.mock('../context/NotificationContext', () => ({
 }));
 
 vi.mock('../services/api', () => ({
-  getCurrentUser: async () => ({ name: 'Ana Ruiz', email: 'ana@acme.com' }),
+  // No `trial`, so the rail's trial card renders nothing here. Its own states
+  // are covered in TrialCard.test.tsx; this file is about the rail's structure.
+  getCurrentUser: async () => ({ id: 1, name: 'Ana Ruiz', email: 'ana@acme.com' }),
+  getCreditBalance: async () => ({ balance: 0 }),
   getDashboardStats: async () => ({}),
   getLeadStats: async () => ({}),
 }));

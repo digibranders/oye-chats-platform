@@ -693,3 +693,102 @@ cancel-and-recreate still handles a sub in `authenticated`.
 
 Gates: full backend suite **5920 passed, 4 skipped, zero failures**. `ruff
 check` and `ruff format --check` clean.
+
+### Task 6 review
+
+10 findings. The first two are the serious ones and both are corrections to
+claims I made in the Task 6 entry above.
+
+1. **CRITICAL: the feature was unreachable from the path customers actually
+   take.** `/checkout` accepts a trialing customer at the API level, but the
+   console never sends them there: `billingModel.hasActive` counts `trialing`
+   as active, so `usePlanCheckout` routes plan picks to `/change-plan`. There
+   the trial row has no gateway mandate, branches 2a and 2b both require one,
+   and it falls into Branch 3, which minted the subscription with no `start_at`
+   and no notes. So the customer was charged immediately, lost their remaining
+   free days, and got neither the grant at authentication nor the forfeit that
+   balances it. Every one of the five deltas was bypassed. Branch 3 now carries
+   the deferral. **This corrects the Task 6 entry above, which described the
+   billing clock as protected.**
+2. **HIGH: the day-14 charge re-granted.** The marker was keyed on `start_at`,
+   but a deferred mandate's first charge carries `current_end = start_at + one
+   interval`, a whole interval past the marker and far outside the four-day
+   period-key tolerance, so the debit reset the allowance the customer had just
+   bought and granted a second one. Confirmed directly with a probe against the
+   real handler: one grant became two. The marker is now `start_at + interval`.
+   My test could not have caught it, twice over: it derived `current_end` from
+   the marker under test, so the comparison was circular, and it asserted on the
+   BALANCE, which is identical either way because plan credits are
+   use-it-or-lose-it (a re-grant resets and re-grants the same number). It
+   asserts the marker directly now, and fails under the original bug.
+3. **HIGH: "Standard starts in N days" would have been true forever.** The gate
+   was the grant marker plus `last_granted_period_end > now`, and neither ever
+   stops being true: the marker is never cleared and the period end rolls
+   forward on every renewal. A customer who bought in September would still be
+   told in March that their plan starts in 29 days, with Upgrade suppressed.
+   Gated on `current_period_start is None` now, which Razorpay writes at the
+   first real debit and nowhere else.
+4. MEDIUM. The payload branch also repurposes `trial_end_at`, `days_remaining`
+   and `credits_granted` to describe the purchased plan rather than the trial.
+   Deliberate, and now stated in the docstring rather than left implicit.
+5. MEDIUM. The harvest guard tested "no paid invoice", which is wrong in both
+   directions: a refund flips an invoice to `refunded`, so a customer billed for
+   months who takes a partial refund and cancels would have been stripped of
+   credits and downgraded; and `/checkout/verify` writes a paid Invoice from the
+   authorisation transaction, which would have disabled the guard entirely. It
+   reads `current_period_start is None` now.
+6. MEDIUM. The plan's ledger reason `trial_conversion_cancel_forfeit` was
+   dropped for the same reason as Task 5's (native PG enum, and a bespoke
+   negative row breaks `get_balance_breakdown`'s attribution), but I had not
+   recorded that deviation. Recorded here. The consequence is real and worth
+   knowing: in the audit trail a punitive forfeit looks like a routine monthly
+   reset.
+7. MEDIUM. `_forfeit_and_convert_to_free` diverges from Task 5's conversion
+   (new row rather than in place, no marker, no email) and did not invalidate
+   the entitlements cache, so a just-downgraded account kept the paid tier's
+   limits for the 60s TTL. The cache invalidation is added. The structural
+   divergence is left as-is and recorded: the cancelled row is terminal and
+   cannot be converted in place, so a replacement row is the right shape here.
+8. MEDIUM. No test covered the route wiring, which is why finding 1 survived.
+   The plan's `test_verify_endpoint_flips_entitlements_before_any_webhook` is
+   still approximated by source inspection rather than by driving the endpoint;
+   recorded as a known weakness rather than claimed as covered.
+9. LOW. The conversion row carries NULL period anchors during the deferral, so
+   Billing shows no renewal date between purchase and day 14. Recorded.
+10. LOW. The conversion note was defined independently in two modules. One
+    definition now, imported by the producer.
+
+### Task 7, the two trial surfaces in the app shell
+
+Status: **done**.
+
+`TrialCard` in the rail footer directly above Billing, `TrialBanner` in
+`ShellBanners` above the routed content. Both read one `/auth/me` query through
+`useTrialState`, so they cannot disagree about how many days are left. The
+payload was already being served and simply never consumed.
+
+The card has no close button, deliberately: the banner is the interruption and
+can be dismissed, the card is the standing fact about an account on a clock.
+Three states, as the plan specifies: counting days; counting credits when
+credits are the binding constraint (`creditsRemaining / granted < daysRemaining
+/ 14`, which is what makes the two comparable); and, once the customer has
+bought, a green confirmation with no CTA, because showing an Upgrade button to
+someone who has paid is an insult rather than a call to action.
+
+The banner's dismissal is per account (`trial_banner_dismissed:{clientId}`,
+every read and write wrapped) and returns regardless of dismissal at three days
+or fewer: "stop telling me" is reasonable on day four and unreasonable on day
+thirteen, when the consequence is the chatbot going quiet.
+
+One design-system correction: the first version painted `bg-success-tint
+text-success` on the card. The rail is ink and paper status tokens do not
+survive it; the repo's own guardrail test caught it, and the token file ships
+rail-ground twins. `text-rail-success` / `text-rail-accent` now.
+
+Mutation-tested: removing the credits state, showing Upgrade in the bought
+state, removing the three-day override, and making the dismissal global each
+fail a distinct test.
+
+Gates: full backend suite **5921 passed, 4 skipped, zero failures**. `ruff
+check` and `ruff format --check` clean. Frontend `tsc --noEmit` clean, `npm run
+lint` clean with zero warnings, `npx vitest run` 136 files / 1784 tests passed.
