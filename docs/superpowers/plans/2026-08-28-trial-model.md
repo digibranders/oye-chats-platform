@@ -120,7 +120,7 @@ def downgrade() -> None:
     op.drop_column("plans", "is_public")
 ```
 
-- [ ] **Step 4: Filter + guard.** `plan_service.get_active_plans` adds `Plan.is_public.is_(True)` to its `where`. In `subscription_routes.py`, at the top of both `/checkout/quote` and `/checkout` plan resolution (where an inactive plan is already rejected), add:
+- [ ] **Step 4: Filter + guard.** `plan_service.get_active_plans` adds `Plan.is_public.is_(True)` to its `where`. In `subscription_routes.py`, at the top of `/checkout/quote`, `/checkout` AND `/change-plan` plan resolution (outside voice: change-plan resolves any `is_active` plan by id at `:2168` and would price the trial at ₹0), add:
 
 ```python
         if not plan.is_public:
@@ -323,7 +323,10 @@ def test_legacy_trial_expired_rows_still_age_out_unchanged(db): ...
                     select(Subscription.id).where(
                         Subscription.client_id == sub.client_id,
                         Subscription.id != sub.id,
-                        Subscription.status.in_(("active", "trialing", "past_due", "created", "authenticated", "pending")),
+                        # Local rows are inserted as "active" by the activation/authenticated
+                        # handler (razorpay_service.py:3550) — created/authenticated/pending
+                        # exist at the GATEWAY, never as local statuses. (Outside voice.)
+                        Subscription.status.in_(("active", "trialing", "past_due")),
                     ).limit(1)
                 ).first()
                 if paid is not None:
@@ -336,74 +339,75 @@ def test_legacy_trial_expired_rows_still_age_out_unchanged(db): ...
                     sub.data_retention_until = None
                     sub.current_period_start = now
                     sub.current_period_end = add_months(now, 1)
-                    grant_monthly_credits(session, sub, months=1)   # the exact helper credit_service already exposes for free-plan grants — reuse, don't invent
+                    credit_service.grant_for_subscription(...)      # credit_service.py:1080 — the real free-grant helper (outside voice: `grant_monthly_credits` does not exist)
                     for bot in bots_of(session, sub.client_id):
-                        deactivate_bot_knowledge_over_limit(session, bot)
+                        deactivate_bot_knowledge(session, bot.id)       # WHOLE-bot pause. There is no over-limit partial pause and this plan must not invent one (knowledge_state_service.py:54 is all-or-nothing)
 ```
 
 Verified safe (eng review): the deferred-purchase row sits in `created`/`authenticated`, which are OUTSIDE `ix_subscriptions_client_bot_active`'s predicate (`status IN ('active','trialing','past_due')`, models.py:1951), so it coexists with the live trial row until retirement — the retirement-before-activation ordering below is still required at day 14, but there is no collision window at purchase time.
 
-Two constraints discovered in review that this must respect: **(a)** don't add a column casually — if a conversion marker is needed for idempotency, prefer `trial_emails_sent["converted_to_free"]` (the JSONB marker pattern this cron already uses); **(b)** the knowledge pause must reuse `knowledge_state_service.deactivate_bot_knowledge` semantics exactly as the paid→free downgrade path does — read that caller first (grep `deactivate_bot_knowledge` call sites) and mirror it, including whatever decides "over limit". Trial credit remainder: zero it via a ledger adjustment with reason `trial_expired_forfeit` so the Free balance is exactly the Free grant (a leftover trial balance on Free is the top-up-leak shape again).
+Two constraints discovered in review that this must respect: **(a)** don't add a column casually — if a conversion marker is needed for idempotency, prefer `trial_emails_sent["converted_to_free"]` (the JSONB marker pattern this cron already uses); **(b)** the pause is ALL knowledge, not "knowledge above the Free limit" — `deactivate_bot_knowledge` is whole-bot by design and no partial mechanism exists. Every piece of copy this plan ships (trial-ended email, Task 8 legal clauses, the artifact) must say exactly that: *your knowledge is paused; one upgrade restores all of it*. Publishing an above-the-limit claim the code cannot honour is the false-published-claim failure the 2026-08-17 legal reconciliation existed to clean up. **(b2)** Reactivation is NOT already wired for these rows: every existing `reactivate_bot_knowledge` call passes the subscription's `bot_id`, and the trial/conversion rows are account-level (`bot_id` NULL), where the helper is a hard no-op (`knowledge_state_service.py:75-84`). Add a client-level reactivation (iterate the client's bots) and call it from the ACCOUNT-level activation branch — Task 6 carries the test. Trial credit remainder: zero it via a ledger adjustment with reason `trial_expired_forfeit` so the Free balance is exactly the Free grant (a leftover trial balance on Free is the top-up-leak shape again).
 
 - [ ] **Step 4: Email rewrite.** `send_trial_ended_email` loses `data_retention_until` entirely. New copy (subject `Your OyeChats trial has ended — your account is now on Free`): everything is kept; knowledge above the Free plan's limit is paused, one upgrade switches it back on; button "Choose a plan" → `/billing`. Delete the warning alert promising permanent deletion. `send_trial_data_deleted_email` stays (legacy rows), with a docstring line: "Legacy: new trials never enter the retention path as of 2026-08-28." Update `EMAIL_INVENTORY.md`.
-- [ ] **Step 5: Cadence for 14 days** (`worker/tasks.py:1349-1353`): mapping becomes `{7: ("halfway", "halfway"), 3: ("day_11", "days_left"), 1: ("day_13", "days_left")}` — keep the historical marker KEYS (`day_7` → keep as key `day_7` if renaming breaks dedup for in-flight rows; safest: keep keys, change trigger thresholds and copy). Decide by reading `_mark_email_sent` usage; the test must assert no double-send for a sub that already carries old markers.
+- [ ] **Step 5: Cadence for 14 days** (`worker/tasks.py:1349-1353`): mapping becomes `{7: ("day_7", "halfway"), 3: ("day_11", "days_left"), 1: ("day_13", "days_left")}` — thresholds and copy change, historical marker KEYS stay exactly as-is so in-flight rows never double-send. Decide by reading `_mark_email_sent` usage; the test must assert no double-send for a sub that already carries old markers.
 - [ ] **Step 6: All four tests green; then the full worker/email neighbourhood:** `pytest tests/test_trial_expiry_converts_to_free.py tests/test_worker_cron_tasks.py tests/test_email_inventory_accuracy.py -q --no-cov`.
 - [ ] **Step 7: Commit** — `feat(billing): trial expiry converts to Free in place — retention/deletion path retired for new trials`
 
 ### Task 6: Mid-trial purchase — mandate now, debit day 14, entitlements instantly
 
-The precedent is the promo path end to end. Differences: the deferred sub must (a) retire the trial row at authentication, (b) grant the purchased plan's first-period credits AT authentication with a marker so activation/charged does not double-grant (the per-bot activation credit-marker machinery from the 2026-07-22 audit is the pattern — find `activation credit marker` in `razorpay_service.py`/`credit_service.py` and reuse its key scheme).
+**The outside voice materially reshaped this task.** The `subscription.authenticated`/activated path ALREADY does most of what the first draft planned to build: it sweeps and cancels the sibling account row — explicitly including `trialing` (`razorpay_service.py:3397-3419`, `old.status = "canceled"` at `:3473`) — and inserts the local row as `status="active"` immediately (`:3550`), which is exactly why promo customers get instant entitlements today. **Do not build a second retirement path.** The genuinely new work is:
 
-**Files:** Modify `api/app/api/subscription_routes.py`, `api/app/services/razorpay_service.py` · Create `api/tests/test_trial_midway_purchase.py`
-
-- [ ] **Step 1: Failing tests:**
-
-```python
-def test_trialing_checkout_passes_start_at_trial_end(db, monkeypatch): ...
-    # capture create_subscription kwargs; start_at == int(sub.trial_end.timestamp())
-def test_authenticated_webhook_retires_trial_and_grants_plan_credits_once(db): ...
-    # after subscription.authenticated: trial sub canceled (reason converted_to_paid),
-    # new sub live in the active set, balance == plan.credits_per_month + marker set
-def test_activation_at_day14_does_not_regrant(db): ...
-    # replay subscription.activated for the same sub → balance unchanged
-def test_entitlements_resolve_to_purchased_plan_immediately(db): ...
-    # get_entitlements(client) between auth and first charge → purchased plan_slug
-def test_verify_endpoint_flips_entitlements_before_any_webhook(db): ...
-    # POST /checkout/verify with a valid signature → same retire+grant as the
-    # webhook, so the customer sees the upgrade the second the popup closes
-def test_verify_then_webhook_is_idempotent(db): ...
-    # both paths run → one retirement, one grant, one marker
-def test_upgrade_after_conversion_reactivates_paused_knowledge(db): ...
-    # converted-to-Free account with paused docs buys a plan →
-    # reactivate_bot_knowledge restores them (the trial-ended email PROMISES
-    # this; razorpay_service.py:3640/3862/3910 already wire it — prove it)
-def test_cancel_before_day14_charges_nothing_and_leaves_trial_running(db): ...
-    # gateway cancel of the deferred sub → trial sub restored/still governs?  NO:
-    # decision — trial was retired at auth; cancel re-opens nothing. Assert the
-    # account falls to Free at original trial_end via Task 5's sibling check.
-```
-
-(The last test encodes a real decision: once you buy, the trial row is retired; cancelling the unbilled purchase before day 14 means Task 5's expiry sweep no longer sees a live sibling — so the conversion-to-Free happens on the original `trial_end`. The days themselves are preserved because the retired trial row keeps its `trial_end` and the app keeps rendering the countdown from `/auth/me` — Step 4.)
-
-- [ ] **Step 2: Verify failures.**
-- [ ] **Step 3: Checkout branch.** In `subscription_routes.py`, in the branch where `sub.status == "trialing"` falls through to conversion, compute and pass `start_at`:
+1. **Checkout passes `start_at`** for a trialing buyer, reconciled with the launch promo and floored for mandate lead time:
 
 ```python
             trial_defer_at = None
             if sub is not None and sub.status == "trialing" and sub.trial_end and sub.trial_end > now:
-                # The billing clock never moves: mandate authorised now, first
-                # debit at the trial's original end. Entitlements flip at the
-                # `subscription.authenticated` webhook, not here.
-                trial_defer_at = int(sub.trial_end.timestamp())
-            result = razorpay_service.create_subscription(..., start_at=trial_defer_at, ...)
+                # The billing clock never moves — but it can only be honest if the
+                # gateway accepts the date. Two adjustments, both customer-favourable:
+                # the LATER of trial-end and any promo start (a consumed promo slot
+                # must be honoured, and max() lets whichever protection runs longer
+                # win), and a 48h floor for eMandate/UPI pre-debit notice — a day-13
+                # buyer gets billing at now+48h, i.e. up to a day of extra grace.
+                trial_defer_at = int(max(
+                    sub.trial_end,
+                    promo_start_at_dt or sub.trial_end,
+                    now + timedelta(hours=48),
+                ).timestamp())
 ```
 
-**Decision (eng review): `/checkout/verify` is the fast path, the webhook is the durable path.** Extract ONE idempotent `convert_trial_purchase(session, sub)` (retire trial → grant with marker → stamp) and call it from both; the marker makes double-delivery a no-op. A customer who just paid must never see trial limits while a webhook is in flight.
+Stamp `extra_notes["oyechats_trial_conversion"] = "1"` so the handlers below can branch.
 
-- [ ] **Step 4: Authenticated handler.** In `razorpay_service.py`'s `subscription.authenticated` branch (the promo materialiser), extend for `notes`-marked trial conversions (stamp `oyechats_trial_conversion: "1"` + `oyechats_trial_sub_id` in `extra_notes` at checkout): retire the trial row (`canceled` / `converted_to_paid` — respecting `ix_subscriptions_client_bot_active` by retiring BEFORE the new row enters the active set, exactly as `transition_service.execute_gateway_cancellation`'s comment block prescribes), grant first-period credits with the activation-marker key, leave trial credits in place until day 15 forfeit (Task 5 zeroes on conversion; a converted-to-paid client keeps both buckets — they paid). `/auth/me`: add `paid_plan_starts_at` (ISO) + `paid_plan_name` when a deferred sub exists, so the rail card can say "Standard starts in 11 days".
-- [ ] **Step 5: All five tests green, then the billing neighbourhood:** `pytest tests/test_trial_midway_purchase.py tests/ -q --no-cov -k "checkout or razorpay or webhook_billing or promo"`.
-- [ ] **Step 6: Sandbox proof (manual, gated).** Against Razorpay TEST keys (they are ACTIVE in the local .env per repo memory): one real deferred-checkout through the modal; confirm the gateway shows `authenticated` with future `start_at` and no charge. Record the sub id in the PR description. Also verify the known constraint: a *second* upgrade before day 14 must go cancel+recreate (UPI/eMandate cannot Update) — assert the existing cancel+recreate path handles a sub in `authenticated` (it is in `_AUTHORIZABLE_SUB_STATES`, `razorpay_service.py:734`; test if uncovered).
-- [ ] **Step 7: Commit** — `feat(billing): mid-trial purchase defers the first debit to day 14 and upgrades entitlements at authentication`
+2. **Grant-at-auth, with the harvest closed** (decision 2026-08-28, superseding the codebase's blanket no-grant-before-payment rule at `razorpay_service.py:3104` for THIS marked case): in the activation/authenticated branch, when the conversion note is present, grant the plan's first-period credits with a grant-once marker — and in the **cancellation handler**, when a conversion-marked sub is cancelled before its first charge: forfeit the unspent remainder of that grant (ledger reason `trial_conversion_cancel_forfeit`) AND convert the client to Free immediately via Task 5's conversion routine. That one branch closes the buy-burn-cancel harvest and fixes the limbo the first draft created (a cancelled conversion previously matched neither the expiry sweep, which filters `trialing`, nor `/auth/me`'s trial payload, which filters `trialing/trial_expired` — `auth_routes.py:558`).
+
+3. **Day-14 `subscription.charged` must not re-grant** — the marker from (2) guards it. Note: the event that grants on the first debit of a deferred sub is `charged`, not `activated`; the idempotency test pins `charged`.
+
+4. **Client-level knowledge reactivation** (from Task 5 constraint b2): the account-level activation branch reactivates every bot of the client, because per-bot `reactivate_bot_knowledge(session, None)` is a no-op.
+
+5. **`/auth/me`** gains `paid_plan_starts_at` + `paid_plan_name` when a conversion-marked deferred sub exists.
+
+**Files:** Modify `api/app/api/subscription_routes.py`, `api/app/services/razorpay_service.py`, `api/app/services/knowledge_state_service.py` (client-level reactivate), `api/app/api/auth_routes.py` · Create `api/tests/test_trial_midway_purchase.py`
+
+- [ ] **Step 1: Failing tests:**
+
+```python
+def test_trialing_checkout_start_at_is_later_of_trial_end_promo_and_48h_floor(db, monkeypatch): ...
+def test_conversion_marked_auth_grants_once_and_existing_sweep_retires_trial(db): ...
+    # asserts the EXISTING sweep cancelled the trial row — no new retirement code
+def test_charged_at_day14_does_not_regrant(db): ...
+def test_cancel_before_first_charge_forfeits_unspent_grant_and_converts_to_free(db): ...
+    # balance falls to Free's grant; client has an active Free sub; no limbo
+def test_entitlements_resolve_to_purchased_plan_immediately(db): ...
+def test_account_level_activation_reactivates_every_bot_knowledge(db): ...
+    # the trial-ended email promises this; per-bot helper no-ops on NULL — prove the client-level path
+def test_verify_endpoint_flips_entitlements_before_any_webhook(db): ...
+def test_verify_then_webhook_is_idempotent(db): ...
+```
+
+- [ ] **Step 2: Verify failures.**
+- [ ] **Step 3: Implement** exactly the five deltas above. **Decision (eng review): `/checkout/verify` is the fast path, the webhook the durable path** — one idempotent `convert_trial_purchase(session, sub)` called from both; the marker makes double-delivery a no-op.
+- [ ] **Step 4: All tests green, then the billing neighbourhood:** `pytest tests/test_trial_midway_purchase.py tests/ -q --no-cov -k "checkout or razorpay or webhook_billing or promo"`.
+- [ ] **Step 5: Sandbox proof (manual, gated).** Razorpay TEST keys: one deferred checkout early in the trial AND one at day 13 (the 48h floor case). Confirm `authenticated` + future `start_at`, no charge. Verify cancel+recreate still handles a sub in `authenticated` (`_AUTHORIZABLE_SUB_STATES`, `razorpay_service.py:734`).
+- [ ] **Step 6: Commit** — `feat(billing): mid-trial purchase defers the first debit and upgrades entitlements at authentication`
 
 ### Task 7: The two trial surfaces in the app shell
 
@@ -449,11 +453,11 @@ TrialCard
 
 Deploy order matters because the seed changes signup behaviour instantly:
 
-- [ ] **1. Deploy code** (API + app + website) with the seed NOT yet applied — everything is backwards-compatible: no trial row exists, Free is still default, new columns are server-defaulted.
-- [ ] **2. `alembic upgrade head`** on prod (adds `is_public`, backfilled true).
+- [ ] **1. Deploy code** (API + app + website) — `deploy-api.yml` runs `alembic upgrade head` as part of the deploy (outside voice: the pipeline migrates during deploy, so steps 1–2 are one step), which adds `is_public` backfilled true. Everything is backwards-compatible until the seed: no trial row exists, Free is still default.
+- [ ] **2.** *(merged into 1 — the pipeline migrates during deploy.)*
 - [ ] **3. `python scripts/seed_plans.py --apply`** — trial row lands, Free demoted. From this moment new signups get the trial. Verify with one real signup (plus-alias) end to end: trialing sub, 500 credits, free first crawl, banner + card visible.
 - [ ] **4. Watch `task_expire_trials`'s first tick** after the first trial cohort ages (journalctl on the droplet) — expected log: conversions, zero retention stamps.
-- [ ] **5. In-flight accounts:** any subscription currently `trialing` on the OLD Standard-trial offer keeps its `trial_end`; the new expiry path converts them to Free instead of expiring them — strictly better, no migration needed. Any row already `trial_expired` inside its retention window is legacy: decide explicitly (recommended: null their `data_retention_until` and convert to Free with the same sweep, one-off SQL, so the deletion cron's queue drains to zero forever).
+- [ ] **5. Documented decisions on today's population:** existing Free accounts (12 in prod, largely internal/test) STAY on Free — no retroactive trial; Task 2b removes their old start-trial path, and a superadmin grant-trial lever is a later follow-up if a real customer asks. Signups landing between deploy and seed-apply get old-Free (a window of minutes; acceptable). The trial clock starts at registration, before email verification — observed verification time is seconds, accepted and stated. In-flight accounts: any subscription currently `trialing` on the OLD Standard-trial offer keeps its `trial_end`; the new expiry path converts them to Free instead of expiring them — strictly better, no migration needed. Any row already `trial_expired` inside its retention window is legacy: decide explicitly (recommended: null their `data_retention_until` and convert to Free with the same sweep, one-off SQL, so the deletion cron's queue drains to zero forever).
 
 ---
 
@@ -473,6 +477,7 @@ Deploy order matters because the seed changes signup behaviour instantly:
 | Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | — |
 
 **Decisions taken 2026-08-28:** (1) `/checkout/verify` flips entitlements as the fast path with the `subscription.authenticated` webhook as durable backstop, one idempotent function. (2) First-training-free is keyed by a `first_training_free` feature flag on the plan row, not a slug check.
-**Verified during review:** superadmin plan list is unaffected by `is_public` (own unfiltered query, superadmin_plan_routes.py:221); deferred-purchase rows cannot collide with the live trial row (outside the unique index predicate, models.py:1951); free-tier month-2 renewal rides `task_renew_due_subscriptions` (worker/tasks.py:559) — now pinned by test.
+**Verified during review:** superadmin plan list is unaffected by `is_public` (own unfiltered query, superadmin_plan_routes.py:221); free-tier month-2 renewal rides `task_renew_due_subscriptions` (worker/tasks.py:559) — now pinned by test.
+**OUTSIDE VOICE (Claude subagent, fresh context, 2026-08-28):** 11 findings, 5 spot-verified against code and confirmed, all incorporated: account-level reactivation no-op (F1), all-or-nothing knowledge pause vs published copy (F2), cancel-before-day-14 limbo (F3), Task 6 duplicating the existing authenticated-handler sweep (F4, task rewritten), grant-at-auth harvest (F5 → resolved: grant at auth + forfeit-and-convert on unbilled cancel), promo×trial start_at collision (F6 → later-of-the-two), missing /change-plan guard (F7), 48h eMandate floor (F8), existing-account population documented (F9), helper-name/cadence-key/rollout-order corrections (F10), pre-verification clock start stated (F11). One first-review verification was CORRECTED by it: the collision-safety note had cited the per-bot index; the binding constraint for account rows is the legacy-active index, and safety actually comes from local rows never holding gateway statuses.
 **UNRESOLVED:** none.
-**VERDICT:** ENG CLEARED — ready to implement.
+**VERDICT:** ENG CLEARED (with outside voice) — ready to implement.
