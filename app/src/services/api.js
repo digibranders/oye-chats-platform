@@ -1493,80 +1493,6 @@ export const removeOperatorAvatar = async () => {
 // --- SUPERADMIN ENDPOINTS ---
 
 /**
- * Superadmin: Fetches global system statistics.
- * @returns {Promise<Object>} Aggregated metrics object
- */
-export const getGlobalStats = async () => {
-    try {
-        const response = await api.get('/superadmin/stats');
-        return response.data;
-    } catch (error) {
-        console.error('API Error fetching global stats:', error);
-        throw buildApiError(error, 'Failed to load stats');
-    }
-};
-
-/**
- * Superadmin: Fetches all clients on the platform.
- * @returns {Promise<Array>} List of client objects
- */
-export const getClients = async () => {
-    try {
-        const response = await api.get('/superadmin/clients');
-        return response.data;
-    } catch (error) {
-        console.error('API Error fetching clients:', error);
-        throw buildApiError(error, 'Failed to load clients');
-    }
-};
-
-/**
- * Superadmin: Creates a new client.
- * @param {string} name 
- * @param {string} email 
- * @param {string} password 
- * @returns {Promise<Object>} The API response with new client API key
- */
-export const createClient = async (name, email, password, website = '') => {
-    try {
-        const response = await api.post('/superadmin/clients', { name, email, password, website });
-        return response.data;
-    } catch (error) {
-        console.error('API Error creating client:', error);
-        throw buildApiError(error, 'Failed to create client');
-    }
-};
-
-/**
- * Superadmin: Deletes a client and all their data (bots, documents, sessions).
- * @param {number} clientId - The client ID to delete
- * @returns {Promise<Object>} Deletion confirmation
- */
-export const deleteClient = async (clientId) => {
-    try {
-        const response = await api.delete(`/superadmin/clients/${clientId}`);
-        return response.data;
-    } catch (error) {
-        console.error('API Error deleting client:', error);
-        throw buildApiError(error, 'Failed to delete client');
-    }
-};
-
-/**
- * Superadmin: Fetches all feedback across the platform.
- * @returns {Promise<Array>} List of global feedback objects
- */
-export const getGlobalFeedbackData = async () => {
-    try {
-        const response = await api.get('/superadmin/feedback');
-        return response.data;
-    } catch (error) {
-        console.error('API Error fetching global feedback:', error);
-        throw buildApiError(error, 'Failed to load feedback');
-    }
-};
-
-/**
  * Client: Submit classified feedback from the admin dashboard Feedback tab.
  * @param {object} payload
  * @param {string} payload.message - The feedback text (required)
@@ -1629,63 +1555,6 @@ export const getMyFeedback = async () => {
     } catch (error) {
         console.error('API Error fetching my feedback:', error);
         throw buildApiError(error, 'Failed to load your feedback');
-    }
-};
-
-/**
- * Superadmin: Fetches all platform feedback submitted via the admin dashboard.
- * @returns {Promise<Array>} List of platform feedback objects
- */
-export const getPlatformFeedback = async () => {
-    try {
-        const response = await api.get('/superadmin/platform-feedback');
-        return response.data;
-    } catch (error) {
-        console.error('API Error fetching platform feedback:', error);
-        throw buildApiError(error, 'Failed to load platform feedback');
-    }
-};
-
-/**
- * Superadmin: Fetches global revenue metrics (MRR, ARR, lifetime, subscription counts).
- * @returns {Promise<Object>}
- */
-export const getSuperadminRevenue = async () => {
-    try {
-        const response = await api.get('/superadmin/revenue');
-        return response.data;
-    } catch (error) {
-        console.error('API Error fetching revenue metrics:', error);
-        throw buildApiError(error, 'Failed to load revenue metrics');
-    }
-};
-
-/**
- * Superadmin: Fetches all plans configured on the platform.
- * @returns {Promise<Array>}
- */
-export const getSuperadminPlans = async () => {
-    try {
-        const response = await api.get('/superadmin/plans');
-        return response.data;
-    } catch (error) {
-        console.error('API Error fetching plans:', error);
-        throw buildApiError(error, 'Failed to load plans');
-    }
-};
-
-/**
- * Superadmin: Fetches subscriptions, optionally filtered by status.
- * @param {{status?: string}} [params]
- * @returns {Promise<Array>}
- */
-export const getSuperadminSubscriptions = async (params = {}) => {
-    try {
-        const response = await api.get('/superadmin/subscriptions', { params });
-        return response.data;
-    } catch (error) {
-        console.error('API Error fetching subscriptions:', error);
-        throw buildApiError(error, 'Failed to load subscriptions');
     }
 };
 
@@ -1801,26 +1670,6 @@ export const sendInstallInvite = async (botId, email) => {
         console.error('API Error sending install invite:', error);
         throw buildApiError(error, 'We could not send that email. Please try again.');
     }
-};
-
-/**
- * Free, origin-exempt preview chat against one of the client's OWN bots - used
- * by the Build Studio "Test & trust" milestone. Authenticated via the admin
- * X-API-Key (auto-attached); the backend `?preview=true` path skips credits and
- * the domain allowlist. Returns `{ answer, sources, session_id, ... }`.
- * @param {number} botId
- * @param {string} question
- * @param {string} [sessionId]
- */
-export const previewChat = async (botId, question, sessionId) => {
-    // AI replies (cold LLM + RAG) can take well over the default timeout - give
-    // the preview a generous 60s window before surfacing a timeout error.
-    const { data } = await api.post(
-        `/chat?preview=true&bot_id=${botId}`,
-        { question, session_id: sessionId },
-        { timeout: 60000 }
-    );
-    return data;
 };
 
 /** Auth headers for the raw-fetch streaming preview (mirrors the axios interceptor). */
@@ -2019,14 +1868,6 @@ export const getBotPreviewUrl = (botKey, websiteUrl, { edit = false } = {}) => {
     if (edit) params.set('edit', '1');
     const qs = params.toString();
     return qs ? `${base}?${qs}` : base;
-};
-
-export const getBotDemoOrigin = () => {
-    try {
-        return new URL(API_BASE_URL).origin;
-    } catch {
-        return API_BASE_URL;
-    }
 };
 
 export const trackDemoShareClick = async (botId) => {
@@ -2316,17 +2157,6 @@ export const getQualifiedBotSessions = async (limit = 50) => {
     } catch (error) {
         console.error('API Error fetching qualified bot sessions:', error);
         throw buildApiError(error, 'Failed to load qualified bot sessions');
-    }
-};
-
-export const takeoverBotSession = async (sessionId, operatorId = null) => {
-    try {
-        const body = operatorId ? { operator_id: operatorId } : {};
-        const response = await api.post(`/operators/takeover/${sessionId}`, body);
-        return response.data;
-    } catch (error) {
-        console.error('API Error taking over bot session:', error);
-        throw buildApiError(error, 'Failed to take over session');
     }
 };
 
@@ -3219,22 +3049,6 @@ export const getAffiliateCodeReferrals = async (codeId) => {
 };
 
 /**
- * Same endpoint, super-admin scope: emails unmasked, platform_pct populated.
- * Returns 404 when ``codeId`` isn't owned by ``affiliateId`` - the backend
- * scopes to prevent global-namespace probing.
- */
-export const getSuperadminCodeReferrals = async (affiliateId, codeId) => {
-    try {
-        const response = await api.get(
-            `/superadmin/affiliates/${affiliateId}/codes/${codeId}/referrals`,
-        );
-        return response.data;
-    } catch (error) {
-        throw buildApiError(error, 'Failed to load referrals for this code');
-    }
-};
-
-/**
  * Create a new referral code for the current affiliate.
  * @param {string} code
  * @param {string|null} label
@@ -3301,72 +3115,6 @@ export const getAffiliateStats = async () => {
 // Endpoints in app/api/affiliate_routes.py under /superadmin/affiliates.
 // All require X-API-Key from a client with is_superadmin = true.
 
-/** List every affiliate (active + deactivated) with aggregate stats. */
-export const listSuperadminAffiliates = async () => {
-    try {
-        const response = await api.get('/superadmin/affiliates');
-        return response.data;
-    } catch (error) {
-        throw buildApiError(error, 'Failed to load affiliates');
-    }
-};
-
-/**
- * Invite an existing customer OR send a magic-link to a stranger.
- * @param {string} email
- * @param {number|null} maxActiveCodes - optional override of the 10-code default
- * @param {number|null} commissionPct - optional commission % (0 to 100). Defaults to 0.
- */
-export const inviteSuperadminAffiliate = async (
-    email,
-    maxActiveCodes = null,
-    commissionPct = null,
-) => {
-    try {
-        const payload = { email };
-        if (maxActiveCodes != null) payload.max_active_codes = maxActiveCodes;
-        if (commissionPct != null) payload.commission_pct = commissionPct;
-        const response = await api.post('/superadmin/affiliates', payload);
-        return response.data;
-    } catch (error) {
-        throw buildApiError(error, 'Failed to invite affiliate');
-    }
-};
-
-/** Detail bundle for one affiliate: meta + codes + stats. */
-export const getSuperadminAffiliateDetail = async (affiliateId) => {
-    try {
-        const response = await api.get(`/superadmin/affiliates/${affiliateId}`);
-        return response.data;
-    } catch (error) {
-        throw buildApiError(error, 'Failed to load affiliate details');
-    }
-};
-
-/**
- * Override an affiliate: change cap, commission %, or toggle active status.
- * Deactivating an affiliate also cascades to deactivate every still-active
- * code they own.
- *
- * @param {number} affiliateId
- * @param {{ maxActiveCodes?: number, commissionPct?: number, active?: boolean }} updates
- */
-export const updateSuperadminAffiliate = async (
-    affiliateId,
-    { maxActiveCodes, commissionPct, active } = {},
-) => {
-    try {
-        const payload = {};
-        if (maxActiveCodes !== undefined) payload.max_active_codes = maxActiveCodes;
-        if (commissionPct !== undefined) payload.commission_pct = commissionPct;
-        if (active !== undefined) payload.active = active;
-        const response = await api.patch(`/superadmin/affiliates/${affiliateId}`, payload);
-        return response.data;
-    } catch (error) {
-        throw buildApiError(error, 'Failed to update affiliate');
-    }
-};
-
 // ─── Affiliate invites (magic-link onboarding) ──────────────────────────
 
 /**
@@ -3414,41 +3162,6 @@ export const acceptAffiliateInviteExisting = async (token) => {
         return response.data;
     } catch (error) {
         throw buildApiError(error, 'Failed to accept invite');
-    }
-};
-
-/** List pending magic-link invites (super-admin). */
-export const listSuperadminAffiliateInvites = async () => {
-    try {
-        const response = await api.get('/superadmin/affiliates/invites');
-        return response.data;
-    } catch (error) {
-        throw buildApiError(error, 'Failed to load pending invites');
-    }
-};
-
-/** Revoke a pending magic-link invite. Idempotent. */
-export const revokeSuperadminAffiliateInvite = async (inviteId) => {
-    try {
-        await api.delete(`/superadmin/affiliates/invites/${inviteId}`);
-        return true;
-    } catch (error) {
-        throw buildApiError(error, 'Failed to revoke invite');
-    }
-};
-
-/**
- * HARD-DELETE an affiliate. Removes the affiliate row, all their codes,
- * and the entire click history. Referred clients keep existing but lose
- * their referral_code_id (set to NULL). Irreversible - UI must require
- * explicit confirmation.
- */
-export const deleteSuperadminAffiliate = async (affiliateId) => {
-    try {
-        await api.delete(`/superadmin/affiliates/${affiliateId}`);
-        return true;
-    } catch (error) {
-        throw buildApiError(error, 'Failed to remove affiliate');
     }
 };
 
