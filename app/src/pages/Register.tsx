@@ -21,6 +21,7 @@ import {
   safeRelativePath,
 } from './auth/authFlow';
 import { useTranslation } from '../i18n/useTranslation';
+import { Trans } from '../i18n/Trans';
 
 const PROMO_STORAGE_KEY = 'oyechats_promo_code';
 
@@ -172,10 +173,20 @@ export default function Register() {
       title={t('auth.createYourAccount') || 'Create your account'}
       footer={
         <>
-          Already have an account?{' '}
-          <Link to="/login" className="font-medium text-accent-600 hover:text-accent-700 hover:underline">
-            {t('auth.signIn') || 'Sign in'}
-          </Link>
+          <Trans
+            k="auth.alreadyHaveAccount"
+            fallback="Already have an account? {link}"
+            values={{
+              link: (
+                <Link
+                  to="/login"
+                  className="font-medium text-accent-600 hover:text-accent-700 hover:underline"
+                >
+                  {t('auth.signIn') || 'Sign in'}
+                </Link>
+              ),
+            }}
+          />
         </>
       }
     >
@@ -271,25 +282,32 @@ export default function Register() {
             below had no legal text near it at all. Signing up is the consenting
             act; there is no checkbox to forget to tick. */}
         <p className="text-xs leading-relaxed text-text-secondary">
-          By creating an account you agree to our{' '}
-          <a
-            href="https://www.oyechats.com/legal/terms"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-medium text-accent-600 hover:text-accent-700 hover:underline"
-          >
-            {t('auth.terms') || 'Terms'}
-          </a>{' '}
-          and{' '}
-          <a
-            href="https://www.oyechats.com/legal/privacy"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-medium text-accent-600 hover:text-accent-700 hover:underline"
-          >
-            {t('auth.privacyPolicy') || 'Privacy Policy'}
-          </a>
-          .
+          <Trans
+            k="auth.byCreatingAccount"
+            fallback="By creating an account you agree to our {terms} and {privacy}."
+            values={{
+              terms: (
+                <a
+                  href="https://www.oyechats.com/legal/terms"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium text-accent-600 hover:text-accent-700 hover:underline"
+                >
+                  {t('auth.terms') || 'Terms'}
+                </a>
+              ),
+              privacy: (
+                <a
+                  href="https://www.oyechats.com/legal/privacy"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium text-accent-600 hover:text-accent-700 hover:underline"
+                >
+                  {t('auth.privacyPolicy') || 'Privacy Policy'}
+                </a>
+              ),
+            }}
+          />
         </p>
       </form>
     </AuthShell>

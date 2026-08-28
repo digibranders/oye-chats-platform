@@ -1654,6 +1654,14 @@ const hi = {
     yourNewPasswordNeeds8: 'आपके नए पासवर्ड में 8 अक्षर, एक अक्षर और एक अंक चाहिए।',
   },
   auth: {
+    ruleLength: 'कम से कम 8 अक्षर',
+    ruleLetter: 'एक अक्षर',
+    ruleNumber: 'एक अंक',
+    ruleDone: 'पूरा',
+    ruleNotYet: 'अभी नहीं',
+    alreadyHaveAccount: 'पहले से खाता है? {link}',
+    byCreatingAccount: 'खाता बनाकर आप हमारी {terms} और {privacy} से सहमत होते हैं।',
+    newHereCreate: 'OyeChats पर नए हैं? {link}',
     acmeInc: 'Acme Inc.',
     aiSupport: 'AI सपोर्ट',
     allSet: 'सब तैयार!',
@@ -3045,6 +3053,7 @@ const hi = {
     youveUsedAllTheWebsite: 'आपने अपने प्लान में शामिल सभी वेबसाइट पेज उपयोग कर लिए हैं। और पेज प्रशिक्षित करने के लिए अपग्रेड करें।',
   },
   ds: {
+    required: 'आवश्यक',
     allChangesSaved: 'सभी बदलाव सहेजे गए।',
     back: 'पीछे',
     cancel: 'रद्द करें',

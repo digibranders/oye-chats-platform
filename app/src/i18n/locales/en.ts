@@ -1235,6 +1235,14 @@ const en = {
     yourNewPasswordNeeds8: 'Your new password needs 8 characters, a letter and a number.',
   },
   auth: {
+    ruleLength: 'At least 8 characters',
+    ruleLetter: 'One letter',
+    ruleNumber: 'One number',
+    ruleDone: 'done',
+    ruleNotYet: 'not yet',
+    alreadyHaveAccount: 'Already have an account? {link}',
+    byCreatingAccount: 'By creating an account you agree to our {terms} and {privacy}.',
+    newHereCreate: 'New to OyeChats? {link}',
     acmeInc: 'Acme Inc.',
     aiSupport: 'AI support',
     allSet: 'All set!',
@@ -2626,6 +2634,7 @@ const en = {
     youveUsedAllTheWebsite: 'You\'ve used all the website pages included on your plan. Upgrade to train more pages.',
   },
   ds: {
+    required: 'required',
     allChangesSaved: 'All changes saved.',
     back: 'Back',
     cancel: 'Cancel',

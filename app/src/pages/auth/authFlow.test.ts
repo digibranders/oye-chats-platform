@@ -62,10 +62,12 @@ describe('password rules', () => {
   it('reports every rule, not just the first failure', () => {
     // The whole point of showing the list up front: a user who is short by two
     // characters should not also be told about the digit one attempt later.
+    // `key` travels with the English so the rule can be translated where it is
+    // rendered; the constant itself is evaluated before any locale exists.
     expect(passwordChecks('abcdefgh')).toEqual([
-      { id: 'length', label: 'At least 8 characters', met: true },
-      { id: 'letter', label: 'One letter', met: true },
-      { id: 'number', label: 'One number', met: false },
+      { id: 'length', key: 'auth.ruleLength', label: 'At least 8 characters', met: true },
+      { id: 'letter', key: 'auth.ruleLetter', label: 'One letter', met: true },
+      { id: 'number', key: 'auth.ruleNumber', label: 'One number', met: false },
     ]);
   });
 

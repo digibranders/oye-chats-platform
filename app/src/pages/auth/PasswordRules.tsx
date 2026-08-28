@@ -1,4 +1,5 @@
 import { Check } from 'lucide-react';
+import { useTranslation } from '../../i18n/useTranslation';
 import { cn } from '../../ui';
 import { passwordChecks } from './authFlow';
 
@@ -35,6 +36,7 @@ export interface PasswordRulesProps {
  * `aria-describedby` wiring, and neither caller ever passed one.
  */
 export function PasswordRules({ value }: PasswordRulesProps) {
+  const { t } = useTranslation();
   const checks = passwordChecks(value);
 
   return (
@@ -55,8 +57,10 @@ export function PasswordRules({ value }: PasswordRulesProps) {
               <span className="h-1 w-1 rounded-full bg-text-tertiary" />
             )}
           </span>
-          <span>{check.label}</span>
-          <span className="sr-only">{check.met ? ' — done' : ' — not yet'}</span>
+          <span>{t(check.key) || check.label}</span>
+          <span className="sr-only">
+            {check.met ? ` ${t('auth.ruleDone') || 'done'}` : ` ${t('auth.ruleNotYet') || 'not yet'}`}
+          </span>
         </span>
       ))}
     </span>

@@ -123,7 +123,7 @@ export function Field({
               {/* Announced, never drawn. See `required` above: the visible
                   marker in this system is "Optional", on the fields that have
                   one. */}
-              {required ? <span className="sr-only"> (required)</span> : null}
+              {required ? <span className="sr-only"> ({t('ds.required') || 'required'})</span> : null}
               {optional && !required ? (
                 <span className="ml-1.5 text-xs font-normal text-text-tertiary">{t('ds.optional') || 'Optional'}</span>
               ) : null}

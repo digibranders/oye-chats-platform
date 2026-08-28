@@ -49,6 +49,8 @@ export function maskEmail(email: string): string {
 }
 
 export interface PasswordRule {
+  /** Dictionary key; `label` is the English fallback. */
+  key: string;
   id: string;
   label: string;
   test: (value: string) => boolean;
@@ -63,9 +65,11 @@ export interface PasswordRule {
  * reset screen never showed them at all and failed the submit instead.
  */
 export const PASSWORD_RULES: readonly PasswordRule[] = [
-  { id: 'length', label: 'At least 8 characters', test: (v) => v.length >= 8 },
-  { id: 'letter', label: 'One letter', test: (v) => /[A-Za-z]/.test(v) },
-  { id: 'number', label: 'One number', test: (v) => /\d/.test(v) },
+  // Keyed beside the English: this is a module constant evaluated at import,
+  // before any locale exists, so the label resolves where it is rendered.
+  { id: 'length', key: 'auth.ruleLength', label: 'At least 8 characters', test: (v) => v.length >= 8 },
+  { id: 'letter', key: 'auth.ruleLetter', label: 'One letter', test: (v) => /[A-Za-z]/.test(v) },
+  { id: 'number', key: 'auth.ruleNumber', label: 'One number', test: (v) => /\d/.test(v) },
 ];
 
 export interface PasswordCheck extends Omit<PasswordRule, 'test'> {
@@ -73,7 +77,7 @@ export interface PasswordCheck extends Omit<PasswordRule, 'test'> {
 }
 
 export function passwordChecks(value: string): PasswordCheck[] {
-  return PASSWORD_RULES.map(({ id, label, test }) => ({ id, label, met: test(value) }));
+  return PASSWORD_RULES.map(({ id, key, label, test }) => ({ id, key, label, met: test(value) }));
 }
 
 export function passwordMeetsRules(value: string): boolean {

@@ -22,6 +22,7 @@ import {
   type SignInDoor,
 } from './auth/authFlow';
 import { useTranslation } from '../i18n/useTranslation';
+import { Trans } from '../i18n/Trans';
 
 const schema = z.object({
   email: z
@@ -185,10 +186,20 @@ export default function Login() {
       title={t('auth.signIn') || 'Sign in'}
       footer={
         <>
-          New to OyeChats?{' '}
-          <Link to="/register" className="font-medium text-accent-600 hover:text-accent-700 hover:underline">
-            {t('auth.createAnAccount') || 'Create an account'}
-          </Link>
+          <Trans
+            k="auth.newHereCreate"
+            fallback="New to OyeChats? {link}"
+            values={{
+              link: (
+                <Link
+                  to="/register"
+                  className="font-medium text-accent-600 hover:text-accent-700 hover:underline"
+                >
+                  {t('auth.createAnAccount') || 'Create an account'}
+                </Link>
+              ),
+            }}
+          />
         </>
       }
     >

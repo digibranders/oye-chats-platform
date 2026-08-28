@@ -1,4 +1,5 @@
 import { useId, type ReactNode } from 'react';
+import { useTranslation } from '../../i18n/useTranslation';
 import { cn } from '../lib/cn';
 import { FieldContext } from '../primitives/fieldContext';
 
@@ -99,6 +100,7 @@ export function SettingRow({
   disabled = false,
   className,
 }: SettingRowProps) {
+  const { t } = useTranslation();
   const generatedId = useId();
   // An explicit `htmlFor` wins: the caller has an id it already owns and the
   // row must point at that one, not at a second one it invented.
@@ -152,7 +154,7 @@ export function SettingRow({
               )}
             >
               {label}
-              {required ? <span className="sr-only"> (required)</span> : null}
+              {required ? <span className="sr-only"> ({t('ds.required') || 'required'})</span> : null}
             </Label>
             {badge}
           </span>
