@@ -39,8 +39,18 @@ from app.services import razorpay_service
 logger = logging.getLogger(__name__)
 
 # Local parent statuses that legitimately own a live add-on. Anything else
-# (canceled / expired) means the add-on should have been cancelled.
-_LIVE_PARENT_STATUSES = ("active", "trialing", "past_due")
+# (canceled / expired / trial_expired) means the add-on should have been
+# cancelled.
+#
+# ``paused`` is in this set even though it is not a billing state. A pause is a
+# supported, REVERSIBLE super-admin override (``superadmin_plan_routes``'s
+# status allow-list), and this sweep's only action is an IRREVERSIBLE gateway
+# cancel — Razorpay has no un-cancel. Treating a pause as death meant support
+# pausing an account for a billing dispute silently destroyed the customer's
+# paid seats and branding removal that same night, and unpausing could not
+# bring them back. Erring towards "leave it alone" costs at most some paused
+# add-on billing; erring the other way is unrecoverable.
+_LIVE_PARENT_STATUSES = ("active", "trialing", "past_due", "paused")
 
 # Gateway subscription states that are still billing or can resume billing.
 # ``completed`` / ``cancelled`` / ``expired`` add-ons are already dead at the
@@ -73,8 +83,17 @@ class _AddonSpec:
 
 
 def _clear_seat_addon(sub: Subscription) -> None:
+    # Park the count as PENDING (wanted, not billed) before zeroing the live
+    # mirror, exactly as ``execute_gateway_cancellation`` does. This sweep is
+    # the one teardown path that used to drop it outright, so a customer whose
+    # parent went terminal and later reactivated lost seats they had paid for
+    # with nothing left on the row to restore them from. Entitlement still
+    # follows an authorized charge; only the intent is preserved.
+    wanted = int(sub.seat_addon_quantity or 0)
     sub.seat_addon_subscription_id = None
     sub.seat_addon_quantity = 0
+    if wanted > 0:
+        sub.seat_addon_pending_quantity = wanted
 
 
 def _clear_branding_addon(sub: Subscription) -> None:

@@ -240,3 +240,54 @@ def test_seat_cancel_failure_does_not_fail_the_cancellation(db, monkeypatch):
     assert "cancelled" in result
     assert sub.status == "canceled"
     assert sub.seat_addon_subscription_id == "addon_stuck"  # pointer intact for the sweep
+
+
+# ── A reversible parent state is not an orphan ───────────────────────────────
+#
+# ``_LIVE_PARENT_STATUSES`` listed only active/trialing/past_due, so a parent a
+# super-admin had merely PAUSED (a supported, reversible override) had its seat
+# and branding mandates classified ``parent_dead`` and cancelled at Razorpay —
+# irreversibly, since Razorpay has no un-cancel. Unpausing then returned a
+# customer whose paid seats and branding removal were silently gone, with the
+# seat count zeroed rather than parked, so nothing could restore them.
+
+
+def test_a_paused_parent_keeps_its_addon(db, monkeypatch):
+    client = _client(db, "recon-paused@e.com")
+    plan = _plan(db, "std-recon-paused")
+    paused = _sub(db, client, plan, status="paused", seat_addon_id="addon_paused", seats=4)
+    db.commit()
+
+    cancelled: list[str] = []
+    _patch_gateway(monkeypatch, gateway_items=[_gateway_addon("addon_paused")], cancelled_sink=cancelled)
+
+    result = seat_addon_reports.reconcile_orphaned_seat_addons(db)
+    db.commit()
+
+    assert "addon_paused" not in cancelled, "a pause is reversible; its mandate must survive it"
+    assert result["orphans"] == []
+    db.refresh(paused)
+    assert paused.seat_addon_subscription_id == "addon_paused"
+    assert paused.seat_addon_quantity == 4
+
+
+def test_a_terminal_parent_parks_the_seat_count_for_a_later_reactivation(db, monkeypatch):
+    """Cancelling the mandate of a genuinely dead parent is right; losing the
+    count the customer paid for is not. Every deliberate teardown path parks it
+    as ``seat_addon_pending_quantity`` so a reactivation can re-mint."""
+    client = _client(db, "recon-park@e.com")
+    plan = _plan(db, "std-recon-park")
+    dead = _sub(db, client, plan, status="expired", seat_addon_id="addon_park", seats=5)
+    db.commit()
+
+    cancelled: list[str] = []
+    _patch_gateway(monkeypatch, gateway_items=[_gateway_addon("addon_park")], cancelled_sink=cancelled)
+
+    seat_addon_reports.reconcile_orphaned_seat_addons(db)
+    db.commit()
+
+    assert "addon_park" in cancelled
+    db.refresh(dead)
+    assert dead.seat_addon_subscription_id is None
+    assert dead.seat_addon_quantity == 0
+    assert dead.seat_addon_pending_quantity == 5, "the paid seat count must survive as pending"
