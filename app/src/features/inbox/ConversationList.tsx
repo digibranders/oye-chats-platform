@@ -24,6 +24,7 @@ import {
   type InboxItem,
   type InboxView,
 } from './inboxModel';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface ConversationListProps {
   view: InboxView;
@@ -71,6 +72,7 @@ function Row({
   onSelect: (item: InboxItem) => void;
   now: number;
 }) {
+  const { t } = useTranslation();
   const waiting = item.kind === 'waiting';
   const wait = waiting ? waitLabel(item.at, now) : '';
 
@@ -107,7 +109,7 @@ function Row({
         <Avatar size="md" name={item.name} />
         {item.online ? (
           <span className="absolute -bottom-0.5 -right-0.5 rounded-full bg-surface p-0.5">
-            <StatusDot tone="success" pulse label="Online now" />
+            <StatusDot tone="success" pulse label={t('inbox.onlineNow') || 'Online now'} />
           </span>
         ) : null}
       </div>
@@ -144,7 +146,7 @@ function Row({
           {item.unread > 0 ? (
             <Badge tone="ink" className="figure shrink-0">
               {item.unread > 99 ? '99+' : item.unread}
-              <span className="sr-only"> unread</span>
+              <span className="sr-only"> {t('inbox.unread') || 'unread'}</span>
             </Badge>
           ) : null}
         </div>
@@ -188,6 +190,7 @@ export function ConversationList({
   footer,
   emptyOverride = null,
 }: ConversationListProps) {
+  const { t } = useTranslation();
   const listRef = useRef<HTMLDivElement | null>(null);
   const meta = VIEW_META[view];
 
@@ -240,16 +243,16 @@ export function ConversationList({
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
       <PaneHeader
-        title="Conversations"
+        title={t('inbox.conversations') || 'Conversations'}
         actions={
           <>
             {/* Colour is never the only signal, so the scope that holds unread
                 messages carries a dot beside its name as well as a count. */}
-            {unread[view] ? <StatusDot tone="danger" label="Unread in this scope" /> : null}
+            {unread[view] ? <StatusDot tone="danger" label={t('inbox.unreadInThisScope') || 'Unread in this scope'} /> : null}
             <div className="w-36">
               <Select<InboxView>
                 size="sm"
-                label="Conversation scope"
+                label={t('inbox.conversationScope') || 'Conversation scope'}
                 value={view}
                 onValueChange={onViewChange}
                 options={INBOX_VIEWS.map((value) => ({
@@ -285,7 +288,7 @@ export function ConversationList({
         ) : visible.length === 0 ? (
           <EmptyState
             size="panel"
-            title={query ? 'Nothing matched' : (emptyOverride?.title ?? meta.emptyTitle)}
+            title={query ? (t('inbox.nothingMatched') || 'Nothing matched') : (emptyOverride?.title ?? meta.emptyTitle)}
             description={
               query
                 ? `No conversation in ${meta.label} matches “${query}”.`
@@ -295,7 +298,7 @@ export function ConversationList({
             action={
               query ? (
                 <Button size="sm" variant="secondary" onClick={() => onQueryChange('')}>
-                  Clear search
+                  {t('inbox.clearSearch') || 'Clear search'}
                 </Button>
               ) : (
                 emptyOverride?.action

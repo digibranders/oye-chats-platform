@@ -15,6 +15,7 @@ import { dayKey, formatDayLabel } from '../../lib/messageDay';
 import { isSafeFileUrl, resolveDisplay, translationMissing } from './liveChatHelpers';
 import { TranslationToggle } from './TranslationToggle';
 import type { OperatorMessage } from './liveChatProtocol';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface TranscriptProps {
   messages: OperatorMessage[];
@@ -82,8 +83,9 @@ function isImage(contentType: string | undefined): boolean {
 }
 
 function Attachment({ message }: { message: OperatorMessage }) {
+  const { t } = useTranslation();
   if (!isSafeFileUrl(message.fileUrl)) return null;
-  const name = message.filename ?? 'Attachment';
+  const name = message.filename ?? (t('inbox.attachment') || 'Attachment');
 
   if (isImage(message.contentType)) {
     return (
@@ -151,6 +153,7 @@ export function Transcript({
   onRetryTranslation,
   className,
 }: TranscriptProps) {
+  const { t } = useTranslation();
   // Per-message "show me what they actually wrote". Keyed by message, and
   // deliberately NOT a single transcript-wide flag: an operator checking one
   // suspicious translation should not have the other forty revert under them.
@@ -236,7 +239,7 @@ export function Transcript({
         <div className="mb-4 flex justify-center">
           <Button size="sm" variant="ghost" onClick={onLoadOlder} disabled={loadingOlder}>
             {loadingOlder ? <Spinner className="h-3.5 w-3.5" /> : null}
-            Load earlier messages
+            {t('inbox.loadEarlierMessages') || 'Load earlier messages'}
           </Button>
         </div>
       ) : null}
@@ -257,7 +260,7 @@ export function Transcript({
       {error && messages.length === 0 ? (
         <ErrorState
           size="panel"
-          title="This conversation could not be loaded"
+          title={t('inbox.thisConversationCouldNotBe') || 'This conversation could not be loaded'}
           description={error}
           onRetry={onRetry}
         />
@@ -422,8 +425,8 @@ export function Transcript({
         <EmptyState
           size="panel"
           icon={MessageSquare}
-          title="Nothing said yet"
-          description="Neither the visitor nor the chatbot has written anything in this conversation."
+          title={t('inbox.nothingSaidYet') || 'Nothing said yet'}
+          description={t('inbox.neitherTheVisitorNorThe') || 'Neither the visitor nor the chatbot has written anything in this conversation.'}
         />
       ) : null}
     </div>

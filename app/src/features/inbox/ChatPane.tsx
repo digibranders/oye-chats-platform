@@ -41,6 +41,7 @@ import { useTranscript } from './inboxQueries';
 import { maxVisitorDbId } from './liveChatHelpers';
 import { waitLabel, waitTone, type InboxItem } from './inboxModel';
 import type { OperatorMessage } from './liveChatProtocol';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface ChatPaneProps {
   item: InboxItem;
@@ -75,6 +76,7 @@ function Header({
   now: number;
   onShowDetails?: () => void;
 }) {
+  const { t } = useTranslation();
   const wait = item.kind === 'waiting' ? waitLabel(item.at, now) : '';
   return (
     <PaneHeader
@@ -85,17 +87,17 @@ function Header({
           <span className="min-w-0">
             <span className="flex min-w-0 items-center gap-2">
               <span className="min-w-0 truncate">{item.name}</span>
-              {online ? <StatusDot tone="success" pulse label="Visitor is on the page" /> : null}
+              {online ? <StatusDot tone="success" pulse label={t('inbox.visitorIsOnThePage') || 'Visitor is on the page'} /> : null}
             </span>
             <span className="block truncate text-2xs font-normal text-text-tertiary">
               {item.botName ? `${item.botName} · ` : ''}
               {item.kind === 'waiting'
-                ? 'Waiting for a person'
+                ? t('inbox.waitingForAPerson') || 'Waiting for a person'
                 : item.kind === 'qualified'
-                  ? 'The AI is handling this'
+                  ? t('inbox.theAiIsHandlingThis') || 'The AI is handling this'
                   : online
-                    ? 'On the page now'
-                    : 'Left the page'}
+                    ? t('inbox.onThePageNow') || 'On the page now'
+                    : t('inbox.leftThePage') || 'Left the page'}
             </span>
           </span>
         </span>
@@ -112,7 +114,7 @@ function Header({
             <Button
               size="icon-sm"
               variant="ghost"
-              aria-label="Show visitor details"
+              aria-label={t('inbox.showVisitorDetails') || 'Show visitor details'}
               onClick={onShowDetails}
             >
               <PanelRight aria-hidden />
@@ -144,6 +146,7 @@ export function ChatPane({
   onLeft,
   onShowDetails,
 }: ChatPaneProps) {
+  const { t } = useTranslation();
   const socket = useInboxSocket();
   const sessionId = item.sessionId ?? '';
   const live = item.kind === 'live';
@@ -193,13 +196,13 @@ export function ChatPane({
   useEffect(() => {
     if (!resolution || !sessionId) return;
     const { outcome, visitorName } = resolution;
-    const who = visitorName ?? 'The visitor';
+    const who = visitorName ?? (t('inbox.theVisitor') || 'The visitor');
     if (outcome === 'accepted') toast.success(`${who} accepted your invitation`);
     else if (outcome === 'declined') toast.info(`${who} declined your invitation`);
     else if (outcome === 'expired') toast.info(`Your invitation to ${who} expired`);
     setInvited(false);
     socket.clearConnectResolution(sessionId);
-  }, [resolution, sessionId, socket]);
+  }, [resolution, sessionId, socket, t]);
 
   const run = useCallback(
     async (label: string, action: () => Promise<unknown>): Promise<void> => {
@@ -218,7 +221,7 @@ export function ChatPane({
   );
 
   const accept = (): void => {
-    void run('Could not accept this conversation', async () => {
+    void run(t('inbox.couldNotAcceptThisConversation') || 'Could not accept this conversation', async () => {
       await acceptChat(sessionId, socket.operatorId);
       // The socket's `chat_accepted` moves it onto the board and into "Yours".
       toast.success(`You are now talking to ${item.name}`);
@@ -232,11 +235,11 @@ export function ChatPane({
       .then(() => {
         setInvited(true);
         toast.success(`Invitation sent to ${item.name}`, {
-          description: 'They will see an offer to talk to a person.',
+          description: t('inbox.theyWillSeeAnOffer') || 'They will see an offer to talk to a person.',
         });
       })
       .catch((err: unknown) => {
-        setError(err instanceof Error ? `Could not send the invitation: ${err.message}` : 'Could not send the invitation.');
+        setError(err instanceof Error ? `Could not send the invitation: ${err.message}` : t('inbox.couldNotSendTheInvitation2') || 'Could not send the invitation.');
       })
       .finally(() => setConnecting(false));
   };
@@ -246,17 +249,17 @@ export function ChatPane({
     void cancelConnectRequest(sessionId)
       .then(() => {
         setInvited(false);
-        toast.info('Invitation withdrawn');
+        toast.info(t('inbox.invitationWithdrawn') || 'Invitation withdrawn');
       })
       .catch((err: unknown) => {
-        setError(err instanceof Error ? `Could not withdraw: ${err.message}` : 'Could not withdraw the invitation.');
+        setError(err instanceof Error ? `Could not withdraw: ${err.message}` : t('inbox.couldNotWithdrawTheInvitation') || 'Could not withdraw the invitation.');
       })
       .finally(() => setConnecting(false));
   };
 
   const send = (text: string): void => {
     if (!socket.sendMessage(sessionId, text)) {
-      setError('That message did not send — you are not connected right now.');
+      setError(t('inbox.thatMessageDidNotSend') || 'That message did not send — you are not connected right now.');
       return;
     }
     onDraftChange('');
@@ -266,19 +269,19 @@ export function ChatPane({
     try {
       const uploaded = await uploadOperatorChatFile(file, sessionId);
       if (!socket.sendFile(sessionId, uploaded)) {
-        setError('The file uploaded but could not be sent — you are not connected right now.');
+        setError(t('inbox.theFileUploadedButCould') || 'The file uploaded but could not be sent — you are not connected right now.');
       }
     } catch (err) {
-      setError(err instanceof Error ? `Could not upload that file: ${err.message}` : 'Could not upload that file.');
+      setError(err instanceof Error ? `Could not upload that file: ${err.message}` : t('inbox.couldNotUploadThatFile2') || 'Could not upload that file.');
     }
   };
 
   const composerBlock = !connected
-    ? 'Reconnecting — your reply will not send until the connection is back.'
+    ? t('inbox.reconnectingYourReplyWillNot') || 'Reconnecting — your reply will not send until the connection is back.'
     : !online
-      ? 'The visitor has left the page. They will see your reply when they return.'
+      ? t('inbox.theVisitorHasLeftThe') || 'The visitor has left the page. They will see your reply when they return.'
       : ended
-        ? 'This conversation has ended.'
+        ? t('inbox.thisConversationHasEnded') || 'This conversation has ended.'
         : null;
 
   return (
@@ -287,7 +290,7 @@ export function ChatPane({
         {item.kind === 'waiting' ? (
           <Button size="sm" variant="primary" onClick={accept} loading={busy} disabled={busy}>
             <UserPlus aria-hidden />
-            Accept and reply
+            {t('inbox.acceptAndReply') || 'Accept and reply'}
           </Button>
         ) : null}
 
@@ -301,7 +304,7 @@ export function ChatPane({
               disabled={connecting}
             >
               <X aria-hidden />
-              Withdraw invitation
+              {t('inbox.withdrawInvitation') || 'Withdraw invitation'}
             </Button>
           ) : (
             <Button
@@ -312,7 +315,7 @@ export function ChatPane({
               disabled={connecting}
             >
               <Sparkles aria-hidden />
-              Offer to take over
+              {t('inbox.offerToTakeOver') || 'Offer to take over'}
             </Button>
           )
         ) : null}
@@ -326,23 +329,23 @@ export function ChatPane({
             <MenuRoot>
               <MenuTrigger
                 render={
-                  <Button size="icon-sm" variant="ghost" aria-label="More actions" disabled={busy}>
+                  <Button size="icon-sm" variant="ghost" aria-label={t('inbox.moreActions') || 'More actions'} disabled={busy}>
                     <MoreHorizontal aria-hidden />
                   </Button>
                 }
               />
               <MenuContent>
                 <MenuItem icon={<ArrowRightLeft aria-hidden />} onSelect={() => setTransferOpen(true)}>
-                  Transfer
+                  {t('inbox.transfer') || 'Transfer'}
                 </MenuItem>
                 <MenuItem icon={<Bot aria-hidden />} onSelect={() => setConfirm('return')}>
-                  Back to AI
+                  {t('inbox.backToAi') || 'Back to AI'}
                 </MenuItem>
               </MenuContent>
             </MenuRoot>
             <Button size="sm" onClick={() => setConfirm('resolve')} disabled={busy}>
               <CheckCircle2 aria-hidden />
-              Resolve
+              {t('inbox.resolve') || 'Resolve'}
             </Button>
           </>
         ) : null}
@@ -356,7 +359,7 @@ export function ChatPane({
 
       {item.kind === 'waiting' ? (
         <p className="border-b border-border bg-surface-sunken px-cell py-2 text-xs text-text-secondary">
-          Read what they have already said before you take the conversation — they are still with the AI until you accept.
+          {t('inbox.readWhatTheyHaveAlready') || 'Read what they have already said before you take the conversation — they are still with the AI until you accept.'}
         </p>
       ) : null}
 
@@ -388,7 +391,7 @@ export function ChatPane({
             <Alert tone="neutral">
               {ended.reason === 'transferred'
                 ? `You handed this conversation to ${ended.transferredTo ?? 'a colleague'}. The transcript stays here until you leave the inbox.`
-                : 'This conversation has ended. The transcript stays here until you leave the inbox.'}
+                : t('inbox.thisConversationHasEndedThe') || 'This conversation has ended. The transcript stays here until you leave the inbox.'}
             </Alert>
           ) : null
         }
@@ -408,10 +411,10 @@ export function ChatPane({
       ) : (
         <div className="shrink-0 border-t border-border bg-surface px-cell py-3 text-xs text-text-secondary">
           {item.kind === 'waiting'
-            ? 'Accept the conversation to reply.'
+            ? t('inbox.acceptTheConversationToReply') || 'Accept the conversation to reply.'
             : item.kind === 'qualified'
-              ? 'You are watching the AI answer. Offer to take over to start replying yourself.'
-              : 'This conversation is closed.'}
+              ? t('inbox.youAreWatchingTheAi') || 'You are watching the AI answer. Offer to take over to start replying yourself.'
+              : t('inbox.thisConversationIsClosed') || 'This conversation is closed.'}
         </div>
       )}
 
@@ -429,7 +432,7 @@ export function ChatPane({
       <ConfirmDialog
         open={confirm === 'resolve'}
         onOpenChange={(open) => setConfirm(open ? 'resolve' : null)}
-        title="Resolve this conversation?"
+        title={t('inbox.resolveThisConversation') || 'Resolve this conversation?'}
         description={`${item.name} will be asked to rate the chat, and it leaves your inbox. You can still find it under Leads.`}
         confirmLabel="Resolve"
         onConfirm={async () => {
@@ -441,7 +444,7 @@ export function ChatPane({
       <ConfirmDialog
         open={confirm === 'return'}
         onOpenChange={(open) => setConfirm(open ? 'return' : null)}
-        title="Hand this back to the AI?"
+        title={t('inbox.handThisBackToThe') || 'Hand this back to the AI?'}
         description={`${item.name} keeps their conversation, but the AI answers from here. Use this when the question turned out to be one the bot can handle.`}
         confirmLabel="Back to AI"
         onConfirm={async () => {

@@ -14,6 +14,7 @@ import {
 } from '../../ui';
 import { getDepartments, getOperators, transferChat } from '../../services/api';
 import type { Department, Operator } from '../../types/domain';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface TransferDialogProps {
   open: boolean;
@@ -74,6 +75,7 @@ export function TransferDialog({
   currentOperatorId,
   onTransferred,
 }: TransferDialogProps) {
+  const { t } = useTranslation();
   const [operators, setOperators] = useState<Operator[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
@@ -96,7 +98,7 @@ export function TransferDialog({
         setDepartments(depts);
       })
       .catch(() => {
-        if (active) setError('Could not load the people and departments you can transfer to.');
+        if (active) setError(t('inbox.couldNotLoadThePeople') || 'Could not load the people and departments you can transfer to.');
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -104,7 +106,7 @@ export function TransferDialog({
     return () => {
       active = false;
     };
-  }, [open, sessionId]);
+  }, [open, sessionId, t]);
 
   const candidates = useMemo(
     () =>
@@ -123,17 +125,17 @@ export function TransferDialog({
         .map<RadioCardItem<TargetValue>>((operator) => ({
           value: `op:${operator.id}`,
           label: operator.name,
-          description: `${operator.is_online ? 'Online' : 'Offline'} · ${operatorLoad(operator)}`,
+          description: `${operator.is_online ? t('inbox.online') || 'Online' : t('inbox.offline') || 'Offline'} · ${operatorLoad(operator)}`,
         })),
       ...departments
         .filter((department) => matches(department.name))
         .map<RadioCardItem<TargetValue>>((department) => ({
           value: `dept:${department.id}`,
           label: department.name,
-          description: department.description ?? 'A department, not one person',
+          description: department.description ?? (t('inbox.aDepartmentNotOnePerson') || 'A department, not one person'),
         })),
     ];
-  }, [candidates, departments, query]);
+  }, [candidates, departments, query, t]);
 
   const nobody = candidates.length === 0 && departments.length === 0;
 
@@ -143,13 +145,13 @@ export function TransferDialog({
     setError(null);
     try {
       await transferChat(sessionId, parseTarget(target));
-      toast.success('Conversation transferred', {
+      toast.success(t('inbox.conversationTransferred') || 'Conversation transferred', {
         description: `${visitorName} is now with the person you chose.`,
       });
       onTransferred();
       onOpenChange(false);
     } catch (err) {
-      setError(err instanceof Error ? `Could not transfer: ${err.message}` : 'Could not transfer this conversation.');
+      setError(err instanceof Error ? `Could not transfer: ${err.message}` : t('inbox.couldNotTransferThisConversation') || 'Could not transfer this conversation.');
     } finally {
       setSubmitting(false);
     }
@@ -159,16 +161,16 @@ export function TransferDialog({
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
-      title="Transfer conversation"
+      title={t('inbox.transferConversation') || 'Transfer conversation'}
       description={`${visitorName} will be told they are being connected to someone else.`}
       dismissible={!submitting}
       footer={
         <>
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>
-            Cancel
+            {t('inbox.cancel') || 'Cancel'}
           </Button>
           <Button onClick={() => void submit()} disabled={!target || submitting} loading={submitting}>
-            Transfer
+            {t('inbox.transfer') || 'Transfer'}
           </Button>
         </>
       }
@@ -186,11 +188,11 @@ export function TransferDialog({
         // up as an operator yet" and "Invite a teammate from Settings → Team".
         <EmptyState
           size="panel"
-          title="Nobody to transfer to"
-          description="Invite a teammate from Settings → Team, or create a department, before you can hand a conversation over."
+          title={t('inbox.nobodyToTransferTo') || 'Nobody to transfer to'}
+          description={t('inbox.inviteATeammateFromSettings') || 'Invite a teammate from Settings → Team, or create a department, before you can hand a conversation over.'}
           action={
             <Link to="/settings/team" className={buttonClass('primary', 'sm')}>
-              Invite a teammate
+              {t('inbox.inviteATeammate') || 'Invite a teammate'}
             </Link>
           }
         />
@@ -198,25 +200,25 @@ export function TransferDialog({
         <div className="space-y-3">
           <SearchField
             size="sm"
-            label="Search people and departments"
-            placeholder="Search people and departments…"
+            label={t('inbox.searchPeopleAndDepartments2') || 'Search people and departments'}
+            placeholder={t('inbox.searchPeopleAndDepartments') || 'Search people and departments…'}
             value={query}
             onValueChange={setQuery}
           />
           {options.length === 0 ? (
             <EmptyState
               size="inline"
-              title="Nothing matched"
+              title={t('inbox.nothingMatched') || 'Nothing matched'}
               description={`No person or department matches “${query}”.`}
               action={
                 <Button size="sm" variant="secondary" onClick={() => setQuery('')}>
-                  Clear search
+                  {t('inbox.clearSearch') || 'Clear search'}
                 </Button>
               }
             />
           ) : (
             <RadioCards<TargetValue>
-              label="Transfer to"
+              label={t('inbox.transferTo') || 'Transfer to'}
               items={options}
               value={target as TargetValue}
               onChange={setTarget}

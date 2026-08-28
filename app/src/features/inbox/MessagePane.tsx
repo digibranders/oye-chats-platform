@@ -19,6 +19,7 @@ import {
 } from '../../ui';
 import type { CannedResponse, OfflineMessage } from '../../types/domain';
 import type { OfflineStatus } from './inboxModel';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface MessagePaneProps {
   message: OfflineMessage;
@@ -58,7 +59,8 @@ export function MessagePane({
   onStatusChange,
   onDelete,
 }: MessagePaneProps) {
-  const name = message.visitor_name?.trim() || message.visitor_email?.trim() || 'Visitor';
+  const { t } = useTranslation();
+  const name = message.visitor_name?.trim() || message.visitor_email?.trim() || t('inbox.visitor') || 'Visitor';
   const status = ((message.status ?? 'new').toLowerCase() as OfflineStatus) ?? 'new';
   const [reply, setReply] = useState('');
   const [busy, setBusy] = useState(false);
@@ -81,7 +83,7 @@ export function MessagePane({
       await onStatusChange(message.id, next);
     } catch (err) {
       setError(
-        err instanceof Error ? `Could not update this message: ${err.message}` : 'Could not update this message.',
+        err instanceof Error ? `Could not update this message: ${err.message}` : t('inbox.couldNotUpdateThisMessage2') || 'Could not update this message.',
       );
     } finally {
       setBusy(false);
@@ -99,11 +101,11 @@ export function MessagePane({
               <span className="flex min-w-0 items-center gap-2">
                 <span className="min-w-0 truncate">{name}</span>
                 <Badge tone={STATUS_TONE[status] ?? 'neutral'}>
-                  {status === 'new' ? 'New' : status === 'read' ? 'Read' : 'Replied'}
+                  {status === 'new' ? t('inbox.new') || 'New' : status === 'read' ? t('inbox.read') || 'Read' : t('inbox.replied') || 'Replied'}
                 </Badge>
               </span>
               <span className="figure block truncate text-2xs font-normal text-text-tertiary">
-                {message.created_at ? formatDateTime(message.created_at) : 'Time unknown'}
+                {message.created_at ? formatDateTime(message.created_at) : t('inbox.timeUnknown') || 'Time unknown'}
                 {message.bot_name ? ` · ${message.bot_name}` : ''}
               </span>
             </span>
@@ -118,7 +120,7 @@ export function MessagePane({
               onClick={() => void setStatus(status === 'new' ? 'read' : 'replied')}
             >
               <Check aria-hidden />
-              {status === 'new' ? 'Mark read' : 'Mark replied'}
+              {status === 'new' ? t('inbox.markRead') || 'Mark read' : t('inbox.markReplied') || 'Mark replied'}
             </Button>
             {/* Destructive actions are `danger` outline. As a ghost this was
                 indistinguishable in weight from "Mark read" beside it. */}
@@ -129,7 +131,7 @@ export function MessagePane({
               onClick={() => setConfirmDelete(true)}
             >
               <Trash2 aria-hidden />
-              Delete
+              {t('inbox.delete') || 'Delete'}
             </Button>
           </>
         }
@@ -146,7 +148,7 @@ export function MessagePane({
           <Card>
             <CardBody>
               <p className="whitespace-pre-wrap break-words text-prose text-text-primary">
-                {message.message_body?.trim() || 'This message had no body.'}
+                {message.message_body?.trim() || t('inbox.thisMessageHadNoBody') || 'This message had no body.'}
               </p>
             </CardBody>
           </Card>
@@ -155,7 +157,7 @@ export function MessagePane({
             columns={2}
             items={[
               {
-                label: 'Email',
+                label: t('inbox.email') || 'Email',
                 value: message.visitor_email ? (
                   <a
                     href={`mailto:${message.visitor_email}`}
@@ -167,7 +169,7 @@ export function MessagePane({
                   ABSENT
                 ),
               },
-              { label: 'Phone', value: message.visitor_phone || ABSENT },
+              { label: t('inbox.phone') || 'Phone', value: message.visitor_phone || ABSENT },
             ]}
           />
 
@@ -177,14 +179,14 @@ export function MessagePane({
                   section this sits inside, and two headings at one rung told
                   the reader they were peers. */}
               <h3 id="reply-heading" className="text-base font-semibold text-text-primary">
-                Reply
+                {t('inbox.reply') || 'Reply'}
               </h3>
               {/* One picker, one label. "Manage" was a second affordance for the
                   same drawer, under a second name. */}
               {snippets.length > 0 ? (
                 <Select
                   size="sm"
-                  label="Saved replies"
+                  label={t('inbox.savedReplies') || 'Saved replies'}
                   value=""
                   onValueChange={(chosen) => {
                     if (chosen === MANAGE_OPTION) {
@@ -194,26 +196,26 @@ export function MessagePane({
                     const snippet = snippets.find((entry) => String(entry.id) === chosen);
                     if (snippet) setReply(applyTemplate(snippet.content, message.visitor_name));
                   }}
-                  placeholder="Saved replies…"
+                  placeholder={t('inbox.savedReplies2') || 'Saved replies…'}
                   options={[
                     ...snippets.map((snippet) => ({
                       value: String(snippet.id),
                       label: snippet.title,
                     })),
-                    { value: MANAGE_OPTION, label: 'Manage saved replies…' },
+                    { value: MANAGE_OPTION, label: t('inbox.manageSavedReplies') || 'Manage saved replies…' },
                   ]}
                 />
               ) : (
                 <Button size="sm" variant="ghost" onClick={onManageSnippets}>
-                  Saved replies
+                  {t('inbox.savedReplies') || 'Saved replies'}
                 </Button>
               )}
             </div>
 
             <Textarea
               rows={6}
-              aria-label="Your reply"
-              placeholder="Write your reply. It opens in your email app with their message quoted underneath."
+              aria-label={t('inbox.yourReply') || 'Your reply'}
+              placeholder={t('inbox.writeYourReplyItOpens') || 'Write your reply. It opens in your email app with their message quoted underneath.'}
               value={reply}
               onChange={(event) => setReply(event.target.value)}
             />
@@ -225,21 +227,21 @@ export function MessagePane({
                   className={buttonClass('primary', 'sm')}
                   onClick={() => {
                     if (status !== 'replied') void setStatus('replied');
-                    toast.info('Opening your email app', {
-                      description: 'This message is marked replied. Send it from your mailbox.',
+                    toast.info(t('inbox.openingYourEmailApp') || 'Opening your email app', {
+                      description: t('inbox.thisMessageIsMarkedReplied') || 'This message is marked replied. Send it from your mailbox.',
                     });
                   }}
                 >
                   <Mail aria-hidden />
-                  Open in your email app
+                  {t('inbox.openInYourEmailApp') || 'Open in your email app'}
                 </a>
                 <p className="text-2xs text-text-tertiary">
-                  OyeChats does not send this for you — it goes from your own mailbox.
+                  {t('inbox.oyechatsDoesNotSendThis') || 'OyeChats does not send this for you — it goes from your own mailbox.'}
                 </p>
               </div>
             ) : (
               <Alert tone="warning">
-                They did not leave an email address, so there is no way to reply to this one.
+                {t('inbox.theyDidNotLeaveAn') || 'They did not leave an email address, so there is no way to reply to this one.'}
               </Alert>
             )}
           </section>
@@ -249,13 +251,13 @@ export function MessagePane({
       <ConfirmDialog
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
-        title="Delete this message?"
+        title={t('inbox.deleteThisMessage') || 'Delete this message?'}
         description={`The message from ${name} is removed for everyone in the workspace, and there is no copy anywhere else.`}
         confirmLabel="Delete"
         destructive
         onConfirm={async () => {
           await onDelete(message.id);
-          toast.success('Message deleted');
+          toast.success(t('inbox.messageDeleted') || 'Message deleted');
         }}
       />
     </section>

@@ -6,6 +6,7 @@ import type {
   QueueItem,
 } from './liveChatProtocol';
 import type { OfflineMessage } from '../../types/domain';
+import { t as translateNow } from '../../i18n/i18n';
 
 /**
  * The inbox's one list, and the four scopes onto it.
@@ -138,8 +139,8 @@ export function toWaitingItem(entry: QueueItem): InboxItem {
     kind: 'waiting',
     sessionId: entry.session_id,
     messageId: null,
-    name: entry.name?.trim() || 'Visitor',
-    preview: entry.reason?.trim() || 'Asked to speak to a person',
+    name: entry.name?.trim() || translateNow('inbox.visitor') || 'Visitor',
+    preview: entry.reason?.trim() || translateNow('inbox.askedToSpeakToA') || 'Asked to speak to a person',
     at: entry.created_at ?? null,
     botName: entry.bot_name,
     unread: 0,
@@ -161,14 +162,14 @@ export function toLiveItem(
     kind: 'live',
     sessionId: chat.session_id,
     messageId: null,
-    name: chat.visitor_name?.trim() || 'Visitor',
-    preview: last?.content?.trim() || chat.reason?.trim() || 'No messages yet',
+    name: chat.visitor_name?.trim() || translateNow('inbox.visitor') || 'Visitor',
+    preview: last?.content?.trim() || chat.reason?.trim() || translateNow('inbox.noMessagesYet') || 'No messages yet',
     at: last?.timestamp ?? null,
     botName: chat.bot_name,
     unread,
     state: ended
       ? {
-          label: ended.reason === 'transferred' ? 'Handed over' : 'Ended',
+          label: ended.reason === 'transferred' ? translateNow('inbox.handedOver') || 'Handed over' : translateNow('inbox.ended') || 'Ended',
           tone: 'neutral',
         }
       : null,
@@ -183,8 +184,8 @@ export function toOfflineItem(message: OfflineMessage): InboxItem {
     kind: 'offline',
     sessionId: null,
     messageId: message.id,
-    name: message.visitor_name?.trim() || message.visitor_email?.trim() || 'Visitor',
-    preview: message.message_body?.trim() || 'No message body',
+    name: message.visitor_name?.trim() || message.visitor_email?.trim() || translateNow('inbox.visitor') || 'Visitor',
+    preview: message.message_body?.trim() || translateNow('inbox.noMessageBody') || 'No message body',
     at: message.created_at ?? null,
     botName: message.bot_name ?? null,
     // An unread offline message is worth one unread, so the scope count means
@@ -192,10 +193,10 @@ export function toOfflineItem(message: OfflineMessage): InboxItem {
     unread: status === 'new' ? 1 : 0,
     state:
       status === 'replied'
-        ? { label: 'Replied', tone: 'success' }
+        ? { label: translateNow('inbox.replied') || 'Replied', tone: 'success' }
         : status === 'read'
-          ? { label: 'Read', tone: 'neutral' }
-          : { label: 'New', tone: 'warning' },
+          ? { label: translateNow('inbox.read') || 'Read', tone: 'neutral' }
+          : { label: translateNow('inbox.new') || 'New', tone: 'warning' },
     online: false,
   };
 }
@@ -207,8 +208,8 @@ export function toQualifiedItem(session: QualifiedSession): InboxItem {
     kind: 'qualified',
     sessionId: session.session_id,
     messageId: null,
-    name: session.name?.trim() || 'Visitor',
-    preview: session.last_message_preview?.trim() || 'No messages yet',
+    name: session.name?.trim() || translateNow('inbox.visitor') || 'Visitor',
+    preview: session.last_message_preview?.trim() || translateNow('inbox.noMessagesYet') || 'No messages yet',
     at: session.last_message_at,
     botName: session.bot_name,
     unread: 0,

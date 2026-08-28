@@ -4,6 +4,7 @@ import { Info } from 'lucide-react';
 import { Select, Spinner, Tooltip, type SelectOption } from '../../ui';
 import { setMyLanguage } from '../../services/api';
 import { useLocaleCatalog } from '../../hooks/useLocaleCatalog';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * The language this operator reads live chat in.
@@ -37,6 +38,7 @@ export function OperatorLanguagePicker({
   onChange: (locale: string | null) => void;
   disabled?: boolean;
 }) {
+  const { t } = useTranslation();
   const { labelFor, localeNameFor } = useLocaleCatalog();
   const [error, setError] = useState<string | null>(null);
 
@@ -49,7 +51,7 @@ export function OperatorLanguagePicker({
   const options = useMemo<SelectOption[]>(() => {
     // Reading messages as written is the default, not an opt-out buried at the
     // bottom of the list, so it stays first.
-    const rows: SelectOption[] = [{ value: '', label: 'Do not translate' }];
+    const rows: SelectOption[] = [{ value: '', label: t('inbox.doNotTranslate') || 'Do not translate' }];
     if (orphaned && value !== null) {
       rows.push({ value, label: `${localeNameFor(value) ?? value} (no longer offered)` });
     }
@@ -57,7 +59,7 @@ export function OperatorLanguagePicker({
       rows.push({ value: locale, label: localeNameFor(locale) ?? locale });
     }
     return rows;
-  }, [availableLocales, orphaned, value, localeNameFor]);
+  }, [availableLocales, orphaned, value, localeNameFor, t]);
 
   const save = useMutation({
     mutationFn: async (next: string) => setMyLanguage(next || null),
@@ -68,13 +70,13 @@ export function OperatorLanguagePicker({
       onChange(result?.preferred_locale ?? null);
     },
     onError: (cause) => {
-      setError(cause instanceof Error ? cause.message : 'Could not save your language.');
+      setError(cause instanceof Error ? cause.message : t('inbox.couldNotSaveYourLanguage') || 'Could not save your language.');
     },
   });
 
   const hint = value
     ? `Visitor messages are translated into ${labelFor(value) ?? value}.`
-    : 'Messages show in the language they were written in.';
+    : t('inbox.messagesShowInTheLanguage') || 'Messages show in the language they were written in.';
 
   return (
     <div className="flex items-center gap-2">
@@ -85,17 +87,17 @@ export function OperatorLanguagePicker({
           assistive tech, so this span is decoration, not a second name for
           screen readers to hear. */}
       <span aria-hidden className="text-xs text-text-tertiary">
-        Read live chat in
+        {t('inbox.readLiveChatIn') || 'Read live chat in'}
       </span>
       <Select
         size="sm"
-        label="Read live chat in"
+        label={t('inbox.readLiveChatIn') || 'Read live chat in'}
         value={value ?? ''}
         options={options}
         disabled={disabled || save.isPending}
         onValueChange={(next) => save.mutate(next)}
       />
-      {save.isPending ? <Spinner size="sm" label="Saving your language" /> : null}
+      {save.isPending ? <Spinner size="sm" label={t('inbox.savingYourLanguage') || 'Saving your language'} /> : null}
       {error ? (
         <span className="text-xs text-danger" role="alert">
           {error}

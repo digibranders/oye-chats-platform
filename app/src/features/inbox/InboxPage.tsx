@@ -43,6 +43,7 @@ import {
   type InboxView,
 } from './inboxModel';
 import type { ConnectionStatus } from './liveChatProtocol';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /** How often the wait timers advance. One clock for the whole surface. */
 const CLOCK_MS = 5000;
@@ -105,6 +106,7 @@ interface ConsoleProps {
 }
 
 function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) {
+  const { t } = useTranslation();
   const socket = useInboxSocket();
   const [params, setParams] = useSearchParams();
   // `SplitPane` shows its third pane at 1152px of split width, which beside the
@@ -318,10 +320,10 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
     try {
       await addSelfAsOperator(botId);
       await operator.refresh();
-      toast.success('You can now take live chats');
+      toast.success(t('inbox.youCanNowTakeLive') || 'You can now take live chats');
     } catch (err) {
-      toast.error('Could not add you as an operator', {
-        description: err instanceof Error ? err.message : 'Please try again.',
+      toast.error(t('inbox.couldNotAddYouAs') || 'Could not add you as an operator', {
+        description: err instanceof Error ? err.message : t('inbox.pleaseTryAgain') || 'Please try again.',
       });
     } finally {
       setJoining(false);
@@ -343,29 +345,29 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
   const emptyOverride =
     liveChat && offlineLive && isLiveView(view)
       ? {
-          title: 'You are not taking chats',
+          title: t('inbox.youAreNotTakingChats') || 'You are not taking chats',
           description:
-            'Turn yourself on above and waiting visitors will appear here the moment they ask for a person.',
+            t('inbox.turnYourselfOnAboveAnd') || 'Turn yourself on above and waiting visitors will appear here the moment they ask for a person.',
         }
       : liveChat && operator.unavailable && isLiveView(view)
         ? {
-            title: 'You are not set up to take chats',
-            description: 'Add yourself as an operator on this workspace to see and answer live conversations.',
+            title: t('inbox.youAreNotSetUp') || 'You are not set up to take chats',
+            description: t('inbox.addYourselfAsAnOperator') || 'Add yourself as an operator on this workspace to see and answer live conversations.',
             action: (
               <Button onClick={() => void joinLiveChat()} loading={joining} disabled={joining}>
                 <UserPlus aria-hidden />
-                Add me as an operator
+                {t('inbox.addMeAsAnOperator') || 'Add me as an operator'}
               </Button>
             ),
           }
         : !liveChat && isLiveView(view)
           ? {
-              title: 'Live chat is not on your plan',
+              title: t('inbox.liveChatIsNotOn') || 'Live chat is not on your plan',
               description:
-                'Upgrade to answer visitors yourself, take over from the AI, and see who is on your site right now.',
+                t('inbox.upgradeToAnswerVisitorsYourself') || 'Upgrade to answer visitors yourself, take over from the AI, and see who is on your site right now.',
               action: (
                 <Link to="/billing" className={buttonClass('primary', 'sm')}>
-                  See plans
+                  {t('inbox.seePlans') || 'See plans'}
                 </Link>
               ),
             }
@@ -399,7 +401,7 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
               disabled={offline.page <= 1}
               onClick={() => offline.setPage(offline.page - 1)}
             >
-              Previous
+              {t('inbox.previous') || 'Previous'}
             </Button>
             <span className="figure text-2xs text-text-tertiary">
               Page {offline.page} of {Math.max(1, Math.ceil(offline.total / offline.pageSize))}
@@ -410,7 +412,7 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
               disabled={offline.page >= Math.ceil(offline.total / offline.pageSize)}
               onClick={() => offline.setPage(offline.page + 1)}
             >
-              Next
+              {t('inbox.next') || 'Next'}
             </Button>
           </div>
         ) : null
@@ -424,11 +426,11 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
         <div className="flex h-full items-center justify-center bg-canvas p-6">
           <LockedState
             className="max-w-md"
-            title="Live chat is a paid feature"
-            description="Your visitors can still leave you messages — those are in the Messages scope. Upgrade to answer them in real time, take conversations over from the AI, and route them to your team."
+            title={t('inbox.liveChatIsAPaid') || 'Live chat is a paid feature'}
+            description={t('inbox.yourVisitorsCanStillLeave') || 'Your visitors can still leave you messages — those are in the Messages scope. Upgrade to answer them in real time, take conversations over from the AI, and route them to your team.'}
             action={
               <Link to="/billing" className={buttonClass('primary')}>
-                See plans
+                {t('inbox.seePlans') || 'See plans'}
               </Link>
             }
           />
@@ -440,7 +442,7 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
         <div className="flex h-full items-center justify-center bg-canvas p-6">
           <EmptyState
             icon={MessageSquare}
-            title="Nothing open"
+            title={t('inbox.nothingOpen') || 'Nothing open'}
             description={VIEW_META[view].blurb}
           />
         </div>
@@ -492,7 +494,7 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
           "Inbox" in the 56px top bar; a second bordered bar under it repeating
           the word cost ~100px of chrome before any conversation. */}
       <header className="flex min-h-row shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-border bg-surface px-cell">
-        <h1 className="sr-only">Inbox</h1>
+        <h1 className="sr-only">{t('inbox.inbox') || 'Inbox'}</h1>
         {liveChat && !operator.unavailable ? (
           <Badge tone={connection.tone} dot>
             {connection.label}
@@ -502,7 +504,7 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
         <div className="ml-auto flex items-center gap-3">
           {!liveChat ? (
             <Link to="/billing" className={buttonClass('primary', 'sm')}>
-              Add live chat
+              {t('inbox.addLiveChat') || 'Add live chat'}
             </Link>
           ) : operator.unavailable ? (
             <Button
@@ -513,7 +515,7 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
               disabled={joining}
             >
               <UserPlus aria-hidden />
-              Add me as an operator
+              {t('inbox.addMeAsAnOperator') || 'Add me as an operator'}
             </Button>
           ) : (
             <>
@@ -533,7 +535,7 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
                 checked={operator.isOnline}
                 onCheckedChange={() => void operator.toggle()}
                 disabled={operator.saving || operator.loading}
-                label="Taking chats"
+                label={t('inbox.takingChats') || 'Taking chats'}
               />
             </>
           )}
@@ -569,7 +571,7 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
            and its property rows changed shape between the two presentations of
            one panel. `Drawer` documents `xs` as "the width of a pane… the
            inbox's visitor panel" for exactly this. */
-        <Drawer open={detailsOpen} onOpenChange={setDetailsOpen} title="Visitor details" width="xs">
+        <Drawer open={detailsOpen} onOpenChange={setDetailsOpen} title={t('inbox.visitorDetails') || 'Visitor details'} width="xs">
           <VisitorPanel {...visitorProps} variant="drawer" />
         </Drawer>
       ) : null}

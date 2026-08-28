@@ -25,6 +25,7 @@ import {
 import { ConversationLanguageBadge } from './ConversationLanguageBadge';
 import { useLeadAnnotations } from '../leads/useLeadAnnotations';
 import type { VisitorProfile } from './visitorProfile';
+import { useTranslation } from '../../i18n/useTranslation';
 
 const BANT_LABEL: Record<keyof NonNullable<VisitorProfile['bant']>, string> = {
   budget: 'Budget',
@@ -64,6 +65,7 @@ function prettyUrl(raw: string): string {
  * visitor, and 200px of editable chrome under eleven facts is not that.
  */
 function PrivateNotes({ sessionId }: { sessionId: string }) {
+  const { t } = useTranslation();
   const store = useLeadAnnotations();
   const controller = store.controllerFor(sessionId);
   const [note, setNote] = useState(() => controller?.note?.text ?? '');
@@ -87,12 +89,12 @@ function PrivateNotes({ sessionId }: { sessionId: string }) {
     >
       <div className="space-y-2.5">
         <Alert tone="neutral">
-          These notes and tags stay in this browser. Nobody else on your team can see them.
+          {t('inbox.theseNotesAndTagsStay') || 'These notes and tags stay in this browser. Nobody else on your team can see them.'}
         </Alert>
         <Textarea
           rows={3}
-          aria-label="Private note about this visitor"
-          placeholder="Context for later — what they need, who to loop in…"
+          aria-label={t('inbox.privateNoteAboutThisVisitor') || 'Private note about this visitor'}
+          placeholder={t('inbox.contextForLaterWhatThey') || 'Context for later — what they need, who to loop in…'}
           value={note}
           onChange={(event) => setNote(event.target.value)}
           // Saved on blur rather than by a button: this console has a `SaveBar`
@@ -101,17 +103,17 @@ function PrivateNotes({ sessionId }: { sessionId: string }) {
           onBlur={() => {
             if (!dirty) return;
             controller.saveNote(note);
-            toast.success('Note saved');
+            toast.success(t('inbox.noteSaved') || 'Note saved');
           }}
         />
         <TagInput
-          label="Tags"
+          label={t('inbox.tags') || 'Tags'}
           values={tags}
           onValuesChange={(next) => {
             setTags(next);
             controller.saveTags(next.join(', '));
           }}
-          placeholder="Add a tag…"
+          placeholder={t('inbox.addATag') || 'Add a tag…'}
         />
       </div>
     </Disclosure>
@@ -159,6 +161,7 @@ export function VisitorPanel({
   variant = 'pane',
   className,
 }: VisitorPanelProps) {
+  const { t } = useTranslation();
   const pane = variant === 'pane';
   // Stacked, in both presentations, because both are about 288px wide.
   //
@@ -177,13 +180,13 @@ export function VisitorPanel({
     () =>
       profile
         ? [
-            { label: 'Phone', value: profile.phone },
-            { label: 'Company', value: profile.company },
-            { label: 'Location', value: profile.location },
-            { label: 'Device', value: profile.device },
+            { label: t('inbox.phone') || 'Phone', value: profile.phone },
+            { label: t('inbox.company') || 'Company', value: profile.company },
+            { label: t('inbox.location') || 'Location', value: profile.location },
+            { label: t('inbox.device') || 'Device', value: profile.device },
           ]
         : [],
-    [profile],
+    [profile, t],
   );
 
   const source = useMemo<PropertyItem[]>(() => {
@@ -191,7 +194,7 @@ export function VisitorPanel({
     const rows: PropertyItem[] = [];
     if (profile.pageUrl) {
       rows.push({
-        label: 'On page',
+        label: t('inbox.onPage') || 'On page',
         value: (
           <Tooltip content={profile.pageUrl}>
             <a
@@ -209,7 +212,7 @@ export function VisitorPanel({
     }
     if (profile.referrer) {
       rows.push({
-        label: 'Referred by',
+        label: t('inbox.referredBy') || 'Referred by',
         value: (
           <Tooltip content={profile.referrer}>
             <span className="block min-w-0 truncate">{prettyUrl(profile.referrer)}</span>
@@ -218,7 +221,7 @@ export function VisitorPanel({
       });
     }
     return rows;
-  }, [profile]);
+  }, [profile, t]);
 
   // An offline message has no session, so five of these seven are facts that
   // cannot exist for it rather than facts we looked for and did not find. Seven
@@ -226,39 +229,39 @@ export function VisitorPanel({
   // reserved for a value that is genuinely absent (DESIGN.md rule 10).
   const context = useMemo<PropertyItem[]>(() => {
     if (!profile) return [];
-    const rows: PropertyItem[] = [{ label: 'Chatbot', value: profile.botName }];
+    const rows: PropertyItem[] = [{ label: t('inbox.chatbot') || 'Chatbot', value: profile.botName }];
     if (profile.kind === 'offline') {
       rows.push({
-        label: 'Received',
+        label: t('inbox.received') || 'Received',
         value: profile.startedAt ? formatDateTime(profile.startedAt) : null,
       });
       return rows;
     }
     rows.push(
-      { label: 'Department', value: profile.departmentName },
-      { label: 'Assigned to', value: profile.operatorName },
-      { label: 'Started', value: profile.startedAt ? formatDateTime(profile.startedAt) : null },
+      { label: t('inbox.department') || 'Department', value: profile.departmentName },
+      { label: t('inbox.assignedTo') || 'Assigned to', value: profile.operatorName },
+      { label: t('inbox.started') || 'Started', value: profile.startedAt ? formatDateTime(profile.startedAt) : null },
       {
-        label: 'Last active',
+        label: t('inbox.lastActive') || 'Last active',
         value: profile.lastActiveAt ? formatRelative(profile.lastActiveAt) : null,
       },
       {
-        label: 'Messages',
+        label: t('inbox.messages') || 'Messages',
         value: profile.messageCount != null ? formatNumber(profile.messageCount) : null,
       },
       {
-        label: 'Rated this chat',
+        label: t('inbox.ratedThisChat') || 'Rated this chat',
         value:
           profile.rating != null ? (
             <>
               <span className="figure">{profile.rating.toFixed(1)}</span>
-              <span className="text-text-tertiary"> out of 5</span>
+              <span className="text-text-tertiary"> {t('inbox.outOf5') || 'out of 5'}</span>
             </>
           ) : null,
       },
     );
     return rows;
-  }, [profile]);
+  }, [profile, t]);
 
   // A badge as the *label* of a paragraph made "Budget" green whenever a value
   // existed — colour carrying "has a value", which no other badge in the system
@@ -306,8 +309,8 @@ export function VisitorPanel({
         <EmptyState
           size="panel"
           icon={UserRound}
-          title="No conversation open"
-          description="Pick a conversation to see who is on the other end."
+          title={t('inbox.noConversationOpen') || 'No conversation open'}
+          description={t('inbox.pickAConversationToSee') || 'Pick a conversation to see who is on the other end.'}
         />
       );
     }
@@ -322,12 +325,12 @@ export function VisitorPanel({
             action={
               onRetry ? (
                 <Button size="sm" onClick={onRetry}>
-                  Try again
+                  {t('inbox.tryAgain') || 'Try again'}
                 </Button>
               ) : undefined
             }
           >
-            These details may be out of date.
+            {t('inbox.theseDetailsMayBeOut') || 'These details may be out of date.'}
           </Alert>
         ) : null}
 
@@ -349,42 +352,42 @@ export function VisitorPanel({
                 {profile.email}
               </a>
             ) : (
-              <p className="text-xs text-text-tertiary">No contact details captured</p>
+              <p className="text-xs text-text-tertiary">{t('inbox.noContactDetailsCaptured') || 'No contact details captured'}</p>
             )}
           </div>
         </div>
 
         {profile.handoffReason ? (
           <div className="border-l-[3px] border-l-border-strong pl-3">
-            <Eyebrow>Why they wanted a person</Eyebrow>
+            <Eyebrow>{t('inbox.whyTheyWantedAPerson') || 'Why they wanted a person'}</Eyebrow>
             <p className="mt-0.5 text-xs text-text-primary">{profile.handoffReason}</p>
           </div>
         ) : null}
 
-        <PropertyGrid label="Contact details" layout="stacked" density="compact" items={identity} />
+        <PropertyGrid label={t('inbox.contactDetails') || 'Contact details'} layout="stacked" density="compact" items={identity} />
 
         {source.length > 0 ? (
           <div>
-            <Eyebrow>Where they came from</Eyebrow>
+            <Eyebrow>{t('inbox.whereTheyCameFrom') || 'Where they came from'}</Eyebrow>
             <PropertyGrid layout="stacked" density="compact" items={source} className="mt-1" />
           </div>
         ) : null}
 
         <div>
-          <Eyebrow>This conversation</Eyebrow>
+          <Eyebrow>{t('inbox.thisConversation') || 'This conversation'}</Eyebrow>
           <PropertyGrid layout="stacked" density="compact" items={context} className="mt-1" />
         </div>
 
         {bant.length > 0 ? (
           <div>
-            <Eyebrow>What the AI learned</Eyebrow>
+            <Eyebrow>{t('inbox.whatTheAiLearned') || 'What the AI learned'}</Eyebrow>
             <PropertyGrid layout="stacked" density="compact" items={bant} className="mt-1" />
           </div>
         ) : null}
 
         {profile.quotation && profile.quotation.line_items.length > 0 ? (
           <div>
-            <Eyebrow>What they priced up</Eyebrow>
+            <Eyebrow>{t('inbox.whatTheyPricedUp') || 'What they priced up'}</Eyebrow>
             <PropertyGrid
               layout="stacked"
               density="compact"
@@ -416,7 +419,7 @@ export function VisitorPanel({
 
   return (
     <aside
-      aria-label="Visitor details"
+      aria-label={t('inbox.visitorDetails') || 'Visitor details'}
       className={cn(
         'flex min-h-0 flex-col',
         // No `border-l`: `SplitPane`'s inspector section draws it, and two
@@ -427,7 +430,7 @@ export function VisitorPanel({
     >
       {pane ? (
         <>
-          <PaneHeader title="Details" />
+          <PaneHeader title={t('inbox.details') || 'Details'} />
           <div className="min-h-0 flex-1 overflow-y-auto">{body}</div>
         </>
       ) : (

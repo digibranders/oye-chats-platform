@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Languages } from 'lucide-react';
 import { Spinner, cn } from '../../ui';
 import { useLocaleCatalog } from '../../hooks/useLocaleCatalog';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * Original or translation, under one bubble.
@@ -31,6 +32,7 @@ export function TranslationToggle({
   onRetry?: () => Promise<void> | void;
   className?: string;
 }) {
+  const { t } = useTranslation();
   const [retrying, setRetrying] = useState(false);
   const { labelFor } = useLocaleCatalog();
   const label = labelFor(sourceLanguage);
@@ -48,7 +50,7 @@ export function TranslationToggle({
   if (onRetry) {
     return (
       <span className={cn('inline-flex items-center gap-1.5 text-2xs text-text-tertiary', className)}>
-        Translation unavailable
+        {t('inbox.translationUnavailable') || 'Translation unavailable'}
         <button
           type="button"
           onClick={() => void retry()}
@@ -59,7 +61,7 @@ export function TranslationToggle({
           className="inline-flex items-center gap-1 underline underline-offset-2 hover:text-text-primary disabled:cursor-not-allowed disabled:text-text-disabled disabled:no-underline"
         >
           {retrying ? <Spinner size="sm" label={null} /> : null}
-          {retrying ? 'Translating' : 'Retry'}
+          {retrying ? t('inbox.translating') || 'Translating' : t('inbox.retry') || 'Retry'}
         </button>
       </span>
     );
@@ -80,10 +82,10 @@ export function TranslationToggle({
     >
       <Languages aria-hidden className="h-3 w-3" />
       {showOriginal
-        ? 'View translation'
+        ? t('inbox.viewTranslation') || 'View translation'
         : label
           ? `View original (${label})`
-          : 'View original'}
+          : t('inbox.viewOriginal') || 'View original'}
     </button>
   );
 }

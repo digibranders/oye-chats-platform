@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { getChatHistory, getQualifiedBotSessions, getSessionDetails } from '../../services/api';
 import { parseHistoryMessage } from './liveChatHelpers';
 import type { OperatorMessage, QualifiedSession, SessionDetails } from './liveChatProtocol';
+import { t as translateNow } from '../../i18n/i18n';
 
 /**
  * The inbox's REST reads.
@@ -25,7 +26,7 @@ export function parseQualifiedSessions(raw: Record<string, unknown>): QualifiedS
       session_id: String(session.session_id ?? ''),
       bot_id: typeof session.bot_id === 'number' ? session.bot_id : null,
       bot_name: str(session.bot_name),
-      name: str(session.name) ?? 'Visitor',
+      name: str(session.name) ?? (translateNow('inbox.visitor') || 'Visitor'),
       email: str(session.email),
       phone: str(session.phone),
       company: str(session.company),
@@ -125,7 +126,7 @@ export function useQualifiedSessions(enabled: boolean, version: number): Qualifi
         setError(null);
       } catch (err: unknown) {
         if (!active) return;
-        setError(err instanceof Error ? err.message : 'Could not load qualified conversations.');
+        setError(err instanceof Error ? err.message : translateNow('inbox.couldNotLoadQualifiedConversations') || 'Could not load qualified conversations.');
       } finally {
         if (active) setLoading(false);
       }
@@ -178,7 +179,7 @@ export function useSessionDetails(sessionId: string | null): SessionDetailsState
         setError(null);
       } catch (err: unknown) {
         if (!active || token !== tokenRef.current) return;
-        setError(err instanceof Error ? err.message : 'Could not load this visitor.');
+        setError(err instanceof Error ? err.message : translateNow('inbox.couldNotLoadThisVisitor') || 'Could not load this visitor.');
       } finally {
         if (active && token === tokenRef.current) setLoading(false);
       }
@@ -236,7 +237,7 @@ export function useTranscript(sessionId: string | null, poll: boolean): Transcri
         // Only the very first attempt may show an error: after that there is a
         // transcript on screen, and a transient failure must not remove it.
         if (!active || !first) return;
-        setError(err instanceof Error ? err.message : 'Could not load this conversation.');
+        setError(err instanceof Error ? err.message : translateNow('inbox.couldNotLoadThisConversation') || 'Could not load this conversation.');
       } finally {
         if (active) {
           first = false;

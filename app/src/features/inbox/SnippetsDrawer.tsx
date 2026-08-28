@@ -19,6 +19,7 @@ import {
   updateCannedResponse,
 } from '../../services/api';
 import type { CannedResponse } from '../../types/domain';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface SnippetsDrawerProps {
   open: boolean;
@@ -52,6 +53,7 @@ function normaliseShortcut(value: string): string {
  * it — the way Front, Intercom and Zendesk all landed on.
  */
 export function SnippetsDrawer({ open, onOpenChange, snippets, loading, onChanged }: SnippetsDrawerProps) {
+  const { t } = useTranslation();
   const [draft, setDraft] = useState<DraftState>(BLANK);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -71,7 +73,7 @@ export function SnippetsDrawer({ open, onOpenChange, snippets, loading, onChange
     const title = draft.title.trim();
     const content = draft.content.trim();
     if (!title || !content) {
-      setError('A saved reply needs both a name and something to say.');
+      setError(t('inbox.aSavedReplyNeedsBoth') || 'A saved reply needs both a name and something to say.');
       return;
     }
     setSaving(true);
@@ -80,16 +82,16 @@ export function SnippetsDrawer({ open, onOpenChange, snippets, loading, onChange
       const shortcut = normaliseShortcut(draft.shortcut);
       if (draft.id == null) {
         await createCannedResponse({ title, content, ...(shortcut ? { shortcut } : {}) });
-        toast.success('Saved reply added');
+        toast.success(t('inbox.savedReplyAdded') || 'Saved reply added');
       } else {
         await updateCannedResponse(draft.id, { title, content, shortcut: shortcut || null });
-        toast.success('Saved reply updated');
+        toast.success(t('inbox.savedReplyUpdated') || 'Saved reply updated');
       }
       setDraft(BLANK);
       setEditing(false);
       onChanged();
     } catch (err) {
-      setError(err instanceof Error ? `Could not save: ${err.message}` : 'Could not save this reply.');
+      setError(err instanceof Error ? `Could not save: ${err.message}` : t('inbox.couldNotSaveThisReply') || 'Could not save this reply.');
     } finally {
       setSaving(false);
     }
@@ -106,14 +108,14 @@ export function SnippetsDrawer({ open, onOpenChange, snippets, loading, onChange
         title={
           editing
             ? draft.id == null
-              ? 'New saved reply'
+              ? t('inbox.newSavedReply') || 'New saved reply'
               : `Edit “${draft.title.trim() || 'saved reply'}”`
-            : 'Saved replies'
+            : t('inbox.savedReplies') || 'Saved replies'
         }
         description={
           editing
             ? undefined
-            : "Type / in the message box to drop one into a conversation. Use {name} and it becomes the visitor's first name."
+            : t('inbox.typeInTheMessageBox') || 'Type / in the message box to drop one into a conversation. Use {name} and it becomes the visitor\'s first name.'
         }
         width="md"
         footer={
@@ -128,10 +130,10 @@ export function SnippetsDrawer({ open, onOpenChange, snippets, loading, onChange
                 }}
                 disabled={saving}
               >
-                Cancel
+                {t('inbox.cancel') || 'Cancel'}
               </Button>
               <Button onClick={() => void save()} loading={saving} disabled={saving}>
-                {draft.id == null ? 'Add reply' : 'Save changes'}
+                {draft.id == null ? t('inbox.addReply') || 'Add reply' : t('inbox.saveChanges') || 'Save changes'}
               </Button>
             </>
           ) : (
@@ -143,7 +145,7 @@ export function SnippetsDrawer({ open, onOpenChange, snippets, loading, onChange
               }}
             >
               <Plus aria-hidden />
-              New saved reply
+              {t('inbox.newSavedReply') || 'New saved reply'}
             </Button>
           )
         }
@@ -156,34 +158,34 @@ export function SnippetsDrawer({ open, onOpenChange, snippets, loading, onChange
 
         {editing ? (
           <div className="space-y-4">
-            <Field label="Name" required hint="What you will recognise it by in the list.">
+            <Field label={t('inbox.name') || 'Name'} required hint={t('inbox.whatYouWillRecogniseIt') || 'What you will recognise it by in the list.'}>
               <Input
                 value={draft.title}
                 onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))}
-                placeholder="Pricing question"
+                placeholder={t('inbox.pricingQuestion') || 'Pricing question'}
               />
             </Field>
             {/* The one skippable field of the three, so it is the one that
                 carries a marker — and it carries it beside the label rather
                 than as the first word of its hint. See DESIGN.md rule 4. */}
             <Field
-              label="Shortcut"
+              label={t('inbox.shortcut') || 'Shortcut'}
               optional
-              hint="Typing /pricing in the message box finds it instantly."
+              hint={t('inbox.typingPricingInTheMessage') || 'Typing /pricing in the message box finds it instantly.'}
             >
               <Input
                 value={draft.shortcut}
                 onChange={(event) => setDraft((current) => ({ ...current, shortcut: event.target.value }))}
                 leading={<span className="figure text-text-tertiary">/</span>}
-                placeholder="pricing"
+                placeholder={t('inbox.pricing') || 'pricing'}
               />
             </Field>
-            <Field label="Message" required>
+            <Field label={t('inbox.message') || 'Message'} required>
               <Textarea
                 rows={6}
                 value={draft.content}
                 onChange={(event) => setDraft((current) => ({ ...current, content: event.target.value }))}
-                placeholder="Hi {name}, our plans start at…"
+                placeholder={t('inbox.hiNameOurPlansStart') || 'Hi {name}, our plans start at…'}
               />
             </Field>
           </div>
@@ -192,8 +194,8 @@ export function SnippetsDrawer({ open, onOpenChange, snippets, loading, onChange
         ) : snippets.length === 0 ? (
           <EmptyState
             size="panel"
-            title="No saved replies yet"
-            description="Write the answers your team gives every day once, and reach them with a slash from any conversation."
+            title={t('inbox.noSavedRepliesYet') || 'No saved replies yet'}
+            description={t('inbox.writeTheAnswersYourTeam') || 'Write the answers your team gives every day once, and reach them with a slash from any conversation.'}
           />
         ) : (
           <ul className="divide-y divide-border">
@@ -247,15 +249,15 @@ export function SnippetsDrawer({ open, onOpenChange, snippets, loading, onChange
         onOpenChange={(next) => {
           if (!next) setPendingDelete(null);
         }}
-        title={pendingDelete ? `Delete “${pendingDelete.title}”?` : 'Delete this reply?'}
-        description="Everyone on your team loses this saved reply. Conversations where it was already sent are unaffected."
+        title={pendingDelete ? `Delete “${pendingDelete.title}”?` : t('inbox.deleteThisReply') || 'Delete this reply?'}
+        description={t('inbox.everyoneOnYourTeamLoses') || 'Everyone on your team loses this saved reply. Conversations where it was already sent are unaffected.'}
         confirmLabel="Delete"
         destructive
         onConfirm={async () => {
           if (!pendingDelete) return;
           await deleteCannedResponse(pendingDelete.id);
           setPendingDelete(null);
-          toast.success('Saved reply deleted');
+          toast.success(t('inbox.savedReplyDeleted') || 'Saved reply deleted');
           onChanged();
         }}
       />

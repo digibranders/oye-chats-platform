@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Paperclip, Send, Zap } from 'lucide-react';
 import { Button, Kbd, Spinner, Tooltip, cn, formatBytes, toast } from '../../ui';
 import type { CannedResponse } from '../../types/domain';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /** Anything larger is refused before the upload starts, not after it fails. */
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -58,9 +59,14 @@ export function Composer({
   onTyping,
   snippets,
   disabledReason = null,
-  placeholder = 'Write a reply…   /  for a saved reply',
+  placeholder,
   onManageSnippets,
 }: ComposerProps) {
+  const { t } = useTranslation();
+  // Defaulted in the body, not the signature: a default parameter is evaluated
+  // before the hook runs, so `t` does not exist yet there.
+  const placeholderText =
+    placeholder ?? (t('inbox.writeAReplyForA') || 'Write a reply…   /  for a saved reply');
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -140,7 +146,7 @@ export function Composer({
     event.target.value = '';
     if (!file) return;
     if (file.size > MAX_FILE_BYTES) {
-      toast.error('That file is too large', {
+      toast.error(t('inbox.thatFileIsTooLarge') || 'That file is too large', {
         description: `The limit is ${formatBytes(MAX_FILE_BYTES)} and this one is ${formatBytes(file.size)}.`,
       });
       return;
@@ -159,7 +165,7 @@ export function Composer({
         <div
           id={listId}
           role="listbox"
-          aria-label="Saved replies"
+          aria-label={t('inbox.savedReplies') || 'Saved replies'}
           // The system's menu rungs: `shadow-md` (`lg` is for modals and
           // drawers), `--z-overlay` (at `--z-sticky` it painted *under* any
           // sticky toolbar), and the `p-1` inset that stops an option's
@@ -207,7 +213,7 @@ export function Composer({
         )}
       >
         <label className="sr-only" htmlFor="composer-input">
-          Reply to this visitor
+          {t('inbox.replyToThisVisitor') || 'Reply to this visitor'}
         </label>
         <textarea
           id="composer-input"
@@ -217,7 +223,7 @@ export function Composer({
           disabled={disabled}
           // The reason rides on the control it explains. `opacity-60` over the
           // whole box also dragged `border-strong` below its measured 3:1.
-          placeholder={disabledReason ?? placeholder}
+          placeholder={disabledReason ?? placeholderText}
           onChange={(event) => {
             onChange(event.target.value);
             onTyping();
@@ -235,7 +241,7 @@ export function Composer({
           <Button
             size="icon-sm"
             variant="ghost"
-            aria-label="Attach a file"
+            aria-label={t('inbox.attachAFile') || 'Attach a file'}
             disabled={disabled || uploading}
             onClick={() => fileRef.current?.click()}
           >
@@ -250,7 +256,7 @@ export function Composer({
             <Button
               size="icon-sm"
               variant="ghost"
-              aria-label="Saved replies"
+              aria-label={t('inbox.savedReplies') || 'Saved replies'}
               onClick={onManageSnippets}
             >
               <Zap aria-hidden />
@@ -260,13 +266,13 @@ export function Composer({
         <Tooltip
           content={
             <span className="flex items-center gap-1.5">
-              Send <Kbd>Enter</Kbd>
+              {t('inbox.send') || 'Send'} <Kbd>Enter</Kbd>
             </span>
           }
         >
           <Button
             size="icon-sm"
-            aria-label="Send reply"
+            aria-label={t('inbox.sendReply') || 'Send reply'}
             disabled={disabled || value.trim().length === 0}
             onClick={submit}
           >
