@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import func, select
+from sqlalchemy import case, distinct, func, or_, select
 
 from app.api.auth import get_superadmin
 from app.api.superadmin_plan_routes import _plan_monthly_usd_cents
@@ -251,6 +251,75 @@ def list_clients(superadmin: Client = Depends(get_superadmin)):
             else {}
         )
 
+        # Per-client conversation engagement, each a single grouped query so the
+        # accounts table can show these columns without an N+1. Definitions match
+        # the client-detail endpoint and /command-center:
+        #   visitors   . distinct people (not conversations) — see fingerprint below
+        #   bant       . sessions whose BANT tier reached mql/sal/sql
+        #   handoffs   . sessions escalated to a human (operator assigned OR a
+        #                handoff reason recorded — the reason survives after close)
+        #   quotations . sessions whose pre-handoff quotation flow completed
+        #
+        # Distinct-visitor fingerprint = "<ip>--<device>", the same identity the
+        # per-bot visitor analytics use (analytics_routes.py). ``location`` holds
+        # "City, Country | 1.2.3.4" (or "IP: 1.2.3.4"); the IP is the part after
+        # " | " when present, else the whole value, with empty/NULL → "Unknown".
+        _raw_loc = func.coalesce(func.nullif(ChatSession.location, ""), "Unknown")
+        _fingerprint = (
+            case(
+                (_raw_loc.like("% | %"), func.split_part(_raw_loc, " | ", 2)),
+                else_=_raw_loc,
+            )
+            .concat("--")
+            .concat(func.coalesce(ChatSession.device, ""))
+        )
+        if client_ids:
+            visitors_by_client = dict(
+                session.execute(
+                    select(ChatSession.client_id, func.count(distinct(_fingerprint)))
+                    .where(ChatSession.client_id.in_(client_ids))
+                    .group_by(ChatSession.client_id)
+                ).all()
+            )
+            bant_by_client = dict(
+                session.execute(
+                    select(ChatSession.client_id, func.count(ChatSession.id))
+                    .where(
+                        ChatSession.client_id.in_(client_ids),
+                        ChatSession.bant_tier.in_(("mql", "sal", "sql")),
+                    )
+                    .group_by(ChatSession.client_id)
+                ).all()
+            )
+            handoffs_by_client = dict(
+                session.execute(
+                    select(ChatSession.client_id, func.count(ChatSession.id))
+                    .where(
+                        ChatSession.client_id.in_(client_ids),
+                        or_(
+                            ChatSession.assigned_operator_id.isnot(None),
+                            ChatSession.handoff_reason.isnot(None),
+                        ),
+                    )
+                    .group_by(ChatSession.client_id)
+                ).all()
+            )
+            quotations_by_client = dict(
+                session.execute(
+                    select(ChatSession.client_id, func.count(ChatSession.id))
+                    .where(
+                        ChatSession.client_id.in_(client_ids),
+                        ChatSession.quotation_state["status"].astext == "complete",
+                    )
+                    .group_by(ChatSession.client_id)
+                ).all()
+            )
+        else:
+            visitors_by_client = {}
+            bant_by_client = {}
+            handoffs_by_client = {}
+            quotations_by_client = {}
+
         result = []
         for c in clients:
             sub = primary_sub.get(c.id)
@@ -272,6 +341,10 @@ def list_clients(superadmin: Client = Depends(get_superadmin)):
                     "mrr_cents": mrr_by_client.get(c.id, 0),
                     "bots_count": bots_by_client.get(c.id, 0),
                     "credits_balance": credits_by_client.get(c.id, 0),
+                    "distinct_visitors": visitors_by_client.get(c.id, 0),
+                    "bant_qualified_leads": bant_by_client.get(c.id, 0),
+                    "operator_transfers": handoffs_by_client.get(c.id, 0),
+                    "quotations_completed": quotations_by_client.get(c.id, 0),
                     "created_at": c.created_at.isoformat() if c.created_at else None,
                 }
             )

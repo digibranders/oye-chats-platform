@@ -1,4 +1,4 @@
-import { ABSENT, Badge, Disclosure, formatMoney, formatNumber, type Tone } from '../../ui';
+import { Badge, formatMoney, formatNumber, type Tone } from '../../ui';
 import type { Lead, LeadQuotation as Quotation } from '../../types/domain';
 import { LeadSection } from './LeadSection';
 
@@ -25,6 +25,9 @@ const STATUS_TONE: Record<Quotation['status'], Tone> = {
   complete: 'success',
   quoting: 'neutral',
   selecting: 'neutral',
+  // `choosing` is the current spelling of `answering`; both render identically
+  // so a session stored under either reads the same.
+  choosing: 'neutral',
   answering: 'neutral',
   skipped: 'warning',
   idle: 'neutral',
@@ -34,6 +37,7 @@ const STATUS_LABEL: Record<Quotation['status'], string> = {
   complete: 'Quote accepted',
   quoting: 'Quote pending',
   selecting: 'Selecting services',
+  choosing: 'Answering questions',
   answering: 'Answering questions',
   skipped: 'Declined',
   idle: 'Not started',
@@ -70,39 +74,25 @@ export function LeadQuotation({ lead }: { lead: Lead }) {
           <ul>
             {lines.map((line) => (
               <li
-                key={line.service_id}
+                key={line.requirement_id}
                 className="border-t border-border py-2 first:border-t-0 first:pt-0"
               >
                 <div className="flex items-baseline justify-between gap-3">
-                  <span className="min-w-0 flex-1 truncate text-sm text-text-primary">{line.name}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm text-text-primary">{line.label}</span>
                   <span className="figure shrink-0 text-sm text-text-primary">
                     {money(quotation.currency, line.subtotal)}
                   </span>
                 </div>
+                {/* The parent service is named here rather than above, because a
+                    service with several requirements now yields several lines
+                    that would otherwise repeat one heading. `unit_label` is
+                    optional server-side (it defaults to ""), so the "per unit"
+                    clause is dropped rather than rendered bare when absent. */}
                 <p className="figure mt-0.5 text-xs text-text-tertiary">
-                  {formatNumber(line.quantity)} × {money(quotation.currency, line.price_per_unit)} per{' '}
-                  {line.unit_label}
+                  {line.service_name} · {formatNumber(line.quantity)} ×{' '}
+                  {money(quotation.currency, line.price)}
+                  {line.unit_label ? ` per ${line.unit_label}` : ''}
                 </p>
-                {line.answers.length > 0 ? (
-                  <div className="mt-1.5">
-                    <Disclosure
-                      summary={line.answers.length === 1 ? '1 answer' : `${line.answers.length} answers`}
-                      regionLabel={`What they said about ${line.name}`}
-                    >
-                      {/* A stacked `<dl>`, not `PropertyGrid`: these labels are
-                          the catalog's own questions, whole sentences, and that
-                          component's labels are contracted to one or two words. */}
-                      <dl className="space-y-1.5">
-                        {line.answers.map((answer) => (
-                          <div key={answer.question_id}>
-                            <dt className="text-xs text-text-tertiary">{answer.question_text}</dt>
-                            <dd className="text-sm text-text-primary">{answer.answer || ABSENT}</dd>
-                          </div>
-                        ))}
-                      </dl>
-                    </Disclosure>
-                  </div>
-                ) : null}
               </li>
             ))}
           </ul>

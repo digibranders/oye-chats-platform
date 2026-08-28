@@ -39,11 +39,11 @@ from app.schemas.validators import (
     SessionId,
     ShortText,
 )
-from app.services import invite_service, plan_entitlements_service
 
 # Imported as a MODULE, not by value. The gate/charge/persist helpers and the
 # service singleton are all swapped in tests, and `from x import y` binds a
 # separate name that a monkeypatch on the module would never reach.
+from app.services import invite_service, plan_entitlements_service
 from app.services import translation_service as translation_svc
 from app.services.invite_service import InviteError
 from app.services.language_service import language_from_locale, normalize_locale
@@ -919,6 +919,18 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
                 "suggested_action": "offline_form",
                 "fallback_reason": "feature_disabled",
             }
+
+        # Plan gate: live chat AND its offline fallback are entitlement-gated
+        # together. A Free-plan bot's widget never offers a handoff (the RAG
+        # prompt no longer suggests one), but the endpoint is the real boundary,
+        # so a crafted request must not be able to queue a chat or bounce the
+        # visitor to the (plan-excluded) offline form. Deny by returning 403,
+        # matching the offline-message endpoint. Deny-by-default on lookup error.
+        if not plan_entitlements_service.is_live_chat_enabled_for_bot(db_bot.id, session):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This workspace's plan does not include live chat.",
+            )
 
         # ── State machine decides what happens ─────────────────────────────
         # Pass the department_id so per-department business hours apply

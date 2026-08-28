@@ -1269,6 +1269,17 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         "company_lookup_enabled": bool(bot.company_lookup_enabled),
         "lead_form_fields": bot.lead_form_fields,
         "live_chat_enabled": effective_live_chat_enabled,
+        # Plan half of the human-support gate: does this bot's plan include the
+        # live_chat feature at all (live chat AND its offline/leave-message
+        # fallback are entitled together)? The widget needs this SEPARATELY from
+        # ``live_chat_enabled`` (the effective real-time value) to tell two cases
+        # apart that both report ``live_chat_enabled=false``:
+        #   - Free plan          → support_enabled=False → no human channel:
+        #                          suppress the leave-message menu, the fallback
+        #                          auto-handoff, and the prominent live-chat pulse.
+        #   - paid, toggle off   → support_enabled=True  → offline-only: the
+        #                          leave-message affordances stay.
+        "support_enabled": plan_includes_live_chat,
         "business_hours": bot.business_hours,
         "feature_flags": effective_feature_flags,
         # Reported as DISABLED when the platform switch is off, not merely

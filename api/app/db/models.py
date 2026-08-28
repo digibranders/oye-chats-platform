@@ -1956,6 +1956,16 @@ class Subscription(Base):
                 "bot_id IS NOT NULL AND status IN ('active', 'trialing', 'past_due')",
             ),
         ),
+        # Branding add-on webhooks arrive keyed by the add-on's Razorpay id and
+        # must find their owning row in one hit. Unique because one mandate
+        # belongs to exactly one subscription; partial so the many rows without
+        # the add-on do not collide on NULL.
+        Index(
+            "ix_subscriptions_branding_addon_subscription_id",
+            "branding_addon_subscription_id",
+            unique=True,
+            postgresql_where=sqlalchemy.text("branding_addon_subscription_id IS NOT NULL"),
+        ),
     )
 
 

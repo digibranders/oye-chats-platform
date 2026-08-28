@@ -390,9 +390,9 @@ export function VisitorPanel({
               density="compact"
               className="mt-1"
               items={profile.quotation.line_items.map((line) => ({
-                label: line.name,
+                label: line.label,
                 value: `${formatNumber(line.quantity)} × ${formatMoney(
-                  Math.round(line.price_per_unit * 100),
+                  Math.round(line.price * 100),
                   profile.quotation?.currency ?? 'INR',
                 )}`,
               }))}

@@ -297,7 +297,7 @@ export const UPGRADE_INTENTS: Record<UpgradeIntentKey, UpgradeIntentBuilder> = {
   // client - and this registry is static copy with no access to a workspace's
   // credit ledger either, so it has no evidence for an expiry claim of any
   // kind. It therefore makes none. The surfaces that CAN read the ledger
-  // (TopupModal, CancelSubscriptionModal, UsageHero) state the real position
+  // (TopupModal, CancelSubscriptionModal, AgentCreditHero) state the real position
   // there. See TopupModal's `describeTopupExpiry`.
   topup_credits: () => ({
     eyebrow: 'Top-up credits are a paid feature',

@@ -8,7 +8,6 @@ import { Eye, EyeOff } from 'lucide-react';
 import { Alert, Button, Field, Input, buttonClass, validateEmail } from '../ui';
 import { registerClient } from '../services/api';
 import { getAuthItem, isSessionExpired, setAuthBundle } from '../utils/authStorage';
-import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import { GoogleAuthButton } from './auth/GoogleAuthButton';
 import { AuthDivider, AuthShell } from './auth/AuthShell';
 import { PasswordRules } from './auth/PasswordRules';
@@ -119,8 +118,6 @@ export default function Register() {
         promoCode || null,
       ),
     onSuccess: (data, values) => {
-      clearTrialBannerDismissals();
-
       // Signup stays remembered by default — someone who has just created an
       // account did not ask to be signed out tomorrow.
       setAuthBundle({

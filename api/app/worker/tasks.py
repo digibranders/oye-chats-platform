@@ -1948,6 +1948,30 @@ async def task_handoff_escalation(ctx: dict, session_id: str) -> bool:
     return await loop.run_in_executor(None, _run)
 
 
+async def task_send_quotation_visitor_email(ctx: dict, session_id: str, bot_id: int) -> bool:
+    """Send the priced "Your quotation" document email (with PDF) to the
+    **visitor**, deferred ~10 min after the visitor accepted the quote. The
+    owner notification and the visitor's "Your quote request" acknowledgement
+    both fire immediately at accept time and are not handled here.
+
+    (The task name is kept for scheduler/registration compatibility; its job is
+    now the deferred document email rather than the plain acknowledgement.)
+
+    Scheduled by ``quotation_routes._schedule_quotation_emails`` with an
+    ``_defer_by`` window (``QUOTATION_EMAIL_DELAY_SECONDS``). The dispatcher
+    re-reads the session + bot at send time so a late lead edit is reflected,
+    and swallows its own errors, so this task is a thin async wrapper that runs
+    the blocking DB + email + PDF work off the event loop.
+    """
+    import asyncio
+
+    from app.api.quotation_routes import dispatch_quotation_document_email_for_session
+
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, dispatch_quotation_document_email_for_session, session_id, bot_id)
+    return True
+
+
 async def task_send_visitor_message_email(
     ctx: dict,
     session_id: str,

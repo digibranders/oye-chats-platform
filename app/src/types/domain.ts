@@ -338,23 +338,35 @@ export interface LeadSignal {
  * the same value (status is a backward-compat alias). Scores are server-decayed.
  */
 /**
- * One service a visitor put in their quote, priced against the bot's catalog at
+ * One line a visitor put in their quote, priced against the bot's catalog at
  * the moment the lead was read.
  *
- * `name`, `unit_label` and `price_per_unit` are RESOLVED server-side from the
- * catalog rather than stored on the session, so a service renamed or repriced
- * after the chat shows its current identity. A service deleted from the catalog
- * outright falls back to its id and a zero price — the line stays, because
- * dropping it would silently change a total the visitor was quoted.
+ * Mirrors `QuoteLine` in `api/app/api/quotation_routes.py` field for field. The
+ * names are RESOLVED server-side from the catalog rather than stored on the
+ * session, so a service renamed or repriced after the chat shows its current
+ * identity. A service deleted from the catalog outright falls back to its id
+ * and a zero price - the line stays, because dropping it would silently change
+ * a total the visitor was quoted.
+ *
+ * A line is now one REQUIREMENT within a service, not one service: a visitor
+ * answering three questions about "Photography" produces three lines that share
+ * a `service_id` and `service_name` and differ by `requirement_id` and `label`.
+ * That is why `requirement_id` is the render key, not `service_id`, which is no
+ * longer unique across the list.
  */
 export interface LeadQuotationLine {
   service_id: string;
-  name: string;
-  unit_label: string;
-  price_per_unit: number;
+  /** The parent service's display name, repeated on each of its lines. */
+  service_name: string;
+  /** Unique within a quote; the correct React key. */
+  requirement_id: string;
+  /** This line's own label, e.g. the requirement or the chosen option. */
+  label: string;
   quantity: number;
+  /** Server default is an empty string, so treat it as optional in copy. */
+  unit_label: string;
+  price: number;
   subtotal: number;
-  answers: { question_id: string; question_text: string; answer: string }[];
 }
 
 /**
@@ -366,7 +378,13 @@ export interface LeadQuotationLine {
  * is authored in whole currency by the customer, unlike the billing rail.
  */
 export interface LeadQuotation {
-  status: 'idle' | 'selecting' | 'answering' | 'quoting' | 'complete' | 'skipped';
+  /**
+   * `QuotationStateOut` in quotation_routes.py emits
+   * `idle | selecting | choosing | quoting | complete | skipped`. `answering`
+   * is the pre-rename spelling of `choosing` and is kept because sessions
+   * persisted before that rename still carry it.
+   */
+  status: 'idle' | 'selecting' | 'choosing' | 'answering' | 'quoting' | 'complete' | 'skipped';
   currency: string;
   line_items: LeadQuotationLine[];
   total: number;

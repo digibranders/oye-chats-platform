@@ -5,7 +5,6 @@ import { Alert, Button, Spinner } from '../ui';
 import { AuthShell } from './auth/AuthShell';
 import { getCurrentUser } from '../services/api';
 import { clearAuthStorage, setAuthBundle, setAuthItem } from '../utils/authStorage';
-import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import { keys } from '../query/keys';
 import { safeRelativePath } from './auth/authFlow';
 
@@ -105,7 +104,6 @@ export default function OAuthCallback() {
     // same value, so a retry costs nothing.
     queryFn: () => {
       if (callback.kind !== 'working') throw new Error('No credential to sign in with.');
-      clearTrialBannerDismissals();
       // Google sign-ins stay signed in across restarts, the way Google's own
       // sessions do. The address is provider-verified, so the email gate is
       // already satisfied.

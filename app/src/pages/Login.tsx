@@ -8,7 +8,6 @@ import { Eye, EyeOff } from 'lucide-react';
 import { Alert, Button, Checkbox, Field, Input, validateEmail } from '../ui';
 import { loginAdmin, loginOperator } from '../services/api';
 import { getAuthItem, isSessionExpired, setAuthBundle } from '../utils/authStorage';
-import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import { GoogleAuthButton } from './auth/GoogleAuthButton';
 import { AuthDivider, AuthShell } from './auth/AuthShell';
 import { useGoogleAuthAvailable } from './auth/useGoogleAuth';
@@ -145,9 +144,6 @@ export default function Login() {
       };
     },
     onSuccess: ({ door: opened, bundle }) => {
-      // A fresh sign-in clears banner dismissals carried over from whichever
-      // account used this browser last.
-      clearTrialBannerDismissals();
       rememberDoor(opened);
       setAuthBundle(bundle, rememberMe);
       navigate(postAuthDestination({ next, affiliateToken, door: opened }), { replace: true });

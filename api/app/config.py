@@ -259,6 +259,18 @@ PUSH_WS_GRACE_SECONDS = int(_env("PUSH_WS_GRACE_SECONDS", "30"))
 # sends multiple messages in quick succession, only one email per window.
 PUSH_VISITOR_MSG_EMAIL_DEBOUNCE_SECONDS = int(_env("PUSH_VISITOR_MSG_EMAIL_DEBOUNCE_SECONDS", "60"))
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Quotation flow
+# ─────────────────────────────────────────────────────────────────────────────
+# Delay (seconds) before the visitor's "Your quotation" document email (the one
+# carrying the itemised pricing inline in the body) is sent. The visitor's
+# "Your quote request" acknowledgement and the owner notification both fire
+# immediately at accept; only the priced document is held back by this window so
+# the visitor gets a brief "we're preparing it" beat before the quote lands.
+# Product spec asks for 10 minutes. Deferred durably via ARQ; see
+# quotation_routes._schedule_quotation_emails. Set to 0 to send immediately.
+QUOTATION_EMAIL_DELAY_SECONDS = int(_env("QUOTATION_EMAIL_DELAY_SECONDS", "600"))
+
 WEB_PUSH_ENABLED = bool(VAPID_PUBLIC_KEY and (VAPID_PRIVATE_KEY or VAPID_PRIVATE_KEY_FILE))
 # Expo relays to FCM/APNs using credentials Expo holds on our behalf, so it
 # needs no local key material. It must therefore be gated independently: a
