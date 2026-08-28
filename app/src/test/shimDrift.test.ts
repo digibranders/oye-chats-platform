@@ -32,7 +32,6 @@ const SHIMMED_MODULES: ReadonlyArray<{
   readonly dts: string;
   readonly load: () => Promise<Record<string, unknown>>;
 }> = [
-  { label: 'data/platformIntegrations', dts: 'src/data/platformIntegrations.d.ts', load: () => import('../data/platformIntegrations') },
   { label: 'context/BotContext', dts: 'src/context/BotContext.d.ts', load: () => import('../context/BotContext') },
   { label: 'context/CurrencyContext', dts: 'src/context/CurrencyContext.d.ts', load: () => import('../context/CurrencyContext') },
   { label: 'context/WorkspaceContext', dts: 'src/context/WorkspaceContext.d.ts', load: () => import('../context/WorkspaceContext') },

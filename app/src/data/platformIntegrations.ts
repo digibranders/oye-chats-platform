@@ -17,6 +17,39 @@
  * `launch-studio/steps/DeployStep` are where a lookup would go, keyed by
  * platform id and step index.
  */
+
+/** Which widget build the generated snippet points at. */
+export type PlatformEnv = 'production' | 'development';
+
+/** One numbered instruction in a platform's install guide. */
+export interface PlatformStep {
+  title: string;
+  description: string;
+  /** The block the reader pastes, or null for a step that is prose only. */
+  code: string | null;
+  language?: string;
+}
+
+export interface GetStepsOptions {
+  /** Include the crawlable attribution anchor. Defaults to true. */
+  attribution?: boolean;
+}
+
+/**
+ * How a platform's attribution anchor is rendered: as JSX for framework
+ * snippets, as raw HTML, or as a separate manual step for builders whose
+ * editors reject markup.
+ */
+export type AttributionMode = 'manual' | 'jsx' | 'html';
+
+export interface Platform {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+  getSteps: (botKey: string, env: PlatformEnv, options?: GetStepsOptions) => PlatformStep[];
+}
+
 /**
  * Platform integration configurations for the OyeChats widget.
  *
@@ -45,7 +78,7 @@ import {
  * @param {'production' | 'development'} env
  * @returns {string}
  */
-export const widgetScriptUrl = (env) =>
+export const widgetScriptUrl = (env: PlatformEnv): string =>
     env === 'production'
         ? 'https://cdn.oyechats.com/oyechats-widget.js'
         : 'http://localhost:4173/oyechats-widget.js';
@@ -64,7 +97,12 @@ const cdnUrl = widgetScriptUrl;
  * @param {boolean} attribution
  * @returns {Array<{title: string, description: string, code: string | null, language?: string}>}
  */
-const attributionStep = (botKey, mode, location, attribution) => {
+const attributionStep = (
+    botKey: string,
+    mode: AttributionMode,
+    location: string,
+    attribution: boolean,
+): PlatformStep[] => {
     if (!attribution) return [];
     if (mode === 'manual') {
         return [
@@ -113,7 +151,12 @@ const INLINE_ATTRIBUTION_NOTE =
  * @param {{attribution: boolean, jsx?: boolean}} options
  * @returns {{code: string, description: string}}
  */
-const withInlineAttribution = (code, description, botKey, { attribution, jsx = false }) => {
+const withInlineAttribution = (
+    code: string,
+    description: string,
+    botKey: string,
+    { attribution, jsx = false }: { attribution: boolean; jsx?: boolean },
+): { description: string; code: string } => {
     if (!attribution) return { description, code };
     const anchor = jsx ? attributionAnchorJsx(botKey) : attributionAnchorHtml(botKey);
     return {
@@ -137,11 +180,11 @@ const withInlineAttribution = (code, description, botKey, { attribution, jsx = f
  * @param {string} [indent] - leading whitespace to match the surrounding block
  * @returns {string}
  */
-const inlineAttributionAnchor = (botKey, attribution, indent = '') =>
+const inlineAttributionAnchor = (botKey: string, attribution: boolean, indent = ''): string =>
     attribution ? `\n\n${indent}${attributionAnchorHtml(botKey)}` : '';
 
 /** Appends the one-sentence attribution note to a step description, or returns it unchanged when attribution is off. */
-const withAttributionNote = (description, attribution) =>
+const withAttributionNote = (description: string, attribution: boolean): string =>
     attribution ? `${description}${INLINE_ATTRIBUTION_NOTE}` : description;
 
 /**
@@ -167,7 +210,7 @@ const withAttributionNote = (description, attribution) =>
  * @param {boolean} attribution
  * @returns {string}
  */
-const phpFooterAttributionBlock = (botKey, attribution) =>
+const phpFooterAttributionBlock = (botKey: string, attribution: boolean): string =>
     attribution
         ? `\n\n// Add the OyeChats attribution link\nfunction oyechats_attribution_link() {\n    echo '${attributionAnchorHtml(botKey)}';\n}\nadd_action('wp_footer', 'oyechats_attribution_link');`
         : '';
@@ -191,7 +234,11 @@ const phpFooterAttributionBlock = (botKey, attribution) =>
  * @param {boolean} attribution
  * @returns {Array<{title: string, description: string, code: string | null, language?: string}>}
  */
-const manualAttributionLinkStep = (botKey, location, attribution) => {
+const manualAttributionLinkStep = (
+    botKey: string,
+    location: string,
+    attribution: boolean,
+): PlatformStep[] => {
     if (!attribution) return [];
     return [
         {
@@ -206,7 +253,7 @@ const manualAttributionLinkStep = (botKey, location, attribution) => {
 // ---------------------------------------------------------------------------
 // HTML / Generic
 // ---------------------------------------------------------------------------
-const html = {
+const html: Platform = {
     id: 'html',
     name: 'HTML',
     category: 'generic',
@@ -234,7 +281,7 @@ const html = {
 // ---------------------------------------------------------------------------
 // Next.js
 // ---------------------------------------------------------------------------
-const nextjs = {
+const nextjs: Platform = {
     id: 'nextjs',
     name: 'Next.js',
     category: 'framework',
@@ -272,7 +319,7 @@ const nextjs = {
 // ---------------------------------------------------------------------------
 // React (CRA / Vite)
 // ---------------------------------------------------------------------------
-const react = {
+const react: Platform = {
     id: 'react',
     name: 'React',
     category: 'framework',
@@ -323,7 +370,7 @@ export default App;`,
 // ---------------------------------------------------------------------------
 // Vue.js
 // ---------------------------------------------------------------------------
-const vue = {
+const vue: Platform = {
     id: 'vue',
     name: 'Vue.js',
     category: 'framework',
@@ -388,7 +435,7 @@ useHead({
 // ---------------------------------------------------------------------------
 // Angular
 // ---------------------------------------------------------------------------
-const angular = {
+const angular: Platform = {
     id: 'angular',
     name: 'Angular',
     category: 'framework',
@@ -427,7 +474,7 @@ const angular = {
 // ---------------------------------------------------------------------------
 // Svelte / SvelteKit
 // ---------------------------------------------------------------------------
-const svelte = {
+const svelte: Platform = {
     id: 'svelte',
     name: 'Svelte',
     category: 'framework',
@@ -481,7 +528,7 @@ const svelte = {
 // ---------------------------------------------------------------------------
 // Astro
 // ---------------------------------------------------------------------------
-const astro = {
+const astro: Platform = {
     id: 'astro',
     name: 'Astro',
     category: 'framework',
@@ -520,7 +567,7 @@ const astro = {
 // ---------------------------------------------------------------------------
 // WordPress
 // ---------------------------------------------------------------------------
-const wordpress = {
+const wordpress: Platform = {
     id: 'wordpress',
     name: 'WordPress',
     category: 'cms',
@@ -576,7 +623,7 @@ add_filter('script_loader_tag', 'oyechats_add_bot_key', 10, 2);${phpFooterAttrib
 // ---------------------------------------------------------------------------
 // Shopify
 // ---------------------------------------------------------------------------
-const shopify = {
+const shopify: Platform = {
     id: 'shopify',
     name: 'Shopify',
     category: 'cms',
@@ -611,7 +658,7 @@ const shopify = {
 // ---------------------------------------------------------------------------
 // Squarespace
 // ---------------------------------------------------------------------------
-const squarespace = {
+const squarespace: Platform = {
     id: 'squarespace',
     name: 'Squarespace',
     category: 'cms',
@@ -645,7 +692,7 @@ const squarespace = {
 // ---------------------------------------------------------------------------
 // Webflow
 // ---------------------------------------------------------------------------
-const webflow = {
+const webflow: Platform = {
     id: 'webflow',
     name: 'Webflow',
     category: 'builder',
@@ -679,7 +726,7 @@ const webflow = {
 // ---------------------------------------------------------------------------
 // Wix
 // ---------------------------------------------------------------------------
-const wix = {
+const wix: Platform = {
     id: 'wix',
     name: 'Wix',
     category: 'builder',
@@ -711,7 +758,7 @@ const wix = {
 // ---------------------------------------------------------------------------
 // Framer
 // ---------------------------------------------------------------------------
-const framer = {
+const framer: Platform = {
     id: 'framer',
     name: 'Framer',
     category: 'builder',
@@ -743,7 +790,7 @@ const framer = {
 // ---------------------------------------------------------------------------
 // Bubble
 // ---------------------------------------------------------------------------
-const bubble = {
+const bubble: Platform = {
     id: 'bubble',
     name: 'Bubble',
     category: 'builder',
@@ -775,7 +822,7 @@ const bubble = {
 // ---------------------------------------------------------------------------
 // Google Tag Manager
 // ---------------------------------------------------------------------------
-const gtm = {
+const gtm: Platform = {
     id: 'gtm',
     name: 'Google Tag Manager',
     category: 'tool',
@@ -820,7 +867,7 @@ const gtm = {
 // ---------------------------------------------------------------------------
 
 /** All supported platforms in display order. */
-export const platforms = [
+export const platforms: Platform[] = [
     html,
     nextjs,
     react,
@@ -839,7 +886,7 @@ export const platforms = [
 ];
 
 /** Category labels for the selector grid. */
-export const categoryLabels = {
+export const categoryLabels: Record<string, string> = {
     generic: 'Generic',
     framework: 'Frameworks',
     cms: 'CMS',
@@ -848,4 +895,4 @@ export const categoryLabels = {
 };
 
 /** Ordered list of categories for display. */
-export const categoryOrder = ['generic', 'framework', 'cms', 'builder', 'tool'];
+export const categoryOrder: string[] = ['generic', 'framework', 'cms', 'builder', 'tool'];
