@@ -1431,6 +1431,10 @@ def checkout_quote(
             raise HTTPException(status_code=404, detail="Plan not found.")
         if not plan.is_active:
             raise HTTPException(status_code=400, detail="This plan is not available.")
+        if not plan.is_public:
+            # The signup trial is assignable but not purchasable. Without this
+            # it would price at zero and mint a mandate for nothing.
+            raise HTTPException(status_code=400, detail="This plan cannot be purchased.")
 
         # ONE resolution order shared with the charge path (Wave 1.2):
         # explicit param (this checkout's country-confirmation) → the account's
@@ -1951,6 +1955,10 @@ def create_checkout(
             raise HTTPException(status_code=404, detail="Plan not found.")
         if not plan.is_active:
             raise HTTPException(status_code=400, detail="This plan is not available.")
+        if not plan.is_public:
+            # The signup trial is assignable but not purchasable. Without this
+            # it would price at zero and mint a mandate for nothing.
+            raise HTTPException(status_code=400, detail="This plan cannot be purchased.")
         if plan.monthly_price_cents == 0:
             raise HTTPException(status_code=400, detail="Cannot checkout for a free plan.")
 
@@ -2163,6 +2171,11 @@ def change_plan(
         new_plan = get_plan_by_id(session, request.plan_id)
         if not new_plan or not new_plan.is_active:
             raise HTTPException(status_code=404, detail="Target plan not found or inactive.")
+        if not new_plan.is_public:
+            # ``/change-plan`` resolves any active plan by id, so without this
+            # the signup trial is reachable as a change target and would price
+            # at zero.
+            raise HTTPException(status_code=400, detail="This plan cannot be purchased.")
 
         # Target the subscription the customer is actually looking at (N3).
         # ``_resolve_target_subscription`` targets the selected bot's own row,

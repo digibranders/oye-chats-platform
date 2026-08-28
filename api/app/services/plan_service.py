@@ -39,8 +39,15 @@ def lock_client_for_billing(session: Session, client_id: int) -> None:
 
 
 def get_active_plans(session: Session) -> list[Plan]:
-    """Return all active plans ordered by sort_order (for pricing page display)."""
-    stmt = select(Plan).where(Plan.is_active.is_(True)).order_by(Plan.sort_order)
+    """Return all active PUBLIC plans ordered by sort_order (pricing page display).
+
+    ``is_public`` is filtered here and not in ``get_default_plan``: the signup
+    trial has to be assignable (so it must stay ``is_active``) while never
+    appearing on a surface a customer can buy from, and this function feeds both
+    ``/plans`` and ``GET /public/pricing-catalog``, which renders
+    oyechats.com/pricing.
+    """
+    stmt = select(Plan).where(Plan.is_active.is_(True), Plan.is_public.is_(True)).order_by(Plan.sort_order)
     return list(session.execute(stmt).scalars().all())
 
 

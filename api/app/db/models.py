@@ -1682,6 +1682,11 @@ class Plan(Base):
     # Display & ordering
     is_active = Column(Boolean, default=True, server_default="true", nullable=False)
     is_default = Column(Boolean, default=False, server_default="false", nullable=False)  # auto-assigned to new clients
+    # Rendered on /plans and the public pricing catalogue. False for internal
+    # rows that must exist and be assignable (the signup trial) but must never
+    # be shown or bought. Orthogonal to is_active on purpose, see
+    # plan_service.plan_checkout_is_wired's warning about conflating flags.
+    is_public = Column(Boolean, default=True, server_default="true", nullable=False)
     sort_order = Column(Integer, default=0, server_default="0", nullable=False)
 
     # Marketing / display copy for the public pricing site (tagline, badge,
