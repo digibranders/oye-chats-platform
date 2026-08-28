@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Button } from '../../ui';
 import { GOOGLE_AUTH_BASE_URL, useGoogleAuthAvailable } from './useGoogleAuth';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface GoogleAuthButtonProps {
   /** Visible label. The only copy difference between sign-in and sign-up. */
@@ -36,13 +37,17 @@ export interface GoogleAuthButtonProps {
  * loading state instead of staying pressable.
  */
 export function GoogleAuthButton({
-  label = 'Continue with Google',
+  label,
   next = '/',
   mode = 'login',
   promoCode = '',
   referralCode = '',
   className,
 }: GoogleAuthButtonProps) {
+  const { t } = useTranslation();
+  // Defaulted here, not in the signature: a default parameter is evaluated
+  // before the hook runs.
+  const text = label ?? (t('auth.continueWithGoogle') || 'Continue with Google');
   const [leaving, setLeaving] = useState(false);
   // Render nothing until the probe answers, and nothing at all if the answer is
   // no. Showing the button first and removing it afterwards moves the email
@@ -70,7 +75,7 @@ export function GoogleAuthButton({
       iconLeft={<GoogleMark />}
       className={className}
     >
-      {label}
+      {text}
     </Button>
   );
 }

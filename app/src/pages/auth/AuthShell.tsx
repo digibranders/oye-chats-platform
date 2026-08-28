@@ -2,6 +2,7 @@ import { type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { Card, CardBody, CardSection, cn } from '../../ui';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface AuthShellProps {
   title: string;
@@ -62,6 +63,7 @@ export function AuthShell({
   back,
   className,
 }: AuthShellProps) {
+  const { t } = useTranslation();
   return (
     <div
       className={cn(
@@ -101,17 +103,17 @@ export function AuthShell({
 
         <div className="max-w-md">
           <p className="font-mono text-2xs uppercase tracking-eyebrow text-rail-text-muted">
-            OyeChats
+            {t('auth.oyechats') || 'OyeChats'}
           </p>
           {/* `text-2xl`, the top of the seven-rung scale. `text-3xl` is not on it
               at all and compiled only because Tailwind's default survives the
               token reset — a 30px headline in a system whose largest rung is
               28. */}
           <p className="mt-4 text-2xl font-semibold leading-tight tracking-tight">
-            An assistant that has read everything you have written.
+            {t('auth.anAssistantThatHasRead') || 'An assistant that has read everything you have written.'}
           </p>
           <p className="mt-4 text-prose text-rail-text-muted">
-            Upload what you know. Paste one line into your site.
+            {t('auth.uploadWhatYouKnowPaste') || 'Upload what you know. Paste one line into your site.'}
           </p>
         </div>
 
@@ -129,7 +131,7 @@ export function AuthShell({
           */}
           <img
             src="/new_dark.png"
-            alt="OyeChats"
+            alt={t('auth.oyechats') || 'OyeChats'}
             className="mx-auto h-7 w-auto object-contain xl:hidden"
             draggable={false}
           />

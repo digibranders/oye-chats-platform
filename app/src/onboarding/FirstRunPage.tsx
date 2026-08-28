@@ -28,6 +28,7 @@ import {
   type FirstRunErrors,
   type FirstRunSource,
 } from './firstRun';
+import { useTranslation } from '../i18n/useTranslation';
 
 /**
  * The three ways in.
@@ -58,6 +59,7 @@ const SOURCES: readonly { value: FirstRunSource; label: string; description: str
  * one step.
  */
 export function FirstRunPage() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { bots, loading, refreshBots } = useBotContext();
   const { currentWorkspaceName } = useWorkspace();
@@ -70,7 +72,7 @@ export function FirstRunPage() {
   const [submitting, setSubmitting] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
-  const fallbackName = currentWorkspaceName?.trim() || 'My chatbot';
+  const fallbackName = currentWorkspaceName?.trim() || t('onboarding.myChatbot') || 'My chatbot';
 
   // The name follows the website until the user types their own. Watching the
   // field fill itself as they paste a domain is also the clearest possible
@@ -121,7 +123,7 @@ export function FirstRunPage() {
       setFailure(
         err instanceof Error
           ? err.message
-          : 'We could not create your chatbot. Please try again in a moment.',
+          : t('onboarding.weCouldNotCreateYour2') || 'We could not create your chatbot. Please try again in a moment.',
       );
     } finally {
       setSubmitting(false);
@@ -141,8 +143,8 @@ export function FirstRunPage() {
       <Measure width="form">
         <PageHeader
           eyebrow="First run"
-          title="Let’s give your chatbot something to know"
-          description="Change any of this later."
+          title={t('onboarding.letsGiveYourChatbotSomething') || 'Let’s give your chatbot something to know'}
+          description={t('onboarding.changeAnyOfThisLater') || 'Change any of this later.'}
         />
 
         {failure ? (
@@ -150,10 +152,10 @@ export function FirstRunPage() {
             tone="danger"
             live
             className="mb-5"
-            title="We could not create your chatbot"
+            title={t('onboarding.weCouldNotCreateYour') || 'We could not create your chatbot'}
             action={
               <Link to="/billing" className={buttonClass('secondary', 'sm')}>
-                Check your plan
+                {t('onboarding.checkYourPlan') || 'Check your plan'}
               </Link>
             }
           >
@@ -168,9 +170,9 @@ export function FirstRunPage() {
                   `fieldset`: those had no owning radiogroup, all three sat in the
                   tab order, arrow keys did nothing, and each blurb folded into
                   its button's accessible name. */}
-              <Field label="Where should it learn from?">
+              <Field label={t('onboarding.whereShouldItLearnFrom') || 'Where should it learn from?'}>
                 <RadioCards
-                  label="Where should it learn from?"
+                  label={t('onboarding.whereShouldItLearnFrom') || 'Where should it learn from?'}
                   columns={3}
                   value={source}
                   onChange={setSource}
@@ -180,8 +182,8 @@ export function FirstRunPage() {
 
               {source === 'website' ? (
                 <Field
-                  label="Your website"
-                  hint="Public pages only."
+                  label={t('onboarding.yourWebsite') || 'Your website'}
+                  hint={t('onboarding.publicPagesOnly') || 'Public pages only.'}
                   error={errors.website}
                 >
                   <Input
@@ -196,8 +198,8 @@ export function FirstRunPage() {
               ) : null}
 
               <Field
-                label="What is it called?"
-                hint="Visitors see this at the top of the chat."
+                label={t('onboarding.whatIsItCalled') || 'What is it called?'}
+                hint={t('onboarding.visitorsSeeThisAtThe') || 'Visitors see this at the top of the chat.'}
                 error={errors.name}
               >
                 <Input
@@ -206,7 +208,7 @@ export function FirstRunPage() {
                     setNameTouched(true);
                     setName(event.target.value);
                   }}
-                  placeholder="Support"
+                  placeholder={t('onboarding.support') || 'Support'}
                   maxLength={80}
                 />
               </Field>
@@ -218,7 +220,7 @@ export function FirstRunPage() {
                 canvas at both bottom edges. */}
             <CardFooter className="justify-between">
               <p className="text-xs text-text-tertiary">
-                {source === 'website' ? 'You can talk to it while it reads.' : null}
+                {source === 'website' ? t('onboarding.youCanTalkToIt') || 'You can talk to it while it reads.' : null}
               </p>
               <div className="flex flex-wrap items-center gap-2">
                 {/* Skippable, like every step of Linear's onboarding and none of
@@ -232,10 +234,10 @@ export function FirstRunPage() {
                     navigate('/', { replace: true });
                   }}
                 >
-                  Skip for now
+                  {t('onboarding.skipForNow') || 'Skip for now'}
                 </Button>
                 <Button type="submit" loading={submitting} disabled={submitting}>
-                  {source === 'website' ? 'Start reading my site' : 'Create my chatbot'}
+                  {source === 'website' ? t('onboarding.startReadingMySite') || 'Start reading my site' : t('onboarding.createMyChatbot') || 'Create my chatbot'}
                 </Button>
               </div>
             </CardFooter>

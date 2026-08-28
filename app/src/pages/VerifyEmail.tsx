@@ -16,6 +16,7 @@ import { AuthShell } from './auth/AuthShell';
 import { OtpField } from './auth/OtpField';
 import { useResendCooldown } from './auth/useResendCooldown';
 import { OTP_LENGTH, digitsOnly, errorMessage, maskEmail, safeRelativePath } from './auth/authFlow';
+import { useTranslation } from '../i18n/useTranslation';
 
 /**
  * Confirm the email address.
@@ -40,6 +41,7 @@ import { OTP_LENGTH, digitsOnly, errorMessage, maskEmail, safeRelativePath } fro
  * through one `release()`.
  */
 export default function VerifyEmail() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
@@ -145,7 +147,7 @@ export default function VerifyEmail() {
 
   return (
     <AuthShell
-      title="Confirm your email"
+      title={t('auth.confirmYourEmail') || 'Confirm your email'}
       // The resend row lives in the card's own hairline-divided section rather
       // than drawing a rule inside `CardBody`'s padding, where it floated 20px
       // short of both edges. And signing out is not a peer of resending a code,
@@ -161,10 +163,10 @@ export default function VerifyEmail() {
               disabled={cooldown.active || !email}
               iconLeft={<RotateCcw aria-hidden />}
             >
-              {cooldown.active ? `Resend in ${cooldown.remaining}s` : 'Resend code'}
+              {cooldown.active ? `Resend in ${cooldown.remaining}s` : t('auth.resendCode') || 'Resend code'}
             </Button>
             <button type="button" onClick={signOut} className={buttonClass('link')}>
-              Sign in as someone else
+              {t('auth.signInAsSomeoneElse') || 'Sign in as someone else'}
             </button>
           </div>
         )
@@ -177,36 +179,36 @@ export default function VerifyEmail() {
             fifteen minutes.
           </>
         ) : (
-          'Checking which account this is.'
+          t('auth.checkingWhichAccountThisIs') || 'Checking which account this is.'
         )
       }
     >
       {stranded ? (
         <div className="space-y-4">
-          <Alert tone="danger" title="We could not tell which account to verify" live>
-            Sign in again and we will send a fresh code.
+          <Alert tone="danger" title={t('auth.weCouldNotTellWhich') || 'We could not tell which account to verify'} live>
+            {t('auth.signInAgainAndWe') || 'Sign in again and we will send a fresh code.'}
           </Alert>
           <Button variant="primary" size="lg" block onClick={signOut}>
-            Sign in again
+            {t('auth.signInAgain') || 'Sign in again'}
           </Button>
         </div>
       ) : (
         <div className="space-y-4">
           {verify.isError ? (
             <Alert tone="danger" live>
-              {errorMessage(verify.error, 'That code was not accepted. Please try again.')}
+              {errorMessage(verify.error, t('auth.thatCodeWasNotAccepted') || 'That code was not accepted. Please try again.')}
             </Alert>
           ) : null}
 
           {resend.isSuccess ? (
             <Alert tone="success" live>
-              New code sent. Check your spam folder too.
+              {t('auth.newCodeSentCheckYour') || 'New code sent. Check your spam folder too.'}
             </Alert>
           ) : null}
 
           {resend.isError ? (
             <Alert tone="danger" live>
-              {errorMessage(resend.error, 'We could not send a new code. Please try again.')}
+              {errorMessage(resend.error, t('auth.weCouldNotSendA2') || 'We could not send a new code. Please try again.')}
             </Alert>
           ) : null}
 
@@ -227,7 +229,7 @@ export default function VerifyEmail() {
                 !email && me.isPending ? (
                   <span className="inline-flex items-center gap-1.5">
                     <Spinner size="sm" label={null} />
-                    Looking up your account…
+                    {t('auth.lookingUpYourAccount') || 'Looking up your account…'}
                   </span>
                 ) : undefined
               }
@@ -242,7 +244,7 @@ export default function VerifyEmail() {
               disabled={code.length < OTP_LENGTH || !email}
               iconLeft={<MailCheck aria-hidden className="h-4 w-4" />}
             >
-              Confirm email
+              {t('auth.confirmEmail') || 'Confirm email'}
             </Button>
           </form>
         </div>

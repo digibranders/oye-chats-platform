@@ -11,6 +11,7 @@ import {
   cn,
 } from '../ui';
 import { useSetupChecklist } from './useSetupChecklist';
+import { useTranslation } from '../i18n/useTranslation';
 
 /**
  * The setup checklist, in full.
@@ -25,6 +26,7 @@ import { useSetupChecklist } from './useSetupChecklist';
  * Reached from the rail's progress ring, and it removes itself once complete.
  */
 export function SetupPage() {
+  const { t } = useTranslation();
   const { steps, done, total, complete } = useSetupChecklist();
 
   return (
@@ -32,8 +34,8 @@ export function SetupPage() {
       <Measure width="form">
         <PageHeader
           eyebrow="Setup"
-          title={complete ? 'You are all set' : 'Get your chatbot working'}
-          description={complete ? 'This checklist will stop appearing in the sidebar.' : undefined}
+          title={complete ? t('onboarding.youAreAllSet') || 'You are all set' : t('onboarding.getYourChatbotWorking') || 'Get your chatbot working'}
+          description={complete ? t('onboarding.thisChecklistWillStopAppearing') || 'This checklist will stop appearing in the sidebar.' : undefined}
         />
 
         <Card>
@@ -119,7 +121,7 @@ export function SetupPage() {
         {complete ? (
           <div className="mt-6 flex justify-center">
             <Link to="/" className={buttonClass('primary', 'md')}>
-              Go to Home
+              {t('onboarding.goToHome') || 'Go to Home'}
             </Link>
           </div>
         ) : null}

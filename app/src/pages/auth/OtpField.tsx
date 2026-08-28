@@ -1,6 +1,7 @@
 import { forwardRef, type ReactNode } from 'react';
 import { Field, Input } from '../../ui';
 import { OTP_LENGTH } from './authFlow';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface OtpFieldProps {
   value: string;
@@ -29,11 +30,14 @@ export interface OtpFieldProps {
  * full length, which is true however the digits arrived.
  */
 export const OtpField = forwardRef<HTMLInputElement, OtpFieldProps>(function OtpField(
-  { value, onChange, label = 'Six-digit code', hint, error, disabled, autoFocus },
+  { value, onChange, label, hint, error, disabled, autoFocus },
   ref,
 ) {
+  const { t } = useTranslation();
+  // Defaulted here for the same reason: the signature runs before the hook.
+  const fieldLabel = label ?? (t('auth.sixDigitCode') || 'Six-digit code');
   return (
-    <Field label={label} hint={hint} error={error} required>
+    <Field label={fieldLabel} hint={hint} error={error} required>
       <Input
         ref={ref}
         type="text"

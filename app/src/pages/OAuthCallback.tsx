@@ -7,6 +7,7 @@ import { getCurrentUser } from '../services/api';
 import { clearAuthStorage, setAuthBundle, setAuthItem } from '../utils/authStorage';
 import { keys } from '../query/keys';
 import { safeRelativePath } from './auth/authFlow';
+import { useTranslation } from '../i18n/useTranslation';
 
 /**
  * The backend's machine-readable OAuth failures, in words.
@@ -81,6 +82,7 @@ function classifyCallback(searchParams: URLSearchParams): Callback {
  * seconds it says so and offers the same two.
  */
 export default function OAuthCallback() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [callback] = useState<Callback>(() => classifyCallback(searchParams));
@@ -154,14 +156,14 @@ export default function OAuthCallback() {
   };
 
   if (callback.kind === 'error') {
-    return <CallbackNotice tone="danger" title="Sign-in failed" message={callback.message} onBack={abandon} />;
+    return <CallbackNotice tone="danger" title={t('auth.signInFailed') || 'Sign-in failed'} message={callback.message} onBack={abandon} />;
   }
 
   if (me.isError) {
     return (
       <CallbackNotice
         tone="danger"
-        title="We could not load your account"
+        title={t('auth.weCouldNotLoadYour') || 'We could not load your account'}
         message="Google signed you in, but we could not reach OyeChats to finish. Your connection may have dropped."
         onBack={abandon}
         onRetry={() => void me.refetch()}
@@ -174,7 +176,7 @@ export default function OAuthCallback() {
     return (
       <CallbackNotice
         tone="warning"
-        title="This is taking longer than usual"
+        title={t('auth.thisIsTakingLongerThan') || 'This is taking longer than usual'}
         message="We are still waiting on OyeChats. You can keep waiting, try again, or start over."
         onBack={abandon}
         onRetry={() => void me.refetch()}
@@ -187,10 +189,10 @@ export default function OAuthCallback() {
   // be a bare centred `<main>` with no wordmark and no card, so a slow sign-in
   // visibly jumped from text on canvas to logo-plus-card at the ten-second mark.
   return (
-    <AuthShell title="Signing you in">
+    <AuthShell title={t('auth.signingYouIn') || 'Signing you in'}>
       <p role="status" className="flex items-center gap-2.5 text-prose text-text-secondary">
         <Spinner label={null} />
-        This will only take a moment.
+        {t('auth.thisWillOnlyTakeA') || 'This will only take a moment.'}
       </p>
     </AuthShell>
   );
@@ -211,6 +213,7 @@ function CallbackNotice({
   onRetry?: () => void;
   retrying?: boolean;
 }) {
+  const { t } = useTranslation();
   // `AuthShell`, not a fifth auth layout. This rebuilt the shell by hand — the
   // wordmark, the `mt-8`, the card, the `p-5 sm:p-6`, the `text-lg` heading —
   // every value copied and none of them shared.
@@ -222,11 +225,11 @@ function CallbackNotice({
       <div className="mt-5 flex flex-wrap gap-2">
         {onRetry ? (
           <Button variant="primary" onClick={onRetry} loading={retrying}>
-            Try again
+            {t('auth.tryAgain') || 'Try again'}
           </Button>
         ) : null}
         <Button variant={onRetry ? 'secondary' : 'primary'} onClick={onBack}>
-          Back to sign in
+          {t('auth.backToSignIn') || 'Back to sign in'}
         </Button>
       </div>
     </AuthShell>

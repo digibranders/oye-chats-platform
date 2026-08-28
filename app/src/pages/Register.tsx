@@ -20,6 +20,7 @@ import {
   postAuthDestination,
   safeRelativePath,
 } from './auth/authFlow';
+import { useTranslation } from '../i18n/useTranslation';
 
 const PROMO_STORAGE_KEY = 'oyechats_promo_code';
 
@@ -68,6 +69,7 @@ function readPromoCode(fromUrl: string): string {
  * both boxes at once, which defeated the point of the second one entirely.
  */
 export default function Register() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -167,18 +169,18 @@ export default function Register() {
 
   return (
     <AuthShell
-      title="Create your account"
+      title={t('auth.createYourAccount') || 'Create your account'}
       footer={
         <>
           Already have an account?{' '}
           <Link to="/login" className="font-medium text-accent-600 hover:text-accent-700 hover:underline">
-            Sign in
+            {t('auth.signIn') || 'Sign in'}
           </Link>
         </>
       }
     >
       <GoogleAuthButton
-        label="Continue with Google"
+        label={t('auth.continueWithGoogle') || 'Continue with Google'}
         mode="register"
         promoCode={promoCode}
         next={postAuthDestination({ next, affiliateToken, door: 'client' })}
@@ -195,33 +197,33 @@ export default function Register() {
           tone={emailTaken ? 'warning' : 'danger'}
           live
           className="mb-4"
-          title={emailTaken ? 'That email already has an account' : undefined}
+          title={emailTaken ? t('auth.thatEmailAlreadyHasAn') || 'That email already has an account' : undefined}
           action={
             emailTaken ? (
               <Link to={`/login?${signInParams.toString()}`} className={buttonClass('secondary', 'sm')}>
-                Sign in
+                {t('auth.signIn') || 'Sign in'}
               </Link>
             ) : undefined
           }
         >
           {emailTaken
-            ? 'Sign in instead, or use a different address.'
-            : errorMessage(signUp.error, 'We could not create your account. Please try again.')}
+            ? t('auth.signInInsteadOrUse') || 'Sign in instead, or use a different address.'
+            : errorMessage(signUp.error, t('auth.weCouldNotCreateYour') || 'We could not create your account. Please try again.')}
         </Alert>
       ) : null}
 
       <form onSubmit={form.handleSubmit((values) => signUp.mutate(values))} noValidate className="space-y-4">
-        <Field label="Your name" error={form.formState.errors.name?.message} required>
+        <Field label={t('auth.yourName') || 'Your name'} error={form.formState.errors.name?.message} required>
           <Input
             type="text"
             autoComplete="name"
             autoFocus
-            placeholder="Priya Sharma"
+            placeholder={t('auth.priyaSharma') || 'Priya Sharma'}
             {...form.register('name')}
           />
         </Field>
 
-        <Field label="Work email" error={form.formState.errors.email?.message} required>
+        <Field label={t('auth.workEmail') || 'Work email'} error={form.formState.errors.email?.message} required>
           <Input
             type="email"
             autoComplete="email"
@@ -231,7 +233,7 @@ export default function Register() {
         </Field>
 
         <Field
-          label="Password"
+          label={t('auth.password') || 'Password'}
           error={form.formState.errors.password?.message}
           hint={<PasswordRules value={password} />}
           required
@@ -239,12 +241,12 @@ export default function Register() {
           <Input
             type={revealPassword ? 'text' : 'password'}
             autoComplete="new-password"
-            placeholder="Choose a password"
+            placeholder={t('auth.chooseAPassword') || 'Choose a password'}
             trailing={
               <button
                 type="button"
                 onClick={() => setRevealPassword((shown) => !shown)}
-                aria-label={revealPassword ? 'Hide password' : 'Show password'}
+                aria-label={revealPassword ? t('auth.hidePassword') || 'Hide password' : t('auth.showPassword') || 'Show password'}
                 aria-pressed={revealPassword}
                 className="grid h-6 w-6 place-items-center rounded-xs text-text-tertiary transition-colors hover:text-text-primary"
               >
@@ -260,7 +262,7 @@ export default function Register() {
         </Field>
 
         <Button type="submit" variant="primary" size="lg" block loading={signUp.isPending}>
-          Create account
+          {t('auth.createAccount') || 'Create account'}
         </Button>
 
         {/* One consent statement covering both paths, under the primary submit.
@@ -276,7 +278,7 @@ export default function Register() {
             rel="noopener noreferrer"
             className="font-medium text-accent-600 hover:text-accent-700 hover:underline"
           >
-            Terms
+            {t('auth.terms') || 'Terms'}
           </a>{' '}
           and{' '}
           <a
@@ -285,7 +287,7 @@ export default function Register() {
             rel="noopener noreferrer"
             className="font-medium text-accent-600 hover:text-accent-700 hover:underline"
           >
-            Privacy Policy
+            {t('auth.privacyPolicy') || 'Privacy Policy'}
           </a>
           .
         </p>

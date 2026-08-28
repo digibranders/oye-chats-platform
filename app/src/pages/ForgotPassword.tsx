@@ -12,6 +12,7 @@ import { OtpField } from './auth/OtpField';
 import { PasswordRules } from './auth/PasswordRules';
 import { useResendCooldown } from './auth/useResendCooldown';
 import { OTP_LENGTH, digitsOnly, errorMessage, maskEmail, passwordMeetsRules } from './auth/authFlow';
+import { useTranslation } from '../i18n/useTranslation';
 
 const requestSchema = z.object({
   email: z
@@ -50,6 +51,7 @@ type Stage = 'request' | 'reset' | 'done';
  * verification, which is the only way they stay the same next time.
  */
 export default function ForgotPassword() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [stage, setStage] = useState<Stage>('request');
   const [email, setEmail] = useState('');
@@ -102,17 +104,17 @@ export default function ForgotPassword() {
 
   if (stage === 'done') {
     return (
-      <AuthShell title="Password changed">
+      <AuthShell title={t('auth.passwordChanged') || 'Password changed'}>
         <div className="space-y-4">
           <Alert tone="success" live icon={<CheckCircle2 aria-hidden className="h-4 w-4" />}>
-            Every other session on this account has been signed out.
+            {t('auth.everyOtherSessionOnThis') || 'Every other session on this account has been signed out.'}
           </Alert>
           {/* No timed redirect. The screen this replaces called `setTimeout`
               with no cleanup, so the navigation fired even after the component
               had gone — and it moved the page out from under anyone still
               reading it. */}
           <Link ref={doneRef} to={signInHref} className={buttonClass('primary', 'lg', 'w-full')}>
-            Sign in
+            {t('auth.signIn') || 'Sign in'}
           </Link>
         </div>
       </AuthShell>
@@ -122,14 +124,14 @@ export default function ForgotPassword() {
   if (stage === 'reset') {
     return (
       <AuthShell
-        title="Choose a new password"
+        title={t('auth.chooseANewPassword') || 'Choose a new password'}
         description={
           <>
             We sent a six-digit code to{' '}
             <span className="figure text-text-primary">{maskEmail(email)}</span>.
           </>
         }
-        back={{ to: '/login', label: 'Back to sign in' }}
+        back={{ to: '/login', label: t('auth.backToSignIn') || 'Back to sign in' }}
         secondary={
           <Button
             variant="ghost"
@@ -139,7 +141,7 @@ export default function ForgotPassword() {
             disabled={cooldown.active}
             iconLeft={<RotateCcw aria-hidden />}
           >
-            {cooldown.active ? `Resend in ${cooldown.remaining}s` : 'Resend code'}
+            {cooldown.active ? `Resend in ${cooldown.remaining}s` : t('auth.resendCode') || 'Resend code'}
           </Button>
         }
         footer={
@@ -156,7 +158,7 @@ export default function ForgotPassword() {
               }}
               className={buttonClass('link')}
             >
-              Use a different email
+              {t('auth.useADifferentEmail') || 'Use a different email'}
             </button>
           </>
         }
@@ -164,13 +166,13 @@ export default function ForgotPassword() {
         <div className="space-y-4">
           {commitReset.isError ? (
             <Alert tone="danger" live>
-              {errorMessage(commitReset.error, 'We could not reset your password. Please try again.')}
+              {errorMessage(commitReset.error, t('auth.weCouldNotResetYour') || 'We could not reset your password. Please try again.')}
             </Alert>
           ) : null}
 
           {requestCode.isSuccess && !commitReset.isError ? (
             <Alert tone="success" live>
-              Code sent. Check your spam folder too.
+              {t('auth.codeSentCheckYourSpam') || 'Code sent. Check your spam folder too.'}
             </Alert>
           ) : null}
 
@@ -193,7 +195,7 @@ export default function ForgotPassword() {
             />
 
             <Field
-              label="New password"
+              label={t('auth.newPassword') || 'New password'}
               error={resetForm.formState.errors.password?.message}
               hint={<PasswordRules value={newPassword} />}
               required
@@ -201,12 +203,12 @@ export default function ForgotPassword() {
               <Input
                 type={revealPassword ? 'text' : 'password'}
                 autoComplete="new-password"
-                placeholder="Choose a password"
+                placeholder={t('auth.chooseAPassword') || 'Choose a password'}
                 trailing={
                   <button
                     type="button"
                     onClick={() => setRevealPassword((shown) => !shown)}
-                    aria-label={revealPassword ? 'Hide password' : 'Show password'}
+                    aria-label={revealPassword ? t('auth.hidePassword') || 'Hide password' : t('auth.showPassword') || 'Show password'}
                     aria-pressed={revealPassword}
                     className="grid h-6 w-6 place-items-center rounded-xs text-text-tertiary transition-colors hover:text-text-primary"
                   >
@@ -222,7 +224,7 @@ export default function ForgotPassword() {
             </Field>
 
             <Button type="submit" variant="primary" size="lg" block loading={commitReset.isPending}>
-              Set new password
+              {t('auth.setNewPassword') || 'Set new password'}
             </Button>
           </form>
         </div>
@@ -232,9 +234,9 @@ export default function ForgotPassword() {
 
   return (
     <AuthShell
-      title="Reset your password"
-      description="We will send a six-digit code."
-      back={{ to: '/login', label: 'Back to sign in' }}
+      title={t('auth.resetYourPassword') || 'Reset your password'}
+      description={t('auth.weWillSendASix') || 'We will send a six-digit code.'}
+      back={{ to: '/login', label: t('auth.backToSignIn') || 'Back to sign in' }}
       footer={
         <>
           Remembered it?{' '}
@@ -243,7 +245,7 @@ export default function ForgotPassword() {
             onClick={() => navigate('/login')}
             className={buttonClass('link')}
           >
-            Sign in
+            {t('auth.signIn') || 'Sign in'}
           </button>
         </>
       }
@@ -251,7 +253,7 @@ export default function ForgotPassword() {
       <div className="space-y-4">
         {requestCode.isError ? (
           <Alert tone="danger" live>
-            {errorMessage(requestCode.error, 'We could not send a code. Please try again.')}
+            {errorMessage(requestCode.error, t('auth.weCouldNotSendA') || 'We could not send a code. Please try again.')}
           </Alert>
         ) : null}
 
@@ -260,7 +262,7 @@ export default function ForgotPassword() {
           noValidate
           className="space-y-4"
         >
-          <Field label="Email address" error={requestForm.formState.errors.email?.message} required>
+          <Field label={t('auth.emailAddress') || 'Email address'} error={requestForm.formState.errors.email?.message} required>
             <Input
               type="email"
               autoComplete="email"
@@ -271,7 +273,7 @@ export default function ForgotPassword() {
           </Field>
 
           <Button type="submit" variant="primary" size="lg" block loading={requestCode.isPending}>
-            Send code
+            {t('auth.sendCode') || 'Send code'}
           </Button>
         </form>
       </div>

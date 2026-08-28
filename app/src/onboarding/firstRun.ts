@@ -1,5 +1,6 @@
 import { normalizeUrl, validateUrl } from '../ui';
 import type { CrawlStatus } from '../types/domain';
+import { t as translateNow } from '../i18n/i18n';
 
 /**
  * The three legitimate ways to start.
@@ -48,16 +49,16 @@ export function suggestName(website: string, fallback: string): string {
 export function validateFirstRun(draft: FirstRunDraft): FirstRunErrors {
   const errors: FirstRunErrors = {};
   if (!draft.name.trim()) {
-    errors.name = 'Give your chatbot a name — you can change it later.';
+    errors.name = translateNow('onboarding.giveYourChatbotAName') || 'Give your chatbot a name — you can change it later.';
   } else if (draft.name.trim().length > 60) {
-    errors.name = 'That is longer than 60 characters. Something short works better in the widget.';
+    errors.name = translateNow('onboarding.thatIsLongerThan60') || 'That is longer than 60 characters. Something short works better in the widget.';
   }
   if (draft.source === 'website') {
     const website = draft.website.trim();
     if (!website) {
-      errors.website = 'Enter the address of the site it should learn from.';
+      errors.website = translateNow('onboarding.enterTheAddressOfThe') || 'Enter the address of the site it should learn from.';
     } else if (validateUrl(website) !== null) {
-      errors.website = 'That does not look like a web address. Try something like example.com.';
+      errors.website = translateNow('onboarding.thatDoesNotLookLike') || 'That does not look like a web address. Try something like example.com.';
     }
   }
   return errors;

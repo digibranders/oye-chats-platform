@@ -21,6 +21,7 @@ import {
   safeRelativePath,
   type SignInDoor,
 } from './auth/authFlow';
+import { useTranslation } from '../i18n/useTranslation';
 
 const schema = z.object({
   email: z
@@ -67,6 +68,7 @@ const DOOR_PROMPT: Record<SignInDoor, { hint: string; action: string }> = {
  * free". Source order is the tab order.
  */
 export default function Login() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -180,18 +182,18 @@ export default function Login() {
 
   return (
     <AuthShell
-      title="Sign in"
+      title={t('auth.signIn') || 'Sign in'}
       footer={
         <>
           New to OyeChats?{' '}
           <Link to="/register" className="font-medium text-accent-600 hover:text-accent-700 hover:underline">
-            Create an account
+            {t('auth.createAnAccount') || 'Create an account'}
           </Link>
         </>
       }
     >
       <GoogleAuthButton
-        label="Continue with Google"
+        label={t('auth.continueWithGoogle') || 'Continue with Google'}
         mode="login"
         next={postAuthDestination({ next, affiliateToken, door: 'client' })}
       />
@@ -208,7 +210,7 @@ export default function Login() {
           className="mb-4"
           title={
             failedCredentials
-              ? 'Email or password is incorrect'
+              ? t('auth.emailOrPasswordIsIncorrect') || 'Email or password is incorrect'
               : undefined
           }
           action={
@@ -221,7 +223,7 @@ export default function Login() {
         >
           {failedCredentials
             ? DOOR_PROMPT[door].hint
-            : errorMessage(signIn.error, 'We could not sign you in. Please try again.')}
+            : errorMessage(signIn.error, t('auth.weCouldNotSignYou') || 'We could not sign you in. Please try again.')}
         </Alert>
       ) : null}
 
@@ -229,7 +231,7 @@ export default function Login() {
           blur and are not reachable by a screen reader. Every rule here is
           enforced in the resolver and rendered by the field. */}
       <form onSubmit={submit} noValidate className="space-y-4">
-        <Field label="Email address" error={form.formState.errors.email?.message} required>
+        <Field label={t('auth.emailAddress') || 'Email address'} error={form.formState.errors.email?.message} required>
           <Input
             type="email"
             autoComplete="email"
@@ -240,16 +242,16 @@ export default function Login() {
         </Field>
 
         <div>
-          <Field label="Password" error={form.formState.errors.password?.message} required>
+          <Field label={t('auth.password') || 'Password'} error={form.formState.errors.password?.message} required>
             <Input
               type={revealPassword ? 'text' : 'password'}
               autoComplete="current-password"
-              placeholder="Your password"
+              placeholder={t('auth.yourPassword') || 'Your password'}
               trailing={
                 <button
                   type="button"
                   onClick={() => setRevealPassword((shown) => !shown)}
-                  aria-label={revealPassword ? 'Hide password' : 'Show password'}
+                  aria-label={revealPassword ? t('auth.hidePassword') || 'Hide password' : t('auth.showPassword') || 'Show password'}
                   aria-pressed={revealPassword}
                   className="grid h-6 w-6 place-items-center rounded-xs text-text-tertiary transition-colors hover:text-text-primary"
                 >
@@ -268,7 +270,7 @@ export default function Login() {
               to="/forgot-password"
               className="text-xs font-medium text-accent-600 hover:text-accent-700 hover:underline"
             >
-              Forgot your password?
+              {t('auth.forgotYourPassword') || 'Forgot your password?'}
             </Link>
           </div>
         </div>
@@ -276,11 +278,11 @@ export default function Login() {
         <Checkbox
           checked={rememberMe}
           onCheckedChange={(checked) => setRememberMe(checked === true)}
-          label="Stay signed in"
+          label={t('auth.staySignedIn') || 'Stay signed in'}
         />
 
         <Button type="submit" variant="primary" size="lg" block loading={signIn.isPending}>
-          Sign in
+          {t('auth.signIn') || 'Sign in'}
         </Button>
       </form>
     </AuthShell>

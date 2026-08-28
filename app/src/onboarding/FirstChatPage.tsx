@@ -24,6 +24,7 @@ import { useBotContext } from '../context/BotContext';
 import { agentPath } from '../shell/nav';
 import { crawlFraction, domainOf } from './firstRun';
 import { useCrawlWatch } from './useCrawlWatch';
+import { useTranslation } from '../i18n/useTranslation';
 
 interface Turn {
   id: number;
@@ -51,6 +52,7 @@ const GENERIC_STARTERS = [
  * we tell them.
  */
 export function FirstChatPage() {
+  const { t } = useTranslation();
   const { agentId } = useParams();
   const botId = Number(agentId);
   const { bots, refreshBots } = useBotContext();
@@ -130,13 +132,13 @@ export function FirstChatPage() {
             setError(
               err instanceof Error
                 ? err.message
-                : 'That answer did not come back. Try asking again.',
+                : t('onboarding.thatAnswerDidNotCome2') || 'That answer did not come back. Try asking again.',
             );
           },
         });
       } catch (err) {
         setTurns((current) => current.filter((turn) => turn.id !== answerId));
-        setError(err instanceof Error ? err.message : 'That answer did not come back.');
+        setError(err instanceof Error ? err.message : t('onboarding.thatAnswerDidNotCome') || 'That answer did not come back.');
       } finally {
         setSending(false);
       }
@@ -159,8 +161,8 @@ export function FirstChatPage() {
         <PageHeader
           className="mb-0"
           eyebrow="First run"
-          title={bot?.name ? `Say hello to ${bot.name}` : 'Say hello to your chatbot'}
-          description="Exactly what a visitor will get."
+          title={bot?.name ? `Say hello to ${bot.name}` : t('onboarding.sayHelloToYourChatbot') || 'Say hello to your chatbot'}
+          description={t('onboarding.exactlyWhatAVisitorWill') || 'Exactly what a visitor will get.'}
         />
 
         {running ? (
@@ -171,7 +173,7 @@ export function FirstChatPage() {
                   Still reading {site || 'your site'}
                 </p>
                 <p className="figure text-xs text-text-tertiary">
-                  {crawled > 0 ? `${formatNumber(crawled)} pages so far` : 'Getting started'}
+                  {crawled > 0 ? `${formatNumber(crawled)} pages so far` : t('onboarding.gettingStarted') || 'Getting started'}
                 </p>
               </div>
               {/* Indeterminate until the total is actually known: a bar that
@@ -181,9 +183,9 @@ export function FirstChatPage() {
                   `hideLabel`, because the line above already reads "Still
                   reading <site>" with the page count beside it — the bar is the
                   picture of a fact the heading has stated. */}
-              <Progress value={fraction} label="Reading your website" hideLabel />
+              <Progress value={fraction} label={t('onboarding.readingYourWebsite') || 'Reading your website'} hideLabel />
               <p className="text-xs text-text-secondary">
-                Answers improve as it reads. No need to wait.
+                {t('onboarding.answersImproveAsItReads') || 'Answers improve as it reads. No need to wait.'}
               </p>
             </CardBody>
           </Card>
@@ -192,24 +194,24 @@ export function FirstChatPage() {
         {failed ? (
           <Alert
             tone="warning"
-            title="We could not read your site"
+            title={t('onboarding.weCouldNotReadYour') || 'We could not read your site'}
             action={
               <Link
                 to={bot ? `${agentPath(bot.id, 'knowledge')}?add=upload` : '/chatbots'}
                 className={buttonClass('secondary', 'sm')}
               >
-                Add content another way
+                {t('onboarding.addContentAnotherWay') || 'Add content another way'}
               </Link>
             }
           >
             {progress?.error ??
-              'Some sites block readers or need JavaScript mode. Try that, a sitemap, or upload documents.'}
+              (t('onboarding.someSitesBlockReadersOr') || 'Some sites block readers or need JavaScript mode. Try that, a sitemap, or upload documents.')}
           </Alert>
         ) : null}
 
         {!running && !failed && indexed === 0 ? (
-          <Alert tone="neutral" title="Your chatbot has nothing to read yet">
-            Add a site, documents, or pasted text.
+          <Alert tone="neutral" title={t('onboarding.yourChatbotHasNothingTo') || 'Your chatbot has nothing to read yet'}>
+            {t('onboarding.addASiteDocumentsOr') || 'Add a site, documents, or pasted text.'}
           </Alert>
         ) : null}
 
@@ -220,7 +222,7 @@ export function FirstChatPage() {
                 <span className="flex h-9 w-9 items-center justify-center rounded-md bg-surface-sunken">
                   <BotIcon aria-hidden className="h-icon-lg w-icon-lg text-text-tertiary" />
                 </span>
-                <p className="max-w-sm text-xs text-text-secondary">Try one of these</p>
+                <p className="max-w-sm text-xs text-text-secondary">{t('onboarding.tryOneOfThese') || 'Try one of these'}</p>
                 <div className="flex flex-wrap justify-center gap-2">
                   {starters.map((question) => (
                     <Button key={question} size="sm" variant="secondary" onClick={() => void ask(question)}>
@@ -237,7 +239,7 @@ export function FirstChatPage() {
                     className={cn('flex items-end gap-2', turn.role === 'you' && 'flex-row-reverse')}
                   >
                     {turn.role === 'bot' ? (
-                      <Avatar size="xs" name={bot?.name ?? 'Chatbot'} shape="rounded" className="shrink-0" />
+                      <Avatar size="xs" name={bot?.name ?? (t('onboarding.chatbot') || 'Chatbot')} shape="rounded" className="shrink-0" />
                     ) : null}
                     <div className={cn('flex min-w-0 max-w-[80%] flex-col', turn.role === 'you' && 'items-end')}>
                       {/* One radius and one ground per speaker, matching the lead
@@ -254,7 +256,7 @@ export function FirstChatPage() {
                         {turn.text ? (
                           <p className="whitespace-pre-wrap break-words">{turn.text}</p>
                         ) : (
-                          <span className="flex items-center gap-1" aria-label="Thinking">
+                          <span className="flex items-center gap-1" aria-label={t('onboarding.thinking') || 'Thinking'}>
                             {[0, 1, 2].map((dot) => (
                               <span
                                 key={dot}
@@ -266,7 +268,7 @@ export function FirstChatPage() {
                         )}
                       </div>
                       <p className="mt-1 px-0.5 text-xs text-text-tertiary">
-                        {turn.role === 'you' ? 'You' : (bot?.name ?? 'Your chatbot')}
+                        {turn.role === 'you' ? (t('onboarding.you') || 'You') : (bot?.name ?? (t('onboarding.yourChatbot') || 'Your chatbot'))}
                       </p>
                     </div>
                   </li>
@@ -292,15 +294,15 @@ export function FirstChatPage() {
                 own `focus:outline` inset by a pixel and firing on `:focus` rather
                 than `:focus-visible`, which is a second focus ring in a system
                 that has exactly one. */}
-            <Field label="Ask your chatbot a question" hideLabel className="min-w-0 flex-1">
+            <Field label={t('onboarding.askYourChatbotAQuestion') || 'Ask your chatbot a question'} hideLabel className="min-w-0 flex-1">
               <Input
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
-                placeholder="Ask your chatbot something…"
+                placeholder={t('onboarding.askYourChatbotSomething') || 'Ask your chatbot something…'}
                 autoComplete="off"
               />
             </Field>
-            <Button type="submit" size="icon-md" aria-label="Ask" disabled={sending || !draft.trim()}>
+            <Button type="submit" size="icon-md" aria-label={t('onboarding.ask') || 'Ask'} disabled={sending || !draft.trim()}>
               {sending ? <Spinner className="h-4 w-4" /> : <Send aria-hidden className="h-4 w-4" />}
             </Button>
           </form>
@@ -316,13 +318,13 @@ export function FirstChatPage() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Link to="/setup" className={buttonClass('ghost', 'md')}>
-              See what’s left
+              {t('onboarding.seeWhatsLeft') || 'See what’s left'}
             </Link>
             <Link
               to={bot ? agentPath(bot.id, 'deploy') : '/chatbots'}
               className={buttonClass('primary', 'md')}
             >
-              Put it on my website
+              {t('onboarding.putItOnMyWebsite') || 'Put it on my website'}
               <ArrowRight aria-hidden className="h-4 w-4" />
             </Link>
           </div>

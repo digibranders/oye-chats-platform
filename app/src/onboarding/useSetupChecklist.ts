@@ -4,6 +4,7 @@ import { useBotContext } from '../context/BotContext';
 import { keys } from '../query/keys';
 import { agentPath } from '../shell/nav';
 import type { Bot } from '../types/domain';
+import { t as translateNow } from '../i18n/i18n';
 
 export interface SetupStep {
   id: string;
@@ -76,43 +77,43 @@ export function useSetupChecklist() {
   const steps: SetupStep[] = [
     {
       id: 'create',
-      label: 'Create your chatbot',
-      description: 'Name it, point it at your site',
+      label: translateNow('onboarding.createYourChatbot') || 'Create your chatbot',
+      description: translateNow('onboarding.nameItPointItAt') || 'Name it, point it at your site',
       done: bots.length > 0,
       to: '/welcome',
     },
     {
       id: 'train',
-      label: 'Give it something to know',
-      description: 'Crawl your site or upload documents',
+      label: translateNow('onboarding.giveItSomethingToKnow') || 'Give it something to know',
+      description: translateNow('onboarding.crawlYourSiteOrUpload') || 'Crawl your site or upload documents',
       done: indexedChunks > 0,
       to: primary ? agentPath(primary.id, 'knowledge') : '/chatbots',
     },
     {
       id: 'brand',
-      label: 'Make it yours',
-      description: 'Your colours, your avatar, your greeting',
+      label: translateNow('onboarding.makeItYours') || 'Make it yours',
+      description: translateNow('onboarding.yourColoursYourAvatarYour') || 'Your colours, your avatar, your greeting',
       done: branded,
       to: primary ? agentPath(primary.id, 'experience') : '/chatbots',
     },
     {
       id: 'test',
-      label: 'Ask it a question',
-      description: 'See exactly what a visitor gets',
+      label: translateNow('onboarding.askItAQuestion') || 'Ask it a question',
+      description: translateNow('onboarding.seeExactlyWhatAVisitor') || 'See exactly what a visitor gets',
       done: conversations > 0,
       to: primary ? agentPath(primary.id, 'overview') : '/chatbots',
     },
     {
       id: 'install',
-      label: 'Put it on your website',
-      description: 'One script tag',
+      label: translateNow('onboarding.putItOnYourWebsite') || 'Put it on your website',
+      description: translateNow('onboarding.oneScriptTag') || 'One script tag',
       done: installed,
       to: primary ? agentPath(primary.id, 'deploy') : '/chatbots',
     },
     {
       id: 'lead',
-      label: 'Capture your first lead',
-      description: 'Happens on its own',
+      label: translateNow('onboarding.captureYourFirstLead') || 'Capture your first lead',
+      description: translateNow('onboarding.happensOnItsOwn') || 'Happens on its own',
       done: capturedLeads > 0,
       to: '/leads',
     },
