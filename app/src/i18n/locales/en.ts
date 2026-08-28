@@ -17,23 +17,27 @@ const en = {
     secondaryLandmark: 'Secondary navigation',
     planChip: '{plan} Plan',
     freeUntil: 'Free until {date}',
-    home: 'Home',
-    homeHint: 'Daily overview',
-    agents: 'Chatbots',
-    agentsHint: 'Create, train and manage chatbots',
-    inbox: 'Support',
-    inboxHint: 'Live chat and messages',
-    leads: 'Leads',
-    leadsHint: 'Captured leads and qualification',
-    journey: 'Journey',
-    journeyHint: 'Visitor journey flow',
-    analytics: 'Analytics',
-    analyticsHint: 'Performance across chatbots',
-    workspace: 'Workspace',
-    workspaceHint: 'Members, billing and usage',
-    settings: 'Settings',
-    settingsHint: 'Profile, workspace and preferences',
     lockedUpgrade: '{label} - upgrade to unlock',
+    /* Keyed off the item's LABEL, not its hint: a hint is a sentence, and a
+       key derived from a sentence breaks on every copy edit. Labels resolve
+       from `app.crumb.*`; these are the one-liners under them. */
+    hint: {
+      home: 'What needs you today',
+      inbox: 'Live chat and messages',
+      leads: 'Captured leads and qualification',
+      journey: 'Visitor journey flow',
+      analytics: 'Conversations and outcomes',
+      chatbots: 'Create, train and deploy chatbots',
+      billing: 'Plan, credits, invoices and usage',
+      settings: 'Workspace, team, integrations and your account',
+      overview: 'Is this chatbot healthy?',
+      knowledge: 'What does it know?',
+      experience: 'What do visitors see?',
+      deploy: 'Where is it live?',
+      qualification: 'How are leads scored?',
+      quotation: 'What can it price?',
+      behaviour: 'How does it decide what to say?',
+    },
   },
   leads: {
     adDetail: 'Ad detail',
@@ -450,6 +454,9 @@ const en = {
     zoomOut: 'Zoom out',
   },
   shell: {
+    palette: {
+      openChatbot: 'Open this chatbot',
+    },
     admin: 'Admin',
     attachment: 'Attachment',
     botSwitcher: {
@@ -1898,6 +1905,7 @@ const en = {
     couldntEnableNotificationsPleaseTry: 'Couldn’t enable notifications. Please try again.',
     couldntTurnOffNotificationsPlease: 'Couldn’t turn off notifications. Please try again.',
     crumb: {
+      allChatbots: 'All chatbots',
       account: 'Account',
       advanced: 'Advanced',
       affiliate: 'Affiliate',

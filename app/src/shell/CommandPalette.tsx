@@ -7,6 +7,8 @@ import { Kbd, cn } from '../ui';
 import { useBotContext } from '../context/BotContext';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { AGENT_NAV, FOOTER_NAV, WORKSPACE_NAV, agentPath, navForRole } from './nav';
+import { navHint, navLabel } from './navCopy';
+import { useTranslation } from '../i18n/useTranslation';
 
 interface Command {
   id: string;
@@ -82,6 +84,9 @@ export function CommandPalette({
   const navigate = useNavigate();
   const { bots } = useBotContext();
   const { isOperator } = useWorkspace();
+  // `t` changes identity with the locale, so listing it below is what
+  // rebuilds every command's label and hint on a language switch.
+  const { t } = useTranslation();
   const [query, setQuery] = useState('');
   const [recent, setRecent] = useState<string[]>(readRecent);
 
@@ -89,8 +94,8 @@ export function CommandPalette({
     const destinations: Command[] = navForRole([...WORKSPACE_NAV, ...FOOTER_NAV], isOperator).map(
       (item) => ({
         id: `nav:${item.to}`,
-        label: item.label,
-        hint: item.hint,
+        label: navLabel(item.label),
+        hint: navHint(item.label, item.hint),
         icon: item.icon,
         to: item.to,
       }),
@@ -103,29 +108,29 @@ export function CommandPalette({
     const agents: Command[] = isOperator
       ? []
       : bots.flatMap((bot) => {
-          const name = bot.name ?? `Chatbot ${bot.id}`;
+          const name = bot.name ?? `${navLabel('Chatbot')} ${bot.id}`;
           return [
             {
               id: `agent:${bot.id}`,
               label: name,
-              hint: 'Open this chatbot',
+              hint: t('shell.palette.openChatbot') || 'Open this chatbot',
               icon: Bot,
               to: agentPath(bot.id, 'overview'),
               keywords: bot.bot_key ?? undefined,
             },
             ...AGENT_NAV.map((tab) => ({
               id: `agent:${bot.id}:${tab.segment}`,
-              label: `${name} — ${tab.label}`,
-              hint: tab.hint,
+              label: `${name} — ${navLabel(tab.label)}`,
+              hint: navHint(tab.label, tab.hint),
               icon: tab.icon,
               to: agentPath(bot.id, tab.segment),
-              keywords: `${name} ${tab.label} ${bot.bot_key ?? ''}`,
+              keywords: `${name} ${tab.label} ${navLabel(tab.label)} ${bot.bot_key ?? ''}`,
             })),
           ];
         });
 
     return [...destinations, ...agents];
-  }, [bots, isOperator]);
+  }, [bots, isOperator, t]);
 
   const groups = useMemo<CommandGroup[]>(() => {
     const byId = new Map(commands.map((command) => [command.id, command]));

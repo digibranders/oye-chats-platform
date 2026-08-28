@@ -1,8 +1,8 @@
 import { useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useBotContext } from '../context/BotContext';
-import { t as translateNow } from '../i18n/i18n';
 import { useTranslation } from '../i18n/useTranslation';
+import { navLabel as label } from './navCopy';
 import {
   ACCOUNT_SECTIONS,
   AGENT_NAV,
@@ -43,31 +43,6 @@ export interface Crumb {
  * all and rendered an empty `<ol>`, `/welcome` — the first screen a new
  * customer sees — among them.
  */
-/** "API Keys" -> apiKeys, so the key survives a copy edit to the label. */
-function crumbKey(crumb: string): string {
-  const words = crumb.replace(/[^A-Za-z0-9]+/g, ' ').trim().split(/\s+/);
-  return words
-    .map((w, i) => (i === 0 ? w.toLowerCase() : w[0]?.toUpperCase() + w.slice(1).toLowerCase()))
-    .join('');
-}
-
-/**
- * A crumb's label in the reader's language.
- *
- * The nav config's English label is the KEY, not the output: the trail is
- * built from `nav.ts`, which is a module constant evaluated at import, before
- * any locale exists. Deriving the key from the label rather than storing one
- * beside it means a copy edit to a nav label cannot silently orphan its
- * translation — it resolves, or it falls back to the English that is already
- * there.
- *
- * A chatbot's own name is never passed through here. It is the customer's
- * text, and translating it would rename their chatbot on screen.
- */
-function label(crumb: string): string {
-  return translateNow(`app.crumb.${crumbKey(crumb)}`) || crumb;
-}
-
 export function useBreadcrumbs(): Crumb[] {
   const { pathname } = useLocation();
   const { bots } = useBotContext();

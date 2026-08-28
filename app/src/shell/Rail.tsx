@@ -11,6 +11,8 @@ import {
   formatBadgeCount,
 } from '../ui';
 import { agentHealth } from '../features/home/agentHealth';
+import { navLabel } from './navCopy';
+import { useTranslation } from '../i18n/useTranslation';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBotContext } from '../context/BotContext';
 import {
@@ -125,6 +127,10 @@ export interface RailProps {
 }
 
 export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 }: RailProps) {
+  // Re-render on a language switch. Every label below is resolved at call
+  // time through `navLabel`, so without this subscription the rail would keep
+  // whatever language it mounted in while the rest of the chrome moved.
+  const { t } = useTranslation();
   const { pathname } = useLocation();
   const { isOperator } = useWorkspace();
   const { bots } = useBotContext();
@@ -193,7 +199,7 @@ export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 
           <RailItem
             key={item.to}
             to={item.to}
-            label={item.label}
+            label={navLabel(item.label)}
             end={item.end}
             collapsed={collapsed}
             onNavigate={onNavigate}
@@ -211,7 +217,11 @@ export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 
     <RailFrame
       header={header}
       footer={footer}
-      navLabel={inAgentScope ? 'Chatbot navigation' : 'Primary navigation'}
+      navLabel={
+        inAgentScope
+          ? t('nav.secondaryLandmark') || 'Chatbot navigation'
+          : t('nav.primaryLandmark') || 'Primary navigation'
+      }
     >
       {inAgentScope ? (
         <>
@@ -229,7 +239,7 @@ export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 
             <RailItem
               key={item.segment}
               to={agentPath(scopedAgentId!, item.segment)}
-              label={item.label}
+              label={navLabel(item.label)}
               collapsed={collapsed}
               onNavigate={onNavigate}
               glyph={<item.icon aria-hidden className="h-icon-md w-icon-md" />}
@@ -242,7 +252,7 @@ export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 
             <RailItem
               key={item.to}
               to={item.to}
-              label={item.label}
+              label={navLabel(item.label)}
               end={item.end}
               active={item.to === '/' && onFirstRun ? true : undefined}
               collapsed={collapsed}
@@ -295,7 +305,7 @@ export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 
                   <RailItem
                     key={bot.id}
                     to={agentPath(bot.id, 'overview')}
-                    label={bot.name ?? `Chatbot ${bot.id}`}
+                    label={bot.name ?? `${navLabel('Chatbot')} ${bot.id}`}
                     collapsed={collapsed}
                     onNavigate={onNavigate}
                     glyph={
@@ -310,7 +320,7 @@ export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 
 
               <RailItem
                 to={CHATBOTS_ITEM.to}
-                label="All chatbots"
+                label={navLabel('All chatbots')}
                 end
                 collapsed={collapsed}
                 onNavigate={onNavigate}

@@ -20,7 +20,7 @@
  * -----------------
  * No dictionary is imported statically, and English is never loaded at
  * runtime. Every call site carries its own inline English default
- * (`t('nav.home') || 'Home'`), so English already exists in the component that
+ * (`t('app.crumb.home') || 'Home'`), so English already exists in the component
  * renders it. Loading `locales/en.ts` on top of that would ship every string
  * twice to every user, and would make "English output is unchanged" an
  * assertion rather than something structurally true.
@@ -222,7 +222,7 @@ export function template(key: string): string | null {
  * Returns **null** on a miss, never the key path. That is what makes the
  * `t('a.b') || 'English'` idiom work: a missing key falls through to the
  * caller's inline English. Returning the key instead would put raw strings
- * like "nav.home" in front of users AND make every `|| 'English'` in the
+ * like "app.crumb.home" in front of users AND make every `|| 'English'` in the
  * codebase unreachable dead code. The widget shipped the key-returning
  * variant first and had exactly that bug.
  */
