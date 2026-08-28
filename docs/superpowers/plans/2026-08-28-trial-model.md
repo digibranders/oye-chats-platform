@@ -12,7 +12,6 @@
 
 **Deliberately OUT of scope** (each is its own later plan):
 - Raising Free's 2,500-char knowledge ceiling (open product decision).
-- Removing/retiring the in-app "start a Standard trial" surface and `standard.trial_days=7` (the new default-trial makes it near-unreachable for new accounts; existing accounts keep it until a follow-up).
 - Onboarding steps 3–5 from the artifact (citations, install-verified screen, qualification step).
 - The super-admin console (oyechats-admin) — the trial row will appear in its plan list; harmless.
 
@@ -23,6 +22,7 @@
 - Crawl charging: `document_routes.py:1071/1177/1459` read `get_credit_cost(db, "url_scan")` and pass `cost_per_page` down; re-crawls already pass 0 (`recrawl_service.py:20-25`). Page cap enforcement reads `limits.max_crawl_pages` (`document_routes.py:1422-1446`, `plan_entitlements_service.py:866`).
 - Trial expiry: `task_expire_trials` (`worker/tasks.py:1282-1305`) flips to `trial_expired`, stamps `data_retention_until = trial_end + TRIAL_DATA_RETENTION_DAYS` (config.py:514, default 15), emails `send_trial_ended_email` whose copy promises **permanent deletion** (`email_service.py:1478-1507`). `task_delete_expired_trial_data` then hard-deletes (this is what destroyed client 3 on 15 Aug).
 - Reminder cadence `task_trial_reminder_emails` maps days-remaining `{4: day_7, 2: day_11, 1: day_13}` (`worker/tasks.py:1349-1353`) — tuned for a 7-day trial.
+- The old Standard-only trial surface, in full (all retired by Task 2b): `POST /subscriptions/start-trial` (`subscription_routes.py:323`), `plan_service.start_trial` + `TrialUnavailable` (`plan_service.py:575+`, reasons incl. `already_trialed` one-per-plan-lifetime), frontend `usePlanCheckout.ts` "trial-eligible paid plan → start-trial (no card)" branch, `PlanPickerDialog` trial CTA + its tests, `api.ts:3525 startTrial`. Production has ZERO `trialing` subscriptions as of 2026-08-28, so nothing is in flight on the old offer.
 - Top-ups are enforced server-side via `has_feature("topup_allowed")` (`subscription_routes.py:3886-3900`); the trial row simply carries `false`.
 - Future-start precedent: promo checkout passes `start_at` (`subscription_routes.py:2112`), `create_subscription` sends it only when in the future (`razorpay_service.py:685-689`), and `subscription.authenticated` **is already handled** and "materialises the row WITHOUT granting credits" (`razorpay_service.py:2533-2540`). `_is_live_sub` treats `authenticated` as live (`razorpay_service.py:1911`).
 - Trial→paid checkout today falls through as a normal conversion (`subscription_routes.py:2199-2209`, `same_plan` excludes `trialing`) — it does NOT pass `start_at`, so today a trialing buyer is charged immediately.
@@ -58,6 +58,7 @@
 - `api/emails/EMAIL_INVENTORY.md`
 - `api/app/api/auth_routes.py` — `/auth/me`: add `paid_plan_starts_at` for the "Standard starts in N days" card state
 - `app/src/shell/nav.ts` / shell layout — mount TrialCard above the Billing footer item; mount TrialBanner in `ProtectedLayout`
+- `app/src/features/workspace/billing/usePlanCheckout.ts`, `PlanPickerDialog.tsx` (+test), `app/src/services/api.ts` — retire the start-trial branch (Task 2b)
 - `oyechats-website/src/lib/pricing.ts`, `src/lib/legal.ts` — 14-day copy; retention clauses
 
 Run backend tests from `api/` with `.venv/bin/python -m pytest <file> -q --no-cov` (DB_URL must point at local Postgres; the suite builds its own `_pytest` database). Frontend: `cd app && npx vitest run <file>`. Commit after every task; branch must be `development` (`git branch --show-current` before each commit).
@@ -176,11 +177,35 @@ def test_seed_matrix_defaults_the_trial_and_not_free():
         },
 ```
 
-Flip Free's `"is_default": True` → `False`. Add `"is_public": True` to the four public rows and `is_public` to `_UPSERT_FIELDS` (the tuple at `seed_plans.py:300`). Fix the two stale comments reading `# trials are the Standard-only 7-day offer` (they no longer are). Leave `standard.trial_days: 7` untouched (out of scope, see header).
+Flip Free's `"is_default": True` → `False` and Standard's `"trial_days": 7` → `0` (the signup trial replaces the Standard-only offer; the dead code it leaves behind is removed in Task 2b). Add `"is_public": True` to the four public rows and `is_public` to `_UPSERT_FIELDS` (the tuple at `seed_plans.py:300`). Fix the two stale comments reading `# trials are the Standard-only 7-day offer`. Extend the Task 2 seed test with `assert by_slug["standard"]["trial_days"] == 0` and `assert all(p["trial_days"] == 0 for p in _PLANS if p["slug"] != "trial")`.
 
 - [ ] **Step 4: Dry-run the seed against the dev DB** — `.venv/bin/python scripts/seed_plans.py` (no `--apply`); confirm the printed diff shows exactly: new `trial` row, `free.is_default true→false`, `is_public` backfills. **Do not `--apply` to any shared DB in this task** — rollout is Task 10.
 
 - [ ] **Step 5: Tests pass, then commit** — `feat(billing): seed the 14-day plan-less trial as the signup default`
+
+### Task 2b: Retire the Standard-only trial offer
+
+With every purchasable plan at `trial_days = 0`, the start-trial surface is dead code with a live route. Remove it rather than leave a second trial concept for the next reader to reconcile — a Free-plan customer post-conversion must never see a "start a card-free Standard trial" button.
+
+**Keep untouched:** `assign_default_plan_to_client`'s `trial_days > 0` branch (it IS the new trial's mechanism) and every `status == "trialing"` handling in checkout/expiry (the new trial produces trialing subs).
+
+**Files:** Modify `api/app/api/subscription_routes.py`, `api/app/services/plan_service.py`, `app/src/features/workspace/billing/usePlanCheckout.ts`, `app/src/features/workspace/billing/PlanPickerDialog.tsx` (+ test), `app/src/services/api.ts` · Delete the start-trial tests that pin the old behaviour
+
+- [ ] **Step 1: Failing test** (append to `api/tests/test_trial_signup_defaults.py`):
+
+```python
+def test_start_trial_route_is_gone(test_app_client):
+    # 404, not 400/403: the surface is removed, not gated.
+    assert test_app_client.post("/subscriptions/start-trial", json={"plan_slug": "standard"}).status_code == 404
+```
+
+(Use the app-factory fixture the other route-absence tests use; if none exists, assert the route is absent from `app.routes` instead.)
+
+- [ ] **Step 2: Verify failure** — route currently answers.
+- [ ] **Step 3: Backend removal.** Delete `start_trial_endpoint` + `StartTrialRequest` (`subscription_routes.py:323`), then `plan_service.start_trial` and `TrialUnavailable` IF nothing else imports them (`grep -rn "TrialUnavailable\|start_trial" api/app api/tests` first — delete their dedicated tests in the same commit; any OTHER test that fails is a real dependency: stop and re-scope). Do not touch `assign_default_plan_to_client`.
+- [ ] **Step 4: Frontend removal.** In `usePlanCheckout.ts` delete the trial-eligible branch (line ~247 `startTrial(plan.slug)`) and the `already_trialed` handling (~127); the docstring's decision table loses its trial row. In `PlanPickerDialog.tsx` remove the card-free-trial CTA and its two tests (`:331`, `:356`); remove `startTrial` from `api.ts:3525` and from both test mock blocks. Grep `startTrial` repo-wide afterwards: zero hits.
+- [ ] **Step 5: Gates.** `pytest tests/test_trial_signup_defaults.py tests/ -q --no-cov -k "start_trial or plan_service or checkout"` and `cd app && npx tsc --noEmit && npx vitest run src/features/workspace/billing/ && npm run lint`.
+- [ ] **Step 6: Commit** — `refactor(billing): retire the Standard-only trial offer — the signup trial is the only trial`
 
 ### Task 3: Signup lands on the trial (verify, don't build — the branch exists)
 
@@ -420,4 +445,5 @@ Deploy order matters because the seed changes signup behaviour instantly:
 
 - **Spec coverage:** trial-not-a-plan → Tasks 1–2; free training + 500 credits → Task 4 + seed; instant-entitlements/deferred debit → Task 6; day-15 conversion → Task 5; no top-ups → seed row (`topup_allowed: false`, enforcement pre-exists at `subscription_routes.py:3893`); banner + 3-state card → Task 7; website/legal → Task 8. The one open product decision (Free's ceiling) is excluded by name in the header.
 - **Type consistency:** `resolve_crawl_cost_per_page(session, client_id, bot)` is the only new cross-file callable; `is_public` the only new column; `paid_plan_starts_at`/`paid_plan_name` the only payload additions.
+- **Old-trial retirement (Task 2b):** route removed not gated; `assign_default_plan_to_client` and all `trialing` handling explicitly preserved; prod verified to have zero in-flight trialing subs.
 - **Known traps encoded:** double credit grant (Task 6 marker), `ix_subscriptions_client_bot_active` retirement order (Task 6), email-marker dedup across cadence change (Task 5 step 5), pricing-catalogue leak (Task 1), UPI no-update constraint (Task 6 step 6), W-1 em-dash gate (Task 8), deploy-before-seed ordering (Task 10).
