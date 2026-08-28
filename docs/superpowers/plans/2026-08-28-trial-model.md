@@ -149,6 +149,7 @@ def test_seed_matrix_defaults_the_trial_and_not_free():
     assert trial["limits"]["knowledge_characters"] == 500_000
     assert trial["limits"]["bots"] == 1 and trial["limits"]["operators"] == 1
     assert trial["features"]["topup_allowed"] is False
+    assert trial["features"]["first_training_free"] is True
     # every Professional feature except volume/topup is open
     pro = by_slug["professional"]["features"]
     for key, val in pro.items():
@@ -158,7 +159,7 @@ def test_seed_matrix_defaults_the_trial_and_not_free():
 
 - [ ] **Step 2: Verify failure** — `KeyError: 'trial'`.
 
-- [ ] **Step 3: Implement.** Add to `_PLANS` (sorted first, `sort_order: 0`), copy Professional's `features` verbatim then override `topup_allowed: False`; set `included_operator_seats: 1`, all prices 0, `"is_public": False`, and:
+- [ ] **Step 3: Implement.** Add to `_PLANS` (sorted first, `sort_order: 0`), copy Professional's `features` verbatim then override `topup_allowed: False` and add `first_training_free: True` (eng review: plan behaviour stays in plan data, like every other feature flag); set `included_operator_seats: 1`, all prices 0, `"is_public": False`, and:
 
 ```python
         "slug": "trial",
@@ -252,7 +253,7 @@ def test_second_training_charges_url_scan_on_trial(db): ...
 def test_first_training_still_charges_on_paid_plans(db): ...
 ```
 
-Assert on the helper `resolve_crawl_cost_per_page(session, client_id, bot)` (to be created), not on route wiring: trial sub + bot with zero `source='crawl'` documents → 0; trial sub + bot that has crawl documents → 5; Standard sub → 5 either way.
+Assert on the helper `resolve_crawl_cost_per_page(session, client_id, bot)` (to be created), not on route wiring: a plan with `first_training_free` + bot with zero `source='crawl'` documents → 0; same plan + bot that has crawl documents → 5; a plan without the flag → 5 either way. The flag, not the slug, is the switch — same convention as `topup_allowed`.
 
 - [ ] **Step 2: Verify failure** — `ImportError`.
 - [ ] **Step 3: Implement** in `document_routes.py` (near the other crawl helpers):
@@ -270,7 +271,7 @@ def resolve_crawl_cost_per_page(session, client_id: int, bot) -> int:
     """
     from app.services import plan_entitlements_service
     ents = plan_entitlements_service.get_entitlements(client_id, session)
-    if ents.plan_slug == "trial":
+    if ents.has_feature("first_training_free"):
         has_crawled = session.execute(
             select(Document.id).where(
                 Document.bot_id == bot.id, Document.source == "crawl"
@@ -304,6 +305,10 @@ def test_expiry_pauses_knowledge_and_is_reversible(db): ...
 def test_expiry_never_touches_a_client_with_a_live_or_deferred_paid_sub(db): ...
     # a sibling sub in active/authenticated/created → trial row is retired
     # (canceled, cancel_reason="converted_to_paid") and NOT converted to free
+def test_converted_free_sub_renews_on_month_two(db): ...
+    # advance past the anniversary current_period_end →
+    # task_renew_due_subscriptions grants Free's 200 (it is "the only trigger
+    # for free-tier subs", worker/tasks.py:559 — conversion must feed it)
 def test_legacy_trial_expired_rows_still_age_out_unchanged(db): ...
     # pre-existing trial_expired + data_retention_until rows remain for
     # task_delete_expired_trial_data (legacy only; new rows never enter it)
@@ -327,7 +332,7 @@ def test_legacy_trial_expired_rows_still_age_out_unchanged(db): ...
                 else:
                     sub.plan_id = free_plan.id
                     sub.status = "active"
-                    sub.trial_end_converted_at = now  # new nullable column? NO — reuse notes/markers; see step 4
+                    _mark_email_sent(sub, "converted_to_free", now)  # JSONB marker, NOT a new column — the idempotency key this cron already uses
                     sub.data_retention_until = None
                     sub.current_period_start = now
                     sub.current_period_end = add_months(now, 1)
@@ -335,6 +340,8 @@ def test_legacy_trial_expired_rows_still_age_out_unchanged(db): ...
                     for bot in bots_of(session, sub.client_id):
                         deactivate_bot_knowledge_over_limit(session, bot)
 ```
+
+Verified safe (eng review): the deferred-purchase row sits in `created`/`authenticated`, which are OUTSIDE `ix_subscriptions_client_bot_active`'s predicate (`status IN ('active','trialing','past_due')`, models.py:1951), so it coexists with the live trial row until retirement — the retirement-before-activation ordering below is still required at day 14, but there is no collision window at purchase time.
 
 Two constraints discovered in review that this must respect: **(a)** don't add a column casually — if a conversion marker is needed for idempotency, prefer `trial_emails_sent["converted_to_free"]` (the JSONB marker pattern this cron already uses); **(b)** the knowledge pause must reuse `knowledge_state_service.deactivate_bot_knowledge` semantics exactly as the paid→free downgrade path does — read that caller first (grep `deactivate_bot_knowledge` call sites) and mirror it, including whatever decides "over limit". Trial credit remainder: zero it via a ledger adjustment with reason `trial_expired_forfeit` so the Free balance is exactly the Free grant (a leftover trial balance on Free is the top-up-leak shape again).
 
@@ -361,6 +368,15 @@ def test_activation_at_day14_does_not_regrant(db): ...
     # replay subscription.activated for the same sub → balance unchanged
 def test_entitlements_resolve_to_purchased_plan_immediately(db): ...
     # get_entitlements(client) between auth and first charge → purchased plan_slug
+def test_verify_endpoint_flips_entitlements_before_any_webhook(db): ...
+    # POST /checkout/verify with a valid signature → same retire+grant as the
+    # webhook, so the customer sees the upgrade the second the popup closes
+def test_verify_then_webhook_is_idempotent(db): ...
+    # both paths run → one retirement, one grant, one marker
+def test_upgrade_after_conversion_reactivates_paused_knowledge(db): ...
+    # converted-to-Free account with paused docs buys a plan →
+    # reactivate_bot_knowledge restores them (the trial-ended email PROMISES
+    # this; razorpay_service.py:3640/3862/3910 already wire it — prove it)
 def test_cancel_before_day14_charges_nothing_and_leaves_trial_running(db): ...
     # gateway cancel of the deferred sub → trial sub restored/still governs?  NO:
     # decision — trial was retired at auth; cancel re-opens nothing. Assert the
@@ -382,7 +398,7 @@ def test_cancel_before_day14_charges_nothing_and_leaves_trial_running(db): ...
             result = razorpay_service.create_subscription(..., start_at=trial_defer_at, ...)
 ```
 
-Thread the same through `/checkout/verify` if it re-creates or confirms (read it first — it may only verify signatures, in which case no change).
+**Decision (eng review): `/checkout/verify` is the fast path, the webhook is the durable path.** Extract ONE idempotent `convert_trial_purchase(session, sub)` (retire trial → grant with marker → stamp) and call it from both; the marker makes double-delivery a no-op. A customer who just paid must never see trial limits while a webhook is in flight.
 
 - [ ] **Step 4: Authenticated handler.** In `razorpay_service.py`'s `subscription.authenticated` branch (the promo materialiser), extend for `notes`-marked trial conversions (stamp `oyechats_trial_conversion: "1"` + `oyechats_trial_sub_id` in `extra_notes` at checkout): retire the trial row (`canceled` / `converted_to_paid` — respecting `ix_subscriptions_client_bot_active` by retiring BEFORE the new row enters the active set, exactly as `transition_service.execute_gateway_cancellation`'s comment block prescribes), grant first-period credits with the activation-marker key, leave trial credits in place until day 15 forfeit (Task 5 zeroes on conversion; a converted-to-paid client keeps both buckets — they paid). `/auth/me`: add `paid_plan_starts_at` (ISO) + `paid_plan_name` when a deferred sub exists, so the rail card can say "Standard starts in 11 days".
 - [ ] **Step 5: All five tests green, then the billing neighbourhood:** `pytest tests/test_trial_midway_purchase.py tests/ -q --no-cov -k "checkout or razorpay or webhook_billing or promo"`.
@@ -447,3 +463,16 @@ Deploy order matters because the seed changes signup behaviour instantly:
 - **Type consistency:** `resolve_crawl_cost_per_page(session, client_id, bot)` is the only new cross-file callable; `is_public` the only new column; `paid_plan_starts_at`/`paid_plan_name` the only payload additions.
 - **Old-trial retirement (Task 2b):** route removed not gated; `assign_default_plan_to_client` and all `trialing` handling explicitly preserved; prod verified to have zero in-flight trialing subs.
 - **Known traps encoded:** double credit grant (Task 6 marker), `ix_subscriptions_client_bot_active` retirement order (Task 6), email-marker dedup across cadence change (Task 5 step 5), pricing-catalogue leak (Task 1), UPI no-update constraint (Task 6 step 6), W-1 em-dash gate (Task 8), deploy-before-seed ordering (Task 10).
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | CLEAR (PLAN) | 6 issues: 2 decisions taken, 4 applied inline, 2 dissolved under verification |
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | — | — |
+| Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | — |
+
+**Decisions taken 2026-08-28:** (1) `/checkout/verify` flips entitlements as the fast path with the `subscription.authenticated` webhook as durable backstop, one idempotent function. (2) First-training-free is keyed by a `first_training_free` feature flag on the plan row, not a slug check.
+**Verified during review:** superadmin plan list is unaffected by `is_public` (own unfiltered query, superadmin_plan_routes.py:221); deferred-purchase rows cannot collide with the live trial row (outside the unique index predicate, models.py:1951); free-tier month-2 renewal rides `task_renew_due_subscriptions` (worker/tasks.py:559) — now pinned by test.
+**UNRESOLVED:** none.
+**VERDICT:** ENG CLEARED — ready to implement.
