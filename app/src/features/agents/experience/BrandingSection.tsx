@@ -8,15 +8,12 @@ import {
   Card,
   CardBody,
   CardHeader,
-  Field,
   FileDrop,
-  Input,
   LoadingRows,
   SegmentedControl,
   Spinner,
   Switch,
   buttonClass,
-  validateUrl,
 } from '../../../ui';
 import PremiumOrb from './PremiumOrb';
 import { useEntitlements } from '../../../hooks/useEntitlements';
@@ -41,12 +38,10 @@ import { useTranslation } from '../../../i18n/useTranslation';
  * these values end up in front of the customer's own visitors and "it looked
  * fine on my monitor" is how an unreadable brand ships. See `ColorField`.
  *
- * **The credit line is configured here, once.** Its on/off switch was on this
- * page and its wording and URL were on Deploy, under a card with the same title
- * and a near-identical 40-word alert — so a customer who switched the badge off
- * here still saw "Change the wording", linking to Deploy, for a badge that was
- * now hidden. Both halves are gated on the same `branding_removable`
- * entitlement, so both halves live in one card.
+ * **The credit line is show-or-hide, nothing more.** The card carries one
+ * control: a switch, gated on `branding_removable`. There is deliberately no
+ * wording or URL field — the credit is OyeChats' own mark, so a customer either
+ * shows it or, with the add-on, hides it. It never becomes someone else's line.
  */
 
 const AVATAR_TYPES: readonly { value: AvatarType; label: string }[] = [
@@ -83,10 +78,6 @@ export function BrandingSection({
   // Colours the crawl pulled off the customer's own site come first: they are
   // the only swatches here that are actually *their* brand.
   const swatches = meta.recommendedColors.slice(0, 6);
-
-  const brandingUrlError = draft.brandingUrl.trim()
-    ? validateUrl(draft.brandingUrl.trim())
-    : null;
 
   const handleFiles = useCallback(
     async (files: File[]): Promise<void> => {
@@ -293,7 +284,7 @@ export function BrandingSection({
                 {/* An ADD-ON, not a plan inclusion. No tier grants it, so
                     "Standard and above" sent customers to compare plans for
                     something no plan on that page would give them. */}
-                Rewording or removing it is a paid add-on on any plan. It currently reads{' '}
+                Removing it is a paid add-on on any plan. It currently reads{' '}
                 <span className="font-medium text-text-primary">
                   {meta.brandingText || t('agents.poweredByOyechats') || 'Powered by OyeChats'}
                 </span>
@@ -312,43 +303,14 @@ export function BrandingSection({
               </Link>
             </div>
           ) : (
-            <>
-              <Switch
-                label={t('agents.showTheCreditLine') || 'Show the credit line'}
-                checked={draft.showBranding}
-                disabled={readOnly}
-                onCheckedChange={(showBranding) => onChange({ showBranding })}
-              />
-              {draft.showBranding ? (
-                // `max-w-pair`, the same cap the labelled `Switch` above draws
-                // itself at. Without it the two inputs ran 38px past the switch's
-                // right edge, so one card had two right margins. `Grid cols={2}`
-                // never went two-up in this column anyway — it is 638px wide, and
-                // the ramp's two-column step is 768.
-                <div className="grid max-w-pair gap-4">
-                  <Field label={t('agents.wording') || 'Wording'} error={errors.brandingText ?? null}>
-                    <Input
-                      value={draft.brandingText}
-                      disabled={readOnly}
-                      placeholder={t('agents.poweredByOyechats') || 'Powered by OyeChats'}
-                      onChange={(event) => onChange({ brandingText: event.target.value })}
-                    />
-                  </Field>
-                  <Field label={t('agents.whereItLinksTo') || 'Where it links to'} error={brandingUrlError}>
-                    <Input
-                      value={draft.brandingUrl}
-                      inputMode="url"
-                      spellCheck={false}
-                      autoComplete="off"
-                      disabled={readOnly}
-                      placeholder="https://www.oyechats.com"
-                      onChange={(event) => onChange({ brandingUrl: event.target.value })}
-                      className="figure"
-                    />
-                  </Field>
-                </div>
-              ) : null}
-            </>
+            // Show or hide, and nothing else. The credit is OyeChats' mark, so
+            // there is no wording or link to edit — only whether it appears.
+            <Switch
+              label={t('agents.showTheCreditLine') || 'Show the credit line'}
+              checked={draft.showBranding}
+              disabled={readOnly}
+              onCheckedChange={(showBranding) => onChange({ showBranding })}
+            />
           )}
         </CardBody>
       </Card>

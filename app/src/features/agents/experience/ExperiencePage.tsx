@@ -261,7 +261,7 @@ export function ExperiencePage(): ReactElement {
                 answerStale={experience.answerStale}
                 botKey={meta.botKey}
                 website={meta.website}
-                brandingText={draft.brandingText || meta.brandingText}
+                brandingText={meta.brandingText}
                 onEditState={selectTab}
               />
             </div>
