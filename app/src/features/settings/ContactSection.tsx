@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Badge, CopyField, SettingGroup, SettingRow, buttonClass } from '../../ui';
 import { useEntitlements } from '../../hooks/useEntitlements';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /** Where questions that do not fit a self-serve flow land. */
 const CONTACT_EMAIL = 'support@oyechats.com';
@@ -15,34 +16,35 @@ const CONTACT_EMAIL = 'support@oyechats.com';
  * every request and shown nowhere.
  */
 export function ContactSection() {
+  const { t } = useTranslation();
   const { hasFeature } = useEntitlements();
   const priority = hasFeature('online_support');
 
   return (
     <SettingGroup
-      title="Getting help"
+      title={t('settings.gettingHelp') || 'Getting help'}
       actions={
         <Badge tone={priority ? 'plan' : 'neutral'}>
-          {priority ? 'Priority support' : 'Email support'}
+          {priority ? t('settings.prioritySupport') || 'Priority support' : t('settings.emailSupport') || 'Email support'}
         </Badge>
       }
     >
-      <SettingRow label="Support email" controlWidth="auto">
-        <CopyField className="w-64" compact value={CONTACT_EMAIL} label="support email address" />
+      <SettingRow label={t('settings.supportEmail') || 'Support email'} controlWidth="auto">
+        <CopyField className="w-64" compact value={CONTACT_EMAIL} label={t('settings.supportEmailAddress') || 'support email address'} />
       </SettingRow>
 
-      <SettingRow label="Email us" controlWidth="auto">
+      <SettingRow label={t('settings.emailUs') || 'Email us'} controlWidth="auto">
         <div className="flex flex-wrap items-center gap-2">
           {!priority ? (
             <Link to="/billing" className={buttonClass('ghost', 'sm')}>
-              See what a plan includes
+              {t('settings.seeWhatAPlanIncludes') || 'See what a plan includes'}
             </Link>
           ) : null}
           <a
-            href={`mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent('OyeChats support')}`}
+            href={`mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(t('settings.oyechatsSupport') || 'OyeChats support')}`}
             className={buttonClass('secondary', 'sm')}
           >
-            Email us
+            {t('settings.emailUs') || 'Email us'}
           </a>
         </div>
       </SettingRow>

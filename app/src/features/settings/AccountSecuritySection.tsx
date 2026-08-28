@@ -26,6 +26,7 @@ import type { CurrentUser } from '../../types/domain';
 import { OtpField } from '../../pages/auth/OtpField';
 import { PasswordRules } from '../../pages/auth/PasswordRules';
 import { errorMessage, passwordMeetsRules } from '../../pages/auth/authFlow';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * The two credentials the account signs in with.
@@ -38,6 +39,7 @@ import { errorMessage, passwordMeetsRules } from '../../pages/auth/authFlow';
 // ── Password ────────────────────────────────────────────────────────────────
 
 export function ChangePasswordCard({ isOperator }: { isOperator: boolean }) {
+  const { t } = useTranslation();
   const fieldId = useId();
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
@@ -60,8 +62,8 @@ export function ChangePasswordCard({ isOperator }: { isOperator: boolean }) {
       setNext('');
       setConfirm('');
       setErrors({});
-      toast.success('Password changed', {
-        description: 'Use the new one next time you sign in.',
+      toast.success(t('settings.passwordChanged') || 'Password changed', {
+        description: t('settings.useTheNewOneNext') || 'Use the new one next time you sign in.',
       });
     },
   });
@@ -71,11 +73,11 @@ export function ChangePasswordCard({ isOperator }: { isOperator: boolean }) {
     // Field-level, not one shared banner: the previous card put "passwords do
     // not match" above the form, where it was nowhere near either field.
     const found: typeof errors = {};
-    if (!current) found.current = 'Enter your current password.';
+    if (!current) found.current = t('settings.enterYourCurrentPassword') || 'Enter your current password.';
     if (!passwordMeetsRules(next)) {
-      found.next = 'Your new password needs 8 characters, a letter and a number.';
+      found.next = t('settings.yourNewPasswordNeeds8') || 'Your new password needs 8 characters, a letter and a number.';
     }
-    if (confirm !== next) found.confirm = 'This does not match the new password.';
+    if (confirm !== next) found.confirm = t('settings.thisDoesNotMatchThe') || 'This does not match the new password.';
     if (Object.keys(found).length > 0) {
       setErrors(found);
       return;
@@ -85,18 +87,18 @@ export function ChangePasswordCard({ isOperator }: { isOperator: boolean }) {
   }
 
   return (
-    <SettingGroup title="Password">
+    <SettingGroup title={t('settings.password') || 'Password'}>
       <form onSubmit={submit}>
         {change.isError ? (
           <SettingBand>
-            <Alert tone="danger" live title="We could not change your password">
-              {errorMessage(change.error, 'Please check your current password and try again.')}
+            <Alert tone="danger" live title={t('settings.weCouldNotChangeYour') || 'We could not change your password'}>
+              {errorMessage(change.error, t('settings.pleaseCheckYourCurrentPassword') || 'Please check your current password and try again.')}
             </Alert>
           </SettingBand>
         ) : null}
 
         <SettingRow
-          label="Current password"
+          label={t('settings.currentPassword') || 'Current password'}
           htmlFor={`${fieldId}-current`}
           error={errors.current}
           description={
@@ -107,7 +109,7 @@ export function ChangePasswordCard({ isOperator }: { isOperator: boolean }) {
                   to="/forgot-password"
                   className="font-medium text-accent-600 underline-offset-2 hover:underline"
                 >
-                  Reset it by email
+                  {t('settings.resetItByEmail') || 'Reset it by email'}
                 </Link>
                 .
               </>
@@ -137,7 +139,7 @@ export function ChangePasswordCard({ isOperator }: { isOperator: boolean }) {
             while the two around it were 256px. The rules sit under the label
             like every other row's hint and the three controls line up. */}
         <SettingRow
-          label="New password"
+          label={t('settings.newPassword') || 'New password'}
           htmlFor={`${fieldId}-next`}
           error={errors.next}
           description={<PasswordRules value={next} />}
@@ -157,7 +159,7 @@ export function ChangePasswordCard({ isOperator }: { isOperator: boolean }) {
         </SettingRow>
 
         <SettingRow
-          label="Confirm new password"
+          label={t('settings.confirmNewPassword') || 'Confirm new password'}
           htmlFor={`${fieldId}-confirm`}
           error={errors.confirm}
         >
@@ -177,7 +179,7 @@ export function ChangePasswordCard({ isOperator }: { isOperator: boolean }) {
 
         <CardFooter>
           <Button type="submit" loading={change.isPending}>
-            Change password
+            {t('settings.changePassword') || 'Change password'}
           </Button>
         </CardFooter>
       </form>
@@ -208,6 +210,7 @@ export interface ChangeEmailCardProps {
  * a silent resend button that 401s is not.
  */
 export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps) {
+  const { t } = useTranslation();
   const emailFieldId = useId();
   const pending = user.pending_email ?? null;
   const [step, setStep] = useState<EmailStep>(pending ? 'verify' : 'idle');
@@ -235,8 +238,8 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps) {
       onEmailChange({ email: updated.email, pending_email: null });
       setOtp('');
       setStep('idle');
-      toast.success('Email address updated', {
-        description: 'Sign in with the new address from now on.',
+      toast.success(t('settings.emailAddressUpdated') || 'Email address updated', {
+        description: t('settings.signInWithTheNew') || 'Sign in with the new address from now on.',
       });
     },
   });
@@ -249,24 +252,24 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps) {
       setStep('idle');
       setOtp('');
       setPassword('');
-      toast.success('Email change cancelled');
+      toast.success(t('settings.emailChangeCancelled') || 'Email change cancelled');
     },
   });
 
   function submitRequest(event: React.FormEvent) {
     event.preventDefault();
     const trimmed = email.trim();
-    const reason = trimmed ? validateEmail(trimmed) : 'Enter the new email address.';
+    const reason = trimmed ? validateEmail(trimmed) : t('settings.enterTheNewEmailAddress') || 'Enter the new email address.';
     if (reason) {
       setEmailError(reason);
       return;
     }
     if (trimmed.toLowerCase() === (user.email ?? '').toLowerCase()) {
-      setEmailError('That is already your address.');
+      setEmailError(t('settings.thatIsAlreadyYourAddress') || 'That is already your address.');
       return;
     }
     if (!password) {
-      setPasswordError('Enter your current password to confirm this change.');
+      setPasswordError(t('settings.enterYourCurrentPasswordTo') || 'Enter your current password to confirm this change.');
       return;
     }
     setEmailError(null);
@@ -277,7 +280,7 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps) {
   function submitConfirm(event: React.FormEvent) {
     event.preventDefault();
     if (!otp.trim()) {
-      setOtpError('Enter the code we emailed to the new address.');
+      setOtpError(t('settings.enterTheCodeWeEmailed') || 'Enter the code we emailed to the new address.');
       return;
     }
     setOtpError(null);
@@ -287,7 +290,7 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps) {
   return (
     <>
       <SettingGroup
-        title="Sign-in email"
+        title={t('settings.signInEmail') || 'Sign-in email'}
         actions={
           step === 'idle' ? (
             <Button
@@ -301,13 +304,13 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps) {
                 setStep('request');
               }}
             >
-              Change
+              {t('settings.change') || 'Change'}
             </Button>
           ) : undefined
         }
       >
         {step === 'idle' ? (
-          <SettingRow label="Current address" controlWidth="auto">
+          <SettingRow label={t('settings.currentAddress') || 'Current address'} controlWidth="auto">
             <span className="figure text-base text-text-primary">{user.email ?? ABSENT}</span>
           </SettingRow>
         ) : null}
@@ -316,16 +319,16 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps) {
           <form onSubmit={submitRequest}>
             {request.isError ? (
               <SettingBand>
-                <Alert tone="danger" live title="We could not start that change">
-                  {errorMessage(request.error, 'Please check the address and your password.')}
+                <Alert tone="danger" live title={t('settings.weCouldNotStartThat') || 'We could not start that change'}>
+                  {errorMessage(request.error, t('settings.pleaseCheckTheAddressAnd') || 'Please check the address and your password.')}
                 </Alert>
               </SettingBand>
             ) : null}
 
             <SettingRow
-              label="New email address"
+              label={t('settings.newEmailAddress') || 'New email address'}
               htmlFor={`${emailFieldId}-new`}
-              description="Your address does not move until you enter the code."
+              description={t('settings.yourAddressDoesNotMove') || 'Your address does not move until you enter the code.'}
               error={emailError ?? undefined}
             >
               <Input
@@ -342,7 +345,7 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps) {
             </SettingRow>
 
             <SettingRow
-              label="Current password"
+              label={t('settings.currentPassword') || 'Current password'}
               htmlFor={`${emailFieldId}-password`}
               error={passwordError ?? undefined}
             >
@@ -370,10 +373,10 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps) {
                   setPasswordError(null);
                 }}
               >
-                Cancel
+                {t('settings.cancel') || 'Cancel'}
               </Button>
               <Button type="submit" loading={request.isPending}>
-                Send the code
+                {t('settings.sendTheCode') || 'Send the code'}
               </Button>
             </CardFooter>
           </form>
@@ -382,21 +385,21 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps) {
         {step === 'verify' ? (
           <form onSubmit={submitConfirm}>
             <CardBody className="space-y-5">
-              <Alert tone="neutral" title="Check the new inbox">
+              <Alert tone="neutral" title={t('settings.checkTheNewInbox') || 'Check the new inbox'}>
                 We sent a code to <strong className="text-text-primary">{pending ?? email}</strong>.
                 Until you enter it, keep signing in with {user.email ?? 'your current address'}.
               </Alert>
 
               {confirmChange.isError ? (
-                <Alert tone="danger" live title="That code did not work">
-                  {errorMessage(confirmChange.error, 'Check the code and try again.')}
+                <Alert tone="danger" live title={t('settings.thatCodeDidNotWork') || 'That code did not work'}>
+                  {errorMessage(confirmChange.error, t('settings.checkTheCodeAndTry') || 'Check the code and try again.')}
                 </Alert>
               ) : null}
 
               <OtpField
                 value={otp}
                 onChange={setOtp}
-                label="Verification code"
+                label={t('settings.verificationCode') || 'Verification code'}
                 error={otpError}
                 autoFocus
               />
@@ -408,7 +411,7 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps) {
                 onClick={() => setConfirmingCancel(true)}
                 disabled={cancelChange.isPending}
               >
-                Cancel the change
+                {t('settings.cancelTheChange') || 'Cancel the change'}
               </Button>
               <Button
                 type="button"
@@ -419,10 +422,10 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps) {
                   setStep('request');
                 }}
               >
-                Send it again
+                {t('settings.sendItAgain') || 'Send it again'}
               </Button>
               <Button type="submit" loading={confirmChange.isPending}>
-                Confirm new address
+                {t('settings.confirmNewAddress') || 'Confirm new address'}
               </Button>
             </CardFooter>
           </form>
@@ -432,7 +435,7 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps) {
       <ConfirmDialog
         open={confirmingCancel}
         onOpenChange={setConfirmingCancel}
-        title="Cancel this email change?"
+        title={t('settings.cancelThisEmailChange') || 'Cancel this email change?'}
         description={
           <>
             Your sign-in address stays {user.email ?? 'as it is'} and the code we sent to{' '}

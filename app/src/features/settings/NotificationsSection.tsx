@@ -32,6 +32,7 @@ import {
   validateTime,
   type PushPreferences,
 } from './notificationPreferences';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * Settings ▸ Account ▸ Alerts.
@@ -66,6 +67,7 @@ function timezoneOptions(current: string): string[] {
 }
 
 export function NotificationsSection() {
+  const { t } = useTranslation();
   const fieldId = useId();
   const device = usePushSubscription();
 
@@ -103,7 +105,7 @@ export function NotificationsSection() {
       const confirmed = fromWire(result);
       setBaseline(confirmed);
       setDraft(confirmed);
-      toast.success('Alert preferences saved');
+      toast.success(t('settings.alertPreferencesSaved') || 'Alert preferences saved');
     },
   });
 
@@ -126,33 +128,33 @@ export function NotificationsSection() {
   const silenced = isFullySilenced(draft);
 
   return (
-    <SettingGroup title="How we reach you" id="alerts">
+    <SettingGroup title={t('settings.howWeReachYou') || 'How we reach you'} id="alerts">
       {/* ── This device ───────────────────────────────────────────────────── */}
       <SettingRow
-        label="This device"
-        description="Reaches you when this tab is in the background."
+        label={t('settings.thisDevice') || 'This device'}
+        description={t('settings.reachesYouWhenThisTab') || 'Reaches you when this tab is in the background.'}
         badge={
           <Badge tone={device.phase.status === 'subscribed' ? 'success' : 'neutral'}>
             {device.phase.status === 'subscribed'
               ? 'On'
               : device.phase.status === 'denied'
-                ? 'Blocked'
+                ? t('settings.blocked') || 'Blocked'
                 : device.phase.status === 'unsupported'
-                  ? 'Unavailable'
-                  : 'Off'}
+                  ? t('settings.unavailable') || 'Unavailable'
+                  : t('settings.off') || 'Off'}
           </Badge>
         }
         controlWidth="auto"
       >
         {device.phase.status === 'checking' ? (
-          <span className="text-xs text-text-secondary">Checking…</span>
+          <span className="text-xs text-text-secondary">{t('settings.checking') || 'Checking…'}</span>
         ) : device.phase.status === 'denied' ? (
           <Button size="sm" variant="secondary" onClick={device.recheck}>
-            Re-check
+            {t('settings.reCheck') || 'Re-check'}
           </Button>
         ) : device.phase.status === 'error' ? (
           <Button size="sm" variant="secondary" onClick={device.recheck}>
-            Try again
+            {t('settings.tryAgain') || 'Try again'}
           </Button>
         ) : device.phase.status === 'subscribed' ? (
           <Button
@@ -162,7 +164,7 @@ export function NotificationsSection() {
             loading={device.busy}
             iconLeft={<BellOff aria-hidden />}
           >
-            Turn off on this device
+            {t('settings.turnOffOnThisDevice') || 'Turn off on this device'}
           </Button>
         ) : device.phase.status === 'default' ? (
           <Button
@@ -171,7 +173,7 @@ export function NotificationsSection() {
             loading={device.busy}
             iconLeft={<Bell aria-hidden />}
           >
-            Turn on for this device
+            {t('settings.turnOnForThisDevice') || 'Turn on for this device'}
           </Button>
         ) : null}
       </SettingRow>
@@ -199,8 +201,8 @@ export function NotificationsSection() {
           ) : null}
 
           {device.phase.status === 'denied' ? (
-            <Alert tone="warning" title="Notifications are blocked in your browser">
-              Click the lock icon beside the address bar, allow notifications, then re-check.
+            <Alert tone="warning" title={t('settings.notificationsAreBlockedInYour') || 'Notifications are blocked in your browser'}>
+              {t('settings.clickTheLockIconBeside') || 'Click the lock icon beside the address bar, allow notifications, then re-check.'}
             </Alert>
           ) : null}
 
@@ -227,7 +229,7 @@ export function NotificationsSection() {
       ) : stored.isError ? (
         <ErrorState
           size="panel"
-          title="We could not load your alert preferences"
+          title={t('settings.weCouldNotLoadYour') || 'We could not load your alert preferences'}
           description={stored.error instanceof Error ? stored.error.message : undefined}
           onRetry={() => void stored.refetch()}
         />
@@ -235,22 +237,22 @@ export function NotificationsSection() {
         <>
           {save.isError ? (
             <SettingBand>
-              <Alert tone="danger" live title="We could not save that">
+              <Alert tone="danger" live title={t('settings.weCouldNotSaveThat') || 'We could not save that'}>
                 {save.error instanceof Error
                   ? save.error.message
-                  : 'Something went wrong. Please try again.'}
+                  : t('settings.somethingWentWrongPleaseTry') || 'Something went wrong. Please try again.'}
               </Alert>
             </SettingBand>
           ) : null}
 
           <SettingRow
-            label="Send me push alerts"
-            description="Applies everywhere you are signed in."
+            label={t('settings.sendMePushAlerts') || 'Send me push alerts'}
+            description={t('settings.appliesEverywhereYouAreSigned') || 'Applies everywhere you are signed in.'}
             controlWidth="auto"
           >
             <Switch
               hideLabel
-              label="Send me push alerts"
+              label={t('settings.sendMePushAlerts') || 'Send me push alerts'}
               checked={draft.enabled}
               onCheckedChange={(next) => setDraft((current) => ({ ...current, enabled: next }))}
             />
@@ -267,7 +269,7 @@ export function NotificationsSection() {
               three switches have gone quiet, and without it the name stayed at
               full contrast above three controls that had gone grey. */}
           <SettingBand>
-            <FieldSet legend="Worth interrupting me for" disabled={!draft.enabled}>
+            <FieldSet legend={t('settings.worthInterruptingMeFor') || 'Worth interrupting me for'} disabled={!draft.enabled}>
               <div className="space-y-3">
                 {PUSH_EVENTS.map((event) => (
                   <Switch
@@ -290,13 +292,13 @@ export function NotificationsSection() {
           {silenced ? (
             <SettingBand>
               <Alert tone="warning">
-                Nothing can reach you right now. Conversations still arrive in the inbox.
+                {t('settings.nothingCanReachYouRight') || 'Nothing can reach you right now. Conversations still arrive in the inbox.'}
               </Alert>
             </SettingBand>
           ) : null}
 
           <SettingRow
-            label="Quiet hours"
+            label={t('settings.quietHours') || 'Quiet hours'}
             badge={
               draft.quietHours ? (
                 <Badge tone="neutral">{describeQuietHours(draft.quietHours)}</Badge>
@@ -306,7 +308,7 @@ export function NotificationsSection() {
           >
             <Switch
               hideLabel
-              label="Quiet hours"
+              label={t('settings.quietHours') || 'Quiet hours'}
               checked={draft.quietHours !== null}
               onCheckedChange={(next) =>
                 setDraft((current) => ({
@@ -320,7 +322,7 @@ export function NotificationsSection() {
           {draft.quietHours ? (
             <>
               <SettingRow
-                label="From"
+                label={t('settings.from') || 'From'}
                 htmlFor={`${fieldId}-from`}
                 controlWidth="sm"
                 error={timeErrors.start}
@@ -346,7 +348,7 @@ export function NotificationsSection() {
                 />
               </SettingRow>
               <SettingRow
-                label="Until"
+                label={t('settings.until') || 'Until'}
                 htmlFor={`${fieldId}-until`}
                 controlWidth="sm"
                 error={timeErrors.end}
@@ -371,9 +373,9 @@ export function NotificationsSection() {
                   }}
                 />
               </SettingRow>
-              <SettingRow label="Timezone">
+              <SettingRow label={t('settings.timezone') || 'Timezone'}>
                 <Combobox
-                  label="Quiet hours timezone"
+                  label={t('settings.quietHoursTimezone') || 'Quiet hours timezone'}
                   value={draft.quietHours.tz}
                   options={timezoneOptions(draft.quietHours.tz).map((zone) => ({
                     value: zone,

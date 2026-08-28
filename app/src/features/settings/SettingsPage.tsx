@@ -25,6 +25,7 @@ import { NotificationsSection } from './NotificationsSection';
 import { AccountSessionsSection } from './AccountSessionsSection';
 import { ContactSection } from './ContactSection';
 import { LanguageSection } from './LanguageSection';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * `/account` — your account, not the workspace's.
@@ -43,6 +44,7 @@ import { LanguageSection } from './LanguageSection';
  * changed nothing, so it is deleted rather than shipped inert.
  */
 export function SettingsPage() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const me = useQuery({
     queryKey: keys.session.me(),
@@ -60,7 +62,7 @@ export function SettingsPage() {
     void queryClient.invalidateQueries({ queryKey: keys.session.me() });
   }
 
-  const header = <PageHeader title="Your account" />;
+  const header = <PageHeader title={t('settings.yourAccount') || 'Your account'} />;
 
   if (me.isPending) {
     return (
@@ -84,7 +86,7 @@ export function SettingsPage() {
         <Measure width="form">
           <Card>
             <ErrorState
-              title="We could not load your account"
+              title={t('settings.weCouldNotLoadYour2') || 'We could not load your account'}
               description={me.error instanceof Error ? me.error.message : undefined}
               onRetry={() => void me.refetch()}
             />
@@ -126,8 +128,8 @@ export function SettingsPage() {
             // this was a `rounded-md` bordered box inside a `rounded-lg` one
             // with a 20px dead ring between them — the card-in-card DESIGN.md §4
             // bans.
-            <Alert tone="neutral" title="This is a team seat">
-              The workspace's chatbots, plan and billing belong to its owner.
+            <Alert tone="neutral" title={t('settings.thisIsATeamSeat') || 'This is a team seat'}>
+              {t('settings.theWorkspacesChatbotsPlanAnd') || 'The workspace\'s chatbots, plan and billing belong to its owner.'}
             </Alert>
           ) : (
             <ChangeEmailCard user={user} onEmailChange={applyPatch} />
@@ -150,9 +152,9 @@ export function SettingsPage() {
 
           {!isOperator ? (
             <SettingGroup>
-              <SettingRow label="Workspace settings" description="Company, team and the API key.">
+              <SettingRow label={t('settings.workspaceSettings') || 'Workspace settings'} description={t('settings.companyTeamAndTheApi') || 'Company, team and the API key.'}>
                 <Link to="/settings/workspace" className={buttonClass('secondary', 'sm')}>
-                  Open
+                  {t('settings.open') || 'Open'}
                 </Link>
               </SettingRow>
             </SettingGroup>

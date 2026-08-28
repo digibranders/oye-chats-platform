@@ -1,4 +1,5 @@
 import type { NotificationPreferences } from '../../services/api';
+import { t as translateNow } from '../../i18n/i18n';
 
 /**
  * Per-event push preferences and quiet hours.
@@ -128,7 +129,7 @@ export function preferencesChanged(a: PushPreferences, b: PushPreferences): bool
 
 /** Server-side rule: `HH:MM`, 24-hour. Returns the reason it failed, or `null`. */
 export function validateTime(value: string): string | null {
-  return HHMM.test(value) ? null : 'Use a 24-hour time, like 22:00.';
+  return HHMM.test(value) ? null : translateNow('settings.useA24HourTime') || 'Use a 24-hour time, like 22:00.';
 }
 
 /**
@@ -139,7 +140,7 @@ export function validateTime(value: string): string | null {
  * reader unsure whether it silenced one hour or twenty-three.
  */
 export function describeQuietHours(quiet: QuietHours | null): string {
-  if (!quiet) return 'Alerts can reach you at any hour.';
+  if (!quiet) return translateNow('settings.alertsCanReachYouAt') || 'Alerts can reach you at any hour.';
   const wraps = quiet.start > quiet.end;
   return wraps
     ? `Silenced from ${quiet.start} until ${quiet.end} the next morning, ${quiet.tz} time.`

@@ -26,6 +26,7 @@ import {
 import { keys } from '../../query/keys';
 import type { CurrentUser } from '../../types/domain';
 import { describeDirty, useDraft } from '../workspace/draft';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface ProfileSectionProps {
   user: CurrentUser;
@@ -50,6 +51,7 @@ const OPERATOR_LABELS = { name: 'Name', email: 'Email' } as const;
  * through the verified change flow below, never through this form.
  */
 export function ProfileSection({ user, onSaved }: ProfileSectionProps) {
+  const { t } = useTranslation();
   const fieldId = useId();
   const queryClient = useQueryClient();
   const isOperator = user.kind === 'operator';
@@ -92,7 +94,7 @@ export function ProfileSection({ user, onSaved }: ProfileSectionProps) {
       });
       void queryClient.invalidateQueries({ queryKey: keys.session.me() });
       onSaved({ name: result.name, email: result.email });
-      toast.success('Profile updated');
+      toast.success(t('settings.profileUpdated') || 'Profile updated');
     },
   });
 
@@ -109,7 +111,7 @@ export function ProfileSection({ user, onSaved }: ProfileSectionProps) {
       file ? (await uploadOperatorAvatar(file)).avatar_url : (await removeOperatorAvatar(), null),
     onSuccess: (avatar_url) => {
       void queryClient.invalidateQueries({ queryKey: keys.session.me() });
-      toast.success(avatar_url ? 'Picture updated' : 'Picture removed');
+      toast.success(avatar_url ? t('settings.pictureUpdated') || 'Picture updated' : t('settings.pictureRemoved') || 'Picture removed');
     },
   });
 
@@ -127,11 +129,11 @@ export function ProfileSection({ user, onSaved }: ProfileSectionProps) {
   function submit() {
     const errors: Record<string, string> = {};
     if (!draft.values.name.trim()) {
-      errors.name = 'Enter your name — visitors see it beside every message you send.';
+      errors.name = t('settings.enterYourNameVisitorsSee') || 'Enter your name — visitors see it beside every message you send.';
     }
     if (isOperator) {
       const email = draft.values.email.trim();
-      const reason = email ? validateEmail(email) : 'Enter your email address.';
+      const reason = email ? validateEmail(email) : t('settings.enterYourEmailAddress') || 'Enter your email address.';
       if (reason) errors.email = reason;
     }
     if (Object.keys(errors).length > 0) {
@@ -142,29 +144,29 @@ export function ProfileSection({ user, onSaved }: ProfileSectionProps) {
   }
 
   return (
-    <SettingGroup title="Profile">
+    <SettingGroup title={t('settings.profile') || 'Profile'}>
       {save.isError ? (
         <SettingBand>
-          <Alert tone="danger" live title="We could not save that">
+          <Alert tone="danger" live title={t('settings.weCouldNotSaveThat') || 'We could not save that'}>
             {save.error instanceof Error
               ? save.error.message
-              : 'Something went wrong. Please try again.'}
+              : t('settings.somethingWentWrongPleaseTry') || 'Something went wrong. Please try again.'}
           </Alert>
         </SettingBand>
       ) : null}
 
       <SettingRow
-        label="Picture"
+        label={t('settings.picture') || 'Picture'}
         description={
           isOperator
-            ? 'Optional. Teammates and visitors see it beside your messages; without one they see your initials.'
-            : 'From the account you signed in with.'
+            ? t('settings.optionalTeammatesAndVisitorsSee') || 'Optional. Teammates and visitors see it beside your messages; without one they see your initials.'
+            : t('settings.fromTheAccountYouSigned') || 'From the account you signed in with.'
         }
         controlWidth="auto"
         error={avatarError ?? undefined}
       >
         <span className="flex items-center gap-3">
-          <Avatar name={draft.values.name || user.email || 'You'} size="lg" src={user.avatar_url} />
+          <Avatar name={draft.values.name || user.email || t('settings.you') || 'You'} size="lg" src={user.avatar_url} />
           {isOperator ? (
             <>
               {/* A hidden input driven by real buttons: a styled `<label>`
@@ -188,7 +190,7 @@ export function ProfileSection({ user, onSaved }: ProfileSectionProps) {
                 loading={avatar.isPending}
                 onClick={() => fileInput.current?.click()}
               >
-                {user.avatar_url ? 'Replace' : 'Upload'}
+                {user.avatar_url ? t('settings.replace') || 'Replace' : t('settings.upload') || 'Upload'}
               </Button>
               {user.avatar_url ? (
                 <Button
@@ -197,7 +199,7 @@ export function ProfileSection({ user, onSaved }: ProfileSectionProps) {
                   disabled={avatar.isPending}
                   onClick={() => avatar.mutate(null)}
                 >
-                  Remove
+                  {t('settings.remove') || 'Remove'}
                 </Button>
               ) : null}
             </>
@@ -207,9 +209,9 @@ export function ProfileSection({ user, onSaved }: ProfileSectionProps) {
       {isOperator ? <SettingBand>{AVATAR_HINT}</SettingBand> : null}
 
       <SettingRow
-        label="Name"
+        label={t('settings.name') || 'Name'}
         htmlFor={`${fieldId}-name`}
-        description={isOperator ? 'Visitors see this beside your messages.' : undefined}
+        description={isOperator ? t('settings.visitorsSeeThisBesideYour') || 'Visitors see this beside your messages.' : undefined}
         error={draft.errors.name}
       >
         <Input
@@ -218,15 +220,15 @@ export function ProfileSection({ user, onSaved }: ProfileSectionProps) {
           value={draft.values.name}
           onChange={(event) => draft.set('name', event.target.value)}
           autoComplete="name"
-          placeholder="Priya Sharma"
+          placeholder={t('settings.priyaSharma') || 'Priya Sharma'}
         />
       </SettingRow>
 
       {isOperator ? (
         <SettingRow
-          label="Email"
+          label={t('settings.email') || 'Email'}
           htmlFor={`${fieldId}-email`}
-          description="Only you can change this."
+          description={t('settings.onlyYouCanChangeThis') || 'Only you can change this.'}
           error={draft.errors.email}
         >
           <Input

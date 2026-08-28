@@ -45,13 +45,13 @@ export function AccountSessionsSection({ email }: AccountSessionsSectionProps) {
 
   return (
     <>
-      <SettingGroup title="Signed in">
+      <SettingGroup title={t('settings.signedIn') || 'Signed in'}>
         <SettingRow
-          label="This device"
+          label={t('settings.thisDevice') || 'This device'}
           description={email || undefined}
           badge={
             <Badge tone="success" dot>
-              Current
+              {t('settings.current') || 'Current'}
             </Badge>
           }
           controlWidth="auto"
@@ -62,20 +62,20 @@ export function AccountSessionsSection({ email }: AccountSessionsSectionProps) {
             onClick={() => setConfirming(true)}
             iconLeft={<LogOut aria-hidden />}
           >
-            Sign out
+            {t('settings.signOut') || 'Sign out'}
           </Button>
         </SettingRow>
 
         <SettingRow
-          label="Lost a device?"
-          description="Rotating the workspace API key ends every session."
+          label={t('settings.lostADevice') || 'Lost a device?'}
+          description={t('settings.rotatingTheWorkspaceApiKey') || 'Rotating the workspace API key ends every session.'}
           controlWidth="auto"
         >
           {/* `secondary`, not `ghost`: it is the row's only control, and a
               borderless grey link at the right edge of a settings row reads as
               disabled text rather than as somewhere to go. */}
           <Link to="/settings/developers" className={buttonClass('secondary', 'sm')}>
-            Open Developers
+            {t('settings.openDevelopers') || 'Open Developers'}
           </Link>
         </SettingRow>
       </SettingGroup>
@@ -83,8 +83,8 @@ export function AccountSessionsSection({ email }: AccountSessionsSectionProps) {
       <ConfirmDialog
         open={confirming}
         onOpenChange={setConfirming}
-        title="Sign out of this device?"
-        description="Unsaved changes are lost and live conversations go back to the queue."
+        title={t('settings.signOutOfThisDevice') || 'Sign out of this device?'}
+        description={t('settings.unsavedChangesAreLostAnd') || 'Unsaved changes are lost and live conversations go back to the queue.'}
         confirmLabel="Sign out"
         onConfirm={signOut}
       />
