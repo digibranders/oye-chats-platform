@@ -1121,11 +1121,18 @@ def test_widget_heartbeat_migration_creates_both_columns(monkeypatch):
     tmp_admin.dispose()
 
     try:
+        # ``render_as_string(hide_password=False)`` rather than ``str(tmp_url)``:
+        # ``URL.__str__`` masks the password as literal "***", so alembic would
+        # authenticate with that instead of the real one. A passwordless local
+        # URL (peer auth over a socket) masks to itself and hides the bug, which
+        # is why this only ever failed against CI's password-protected Postgres.
+        #
         # ``env.py`` feeds this straight into ``config.set_main_option``, which
         # is configparser-backed and treats "%" as interpolation syntax. A
         # socket URL renders its host as "%2Ftmp", so the "%" has to be doubled;
         # configparser hands back "%2F" and SQLAlchemy decodes it to "/".
-        monkeypatch.setattr(app_config, "DB_URL", str(tmp_url).replace("%", "%%"))
+        rendered = tmp_url.render_as_string(hide_password=False)
+        monkeypatch.setattr(app_config, "DB_URL", rendered.replace("%", "%%"))
         cfg = Config()
         cfg.set_main_option("script_location", "alembic")
 
