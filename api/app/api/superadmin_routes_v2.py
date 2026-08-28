@@ -182,10 +182,14 @@ def client_detail(client_id: int, _admin: Client = Depends(get_superadmin)):
         # is the part of ``location`` after " | " when present, else the whole
         # value; empty/NULL → "Unknown".
         _raw_loc = func.coalesce(func.nullif(ChatSession.location, ""), "Unknown")
-        _fingerprint = case(
-            (_raw_loc.like("% | %"), func.split_part(_raw_loc, " | ", 2)),
-            else_=_raw_loc,
-        ).concat("--").concat(func.coalesce(ChatSession.device, ""))
+        _fingerprint = (
+            case(
+                (_raw_loc.like("% | %"), func.split_part(_raw_loc, " | ", 2)),
+                else_=_raw_loc,
+            )
+            .concat("--")
+            .concat(func.coalesce(ChatSession.device, ""))
+        )
         distinct_visitors = (
             session.execute(
                 select(func.count(distinct(_fingerprint))).where(ChatSession.client_id == client_id)

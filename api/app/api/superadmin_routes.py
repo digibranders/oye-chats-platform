@@ -265,10 +265,14 @@ def list_clients(superadmin: Client = Depends(get_superadmin)):
         # "City, Country | 1.2.3.4" (or "IP: 1.2.3.4"); the IP is the part after
         # " | " when present, else the whole value, with empty/NULL → "Unknown".
         _raw_loc = func.coalesce(func.nullif(ChatSession.location, ""), "Unknown")
-        _fingerprint = case(
-            (_raw_loc.like("% | %"), func.split_part(_raw_loc, " | ", 2)),
-            else_=_raw_loc,
-        ).concat("--").concat(func.coalesce(ChatSession.device, ""))
+        _fingerprint = (
+            case(
+                (_raw_loc.like("% | %"), func.split_part(_raw_loc, " | ", 2)),
+                else_=_raw_loc,
+            )
+            .concat("--")
+            .concat(func.coalesce(ChatSession.device, ""))
+        )
         if client_ids:
             visitors_by_client = dict(
                 session.execute(
