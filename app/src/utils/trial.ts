@@ -1,3 +1,8 @@
+import { formatDate } from '../i18n/formatters';
+
+/** Milliseconds in a day, for the ceil-rounded countdowns below. */
+const DAY_MS = 86_400_000;
+
 /**
  * Whole days left until an ISO-8601 trial-end timestamp, rounded UP.
  *
@@ -11,17 +16,12 @@
  * The ISO string carries its own UTC offset, so `Date.parse` is
  * timezone-safe regardless of the viewer's locale.
  *
- * @param {string} iso - ISO-8601 trial-end timestamp (with offset).
- * @param {number} [nowMs] - Reference instant in epoch ms; defaults to now.
- * @returns {number|null} Ceil day count (may be 0 or negative once lapsed),
- *   or `null` when `iso` is missing/unparseable.
+ * Returns null when `iso` is missing or unparseable.
  */
-
-import { formatDate } from '../i18n/formatters';
-export function trialDaysLeft(iso, nowMs = Date.now()) {
+export function trialDaysLeft(iso: string, nowMs: number = Date.now()): number | null {
   const endMs = Date.parse(iso);
   if (Number.isNaN(endMs)) return null;
-  return Math.ceil((endMs - nowMs) / 86_400_000);
+  return Math.ceil((endMs - nowMs) / DAY_MS);
 }
 
 /**
@@ -29,16 +29,11 @@ export function trialDaysLeft(iso, nowMs = Date.now()) {
  * ceiling rule as {@link trialDaysLeft} so every countdown across the app
  * agrees. Used for the post-trial data-retention grace window ("your
  * workspace will be deleted in X days").
- *
- * @param {string} iso - ISO-8601 target timestamp.
- * @param {number} [nowMs] - Reference instant in epoch ms; defaults to now.
- * @returns {number|null} Ceil day count (0 or negative once lapsed), or
- *   `null` when `iso` is missing/unparseable.
  */
-export function daysUntil(iso, nowMs = Date.now()) {
+export function daysUntil(iso: string, nowMs: number = Date.now()): number | null {
   const endMs = Date.parse(iso);
   if (Number.isNaN(endMs)) return null;
-  return Math.ceil((endMs - nowMs) / 86_400_000);
+  return Math.ceil((endMs - nowMs) / DAY_MS);
 }
 
 /**
@@ -46,7 +41,7 @@ export function daysUntil(iso, nowMs = Date.now()) {
  * "Jul 16, 2026". Returns the input unchanged when unparseable so we
  * never render "Invalid Date" in production.
  */
-export function formatTrialDate(iso) {
+export function formatTrialDate(iso: string): string {
   const ms = Date.parse(iso);
   if (Number.isNaN(ms)) return iso ?? '';
   return formatDate(new Date(ms), {
