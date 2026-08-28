@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { t as translateNow } from '../../i18n/i18n';
 import Markdown from 'react-markdown';
 import { useQuery } from '@tanstack/react-query';
 import { Star } from 'lucide-react';
@@ -46,6 +47,7 @@ import {
   leadDisplayName,
   normalizeTier,
 } from './leadModel';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * One lead, one panel, two tabs.
@@ -92,16 +94,16 @@ function leadProperties(lead: Lead): PropertyItem[] {
   const engagement = lead.behavioral_score ?? 0;
 
   const items: PropertyItem[] = [
-    { label: 'Email', value: lead.contact?.email || undefined },
-    { label: 'Phone', value: lead.contact?.phone || undefined },
-    { label: 'Company', value: company?.value, note: company?.secondary ?? undefined },
-    { label: 'Location', value: location === 'Unknown' ? undefined : location },
+    { label: translateNow('leads.email') || 'Email', value: lead.contact?.email || undefined },
+    { label: translateNow('leads.phone') || 'Phone', value: lead.contact?.phone || undefined },
+    { label: (translateNow('leads.company') || 'Company'), value: company?.value, note: company?.secondary ?? undefined },
+    { label: translateNow('leads.location') || 'Location', value: location === 'Unknown' ? undefined : location },
     {
-      label: 'Device',
+      label: translateNow('leads.device') || 'Device',
       value: lead.device && lead.device !== 'Unknown' ? lead.device : undefined,
     },
     {
-      label: 'First seen',
+      label: translateNow('leads.firstSeen') || 'First seen',
       value: lead.created_at ? formatDateTime(lead.created_at) : undefined,
     },
   ];
@@ -116,19 +118,19 @@ function leadProperties(lead: Lead): PropertyItem[] {
   const landing = asText(source.landing_page);
   const utmSource = asText(utm.utm_source);
 
-  if (utmSource) items.push({ label: 'Source', value: utmSource });
-  if (campaign) items.push({ label: 'Campaign', value: campaign });
-  if (medium) items.push({ label: 'Medium', value: medium });
-  if (adDetail) items.push({ label: 'Ad detail', value: truncate(adDetail) });
-  if (referrer) items.push({ label: 'Referrer', value: truncate(referrer) });
-  if (landing) items.push({ label: 'Landed on', value: truncate(landing) });
+  if (utmSource) items.push({ label: translateNow('leads.source') || 'Source', value: utmSource });
+  if (campaign) items.push({ label: translateNow('leads.campaign') || 'Campaign', value: campaign });
+  if (medium) items.push({ label: translateNow('leads.medium') || 'Medium', value: medium });
+  if (adDetail) items.push({ label: translateNow('leads.adDetail') || 'Ad detail', value: truncate(adDetail) });
+  if (referrer) items.push({ label: translateNow('leads.referrer') || 'Referrer', value: truncate(referrer) });
+  if (landing) items.push({ label: translateNow('leads.landedOn') || 'Landed on', value: truncate(landing) });
   if (Object.keys(source).length > 0 && !utmSource && !campaign && !medium && !referrer) {
-    items.push({ label: 'Source', value: 'Direct — no campaign or referrer' });
+    items.push({ label: translateNow('leads.source') || 'Source', value: translateNow('leads.directNoCampaignOrReferrer') || 'Direct — no campaign or referrer' });
   }
 
-  if (engagement > 0) items.push({ label: 'Engagement', value: engagementBand(engagement) });
+  if (engagement > 0) items.push({ label: translateNow('leads.engagement') || 'Engagement', value: engagementBand(engagement) });
   if (visits > 1) {
-    items.push({ label: 'Visits', value: <span className="figure">{visits}</span> });
+    items.push({ label: translateNow('leads.visits') || 'Visits', value: <span className="figure">{visits}</span> });
   }
 
   return items;
@@ -138,6 +140,7 @@ function leadProperties(lead: Lead): PropertyItem[] {
 
 /** A post-chat rating, as stars and as a word. Colour is never the only signal. */
 function VisitorRating({ rating }: { rating: number }) {
+  const { t } = useTranslation();
   const unhappy = rating <= 2;
   return (
     <span className="flex items-center gap-2">
@@ -154,7 +157,7 @@ function VisitorRating({ rating }: { rating: number }) {
         ))}
       </span>
       <Badge tone={unhappy ? 'danger' : rating >= 4 ? 'success' : 'neutral'}>
-        {unhappy ? 'Unhappy' : rating >= 4 ? 'Happy' : 'Mixed'}
+        {unhappy ? t('leads.unhappy') || 'Unhappy' : rating >= 4 ? t('leads.happy') || 'Happy' : t('leads.mixed') || 'Mixed'}
       </Badge>
     </span>
   );
@@ -218,10 +221,11 @@ function sentAt(message: TranscriptMessage | undefined): string | null {
 }
 
 function Bubble({ message }: { message: TranscriptMessage }) {
+  const { t } = useTranslation();
   const text = message.content ?? message.message ?? '';
   const visitor = message.role === 'user';
   const operator = message.role === 'operator';
-  const who = visitor ? 'Visitor' : operator ? 'Operator' : 'Chatbot';
+  const who = visitor ? t('leads.visitor') || 'Visitor' : operator ? t('leads.operator') || 'Operator' : t('leads.chatbot') || 'Chatbot';
   const at = message.created_at ?? message.timestamp ?? null;
 
   return (
@@ -255,7 +259,7 @@ function Bubble({ message }: { message: TranscriptMessage }) {
             </div>
           )
         ) : (
-          <p className="text-prose text-text-tertiary">No text in this message.</p>
+          <p className="text-prose text-text-tertiary">{t('leads.noTextInThisMessage') || 'No text in this message.'}</p>
         )}
       </div>
     </li>
@@ -280,6 +284,7 @@ function Bubble({ message }: { message: TranscriptMessage }) {
  * lead sees nothing.
  */
 function Annotations({ controller }: { controller: LeadAnnotationController }) {
+  const { t } = useTranslation();
   const { note, tags, saveNote, saveTags } = controller;
   const [noteDraft, setNoteDraft] = useState(note?.text ?? '');
   const [tagDraft, setTagDraft] = useState<string[]>(() => [...tags]);
@@ -290,17 +295,17 @@ function Annotations({ controller }: { controller: LeadAnnotationController }) {
   const dirty = noteChanged || tagsChanged;
 
   return (
-    <LeadSection title="Your notes">
+    <LeadSection title={t('leads.yourNotes') || 'Your notes'}>
       <p className="text-xs text-text-secondary">
-        Saved in this browser only — teammates cannot see these.
+        {t('leads.savedInThisBrowserOnly') || 'Saved in this browser only — teammates cannot see these.'}
       </p>
 
       <div className="mt-3 space-y-4">
-        <Field label="Note" hint={note ? `Last edited ${formatDateTime(note.ts)}` : undefined}>
+        <Field label={t('leads.note') || 'Note'} hint={note ? `Last edited ${formatDateTime(note.ts)}` : undefined}>
           <Textarea
             rows={3}
             value={noteDraft}
-            placeholder="Context for yourself — next steps, who to loop in…"
+            placeholder={t('leads.contextForYourselfNextSteps') || 'Context for yourself — next steps, who to loop in…'}
             onChange={(event) => {
               setNoteDraft(event.target.value);
               setSaved(false);
@@ -308,11 +313,11 @@ function Annotations({ controller }: { controller: LeadAnnotationController }) {
           />
         </Field>
 
-        <Field label="Tags">
+        <Field label={t('leads.tags') || 'Tags'}>
           <TagInput
-            label="Tags"
+            label={t('leads.tags') || 'Tags'}
             values={tagDraft}
-            placeholder="enterprise, follow-up…"
+            placeholder={t('leads.enterpriseFollowUp') || 'enterprise, follow-up…'}
             onValuesChange={(next) => {
               setTagDraft(next);
               setSaved(false);
@@ -354,6 +359,7 @@ function humanizeAction(action: string): string {
 }
 
 function LeadAuditTrail({ sessionId }: { sessionId: string }) {
+  const { t } = useTranslation();
   const { data } = useQuery({
     queryKey: ['lead-audit', sessionId],
     queryFn: () => getSessionAuditTrail(sessionId),
@@ -363,7 +369,7 @@ function LeadAuditTrail({ sessionId }: { sessionId: string }) {
   if (entries.length === 0) return null;
 
   return (
-    <LeadSection title="Activity">
+    <LeadSection title={t('leads.activity') || 'Activity'}>
       <Disclosure summary="Activity" regionLabel="Activity">
         <ol>
           {entries.map((entry, index) => {
@@ -397,6 +403,7 @@ export function LeadDrawer({
   visitorIntelligence,
   annotations,
 }: LeadDrawerProps) {
+  const { t } = useTranslation();
   const data = useLeadDetail(sessionId);
   const { detail, transcript } = data;
   const controller = annotations.controllerFor(sessionId);
@@ -414,7 +421,7 @@ export function LeadDrawer({
       // its own line.
       width="xl"
       eyebrow="Lead"
-      title={detail ? leadDisplayName(detail) : 'Lead'}
+      title={detail ? leadDisplayName(detail) : t('leads.lead') || 'Lead'}
       // Relative, not `formatDateTime`. The description is 12px secondary text;
       // an absolute timestamp there is neither readable nor scannable.
       description={detail ? subtitle(detail) : undefined}
@@ -426,20 +433,20 @@ export function LeadDrawer({
         </div>
       ) : data.error ? (
         <ErrorState
-          title="We could not load this lead"
+          title={t('leads.weCouldNotLoadThis') || 'We could not load this lead'}
           description={data.error.message}
           onRetry={data.retry}
         />
       ) : detail ? (
         <Tabs
-          label="Lead details"
+          label={t('leads.leadDetails') || 'Lead details'}
           value={tab}
           onValueChange={(next) => onTabChange(next as DrawerTab)}
           items={[
-            { value: 'profile', label: 'Profile' },
+            { value: 'profile', label: t('leads.profile') || 'Profile' },
             {
               value: 'conversation',
-              label: 'Conversation',
+              label: t('leads.conversation') || 'Conversation',
               badge: detail.chats ? (
                 <span className="figure text-xs text-text-tertiary">{detail.chats}</span>
               ) : undefined,
@@ -454,7 +461,7 @@ export function LeadDrawer({
               <ScoreBand lead={detail} rating={data.visitorRating} />
             )}
 
-            <LeadSection title="Details">
+            <LeadSection title={t('leads.details') || 'Details'}>
               {/* No `label`: the heading above already names these facts, and a
                   second `role="group"` name would announce "Details" twice. */}
               <PropertyGrid density="compact" items={properties} />
@@ -475,14 +482,14 @@ export function LeadDrawer({
             {transcript.error ? (
               <ErrorState
                 size="panel"
-                title="We could not load the conversation"
+                title={t('leads.weCouldNotLoadThe') || 'We could not load the conversation'}
                 description={transcript.error.message}
                 onRetry={transcript.retry}
               />
             ) : transcript.loading ? (
               <LoadingRows rows={5} />
             ) : transcript.messages.length === 0 ? (
-              <Alert tone="neutral">No messages recorded.</Alert>
+              <Alert tone="neutral">{t('leads.noMessagesRecorded') || 'No messages recorded.'}</Alert>
             ) : (
               <>
                 {/* Paged backwards from the most recent message. The panel used
@@ -502,7 +509,7 @@ export function LeadDrawer({
                   </div>
                 ) : (
                   <p className="text-center text-xs text-text-tertiary">
-                    This is the start of the conversation.
+                    {t('leads.thisIsTheStartOf') || 'This is the start of the conversation.'}
                   </p>
                 )}
                 <ul className="space-y-2.5">

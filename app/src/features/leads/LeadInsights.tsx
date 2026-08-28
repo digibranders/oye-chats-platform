@@ -2,6 +2,7 @@ import { ABSENT, Disclosure } from '../../ui';
 import type { Lead } from '../../types/domain';
 import { LeadSection } from './LeadSection';
 import { asRecord, buildJourney } from './leadSource';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * The pages they read before they typed.
@@ -13,12 +14,13 @@ import { asRecord, buildJourney } from './leadSource';
  * Expanding in place keeps the record on screen behind it.
  */
 export function LeadJourney({ lead }: { lead: Lead }) {
+  const { t } = useTranslation();
   const source = asRecord(lead.source);
   const journey = buildJourney(Array.isArray(source.journey) ? source.journey : []);
   if (journey.length === 0) return null;
 
   return (
-    <LeadSection title="Journey">
+    <LeadSection title={t('leads.journey') || 'Journey'}>
       <Disclosure
         summary={`${journey.length === 1 ? '1 page' : `${journey.length} pages`} before the chat`}
         regionLabel="Pages visited before the chat"
@@ -34,14 +36,14 @@ export function LeadJourney({ lead }: { lead: Lead }) {
                 {step.path || ABSENT}
               </span>
               {step.last ? (
-                <span className="shrink-0 text-text-secondary">opened the chat here</span>
+                <span className="shrink-0 text-text-secondary">{t('leads.openedTheChatHere') || 'opened the chat here'}</span>
               ) : step.dwell ? (
                 <span className="figure shrink-0 text-text-tertiary">{step.dwell}</span>
               ) : null}
             </li>
           ))}
         </ol>
-        <p className="mt-2 text-xs text-text-tertiary">Oldest first; the chat opened on the last.</p>
+        <p className="mt-2 text-xs text-text-tertiary">{t('leads.oldestFirstTheChatOpened') || 'Oldest first; the chat opened on the last.'}</p>
       </Disclosure>
     </LeadSection>
   );

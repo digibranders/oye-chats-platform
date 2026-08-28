@@ -14,6 +14,7 @@
  */
 import type { Lead, LeadContact } from '../../types/domain';
 import type { Tone } from '../../ui';
+import { t as translateNow } from '../../i18n/i18n';
 
 // ── Tiers ───────────────────────────────────────────────────────────────────
 
@@ -379,7 +380,7 @@ export function dimensionMax(dimensionCount: number): number {
 
 /** A short display name — the real one, else "Anonymous visitor". */
 export function leadDisplayName(lead: Lead): string {
-  return hasContactName(lead) ? (lead.contact?.name as string).trim() : 'Anonymous visitor';
+  return hasContactName(lead) ? (lead.contact?.name as string).trim() : translateNow('leads.anonymousVisitor') || 'Anonymous visitor';
 }
 
 /** Up to two letters for an avatar, or `?` when the visitor stayed anonymous. */

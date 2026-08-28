@@ -20,6 +20,7 @@ import type { SortDirection, SortState } from '../../ui';
 import { RANGE_OPTIONS, resolveRange, type RangeKey } from '../analytics/range';
 import { getLocale } from '../../i18n/i18n';
 import { TIER_ORDER, type ContactFilter, type TierKey } from './leadModel';
+import { t as translateNow } from '../../i18n/i18n';
 
 /** Analytics' four presets, plus the one window it has no notion of: an
  * explicit calendar range. Kept local to Leads rather than folded into
@@ -249,7 +250,7 @@ export function leadsRangeLabel(
   if (rangeFrom && rangeTo) return `${formatIsoDate(rangeFrom)} to ${formatIsoDate(rangeTo)}`;
   if (rangeFrom) return `Since ${formatIsoDate(rangeFrom)}`;
   if (rangeTo) return `Through ${formatIsoDate(rangeTo)}`;
-  return 'Custom range';
+  return translateNow('leads.customRange') || 'Custom range';
 }
 
 /** True when a filter runs in the browser rather than on the server. */

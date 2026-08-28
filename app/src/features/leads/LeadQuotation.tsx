@@ -1,6 +1,7 @@
 import { Badge, formatMoney, formatNumber, type Tone } from '../../ui';
 import type { Lead, LeadQuotation as Quotation } from '../../types/domain';
 import { LeadSection } from './LeadSection';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * What the visitor priced up before they left.
@@ -49,6 +50,7 @@ function money(currency: string, majorUnits: number): string {
 }
 
 export function LeadQuotation({ lead }: { lead: Lead }) {
+  const { t } = useTranslation();
   const quotation = lead.quotation ?? null;
   if (!quotation) return null;
 
@@ -60,14 +62,14 @@ export function LeadQuotation({ lead }: { lead: Lead }) {
 
   return (
     <LeadSection
-      title="Quotation"
+      title={t('leads.quotation') || 'Quotation'}
       actions={<Badge tone={STATUS_TONE[quotation.status] ?? 'neutral'}>{STATUS_LABEL[quotation.status] ?? quotation.status}</Badge>}
     >
       {lines.length === 0 ? (
         <p className="text-sm text-text-secondary">
           {quotation.status === 'skipped'
-            ? 'They opened the quote builder and chose not to price anything.'
-            : 'They started a quote but never priced a service.'}
+            ? t('leads.theyOpenedTheQuoteBuilder') || 'They opened the quote builder and chose not to price anything.'
+            : t('leads.theyStartedAQuoteBut') || 'They started a quote but never priced a service.'}
         </p>
       ) : (
         <>
@@ -97,7 +99,7 @@ export function LeadQuotation({ lead }: { lead: Lead }) {
             ))}
           </ul>
           <div className="mt-3 flex items-baseline justify-between gap-3 border-t border-border pt-2">
-            <span className="text-sm font-medium text-text-primary">Estimated total</span>
+            <span className="text-sm font-medium text-text-primary">{t('leads.estimatedTotal') || 'Estimated total'}</span>
             <span className="figure text-base font-semibold text-text-primary">
               {money(quotation.currency, quotation.total)}
             </span>

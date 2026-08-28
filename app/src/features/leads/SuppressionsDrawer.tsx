@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { t as translateNow } from '../../i18n/i18n';
 import { MailX } from 'lucide-react';
 import {
   Alert,
@@ -21,6 +22,7 @@ import {
 import type { Bot } from '../../types/domain';
 import type { EmailSuppression } from '../../services/api';
 import { SUPPRESSIONS_PAGE_SIZE, useSuppressions } from './useSuppressions';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface SuppressionsDrawerProps {
   open: boolean;
@@ -40,7 +42,7 @@ const REASON_LABEL: Record<string, string> = {
 function messageFrom(cause: unknown): string {
   return cause instanceof Error && cause.message
     ? cause.message
-    : 'Something went wrong. Please try again.';
+    : translateNow('leads.somethingWentWrongPleaseTry') || 'Something went wrong. Please try again.';
 }
 
 /**
@@ -64,6 +66,7 @@ function messageFrom(cause: unknown): string {
  * table that raised the question rather than at the end of a navigation.
  */
 export function SuppressionsDrawer({ open, onOpenChange, botId, bots }: SuppressionsDrawerProps) {
+  const { t } = useTranslation();
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [email, setEmail] = useState('');
@@ -95,7 +98,7 @@ export function SuppressionsDrawer({ open, onOpenChange, botId, bots }: Suppress
   const columns: Column<EmailSuppression>[] = [
     {
       key: 'email',
-      header: 'Address',
+      header: t('leads.address') || 'Address',
       // No `pinned`. It exists for a wide table that scrolls sideways; in a
       // four-column drawer nothing scrolls, so all it drew was a vertical rule
       // down one column that the others did not have.
@@ -106,14 +109,14 @@ export function SuppressionsDrawer({ open, onOpenChange, botId, bots }: Suppress
     },
     {
       key: 'reason',
-      header: 'Why',
+      header: t('leads.why') || 'Why',
       render: (row) => <Badge tone="neutral">{REASON_LABEL[row.reason] ?? row.reason}</Badge>,
     },
     ...(botId === null
       ? [
           {
             key: 'bot',
-            header: 'Chatbot',
+            header: t('leads.chatbot') || 'Chatbot',
             secondary: true,
             render: (row: EmailSuppression) => (
               <span className="text-text-secondary">{row.bot_name ?? `Chatbot ${row.bot_id}`}</span>
@@ -123,7 +126,7 @@ export function SuppressionsDrawer({ open, onOpenChange, botId, bots }: Suppress
       : []),
     {
       key: 'created',
-      header: 'Since',
+      header: t('leads.since') || 'Since',
       align: 'right',
       secondary: true,
       render: (row) => (
@@ -136,7 +139,7 @@ export function SuppressionsDrawer({ open, onOpenChange, botId, bots }: Suppress
     event.preventDefault();
     const trimmed = email.trim();
     if (!trimmed) {
-      setFormError('Enter the address that asked you to stop.');
+      setFormError(t('leads.enterTheAddressThatAsked') || 'Enter the address that asked you to stop.');
       return;
     }
     const invalid = validateEmail(trimmed);
@@ -145,7 +148,7 @@ export function SuppressionsDrawer({ open, onOpenChange, botId, bots }: Suppress
       return;
     }
     if (scopedBotId === null) {
-      setFormError('Choose which chatbot this applies to.');
+      setFormError(t('leads.chooseWhichChatbotThisApplies') || 'Choose which chatbot this applies to.');
       return;
     }
     setFormError(null);
@@ -179,26 +182,26 @@ export function SuppressionsDrawer({ open, onOpenChange, botId, bots }: Suppress
     <Drawer
       open={open}
       onOpenChange={onOpenChange}
-      title="Unsubscribes"
-      description="Checked before every follow-up. Nothing can be removed."
+      title={t('leads.unsubscribes') || 'Unsubscribes'}
+      description={t('leads.checkedBeforeEveryFollowUp') || 'Checked before every follow-up. Nothing can be removed.'}
       width="lg"
     >
       {data.forbidden ? (
         <LockedState
-          title="You cannot see this workspace's unsubscribes"
-          description="Limited to chatbots your account owns. Ask a workspace owner for access."
+          title={t('leads.youCannotSeeThisWorkspaces') || 'You cannot see this workspace\'s unsubscribes'}
+          description={t('leads.limitedToChatbotsYourAccount') || 'Limited to chatbots your account owns. Ask a workspace owner for access.'}
         />
       ) : (
         <div className="space-y-5">
           <SearchField
-            label="Search unsubscribed addresses"
-            placeholder="Search by address"
+            label={t('leads.searchUnsubscribedAddresses') || 'Search unsubscribed addresses'}
+            placeholder={t('leads.searchByAddress') || 'Search by address'}
             value={search}
             onValueChange={setSearch}
           />
 
           <DataTable
-            caption="Addresses suppressed for this workspace"
+            caption={t('leads.addressesSuppressedForThisWorkspace') || 'Addresses suppressed for this workspace'}
             columns={columns}
             rows={data.rows}
             rowKey={(row) => String(row.id)}
@@ -214,11 +217,11 @@ export function SuppressionsDrawer({ open, onOpenChange, botId, bots }: Suppress
                 <EmptyState
                   compact
                   icon={MailX}
-                  title="No address matches"
-                  description="No address contains that text."
+                  title={t('leads.noAddressMatches') || 'No address matches'}
+                  description={t('leads.noAddressContainsThatText') || 'No address contains that text.'}
                   action={
                     <Button size="sm" variant="secondary" onClick={() => setSearch('')}>
-                      Clear search
+                      {t('leads.clearSearch') || 'Clear search'}
                     </Button>
                   }
                 />
@@ -226,8 +229,8 @@ export function SuppressionsDrawer({ open, onOpenChange, botId, bots }: Suppress
                 <EmptyState
                   compact
                   icon={MailX}
-                  title="Nobody has unsubscribed"
-                  description="Every captured address can still be emailed."
+                  title={t('leads.nobodyHasUnsubscribed') || 'Nobody has unsubscribed'}
+                  description={t('leads.everyCapturedAddressCanStill') || 'Every captured address can still be emailed.'}
                 />
               )
             }
@@ -246,13 +249,13 @@ export function SuppressionsDrawer({ open, onOpenChange, botId, bots }: Suppress
           <Disclosure summary="Record an opt-out" divider headingLevel={3}>
           <form noValidate onSubmit={submit} className="space-y-3 pt-2">
             {botId === null ? (
-              <Field label="Chatbot" required>
+              <Field label={t('leads.chatbot') || 'Chatbot'} required>
                 <Select
-                  label="Chatbot"
+                  label={t('leads.chatbot') || 'Chatbot'}
                   value={target}
                   onValueChange={setTarget}
                   options={[
-                    { value: '', label: 'Choose a chatbot' },
+                    { value: '', label: t('leads.chooseAChatbot') || 'Choose a chatbot' },
                     ...bots.map((bot) => ({
                       value: String(bot.id),
                       label: bot.name || `Chatbot ${bot.id}`,
@@ -262,7 +265,7 @@ export function SuppressionsDrawer({ open, onOpenChange, botId, bots }: Suppress
               </Field>
             ) : null}
 
-            <Field label="Email address" required error={formError}>
+            <Field label={t('leads.emailAddress') || 'Email address'} required error={formError}>
               <Input
                 type="text"
                 inputMode="email"
@@ -278,7 +281,7 @@ export function SuppressionsDrawer({ open, onOpenChange, botId, bots }: Suppress
             </Field>
 
             {addError ? (
-              <Alert tone="danger" live title="We could not add that address">
+              <Alert tone="danger" live title={t('leads.weCouldNotAddThat') || 'We could not add that address'}>
                 {addError}
               </Alert>
             ) : null}
@@ -290,7 +293,7 @@ export function SuppressionsDrawer({ open, onOpenChange, botId, bots }: Suppress
             ) : null}
 
             <Button type="submit" variant="secondary" loading={data.adding}>
-              Add to unsubscribes
+              {t('leads.addToUnsubscribes') || 'Add to unsubscribes'}
             </Button>
           </form>
           </Disclosure>
@@ -311,7 +314,7 @@ export function SuppressionsDrawer({ open, onOpenChange, botId, bots }: Suppress
       <ConfirmDialog
         open={confirming}
         onOpenChange={setConfirming}
-        title="Never email this address again?"
+        title={t('leads.neverEmailThisAddressAgain') || 'Never email this address again?'}
         description={
           <>
             Every follow-up to <strong>{email.trim()}</strong> from this chatbot will be refused

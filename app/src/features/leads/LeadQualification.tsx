@@ -2,6 +2,7 @@ import { Disclosure, Progress } from '../../ui';
 import type { Lead, LeadSignal } from '../../types/domain';
 import { LeadSection } from './LeadSection';
 import { dimensionMax, orderedDimensions } from './leadModel';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * What the chatbot learned. Read-only — the score is derived from what the
@@ -69,6 +70,7 @@ function statedValues(signals: LeadSignal[] | undefined, dimension: string): str
 }
 
 export function LeadQualification({ lead }: LeadQualificationProps) {
+  const { t } = useTranslation();
   const dimensions = orderedDimensions(lead);
   if (dimensions.length === 0) return null;
 
@@ -83,7 +85,7 @@ export function LeadQualification({ lead }: LeadQualificationProps) {
     .filter((entry) => entry.values.length > 0 || entry.fallback);
 
   return (
-    <LeadSection title="What we learned">
+    <LeadSection title={t('leads.whatWeLearned') || 'What we learned'}>
       <ul>
         {dimensions.map((dimension) => {
           // Clamped for the bar only. An unevenly-weighted dimension can exceed

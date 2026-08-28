@@ -82,6 +82,7 @@ import {
   type ContactFilter,
   type TierKey,
 } from './leadModel';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * Leads — "who asked about buying, and how ready did they sound?"
@@ -135,10 +136,11 @@ const SCOPE_NOTE = `Quality, score and date filter every lead. Search and lead t
  * never implies a judgement the backend did not make.
  */
 function EmailVerdict({ isValid }: { isValid?: boolean | null }) {
+  const { t } = useTranslation();
   if (isValid !== true && isValid !== false) return null;
   const label = isValid
-    ? 'Email verified as deliverable'
-    : 'Email failed validation and cannot be contacted';
+    ? t('leads.emailVerifiedAsDeliverable') || 'Email verified as deliverable'
+    : t('leads.emailFailedValidationAndCannot') || 'Email failed validation and cannot be contacted';
   return (
     <span role="img" aria-label={label} className="inline-flex shrink-0">
       {isValid ? (
@@ -165,6 +167,7 @@ function EmailVerdict({ isValid }: { isValid?: boolean | null }) {
  * detail drawer.
  */
 function QualificationCell({ lead }: { lead: Lead }) {
+  const { t } = useTranslation();
   const dimensions = orderedDimensions(lead);
   if (dimensions.length === 0) {
     return <span className="text-text-tertiary">{ABSENT}</span>;
@@ -183,7 +186,7 @@ function QualificationCell({ lead }: { lead: Lead }) {
     >
       <div
         role="group"
-        aria-label="Qualification signals"
+        aria-label={t('leads.qualificationSignals') || 'Qualification signals'}
         className="inline-flex items-center gap-1"
       >
         {dimensions.map((dimension) => (
@@ -239,6 +242,7 @@ function LeadCell({ lead }: { lead: Lead }) {
 }
 
 export function LeadsPage() {
+  const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const state = useMemo(() => readLeadsUrl(searchParams), [searchParams]);
 
@@ -358,7 +362,7 @@ export function LeadsPage() {
       await exportLeadsCsv(botId);
     } catch (error) {
       setExportError(
-        error instanceof Error ? error.message : 'The export could not be produced.',
+        error instanceof Error ? error.message : t('leads.theExportCouldNotBe') || 'The export could not be produced.',
       );
     } finally {
       setExporting(false);
@@ -369,7 +373,7 @@ export function LeadsPage() {
     const base: Column<Lead>[] = [
       {
         key: 'lead',
-        header: 'Lead',
+        header: t('leads.lead') || 'Lead',
         rowHeader: true,
         // Pinned, because this table is wider than the card that holds it and
         // there is no honest way to make it narrower. Eight columns came to
@@ -390,7 +394,7 @@ export function LeadsPage() {
       },
       {
         key: 'tags',
-        header: 'Tags',
+        header: t('leads.tags') || 'Tags',
         secondary: true,
         width: '5rem',
         render: (lead) => {
@@ -398,7 +402,7 @@ export function LeadsPage() {
           if (tags.length === 0) return <span className="text-text-tertiary">{ABSENT}</span>;
           return (
             <span className="flex items-center gap-1">
-              <span className="sr-only">Your private tags: </span>
+              <span className="sr-only">{t('leads.yourPrivateTags') || 'Your private tags:'} </span>
               {tags.slice(0, 2).map((tag) => (
                 <Badge key={tag}>{tag}</Badge>
               ))}
@@ -411,7 +415,7 @@ export function LeadsPage() {
       },
       {
         key: 'company',
-        header: 'Company',
+        header: t('leads.company') || 'Company',
         secondary: true,
         width: '9rem',
         sortable: sortable ? compareLeads.company : undefined,
@@ -430,7 +434,7 @@ export function LeadsPage() {
       base.push(
         {
           key: 'quality',
-          header: 'Quality',
+          header: t('leads.quality') || 'Quality',
           width: '10rem',
           sortable: sortable ? compareLeads.score : undefined,
           render: (lead) => {
@@ -449,7 +453,7 @@ export function LeadsPage() {
         },
         {
           key: 'qualification',
-          header: 'Qualified',
+          header: t('leads.qualified') || 'Qualified',
           secondary: true,
           align: 'center',
           // 4rem, not 6: the cell is a `4/4` chip about 34px wide, so 96px was
@@ -459,7 +463,7 @@ export function LeadsPage() {
         },
         {
           key: 'location',
-          header: 'Location',
+          header: t('leads.location') || 'Location',
           secondary: true,
           width: '6rem',
           render: (lead) => {
@@ -477,7 +481,7 @@ export function LeadsPage() {
     base.push(
       {
         key: 'chats',
-        header: 'Messages',
+        header: t('leads.messages') || 'Messages',
         type: 'number',
         width: '5rem',
         secondary: true,
@@ -489,7 +493,7 @@ export function LeadsPage() {
         // the cell as a figure, and "3 days ago" is a phrase — right-aligned
         // monospace prose with tabular figures reads as a broken number column.
         key: 'last_active',
-        header: 'Last active',
+        header: t('leads.lastActive') || 'Last active',
         width: '7rem',
         sortable: sortable ? compareLeads.lastActive : undefined,
         render: (lead) => formatRelative(lead.last_active_at),
@@ -497,22 +501,25 @@ export function LeadsPage() {
     );
 
     return base;
-  }, [annotations, intelligenceLocked, sortable]);
+  // `t` changes identity with the locale: the column headers built above are
+  // resolved at call time, so without it the table would keep whatever
+  // language it first mounted in.
+  }, [annotations, intelligenceLocked, sortable, t]);
 
   // ── Guards ────────────────────────────────────────────────────────────────
 
   if (!botsLoading && bots.length === 0) {
     return (
       <Page width="wide">
-        <PageHeader title="Leads" titleVisuallyHidden />
+        <PageHeader title={t('leads.leads') || 'Leads'} titleVisuallyHidden />
         <Card>
           <EmptyState
             icon={BotIcon}
-            title="No chatbots yet"
-            description="Everyone who chats with your chatbot appears here."
+            title={t('leads.noChatbotsYet') || 'No chatbots yet'}
+            description={t('leads.everyoneWhoChatsWithYour') || 'Everyone who chats with your chatbot appears here.'}
             action={
               <Link to="/chatbots?new=1" className={buttonClass('primary', 'sm')}>
-                Create your first chatbot
+                {t('leads.createYourFirstChatbot') || 'Create your first chatbot'}
               </Link>
             }
           />
@@ -524,7 +531,7 @@ export function LeadsPage() {
   if (leads.locked) {
     return (
       <Page width="wide">
-        <PageHeader title="Leads" titleVisuallyHidden />
+        <PageHeader title={t('leads.leads') || 'Leads'} titleVisuallyHidden />
         <LockedLeads />
       </Page>
     );
@@ -539,10 +546,10 @@ export function LeadsPage() {
   return (
     <Page width="wide">
       <PageHeader
-        title="Leads" titleVisuallyHidden
+        title={t('leads.leads') || 'Leads'} titleVisuallyHidden
         toolbar={
           exportError ? (
-            <Alert tone="danger" live title="The export failed">
+            <Alert tone="danger" live title={t('leads.theExportFailed') || 'The export failed'}>
               {exportError}
             </Alert>
           ) : undefined
@@ -553,14 +560,14 @@ export function LeadsPage() {
         {intelligenceLocked ? (
           <Alert
             tone="plan"
-            title="Lead scoring is included on Starter and above"
+            title={t('leads.leadScoringIsIncludedOn') || 'Lead scoring is included on Starter and above'}
             action={
               <Link to="/billing" className={buttonClass('secondary', 'sm')}>
-                See plans
+                {t('leads.seePlans') || 'See plans'}
               </Link>
             }
           >
-            Scores, qualification, location and CSV export are on Starter and above.
+            {t('leads.scoresQualificationLocationAndCsv') || 'Scores, qualification, location and CSV export are on Starter and above.'}
           </Alert>
         ) : null}
 
@@ -574,37 +581,37 @@ export function LeadsPage() {
         <Card>
           <CardBody flush>
             <StatRow
-              label="Lead pipeline"
+              label={t('leads.leadPipeline') || 'Lead pipeline'}
               period={leadsRangeLabel(state)}
               columns={5}
               loading={leads.loading}
               items={[
                 {
-                  label: 'Leads',
+                  label: t('leads.leads') || 'Leads',
                   value: leads.stats ? formatNumber(leads.stats.total) : undefined,
                   size: 'lg',
                 },
                 {
-                  label: 'Qualified',
+                  label: t('leads.qualified') || 'Qualified',
                   value:
                     leads.stats?.qualified === undefined
                       ? undefined
                       : formatNumber(leads.stats.qualified),
                 },
                 {
-                  label: 'Ready to buy',
+                  label: t('leads.readyToBuy') || 'Ready to buy',
                   value: leads.stats?.sql === undefined ? undefined : formatNumber(leads.stats.sql),
                   tone: leads.stats?.sql ? 'success' : 'neutral',
                 },
                 {
-                  label: 'Average score',
+                  label: t('leads.averageScore') || 'Average score',
                   value:
                     leads.stats?.avgScore === undefined
                       ? undefined
                       : `${formatNumber(Math.round(leads.stats.avgScore))}/100`,
                 },
                 {
-                  label: 'Not opened',
+                  label: t('leads.notOpened') || 'Not opened',
                   value: leads.stats ? formatNumber(leads.stats.unread) : undefined,
                   tone: leads.stats?.unread ? 'warning' : 'neutral',
                 },
@@ -620,8 +627,8 @@ export function LeadsPage() {
           <Toolbar sticky>
             <div className="w-full sm:w-64">
               <SearchField
-                label="Search the leads on this page"
-                placeholder="Name, email, company…"
+                label={t('leads.searchTheLeadsOnThis') || 'Search the leads on this page'}
+                placeholder={t('leads.nameEmailCompany') || 'Name, email, company…'}
                 value={state.query}
                 onValueChange={(query) => update({ query }, { replace: true })}
               />
@@ -631,7 +638,7 @@ export function LeadsPage() {
                 so arrowing through the filter row was a keyboard trap. */}
             <div className="w-40">
               <Select
-                label="Filter by quality"
+                label={t('leads.filterByQuality') || 'Filter by quality'}
                 value={state.tier ?? ''}
                 options={TIER_OPTIONS}
                 disabled={intelligenceLocked}
@@ -640,7 +647,7 @@ export function LeadsPage() {
             </div>
             <div className="w-36">
               <Select
-                label="Filter by minimum score"
+                label={t('leads.filterByMinimumScore') || 'Filter by minimum score'}
                 value={state.minScore === null ? '' : String(state.minScore)}
                 options={SCORE_OPTIONS}
                 disabled={intelligenceLocked}
@@ -649,7 +656,7 @@ export function LeadsPage() {
             </div>
             <div className="w-36">
               <Select
-                label="Filter by date captured"
+                label={t('leads.filterByDateCaptured') || 'Filter by date captured'}
                 value={state.range}
                 options={LEADS_RANGE_OPTIONS}
                 onValueChange={(value) => {
@@ -665,7 +672,7 @@ export function LeadsPage() {
               <>
                 <div className="w-40">
                   <DatePicker
-                    label="From date"
+                    label={t('leads.fromDate') || 'From date'}
                     value={state.rangeFrom}
                     onValueChange={(rangeFrom) => update({ rangeFrom })}
                     max={state.rangeTo ?? undefined}
@@ -674,7 +681,7 @@ export function LeadsPage() {
                 </div>
                 <div className="w-40">
                   <DatePicker
-                    label="To date"
+                    label={t('leads.toDate') || 'To date'}
                     value={state.rangeTo}
                     onValueChange={(rangeTo) => update({ rangeTo })}
                     min={state.rangeFrom ?? undefined}
@@ -685,7 +692,7 @@ export function LeadsPage() {
             ) : null}
             <div className="w-40">
               <Select
-                label="Filter by lead type"
+                label={t('leads.filterByLeadType') || 'Filter by lead type'}
                 value={state.contact}
                 options={CONTACT_OPTIONS}
                 onValueChange={(value) => update({ contact: value as ContactFilter })}
@@ -694,7 +701,7 @@ export function LeadsPage() {
             <Tooltip content={SCOPE_NOTE}>
               <button
                 type="button"
-                aria-label="What these filters cover"
+                aria-label={t('leads.whatTheseFiltersCover') || 'What these filters cover'}
                 className="flex h-6 w-6 shrink-0 items-center justify-center rounded-xs text-text-tertiary hover:text-text-primary"
               >
                 <Info aria-hidden className="h-icon-sm w-icon-sm" />
@@ -708,7 +715,7 @@ export function LeadsPage() {
                   update({ query: '', contact: 'all', tier: null, minScore: null, range: 'all', rangeFrom: null, rangeTo: null, page: 1 })
                 }
               >
-                Clear filters
+                {t('leads.clearFilters') || 'Clear filters'}
               </Button>
             ) : null}
             {/* Was `PageHeader`'s `actions` — its own row, above this one, with
@@ -718,7 +725,7 @@ export function LeadsPage() {
             <div className="ml-auto">
               <MenuRoot>
                 <MenuTrigger
-                  aria-label="Lead actions"
+                  aria-label={t('leads.leadActions') || 'Lead actions'}
                   className={buttonClass('secondary', 'icon-md', BUTTON_ICON_SLOT['icon-md'])}
                 >
                   <MoreHorizontal aria-hidden />
@@ -729,7 +736,7 @@ export function LeadsPage() {
                     disabled={intelligenceLocked || leads.total === 0 || exporting}
                     onSelect={() => void handleExportAll()}
                   >
-                    Export all leads
+                    {t('leads.exportAllLeads') || 'Export all leads'}
                   </MenuItem>
                   {/* Disabled only when there is genuinely nothing unread.
                       `stats === null` is also the state when the stats request
@@ -741,13 +748,13 @@ export function LeadsPage() {
                     disabled={leads.stats?.unread === 0}
                     onSelect={() => setConfirmMarkAll(true)}
                   >
-                    Mark all read
+                    {t('leads.markAllRead') || 'Mark all read'}
                   </MenuItem>
                   <MenuItem
                     icon={<MailX aria-hidden className="h-icon-sm w-icon-sm" />}
                     onSelect={() => setSuppressionsOpen(true)}
                   >
-                    Unsubscribes
+                    {t('leads.unsubscribes') || 'Unsubscribes'}
                   </MenuItem>
                 </MenuContent>
               </MenuRoot>
@@ -756,7 +763,7 @@ export function LeadsPage() {
 
           <div className="mt-3">
             <DataTable
-              caption="Leads captured by your chatbots"
+              caption={t('leads.leadsCapturedByYourChatbots') || 'Leads captured by your chatbots'}
               columns={columns}
               rows={rows}
               rowKey={(lead) => lead.session_id}
@@ -792,12 +799,12 @@ export function LeadsPage() {
                         iconLeft={<Download aria-hidden />}
                         onClick={handleExportSelected}
                       >
-                        Export selection
+                        {t('leads.exportSelection') || 'Export selection'}
                       </Button>
                     </span>
                   </Tooltip>
                   <Button size="sm" variant="secondary" onClick={handleMarkSelectedRead}>
-                    Mark read
+                    {t('leads.markRead') || 'Mark read'}
                   </Button>
                 </>
               }
@@ -806,8 +813,8 @@ export function LeadsPage() {
                 filtered ? (
                   <EmptyState
                     size="inline"
-                    title="No leads match these filters"
-                    description="Try a wider quality or score filter."
+                    title={t('leads.noLeadsMatchTheseFilters') || 'No leads match these filters'}
+                    description={t('leads.tryAWiderQualityOr') || 'Try a wider quality or score filter.'}
                     action={
                       <Button
                         size="sm"
@@ -815,7 +822,7 @@ export function LeadsPage() {
                           update({ query: '', contact: 'all', tier: null, minScore: null, range: 'all', rangeFrom: null, rangeTo: null, page: 1 })
                         }
                       >
-                        Clear filters
+                        {t('leads.clearFilters') || 'Clear filters'}
                       </Button>
                     }
                   />
@@ -823,8 +830,8 @@ export function LeadsPage() {
                   <EmptyState
                     size="inline"
                     icon={Users}
-                    title="No leads yet"
-                    description="Visitors appear here as soon as they start a conversation."
+                    title={t('leads.noLeadsYet') || 'No leads yet'}
+                    description={t('leads.visitorsAppearHereAsSoon') || 'Visitors appear here as soon as they start a conversation.'}
                   />
                 )
               }
@@ -853,7 +860,7 @@ export function LeadsPage() {
       <ConfirmDialog
         open={confirmMarkAll}
         onOpenChange={setConfirmMarkAll}
-        title="Mark every lead as read?"
+        title={t('leads.markEveryLeadAsRead') || 'Mark every lead as read?'}
         description={
           <>
             Clears the unread mark on{' '}
@@ -881,13 +888,14 @@ export function LeadsPage() {
  * argument than the table.
  */
 function LockedLeads() {
+  const { t } = useTranslation();
   return (
     <LockedState
-      title="Leads are not included on your plan"
-      description="Every visitor scored on how ready they sounded to buy, with the conversation attached."
+      title={t('leads.leadsAreNotIncludedOn') || 'Leads are not included on your plan'}
+      description={t('leads.everyVisitorScoredOnHow') || 'Every visitor scored on how ready they sounded to buy, with the conversation attached.'}
       action={
         <Link to="/billing" className={buttonClass('primary', 'md')}>
-          See plans
+          {t('leads.seePlans') || 'See plans'}
         </Link>
       }
       preview={<LockedPreview />}
@@ -970,10 +978,11 @@ const PREVIEW_COLUMNS: Column<PreviewRow>[] = [
 ];
 
 function LockedPreview() {
+  const { t } = useTranslation();
   return (
     <div className="p-cell">
       <DataTable
-        caption="What the leads table looks like"
+        caption={t('leads.whatTheLeadsTableLooks') || 'What the leads table looks like'}
         columns={PREVIEW_COLUMNS}
         rows={PREVIEW_ROWS}
         rowKey={(row) => row.session_id}

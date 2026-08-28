@@ -5,6 +5,7 @@ import { Alert, Badge, Button, ConfirmDialog, LockedState, Tooltip, buttonClass 
 import { sendLeadFollowUp } from '../../services/api';
 import type { Lead } from '../../types/domain';
 import { LeadSection } from './LeadSection';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * The Professional-only network and email signal, plus the manual follow-up.
@@ -84,6 +85,7 @@ function FollowUp({ sessionId, isValidEmail, email }: {
   isValidEmail: boolean | null | undefined;
   email: string;
 }) {
+  const { t } = useTranslation();
   const [confirming, setConfirming] = useState(false);
   const [state, setState] = useState<'idle' | 'sent' | 'error' | 'needs-override' | 'paused'>(
     'idle',
@@ -99,7 +101,7 @@ function FollowUp({ sessionId, isValidEmail, email }: {
       setState('sent');
       setConfirming(false);
     } catch (cause) {
-      const detail = cause instanceof Error ? cause.message : 'The follow-up could not be sent.';
+      const detail = cause instanceof Error ? cause.message : t('leads.theFollowUpCouldNot') || 'The follow-up could not be sent.';
       const status = (cause as { status?: number } | undefined)?.status;
       // 409 is the server asking "are you sure?" — a cooldown that has not
       // elapsed, or an address validation never reached. Both are recoverable
@@ -126,9 +128,9 @@ function FollowUp({ sessionId, isValidEmail, email }: {
   // The caveats are the button's tooltip, not three stacked paragraphs about one
   // email address.
   const caveat = blocked
-    ? 'Failed validation'
+    ? t('leads.failedValidation') || 'Failed validation'
     : isValidEmail !== true
-      ? 'Not validated — you will confirm'
+      ? t('leads.notValidatedYouWillConfirm') || 'Not validated — you will confirm'
       : null;
 
   return (
@@ -147,7 +149,7 @@ function FollowUp({ sessionId, isValidEmail, email }: {
               iconLeft={<Send aria-hidden />}
               onClick={() => setConfirming(true)}
             >
-              Send a follow-up email
+              {t('leads.sendAFollowUpEmail2') || 'Send a follow-up email'}
             </Button>
           </span>
         </Tooltip>
@@ -158,7 +160,7 @@ function FollowUp({ sessionId, isValidEmail, email }: {
           iconLeft={<Send aria-hidden />}
           onClick={() => setConfirming(true)}
         >
-          Send a follow-up email
+          {t('leads.sendAFollowUpEmail2') || 'Send a follow-up email'}
         </Button>
       )}
 
@@ -168,7 +170,7 @@ function FollowUp({ sessionId, isValidEmail, email }: {
           live
           action={
             <Button size="sm" variant="secondary" onClick={() => void send(true)}>
-              Send anyway
+              {t('leads.sendAnyway') || 'Send anyway'}
             </Button>
           }
         >
@@ -176,7 +178,7 @@ function FollowUp({ sessionId, isValidEmail, email }: {
         </Alert>
       ) : null}
       {state === 'paused' && message ? (
-        <Alert tone="warning" live title="Follow-ups are paused for this chatbot">
+        <Alert tone="warning" live title={t('leads.followUpsArePausedFor') || 'Follow-ups are paused for this chatbot'}>
           {message} Turn them back on under Behaviour → Lead follow-up emails.
         </Alert>
       ) : null}
@@ -189,7 +191,7 @@ function FollowUp({ sessionId, isValidEmail, email }: {
       <ConfirmDialog
         open={confirming}
         onOpenChange={setConfirming}
-        title="Send a follow-up email?"
+        title={t('leads.sendAFollowUpEmail') || 'Send a follow-up email?'}
         description={
           <>
             This sends a real email to <strong>{email}</strong> now. It cannot be recalled, and the
@@ -210,16 +212,17 @@ export function VisitorIntelligenceSection({
   lead: Lead;
   unlocked: boolean;
 }) {
+  const { t } = useTranslation();
   if (!unlocked) {
     return (
-      <LeadSection title="Network and email">
+      <LeadSection title={t('leads.networkAndEmail') || 'Network and email'}>
         <LockedState
           size="inline"
-          title="Included on the Professional plan"
-          description="Company from the visitor's network, email deliverability, and one-click follow-up."
+          title={t('leads.includedOnTheProfessionalPlan') || 'Included on the Professional plan'}
+          description={t('leads.companyFromTheVisitorsNetwork') || 'Company from the visitor\'s network, email deliverability, and one-click follow-up.'}
           action={
             <Link to="/billing" className={buttonClass('secondary', 'sm')}>
-              See plans
+              {t('leads.seePlans') || 'See plans'}
             </Link>
           }
         />
@@ -235,11 +238,11 @@ export function VisitorIntelligenceSection({
   const emailScore = lead.contact?.email_score;
 
   return (
-    <LeadSection title="Network and email">
+    <LeadSection title={t('leads.networkAndEmail') || 'Network and email'}>
       {hasNetworkSignal(intel) ? (
         <NetworkSignal intel={intel} />
       ) : (
-        <p className="text-prose text-text-secondary">No network details resolved.</p>
+        <p className="text-prose text-text-secondary">{t('leads.noNetworkDetailsResolved') || 'No network details resolved.'}</p>
       )}
 
       {email ? (
@@ -252,9 +255,9 @@ export function VisitorIntelligenceSection({
               Deliverable{typeof emailScore === 'number' ? ` · ${emailScore}/100` : ''}
             </Badge>
           ) : isValidEmail === false ? (
-            <Badge tone="danger">Not deliverable</Badge>
+            <Badge tone="danger">{t('leads.notDeliverable') || 'Not deliverable'}</Badge>
           ) : (
-            <Badge>Not validated yet</Badge>
+            <Badge>{t('leads.notValidatedYet') || 'Not validated yet'}</Badge>
           )}
           <FollowUp sessionId={lead.session_id} isValidEmail={isValidEmail} email={email} />
         </div>

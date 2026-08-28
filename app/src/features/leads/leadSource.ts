@@ -1,4 +1,5 @@
 import { formatDuration } from '../../ui';
+import { t as translateNow } from '../../i18n/i18n';
 
 /**
  * Reading the loosely-typed attribution blob.
@@ -29,9 +30,9 @@ export function truncate(value: string, max = 80): string {
  * same panel competes with the verdict the panel exists to give.
  */
 export function engagementBand(score: number): string {
-  if (score >= 15) return 'High';
-  if (score >= 8) return 'Medium';
-  return 'Low';
+  if (score >= 15) return translateNow('leads.high') || 'High';
+  if (score >= 8) return translateNow('leads.medium') || 'Medium';
+  return translateNow('leads.low') || 'Low';
 }
 
 export interface JourneyStep {
