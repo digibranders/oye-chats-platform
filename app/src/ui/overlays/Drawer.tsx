@@ -12,6 +12,7 @@ import {
   OVERLAY_TITLE,
   OverlayHeader,
 } from './overlayParts';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export type DrawerWidth = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 
@@ -86,6 +87,7 @@ export function Drawer({
   dismissible = true,
   className,
 }: DrawerProps) {
+  const { t } = useTranslation();
   return (
     <BaseDialog.Root
       open={open}
@@ -111,7 +113,7 @@ export function Drawer({
               dismissible ? (
                 <BaseDialog.Close
                   render={
-                    <Button variant="ghost" size="icon-sm" aria-label="Close">
+                    <Button variant="ghost" size="icon-sm" aria-label={t('ds.close') || 'Close'}>
                       <X aria-hidden />
                     </Button>
                   }

@@ -9,6 +9,7 @@ import { FeedbackLauncher } from './FeedbackLauncher';
 import { ShellBanners } from './ShellBanners';
 import { useNotifications } from '../context/NotificationContext';
 import { useWorkspace } from '../context/WorkspaceContext';
+import { useTranslation } from '../i18n/useTranslation';
 
 /**
  * Below this the rail is a drawer.
@@ -52,6 +53,7 @@ const COLLAPSE_KEY = 'oc_rail_collapsed';
  * honestly on a page that is as tall as its longest column.
  */
 export function AppShell() {
+  const { t } = useTranslation();
   const isMobile = useMediaQuery(MOBILE_QUERY);
   const forceCollapsed = useMediaQuery(AUTO_COLLAPSE_QUERY);
   const [preferCollapsed, setPreferCollapsed] = useState(() => {
@@ -140,7 +142,7 @@ export function AppShell() {
                   `--spacing-rail` token, so a fixed pixel class here would
                   drift out of sync the next time that token changes. */}
               <BaseDialog.Popup className="motion-slide-left fixed inset-y-0 left-0 z-[var(--z-overlay)] w-rail focus:outline-none">
-                <BaseDialog.Title className="sr-only">Navigation</BaseDialog.Title>
+                <BaseDialog.Title className="sr-only">{t('shell.navigation') || 'Navigation'}</BaseDialog.Title>
                 <Rail
                   collapsed={false}
                   onNavigate={() => setDrawerOpen(false)}

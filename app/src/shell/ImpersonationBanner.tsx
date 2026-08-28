@@ -8,6 +8,7 @@ import {
   type ImpersonationProfile,
 } from '../utils/impersonation';
 import { ImpersonationNotice } from './ImpersonationNotice';
+import { useTranslation } from '../i18n/useTranslation';
 
 /**
  * The bar shown on every page while a super-admin is acting inside somebody
@@ -65,6 +66,7 @@ function formatExpiry(expiresAt: string | undefined): string | null {
 const MAX_TIMEOUT_MS = 2_147_483_647;
 
 export function ImpersonationBanner() {
+  const { t } = useTranslation();
   // A tab holding the credential ALWAYS gets the bar, even if the stored
   // profile is missing or corrupt — an unlabelled impersonated session is the
   // one state this component exists to prevent. Empty object → the field
@@ -83,11 +85,11 @@ export function ImpersonationBanner() {
     function onEnded(event: Event) {
       const detail = (event as CustomEvent<{ message?: string }>).detail;
       setProfile(null);
-      setEndedMessage(detail?.message || 'Impersonation session ended.');
+      setEndedMessage(detail?.message || t('shell.impersonationSessionEnded2') || 'Impersonation session ended.');
     }
     window.addEventListener(IMPERSONATION_ENDED_EVENT, onEnded);
     return () => window.removeEventListener(IMPERSONATION_ENDED_EVENT, onEnded);
-  }, []);
+  }, [t]);
 
   // Close the session the moment the token lapses instead of waiting for the
   // next request to 401. Server-side expiry is still the real boundary; this
@@ -99,21 +101,21 @@ export function ImpersonationBanner() {
 
     const delay = Math.min(Math.max(expiresAt.getTime() - Date.now(), 0), MAX_TIMEOUT_MS);
     const timer = setTimeout(
-      () => endImpersonationSession('This impersonation session expired.'),
+      () => endImpersonationSession(t('shell.thisImpersonationSessionExpired') || 'This impersonation session expired.'),
       delay,
     );
     return () => clearTimeout(timer);
-  }, [active, profile]);
+  }, [active, profile, t]);
 
   const handleExit = useCallback(() => {
-    endImpersonationSession('Impersonation session ended. You can close this tab.');
+    endImpersonationSession(t('shell.impersonationSessionEndedYouCan') || 'Impersonation session ended. You can close this tab.');
     // Only works for tabs opened by script — which is how the super-admin
     // console launches this one. When it does not, the notice stands in.
     window.close();
-  }, []);
+  }, [t]);
 
   if (endedMessage) {
-    return <ImpersonationNotice title="Impersonation session ended" message={endedMessage} />;
+    return <ImpersonationNotice title={t('shell.impersonationSessionEnded') || 'Impersonation session ended'} message={endedMessage} />;
   }
   if (!active || !profile) return null;
 
@@ -144,7 +146,7 @@ export function ImpersonationBanner() {
         {/* "limited", not "safe": the allowlist admits real config writes
             (chatbot settings, canned responses, conversation triage), so the
             honest claim is scope-limited, not harmless. */}
-        <> · limited actions</>
+        <> {t('shell.limitedActions') || '· limited actions'}</>
         {expiry ? <> · expires <span className="figure">{expiry}</span></> : null}
       </p>
       <button
@@ -153,7 +155,7 @@ export function ImpersonationBanner() {
         className="inline-flex h-control-sm shrink-0 items-center gap-1.5 rounded-sm bg-surface px-2.5 text-xs font-medium text-danger transition-colors hover:bg-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-surface"
       >
         <LogOut aria-hidden className="h-icon-sm w-icon-sm" />
-        Exit
+        {t('shell.exit') || 'Exit'}
       </button>
     </div>
   );

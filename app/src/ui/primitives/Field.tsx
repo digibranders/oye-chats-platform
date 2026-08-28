@@ -2,6 +2,7 @@ import { useId, type ReactNode } from 'react';
 import { AlertCircle } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { FieldContext } from './fieldContext';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface FieldProps {
   label: string;
@@ -95,6 +96,7 @@ export function Field({
   reserveMessageSpace,
   className,
 }: FieldProps) {
+  const { t } = useTranslation();
   const id = useId();
   const labelId = `${id}-label`;
   const descriptionId = hint ? `${id}-hint` : undefined;
@@ -123,7 +125,7 @@ export function Field({
                   one. */}
               {required ? <span className="sr-only"> (required)</span> : null}
               {optional && !required ? (
-                <span className="ml-1.5 text-xs font-normal text-text-tertiary">Optional</span>
+                <span className="ml-1.5 text-xs font-normal text-text-tertiary">{t('ds.optional') || 'Optional'}</span>
               ) : null}
             </label>
           );

@@ -2,6 +2,7 @@ import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from 
 import { Minus, Plus, RotateCcw } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { Button } from '../primitives/Button';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * A pannable, zoomable SVG viewport. Ported from a mouse-only canvas
@@ -58,6 +59,7 @@ export function ZoomPanCanvas({
   className,
   style,
 }: ZoomPanCanvasProps) {
+  const { t } = useTranslation();
   const svgRef = useRef<SVGSVGElement>(null);
   const [transform, setTransform] = useState<Transform>(IDENTITY);
   const [dragging, setDragging] = useState(false);
@@ -182,7 +184,7 @@ export function ZoomPanCanvas({
         ref={svgRef}
         role="application"
         aria-label={label}
-        aria-roledescription="pannable, zoomable diagram"
+        aria-roledescription={t('ds.pannableZoomableDiagram') || 'pannable, zoomable diagram'}
         tabIndex={0}
         viewBox={`0 0 ${viewBoxWidth} ${viewBoxHeight}`}
         preserveAspectRatio="xMidYMid meet"
@@ -213,7 +215,7 @@ export function ZoomPanCanvas({
         <Button
           size="icon-sm"
           variant="secondary"
-          aria-label="Zoom in"
+          aria-label={t('ds.zoomIn') || 'Zoom in'}
           onClick={zoomIn}
           disabled={transform.scale >= ZOOM_MAX}
         >
@@ -222,13 +224,13 @@ export function ZoomPanCanvas({
         <Button
           size="icon-sm"
           variant="secondary"
-          aria-label="Zoom out"
+          aria-label={t('ds.zoomOut') || 'Zoom out'}
           onClick={zoomOut}
           disabled={transform.scale <= ZOOM_MIN}
         >
           <Minus aria-hidden className="h-icon-sm w-icon-sm" />
         </Button>
-        <Button size="icon-sm" variant="secondary" aria-label="Reset view" onClick={reset}>
+        <Button size="icon-sm" variant="secondary" aria-label={t('ds.resetView') || 'Reset view'} onClick={reset}>
           <RotateCcw aria-hidden className="h-icon-sm w-icon-sm" />
         </Button>
       </div>

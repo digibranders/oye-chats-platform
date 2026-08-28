@@ -1,5 +1,6 @@
 import { ShieldAlert } from 'lucide-react';
 import { FullPageState, Spinner } from '../ui';
+import { useTranslation } from '../i18n/useTranslation';
 
 export interface ImpersonationNoticeProps {
   title: string;
@@ -24,6 +25,7 @@ export interface ImpersonationNoticeProps {
  * of the same shape — which is the duplication `src/ui/` exists to stop.
  */
 export function ImpersonationNotice({ title, message, busy = false }: ImpersonationNoticeProps) {
+  const { t } = useTranslation();
   return (
     <FullPageState
       // A takeover, not a banner: one of its three callers is the live bar
@@ -35,11 +37,11 @@ export function ImpersonationNotice({ title, message, busy = false }: Impersonat
       busy={busy}
       title={title}
       description={message}
-      actions={busy ? <Spinner size="lg" label="Opening the support session" /> : undefined}
+      actions={busy ? <Spinner size="lg" label={t('shell.openingTheSupportSession') || 'Opening the support session'} /> : undefined}
       footnote={
         busy
           ? undefined
-          : 'Close this tab and issue a new impersonation link from the platform console.'
+          : t('shell.closeThisTabAndIssue') || 'Close this tab and issue a new impersonation link from the platform console.'
       }
     />
   );

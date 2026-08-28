@@ -14,6 +14,7 @@ import { getCurrentUser } from '../services/api';
 import { keys } from '../query/keys';
 import { clearAuthStorage } from '../utils/authStorage';
 import { useWorkspace } from '../context/WorkspaceContext';
+import { useTranslation } from '../i18n/useTranslation';
 
 /**
  * The account menu, anchored at the foot of the rail.
@@ -33,6 +34,7 @@ import { useWorkspace } from '../context/WorkspaceContext';
  * avatar's left edge lands on the icon column rather than two pixels inside it.
  */
 export function AccountMenu({ collapsed }: { collapsed: boolean }) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { currentWorkspaceName, effectiveRole } = useWorkspace();
   const { data } = useQuery({
@@ -42,7 +44,7 @@ export function AccountMenu({ collapsed }: { collapsed: boolean }) {
     staleTime: 5 * 60_000,
   });
 
-  const name = (data?.name as string | undefined) ?? (data?.email as string | undefined) ?? 'Account';
+  const name = (data?.name as string | undefined) ?? (data?.email as string | undefined) ?? (t('shell.account') || 'Account');
   const email = data?.email as string | undefined;
   // The trigger already carries the name and the email on two lines, so the
   // menu's group label is the one fact it does not: which seat you hold, where.
@@ -56,7 +58,7 @@ export function AccountMenu({ collapsed }: { collapsed: boolean }) {
   return (
     <MenuRoot>
       <MenuTrigger
-        aria-label="Account"
+        aria-label={t('shell.account') || 'Account'}
         className={cn(
           'flex h-row w-full min-w-0 items-center gap-2.5 rounded-md px-2.5 text-left',
           'transition-colors duration-[var(--dur-fast)] hover:bg-rail-hover focus-visible:outline-rail-accent',
@@ -77,7 +79,7 @@ export function AccountMenu({ collapsed }: { collapsed: boolean }) {
       <MenuContent side="right" align="end" className="w-64">
         {seat ? <p className="px-2 pb-1 pt-1.5 text-2xs text-text-tertiary">{seat}</p> : null}
         <MenuItem icon={<User aria-hidden />} onSelect={() => navigate('/account')}>
-          Account settings
+          {t('shell.accountSettings') || 'Account settings'}
         </MenuItem>
         <MenuSeparator />
         <MenuItem
@@ -86,17 +88,17 @@ export function AccountMenu({ collapsed }: { collapsed: boolean }) {
             window.open('https://www.oyechats.com/contact', '_blank', 'noopener')
           }
         >
-          Send feedback
+          {t('shell.sendFeedback') || 'Send feedback'}
         </MenuItem>
         <MenuItem
           icon={<HelpCircle aria-hidden />}
           onSelect={() => window.open('https://www.oyechats.com/docs', '_blank', 'noopener')}
         >
-          Help and docs
+          {t('shell.helpAndDocs') || 'Help and docs'}
         </MenuItem>
         <MenuSeparator />
         <MenuItem icon={<LogOut aria-hidden />} onSelect={signOut}>
-          Sign out
+          {t('shell.signOut') || 'Sign out'}
         </MenuItem>
       </MenuContent>
     </MenuRoot>

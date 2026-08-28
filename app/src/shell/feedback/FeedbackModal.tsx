@@ -149,6 +149,7 @@ function AttachmentThumbs({
 }: {
   attachments: PlatformFeedbackAttachment[] | null;
 }): ReactElement | null {
+  const { t } = useTranslation();
   if (!attachments?.length) return null;
   return (
     <div className="mt-3 flex flex-wrap gap-2">
@@ -158,7 +159,7 @@ function AttachmentThumbs({
           href={att.url}
           target="_blank"
           rel="noopener noreferrer"
-          title={att.name || 'Attachment'}
+          title={att.name || t('shell.attachment') || 'Attachment'}
           className="relative h-16 w-16 shrink-0 overflow-hidden rounded-md border border-border bg-surface-sunken"
         >
           <img src={att.url} alt={att.name || 'attachment'} className="h-full w-full object-cover" loading="lazy" />
@@ -263,7 +264,7 @@ function MyFeedbackList({ highlightId }: MyFeedbackListProps): ReactElement {
               <div className="mt-3 rounded-md border border-accent-500 bg-accent-50 p-3">
                 <p className="mb-1.5 flex items-center gap-1.5 text-2xs font-semibold uppercase tracking-eyebrow text-accent-700">
                   <MessageSquare aria-hidden className="h-icon-sm w-icon-sm" />
-                  Response from OyeChats
+                  {t('shell.responseFromOyechats') || 'Response from OyeChats'}
                 </p>
                 <p className="whitespace-pre-wrap text-sm leading-relaxed text-text-primary">
                   {item.admin_response}
@@ -568,7 +569,7 @@ export function FeedbackModal({
       onOpenChange={(next) => {
         if (!next) onClose();
       }}
-      title="Feedback"
+      title={t('shell.feedbackTitle') || 'Feedback'}
       description={description}
       size="md"
       footer={
@@ -579,10 +580,10 @@ export function FeedbackModal({
             </Button>
             <Button onClick={() => void handleSubmit()} disabled={!canSubmit} loading={isSubmitting}>
               {uploading && !isSubmitting ? (
-                'Uploading…'
+                t('shell.uploading') || 'Uploading…'
               ) : (
                 <>
-                  Send feedback
+                  {t('shell.sendFeedback') || 'Send feedback'}
                   <ArrowRight aria-hidden className="h-icon-sm w-icon-sm" />
                 </>
               )}
@@ -592,23 +593,23 @@ export function FeedbackModal({
       }
     >
       <Tabs
-        label="Feedback"
+        label={t('shell.feedbackTitle') || 'Feedback'}
         value={activeTab}
         onValueChange={(value) => setActiveTab(value as FeedbackTab)}
         items={[
-          { value: 'send', label: 'Send feedback' },
-          { value: 'mine', label: 'My feedback' },
+          { value: 'send', label: t('shell.sendFeedback') || 'Send feedback' },
+          { value: 'mine', label: t('shell.myFeedback') || 'My feedback' },
         ]}
       >
         <TabPanel value="send" className="pt-5">
           <div className="space-y-5">
-            <Field label="What type of feedback is this?" required>
+            <Field label={t('shell.whatTypeOfFeedbackIs') || 'What type of feedback is this?'} required>
               <TypePicker value={type} onChange={setType} />
             </Field>
 
-            <Field label="Area" optional>
+            <Field label={t('shell.area') || 'Area'} optional>
               <Select
-                label="Area"
+                label={t('shell.area') || 'Area'}
                 value={area}
                 onValueChange={(next) => setArea(next as FeedbackAreaId | '')}
                 emptyOption="Not sure / unspecified"
@@ -617,12 +618,12 @@ export function FeedbackModal({
             </Field>
 
             {type === 'bug' ? (
-              <Field label="Severity" optional>
+              <Field label={t('shell.severity') || 'Severity'} optional>
                 <SeverityPicker value={severity} onChange={setSeverity} />
               </Field>
             ) : null}
 
-            <Field label="Describe your feedback" required>
+            <Field label={t('shell.describeYourFeedback') || 'Describe your feedback'} required>
               <div className="overflow-hidden rounded-md border border-border-strong bg-surface transition-colors focus-within:border-accent-500 focus-within:shadow-[0_0_0_1px_var(--color-accent-500)]">
                 <Textarea
                   value={message}
@@ -653,12 +654,12 @@ export function FeedbackModal({
                       onClick={() => fileInputRef.current?.click()}
                       disabled={attachments.length >= MAX_ATTACHMENTS}
                       className="inline-flex h-control-sm items-center gap-1.5 rounded-md px-2.5 text-xs text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary disabled:cursor-not-allowed disabled:text-text-disabled disabled:hover:bg-transparent"
-                      title="Attach screenshots or paste from clipboard (max 5, 10MB each)"
+                      title={t('shell.attachScreenshotsOrPasteFrom') || 'Attach screenshots or paste from clipboard (max 5, 10MB each)'}
                     >
                       <ImagePlus aria-hidden className="h-icon-sm w-icon-sm" />
-                      Add screenshot
+                      {t('shell.addScreenshot') || 'Add screenshot'}
                     </button>
-                    <span className="text-2xs text-text-tertiary">or paste from clipboard</span>
+                    <span className="text-2xs text-text-tertiary">{t('shell.orPasteFromClipboard') || 'or paste from clipboard'}</span>
                   </div>
 
                   {attachments.length > 0 ? (
@@ -677,7 +678,7 @@ export function FeedbackModal({
                           {att.status === 'error' ? (
                             <div
                               className="absolute inset-0 flex items-center justify-center bg-danger-tint"
-                              title="Upload failed"
+                              title={t('shell.uploadFailed') || 'Upload failed'}
                             >
                               <AlertCircle aria-hidden className="h-icon-sm w-icon-sm text-danger" />
                             </div>
@@ -707,7 +708,7 @@ export function FeedbackModal({
             <div className="flex items-start gap-2.5 px-0.5">
               <Info aria-hidden className="mt-0.5 h-icon-sm w-icon-sm shrink-0 text-text-tertiary" />
               <p className="text-xs leading-relaxed text-text-secondary">
-                Don&apos;t include passwords, API keys, or any sensitive information.
+                {t('shell.dontIncludePasswordsApiKeys') || 'Don\'t include passwords, API keys, or any sensitive information.'}
                 <br />
                 {t('shell.feedbackModal.weAttach') ||
                 'We attach your current page, app version, plan, and browser to help us triage.'}

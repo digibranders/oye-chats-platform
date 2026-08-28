@@ -14,6 +14,7 @@ import {
   formatRelative,
 } from '../ui';
 import { useNotifications } from '../context/NotificationContext';
+import { useTranslation } from '../i18n/useTranslation';
 
 /**
  * The notification bell.
@@ -40,6 +41,7 @@ import { useNotifications } from '../context/NotificationContext';
  * has exactly one blue thing in it and it means unread.
  */
 export function NotificationBell() {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const { items, unreadCount, connected, markAllRead, markRead } = useNotifications();
   const [showUnreadOnly, setShowUnreadOnly] = useState(false);
@@ -49,7 +51,7 @@ export function NotificationBell() {
     <PopoverRoot open={open} onOpenChange={setOpen}>
       <Tooltip content="Notifications" disabled={open}>
         <PopoverTrigger
-          aria-label={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : 'Notifications'}
+          aria-label={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : t('shell.notificationsTitle') || 'Notifications'}
           className={cn(
             'relative flex h-control-sm w-control-sm items-center justify-center rounded-md',
             'text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary',
@@ -76,12 +78,12 @@ export function NotificationBell() {
             size="sm"
             fill
             className="min-w-0 flex-1"
-            label="Which notifications to show"
+            label={t('shell.whichNotificationsToShow') || 'Which notifications to show'}
             value={showUnreadOnly ? 'unread' : 'all'}
             onChange={(next) => setShowUnreadOnly(next === 'unread')}
             items={[
-              { value: 'all', label: 'All', count: items.length },
-              { value: 'unread', label: 'Unread', count: items.filter((item) => !item.is_read).length },
+              { value: 'all', label: t('shell.all') || 'All', count: items.length },
+              { value: 'unread', label: t('shell.unread') || 'Unread', count: items.filter((item) => !item.is_read).length },
             ]}
           />
           {unreadCount > 0 ? (
@@ -89,7 +91,7 @@ export function NotificationBell() {
               <Button
                 size="icon-sm"
                 variant="ghost"
-                aria-label="Mark all read"
+                aria-label={t('shell.markAllRead') || 'Mark all read'}
                 onClick={() => void markAllRead()}
               >
                 <Check aria-hidden />
@@ -102,13 +104,13 @@ export function NotificationBell() {
           <EmptyState
             size="panel"
             icon={Inbox}
-            title={showUnreadOnly ? 'Nothing unread' : 'Nothing new'}
+            title={showUnreadOnly ? t('shell.nothingUnread') || 'Nothing unread' : t('shell.nothingNew') || 'Nothing new'}
             description={
               showUnreadOnly
-                ? 'Everything in the latest thirty has been read.'
+                ? t('shell.everythingInTheLatestThirty') || 'Everything in the latest thirty has been read.'
                 : connected
-                  ? 'Handoffs, offline messages and billing events land here.'
-                  : 'Reconnecting — anything that arrives will appear here.'
+                  ? t('shell.handoffsOfflineMessagesAndBilling') || 'Handoffs, offline messages and billing events land here.'
+                  : t('shell.reconnectingAnythingThatArrivesWill') || 'Reconnecting — anything that arrives will appear here.'
             }
           />
         ) : (
@@ -165,7 +167,7 @@ export function NotificationBell() {
           onClick={() => setOpen(false)}
           className="block shrink-0 border-t border-border px-3 py-2 text-center text-xs text-accent-600 transition-colors hover:bg-surface-hover"
         >
-          Open the inbox
+          {t('shell.openTheInbox') || 'Open the inbox'}
         </Link>
       </PopoverContent>
     </PopoverRoot>

@@ -3,6 +3,7 @@ import { AlertCircle, Lock, type LucideIcon } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { Button } from '../primitives/Button';
 import { Skeleton } from '../primitives/Skeleton';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * The four states every surface owes its user: loading, empty, error, forbidden.
@@ -336,10 +337,10 @@ export interface ErrorStateProps {
  * read the zero and believe it.
  */
 export function ErrorState({
-  title = 'This could not be loaded',
+  title: titleProp,
   description,
   onRetry,
-  retryLabel = 'Try again',
+  retryLabel: retryLabelProp,
   size,
   align,
   framed,
@@ -348,6 +349,13 @@ export function ErrorState({
   compact,
   className,
 }: ErrorStateProps) {
+  const { t } = useTranslation();
+  // `??` would also swallow an explicit `null`; a default parameter
+  // only applies to `undefined`, and callers pass null to opt OUT.
+  const title = titleProp === undefined ? (t('ds.thisCouldNotBeLoaded') || 'This could not be loaded') : titleProp;
+  // `??` would also swallow an explicit `null`; a default parameter
+  // only applies to `undefined`, and callers pass null to opt OUT.
+  const retryLabel = retryLabelProp === undefined ? (t('ds.tryAgain') || 'Try again') : retryLabelProp;
   const resolved = resolveSize(size, compact);
   return (
     <StateShell

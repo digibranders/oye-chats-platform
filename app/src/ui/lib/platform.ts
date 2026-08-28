@@ -1,4 +1,5 @@
-/**
+
+import { t as translateNow } from '../../i18n/i18n';/**
  * Platform detection, for shortcut hints only.
  *
  * The shell it replaces hardcoded `⌘K` and showed it to Windows and Linux users,
@@ -11,5 +12,5 @@ export function isMacPlatform(): boolean {
 
 /** The platform's command-key glyph. */
 export function modifierKey(): string {
-  return isMacPlatform() ? '⌘' : 'Ctrl';
+  return isMacPlatform() ? '⌘' : translateNow('ds.ctrl') || 'Ctrl';
 }

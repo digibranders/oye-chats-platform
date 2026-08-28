@@ -47,7 +47,7 @@ export function GoogleAuthButton({
   const { t } = useTranslation();
   // Defaulted here, not in the signature: a default parameter is evaluated
   // before the hook runs.
-  const text = label ?? (t('auth.continueWithGoogle') || 'Continue with Google');
+  const text = label === undefined ? (t('auth.continueWithGoogle') || 'Continue with Google') : label;
   const [leaving, setLeaving] = useState(false);
   // Render nothing until the probe answers, and nothing at all if the answer is
   // no. Showing the button first and removing it afterwards moves the email

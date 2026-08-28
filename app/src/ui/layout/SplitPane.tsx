@@ -10,6 +10,7 @@ import {
 import { ArrowLeft } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { Button } from '../primitives/Button';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /** Default list widths, in px, so the resize arithmetic has one unit. */
 const LIST_WIDTHS = { sm: 288, md: 320 } as const;
@@ -106,7 +107,7 @@ export function SplitPane({
   inspector,
   selected,
   onBack,
-  backLabel = 'Back',
+  backLabel: backLabelProp,
   listWidth = 'sm',
   resizable = false,
   storageKey,
@@ -115,6 +116,10 @@ export function SplitPane({
   inspectorLabel,
   className,
 }: SplitPaneProps) {
+  const { t } = useTranslation();
+  // `??` would also swallow an explicit `null`; a default parameter
+  // only applies to `undefined`, and callers pass null to opt OUT.
+  const backLabel = backLabelProp === undefined ? (t('ds.back') || 'Back') : backLabelProp;
   const [width, setWidth] = useState<number>(
     () => readStored(storageKey) ?? LIST_WIDTHS[listWidth],
   );
@@ -201,7 +206,7 @@ export function SplitPane({
             <div
               role="separator"
               aria-orientation="vertical"
-              aria-label="Resize the list"
+              aria-label={t('ds.resizeTheList') || 'Resize the list'}
               aria-valuenow={width}
               aria-valuemin={MIN_LIST}
               aria-valuemax={MAX_LIST}

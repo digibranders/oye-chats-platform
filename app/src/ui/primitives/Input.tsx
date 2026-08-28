@@ -9,6 +9,7 @@ import {
   type ControlSize,
 } from './controlStyles';
 import { useFieldControlProps } from './fieldContext';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * The shared shape of every text-entry control.
@@ -80,6 +81,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
   { size = 'md', leading, trailing, revealable = false, className, type = 'text', ...props },
   ref,
 ) {
+  const { t } = useTranslation();
   const fieldProps = useFieldControlProps();
   const geometry = CONTROL_SIZE[size];
   const [revealed, setRevealed] = useState(false);
@@ -88,7 +90,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
     <button
       type="button"
       aria-pressed={revealed}
-      aria-label={revealed ? 'Hide password' : 'Show password'}
+      aria-label={revealed ? t('ds.hidePassword') || 'Hide password' : t('ds.showPassword') || 'Show password'}
       onClick={() => setRevealed((shown) => !shown)}
       className={cn(
         'flex h-6 w-6 items-center justify-center rounded-xs text-text-tertiary',

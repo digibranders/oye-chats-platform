@@ -108,7 +108,7 @@ export function CommandPalette({
     const agents: Command[] = isOperator
       ? []
       : bots.flatMap((bot) => {
-          const name = bot.name ?? `${navLabel('Chatbot')} ${bot.id}`;
+          const name = bot.name ?? `${navLabel((t('shell.chatbot') || 'Chatbot'))} ${bot.id}`;
           return [
             {
               id: `agent:${bot.id}`,
@@ -143,21 +143,21 @@ export function CommandPalette({
     const recentIds = new Set(recentCommands.map((command) => command.id));
 
     return [
-      { label: 'Recent', items: recentCommands },
+      { label: t('shell.recent') || 'Recent', items: recentCommands },
       {
-        label: 'Go to',
+        label: t('shell.goTo') || 'Go to',
         items: commands.filter(
           (command) => command.id.startsWith('nav:') && !recentIds.has(command.id),
         ),
       },
       {
-        label: 'Chatbots',
+        label: t('shell.chatbots') || 'Chatbots',
         items: commands.filter(
           (command) => command.id.startsWith('agent:') && !recentIds.has(command.id),
         ),
       },
     ].filter((group) => group.items.length > 0);
-  }, [commands, recent, query]);
+  }, [commands, recent, query, t]);
 
   function run(command: Command | null) {
     if (!command) return;
@@ -182,7 +182,7 @@ export function CommandPalette({
             'focus:outline-none',
           )}
         >
-          <BaseDialog.Title className="sr-only">Search</BaseDialog.Title>
+          <BaseDialog.Title className="sr-only">{t('shell.search') || 'Search'}</BaseDialog.Title>
           <BaseCombobox.Root<Command, false>
             items={groups}
             value={null}
@@ -196,7 +196,7 @@ export function CommandPalette({
               <Search aria-hidden className="h-icon-md w-icon-md shrink-0 text-text-tertiary" />
               <BaseCombobox.Input
                 autoFocus
-                placeholder="Jump to a chatbot or a page…"
+                placeholder={t('shell.jumpToAChatbotOr') || 'Jump to a chatbot or a page…'}
                 className="h-control-lg w-full bg-transparent text-base text-text-primary outline-none placeholder:text-text-disabled"
               />
             </div>
@@ -212,7 +212,7 @@ export function CommandPalette({
                   <span className="font-medium text-text-primary">“{shownQuery}”</span>
                 </p>
                 <p className="mt-1 text-xs text-text-tertiary">
-                  Try a chatbot name, a page, or a setting.
+                  {t('shell.tryAChatbotNameA') || 'Try a chatbot name, a page, or a setting.'}
                 </p>
               </div>
             </BaseCombobox.Empty>
@@ -258,13 +258,13 @@ export function CommandPalette({
             <div className="flex items-center gap-4 border-t border-border bg-surface-sunken px-4 py-2 text-2xs text-text-tertiary">
               <span className="flex items-center gap-1">
                 <Kbd>↑</Kbd>
-                <Kbd>↓</Kbd> navigate
+                <Kbd>↓</Kbd> {t('shell.navigate') || 'navigate'}
               </span>
               <span className="flex items-center gap-1">
-                <Kbd>↵</Kbd> open
+                <Kbd>↵</Kbd> {t('shell.open') || 'open'}
               </span>
               <span className="flex items-center gap-1">
-                <Kbd>Esc</Kbd> close
+                <Kbd>{t('shell.esc') || 'Esc'}</Kbd> close
               </span>
             </div>
           </BaseCombobox.Root>

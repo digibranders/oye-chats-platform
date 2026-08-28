@@ -164,7 +164,7 @@ export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 
       <button
         type="button"
         onClick={onToggle}
-        aria-label="Expand navigation"
+        aria-label={t('shell.expandNavigation') || 'Expand navigation'}
         aria-expanded={false}
         aria-controls="app-rail"
         className="mx-auto flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-rail-hover focus-visible:outline-rail-accent"
@@ -177,13 +177,13 @@ export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 
       <RailBrand />
       {onClose ? (
         <RailHeaderButton
-          label="Close navigation"
+          label={t('shell.closeNavigation') || 'Close navigation'}
           onClick={onClose}
           icon={<X aria-hidden className="h-icon-md w-icon-md" />}
         />
       ) : onToggle ? (
         <RailHeaderButton
-          label="Collapse navigation"
+          label={t('shell.collapseNavigation') || 'Collapse navigation'}
           onClick={onToggle}
           controls="app-rail"
           icon={<PanelLeft aria-hidden className="h-icon-md w-icon-md" />}
@@ -226,7 +226,7 @@ export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 
       {inAgentScope ? (
         <>
           <RailBackLink to="/chatbots" onNavigate={onNavigate}>
-            All chatbots
+            {t('shell.allChatbots') || 'All chatbots'}
           </RailBackLink>
 
           {!collapsed ? (
@@ -260,7 +260,7 @@ export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 
               glyph={<item.icon aria-hidden className="h-icon-md w-icon-md" />}
               trailing={
                 item.to === '/inbox' && inboxCount > 0 ? (
-                  <RailCount value={inboxCount} label="waiting" />
+                  <RailCount value={inboxCount} label={t('shell.waiting') || 'waiting'} />
                 ) : undefined
               }
             />
@@ -284,7 +284,7 @@ export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 
                     <Link
                       to="/chatbots?new=1"
                       onClick={onNavigate}
-                      aria-label="New chatbot"
+                      aria-label={t('shell.newChatbot') || 'New chatbot'}
                       className="-mr-1 flex h-6 w-6 items-center justify-center rounded-sm text-rail-text-muted transition-colors hover:bg-rail-hover hover:text-rail-text focus-visible:outline-rail-accent"
                     >
                       <Plus aria-hidden className="h-icon-sm w-icon-sm" />
@@ -292,7 +292,7 @@ export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 
                   </Tooltip>
                 }
               >
-                Chatbots
+                {t('shell.chatbots') || 'Chatbots'}
               </RailGroupLabel>
 
               {firstThree.map((bot) => {
@@ -305,7 +305,7 @@ export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 
                   <RailItem
                     key={bot.id}
                     to={agentPath(bot.id, 'overview')}
-                    label={bot.name ?? `${navLabel('Chatbot')} ${bot.id}`}
+                    label={bot.name ?? `${navLabel((t('shell.chatbot') || 'Chatbot'))} ${bot.id}`}
                     collapsed={collapsed}
                     onNavigate={onNavigate}
                     glyph={
@@ -320,7 +320,7 @@ export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 
 
               <RailItem
                 to={CHATBOTS_ITEM.to}
-                label={navLabel('All chatbots')}
+                label={navLabel(t('shell.allChatbots') || 'All chatbots')}
                 end
                 collapsed={collapsed}
                 onNavigate={onNavigate}

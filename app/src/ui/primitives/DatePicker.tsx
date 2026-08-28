@@ -7,6 +7,7 @@ import { CONTROL_BASE } from './Input';
 import { CONTROL_SIZE, controlClass, type ControlSize } from './controlStyles';
 import { PANEL_BASE, PANEL_POSITIONER } from '../overlays/panelStyles';
 import { useFieldControlProps, useFieldNamesControl } from './fieldContext';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * A calendar day, as the three numbers it actually is.
@@ -133,7 +134,7 @@ export function DatePicker({
   value,
   onValueChange,
   label,
-  placeholder = 'Select a date',
+  placeholder: placeholderProp,
   min,
   max,
   disabled = false,
@@ -142,6 +143,10 @@ export function DatePicker({
   id,
   className,
 }: DatePickerProps) {
+  const { t } = useTranslation();
+  // `??` would also swallow an explicit `null`; a default parameter
+  // only applies to `undefined`, and callers pass null to opt OUT.
+  const placeholder = placeholderProp === undefined ? (t('ds.selectADate') || 'Select a date') : placeholderProp;
   const fieldNamesIt = useFieldNamesControl();
   const fieldProps = useFieldControlProps();
   const geometry = CONTROL_SIZE[size];
@@ -328,7 +333,7 @@ export function DatePicker({
             <div className="flex items-center justify-between pb-2">
               <button
                 type="button"
-                aria-label="Previous month"
+                aria-label={t('ds.previousMonth') || 'Previous month'}
                 onClick={() => setVisibleMonth((current) => addMonths(current, -1))}
                 className="flex h-7 w-7 items-center justify-center rounded-sm text-text-secondary hover:bg-surface-hover hover:text-text-primary"
               >
@@ -339,7 +344,7 @@ export function DatePicker({
               </span>
               <button
                 type="button"
-                aria-label="Next month"
+                aria-label={t('ds.nextMonth') || 'Next month'}
                 onClick={() => setVisibleMonth((current) => addMonths(current, 1))}
                 className="flex h-7 w-7 items-center justify-center rounded-sm text-text-secondary hover:bg-surface-hover hover:text-text-primary"
               >

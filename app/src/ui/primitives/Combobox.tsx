@@ -6,6 +6,7 @@ import { CONTROL_BASE } from './Input';
 import { CONTROL_SIZE, controlClass } from './controlStyles';
 import { PANEL_BASE, PANEL_POSITIONER } from '../overlays/panelStyles';
 import { useFieldControlProps, useFieldNamesControl } from './fieldContext';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface ComboboxOption<T extends string> {
   value: T;
@@ -73,14 +74,24 @@ export function Combobox<T extends string>({
   value,
   onValueChange,
   label,
-  placeholder = 'Select…',
-  searchPlaceholder = 'Search…',
-  emptyMessage = 'No matches',
+  placeholder: placeholderProp,
+  searchPlaceholder: searchPlaceholderProp,
+  emptyMessage: emptyMessageProp,
   clearable = false,
   disabled = false,
   size = 'md',
   className,
 }: ComboboxProps<T>) {
+  const { t } = useTranslation();
+  // `??` would also swallow an explicit `null`; a default parameter
+  // only applies to `undefined`, and callers pass null to opt OUT.
+  const placeholder = placeholderProp === undefined ? (t('ds.selectPlaceholder') || 'Select…') : placeholderProp;
+  // `??` would also swallow an explicit `null`; a default parameter
+  // only applies to `undefined`, and callers pass null to opt OUT.
+  const searchPlaceholder = searchPlaceholderProp === undefined ? (t('ds.search') || 'Search…') : searchPlaceholderProp;
+  // `??` would also swallow an explicit `null`; a default parameter
+  // only applies to `undefined`, and callers pass null to opt OUT.
+  const emptyMessage = emptyMessageProp === undefined ? (t('ds.noMatches') || 'No matches') : emptyMessageProp;
   const fieldNamesIt = useFieldNamesControl();
   const fieldProps = useFieldControlProps();
   const geometry = CONTROL_SIZE[size];

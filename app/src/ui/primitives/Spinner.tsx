@@ -1,5 +1,6 @@
 import { Loader2 } from 'lucide-react';
 import { cn } from '../lib/cn';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface SpinnerProps {
   size?: 'sm' | 'md' | 'lg';
@@ -28,7 +29,12 @@ const SIZES = {
  * dropped into. Colour lives on the wrapper, which is what lets `Button` hand it
  * `text-current` and get a spinner in the button's own ink.
  */
-export function Spinner({ size = 'md', label = 'Loading', className }: SpinnerProps) {
+export function Spinner({ size = 'md', label: labelProp, className }: SpinnerProps) {
+  const { t } = useTranslation();
+  // Defaulted in the body: the signature runs before the hook.
+  // `??` would also swallow an explicit `null`; a default parameter
+  // only applies to `undefined`, and callers pass null to opt OUT.
+  const label = labelProp === undefined ? (t('ds.loading') || 'Loading') : labelProp;
   return (
     <span className={cn('inline-flex shrink-0 items-center text-text-tertiary', className)}>
       <Loader2 aria-hidden className={cn('shrink-0 animate-spin', SIZES[size])} />

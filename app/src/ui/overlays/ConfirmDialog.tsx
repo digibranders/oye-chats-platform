@@ -12,6 +12,7 @@ import {
   OVERLAY_SCRIM,
   OVERLAY_TITLE,
 } from './overlayParts';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface ConfirmDialogProps {
   open: boolean;
@@ -89,13 +90,17 @@ export function ConfirmDialog({
   title,
   description,
   confirmLabel,
-  cancelLabel = 'Cancel',
+  cancelLabel: cancelLabelProp,
   onConfirm,
   destructive = false,
   confirmPhrase,
   confirmPhraseLabel,
   children,
 }: ConfirmDialogProps) {
+  const { t } = useTranslation();
+  // `??` would also swallow an explicit `null`; a default parameter
+  // only applies to `undefined`, and callers pass null to opt OUT.
+  const cancelLabel = cancelLabelProp === undefined ? (t('ds.cancel') || 'Cancel') : cancelLabelProp;
   // Focus lands on Cancel, not on the destructive button and not on the popup
   // itself. When the next keypress can delete something, the default answer has
   // to be the safe one.
@@ -117,7 +122,7 @@ export function ConfirmDialog({
       // failure it handles inline can keep the dialog open with the typed
       // phrase intact.
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Something went wrong. Please try again.');
+      setError(cause instanceof Error ? cause.message : t('ds.somethingWentWrongPleaseTry') || 'Something went wrong. Please try again.');
     } finally {
       setBusy(false);
     }
@@ -184,7 +189,7 @@ export function ConfirmDialog({
           <div className={OVERLAY_FOOTER}>
             {!phraseSatisfied && confirmPhrase ? (
               <span id={reasonId} className="mr-auto text-xs text-text-secondary">
-                Type the name exactly to continue.
+                {t('ds.typeTheNameExactlyTo') || 'Type the name exactly to continue.'}
               </span>
             ) : null}
             <AlertDialog.Close

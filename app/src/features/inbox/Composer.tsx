@@ -65,8 +65,7 @@ export function Composer({
   const { t } = useTranslation();
   // Defaulted in the body, not the signature: a default parameter is evaluated
   // before the hook runs, so `t` does not exist yet there.
-  const placeholderText =
-    placeholder ?? (t('inbox.writeAReplyForA') || 'Write a reply…   /  for a saved reply');
+  const placeholderText = placeholder === undefined ? (t('inbox.writeAReplyForA') || 'Write a reply…   /  for a saved reply') : placeholder;
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);

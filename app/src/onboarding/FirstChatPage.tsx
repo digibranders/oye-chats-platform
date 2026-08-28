@@ -143,7 +143,7 @@ export function FirstChatPage() {
         setSending(false);
       }
     },
-    [botId, sending],
+    [botId, sending, t],
   );
 
   const site = bot?.website ? domainOf(bot.website) : '';

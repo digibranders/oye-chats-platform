@@ -35,7 +35,7 @@ export const OtpField = forwardRef<HTMLInputElement, OtpFieldProps>(function Otp
 ) {
   const { t } = useTranslation();
   // Defaulted here for the same reason: the signature runs before the hook.
-  const fieldLabel = label ?? (t('auth.sixDigitCode') || 'Six-digit code');
+  const fieldLabel = label === undefined ? (t('auth.sixDigitCode') || 'Six-digit code') : label;
   return (
     <Field label={fieldLabel} hint={hint} error={error} required>
       <Input

@@ -15,6 +15,7 @@ import { Checkbox } from '../primitives/Toggle';
 import { Skeleton } from '../primitives/Skeleton';
 import { Tooltip } from '../overlays/Tooltip';
 import { EmptyState, ErrorState, LockedState } from './States';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export type SortDirection = 'asc' | 'desc';
 export interface SortState {
@@ -449,6 +450,7 @@ export function DataTable<T>({
   stickyOffset: _stickyOffset,
   className,
 }: DataTableProps<T>) {
+  const { t } = useTranslation();
   const [uncontrolledPage, setUncontrolledPage] = useState(0);
   const [uncontrolledSort, setUncontrolledSort] = useState<SortState | null>(defaultSort);
 
@@ -655,8 +657,8 @@ export function DataTable<T>({
                     onCheckedChange={toggleAllOnPage}
                     aria-label={
                       allOnPageSelected
-                        ? 'Clear selection on this page'
-                        : 'Select all rows on this page'
+                        ? t('ds.clearSelectionOnThisPage') || 'Clear selection on this page'
+                        : t('ds.selectAllRowsOnThis') || 'Select all rows on this page'
                     }
                   />
                 </th>
@@ -760,8 +762,8 @@ export function DataTable<T>({
                       <EmptyState
                         flush
                         size="inline"
-                        title="Nothing to show"
-                        description="No rows matched."
+                        title={t('ds.nothingToShow') || 'Nothing to show'}
+                        description={t('ds.noRowsMatched') || 'No rows matched.'}
                       />
                     )
                   )}
@@ -887,7 +889,7 @@ export function DataTable<T>({
             className="ml-auto shrink-0"
             onClick={() => onSelectionChange?.(new Set())}
           >
-            Clear
+            {t('ds.clear') || 'Clear'}
           </Button>
         </div>
       ) : null}
@@ -923,7 +925,7 @@ export function DataTable<T>({
               <Button
                 size="icon-sm"
                 variant="ghost"
-                aria-label="Previous page"
+                aria-label={t('ds.previousPage') || 'Previous page'}
                 disabled={safePage === 0}
                 onClick={() => goToPage(safePage - 1)}
               >
@@ -942,7 +944,7 @@ export function DataTable<T>({
               <Button
                 size="icon-sm"
                 variant="ghost"
-                aria-label="Next page"
+                aria-label={t('ds.nextPage') || 'Next page'}
                 disabled={safePage >= pageCount - 1}
                 onClick={() => goToPage(safePage + 1)}
               >

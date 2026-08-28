@@ -12,6 +12,7 @@ import {
   OVERLAY_TITLE,
   OverlayHeader,
 } from './overlayParts';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export type DialogSize = 'sm' | 'md' | 'lg' | 'xl' | 'full';
 
@@ -94,6 +95,7 @@ export function Dialog({
   dismissible = true,
   className,
 }: DialogProps) {
+  const { t } = useTranslation();
   return (
     <BaseDialog.Root
       open={open}
@@ -119,7 +121,7 @@ export function Dialog({
               dismissible ? (
                 <BaseDialog.Close
                   render={
-                    <Button variant="ghost" size="icon-sm" aria-label="Close">
+                    <Button variant="ghost" size="icon-sm" aria-label={t('ds.close') || 'Close'}>
                       <X aria-hidden />
                     </Button>
                   }

@@ -3,6 +3,7 @@ import { Combobox, Skeleton } from '../ui';
 import { useBotContext } from '../context/BotContext';
 import { agentPath } from './nav';
 import type { Bot } from '../types/domain';
+import { useTranslation } from '../i18n/useTranslation';
 
 /**
  * Which chatbot the agent scope is showing.
@@ -34,6 +35,7 @@ export function AgentSwitcher({
   agent: Bot | null;
   onNavigate?: () => void;
 }) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { bots } = useBotContext();
 
@@ -48,9 +50,9 @@ export function AgentSwitcher({
   return (
     <Combobox
       size="sm"
-      label="Chatbot"
+      label={t('shell.chatbot') || 'Chatbot'}
       value={agentId}
-      placeholder="Select a chatbot"
+      placeholder={t('shell.selectAChatbot') || 'Select a chatbot'}
       searchPlaceholder="Find a chatbot…"
       emptyMessage="No chatbots match"
       options={bots.map((bot) => ({

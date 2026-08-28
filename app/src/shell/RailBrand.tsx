@@ -1,4 +1,5 @@
-/**
+
+import { useTranslation } from '../i18n/useTranslation';/**
  * The brand mark at the top of the expanded rail.
  *
  * Static, deliberately. This used to be a menu — `WorkspaceSwitcher` — showing
@@ -23,9 +24,10 @@
  * mark, one size, wherever it appears.
  */
 export function RailBrand() {
+  const { t } = useTranslation();
   return (
     <div className="flex h-9 min-w-0 flex-1 items-center px-2.5">
-      <img src="/new_white.png" alt="OyeChats" className="h-7 w-auto object-contain" draggable={false} />
+      <img src="/new_white.png" alt={t('shell.oyechats') || 'OyeChats'} className="h-7 w-auto object-contain" draggable={false} />
     </div>
   );
 }

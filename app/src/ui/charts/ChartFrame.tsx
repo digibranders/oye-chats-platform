@@ -4,6 +4,7 @@ import { EmptyState, ErrorState } from '../data/States';
 import { Disclosure } from '../layout/Disclosure';
 import { Skeleton } from '../primitives/Skeleton';
 import { seriesColor } from './theme';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /** Uneven on purpose: a row of equal bars reads as a rendering fault. */
 const CHART_SKELETON_HEIGHTS = ['h-[45%]', 'h-[70%]', 'h-[35%]', 'h-[85%]', 'h-[55%]', 'h-[65%]'] as const;
@@ -63,7 +64,7 @@ export function ChartFrame({
   error = null,
   onRetry,
   empty = false,
-  emptyTitle = 'Nothing to plot yet',
+  emptyTitle: emptyTitleProp,
   emptyDescription,
   height = 240,
   summary,
@@ -71,6 +72,10 @@ export function ChartFrame({
   dataTable,
   className,
 }: ChartFrameProps) {
+  const { t } = useTranslation();
+  // `??` would also swallow an explicit `null`; a default parameter
+  // only applies to `undefined`, and callers pass null to opt OUT.
+  const emptyTitle = emptyTitleProp === undefined ? (t('ds.nothingToPlotYet') || 'Nothing to plot yet') : emptyTitleProp;
   const plotted = !loading && !error && !empty;
 
   return (

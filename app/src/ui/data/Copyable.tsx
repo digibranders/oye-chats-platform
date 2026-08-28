@@ -3,6 +3,7 @@ import { Check, Copy, Eye, EyeOff } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { Button } from '../primitives/Button';
 import { useClipboard } from '../hooks/useClipboard';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface CopyFieldProps {
   value: string;
@@ -140,6 +141,7 @@ export interface CodeBlockProps {
  * caption and rendered a `justify-between` flex with one child in it.
  */
 export function CodeBlock({ code, caption, label = 'code', onCopy, className }: CodeBlockProps) {
+  const { t } = useTranslation();
   const { state, copy } = useClipboard();
 
   return (
@@ -169,7 +171,7 @@ export function CodeBlock({ code, caption, label = 'code', onCopy, className }: 
             )
           }
         >
-          {state === 'copied' ? 'Copied' : 'Copy'}
+          {state === 'copied' ? t('ds.copied') || 'Copied' : t('ds.copy') || 'Copy'}
         </Button>
       </div>
       {/* `tabIndex={0}` because a scrollable region must be reachable by

@@ -209,7 +209,7 @@ export function JourneyDiagram({
   const { t } = useTranslation();
   // Defaulted in the body: a default parameter is evaluated before the hook
   // runs, so `t` does not exist in the signature yet.
-  const center = centerLabel ?? (t('analytics.openedChatbot') || 'Opened Chatbot');
+  const center = centerLabel === undefined ? (t('analytics.openedChatbot') || 'Opened Chatbot') : centerLabel;
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   // How many page flows to render. Defaults to the top few so the pre-chat

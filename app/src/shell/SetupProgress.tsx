@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { CheckCircle2 } from 'lucide-react';
 import { RailItem } from '../ui';
 import { useSetupChecklist } from '../onboarding/useSetupChecklist';
+import { useTranslation } from '../i18n/useTranslation';
 
 const DONE_KEY = 'oc_setup_done';
 
@@ -32,6 +33,7 @@ export function SetupProgress({
   collapsed: boolean;
   onNavigate?: () => void;
 }) {
+  const { t } = useTranslation();
   const { done, total, complete, loading } = useSetupChecklist();
   // Read once, at mount: the effect below writes the flag as soon as the
   // checklist completes, and reading it live would hide the confirmation in the
@@ -87,7 +89,7 @@ export function SetupProgress({
   return (
     <RailItem
       to="/setup"
-      label={complete ? 'Setup complete' : 'Finish setup'}
+      label={complete ? t('shell.setupComplete') || 'Setup complete' : t('shell.finishSetup') || 'Finish setup'}
       collapsed={collapsed}
       onNavigate={onNavigate}
       glyph={

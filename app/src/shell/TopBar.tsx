@@ -65,7 +65,7 @@ export function TopBar({ isMobile, onToggleRail, onOpenSearch, searchable = true
       {isMobile ? (
         <div className="flex-1" />
       ) : (
-        <nav aria-label="Breadcrumb" className="min-w-0 flex-1">
+        <nav aria-label={t('shell.breadcrumbLabel') || 'Breadcrumb'} className="min-w-0 flex-1">
           <ol className="flex min-w-0 items-center gap-1.5 text-sm">
             {crumbs.map((crumb, index) => (
               <Fragment key={`${crumb.label}-${index}`}>

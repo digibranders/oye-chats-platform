@@ -1,6 +1,7 @@
 import { type ReactNode } from 'react';
 import { cn } from '../lib/cn';
 import { EmptyState, LoadingBars } from '../data/States';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface RankedBar {
   /** Stable identity, so a re-sort does not re-key every row. */
@@ -101,10 +102,14 @@ export function RankedBars({
   tone = 'data',
   loading = false,
   loadingRows = 5,
-  emptyTitle = 'Nothing to rank yet',
+  emptyTitle: emptyTitleProp,
   emptyDescription,
   className,
 }: RankedBarsProps) {
+  const { t } = useTranslation();
+  // `??` would also swallow an explicit `null`; a default parameter
+  // only applies to `undefined`, and callers pass null to opt OUT.
+  const emptyTitle = emptyTitleProp === undefined ? (t('ds.nothingToRankYet') || 'Nothing to rank yet') : emptyTitleProp;
   if (loading) return <LoadingBars rows={loadingRows} className={className} />;
 
   // An empty `<ol>` is a blank area with no message, on a surface whose system

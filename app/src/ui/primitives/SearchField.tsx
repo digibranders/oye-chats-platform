@@ -4,6 +4,7 @@ import { cn } from '../lib/cn';
 import { Input, type InputProps } from './Input';
 import { CONTROL_SIZE } from './controlStyles';
 import { useFieldNamesControl } from './fieldContext';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface SearchFieldProps extends Omit<InputProps, 'value' | 'onChange' | 'type'> {
   value: string;
@@ -36,6 +37,7 @@ export const SearchField = forwardRef<HTMLInputElement, SearchFieldProps>(functi
   { value, onValueChange, debounceMs = 200, label, size = 'md', className, ...props },
   ref,
 ) {
+  const { t } = useTranslation();
   const [draft, setDraft] = useState(value);
   const fieldNamesIt = useFieldNamesControl();
 
@@ -66,7 +68,7 @@ export const SearchField = forwardRef<HTMLInputElement, SearchFieldProps>(functi
       trailing={
         <button
           type="button"
-          aria-label="Clear search"
+          aria-label={t('ds.clearSearch') || 'Clear search'}
           // Out of the tab order while there is nothing to clear, so a keyboard
           // user does not tab onto an invisible control.
           tabIndex={draft ? 0 : -1}

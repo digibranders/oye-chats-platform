@@ -4,6 +4,7 @@ import { Dialog } from './Dialog';
 import { Button } from '../primitives/Button';
 import { Spinner } from '../primitives/Spinner';
 import { Alert } from '../feedback/Alert';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * The phases a purchase moves through, in order. The consumer owns the
@@ -136,17 +137,30 @@ export function PurchaseDialog({
   summary,
   confirmLabel,
   onConfirm,
-  cancelLabel = 'Cancel',
+  cancelLabel: cancelLabelProp,
   notice,
-  processingMessage = 'Opening secure checkout…',
-  activatingMessage = 'Payment received. Finishing up…',
+  processingMessage: processingMessageProp,
+  activatingMessage: activatingMessageProp,
   doneTitle,
   doneMessage,
   greetingName,
-  doneLabel = 'Done',
+  doneLabel: doneLabelProp,
   error,
   onRetry,
 }: PurchaseDialogProps) {
+  const { t } = useTranslation();
+  // `??` would also swallow an explicit `null`; a default parameter
+  // only applies to `undefined`, and callers pass null to opt OUT.
+  const cancelLabel = cancelLabelProp === undefined ? (t('ds.cancel') || 'Cancel') : cancelLabelProp;
+  // `??` would also swallow an explicit `null`; a default parameter
+  // only applies to `undefined`, and callers pass null to opt OUT.
+  const processingMessage = processingMessageProp === undefined ? (t('ds.openingSecureCheckout') || 'Opening secure checkout…') : processingMessageProp;
+  // `??` would also swallow an explicit `null`; a default parameter
+  // only applies to `undefined`, and callers pass null to opt OUT.
+  const activatingMessage = activatingMessageProp === undefined ? (t('ds.paymentReceivedFinishingUp') || 'Payment received. Finishing up…') : activatingMessageProp;
+  // `??` would also swallow an explicit `null`; a default parameter
+  // only applies to `undefined`, and callers pass null to opt OUT.
+  const doneLabel = doneLabelProp === undefined ? (t('ds.done') || 'Done') : doneLabelProp;
   const waiting = phase === 'processing' || phase === 'activating';
   const close = () => onOpenChange(false);
 
@@ -167,11 +181,11 @@ export function PurchaseDialog({
     ) : phase === 'error' ? (
       <>
         <Button variant="secondary" onClick={close}>
-          Close
+          {t('ds.close') || 'Close'}
         </Button>
         {onRetry ? (
           <Button variant="primary" onClick={onRetry}>
-            Try again
+            {t('ds.tryAgain') || 'Try again'}
           </Button>
         ) : null}
       </>
@@ -211,7 +225,7 @@ export function PurchaseDialog({
           <PurchaseSuccess message={doneMessage} greetingName={greetingName} />
         ) : (
           <Alert tone="danger" live>
-            {error ?? 'Something went wrong. Please try again.'}
+            {error ?? (t('ds.somethingWentWrongPleaseTry') || 'Something went wrong. Please try again.')}
           </Alert>
         )}
       </div>

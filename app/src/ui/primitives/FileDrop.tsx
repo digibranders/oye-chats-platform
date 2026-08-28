@@ -6,6 +6,7 @@ import { Eyebrow } from './Misc';
 import { Progress } from './Progress';
 import { formatBytes } from '../lib/formatters';
 import { Alert } from '../feedback/Alert';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface FileDropProps {
   onFiles: (files: File[]) => void;
@@ -74,6 +75,7 @@ export function FileDrop({
   disabled = false,
   className,
 }: FileDropProps) {
+  const { t } = useTranslation();
   const inputId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -231,7 +233,7 @@ export function FileDrop({
           tone="warning"
           className="mt-1.5"
           action={
-            <Button size="icon-sm" variant="ghost" aria-label="Dismiss" onClick={() => setRejected([])}>
+            <Button size="icon-sm" variant="ghost" aria-label={t('ds.dismiss') || 'Dismiss'} onClick={() => setRejected([])}>
               <X aria-hidden />
             </Button>
           }

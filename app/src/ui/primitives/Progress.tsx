@@ -3,6 +3,7 @@ import { Meter as BaseMeter } from '@base-ui/react/meter';
 import { Progress as BaseProgress } from '@base-ui/react/progress';
 import { cn } from '../lib/cn';
 import { formatNumber, formatPercent } from '../lib/formatters';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface ProgressProps {
   /** 0–100. Pass `null` for an indeterminate bar. */
@@ -163,13 +164,17 @@ export function Meter({
   used,
   limit,
   unit,
-  unlimitedNote = 'No limit',
+  unlimitedNote: unlimitedNoteProp,
   tone: forcedTone,
   hideLabel = false,
   hint,
   size = 'md',
   className,
 }: MeterProps) {
+  const { t } = useTranslation();
+  // `??` would also swallow an explicit `null`; a default parameter
+  // only applies to `undefined`, and callers pass null to opt OUT.
+  const unlimitedNote = unlimitedNoteProp === undefined ? (t('ds.noLimit') || 'No limit') : unlimitedNoteProp;
   const unlimited = limit < 0;
   const fraction = unlimited || limit === 0 ? 0 : used / limit;
   const tone =
@@ -204,7 +209,7 @@ export function Meter({
             <span className="figure text-xs font-medium text-text-primary">
               {formatNumber(used)}
             </span>
-            <span className="text-xs text-text-tertiary">used ·</span>
+            <span className="text-xs text-text-tertiary">{t('ds.used') || 'used ·'}</span>
             <span className="text-xs text-text-tertiary">{unlimitedNote}</span>
           </span>
         </div>

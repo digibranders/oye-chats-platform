@@ -5,6 +5,7 @@ import { cn } from '../lib/cn';
 import { Button } from '../primitives/Button';
 import { CardFooter } from './Card';
 import { ConfirmDialog } from '../overlays/ConfirmDialog';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * The half of the contract that needs a data router.
@@ -15,6 +16,7 @@ import { ConfirmDialog } from '../overlays/ConfirmDialog';
  * imposed on the surfaces that opted out.
  */
 function NavigationGuard({ dirty, surface }: { dirty: boolean; surface: string }) {
+  const { t } = useTranslation();
   useEffect(() => {
     if (!dirty) return undefined;
     const warn = (event: BeforeUnloadEvent): void => {
@@ -39,7 +41,7 @@ function NavigationGuard({ dirty, surface }: { dirty: boolean; surface: string }
       onOpenChange={(next) => {
         if (!next) blocker.reset?.();
       }}
-      title="Leave without saving?"
+      title={t('ds.leaveWithoutSaving') || 'Leave without saving?'}
       description={`Your changes to ${surface} have not been saved. Leaving now discards them.`}
       confirmLabel="Discard and leave"
       cancelLabel="Keep editing"
@@ -131,12 +133,19 @@ export function SaveBar({
   summary,
   onSave,
   onDiscard,
-  saveLabel = 'Save changes',
-  discardLabel = 'Discard',
+  saveLabel: saveLabelProp,
+  discardLabel: discardLabelProp,
   variant = 'sticky',
   guard = null,
   className,
 }: SaveBarProps) {
+  const { t } = useTranslation();
+  // `??` would also swallow an explicit `null`; a default parameter
+  // only applies to `undefined`, and callers pass null to opt OUT.
+  const saveLabel = saveLabelProp === undefined ? (t('ds.saveChanges') || 'Save changes') : saveLabelProp;
+  // `??` would also swallow an explicit `null`; a default parameter
+  // only applies to `undefined`, and callers pass null to opt OUT.
+  const discardLabel = discardLabelProp === undefined ? (t('ds.discard') || 'Discard') : discardLabelProp;
   // A failed save leaves the draft dirty, so this is where the reason belongs —
   // beside the button that produced it, not in a toast that has already gone.
   const message = saveError
@@ -144,14 +153,14 @@ export function SaveBar({
     : blockedReason
       ? blockedReason
       : !dirty
-        ? 'Everything here is saved.'
+        ? t('ds.everythingHereIsSaved') || 'Everything here is saved.'
         : summary
           ? // Deliberately just the fact. An earlier draft appended "nothing is
             // live until you save", which is true of a chatbot's greeting and
             // false of a personal notification preference — a shared primitive
             // cannot make that claim on every caller's behalf.
             <>Unsaved changes to {summary}.</>
-          : 'You have unsaved changes.';
+          : t('ds.youHaveUnsavedChanges') || 'You have unsaved changes.';
   const tone = saveError || blockedReason ? 'text-danger' : 'text-text-secondary';
 
   const controls = (
@@ -206,7 +215,7 @@ export function SaveBar({
           className={cn('flex items-center gap-2 text-prose font-medium text-success', className)}
         >
           <CheckCircle2 aria-hidden className="h-icon-md w-icon-md" />
-          All changes saved.
+          {t('ds.allChangesSaved') || 'All changes saved.'}
         </p>
       ) : null}
 

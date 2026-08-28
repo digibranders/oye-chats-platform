@@ -1,6 +1,7 @@
 import { DatePicker } from './DatePicker';
 import { Input } from './Input';
 import type { ControlSize } from './controlStyles';
+import { useTranslation } from '../../i18n/useTranslation';
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -48,6 +49,7 @@ export function DateTimePicker({
   size = 'md',
   className,
 }: DateTimePickerProps) {
+  const { t } = useTranslation();
   const { date, time } = splitLocal(value);
 
   return (
@@ -66,7 +68,7 @@ export function DateTimePicker({
           key={date ?? 'unset'}
           aria-label={`${label} time`}
           size={size}
-          placeholder="HH:MM"
+          placeholder={t('ds.hhMm') || 'HH:MM'}
           inputMode="numeric"
           // The date half is what turns "" into a real value — a time typed
           // with no date has nothing to attach to, so this waits for one
