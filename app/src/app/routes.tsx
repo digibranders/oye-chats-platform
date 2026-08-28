@@ -13,7 +13,6 @@ import { LEGACY_AGENT_SEGMENTS, LEGACY_PATHS } from './redirects';
 // password field is the one place a split chunk is a straight loss.
 import Login from '../pages/Login';
 
-import { platformRoutes } from '../superadmin/routes';
 import { RootErrorBoundary } from './errors/RootErrorBoundary';
 import { PageErrorBoundary } from './errors/PageErrorBoundary';
 import { NotFoundPage } from './errors/NotFoundPage';
@@ -127,11 +126,6 @@ export const router = createBrowserRouter([
           </Route>
         ),
       },
-
-      // The platform console. Its own shell and its own URL space, outside the
-      // customer providers: a super-admin has no workspace, no plan and no
-      // chatbots, and mounting them would fetch a workspace that does not exist.
-      platformRoutes,
 
       // ── Public ────────────────────────────────────────────────────────────
       { path: '/login', element: <Login /> },

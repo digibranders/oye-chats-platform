@@ -1,6 +1,6 @@
 import { useMemo, type ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Bot, PanelLeft, Plus, ShieldAlert, X } from 'lucide-react';
+import { Bot, PanelLeft, Plus, X } from 'lucide-react';
 import {
   RailBackLink,
   RailFrame,
@@ -10,8 +10,6 @@ import {
   cn,
   formatBadgeCount,
 } from '../ui';
-import { getAuthItem } from '../utils/authStorage';
-import { isImpersonating } from '../utils/impersonation';
 import { agentHealth } from '../features/home/agentHealth';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBotContext } from '../context/BotContext';
@@ -137,10 +135,6 @@ export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 
     [bots, scopedAgentId],
   );
 
-  const superAdminFlag = getAuthItem('is_superadmin');
-  const showsPlatformLink =
-    !isImpersonating() && (superAdminFlag === 'true' || superAdminFlag === '1');
-
   const primary = railPrimary(isOperator);
   // `/welcome` *is* Home for a workspace with no chatbot — `HomePage` redirects
   // there rather than rendering a page of zeros, and `/welcome/:agentId` is the
@@ -206,21 +200,6 @@ export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 
             glyph={<item.icon aria-hidden className="h-icon-md w-icon-md" />}
           />
         ))}
-        {/* The way into the platform console, for the handful of people who have
-            one. Not in the account menu: a super-admin switching personas is a
-            navigation act, and burying it under an avatar is how the console it
-            opens went unbuilt for so long. Hidden during a support session —
-            acting on the platform through somebody else's identity is exactly
-            what must not happen. */}
-        {showsPlatformLink ? (
-          <RailItem
-            to="/platform"
-            label="Platform"
-            collapsed={collapsed}
-            onNavigate={onNavigate}
-            glyph={<ShieldAlert aria-hidden className="h-icon-md w-icon-md" />}
-          />
-        ) : null}
       </ul>
       <div className={cn(collapsed && 'flex justify-center')}>
         <AccountMenu collapsed={collapsed} />
