@@ -4,7 +4,7 @@
 
 **Goal:** Convert the last 16 legacy `.js`/`.jsx` files in `app/src` to TypeScript and delete the 14 hand-written `.d.ts` shims, so every module in the admin dashboard has exactly one checked definition instead of two unchecked ones.
 
-**Architecture:** The `app/` codebase is already 95% TypeScript (645 TS files / 136k lines vs 16 JS files / 7.3k lines) under a `strict: true`, `allowJs: false` tsconfig that passes clean today. New TS code sees the remaining JS through hand-written `.d.ts` shims. Nothing binds a shim to its implementation, so the shims can lie, and `services/api.d.ts` has already drifted (28 of 212 runtime exports are undeclared). This plan works leaves-first: kill the drift that exists, convert dependency-free utilities, then React contexts, then the entry point, then the 3,817-line API client, then seal the door with a CI guard so `.js` cannot come back.
+**Architecture:** The `app/` codebase is already 95% TypeScript (646 TS files / 137k lines vs 16 JS files / 7,333 lines) under a `strict: true`, `allowJs: false` tsconfig that passes clean today. New TS code sees the remaining JS through hand-written `.d.ts` shims. Nothing binds a shim to its implementation, so the shims can lie, and `services/api.d.ts` has already drifted (28 of 214 runtime exports are undeclared). This plan works leaves-first: kill the drift that exists, convert dependency-free utilities, then React contexts, then the entry point, then the 3,817-line API client, then seal the door with a CI guard so `.js` cannot come back.
 
 **Tech Stack:** TypeScript 6, React 19, Vite 8 (rolldown), Vitest 4, ESLint 9 + typescript-eslint 8, React Router 7, axios 1.18.
 
@@ -83,7 +83,7 @@ Every file this plan touches, and what happens to it.
 | `src/services/orbRenderer.js` | `.ts` | 279 | 1 | 3 |
 | `src/features/agents/experience/PremiumOrb.jsx` | `.tsx` | 119 | 2 | 3 |
 | `src/main.jsx` | `.tsx` | 118 | 0 | 3 |
-| `src/services/api.js` | `.ts` | 3,817 | 119 | 4 |
+| `src/services/api.js` | `.ts` | 3,859 | 119 | 4 |
 
 ### Deleted
 
@@ -142,7 +142,7 @@ Expected exactly:
 ```
 jsx: 7 files
 js: 9 files
-tsx: 386 files
+tsx: 387 files
 ts: 259 files
 ```
 
@@ -219,7 +219,7 @@ Run:
 cd app && grep -cE "^export (const|async function|function) " src/services/api.js
 ```
 
-Expected: `192` (down from 212).
+Expected: `194` (down from 214).
 
 - [ ] **Step 4: Verify the module still evaluates**
 
@@ -367,7 +367,7 @@ git commit -m "types(api): declare the 8 remaining undeclared api.js exports
 
 The notification feed, impersonation redeem and workspace abort rotation were
 only ever called from .jsx, so the compiler never saw them. api.d.ts now
-covers all 192 runtime exports, which is what the drift guard needs."
+covers all 194 runtime exports, which is what the drift guard needs."
 ```
 
 ### Task 0.4: Add the shim-drift guard test
@@ -512,7 +512,7 @@ noticing. This compares declared value exports against real ones in both
 directions. It is scaffolding: delete it when the last shim goes."
 ```
 
-**Phase 0 exit criteria:** `api.js` down to 192 exports, `api.d.ts` complete, drift guard green and proven to fail on real drift. No file has been renamed yet.
+**Phase 0 exit criteria:** `api.js` down to 194 exports, `api.d.ts` complete, drift guard green and proven to fail on real drift. No file has been renamed yet.
 
 ---
 
@@ -2059,9 +2059,9 @@ Expected exactly: `src/services/api.js`.
 
 # Phase 4: The API Client
 
-One file, 3,817 lines before Task 0.2 and roughly 3,400 after, with fan-in 119 and 53 test files mocking it. This is the largest single risk in the plan and gets its own phase.
+One file, 3,859 lines before Task 0.2 and roughly 3,470 after, with fan-in 119 and 53 test files mocking it. This is the largest single risk in the plan and gets its own phase.
 
-**Why this is less work than the line count suggests.** `api.d.ts` is 1,092 lines and, after Phase 0, declares all 192 runtime exports with real parameter and return types referencing `src/types/domain.ts`. The types are already designed. Phase 4 is a merge, not a typing exercise.
+**Why this is less work than the line count suggests.** `api.d.ts` is 1,106 lines and, after Phase 0, declares all 194 runtime exports with real parameter and return types referencing `src/types/domain.ts`. The types are already designed. Phase 4 is a merge, not a typing exercise.
 
 **Why it still needs care.** The first ~300 lines are not endpoint functions. They are the axios instance, the error builder, the workspace abort controller, and three interceptors implementing impersonation header suppression and read-only write blocking. That is where all the actual type design lives.
 
@@ -2294,7 +2294,7 @@ Endpoint bodies are typed in the following commits; tsc is not yet clean."
 - Modify: `app/src/services/api.ts`
 - Modify: `app/src/services/api.d.ts` (progressively emptied)
 
-192 exported endpoint functions, all already declared in `api.d.ts`. Work in batches of roughly 40, moving each function's signature from the shim onto the implementation and deleting it from the shim as you go. The shim shrinks to nothing across five commits; the drift guard stays green throughout because it compares value exports and you are only relocating them.
+194 exported endpoint functions, all already declared in `api.d.ts`. Work in batches of roughly 40, moving each function's signature from the shim onto the implementation and deleting it from the shim as you go. The shim shrinks to nothing across five commits; the drift guard stays green throughout because it compares value exports and you are only relocating them.
 
 - [ ] **Step 1: Establish the batch loop**
 
@@ -2406,7 +2406,7 @@ Compare against the Task 0.1 baseline. The conversion erases types at build time
 git add -A app/src/services app/src/test/shimDrift.test.ts
 git commit -m "refactor(api): retire api.d.ts, the last shim
 
-All 192 endpoint signatures now live on their implementations. The shim
+All 194 endpoint signatures now live on their implementations. The shim
 layer that api.d.ts anchored is gone, so there is no longer any module in
 app/ whose types are asserted rather than checked."
 ```
@@ -2643,7 +2643,7 @@ cd app && for e in js jsx ts tsx; do printf "%s: %s\n" "$e" "$(find src -name "*
 find app/src -name "*.d.ts" | wc -l | tr -d ' '
 ```
 
-Expected: `js: 0`, `jsx: 0`, zero `.d.ts`, and a `ts` + `tsx` total of 661 or 662: the 645 that existed at baseline, plus the 16 converted files, plus `apiTypes.ts`, minus the deleted `shimDrift.test.ts`, plus `workspaceEvents.ts` only if Task 2.3 Step 4 was triggered.
+Expected: `js: 0`, `jsx: 0`, zero `.d.ts`, and a `ts` + `tsx` total of 662 or 663: the 646 that existed at baseline, plus the 16 converted files, plus `apiTypes.ts`, minus the deleted `shimDrift.test.ts`, plus `workspaceEvents.ts` only if Task 2.3 Step 4 was triggered.
 
 - [ ] **Step 2: Run everything**
 
@@ -2711,9 +2711,9 @@ Stated so nobody expands the plan mid-flight.
 | 1. Leaf utilities | 7 | 1,466 | 1 day |
 | 2. React contexts | 5 | 1,492 | 2 days |
 | 3. Rendering and entry | 3 | 516 | 0.5 day |
-| 4. API client | 1 | ~3,400 | 3 to 4 days |
+| 4. API client | 1 | ~3,470 | 3 to 4 days |
 | 5. Seal the door | 4 | ~100 new | 0.5 day |
-| **Total** | **23** | **~7,300** | **7.5 to 8.5 days** |
+| **Total** | **23** | **~7,350** | **7.5 to 8.5 days** |
 
 One engineer. Twenty-two commits across six phases, every one independently revertible. The estimate assumes each phase ships as its own PR rather than one migration branch: a 7,000-line review is not a review.
 
