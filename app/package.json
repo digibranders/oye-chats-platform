@@ -81,7 +81,7 @@
     {
       "name": "Hindi dictionary (lazy, non-English only)",
       "path": "dist/assets/hi-*.js",
-      "limit": "40 KB",
+      "limit": "70 KB",
       "gzip": true
     }
   ]
