@@ -28,7 +28,7 @@ const SESSION_TTL_MS = 24 * 60 * 60 * 1000; //  1 day
  * on logout and by the API auto-logout interceptor. Adding a new auth-related
  * key? Add it here so logout fully clears it from both stores.
  */
-export const AUTH_STORAGE_KEYS = [
+export const AUTH_STORAGE_KEYS: readonly string[] = [
     'admin_token',
     'admin_name',
     'admin_client_id',
@@ -64,7 +64,10 @@ export const AUTH_STORAGE_KEYS = [
  * positional args from legacy callers (the old ``persistent`` flag) are
  * harmlessly ignored.
  */
-export function setAuthItem(key, value) {
+export function setAuthItem(
+    key: string,
+    value: string | number | boolean | null | undefined,
+): void {
     if (value === null || value === undefined) {
         removeAuthItem(key);
         return;
@@ -78,7 +81,10 @@ export function setAuthItem(key, value) {
  * values are skipped (NOT cleared) so callers can pass partial payloads
  * without accidentally nuking unrelated keys.
  */
-export function setAuthBundle(items, persistent = true) {
+export function setAuthBundle(
+    items: Record<string, string | number | boolean | null | undefined>,
+    persistent = true,
+): void {
     Object.entries(items).forEach(([k, v]) => {
         if (v === undefined || v === null) return;
         setAuthItem(k, v);
@@ -97,7 +103,7 @@ export function setAuthBundle(items, persistent = true) {
  * created before this mechanism existed) is treated as NOT expired so the
  * migration never force-logs-out a currently-valid user.
  */
-export function isSessionExpired() {
+export function isSessionExpired(): boolean {
     const raw = window.localStorage.getItem(SESSION_EXPIRY_KEY);
     if (!raw) return false;
     const ts = Number(raw);
@@ -109,14 +115,14 @@ export function isSessionExpired() {
  * happen because writes clear the other side, but defensive against legacy
  * data from before this module existed).
  */
-export function getAuthItem(key) {
+export function getAuthItem(key: string): string | null {
     const fromLocal = window.localStorage.getItem(key);
     if (fromLocal !== null) return fromLocal;
     return window.sessionStorage.getItem(key);
 }
 
 /** Delete a key from both stores. */
-export function removeAuthItem(key) {
+export function removeAuthItem(key: string): void {
     window.localStorage.removeItem(key);
     window.sessionStorage.removeItem(key);
 }
@@ -126,6 +132,6 @@ export function removeAuthItem(key) {
  * session-only login is fully cleared without leaving stale localStorage
  * shadows (and vice versa).
  */
-export function clearAuthStorage() {
+export function clearAuthStorage(): void {
     AUTH_STORAGE_KEYS.forEach(removeAuthItem);
 }

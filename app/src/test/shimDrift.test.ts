@@ -32,7 +32,6 @@ const SHIMMED_MODULES: ReadonlyArray<{
   readonly dts: string;
   readonly load: () => Promise<Record<string, unknown>>;
 }> = [
-  { label: 'utils/authStorage', dts: 'src/utils/authStorage.d.ts', load: () => import('../utils/authStorage') },
   { label: 'lib/razorpay', dts: 'src/lib/razorpay.d.ts', load: () => import('../lib/razorpay') },
   { label: 'utils/impersonation', dts: 'src/utils/impersonation.d.ts', load: () => import('../utils/impersonation') },
   { label: 'data/platformIntegrations', dts: 'src/data/platformIntegrations.d.ts', load: () => import('../data/platformIntegrations') },
