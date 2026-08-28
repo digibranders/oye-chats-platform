@@ -106,7 +106,12 @@ export interface CrawlProgress {
   pages_crawled?: number;
   max_pages?: number;
   current_url?: string | null;
-  started_at?: string | null;
+  /** Epoch SECONDS as a float. The worker stamps `time.time()`
+   *  (crawl_orchestrator.py), so this is a number, not an ISO string. */
+  started_at?: number | null;
+  /** Server-side phase label, e.g. "Scanning pages" /
+   *  "Embedding 3,400/9,795 chunks". Written by `set_crawl_progress`. */
+  phase?: string | null;
   cancellable?: boolean;
   result?: Record<string, unknown> | null;
   error?: string | null;
@@ -1042,7 +1047,9 @@ export function cancelConnectRequest(sessionId: string): Promise<Record<string, 
 
 // ── Knowledge: recrawl lifecycle ─────────────────────────────────────────────
 /** POST /bots/{id}/crawl/cancel - stop an in-progress crawl. */
-export function cancelCrawl(botId: number): Promise<Record<string, unknown>>;
+/** Omit `botId` to cancel the caller's crawl without scoping to a bot -
+ *  the runtime branches on it (`botId ? '?bot_id=' : ''`). */
+export function cancelCrawl(botId?: number): Promise<Record<string, unknown>>;
 /** Preview a recrawl diff (unchanged/new/removed) before spending credits; mode 'full' | 'delta'. */
 export function diffRecrawl(
   url: string,

@@ -7,6 +7,7 @@ import {
     useMemo,
     useRef,
     useState,
+    type ReactNode,
 } from 'react';
 
 import {
@@ -15,6 +16,8 @@ import {
     getCrawlProgress,
 } from '../services/api';
 import { useBotContext } from './BotContext';
+import type { CrawlProgress } from '../services/api';
+import type { CrawlState, CrawlStatus } from '../types/domain';
 import { t as translateNow } from '../i18n/i18n';
 
 /**
@@ -59,12 +62,52 @@ const TERMINAL_HOLD_MS = 4000;
 // - otherwise nothing ever calls resetToIdle for it and CrawlContext stays
 // pinned on 'no_content' forever while the server's 1h progress key keeps
 // echoing it back on every poll.
-const TERMINAL_STATUSES = new Set(['done', 'cancelled', 'failed', 'no_content']);
-const ACTIVE_STATUSES = new Set(['running', 'cancelling']);
+const TERMINAL_STATUSES = new Set<string>(['done', 'cancelled', 'failed', 'no_content']);
+const ACTIVE_STATUSES = new Set<string>(['running', 'cancelling']);
 
-const CrawlContext = createContext(null);
+/** Every value `CrawlStatus` admits, for validating the server's string. */
+const KNOWN_STATUSES = new Set<string>([
+    'idle', 'running', 'cancelling', 'cancelled', 'done', 'failed', 'no_content',
+]);
 
-const initialState = {
+/**
+ * The server's status string, constrained to `CrawlStatus`.
+ *
+ * The worker only ever writes values inside the union (see
+ * `set_crawl_progress` callers and `_terminal_status`), so in practice this is
+ * a pass-through. It exists so an unrecognised status degrades to 'idle' - a
+ * state every consumer already handles - rather than being asserted into the
+ * union and flowing on as a status nothing branches for.
+ */
+function toCrawlStatus(raw: string | undefined): CrawlStatus {
+    return raw && KNOWN_STATUSES.has(raw) ? (raw as CrawlStatus) : 'idle';
+}
+
+export interface StartCrawlOptions {
+  url: string;
+  botId: number;
+  botName?: string | null;
+  useJs?: boolean;
+  replaceSource?: string | null;
+  discoveredTotal?: number | null;
+  expectedNewPages?: number | null;
+  orderedUrls?: string[] | null;
+  maxPages?: number | null;
+  mode?: 'delta' | 'full';
+}
+
+export interface CrawlContextValue {
+  crawl: CrawlState;
+  startCrawl: (opts: StartCrawlOptions) => Promise<Record<string, unknown>>;
+  cancelCrawl: () => Promise<Record<string, unknown>>;
+  dismissCrawl: () => void;
+  isActive: boolean;
+  isTerminal: boolean;
+}
+
+const CrawlContext = createContext<CrawlContextValue | null>(null);
+
+const initialState: CrawlState = {
     status: 'idle', // 'idle' | 'running' | 'cancelling' | 'cancelled' | 'done' | 'failed' | 'no_content'
     urls: [],
     pagesCrawled: 0,
@@ -86,8 +129,8 @@ const initialState = {
     cancelInFlight: false, // local state - true between cancelCrawl() and the server flip
 };
 
-function normalizeProgress(raw, prev) {
-    const status = raw?.status ?? 'idle';
+function normalizeProgress(raw: CrawlProgress | null | undefined, prev: CrawlState): CrawlState {
+    const status = toCrawlStatus(raw?.status);
     const urls = Array.isArray(raw?.urls) ? raw.urls : [];
     return {
         status,
@@ -110,8 +153,8 @@ function normalizeProgress(raw, prev) {
     };
 }
 
-export const CrawlProvider = ({ children }) => {
-    const [crawl, setCrawl] = useState(initialState);
+export const CrawlProvider = ({ children }: { children: ReactNode }) => {
+    const [crawl, setCrawl] = useState<CrawlState>(initialState);
     // CrawlProvider is mounted inside BotProvider (see ProtectedLayout), so the
     // bot list is available here. Used to re-read the durable "trained" fields
     // once a crawl reaches a terminal state.
@@ -121,15 +164,17 @@ export const CrawlProvider = ({ children }) => {
     const crawlRef = useRef(crawl);
     crawlRef.current = crawl;
 
-    const pollTimerRef = useRef(null);
+    // `setTimeout` returns `number` in the DOM and a Timeout under Node; the
+    // suite runs jsdom, so derive the handle type instead of pinning either.
+    const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const cancelledByUserRef = useRef(false); // suppresses the failure toast when *we* triggered the cancel
     // The status string of the most-recent transition we've already "handled"
     // (i.e. consumers fired their one-shot toast for it). Used to suppress the
     // "Crawl complete" toast looping every poll tick - without this guard,
     // any component that re-mounts or any spurious re-render with the same
     // terminal status would re-fire its useEffect. See TERMINAL_HOLD_MS.
-    const handledTerminalRef = useRef(null);
-    const terminalResetTimerRef = useRef(null);
+    const handledTerminalRef = useRef<string | null>(null);
+    const terminalResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     // True once we've observed a running/cancelling poll in this browser
     // session. Used to suppress the "Crawl complete" toast on page reload -
     // the server's progress key has a 1h TTL, so a reload right after a
@@ -262,7 +307,7 @@ export const CrawlProvider = ({ children }) => {
             // never the bot).
             void refreshBots();
         }
-        const timers = [];
+        const timers: ReturnType<typeof setTimeout>[] = [];
         if (firstTimeHere && !crawl.result && !crawl.error) {
             timers.push(setTimeout(poll, 500));
         }
@@ -287,7 +332,7 @@ export const CrawlProvider = ({ children }) => {
             orderedUrls = null,
             maxPages = null,
             mode = 'delta',
-        } = {}) => {
+        }: StartCrawlOptions): Promise<Record<string, unknown>> => {
             cancelledByUserRef.current = false;
             // Brand-new crawl → forget which terminal we already handled so
             // the next "Crawl complete" toast fires once for THIS run. Also
@@ -346,7 +391,9 @@ export const CrawlProvider = ({ children }) => {
                     ...prev,
                     status: 'failed',
                     isStarting: false,
-                    error: error?.message || translateNow('app.failedToStartCrawl') || 'Failed to start crawl.',
+                    error: (error as { message?: string } | null)?.message
+                        || translateNow('app.failedToStartCrawl')
+                        || 'Failed to start crawl.',
                 }));
                 throw error;
             }
@@ -354,7 +401,7 @@ export const CrawlProvider = ({ children }) => {
         [poll],
     );
 
-    const cancelCrawl = useCallback(async () => {
+    const cancelCrawl = useCallback(async (): Promise<Record<string, unknown>> => {
         const current = crawlRef.current;
         if (!ACTIVE_STATUSES.has(current.status)) {
             return { status: current.status, message: translateNow('app.noCrawlInProgress') || 'No crawl in progress.' };
@@ -379,14 +426,14 @@ export const CrawlProvider = ({ children }) => {
     }, [poll]);
 
     /** Dismiss a terminal-state crawl so the toast hides. */
-    const dismissCrawl = useCallback(() => {
+    const dismissCrawl = useCallback((): void => {
         setCrawl((prev) => {
             if (!TERMINAL_STATUSES.has(prev.status)) return prev;
             return { ...initialState };
         });
     }, []);
 
-    const value = useMemo(
+    const value = useMemo<CrawlContextValue>(
         () => ({
             crawl,
             startCrawl,
@@ -402,7 +449,7 @@ export const CrawlProvider = ({ children }) => {
 };
 
 /** Subscribe to global crawl state from any component. */
-export const useCrawl = () => {
+export const useCrawl = (): CrawlContextValue => {
     const ctx = useContext(CrawlContext);
     if (!ctx) {
         throw new Error('useCrawl must be used inside <CrawlProvider>');

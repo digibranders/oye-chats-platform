@@ -32,7 +32,6 @@ const SHIMMED_MODULES: ReadonlyArray<{
   readonly dts: string;
   readonly load: () => Promise<Record<string, unknown>>;
 }> = [
-  { label: 'context/CrawlContext', dts: 'src/context/CrawlContext.d.ts', load: () => import('../context/CrawlContext') },
   { label: 'context/NotificationContext', dts: 'src/context/NotificationContext.d.ts', load: () => import('../context/NotificationContext') },
   { label: 'features/agents/experience/PremiumOrb', dts: 'src/features/agents/experience/PremiumOrb.d.ts', load: () => import('../features/agents/experience/PremiumOrb') },
   { label: 'services/api', dts: 'src/services/api.d.ts', load: () => import('../services/api') },
