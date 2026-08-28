@@ -31,10 +31,12 @@ import {
     useMemo,
     useRef,
     useState,
+    type ReactNode,
 } from 'react';
 
 import { getAuthItem } from '../utils/authStorage';
 import { isImpersonating } from '../utils/impersonation';
+import type { NotificationItem } from '../types/domain';
 import {
     clearAllNotifications,
     deleteNotification,
@@ -44,19 +46,34 @@ import {
     markNotificationRead,
 } from '../services/api';
 
-const NotificationContext = createContext(null);
+export interface NotificationContextValue {
+  items: NotificationItem[];
+  unreadCount: number;
+  connected: boolean;
+  loading: boolean;
+  /** Most recent un-dismissed `handoff_request` notification, for the live-chat banner. */
+  incomingHandoff: NotificationItem | null;
+  dismissIncomingHandoff: () => void;
+  markRead: (id: number) => Promise<void>;
+  markAllRead: () => Promise<void>;
+  dismiss: (id: number) => Promise<void>;
+  clearAll: () => Promise<void>;
+  refresh: () => Promise<void>;
+}
+
+const NotificationContext = createContext<NotificationContextValue | null>(null);
 
 const HANDOFF_TYPE = 'handoff_request';
 const MAX_KEEP = 60;
 const POLL_INTERVAL_MS = 30_000;
 const RECONNECT_MAX_MS = 30_000;
 
-function resolveWsBase() {
+function resolveWsBase(): string {
     const apiBase = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
     return apiBase.replace(/^http/, 'ws').replace(/\/+$/, '');
 }
 
-function buildAuthSubprotocol() {
+function buildAuthSubprotocol(): string | null {
     // Never open this socket from an impersonated tab. The only credential
     // available here is the shared localStorage `admin_token` (the
     // super-admin's OWN key) so connecting would stream the admin's
@@ -75,9 +92,9 @@ function buildAuthSubprotocol() {
     return authType === 'operator' ? `operator-key.${token}` : `api-key.${token}`;
 }
 
-function dedupeById(items) {
-    const seen = new Set();
-    const out = [];
+function dedupeById(items: NotificationItem[]): NotificationItem[] {
+    const seen = new Set<number>();
+    const out: NotificationItem[] = [];
     for (const item of items) {
         if (seen.has(item.id)) continue;
         seen.add(item.id);
@@ -87,19 +104,21 @@ function dedupeById(items) {
     return out;
 }
 
-export function NotificationProvider({ children }) {
-    const [items, setItems] = useState([]);
+export function NotificationProvider({ children }: { children: ReactNode }) {
+    const [items, setItems] = useState<NotificationItem[]>([]);
     const [unreadCount, setUnreadCount] = useState(0);
     const [connected, setConnected] = useState(false);
     const [loading, setLoading] = useState(true);
-    const [incomingHandoff, setIncomingHandoff] = useState(null);
+    const [incomingHandoff, setIncomingHandoff] = useState<NotificationItem | null>(null);
 
-    const wsRef = useRef(null);
-    const reconnectTimerRef = useRef(null);
-    const pollTimerRef = useRef(null);
+    const wsRef = useRef<WebSocket | null>(null);
+    // Handle types are derived rather than pinned to `number`: the suite runs
+    // under jsdom, where the Node and DOM timer signatures differ.
+    const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const mountedRef = useRef(true);
     const attemptRef = useRef(0);
-    const seenHandoffSessionsRef = useRef(new Set());
+    const seenHandoffSessionsRef = useRef(new Set<unknown>());
 
     useEffect(() => {
         // Reset on every mount - critical for React StrictMode double-mount
@@ -110,11 +129,11 @@ export function NotificationProvider({ children }) {
         };
     }, []);
 
-    const isAuthed = useCallback(() => {
+    const isAuthed = useCallback((): boolean => {
         return Boolean(buildAuthSubprotocol());
     }, []);
 
-    const hydrate = useCallback(async () => {
+    const hydrate = useCallback(async (): Promise<void> => {
         if (!isAuthed()) {
             setLoading(false);
             return;
@@ -131,7 +150,7 @@ export function NotificationProvider({ children }) {
         }
     }, [isAuthed]);
 
-    const refreshUnread = useCallback(async () => {
+    const refreshUnread = useCallback(async (): Promise<void> => {
         if (!isAuthed()) return;
         try {
             const next = await getUnreadNotificationCount();
@@ -167,7 +186,7 @@ export function NotificationProvider({ children }) {
     // dismissed by the operator. The banner subscribes to this. We track
     // already-shown session_ids in a ref so a REST hydrate after refresh
     // doesn't pop the banner for a chat the operator already saw.
-    const maybeShowHandoff = useCallback((notification) => {
+    const maybeShowHandoff = useCallback((notification: NotificationItem): void => {
         if (notification?.type !== HANDOFF_TYPE) return;
         const sid = notification?.data?.session_id;
         if (!sid || seenHandoffSessionsRef.current.has(sid)) {
@@ -179,13 +198,13 @@ export function NotificationProvider({ children }) {
         setIncomingHandoff(notification);
     }, []);
 
-    const dismissIncomingHandoff = useCallback(() => {
+    const dismissIncomingHandoff = useCallback((): void => {
         setIncomingHandoff(null);
     }, []);
 
     // ── Mutations ──
 
-    const markRead = useCallback(async (id) => {
+    const markRead = useCallback(async (id: number): Promise<void> => {
         setItems((prev) =>
             prev.map((item) =>
                 item.id === id && !item.is_read
@@ -204,7 +223,7 @@ export function NotificationProvider({ children }) {
         }
     }, [refreshUnread]);
 
-    const markAllRead = useCallback(async () => {
+    const markAllRead = useCallback(async (): Promise<void> => {
         setItems((prev) =>
             prev.map((item) =>
                 item.is_read ? item : { ...item, is_read: true, read_at: new Date().toISOString() },
@@ -219,8 +238,8 @@ export function NotificationProvider({ children }) {
         }
     }, [refreshUnread]);
 
-    const dismiss = useCallback(async (id) => {
-        let removed;
+    const dismiss = useCallback(async (id: number): Promise<void> => {
+        let removed: NotificationItem | undefined;
         setItems((prev) => {
             removed = prev.find((item) => item.id === id);
             return prev.filter((item) => item.id !== id);
@@ -237,7 +256,7 @@ export function NotificationProvider({ children }) {
         }
     }, [hydrate]);
 
-    const clearAll = useCallback(async () => {
+    const clearAll = useCallback(async (): Promise<void> => {
         setItems([]);
         setUnreadCount(0);
         try {
@@ -250,7 +269,7 @@ export function NotificationProvider({ children }) {
 
     // ── WebSocket lifecycle ──
 
-    const connect = useCallback(() => {
+    const connect = useCallback((): void => {
         if (!mountedRef.current) return;
         const subprotocol = buildAuthSubprotocol();
         const wsUrl = `${resolveWsBase()}/ws/notifications`;
@@ -274,7 +293,7 @@ export function NotificationProvider({ children }) {
         }
         wsRef.current = ws;
 
-        let pingTimer = null;
+        let pingTimer: ReturnType<typeof setInterval> | null = null;
 
         ws.onopen = () => {
             console.log('[Notifications] WebSocket connection established successfully');
@@ -288,11 +307,14 @@ export function NotificationProvider({ children }) {
             }, 25_000);
         };
 
-        ws.onmessage = (event) => {
+        ws.onmessage = (event: MessageEvent<string>) => {
             if (!mountedRef.current) return;
             // pong arrives as a plain string - JSON.parse would throw.
             if (event.data === 'pong') return;
-            let payload;
+            // Server-controlled, but still parsed into `unknown` and read
+            // through optional access: a malformed frame must drop to the 30s
+            // poll fallback, not corrupt the feed.
+            let payload: { event?: string; unread_count?: number; notification?: NotificationItem } | null;
             try {
                 payload = JSON.parse(event.data);
             } catch {
@@ -329,7 +351,7 @@ export function NotificationProvider({ children }) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [maybeShowHandoff]);
 
-    const scheduleReconnect = useCallback(() => {
+    const scheduleReconnect = useCallback((): void => {
         if (!mountedRef.current) return;
         if (reconnectTimerRef.current) return;
         attemptRef.current += 1;
@@ -393,7 +415,7 @@ export function NotificationProvider({ children }) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const value = useMemo(
+    const value = useMemo<NotificationContextValue>(
         () => ({
             items,
             unreadCount,
@@ -427,7 +449,7 @@ export function NotificationProvider({ children }) {
     );
 }
 
-export function useNotifications() {
+export function useNotifications(): NotificationContextValue {
     const ctx = useContext(NotificationContext);
     if (!ctx) {
         // Soft fallback so a component that renders before the provider
