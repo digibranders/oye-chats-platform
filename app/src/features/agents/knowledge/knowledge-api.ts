@@ -82,7 +82,8 @@ export async function fetchRecrawlDiff(
     unchangedUrls: asStringArray(raw.unchanged_urls),
     newUrls: asStringArray(raw.new_urls),
     removedUrls: asStringArray(raw.removed_urls),
-    costPerPage: Math.max(1, asNumber(raw.cost_per_page, 1)),
+    // Zero is a real price here too: re-crawls are free on every tier.
+    costPerPage: Math.max(0, asNumber(raw.cost_per_page, 1)),
     balance: asNumber(raw.balance),
     capped: raw.capped === true,
     headPartial: raw.head_partial === true,

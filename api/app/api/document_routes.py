@@ -191,15 +191,24 @@ def resolve_crawl_cost_per_page(session, client_id: int, bot_id: int | None) -> 
     The switch is the ``first_training_free`` feature flag on the plan row, not
     a slug check, so plan behaviour stays in plan data like every other flag.
 
-    "First" is judged per bot by whether any crawl-sourced Document exists, the
-    same predicate ``recrawl_service`` uses to decide what a re-crawl covers.
-    Every crawl route takes ``bot_id`` as an optional query parameter, so when
-    there is no bot to scope to the client's own crawl history answers instead:
-    the free training is one per account either way, and reading "no bot, so no
-    crawls" would hand out a fresh free training on every account-level call.
+    "First" is judged per ACCOUNT, by whether any crawl-sourced Document exists
+    anywhere on the client. The plan for this work said per bot, matching the
+    predicate ``recrawl_service`` uses to decide what a re-crawl covers, and per
+    bot is exploitable: ``bot_id`` is an OPTIONAL query parameter on all three
+    crawl routes, so one crawl with it omitted (documents land with a NULL
+    ``bot_id``) followed by one with it set are two different scopes and both
+    come out free. Per account closes that, costs nothing real, and is what the
+    trial means anyway: it grants exactly one bot, so the two rules coincide
+    there.
 
     Re-crawls are already free on every tier and never reach here with a cost
     to pay (``recrawl_service`` passes 0).
+
+    Known and accepted: deleting every crawl-sourced document makes the account
+    eligible again. Closing that needs a durable "has consumed the free
+    training" marker rather than an inference over live rows, which is a
+    billing-state change this task does not carry. The exposure is one free
+    crawl per deletion on a plan capped at 100 pages.
     """
     from sqlalchemy import select as _sa_select
 
@@ -207,9 +216,8 @@ def resolve_crawl_cost_per_page(session, client_id: int, bot_id: int | None) -> 
 
     entitlements = plan_entitlements_service.get_entitlements(client_id, session)
     if entitlements.has_feature("first_training_free"):
-        scope = Document.bot_id == bot_id if bot_id is not None else Document.client_id == client_id
         already_crawled = session.execute(
-            _sa_select(Document.id).where(scope, Document.source == "crawl").limit(1)
+            _sa_select(Document.id).where(Document.client_id == client_id, Document.source == "crawl").limit(1)
         ).first()
         if already_crawled is None:
             return 0
@@ -1136,8 +1144,10 @@ async def crawl_discover_endpoint(
 
     total = len(urls)
 
+    # A free crawl affords every page found, not ``balance`` of them. The
+    # clamp is only there to keep the division finite.
     per_page = max(int(cost_per_page), 1)
-    max_affordable_pages = int(balance) // per_page
+    max_affordable_pages = total if cost_per_page == 0 else int(balance) // per_page
     credits_required_full = total * cost_per_page
 
     return {

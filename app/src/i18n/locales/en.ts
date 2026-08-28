@@ -2541,6 +2541,9 @@ const en = {
     weJustSawItLoad: 'We just saw it load on your website. Visitors can talk to it now.',
     weOnlyCountAReal: 'We only count a real page on your own domain',
     weReachedTheSiteBut: 'We reached the site but found no readable text. If it is built with React or Next.js, turn on the JavaScript option above and try again — or upload a document instead.',
+    everyPageFound: 'Every page found',
+    thisTrainingIsFree: 'This training is free · balance unchanged',
+    thisIsFree: 'free',
     thisCrawlHitALimit: 'This crawl stopped at a limit',
     weStoppedBeforeTraining: 'We stopped before training on your pages because this workspace reached a limit. Upgrade or add credits, then run the crawl again.',
     weStillCannotSeeIt: 'We still cannot see it',
@@ -3269,6 +3272,8 @@ const en = {
   },
   onboarding: {
     addASiteDocumentsOr: 'Add a site, documents, or pasted text.',
+    thisCrawlStoppedAtALimit: 'This crawl stopped at a limit',
+    yourSiteIsFineThisWorkspace: 'Your site is fine. This workspace reached a limit before it could finish training. Upgrade or add credits, then run it again.',
     addContentAnotherWay: 'Add content another way',
     answersImproveAsItReads: 'Answers improve as it reads. No need to wait.',
     ask: 'Ask',

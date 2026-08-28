@@ -113,8 +113,7 @@ Grouped by category. All emails render raw HTML in code (see above). Any `#NN` i
 |---|---|
 | Function | `send_trial_halfway_email(to_email, name, days_remaining, plan_name)` |
 | Subject | `You're halfway through your OyeChats trial` |
-| Trigger | ARQ cron `task_trial_reminder_emails` — **daily 09:00** — fires when `days_remaining == 4` (marker key `day_7`, preserved across every cadence change so an in-flight subscription is never sent the same slot twice) |
-| **Known gap** | The trigger is still tuned for the retired 7-day offer. On the 14-day trial, `days_remaining == 4` is day 10, so the body's "you're halfway through" is wrong by four days and nothing is sent for the first ten. Retuning the cadence is its own task in the trial plan; the marker keys stay as they are. |
+| Trigger | ARQ cron `task_trial_reminder_emails` — **daily 09:00** — fires when `days_remaining == 7`, i.e. day 7 of the 14-day trial, which is genuinely halfway (marker key `day_7`, preserved across every cadence change so an in-flight subscription is never sent the same slot twice; the key names the SLOT, not the day) |
 | Metered | No |
 
 #### B3. Trial "X days left" (T-2 warning and final-day alarm)
@@ -122,16 +121,17 @@ Grouped by category. All emails render raw HTML in code (see above). Any `#NN` i
 |---|---|
 | Function | `send_trial_days_left_email(to_email, name, days_remaining, plan_name)` |
 | Subject | `{N} days left in your OyeChats trial` / `Your OyeChats trial ends tomorrow` (≤1 day). The body no longer names the plan: there is one trial and its row is called "Free Trial", so naming it read "your Free Trial trial" |
-| Trigger | ARQ cron `task_trial_reminder_emails` — **daily 09:00** — fires when `days_remaining ∈ {2, 1}` (marker keys `day_11`, `day_13`, preserved across every cadence change). Same known gap as B2: the thresholds are the 7-day offer's. |
+| Body | Days remaining, and the truth about what happens next: nothing is deleted, the account moves to Free, the knowledge base is paused until a plan is picked |
+| Trigger | ARQ cron `task_trial_reminder_emails` — **daily 09:00** — fires when `days_remaining ∈ {3, 1}` (marker keys `day_11`, `day_13`, preserved across every cadence change) |
 | Metered | No |
 
 #### B4. Trial ended
 | | |
 |---|---|
-| Function | `send_trial_ended_email(to_email, name, plan_name, data_retention_until)` |
-| Subject | `Your OyeChats trial has ended — pick a plan to keep your bot live` |
-| Body | Bot now offline; **15-day data retention** window quoted; reactivate CTA |
-| Trigger | ARQ cron `task_expire_trials` (`tasks.py:765`) — **hourly at minute :15** |
+| Function | `send_trial_ended_email(to_email, name, plan_name="Free")` |
+| Subject | `Your OyeChats trial has ended, your account is now on Free` |
+| Body | The account has CONVERTED to Free, nothing deleted; the knowledge base is paused and one plan choice switches all of it back on; "Choose a plan" → `/billing`. No retention window and no deletion warning: there is no longer a deletion path for a lapsed trial to enter |
+| Trigger | ARQ cron `task_expire_trials` — **hourly at minute :15** |
 | Metered | No |
 
 #### B5. Trial data deleted
@@ -140,7 +140,7 @@ Grouped by category. All emails render raw HTML in code (see above). Any `#NN` i
 | Function | `send_trial_data_deleted_email(to_email, name)` |
 | Subject | `Your OyeChats workspace has been deleted` |
 | Body | Confirms permanent purge of bots/documents/chat history; no CTA |
-| Trigger | ARQ cron `task_delete_expired_trial_data` (`tasks.py:952`) — **daily 00:20** |
+| Trigger | ARQ cron `task_delete_expired_trial_data` — **daily 00:20**. **Legacy as of 2026-08-28:** a lapsed trial now converts to Free and is never stamped `data_retention_until`, so only rows stamped before that change can still reach this. The queue drains to zero and stays there |
 | Metered | No |
 
 ### C. Billing
@@ -376,9 +376,9 @@ From `api/app/worker/settings.py` (`cron_jobs`) — server timezone:
 
 | Cron task | Schedule | Emails it can send |
 |-----------|----------|--------------------|
-| `task_trial_reminder_emails` | daily **09:00** | B2 (T-4 halfway), B3 (T-2 & final day) |
-| `task_expire_trials` | **hourly at :15** | B4 (trial ended) |
-| `task_delete_expired_trial_data` | daily **00:20** | B5 (data deleted) |
+| `task_trial_reminder_emails` | daily **09:00** | B2 (T-7 halfway), B3 (T-3 & final day) |
+| `task_expire_trials` | **hourly at :15** | B4 (trial ended, converts to Free) |
+| `task_delete_expired_trial_data` | daily **00:20** | B5 (data deleted) — legacy rows only |
 | `task_promote_scheduled_downgrades` | daily **00:07** | C2 (downgrade re-auth, via transition_service) |
 | `task_render_invoice_pdfs` | every 5 min (**:01,:06,…**) | C1 (invoice) |
 | `task_invoice_reconciliation_alert` | daily **01:00** | *(none — alerts to **Sentry** only, not email)* |

@@ -258,12 +258,23 @@ export function WebsiteFlow({
               />
               <FigureRow
                 label={t('agents.yourCreditsCover') || 'Your credits cover'}
-                value={`${formatNumber(budget.affordablePages)} pages`}
-                hint={`${formatNumber(budget.costPerPage)} credits a page · balance ${formatNumber(budget.balance)}`}
+                // A free crawl is stated as free. "0 credits a page" reads like
+                // a bug or a rounding error, and the number people check before
+                // they commit is exactly this one.
+                value={budget.costPerPage === 0 ? t('agents.everyPageFound') || 'Every page found' : `${formatNumber(budget.affordablePages)} pages`}
+                hint={
+                  budget.costPerPage === 0
+                    ? t('agents.thisTrainingIsFree') || 'This training is free · balance unchanged'
+                    : `${formatNumber(budget.costPerPage)} credits a page · balance ${formatNumber(budget.balance)}`
+                }
               />
               <FigureRow
                 label={t('agents.selected') || 'Selected'}
-                value={`${formatNumber(pageCount)} pages · ${formatNumber(cost)} credits`}
+                value={
+                  budget.costPerPage === 0
+                    ? `${formatNumber(pageCount)} pages · ${t('agents.thisIsFree') || 'free'}`
+                    : `${formatNumber(pageCount)} pages · ${formatNumber(cost)} credits`
+                }
                 hint={
                   budget.found === 0
                     ? t('agents.weCouldNotListThis') || 'We could not list this site’s pages; training will follow links from the homepage'
@@ -361,7 +372,9 @@ export function WebsiteFlow({
         // the selection. This states the consequence and nothing else.
         description={
           budget
-            ? `${formatNumber(pageCount)} page${pageCount === 1 ? '' : 's'} × ${formatNumber(budget.costPerPage)} credits = ${formatNumber(cost)} credits, from a balance of ${formatNumber(budget.balance)}. Charged as they are read, so stopping early only pays for what was read.`
+            ? budget.costPerPage === 0
+              ? `${formatNumber(pageCount)} page${pageCount === 1 ? '' : 's'}, free. Your balance of ${formatNumber(budget.balance)} credits is not touched.`
+              : `${formatNumber(pageCount)} page${pageCount === 1 ? '' : 's'} × ${formatNumber(budget.costPerPage)} credits = ${formatNumber(cost)} credits, from a balance of ${formatNumber(budget.balance)}. Charged as they are read, so stopping early only pays for what was read.`
             : `This reads ${url.trim() || 'this website'} and charges credits for each page it reads.`
         }
         confirmLabel="Start training"

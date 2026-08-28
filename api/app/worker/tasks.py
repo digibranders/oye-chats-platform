@@ -1239,30 +1239,56 @@ def _mark_dunning_sent(sub, key: str, when) -> None:
 
 
 async def task_expire_trials(ctx: dict) -> int:
-    """Cron: flip trialing subscriptions whose ``trial_end`` has lapsed.
+    """Cron: convert trialing subscriptions whose ``trial_end`` has lapsed.
 
-    Idempotent, the ``status`` filter naturally excludes already-expired
-    rows on the next tick. The "trial ended" email fires once per
-    subscription (gated by ``trial_emails_sent.trial_ended``); if the
-    Brevo call fails the cron retries on the next tick.
+    The trial does not expire any more, it CONVERTS. The same subscription row
+    moves onto the Free plan, keeps every bot, document and conversation, and
+    opens a fresh anniversary period so ``task_renew_due_subscriptions`` (the
+    only trigger for free-tier subs) can grant month two. Knowledge built on
+    trial entitlements is PAUSED, not deleted, and one upgrade switches all of
+    it back on.
 
-    Returns the number of subscriptions that flipped this run.
+    What this used to do, and no longer does: flip to ``trial_expired``, stamp
+    ``data_retention_until``, and hand the workspace to
+    ``task_delete_expired_trial_data``, which hard-deleted every bot. No row
+    written from here can enter that path again. Rows already stamped before
+    this change still drain through it; the filter below only ever sees
+    ``trialing``, so they are untouched.
+
+    A client who bought mid-trial is the one case that is NOT converted: their
+    trial row is retired as ``converted_to_paid``, because dragging it onto Free
+    would demote a customer who has just paid. Local rows are inserted as
+    ``active`` by the activation handler, so the live-set filter below is the
+    right test; ``created`` and ``authenticated`` exist at the gateway only.
+
+    In practice that sibling is per-bot. ``ix_subscriptions_client_legacy_active``
+    admits one account-level row per client in the active set, so an
+    account-level purchase cannot coexist with the trial row at all: the
+    activation handler cancels the trial in the same transaction that inserts
+    the purchase, and this cron never sees it. The guard is still required, for
+    the per-bot shape the other index does allow.
+
+    Idempotent: the ``status`` filter naturally excludes already-converted rows
+    on the next tick, and the conversion email is gated by its own marker.
     """
     import asyncio
-    from datetime import UTC, datetime, timedelta
+    from datetime import UTC, datetime
 
     from sqlalchemy import select
 
-    from app.config import TRIAL_DATA_RETENTION_DAYS
+    from app.core.dates import add_months
     from app.db.models import Client, Subscription
     from app.db.session import get_session
     from app.services.email_service import send_trial_ended_email
 
     def _run() -> int:
         now = datetime.now(UTC)
-        retention_window = timedelta(days=TRIAL_DATA_RETENTION_DAYS)
-        flipped = 0
+        converted = 0
         with get_session() as session:
+            from app.services import credit_service
+            from app.services.knowledge_state_service import deactivate_client_knowledge
+            from app.services.plan_service import get_plan_by_slug
+
             subs = (
                 session.execute(
                     select(Subscription).where(
@@ -1274,48 +1300,81 @@ async def task_expire_trials(ctx: dict) -> int:
                 .scalars()
                 .all()
             )
+            free_plan = get_plan_by_slug(session, "free") if subs else None
             for sub in subs:
-                trial_end = sub.trial_end
-                if trial_end.tzinfo is None:
-                    trial_end = trial_end.replace(tzinfo=UTC)
+                paid = session.execute(
+                    select(Subscription.id)
+                    .where(
+                        Subscription.client_id == sub.client_id,
+                        Subscription.id != sub.id,
+                        Subscription.status.in_(("active", "trialing", "past_due")),
+                    )
+                    .limit(1)
+                ).first()
+                if paid is not None:
+                    # Bought mid-trial. Retire the trial row; the purchased one
+                    # already carries their entitlements.
+                    sub.status = "canceled"
+                    sub.canceled_at = now
+                    sub.cancel_reason = "converted_to_paid"
+                    sub.data_retention_until = None
+                    converted += 1
+                    continue
 
-                sub.status = "trial_expired"
-                sub.data_retention_until = trial_end + retention_window
+                if free_plan is None:
+                    logger.error(
+                        "task_expire_trials: no 'free' plan to convert client %s onto; leaving the trial row alone",
+                        sub.client_id,
+                    )
+                    continue
 
-                # Email the workspace owner outside the transaction. We
-                # snapshot the values we need first (owner row may live in
-                # a separate query) and fire after commit.
+                # Zero the unused trial allowance BEFORE granting Free's, so the
+                # balance is exactly the Free grant. A leftover trial balance
+                # riding onto Free is the same leak shape as an unmetered
+                # top-up. This is the renewal helper, not a bespoke ledger row:
+                # it writes one negative entry per still-positive grant, tied to
+                # that grant's id, which is the only shape
+                # ``get_balance_breakdown`` attributes correctly.
+                credit_service.reset_monthly_plan_credits(session, sub.client_id)
+
+                sub.plan_id = free_plan.id
+                sub.status = "active"
+                sub.data_retention_until = None
+                sub.current_period_start = now
+                sub.current_period_end = add_months(now, 1)
+                sub.plan = free_plan
+                credit_service.grant_for_subscription(session, sub)
+
+                # Whole-bot pause, across every bot on the account. There is no
+                # over-limit partial pause and this must not invent one: the
+                # copy says the knowledge is paused and one upgrade restores all
+                # of it, which is exactly what this does.
+                deactivate_client_knowledge(session, sub.client_id)
+
                 owner = session.get(Client, sub.client_id)
-                plan_name = sub.plan.name if sub.plan else "your trial plan"
-
                 if not (sub.trial_emails_sent or {}).get("trial_ended") and owner:
                     try:
-                        send_trial_ended_email(
-                            owner.email,
-                            name=owner.name,
-                            plan_name=plan_name,
-                            data_retention_until=sub.data_retention_until,
-                        )
+                        send_trial_ended_email(owner.email, name=owner.name, plan_name=free_plan.name)
                         _mark_email_sent(sub, "trial_ended", now)
                     except Exception as exc:
                         logger.warning(
-                            "task_expire_trials: ended email failed for client %s: %s",
+                            "task_expire_trials: conversion email failed for client %s: %s",
                             sub.client_id,
                             exc,
                         )
-                flipped += 1
+                converted += 1
             session.commit()
-        return flipped
+        return converted
 
     loop = asyncio.get_running_loop()
     count = await loop.run_in_executor(None, _run)
     if count:
-        logger.info("task_expire_trials: flipped %d subscription(s) to trial_expired", count)
+        logger.info("task_expire_trials: converted %d lapsed trial(s)", count)
     return count
 
 
 async def task_trial_reminder_emails(ctx: dict) -> int:
-    """Cron: 7-day trial reminder cadence (halfway / T-1 / final day).
+    """Cron: 14-day trial reminder cadence (halfway / T-3 / final day).
 
     Runs once a day; for every still-trialing subscription it computes
     ``days_remaining = ceil((trial_end - now) / 1 day)`` and fires the
@@ -1323,11 +1382,12 @@ async def task_trial_reminder_emails(ctx: dict) -> int:
     idempotency key so a customer who started a trial mid-day still gets
     every reminder on the right calendar day rather than 24h later.
 
-    Marker keys (``day_7``, ``day_11``, ``day_13``) are preserved from
-    the previous 14-day cadence so historical subscriptions with those
-    slots already set on ``trial_emails_sent`` aren't spammed a second
-    time after this rescale ships. The trigger (``days_remaining``)
-    is what changed.
+    Marker keys (``day_7``, ``day_11``, ``day_13``) are preserved across every
+    rescale this cadence has been through, so a subscription already carrying
+    one of those slots on ``trial_emails_sent`` is never sent that slot twice.
+    Only the trigger (``days_remaining``) moves. The keys therefore describe
+    the SLOT, not the day: ``day_7`` is "the halfway check-in", whichever day
+    that lands on.
 
     Returns the number of emails sent across all subscriptions.
     """
@@ -1345,10 +1405,13 @@ async def task_trial_reminder_emails(ctx: dict) -> int:
     # discriminator for which template fires.
     cadence: dict[int, tuple[str, str]] = {
         # days_remaining → (marker_key, template)
-        # Halfway check-in on a 7-day trial.
-        4: ("day_7", "day_7"),
-        # T-2 warning.
-        2: ("day_11", "days_left"),
+        # Halfway check-in. On the 14-day trial that is day 7, with 7 left.
+        # It fired at 4 while the row was 14 days long, which is day 10 of 14
+        # under a heading reading "you're halfway through", and left the first
+        # ten days of the trial with no contact at all.
+        7: ("day_7", "day_7"),
+        # T-3 warning, enough notice to actually decide.
+        3: ("day_11", "days_left"),
         # Final-day alarm.
         1: ("day_13", "days_left"),
     }
@@ -1393,10 +1456,10 @@ async def task_trial_reminder_emails(ctx: dict) -> int:
 
                 try:
                     if template == "day_7":
-                        # Legacy template key "day_7" is now the halfway
-                        # slot on a 7-day trial (T-4). Marker key preserved
-                        # for backward-compat with in-flight trials whose
-                        # ``trial_emails_sent`` was set under the old name.
+                        # "day_7" names the SLOT, not the day: the halfway
+                        # check-in, which on the 14-day trial is day 7. The
+                        # marker key is preserved so an in-flight trial that
+                        # already has it is never sent the halfway note twice.
                         send_trial_halfway_email(
                             owner.email,
                             name=owner.name,

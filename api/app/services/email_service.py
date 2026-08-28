@@ -1432,8 +1432,9 @@ def send_trial_days_left_email(to_email: str, *, name: str | None, days_remainin
         h1(f"Hi {_first_name(name)} - {headline}")
         + p(lead)
         + p(
-            "Your knowledge base, settings, and chat history are kept safe for 15 days after the trial "
-            "ends, nothing is lost if you decide later."
+            "Nothing is deleted when the trial ends. Your account moves to the Free plan with your "
+            "chatbot, documents and conversations intact, and your knowledge base is paused until "
+            "you pick a plan."
         )
         + button("Pick a plan", f"{APP_URL}/billing")
         + p(f"Questions about pricing? Reply to this email or write to {_SUPPORT_LINK}.", top=8)
@@ -1487,36 +1488,41 @@ def send_promo_precharge_reminder_email(
         _capture_email_failure(exc, event="promo_precharge", email=to_email)
 
 
-def send_trial_ended_email(to_email: str, *, name: str | None, plan_name: str, data_retention_until) -> None:
-    """Fired the moment the expiry cron flips status to trial_expired.
+def send_trial_ended_email(to_email: str, *, name: str | None, plan_name: str = "Free") -> None:
+    """Fired when the expiry cron converts a lapsed trial onto the Free plan.
 
-    ``plan_name`` is accepted and not rendered, for the same reason as
-    :func:`send_trial_days_left_email`: there is one trial, its row is named
-    "Free Trial", and naming it read "Your trial of Free Trial wrapped up
-    today."
+    Nothing is deleted and nothing is retained on a clock, so this email no
+    longer takes ``data_retention_until`` and no longer warns about permanent
+    deletion. It previously promised exactly that, which is what made the
+    deletion cron's behaviour feel sanctioned.
+
+    The pause it describes is ALL of the workspace's knowledge, not the part
+    above the Free plan's ceiling. ``knowledge_state_service`` is all-or-nothing
+    by design, so saying "the knowledge above your Free limit is paused" would
+    publish a claim the code cannot honour.
     """
-    retention_human = data_retention_until.strftime("%B %-d, %Y")
     inner = (
         h1("Your trial has ended")
         + p(
-            f"Hi {_first_name(name)}. Your free trial wrapped up today. Your bot is now "
-            f"showing its offline message to visitors. Pick a plan and it&rsquo;s back online within a minute."
+            f"Hi {_first_name(name)}. Your free trial wrapped up today and your account is now on "
+            f"the {strong(esc(plan_name))} plan. Nothing has been deleted: your chatbot, your "
+            f"documents, your settings and every conversation are exactly where you left them."
         )
-        + ed.alert(
-            f"Your knowledge base, settings, and chat history are kept safe until "
-            f"{strong(esc(retention_human))}. After that date, the workspace is permanently deleted.",
-            "warning",
+        + p(
+            "Your knowledge base is paused, so your chatbot is not answering from it right now. "
+            "Choosing a plan switches all of it back on, in one step, with nothing to re-upload."
         )
-        + button("Choose a plan to reactivate", f"{APP_URL}/billing")
+        + button("Choose a plan", f"{APP_URL}/billing")
         + p(f"Trial didn&rsquo;t fit? We&rsquo;d love quick feedback - {_SUPPORT_LINK}.", top=8)
     )
+    subject = f"Your {BRAND_NAME} trial has ended, your account is now on Free"
     try:
         send_email_async(
             to_email,
-            f"Your {BRAND_NAME} trial has ended. Pick a plan to keep your bot live",
+            subject,
             shell(
-                subject=f"Your {BRAND_NAME} trial has ended. Pick a plan to keep your bot live",
-                preheader=f"Reactivate by {retention_human} to keep your bot and data.",
+                subject=subject,
+                preheader="Nothing was deleted. Your knowledge is paused until you pick a plan.",
                 inner=inner,
             ),
         )
@@ -1526,7 +1532,13 @@ def send_trial_ended_email(to_email: str, *, name: str | None, plan_name: str, d
 
 
 def send_trial_data_deleted_email(to_email: str, *, name: str | None) -> None:
-    """Sent after the hard-delete cron purges the workspace."""
+    """Sent after the hard-delete cron purges the workspace.
+
+    Legacy: new trials never enter the retention path as of 2026-08-28. A lapsed
+    trial converts to the Free plan with nothing deleted, so the only rows that
+    can still reach this are ones stamped ``data_retention_until`` before that
+    change, draining the old queue.
+    """
     inner = (
         h1("Your workspace has been deleted")
         + p(

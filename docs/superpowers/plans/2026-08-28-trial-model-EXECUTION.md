@@ -428,3 +428,134 @@ on a shared data tier (`LC_NODE_A`/`LC_NODE_B`); no DB-backed test skipped.
 `ruff check` and `ruff format --check` clean. Frontend `tsc --noEmit` clean,
 `npm run lint` clean with zero warnings, `npx vitest run` 134 files / 1769 tests
 passed.
+
+### Task 4 review
+
+10 findings, and the two most severe were things I had reported as working.
+All fixed in the Task 5 commit.
+
+1. **HIGH, and my Task 4 commit message asserted the opposite.** The plan's
+   Step 3 requires the pre-crawl quote to SHOW the free training, "rather than a
+   price that then isn't charged". The backend returned `cost_per_page: 0`
+   correctly and the client threw it away: `crawlBudgetOf` clamped it with
+   `Math.max(1, ...)`, so a trial customer's free 100-page training was quoted
+   as "1 credits a page", "100 credits", and a confirm dialog reading "100
+   pages × 1 credits = 100 credits". The deterrent the feature exists to remove,
+   re-created exactly, and inverted: quoted 100, charged 0. The clamp existed to
+   keep a division finite, so that is now guarded at the division instead. The
+   pre-existing test pinned the clamp, which is why nothing caught it. The UI
+   states a free crawl as free rather than as "0 credits".
+2. **HIGH.** The trial wall copy I added was unreachable. `/crawl/discover`
+   truncates its listing AT the plan ceiling, so on the trial `total_found` can
+   never exceed 100 and `selectedPages > perCrawlLimit` is never true; had it
+   been, "Your site has {found} pages" would have printed 100, not the site's
+   real size. My test constructed a payload the endpoint is structurally
+   incapable of returning. The reachable signal is `capped`, which is the
+   server saying "there was more than this", so the sentence is now "Your site
+   has more than 100 pages. Your trial trains 100 of them. Upgrade to train the
+   rest." It does not block, because the 100 they can train are worth training.
+3. **MEDIUM-HIGH.** The three limit sentences the orchestrator computes were
+   written into `result` only, and `CrawlContext` surfaces `error`. So the
+   specific message naming WHICH limit was hit never reached anyone and the UI
+   always fell back to a generic line, under a comment claiming the server sends
+   the sentence. It is passed as `error` now, with a test that fails if that
+   argument is dropped.
+4. **MEDIUM.** Free training was grantable twice. `bot_id` is optional on every
+   crawl route, so a crawl with it omitted and a crawl with it set were two
+   different scopes under the plan's per-bot rule, and both came out free. The
+   predicate is per ACCOUNT now. This is a deliberate deviation from the plan's
+   "judged per bot": the trial grants exactly one bot, so the rules coincide
+   except where the difference is abuse. The remaining vector, deleting every
+   crawl-sourced document to become eligible again, is documented in the
+   helper as accepted: closing it needs a durable "has consumed" marker rather
+   than an inference over live rows, which is a billing-state change this task
+   does not carry.
+5. **MEDIUM.** A zero-priced crawl walked straight past the global credit kill
+   switch, because the switch is enforced inside `check_and_deduct` and a zero
+   cost skips that call. The path it could not see is the highest-volume one
+   there is: up to 100 pages of embedding per new signup. The pipeline now
+   consults the switch explicitly on the free path and aborts with the same
+   reason code.
+6. **MEDIUM.** The regression test the plan asked for tested only the pure
+   `_terminal_status`, so deleting either line of the plumbing that feeds it
+   left the suite green, and the MESSAGE, which is what the plan actually named,
+   was asserted nowhere. Both are covered now, and verified by deletion.
+7. **MEDIUM-LOW.** The day-0 onboarding screen still told a limited crawl to
+   "add a site", i.e. redo the thing that had just worked. It reads the `limit`
+   outcome now.
+8. LOW. `state["abort_reason"]` was read with `[]` on a dict some existing test
+   fakes build without the key. `.get()`.
+9. LOW. The new pricing tests were order-dependent wherever a local Redis is
+   running, because the entitlements cache keys on `client_id` alone and the
+   truncate restarts identities. Cache disabled in that module.
+10. LOW. The pipeline's documented return contract did not mention
+    `abort_reason`; `test_crawl_discover_credits.py` passed only because a
+    MagicMock incidentally resolved to "no features". Both pinned.
+
+### Task 5, day 15 converts to Free
+
+Status: **done**.
+
+Six tests written first and verified failing (the legacy-rows one correctly
+passed from the start, since the cron's `trialing` filter already excluded it).
+`task_expire_trials` now converts in place: the row moves to the Free plan,
+`status` goes to `active`, `data_retention_until` is cleared, a fresh
+anniversary period opens so the renewal cron can grant month two, the unused
+trial allowance is forfeited before Free's is granted, and every bot's knowledge
+is paused. A client who bought mid-trial has their trial row retired as
+`converted_to_paid` instead.
+
+Two plan-versus-code discrepancies recorded rather than improvised:
+
+* The plan says to zero the trial remainder "via a ledger adjustment with reason
+  `trial_expired_forfeit`". `CreditLedger.reason` is a native Postgres ENUM, so
+  a new value needs a migration; more importantly, the existing
+  `reset_monthly_plan_credits` docstring documents exactly why a bespoke
+  negative row is wrong: an orphan negative with no `grant_id` floats in the raw
+  sum but never reduces the per-grant remaining, which is the documented cause
+  of a past "614 / 500" balance bug. The forfeit therefore reuses
+  `reset_monthly_plan_credits`, the mechanism the codebase already has for
+  "zero the unused allowance at a period boundary", which conversion is.
+* The plan's test seeds an account-level paid sibling beside the live trial row.
+  `ix_subscriptions_client_legacy_active` admits ONE account-level row per
+  client in the active set, so that shape cannot exist: the activation handler
+  cancels the trial in the same transaction that inserts the purchase. The
+  reachable sibling is per-bot, which the other index does allow, so that is
+  what the test builds. The guard is still required; the outside voice's
+  correction on this point is what the code actually shows.
+
+Knowledge pause and restore are account-level now
+(`deactivate_client_knowledge` / `reactivate_client_knowledge`), because the
+per-bot helpers are hard no-ops for the NULL `bot_id` these rows carry, which is
+the outside voice's F1. The trial-ended email's restore promise depends on it.
+
+Copy: `send_trial_ended_email` no longer takes `data_retention_until`, no longer
+warns about permanent deletion, and says what actually happens, that the account
+is on Free with nothing deleted and the knowledge paused until a plan is picked.
+The days-left email's "kept safe for 15 days" claim went with it.
+`send_trial_data_deleted_email` is marked legacy. `EMAIL_INVENTORY.md` updated
+for all of it, including removing the known-gap note now that the cadence is
+fixed.
+
+Cadence retuned to the 14-day trial: halfway at 7 days remaining (genuinely
+halfway, where it used to fire at 4, which is day 10 of 14 under a heading
+reading "you're halfway through", leaving the first ten days silent), then 3 and
+1. Marker keys `day_7` / `day_11` / `day_13` are unchanged, so an in-flight
+subscription is never sent the same slot twice; they name the slot, not the day.
+
+`TestTaskExpireTrials` in `test_worker_cron_tasks.py` was removed rather than
+patched. It drove a hand-rolled fake session, and the task now collaborates with
+plans, the credit ledger and documents; satisfying all of that with a fake would
+have been asserting on the fake. Its three real behaviours (the transition,
+marker idempotency, an email failure not blocking the transition) are pinned in
+the new real-Postgres file, with a pointer left where the class was.
+
+Mutation-tested: removing the forfeit, the knowledge pause, the paid-sibling
+guard, or reintroducing the retention stamp each fail a distinct test. The first
+round of these all survived, which exposed two tests that were weaker than they
+looked (the fixture never granted the trial's credits, so there was nothing to
+forfeit), and those were strengthened before the fixes were accepted.
+
+Gates: full backend suite **5911 passed, 4 skipped, zero failures**. `ruff
+check` and `ruff format --check` clean. Frontend `tsc --noEmit` clean, `npm run
+lint` clean with zero warnings, `npx vitest run` 134 files / 1770 tests passed.

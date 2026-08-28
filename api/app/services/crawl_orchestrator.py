@@ -480,7 +480,9 @@ async def _consume_ingest_stream(
             totals["credits_deducted"] += result["credits_deducted"]
             if result.get("aborted"):
                 state["billing_aborted"] = True
-                state["abort_reason"] = state["abort_reason"] or result.get("abort_reason")
+                # ``.get``: ``state`` is supplied by the caller and older
+                # fakes build it without this key.
+                state["abort_reason"] = state.get("abort_reason") or result.get("abort_reason")
         if done:
             return
 
@@ -1068,6 +1070,12 @@ async def run_full_crawl(
             status=crawl_status,
             urls=[p["url"] for p in valid_pages],
             result=result_payload,
+            # The limit sentence has to travel in ``error``: that is the only
+            # field ``CrawlContext`` surfaces to the outcome banner. Written
+            # into ``result`` alone it never reached a customer, and the UI fell
+            # back to a generic line while the specific one (which limit, and
+            # therefore what to do about it) sat unread in the payload.
+            error=result_payload.get("message") if crawl_status == "limit" else None,
         )
         _record_bot_crawl_state(bot_id, crawl_status)
         if crawl_status == "done":

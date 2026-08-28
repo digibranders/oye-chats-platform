@@ -51,6 +51,15 @@ def test_discover_returns_credit_math(monkeypatch):
         return fake_urls
 
     monkeypatch.setattr("app.services.url_discovery.discover_website_urls", _fake_discover)
+    # The per-page price resolves through the plan entitlements now. Pinned to a
+    # tier WITHOUT first_training_free, so this file keeps testing what it was
+    # written for: a plan that charges. Relying on a MagicMock session to
+    # incidentally yield "no features" would turn a charging test silently
+    # free the day that resolution changes.
+    monkeypatch.setattr(
+        "app.services.plan_entitlements_service.get_entitlements",
+        lambda client_id, session, **kwargs: SimpleNamespace(has_feature=lambda name: False),
+    )
     monkeypatch.setattr("app.services.credit_service.get_credit_cost", lambda db, action: 5)
     # 100 credits -> 20 affordable pages; bot_id must be threaded through.
     monkeypatch.setattr("app.services.credit_service.get_balance", lambda db, cid, bot_id=None: 100)

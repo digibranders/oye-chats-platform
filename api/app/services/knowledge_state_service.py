@@ -72,6 +72,48 @@ def deactivate_bot_knowledge(session: Session, bot_id: int | None) -> int:
     return count
 
 
+def reactivate_client_knowledge(session: Session, client_id: int) -> int:
+    """Reactivate every deactivated chunk across ALL of a client's bots.
+
+    Account-level subscriptions (``bot_id IS NULL``) are the trial and the Free
+    row it converts into, and :func:`reactivate_bot_knowledge` is a hard no-op
+    for a NULL bot id. So every account-level upgrade silently restored nothing,
+    while the trial-ended email promised "one upgrade switches it back on".
+    This is the client-level path that promise needs.
+
+    Returns the number of chunks reactivated, summed across the client's bots.
+    """
+    from app.db.models import Bot
+
+    total = 0
+    bot_ids = session.execute(select(Bot.id).where(Bot.client_id == client_id)).scalars().all()
+    for bot_id in bot_ids:
+        total += reactivate_bot_knowledge(session, bot_id)
+    return total
+
+
+def deactivate_client_knowledge(session: Session, client_id: int) -> int:
+    """Pause every active chunk across ALL of a client's bots. Returns the count.
+
+    The account-level counterpart to :func:`deactivate_bot_knowledge`, used when
+    a trial converts to Free: the subscription that lapsed is account-scoped, so
+    there is no single ``bot_id`` to pass.
+
+    The pause is ALL of a bot's knowledge, not the part above the Free plan's
+    ceiling. ``deactivate_bot_knowledge`` is all-or-nothing by design and no
+    partial mechanism exists, so every piece of copy about this must say exactly
+    that: the knowledge is paused, and one upgrade restores all of it. Claiming
+    a partial pause would publish something the code cannot honour.
+    """
+    from app.db.models import Bot
+
+    total = 0
+    bot_ids = session.execute(select(Bot.id).where(Bot.client_id == client_id)).scalars().all()
+    for bot_id in bot_ids:
+        total += deactivate_bot_knowledge(session, bot_id)
+    return total
+
+
 def reactivate_bot_knowledge(session: Session, bot_id: int | None) -> int:
     """Reactivate every deactivated chunk for ``bot_id``. Returns the count.
 
