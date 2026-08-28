@@ -1343,11 +1343,17 @@ def send_trial_welcome_email(to_email: str, *, name: str | None, trial_end, cred
         + button("Open my dashboard", APP_URL)
         + ed.divider()
         + ed.section_label("A 3-step path to your first chat")
+        # Every step links to the chatbot list, because that is where all three
+        # actually begin and it is a route that exists. The pages themselves are
+        # per chatbot (/chatbots/:id/knowledge, /experience, /deploy) and this
+        # email has no chatbot id to build them from. The previous deep links,
+        # /knowledge and /chatbot, are not routes and never were in the rebuilt
+        # console: all three steps of the day-0 email landed on Not Found.
         + ed.steps(
             [
-                f"{link('Upload your knowledge base', APP_URL + '/knowledge')}. PDFs, docs, or paste your website URL and we train on it.",
-                f"{link('Style the widget', APP_URL + '/chatbot')}. Colors, logo, welcome message.",
-                f"{link('Drop the script tag', APP_URL + '/chatbot')} on your site, one line of HTML and you&rsquo;re live.",
+                f"{link('Upload your knowledge base', APP_URL + '/chatbots')}. PDFs, docs, or paste your website URL and we train on it.",
+                f"{link('Style the widget', APP_URL + '/chatbots')}. Colors, logo, welcome message.",
+                f"{link('Drop the script tag', APP_URL + '/chatbots')} on your site, one line of HTML and you&rsquo;re live.",
             ]
         )
         + p(f"Stuck on something? Just reply to this email or write to {_SUPPORT_LINK}.")
@@ -1482,13 +1488,18 @@ def send_promo_precharge_reminder_email(
 
 
 def send_trial_ended_email(to_email: str, *, name: str | None, plan_name: str, data_retention_until) -> None:
-    """Fired the moment the expiry cron flips status to trial_expired."""
-    safe_plan = esc(plan_name)
+    """Fired the moment the expiry cron flips status to trial_expired.
+
+    ``plan_name`` is accepted and not rendered, for the same reason as
+    :func:`send_trial_days_left_email`: there is one trial, its row is named
+    "Free Trial", and naming it read "Your trial of Free Trial wrapped up
+    today."
+    """
     retention_human = data_retention_until.strftime("%B %-d, %Y")
     inner = (
         h1("Your trial has ended")
         + p(
-            f"Hi {_first_name(name)}. Your trial of {strong(safe_plan)} wrapped up today. Your bot is now "
+            f"Hi {_first_name(name)}. Your free trial wrapped up today. Your bot is now "
             f"showing its offline message to visitors. Pick a plan and it&rsquo;s back online within a minute."
         )
         + ed.alert(

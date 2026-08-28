@@ -498,9 +498,12 @@ def assign_default_plan_to_client(session: Session, client_id: int) -> Subscript
     * **Trial plan** (``trial_days > 0``), the modern default. The
       subscription starts in ``trialing``; ``trial_start`` / ``trial_end``
       are populated and ``current_period_end`` is pinned to ``trial_end``
-      so the billing UI's "renews on" label matches the trial deadline.
-      The expiry cron (PR4) flips status to ``trial_expired`` when
-      ``trial_end < now()``.
+      because the trial IS the period: every consumer that reads
+      ``current_period_end`` (the renewal cron's due filter, the "resets on"
+      arithmetic) must see the trial deadline rather than an invented month
+      the customer has not been given. The billing UI does not read it while
+      the row is trialing, it short-circuits on ``trial_end`` and renders
+      "Trial ends". The expiry cron flips the row when ``trial_end < now()``.
     * **Free plan** (``trial_days == 0``). Historical fallback for any
       install whose default is still pointed at a zero-trial plan. Starts
       in ``active`` with an anniversary-monthly billing cycle.
@@ -527,8 +530,9 @@ def assign_default_plan_to_client(session: Session, client_id: int) -> Subscript
     trial_days = int(default_plan.trial_days or 0)
 
     if trial_days > 0:
-        # Trial-plan path. Period and trial dates intentionally coincide so
-        # the dashboard's "renews on" badge points at the trial deadline.
+        # Trial-plan path. Period and trial dates intentionally coincide: the
+        # trial is the whole period, so anything reading current_period_end
+        # sees the real deadline instead of a month nobody granted.
         trial_start = now
         trial_end = now + timedelta(days=trial_days)
         sub_status = "trialing"

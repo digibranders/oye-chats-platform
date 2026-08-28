@@ -314,3 +314,117 @@ One observation recorded, not a finding:
 fails under a `-k`-filtered run and passes both alone and in the full suite. It
 is order-sensitive on some other module's state, is unrelated to this work, and
 does not fail any gate this plan runs.
+
+### Task 3 review
+
+12 findings. All the actionable ones fixed in the Task 4 commit.
+
+1. **HIGH.** The day-0 welcome email's three quick-start links were dead. It
+   linked `/knowledge` and `/chatbot`, neither of which is a route in the
+   rebuilt console nor in its legacy-redirect table, so every step of "a 3-step
+   path to your first chat" landed on Not Found, for every new signup. The real
+   pages are per chatbot and the email has no chatbot id, so all three now point
+   at `/chatbots`, where all three actually begin.
+2. **MEDIUM-HIGH.** The literal string Step 3 named, "your trial of {plan}",
+   still shipped in `send_trial_ended_email`, rendering "Your trial of Free
+   Trial wrapped up today." I had deferred it to Task 5 on the grounds that Task
+   5 rewrites that email, but the deferral I recorded covered the RETENTION
+   claim in a different email. Reworded now; Task 5 still rewrites the body.
+3. **MEDIUM.** The reminder cadence is already wrong on a 14-day row: the
+   halfway email fires at `days_remaining == 4`, which is day 10 of 14, and the
+   body says "you're halfway through". Nothing is sent for the first ten days.
+   This is Task 5 Step 5's job and is left there deliberately, but it is now
+   written down in `EMAIL_INVENTORY.md` as a known gap rather than being implied
+   by stale headings.
+4. **MEDIUM.** My B1 edit had left `EMAIL_INVENTORY.md` self-contradicting: one
+   document saying the trial is 14 days, the cadence is the 7-day one, and 14
+   days is "legacy". B2 and B3 reconciled.
+5. **MEDIUM-LOW.** The welcome-email skip I added guarded the wrong thing. It
+   skipped on a missing plan row, but a row carrying zero credits or zero trial
+   days still sent, rendering the "0 credits / 0-day trial" the guard existed to
+   prevent. Both paths now guard on the NUMBERS, and the OAuth path, which
+   skipped silently, logs.
+6. **LOW.** `credits_granted` still went into the trial payload as 0 for the
+   case the email refuses to send. The field is `int | None` and the login path
+   already answers None. Fixed.
+7. **LOW.** Nothing tested the welcome email at all, which is how a broken
+   subject line and three dead links shipped. `tests/test_trial_welcome_email.py`
+   pins the subject, asserts every APP_URL link resolves to a real route, and
+   records what a zero renders. Verified: reintroducing either original defect
+   fails it.
+8. **LOW.** `_mk` granted 500 credits to every plan it built, so the signup
+   test's balance assertion could not tell the trial's grant from Free's or from
+   a hardcoded constant. Free now grants 200.
+9. **LOW.** The gate scan imported all 165 modules under `app` into the test
+   process to read their attributes, and silently dropped the gate of any module
+   that failed to import. It parses with `ast` now: no imports, no side effects,
+   and an unimportable module is still scanned.
+10. **LOW.** The narrowed `_paid_tier_includes` loop was near-vacuous, since
+    that function collapses to plain membership for any slug on the roster. It
+    now asserts the one thing it actually adds, that the trial IS on the roster,
+    plus the bespoke-slug behaviour that makes the roster matter.
+11. **LOW.** Three comments claimed pinning `current_period_end` to `trial_end`
+    makes the billing UI's "renews on" label the trial deadline.
+    `getRenewalDisplay` short-circuits on `trialEnd` and renders "Trial ends",
+    never reading `currentPeriodEnd` for a trialing row. The real reason (the
+    trial IS the period, and the renewal cron reads that column) is stated now.
+12. Retention claims: recorded for Task 5.
+
+### Task 4, first training free and a wall that upsells
+
+Status: **done**.
+
+`resolve_crawl_cost_per_page` written test-first, verified failing with
+`ImportError` as the plan predicted, then wired into all three charging sites
+(`/crawl/discover`'s quote, `/crawl/diff`, and the crawl start) so the estimate
+a customer is shown is the price they are charged.
+
+One signature deviation from the plan, recorded rather than improvised: the plan
+writes `resolve_crawl_cost_per_page(session, client_id, bot)`. Every crawl route
+takes `bot_id` as an OPTIONAL query parameter and none of them has a `Bot` in
+hand at the charging site, so the helper takes `bot_id: int | None`. With no bot
+to scope to it falls back to the client's own crawl history, because reading
+"no bot, so no crawls" would hand out a fresh free training on every
+account-level call. Covered by its own test.
+
+Mutation-tested rather than assumed: ignoring the feature flag, dropping the
+`source == "crawl"` filter, and ignoring the per-bot scope each fail a distinct
+test.
+
+The honest wall, both halves:
+
+* The crawl-outcome mislabel is fixed at the source. A crawl stopped by an empty
+  credit balance, a knowledge-character ceiling, or the kill switch indexed
+  nothing, which was indistinguishable from a JS-rendered site, so the customer
+  was told "we couldn't extract readable text to train on" and sent to debug a
+  rendering problem they did not have. `batch_web_ingestion` now names WHY it
+  aborted, and `_terminal_status` maps a limit abort to a new `limit` outcome
+  with its own message. Partial success stays `done`: pages that landed before
+  the abort are real knowledge. `limit` was threaded through the frontend's
+  status union, terminal sets and `isCrawlFinished`, and `WebsiteFlow` renders
+  it as a warning that says upgrade rather than a danger that says debug.
+* The per-crawl cap wall names the site's real size on the trial: "Your site has
+  340 pages. Your trial trains 100. Upgrade to train them all, or deselect 30 to
+  continue now." Paid tiers keep the deselect-first sentence, because on a paid
+  tier that is the actionable move.
+
+**Harness fix, and it is a deviation worth reading.** Three of this task's gate
+runs came back with dozens of ERRORs in unrelated modules that passed when run
+alone. The cause is not this work: `tests/conftest.py`'s `pg_engine` was
+module-scoped, so every DB-backed module DROPped and CREATEd the same
+`oyechats_pytest`, and with enough modules in one run those cycles interleave
+and the CREATE fails with `duplicate key value violates unique constraint
+"pg_database_datname_index"`. The Task 1 reviewer independently hit it and
+confirmed it pre-existed. Adding DB-backed modules made it fire more often, and
+it reads exactly like a real regression, which makes every gate number
+untrustworthy. The fixture is session-scoped now; isolation is unchanged because
+the function-scoped `db` fixture still TRUNCATEs every table after each test.
+The full suite went from 8 failures and 9 errors to zero of both, and from 17
+minutes to 10.
+
+Gates: full backend suite **5902 passed, 4 skipped, zero failures, zero errors**.
+The 4 skips are `test_live_chat_cross_process.py`, which needs two API processes
+on a shared data tier (`LC_NODE_A`/`LC_NODE_B`); no DB-backed test skipped.
+`ruff check` and `ruff format --check` clean. Frontend `tsc --noEmit` clean,
+`npm run lint` clean with zero warnings, `npx vitest run` 134 files / 1769 tests
+passed.

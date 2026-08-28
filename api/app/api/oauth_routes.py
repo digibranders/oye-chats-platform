@@ -508,7 +508,10 @@ def _resolve_client_for_profile(profile: GoogleProfile, billing_country: str | N
     # doesn't rollback the user. Only sent when the trial fields were
     # populated; otherwise we skip cleanly rather than send a half-filled
     # template.
-    if trial_end_at is not None and trial_credits is not None and trial_duration_days is not None:
+    # Guarded on the NUMBERS, matching the register path: the template asserts
+    # both, so a zero in either would contradict the trialing subscription the
+    # signup just created.
+    if trial_end_at is not None and trial_credits and trial_duration_days:
         try:
             from app.services.email_service import send_trial_welcome_email
 
@@ -521,6 +524,16 @@ def _resolve_client_for_profile(profile: GoogleProfile, billing_country: str | N
             )
         except Exception as mail_err:  # pragma: no cover. Best-effort
             logger.warning("google_oauth_welcome_email_failed client_id=%s err=%s", client_id, mail_err)
+    else:
+        # Skipping used to be silent, so a signup that never got its welcome
+        # email left no trace to find it by.
+        logger.warning(
+            "google_oauth_welcome_skipped client_id=%s trial_end=%s credits=%s duration_days=%s",
+            client_id,
+            trial_end_at,
+            trial_credits,
+            trial_duration_days,
+        )
 
     logger.info("google_oauth_signup_new client_id=%s", client_id)
     return new_client, True

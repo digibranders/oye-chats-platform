@@ -47,6 +47,15 @@ _TITLE_FALLBACK_PATTERN = re.compile(r"^##\s+(.+)", re.MULTILINE)
 _MAX_CRAWLED_PAGE_CHARS = 750_000
 
 
+# Why ``batch_web_ingestion`` stopped early. A bare ``aborted: True`` told the
+# caller that ingestion halted but not that the halt was a LIMIT, so a crawl
+# stopped by an empty credit balance was reported to the customer as a site we
+# could not read. The orchestrator maps these onto its ``limit`` outcome.
+ABORT_REASON_CREDITS = "credits"
+ABORT_REASON_KNOWLEDGE_QUOTA = "knowledge_quota"
+ABORT_REASON_KILL_SWITCH = "kill_switch"
+
+
 def _cap_crawled_page_content(content: str, url: str) -> str:
     """Truncate a single crawled page's raw content to ``_MAX_CRAWLED_PAGE_CHARS``,
     logging when truncation actually occurs."""
@@ -502,7 +511,7 @@ def batch_web_ingestion(
         instead of wasting embedding quota on pages that can't be paid for.
     """
     if not pages:
-        return {"chunks": 0, "pages_charged": 0, "credits_deducted": 0, "aborted": False}
+        return {"chunks": 0, "pages_charged": 0, "credits_deducted": 0, "aborted": False, "abort_reason": None}
 
     # Local import: credit_service depends on db.models which already imports
     # heavily. Keep this lazy so importing pipeline.py stays cheap and there
@@ -613,6 +622,7 @@ def batch_web_ingestion(
                 "pages_charged": 0,
                 "credits_deducted": 0,
                 "aborted": False,
+                "abort_reason": None,
             }
 
         # Embed all chunks. embed_chunks sub-batches internally and runs the
@@ -630,6 +640,7 @@ def batch_web_ingestion(
         pages_charged = 0
         credits_deducted = 0
         aborted = False
+        abort_reason: str | None = None
         # ``pages_changed`` counts pages whose fresh chunks were committed.
         # I.e. re-ingested pages that made it past the hash-skip AND the
         # insert TX succeeded. Bumped inside the successful-commit branch so
@@ -725,6 +736,7 @@ def batch_web_ingestion(
                 )
                 # Stop ingesting further pages, the user can't pay for them.
                 aborted = True
+                abort_reason = ABORT_REASON_CREDITS
                 break
             except KnowledgeQuotaExceeded as exc:
                 session.rollback()
@@ -739,6 +751,7 @@ def batch_web_ingestion(
                     exc.plan_slug,
                 )
                 aborted = True
+                abort_reason = ABORT_REASON_KNOWLEDGE_QUOTA
                 break
             except credit_service.KillSwitchActive:
                 session.rollback()
@@ -749,6 +762,7 @@ def batch_web_ingestion(
                     client_id,
                 )
                 aborted = True
+                abort_reason = ABORT_REASON_KILL_SWITCH
                 break
             except Exception as e:
                 logger.error(f"Failed to insert chunks for {boundary['url']}: {e}")
@@ -775,6 +789,7 @@ def batch_web_ingestion(
         "pages_charged": pages_charged,
         "credits_deducted": credits_deducted,
         "aborted": aborted,
+        "abort_reason": abort_reason,
     }
 
 

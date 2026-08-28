@@ -943,7 +943,13 @@ def register(request: Request, body: RegisterRequest):
                     trial_end = trial_end.replace(tzinfo=UTC)
                 days_remaining = trial_days_remaining(trial_end)
                 plan_row = subscription.plan
-                credits_granted = int(plan_row.credits_per_month or 0) if plan_row else 0
+                # ``None``, not 0, when the row cannot answer. The field is
+                # ``int | None`` precisely so "unknown" is expressible, and the
+                # login-path builder already returns None for this case. A zero
+                # here would tell the dashboard nothing was granted while the
+                # credits sit in the ledger.
+                credits_granted = int(plan_row.credits_per_month or 0) if plan_row else None
+                trial_length_days = int(plan_row.trial_days or 0) if plan_row else 0
 
                 trial_payload = TrialStatePayload(
                     status=subscription.status,
@@ -952,22 +958,22 @@ def register(request: Request, body: RegisterRequest):
                     credits_granted=credits_granted,
                 )
 
-                # Only send when the row can actually answer the two numbers
-                # the template asserts. It writes "your {N}-day free trial is
-                # live, you've got {C} credits", so a fallback would put a
-                # figure in front of a customer that nothing granted: the old
-                # 750 credits / 7 days named the retired offer, and zeros would
-                # promise a 0-day trial while the subscription is trialing and
-                # its credits are already in the ledger. No numbers means no
-                # email, and the trial payload above still tells the app.
-                if plan_row is not None:
+                # Guarded on the NUMBERS, not on the row. The template writes
+                # "your {N}-day free trial is live, you've got {C} credits", so
+                # either figure arriving as zero puts a claim in front of a
+                # customer that contradicts the subscription they just got: the
+                # status is trialing, so the length is positive, and the credits
+                # are already in the ledger. A row present but carrying zeros
+                # fails this the same way a missing row does. No numbers means
+                # no email; the trial payload above still tells the app.
+                if credits_granted and trial_length_days:
                     try:
                         send_trial_welcome_email(
                             new_client.email,
                             name=new_client.name,
                             trial_end=trial_end,
                             credits=credits_granted,
-                            duration_days=int(plan_row.trial_days or 0),
+                            duration_days=trial_length_days,
                         )
                     except Exception as mail_err:
                         # send_trial_welcome_email is already defensive. This is
@@ -979,10 +985,13 @@ def register(request: Request, body: RegisterRequest):
                         )
                 else:
                     logger.warning(
-                        "trial_welcome_skipped_no_plan_row for client %s: "
-                        "subscription %s is trialing but carries no plan",
+                        "trial_welcome_skipped for client %s: subscription %s is trialing "
+                        "but resolves to credits=%s duration_days=%s, so the welcome copy "
+                        "would contradict it",
                         new_client.id,
                         subscription.id,
+                        credits_granted,
+                        trial_length_days,
                     )
 
             # Affiliate first-touch attribution. Best-effort. Invalid /

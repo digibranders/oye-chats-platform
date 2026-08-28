@@ -108,12 +108,13 @@ Grouped by category. All emails render raw HTML in code (see above). Any `#NN` i
 | Triggers | `auth_routes.py` (register); `oauth_routes.py` (OAuth signup). **N is 14** and comes from the seeded `trial` plan row; there is no start-a-trial route to fire this from any more |
 | Metered | No |
 
-#### B2. Trial midpoint check-in (T-4 on the 7-day trial)
+#### B2. Trial midpoint check-in
 | | |
 |---|---|
 | Function | `send_trial_halfway_email(to_email, name, days_remaining, plan_name)` |
 | Subject | `You're halfway through your OyeChats trial` |
-| Trigger | ARQ cron `task_trial_reminder_emails` (`tasks.py:879`) — **daily 09:00** — fires when `days_remaining == 4` (marker key `day_7` preserved from the legacy 14-day cadence) |
+| Trigger | ARQ cron `task_trial_reminder_emails` — **daily 09:00** — fires when `days_remaining == 4` (marker key `day_7`, preserved across every cadence change so an in-flight subscription is never sent the same slot twice) |
+| **Known gap** | The trigger is still tuned for the retired 7-day offer. On the 14-day trial, `days_remaining == 4` is day 10, so the body's "you're halfway through" is wrong by four days and nothing is sent for the first ten. Retuning the cadence is its own task in the trial plan; the marker keys stay as they are. |
 | Metered | No |
 
 #### B3. Trial "X days left" (T-2 warning and final-day alarm)
@@ -121,7 +122,7 @@ Grouped by category. All emails render raw HTML in code (see above). Any `#NN` i
 |---|---|
 | Function | `send_trial_days_left_email(to_email, name, days_remaining, plan_name)` |
 | Subject | `{N} days left in your OyeChats trial` / `Your OyeChats trial ends tomorrow` (≤1 day). The body no longer names the plan: there is one trial and its row is called "Free Trial", so naming it read "your Free Trial trial" |
-| Trigger | ARQ cron `task_trial_reminder_emails` (`tasks.py:886`) — **daily 09:00** — fires when `days_remaining ∈ {2, 1}` (marker keys `day_11`, `day_13` preserved from the legacy 14-day cadence) |
+| Trigger | ARQ cron `task_trial_reminder_emails` — **daily 09:00** — fires when `days_remaining ∈ {2, 1}` (marker keys `day_11`, `day_13`, preserved across every cadence change). Same known gap as B2: the thresholds are the 7-day offer's. |
 | Metered | No |
 
 #### B4. Trial ended

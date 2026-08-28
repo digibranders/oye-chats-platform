@@ -385,14 +385,22 @@ export function crawlBudgetOf(discovery: CrawlDiscovery): CrawlBudget {
 export function crawlPreflight(
   budget: CrawlBudget,
   selectedPages: number,
+  planSlug?: string,
 ): { blocked: boolean; message: string | null } {
   if (selectedPages <= 0) {
     return { blocked: true, message: translateNow('agents.pickAtLeastOnePage') || 'Pick at least one page to train on.' };
   }
   if (budget.perCrawlLimit !== null && selectedPages > budget.perCrawlLimit) {
+    // On the trial the cap is the thing being sold against, so the sentence
+    // names what the site actually has and what the trial covers, rather than
+    // asking the customer to work out the shortfall. On a paid tier the
+    // actionable move is still to deselect, so that phrasing stays.
     return {
       blocked: true,
-      message: `Your plan trains up to ${budget.perCrawlLimit} pages in one go. Deselect ${selectedPages - budget.perCrawlLimit} to continue, or move to a plan with no per-crawl limit.`,
+      message:
+        planSlug === 'trial'
+          ? `Your site has ${budget.found} pages. Your trial trains ${budget.perCrawlLimit}. Upgrade to train them all, or deselect ${selectedPages - budget.perCrawlLimit} to continue now.`
+          : `Your plan trains up to ${budget.perCrawlLimit} pages in one go. Deselect ${selectedPages - budget.perCrawlLimit} to continue, or move to a plan with no per-crawl limit.`,
     };
   }
   if (selectedPages > budget.affordablePages) {

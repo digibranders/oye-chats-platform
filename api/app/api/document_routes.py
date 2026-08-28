@@ -181,6 +181,41 @@ def _verify_bot_ownership(bot_id: int | None, client_id: int) -> None:
             raise HTTPException(status_code=403, detail="Bot not found or access denied.")
 
 
+def resolve_crawl_cost_per_page(session, client_id: int, bot_id: int | None) -> int:
+    """Per-page crawl price for THIS crawl.
+
+    The trial's first training is free: site size is a fact about the
+    customer's website, not about the value they will get, and metering it made
+    a 100-page site spend its whole budget before evaluating anything.
+
+    The switch is the ``first_training_free`` feature flag on the plan row, not
+    a slug check, so plan behaviour stays in plan data like every other flag.
+
+    "First" is judged per bot by whether any crawl-sourced Document exists, the
+    same predicate ``recrawl_service`` uses to decide what a re-crawl covers.
+    Every crawl route takes ``bot_id`` as an optional query parameter, so when
+    there is no bot to scope to the client's own crawl history answers instead:
+    the free training is one per account either way, and reading "no bot, so no
+    crawls" would hand out a fresh free training on every account-level call.
+
+    Re-crawls are already free on every tier and never reach here with a cost
+    to pay (``recrawl_service`` passes 0).
+    """
+    from sqlalchemy import select as _sa_select
+
+    from app.services import credit_service, plan_entitlements_service
+
+    entitlements = plan_entitlements_service.get_entitlements(client_id, session)
+    if entitlements.has_feature("first_training_free"):
+        scope = Document.bot_id == bot_id if bot_id is not None else Document.client_id == client_id
+        already_crawled = session.execute(
+            _sa_select(Document.id).where(scope, Document.source == "crawl").limit(1)
+        ).first()
+        if already_crawled is None:
+            return 0
+    return credit_service.get_credit_cost(session, "url_scan")
+
+
 def _tenant_documents_dir(client_id: int, bot_id: int | None) -> Path:
     """Per-tenant upload directory: ``documents/{client_id}/{bot_id}/``.
 
@@ -1068,7 +1103,7 @@ async def crawl_discover_endpoint(
         # bot ledger, but a client-level/Free bot drains the client pool. Using
         # the raw bot_id here reported 0 for client-level subs (credits live in
         # the pool). Mirror batch_web_ingestion's resolve_bot_ledger_bot_id.
-        cost_per_page = credit_service.get_credit_cost(db, "url_scan")
+        cost_per_page = resolve_crawl_cost_per_page(db, client_id, bot_id)
         ledger_bot_id = None
         if bot_id is not None:
             ledger_bot_id = credit_service.resolve_bot_ledger_bot_id(db.get(Bot, bot_id))
@@ -1174,7 +1209,7 @@ async def crawl_diff_endpoint(
         # subscription drains its own bucket, everything else drains the
         # client pool) so the balance the user sees here matches what
         # gets charged. Mirrors the resolution in /crawl/discover:569-573.
-        cost_per_page = credit_service.get_credit_cost(db, "url_scan")
+        cost_per_page = resolve_crawl_cost_per_page(db, client_id, bot_id)
         ledger_bot_id = None
         if bot_id is not None:
             ledger_bot_id = credit_service.resolve_bot_ledger_bot_id(db.get(Bot, bot_id))
@@ -1456,7 +1491,7 @@ async def crawl_endpoint(
                 },
             )
 
-        cost_per_page = credit_service.get_credit_cost(db, "url_scan")
+        cost_per_page = resolve_crawl_cost_per_page(db, client_id, bot_id)
         # Resolve the SAME ledger bucket the actual crawl will drain, a
         # per-bot subscription drains its own bucket, everything else drains
         # the client pool. Both the unlimited-plan sizing fallback below and

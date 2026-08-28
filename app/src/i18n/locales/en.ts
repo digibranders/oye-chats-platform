@@ -2541,6 +2541,8 @@ const en = {
     weJustSawItLoad: 'We just saw it load on your website. Visitors can talk to it now.',
     weOnlyCountAReal: 'We only count a real page on your own domain',
     weReachedTheSiteBut: 'We reached the site but found no readable text. If it is built with React or Next.js, turn on the JavaScript option above and try again — or upload a document instead.',
+    thisCrawlHitALimit: 'This crawl stopped at a limit',
+    weStoppedBeforeTraining: 'We stopped before training on your pages because this workspace reached a limit. Upgrade or add credits, then run the crawl again.',
     weStillCannotSeeIt: 'We still cannot see it',
     website: 'Website',
     websiteAddress: 'Website address',

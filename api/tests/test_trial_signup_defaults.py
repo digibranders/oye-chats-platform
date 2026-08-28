@@ -18,17 +18,17 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.db.models import Client, Plan
-from app.services.plan_entitlements_service import _paid_tier_includes
+from app.services.plan_entitlements_service import _SEEDED_PLAN_SLUGS, _paid_tier_includes
 from app.services.plan_service import get_active_plans, get_default_plan
 
 pytestmark = pytest.mark.skipif(not os.getenv("DB_URL"), reason="needs a reachable Postgres at DB_URL")
 
 
-def _mk(db, slug, *, default=False, public=True, trial_days=0, active=True):
+def _mk(db, slug, *, default=False, public=True, trial_days=0, active=True, credits=500):
     p = Plan(
         slug=slug,
         name=slug.title(),
-        credits_per_month=500,
+        credits_per_month=credits,
         monthly_price_cents=0,
         annual_price_cents=0,
         trial_days=trial_days,
@@ -36,7 +36,7 @@ def _mk(db, slug, *, default=False, public=True, trial_days=0, active=True):
         is_active=active,
         is_public=public,
         sort_order=99,
-        limits={"bots": 1},
+        limits={"bots": 1, "credits": credits},
         features={"topup_allowed": False},
     )
     db.add(p)
@@ -229,54 +229,65 @@ _KNOWN_SLUG_GATES: frozenset[str] = frozenset(
 )
 
 
-def _slug_gate_constants() -> list[tuple[str, frozenset[str] | set[str]]]:
+def _slug_gate_constants() -> list[tuple[str, frozenset[str]]]:
     """Every module-level plan-slug gate, discovered rather than enumerated.
 
-    A gate is a module-level set of plan slugs whose name ends in ``_SLUGS``:
-    the shape every capability gate outside ``Plan.features`` uses. Membership
-    decides whether a tier gets the feature, so a new one that forgets the
-    trial takes a Professional capability away from it, silently and behind
-    copy that promises the opposite.
+    A gate is a module-level assignment of a set of plan slugs whose name ends
+    in ``_SLUGS``: the shape every capability gate outside ``Plan.features``
+    uses. Membership decides whether a tier gets the feature, so a new one that
+    forgets the trial takes a Professional capability away from it, silently
+    and behind copy that promises the opposite.
 
-    Every module under ``app`` is walked, not a hand-picked list, because the
-    gate that motivated this scan (``QUOTATION_PLAN_SLUGS``) lives in
-    ``app.api`` while the others live in ``app.services``: gates do not stay
-    where you expect them. The walk is over FILES rather than
-    ``pkgutil.walk_packages`` because ``app.api`` carries no ``__init__.py``,
-    so the package walker never descends into it and the scan would have
-    silently missed the one gate it exists to catch.
+    Read with :mod:`ast` rather than by importing. Importing every module under
+    ``app`` to inspect it would pull the FastAPI app, the ARQ worker and their
+    module-level side effects into this test's process, and it would silently
+    drop the gate of any module that failed to import, which is exactly the
+    silence this scan exists to break. Parsing sees the source whether or not
+    it imports.
 
-    ``_KNOWN_SLUG_GATES`` is the floor, so a rename out of the ``_SLUGS``
-    convention fails loudly rather than quietly shrinking the guard.
+    Every file under ``app`` is read, not a hand-picked list, because the gate
+    that motivated this scan (``QUOTATION_PLAN_SLUGS``) lives in ``app.api``
+    while the others live in ``app.services``: gates do not stay where you
+    expect them. ``_KNOWN_SLUG_GATES`` is the floor, so a rename out of the
+    ``_SLUGS`` convention fails loudly rather than quietly shrinking the guard.
     """
-    import importlib
+    import ast
     from pathlib import Path
 
     import app
 
     root = Path(app.__file__).resolve().parent
-    gates: dict[str, frozenset[str] | set[str]] = {}
+    gates: dict[str, frozenset[str]] = {}
     for path in sorted(root.rglob("*.py")):
         rel = path.relative_to(root).with_suffix("")
-        parts = [part for part in rel.parts if part != "__init__"]
-        if not parts or any(part.startswith("_") and part != "__init__" for part in parts[:-1]):
-            continue
-        module_name = ".".join(["app", *parts])
-        try:
-            module = importlib.import_module(module_name)
-        except Exception:  # noqa: BLE001 - an unimportable module cannot hold a live gate
-            continue
-        for attr in dir(module):
-            if not attr.endswith("_SLUGS"):
-                continue
+        module_name = ".".join(["app", *(part for part in rel.parts if part != "__init__")])
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in tree.body:
+            targets = (
+                [node.target]
+                if isinstance(node, ast.AnnAssign)
+                else (node.targets if isinstance(node, ast.Assign) else [])
+            )
+            names = [t.id for t in targets if isinstance(t, ast.Name) and t.id.endswith("_SLUGS")]
             # ``_SEEDED_PLAN_SLUGS`` is the roster of seeded tiers, not a gate:
             # it answers "is this slug bespoke", which is the opposite question.
-            if attr == "_SEEDED_PLAN_SLUGS":
+            names = [name for name in names if name != "_SEEDED_PLAN_SLUGS"]
+            if not names or node.value is None:
                 continue
-            value = getattr(module, attr)
-            if not isinstance(value, frozenset | set) or not all(isinstance(item, str) for item in value):
+            literal = node.value
+            # ``frozenset({...})`` / ``set({...})`` wrap the literal in a call.
+            if isinstance(literal, ast.Call) and isinstance(literal.func, ast.Name):
+                if literal.func.id not in ("frozenset", "set") or len(literal.args) != 1:
+                    continue
+                literal = literal.args[0]
+            try:
+                value = ast.literal_eval(literal)
+            except ValueError:
                 continue
-            gates[f"{module_name}.{attr}"] = value
+            if not isinstance(value, set | frozenset) or not all(isinstance(item, str) for item in value):
+                continue
+            for name in names:
+                gates[f"{module_name}.{name}"] = frozenset(value)
 
     missing = _KNOWN_SLUG_GATES - set(gates)
     assert not missing, f"the scan stopped finding known slug gates: {sorted(missing)}"
@@ -303,24 +314,19 @@ def test_the_trial_matches_professional_on_every_gate_outside_plan_features():
         assert ("trial" in ladder) == ("professional" in ladder), name
 
     # Membership is what every gate reads. Four of them wrap it in
-    # ``_paid_tier_includes``, which also grants any slug OUTSIDE
+    # ``_paid_tier_includes``, which ALSO grants any slug outside
     # ``_SEEDED_PLAN_SLUGS`` (a bespoke per-contract tier); the other two use a
-    # bare ``in``. Asserting the wrapper over all six would be vacuous on the
-    # two that never call it, so it is asserted only where it is the enforcer.
-    from app.services.plan_entitlements_service import (
-        EMAIL_VERIFICATION_SLUGS,
-        JOURNEY_ANALYTICS_SLUGS,
-        LEAD_SOURCE_ATTRIBUTION_SLUGS,
-        VISITOR_INTELLIGENCE_SLUGS,
-    )
-
-    for ladder in (
-        EMAIL_VERIFICATION_SLUGS,
-        JOURNEY_ANALYTICS_SLUGS,
-        LEAD_SOURCE_ATTRIBUTION_SLUGS,
-        VISITOR_INTELLIGENCE_SLUGS,
-    ):
-        assert _paid_tier_includes("trial", ladder) == _paid_tier_includes("professional", ladder)
+    # bare ``in``, so a bespoke slug is denied there. That split is real and
+    # predates this row, so it is recorded here rather than asserted away.
+    #
+    # For a slug the roster knows, ``_paid_tier_includes`` collapses to plain
+    # membership, so re-asserting it over the ladders above would only restate
+    # the loop. The one thing it adds is that the trial IS on the roster: drop
+    # it and every ladder-gated feature flips on through the bespoke rule
+    # instead, silently and without anyone choosing it.
+    assert "trial" in _SEEDED_PLAN_SLUGS
+    assert _paid_tier_includes("trial", frozenset()) is False
+    assert _paid_tier_includes("enterprise-acme", frozenset()) is True
 
 
 def test_start_trial_route_is_gone(db):
@@ -346,13 +352,15 @@ def test_signup_opens_a_trialing_sub_with_500_credits(db):
 
     ``assign_default_plan_to_client`` branches on ``trial_days > 0``, opens the
     subscription in ``trialing``, pins ``current_period_end`` to ``trial_end``
-    so the billing UI's "renews on" label is the trial deadline, and grants the
-    plan's credits inline because no payment ever arrives to trigger a grant.
+    because the trial is the whole period, and grants the plan's credits inline
+    because no payment ever arrives to trigger a grant.
     """
     from app.services import credit_service, plan_service
 
-    _mk(db, "free")
-    _mk(db, "trial", default=True, public=False, trial_days=14)
+    # Free grants a DIFFERENT number, so the balance assertion below can tell
+    # the trial's grant apart from the free plan's and from a hardcoded 500.
+    _mk(db, "free", credits=200)
+    _mk(db, "trial", default=True, public=False, trial_days=14, credits=500)
     c = Client(name="T", email="trial-t@example.com", api_key="k-trial-1", hashed_password="h")
     db.add(c)
     db.flush()

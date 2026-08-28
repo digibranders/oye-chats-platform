@@ -622,6 +622,11 @@ export type CrawlStatus =
   | 'cancelled'
   | 'done'
   | 'failed'
+  // Terminal, and NOT a rendering problem: ingestion stopped because the
+  // workspace ran out of credits or reached its knowledge-base ceiling. It was
+  // reported as `no_content` until the trial work, which sent customers to
+  // debug JavaScript when the answer was to upgrade.
+  | 'limit'
   | 'no_content';
 
 export interface CrawlState {

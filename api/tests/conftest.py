@@ -31,15 +31,33 @@ def _pg_base_url():
     return make_url(raw) if raw else None
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def pg_engine():
+    """One throwaway database for the whole run.
+
+    Session-scoped, not module-scoped. Per module, every DB-backed module
+    DROPped and CREATEd the same ``<db>_pytest`` name, and with enough of them
+    in one run those cycles interleave with the previous module's teardown:
+    the CREATE then fails with ``duplicate key value violates unique constraint
+    "pg_database_datname_index"`` and every test in that module ERRORs at
+    setup. It is order- and timing-dependent, so it shows up as a handful of
+    unrelated modules failing in a full run and passing on their own, which is
+    the worst shape a harness failure can take, it reads exactly like a real
+    regression.
+
+    Isolation does not depend on the scope: the function-scoped ``db`` fixture
+    TRUNCATEs every table with RESTART IDENTITY after each test, so a
+    session-wide database is as clean per test as a per-module one was.
+    """
     base = _pg_base_url()
     if base is None:
         pytest.skip("needs a reachable Postgres at DB_URL")
     test_db = (base.database or "postgres") + "_pytest"
     admin = create_engine(base.set(database="postgres"), isolation_level="AUTOCOMMIT")
     with admin.connect() as conn:
-        conn.exec_driver_sql(f'DROP DATABASE IF EXISTS "{test_db}"')
+        # FORCE so a connection left open by a crashed earlier run cannot
+        # wedge the drop; without it the CREATE below inherits a stale schema.
+        conn.exec_driver_sql(f'DROP DATABASE IF EXISTS "{test_db}" WITH (FORCE)')
         conn.exec_driver_sql(f'CREATE DATABASE "{test_db}"')
     admin.dispose()
 
@@ -54,7 +72,7 @@ def pg_engine():
 
     admin = create_engine(base.set(database="postgres"), isolation_level="AUTOCOMMIT")
     with admin.connect() as conn:
-        conn.exec_driver_sql(f'DROP DATABASE IF EXISTS "{test_db}"')
+        conn.exec_driver_sql(f'DROP DATABASE IF EXISTS "{test_db}" WITH (FORCE)')
     admin.dispose()
 
 

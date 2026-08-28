@@ -263,6 +263,25 @@ describe('crawl pre-flight', () => {
     expect(result.message).toMatch(/Deselect 30/);
   });
 
+  it('names the site size and the trial cap, because the cap is the upsell', () => {
+    const budget = crawlBudgetOf({ total_found: 340, capped: false, plan_max: 100 });
+    const result = crawlPreflight(budget, 130, 'trial');
+    expect(result.blocked).toBe(true);
+    expect(result.message).toContain('Your site has 340 pages');
+    expect(result.message).toContain('Your trial trains 100');
+    expect(result.message).toContain('Upgrade');
+    // Never the paid-tier sentence, which tells a trial customer to move to a
+    // plan rather than to start one.
+    expect(result.message).not.toContain('move to a plan');
+  });
+
+  it('keeps the deselect-first sentence on a paid tier', () => {
+    const budget = crawlBudgetOf({ total_found: 340, capped: false, plan_max: 100 });
+    const result = crawlPreflight(budget, 130, 'standard');
+    expect(result.message).toContain('Deselect 30');
+    expect(result.message).not.toContain('Your trial');
+  });
+
   it('warns without blocking when credits cover only part of the selection', () => {
     const result = crawlPreflight(budget, 90);
     expect(result.blocked).toBe(false);

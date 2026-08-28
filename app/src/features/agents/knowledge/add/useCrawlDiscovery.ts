@@ -15,6 +15,7 @@ import {
   rootDomainOf,
 } from '../knowledge-model';
 import { t as translateNow } from '../../../../i18n/i18n';
+import { useEntitlements } from '../../../../hooks/useEntitlements';
 
 export interface UseCrawlDiscoveryOptions {
   agentId: number;
@@ -43,6 +44,9 @@ export function useCrawlDiscovery({
   sources,
   onChanged,
 }: UseCrawlDiscoveryOptions) {
+  // The per-crawl cap wall names the trial by name, because on the trial the
+  // cap IS the upsell rather than a number to work around.
+  const { planSlug } = useEntitlements();
   const { crawl, startCrawl, cancelCrawl } = useCrawl();
 
   // The account's own website, read from the shared session cache rather than a
@@ -114,7 +118,7 @@ export function useCrawlDiscovery({
   const budget = discovery ? crawlBudgetOf(discovery) : null;
   const hasPageList = (discovery?.urls?.length ?? 0) > 0;
   const pageCount = hasPageList ? selected.length : (discovery?.total_found ?? 0);
-  const preflight = budget ? crawlPreflight(budget, Math.max(pageCount, 0)) : null;
+  const preflight = budget ? crawlPreflight(budget, Math.max(pageCount, 0), planSlug) : null;
   const cost = budget ? pageCount * budget.costPerPage : 0;
 
   const alreadyTrained = useMemo(() => {

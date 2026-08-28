@@ -130,7 +130,20 @@ export function WebsiteFlow({
           title: undefined,
           body: `Finished — this chatbot read ${formatNumber(crawl.pagesCrawled)} page${crawl.pagesCrawled === 1 ? '' : 's'}.`,
         }
-      : crawl.status === 'no_content'
+      : crawl.status === 'limit'
+        ? {
+            // Not a reading problem. The site was fine and this workspace ran
+            // out of credits or knowledge-base room, so the advice is to add
+            // capacity rather than to debug JavaScript. The server sends the
+            // sentence, because only it knows which limit was reached.
+            tone: 'warning' as const,
+            title: t('agents.thisCrawlHitALimit') || 'This crawl stopped at a limit',
+            body:
+              crawl.error ??
+              (t('agents.weStoppedBeforeTraining') ||
+                'We stopped before training on your pages because this workspace reached a limit. Upgrade or add credits, then run the crawl again.'),
+          }
+        : crawl.status === 'no_content'
         ? {
             tone: 'danger' as const,
             title: t('agents.thatWebsiteCouldNotBe') || 'That website could not be read',
