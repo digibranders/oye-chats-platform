@@ -1674,6 +1674,49 @@ async def transfer_chat(session_id: SessionId, request: TransferRequest, auth=De
         return {"success": True, "transferred_to_department": dept_name}
 
 
+def _resolve_status_operator(session, auth: dict, bot_id: int | None = None) -> Operator | None:
+    """The Operator row a caller's *availability* refers to.
+
+    Distinct from ``_resolve_self_operator``, which resolves only the linked
+    self-op row: this one carries the legacy owner-role fallback as well, and
+    the preference order below is the same one ``POST /operators/status`` uses.
+    Extracted so every reader of "which operator row is this caller" answers
+    identically — a badge that disagreed with the availability toggle about the
+    answer would report a queue belonging to somebody else.
+
+        1. Self-op row (``linked_client_id == client.id``).
+        2. Legacy owner-role row.
+
+    ``bot_id`` scopes the lookup: a workspace with two bots must not resolve
+    bot B's row for a caller who is only an operator on bot A.
+    """
+    if auth["type"] == "operator":
+        return session.execute(
+            select(Operator).where(Operator.id == auth["operator_id"], Operator.is_active.is_(True))
+        ).scalar_one_or_none()
+
+    client = auth["entity"]
+    self_op_stmt = select(Operator).where(
+        Operator.client_id == client.id,
+        Operator.linked_client_id == client.id,
+        Operator.is_active.is_(True),
+    )
+    if bot_id is not None:
+        self_op_stmt = self_op_stmt.where(Operator.bot_id == bot_id)
+    operator = session.execute(self_op_stmt).scalar_one_or_none()
+    if operator:
+        return operator
+
+    legacy_stmt = select(Operator).where(
+        Operator.client_id == client.id,
+        Operator.role == "owner",
+        Operator.is_active.is_(True),
+    )
+    if bot_id is not None:
+        legacy_stmt = legacy_stmt.where(Operator.bot_id == bot_id)
+    return session.execute(legacy_stmt.limit(1)).scalar_one_or_none()
+
+
 @router.get("/me/status")
 def get_my_operator_status(
     bot_id: int | None = None,
@@ -1693,29 +1736,7 @@ def get_my_operator_status(
         2. Legacy owner-role row.
     """
     with get_session() as session:
-        if auth["type"] == "operator":
-            operator = session.execute(
-                select(Operator).where(Operator.id == auth["operator_id"], Operator.is_active.is_(True))
-            ).scalar_one_or_none()
-        else:
-            client = auth["entity"]
-            self_op_stmt = select(Operator).where(
-                Operator.client_id == client.id,
-                Operator.linked_client_id == client.id,
-                Operator.is_active.is_(True),
-            )
-            if bot_id is not None:
-                self_op_stmt = self_op_stmt.where(Operator.bot_id == bot_id)
-            operator = session.execute(self_op_stmt).scalar_one_or_none()
-            if not operator:
-                legacy_stmt = select(Operator).where(
-                    Operator.client_id == client.id,
-                    Operator.role == "owner",
-                    Operator.is_active.is_(True),
-                )
-                if bot_id is not None:
-                    legacy_stmt = legacy_stmt.where(Operator.bot_id == bot_id)
-                operator = session.execute(legacy_stmt.limit(1)).scalar_one_or_none()
+        operator = _resolve_status_operator(session, auth, bot_id)
 
         if not operator:
             return {"is_online": False, "operator_name": None, "operator_id": None}
@@ -1725,6 +1746,41 @@ def get_my_operator_status(
             "operator_name": operator.name,
             "operator_id": operator.id,
         }
+
+
+@router.get("/me/waiting-count")
+def get_my_waiting_count(
+    bot_id: int | None = None,
+    auth=Depends(get_current_client_or_operator),
+):
+    """How many visitors are waiting for a person, for this caller, right now.
+
+    The console's rail badge reads this. It used to derive that number from the
+    notifications feed instead — every unread ``handoff_request`` row — which
+    is a pile of history, not a queue: it counted visitors who had asked for a
+    person weeks earlier and long since left, so the rail said six people were
+    waiting on the same screen where the inbox said nobody was.
+
+    The live queue exists on the operator websocket as ``queue_update``, but
+    that socket is deliberately owned by the inbox page, so the shell cannot
+    read it from anywhere else. Hence this: the same view the socket sends,
+    over HTTP, for a caller who is not on that page.
+
+    ``_visible_queue_for_operator`` derives from ``ChatSession.status`` in
+    Postgres rather than any in-process list, so the answer is the same on
+    every worker.
+
+    Returns ``0`` rather than 404 for a caller with no operator profile: the
+    badge's question is "how many are waiting for me", and "none, because you
+    take no chats" is an answer, not an error.
+    """
+    with get_session() as session:
+        operator = _resolve_status_operator(session, auth, bot_id)
+        if not operator:
+            return {"count": 0}
+        operator_id = operator.id
+
+    return {"count": len(manager._visible_queue_for_operator(operator_id))}
 
 
 # ── Notification preferences (self-service) ─────────────────────────────────

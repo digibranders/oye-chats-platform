@@ -31,6 +31,8 @@ export const keys = {
 
   inbox: {
     queue: () => ['inbox', 'queue'] as const,
+    /** The rail badge's count of visitors waiting for a person. */
+    waitingCount: () => ['inbox', 'waiting-count'] as const,
     offline: (params: Record<string, unknown>) => ['inbox', 'offline', params] as const,
     cannedResponses: () => ['inbox', 'canned-responses'] as const,
     session: (sessionId: string) => ['inbox', 'session', sessionId] as const,
