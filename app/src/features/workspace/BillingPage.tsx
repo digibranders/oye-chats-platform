@@ -452,7 +452,6 @@ export function BillingPage() {
             currentPlan={plan}
             currentStatus={subscription.status || null}
             hasActiveSubscription={subscription.hasActive}
-            trialUsed={core?.trialUsed ?? false}
             promotion={billing.promotion.data ?? null}
             geo={billing.geo.data ?? null}
             botId={botId}

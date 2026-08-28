@@ -70,15 +70,15 @@ def test_no_plan_bundles_branding_removal():
     read straight into the pricing matrix and the plan cards, advertising a
     feature the plan does not include. Keep the seed honest.
     """
-    for slug in _LADDER:
-        assert _plan(slug)["features"]["branding_removable"] is False, f"{slug} must not bundle branding removal"
+    for plan in _PLANS:
+        assert plan["features"]["branding_removable"] is False, f"{plan['slug']} must not bundle branding removal"
 
 
 def test_enterprise_sorts_after_professional():
     assert _plan("enterprise")["sort_order"] > _plan("professional")["sort_order"]
 
 
-@pytest.mark.parametrize("slug", _LADDER)
+@pytest.mark.parametrize("slug", sorted(p["slug"] for p in _PLANS))
 def test_limits_credits_mirrors_credits_per_month(slug: str):
     """One quantity, two fields. They must never disagree.
 

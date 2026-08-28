@@ -74,7 +74,12 @@ VALID_CURRENCIES = {"INR", "USD", "EUR", "GBP", "AUD", "CAD", "SGD", "AED"}
 # active subscription resolves to one of these plan slugs may configure and
 # run the flow; everyone else gets a 403 on admin CRUD and a silent
 # ``active: false`` on the widget runtime.
-QUOTATION_PLAN_SLUGS: frozenset[str] = frozenset({"professional", "enterprise"})
+#
+# ``trial`` is here because the 14-day signup trial carries Professional's
+# entitlements, and its own description tells the customer so in the dashboard.
+# A slug-keyed gate that omitted it would take a Professional feature away
+# behind copy that promises it.
+QUOTATION_PLAN_SLUGS: frozenset[str] = frozenset({"trial", "professional", "enterprise"})
 
 
 def _client_plan_allows(client_id: int, db) -> bool:

@@ -911,11 +911,12 @@ def register(request: Request, body: RegisterRequest):
 
             # Auto-assign the default plan. Whether that yields a trialing
             # or an active subscription depends on the plan seed
-            # (``Plan.trial_days``). Today the default plan is "free" with
-            # zero trial days, so a plain signup lands active on Free and
-            # the trial is opt-in via the billing modal. The subscription
-            # row is bound locally so we can build the trial payload +
-            # welcome email without re-querying after commit.
+            # (``Plan.trial_days``). Today the default plan is "trial", the
+            # non-public 14-day row, so a plain signup lands TRIALING with the
+            # row's credits granted inline, and there is no opt-in step: the
+            # trial is not something a customer starts, it is where they
+            # begin. The subscription row is bound locally so we can build the
+            # trial payload + welcome email without re-querying after commit.
             subscription = None
             try:
                 from app.services.plan_service import assign_default_plan_to_client
@@ -935,14 +936,19 @@ def register(request: Request, body: RegisterRequest):
             # follow up.
             trial_payload: TrialStatePayload | None = None
             if subscription is not None and subscription.status == "trialing" and subscription.trial_end is not None:
-                from app.config import TRIAL_CREDITS
                 from app.services.email_service import send_trial_welcome_email
 
                 trial_end = subscription.trial_end
                 if trial_end.tzinfo is None:
                     trial_end = trial_end.replace(tzinfo=UTC)
                 days_remaining = trial_days_remaining(trial_end)
-                credits_granted = int(subscription.plan.credits_per_month or 0) if subscription.plan else TRIAL_CREDITS
+                # No hardcoded fallback. A missing plan relationship here would
+                # once have reported the retired offer's 750 credits / 7 days,
+                # numbers no row carries any more, so the honest degraded answer
+                # is to report what was actually granted, which is nothing we
+                # can name. Both branches read the row or say zero.
+                plan_row = subscription.plan
+                credits_granted = int(plan_row.credits_per_month or 0) if plan_row else 0
 
                 trial_payload = TrialStatePayload(
                     status=subscription.status,
@@ -957,7 +963,7 @@ def register(request: Request, body: RegisterRequest):
                         name=new_client.name,
                         trial_end=trial_end,
                         credits=credits_granted,
-                        duration_days=int(subscription.plan.trial_days or 7) if subscription.plan else 7,
+                        duration_days=int(plan_row.trial_days or 0) if plan_row else 0,
                     )
                 except Exception as mail_err:
                     # send_trial_welcome_email is already defensive. This is

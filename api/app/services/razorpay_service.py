@@ -3660,7 +3660,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
         # customer who upgrades to Standard mid-cycle sees their leftover
         # free credits stacked on top of the new grant (e.g. 500 + 10,000
         # → 10,500 / 10,000). Mirrors the same reset → grant ordering used
-        # by the change-plan path and ``start_trial_subscription``.
+        # by the change-plan path.
         # Sets the period marker so the first subscription.charged for this
         # period is a no-op (H4).
         from app.services import transition_service

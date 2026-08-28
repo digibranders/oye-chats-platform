@@ -32,7 +32,7 @@ import {
   type PromotionView,
 } from '../billingModel';
 import { TaxNote } from './TaxNote';
-import { isTrialEligible, usePlanCheckout } from './usePlanCheckout';
+import { usePlanCheckout } from './usePlanCheckout';
 import { usePlanActivation } from './usePlanActivation';
 
 export interface PlanPickerDialogProps {
@@ -42,7 +42,6 @@ export interface PlanPickerDialogProps {
   currentPlan: PlanView | null;
   currentStatus: string | null;
   hasActiveSubscription: boolean;
-  trialUsed: boolean;
   promotion: PromotionView | null;
   geo: BillingGeoView | null;
   botId?: number | null;
@@ -206,7 +205,6 @@ export function PlanPickerDialog({
   currentPlan,
   currentStatus,
   hasActiveSubscription,
-  trialUsed,
   promotion,
   geo,
   botId = null,
@@ -230,7 +228,6 @@ export function PlanPickerDialog({
     currentPlanSlug: currentPlan?.slug ?? 'free',
     currentSubscriptionStatus: currentStatus,
     hasActiveSubscription,
-    trialUsed,
     promotion,
     botId,
     onSuccess: onChanged,
@@ -400,9 +397,6 @@ export function PlanPickerDialog({
             render as two and a widow. See the round-two report. */}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {plans.map((plan) => {
-            const trialPath =
-              !trialUsed &&
-              isTrialEligible(plan, currentPlan?.slug ?? 'free', currentStatus, trialUsed);
             return (
               <PlanCard
                 key={plan.id}
@@ -415,11 +409,9 @@ export function PlanPickerDialog({
                 ctaLabel={
                   !plan.isPaid
                     ? 'Move to Free'
-                    : trialPath
-                      ? `Start ${plan.trialDays}-day trial`
-                      : hasActiveSubscription
-                        ? 'Switch to this plan'
-                        : 'Subscribe'
+                    : hasActiveSubscription
+                      ? 'Switch to this plan'
+                      : 'Subscribe'
                 }
                 onSelect={() => void checkout.submit(plan, cycle)}
               />

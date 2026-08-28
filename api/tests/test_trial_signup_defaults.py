@@ -18,6 +18,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.db.models import Client, Plan
+from app.services.plan_entitlements_service import _paid_tier_includes
 from app.services.plan_service import get_active_plans, get_default_plan
 
 pytestmark = pytest.mark.skipif(not os.getenv("DB_URL"), reason="needs a reachable Postgres at DB_URL")
@@ -74,6 +75,33 @@ def test_seed_matrix_defaults_the_trial_and_not_free():
     for key, val in pro.items():
         if key != "topup_allowed":
             assert trial["features"][key] == val, key
+
+    # Priced at nothing, on purpose and in every column. The row is
+    # ``is_default``, so ``assign_default_plan_to_client`` opens a subscription
+    # on it and grants its credits with no payment anywhere in the loop. A
+    # non-zero price here would be a tier billed to nobody.
+    for axis in (
+        "monthly_price_cents",
+        "annual_price_cents",
+        "monthly_price_usd_cents",
+        "annual_price_usd_cents",
+        "extra_seat_price_cents",
+        "extra_seat_price_usd_cents",
+    ):
+        assert trial[axis] == 0, axis
+
+    assert trial["sort_order"] == 0
+    assert trial["included_operator_seats"] == 1
+    # The rest of the limits map, which is served verbatim in the
+    # current-subscription payload and so is read by the customer.
+    assert trial["limits"]["credits"] == 500
+    assert trial["limits"]["leads"] == -1
+    assert trial["limits"]["documents"] == -1
+    assert trial["limits"]["page_scraping"] == 100
+    assert trial["limits"]["chat_history_days"] == 90
+    assert trial["limits"]["max_crawl_depth"] == 4
+    assert trial["limits"]["max_crawl_js_pages"] == 50
+    assert trial["limits"]["max_crawl_concurrency"] == 4
 
 
 def test_the_signup_trial_is_the_only_trial_in_the_matrix():
@@ -186,32 +214,71 @@ def test_change_plan_refuses_a_non_public_plan_as_a_target(db):
     create_sub.assert_not_called()
 
 
+def _slug_gate_constants() -> list[tuple[str, frozenset[str]]]:
+    """Every module-level plan-slug gate, discovered rather than enumerated.
+
+    A gate is a module-level ``frozenset`` of plan slugs whose name ends in
+    ``_SLUGS``: the shape every capability gate outside ``Plan.features`` uses.
+    Membership decides whether a tier gets the feature, so a new one that
+    forgets the trial takes a Professional capability away from it, silently
+    and behind copy that promises the opposite. Discovering them means that
+    failure shows up here on the day the gate is written.
+    """
+    import importlib
+
+    gates: list[tuple[str, frozenset[str]]] = []
+    for module_name in (
+        "app.services.plan_entitlements_service",
+        "app.services.plan_service",
+        "app.api.quotation_routes",
+    ):
+        module = importlib.import_module(module_name)
+        for attr in dir(module):
+            if not attr.endswith("_SLUGS"):
+                continue
+            value = getattr(module, attr)
+            # ``_SEEDED_PLAN_SLUGS`` is the roster of seeded tiers, not a gate:
+            # it answers "is this slug bespoke", the opposite question.
+            if isinstance(value, frozenset) and attr != "_SEEDED_PLAN_SLUGS":
+                gates.append((f"{module_name}.{attr}", value))
+    assert gates, "no slug gates discovered, the scan is broken"
+    return gates
+
+
 def test_the_trial_matches_professional_on_every_gate_outside_plan_features():
     """Capabilities gated by slug, not by the ``features`` column, must agree.
 
     The trial's ``features`` dict is Professional's, and the seed test above
-    pins that. But five capabilities are gated on slug sets instead, so a row
-    absent from them silently carries LESS than its features claim. Worse, a
+    pins that. But several capabilities are gated on slug sets instead, so a
+    row absent from one silently carries LESS than its features claim. Worse, a
     slug absent from ``_SEEDED_PLAN_SLUGS`` is read by ``_paid_tier_includes``
     as a bespoke per-contract tier and silently carries MORE. Pinning the trial
-    to Professional's answer on each gate is what keeps "fourteen days of
-    everything" true in both directions.
-    """
-    from app.services.plan_entitlements_service import (
-        EMAIL_VERIFICATION_SLUGS,
-        JOURNEY_ANALYTICS_SLUGS,
-        LEAD_SOURCE_ATTRIBUTION_SLUGS,
-        VISITOR_INTELLIGENCE_SLUGS,
-        _paid_tier_includes,
-    )
-    from app.services.plan_service import _DELTA_RECRAWL_PLAN_SLUGS
+    to Professional's answer on each gate is what keeps the row's own
+    description, "Fourteen days of everything", true in both directions.
 
-    for ladder in (
-        EMAIL_VERIFICATION_SLUGS,
-        JOURNEY_ANALYTICS_SLUGS,
-        LEAD_SOURCE_ATTRIBUTION_SLUGS,
-        VISITOR_INTELLIGENCE_SLUGS,
-        _DELTA_RECRAWL_PLAN_SLUGS,
-    ):
-        assert ("trial" in ladder) == ("professional" in ladder)
-        assert _paid_tier_includes("trial", ladder) == _paid_tier_includes("professional", ladder)
+    ``_slug_gate_constants`` finds the gates by scanning the modules that hold
+    them rather than listing them here, so a gate added later is covered the
+    day it lands. A hand-written list is what let the quotation flow sit
+    outside this guard.
+    """
+    for name, ladder in _slug_gate_constants():
+        assert ("trial" in ladder) == ("professional" in ladder), name
+        assert _paid_tier_includes("trial", ladder) == _paid_tier_includes("professional", ladder), name
+
+
+def test_start_trial_route_is_gone(db):
+    """The Standard-only trial offer is removed, not gated.
+
+    404, not 400 or 403. A Free customer post-conversion must never be able to
+    reach a second trial concept, and a gated route is still a route the next
+    reader has to reconcile with the signup trial.
+    """
+    from app.api import subscription_routes
+
+    assert not any(getattr(route, "path", "").endswith("/start-trial") for route in subscription_routes.router.routes)
+
+    buyer = _buyer(db, email="starttrial-gone@e.com")
+    db.commit()
+    with patch.object(subscription_routes, "get_session", lambda: _session_cm(db)):
+        res = _api(db, buyer).post("/subscriptions/start-trial", json={"plan_slug": "standard"})
+    assert res.status_code == 404, res.text

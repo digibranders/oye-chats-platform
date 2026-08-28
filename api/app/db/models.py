@@ -1629,8 +1629,14 @@ class Plan(Base):
     # (retained to avoid a schema migration here) can no longer reach a customer.
     annual_discount_percent = Column(Integer, default=30, server_default="30", nullable=False)
 
-    # Trial. Default 7 = the Standard-only free-trial length; seed_plans sets
-    # trial_days per tier (Standard 7, all others 0. Trials are Standard-only).
+    # Trial length in days. Exactly ONE seeded row carries a non-zero value:
+    # ``trial``, the non-public 14-day row every signup lands on
+    # (``plan_service.assign_default_plan_to_client`` branches on this being
+    # > 0). Every purchasable tier is 0 since the Standard-only 7-day offer was
+    # retired. The stale ``7`` defaults below are historical and are NOT the
+    # policy: the seed writes this column explicitly on every row, and the
+    # super-admin plan editor defaults new tiers to 0. They are retained to
+    # avoid a migration whose only effect would be on rows nothing creates.
     trial_days = Column(Integer, default=7, server_default="7", nullable=False)
 
     # Usage limits. JSONB allows flexible addition of new limit types without migrations

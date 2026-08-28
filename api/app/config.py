@@ -502,15 +502,17 @@ logger.info(f"Default billing provider: {BILLING_PROVIDER} ({BILLING_CURRENCY})"
 # ─────────────────────────────────────────────────────────────────────────────
 # Free-trial lifecycle
 # ─────────────────────────────────────────────────────────────────────────────
-# ``TRIAL_CREDITS`` is the fallback credit grant when a trial is provisioned
-# without a plan reference (auth_routes.py). ``TRIAL_DATA_RETENTION_DAYS`` is
-# the grace window between trial expiry and the cron that hard-deletes bot
-# documents/sessions (worker/tasks.py).
+# ``TRIAL_DATA_RETENTION_DAYS`` is the grace window between trial expiry and
+# the cron that hard-deletes bot documents/sessions (worker/tasks.py).
 #
-# Trial DURATION is sourced from ``Plan.trial_days`` (seeded by alembic), NOT
-# an env var. Keeping it on the plan row lets super admins change trial
-# length per-tier without a redeploy.
-TRIAL_CREDITS = int(_env("TRIAL_CREDITS", "750"))
+# ``TRIAL_CREDITS`` used to sit here as a fallback grant for a trial provisioned
+# without a plan reference. It is gone: the only trial is a plan row, so its
+# ``credits_per_month`` is the grant, and a constant naming the retired offer's
+# 750 was a second answer to a question with one.
+#
+# Trial DURATION is likewise sourced from ``Plan.trial_days``, NOT an env var.
+# Keeping it on the plan row lets super admins change trial length per-tier
+# without a redeploy.
 TRIAL_DATA_RETENTION_DAYS = int(_env("TRIAL_DATA_RETENTION_DAYS", "15"))
 
 # Dunning grace window. How long a subscription stays in ``past_due`` (full

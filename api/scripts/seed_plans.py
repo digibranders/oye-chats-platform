@@ -468,9 +468,17 @@ def run(*, apply: bool) -> int:
             verb = "update" if plan else "insert"
             price = data["monthly_price_cents"] / 100
             wired = _would_be_wired(data, plan)
-            if not wired:
+            if not data["is_public"]:
+                # Delisted rows are not a checkout question at all. Printing
+                # "self-serve" for the one row this flag exists to make
+                # un-buyable is the exact opposite of what the operator needs
+                # to read, and a zero price makes _would_be_wired say yes.
+                state = "NOT FOR SALE, delisted (is_public false)"
+            elif wired:
+                state = "self-serve"
+            else:
                 contact_sales_only.append(slug)
-            state = "self-serve" if wired else "CONTACT SALES, no Razorpay plan id"
+                state = "CONTACT SALES, no Razorpay plan id"
             print(f"  {verb:<6} {slug:<13} ₹{price:>8,.0f}/mo  {data['credits_per_month']:>6} credits  {state}")
             ceiling_warnings.extend(_emandate_warnings(data, seller_rate_bps))
 

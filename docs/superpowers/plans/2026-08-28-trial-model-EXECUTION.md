@@ -124,3 +124,93 @@ Gates: full backend suite 5875 passed, 4 skipped after the fix (two failures
 before it). `ruff check` and `ruff format --check` clean. Frontend
 `tsc --noEmit` and `npm run lint` clean, run because the review's finding 3
 touched `app/src/features/workspace/billingModel.ts`.
+
+### Task 2 review
+
+Fresh-context adversarial subagent (this one and every one after it forbidden
+from running any test runner, after the first review's pytest run collided with
+mine over the shared throwaway database). 6 findings, all real, all fixed in the
+Task 2b commit:
+
+1. **A sixth slug-keyed gate.** `quotation_routes.QUOTATION_PLAN_SLUGS` gates the
+   quotation flow on a bare `in` check with no bespoke fallback, and the trial
+   was not on it. So the row's own description, which
+   `subscription_routes` serializes into the dashboard, promised "fourteen days
+   of everything" while a Professional feature 403'd. `trial` added. The parity
+   test that was supposed to catch this hand-enumerated five ladders and could
+   never have found a sixth, so it now DISCOVERS gates by scanning the modules
+   for module-level `*_SLUGS` frozensets. Verified: removing `trial` from
+   `QUOTATION_PLAN_SLUGS` now fails that test.
+2. **The retired 7-day offer still lived in two defaults.**
+   `models.Plan.trial_days` carried a comment asserting "Standard 7, trials are
+   Standard-only", and `superadmin_plan_routes` defaulted a hand-created tier to
+   `trial_days=7`, which would have minted a second trial concept. The editor
+   default is now 0 and the comment states the real policy. The column's
+   `server_default="7"` is left alone deliberately: changing it needs a
+   migration for rows nothing creates, and the comment now says so. Flagged.
+3. **`auth_routes` registration comment described the behaviour this work
+   removed** ("the default plan is free ... the trial is opt-in via the billing
+   modal"). Reworded. Its welcome-email fallbacks also still named the retired
+   offer's shape, 750 credits and 7 days, so a missing plan relationship would
+   have emailed a customer numbers no row carries. Both read the row or say
+   zero now, and `config.TRIAL_CREDITS` (the 750) is deleted, having lost its
+   only reader.
+4. **Narrowing the ladder guard dropped the trial out of two invariants that
+   still apply to it.** `test_limits_credits_mirrors_credits_per_month` and
+   `test_no_plan_bundles_branding_removal` now walk every seeded row; only the
+   price and annual-discount guards stay ladder-only, because they divide by a
+   price the trial does not have.
+5. **The seed test pinned about a third of the row.** Nothing asserted the four
+   price fields are zero, which matters: the row is `is_default`, so
+   `assign_default_plan_to_client` opens a subscription on it and grants credits
+   with no payment in the loop. Prices, seats, sort order and the rest of the
+   limits map are pinned now.
+6. Two nits fixed: the seed dry-run printed `self-serve` for the one row the
+   whole change exists to make un-buyable (it now prints `NOT FOR SALE,
+   delisted`), and the exporter's gate test derived both sides of its assertion
+   from the exporter's own output, so it could only catch a rename. It reads the
+   seed directly now.
+
+### Task 2b, retire the Standard-only trial offer
+
+Status: **done**.
+
+Failing test first: `test_start_trial_route_is_gone` asserts both that no route
+in the subscriptions router ends in `/start-trial` and that a POST to it 404s.
+Verified failing before the removal.
+
+Removed: `POST /subscriptions/start-trial` with its `StartTrialRequest`,
+`plan_service.start_trial`, `plan_service.TrialUnavailable`, and the one test
+that pinned them (`test_start_trial_acquires_billing_lock`; the lock invariant it
+covered is still covered for the surviving path by the test directly below it).
+`has_used_trial` is KEPT: it feeds `/subscriptions/current`'s `trial_used`, which
+the payload still carries. So is `assign_default_plan_to_client`'s `trial_days >
+0` branch, which IS the new trial's mechanism.
+
+Frontend: the `startTrial` client, the trial branch in `usePlanCheckout`,
+`isTrialEligible`, the card-free-trial CTA in `PlanPickerDialog`, and the
+`trialUsed` prop threading behind them are gone. `submit`'s `actionKind`
+parameter went with them: its only purpose was forcing the trial path and no
+caller passed it. `grep startTrial src/` is now zero hits.
+
+Two tests were retargeted rather than deleted, because their subject was not the
+trial: the keyboard-navigation test used the trial button only as a focus
+target, and "never offers a trial the backend would refuse" is now an
+unconditional invariant ("never offers a trial, because the picker is not where
+trials start").
+
+Copy that named the deleted route was corrected wherever it appeared: the
+super-admin `extend_trial_days` 409 told a support engineer to send the customer
+to `POST /subscriptions/start-trial`, which was the plan's own
+false-published-claim failure mode in miniature. It now names what actually
+exists. Same for three code comments in `plan_service`, `razorpay_service` and
+`superadmin_plan_routes`.
+
+Gates: full backend suite **5879 passed, 4 skipped**. `ruff check` and
+`ruff format` clean. Frontend `tsc --noEmit` clean, `npm run lint` clean
+(1 pre-existing warning, 0 errors), `npx vitest run` 134 files / 1767 tests
+passed.
+
+Also merged `origin/development` (`24ce482`, a WidgetMock refactor) into the
+branch at the user's request. Clean merge, frontend only, and the full frontend
+suite was re-run against it.

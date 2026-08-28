@@ -3,10 +3,9 @@
  * PlanModal so the redesigned confirm Drawer can reuse it without
  * reimplementing anything payment-critical.
  *
- * One entry point, `submit(plan, billingCycle, actionKind)`, drives every
+ * One entry point, `submit(plan, billingCycle)`, drives every
  * branch the backend supports:
  *   - downgrade to Free            → change-plan (scheduled at period end)
- *   - trial-eligible paid plan     → start-trial (no card)
  *   - first paid purchase          → checkout → Razorpay → verify
  *   - upgrade/downgrade (active)   → change-plan (proration applied server-side)
  *   - international USD-pending     → surfaced as a notice (contact sales)
@@ -24,7 +23,6 @@ import { useCurrency } from '../../../context/CurrencyContext';
 import {
   changePlan,
   createCheckoutSession,
-  startTrial,
   verifyRazorpaySubscription,
   recordBillingEvent,
 } from '../../../services/api';
@@ -61,8 +59,6 @@ export interface PlanCheckoutContext {
    * one. `null` = the account-level ("All agents") view.
    */
   botId?: number | null;
-  /** True once the client has consumed their lifetime free trial - closes the trial path. */
-  trialUsed: boolean;
   /**
    * Active launch promotion the client qualifies for, if any. When it applies to
    * the selected plan, the money-path is forced through CHECKOUT (where the
@@ -115,27 +111,9 @@ export interface PlanCheckoutResult {
    */
   activationPending: boolean;
   /** Run the checkout money-path for `plan` at `billingCycle`. */
-  submit: (plan: PlanView, billingCycle: BillingCycle, actionKind?: string) => Promise<void>;
+  submit: (plan: PlanView, billingCycle: BillingCycle) => Promise<void>;
   /** Clear transient error/notice state (call on drawer open). */
   reset: () => void;
-}
-
-// The single trial gate for every checkout surface (modal and drawer both call
-// this), so the offer can never drift between them.
-// ``trialUsed`` reflects the backend's lifetime one-trial-per-client rule
-// (from /subscriptions/current); without it the UI would offer a trial the
-// start-trial endpoint rejects with ``already_trialed``.
-export function isTrialEligible(
-  plan: PlanView,
-  currentPlanSlug: string,
-  currentSubscriptionStatus: string | null,
-  trialUsed: boolean,
-): boolean {
-  if (trialUsed) return false;
-  if (plan.slug === currentPlanSlug) return false;
-  if (plan.trialDays <= 0) return false;
-  const onPaidPlan = Boolean(currentPlanSlug && currentPlanSlug !== 'free');
-  return !(currentSubscriptionStatus === 'active' && onPaidPlan);
 }
 
 export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
@@ -143,7 +121,6 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
     currentPlanSlug,
     currentSubscriptionStatus,
     hasActiveSubscription,
-    trialUsed,
     promotion,
     botId = null,
     onSuccess,
@@ -182,7 +159,7 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
   }, []);
 
   const submit = useCallback(
-    async (plan: PlanView, billingCycle: BillingCycle, actionKind: string = 'auto'): Promise<void> => {
+    async (plan: PlanView, billingCycle: BillingCycle): Promise<void> => {
       // One attempt at a time - a second click must not open a second checkout.
       if (inFlight.current) return;
       /**
@@ -235,26 +212,6 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
       // annual + promo would bill a full year after the free period, so the
       // backend never applies it there either.
       const promoApplies = billingCycle === 'monthly' && promotionAppliesToPlan(promotion ?? null, plan);
-
-      const trialEligible = isTrialEligible(plan, currentPlanSlug, currentSubscriptionStatus, trialUsed);
-      const takeTrialPath = actionKind === 'trial' || (actionKind === 'auto' && trialEligible && !promoApplies);
-      if (takeTrialPath) {
-        setError('');
-        setNotice('');
-        inFlight.current = true;
-        setSubmitting(true);
-        try {
-          await startTrial(plan.slug);
-          onSuccess(`Your ${plan.trialDays || 7}-day ${plan.name} trial has started.`);
-          onDone();
-        } catch (err: unknown) {
-          setError(err instanceof Error ? err.message : 'Could not start your free trial.');
-        } finally {
-          inFlight.current = false;
-          setSubmitting(false);
-        }
-        return;
-      }
 
       setError('');
       inFlight.current = true;
@@ -528,7 +485,6 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
       currentSubscriptionStatus,
       onBillingDetailsRequired,
       hasActiveSubscription,
-      trialUsed,
       promotion,
       botId,
       onSuccess,

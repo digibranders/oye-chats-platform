@@ -122,8 +122,12 @@ def test_external_gates_match_the_live_constants(matrix: dict) -> None:
         "visitor_intelligence": VISITOR_INTELLIGENCE_SLUGS,
         "delta_recrawl": _DELTA_RECRAWL_PLAN_SLUGS,
     }
+    from scripts.seed_plans import _PLANS
+
     by_key = {c["key"]: c for c in matrix["capabilities"]}
-    published = {p["slug"] for p in matrix["plans"]}
+    # From the SEED, not from the matrix the exporter just built. Deriving both
+    # sides from the exporter's own output would only catch a rename.
+    published = {p["slug"] for p in _PLANS if p["is_public"]}
 
     for key, slugs in expected.items():
         assert key in by_key, f"{key} missing from the exported matrix"

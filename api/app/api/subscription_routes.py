@@ -27,7 +27,7 @@ from app.config import (
     INTL_PAYMENTS_ENABLED,
     RAZORPAY_ENABLED,
 )
-from app.core.dates import add_months, trial_days_remaining
+from app.core.dates import add_months
 from app.core.geo import resolve_country
 from app.core.gstin import VALID_STATE_CODES, is_valid_gstin, normalize_gstin
 from app.core.pricing import annual_saving_percent, format_amount, resolve_billing_context, seat_price
@@ -314,101 +314,6 @@ def get_active_promotion(client: Client = Depends(get_current_client)):
 # ── Authenticated: Current subscription ──
 
 
-class StartTrialRequest(BaseModel):
-    """Body for ``POST /subscriptions/start-trial``.
-
-    The slug is the public plan identifier the pricing page renders against
-    (``starter`` / ``standard``). The slug must point at an active plan with
-    ``trial_days > 0``, the free plan is intentionally excluded.
-    """
-
-    plan_slug: str = Field(..., min_length=1, max_length=64, pattern=r"^[a-z0-9_\-]+$")
-
-
-@router.post("/start-trial")
-def start_trial_endpoint(body: StartTrialRequest, client: Client = Depends(get_current_client)):
-    """Begin the paid plan's configured free trial (currently Standard, 7 days).
-
-    Triggered when the customer clicks "Start free trial". No card is
-    required; when the trial window elapses the expiry cron flips the
-    subscription to ``trial_expired`` and the customer must pick a plan
-    + enter a card to keep their bot live.
-
-    Trial credits = the plan's full ``credits_per_month`` so the prospect
-    experiences the real product. The welcome email fires here, not on
-    registration, since registration now lands the customer on the free
-    tier without a trial.
-
-    Error mapping (matches :class:`TrialUnavailable.reason`):
-
-    * ``plan_not_found``           → 404
-    * ``plan_not_trialable``       → 400
-    * ``already_trialed``          → 409
-    * ``active_paid_subscription`` → 409
-    """
-    from datetime import UTC, datetime
-
-    from app.services.email_service import send_trial_welcome_email
-    from app.services.plan_service import TrialUnavailable, start_trial
-
-    with get_session() as session:
-        try:
-            sub = start_trial(session, client.id, body.plan_slug)
-        except TrialUnavailable as exc:
-            session.rollback()
-            code_to_status = {
-                "plan_not_found": 404,
-                "plan_not_trialable": 400,
-                "already_trialed": 409,
-                "active_paid_subscription": 409,
-            }
-            raise HTTPException(
-                status_code=code_to_status.get(exc.reason, 400),
-                detail={"error": exc.reason, "message": exc.message},
-            ) from exc
-
-        # Snapshot every value we'll need post-commit. SQLAlchemy expires
-        # ORM attributes on ``session.commit()``, so reading anything off
-        # ``sub`` after the with-block closes would raise
-        # ``DetachedInstanceError``. Pulling everything into locals here
-        # keeps the response builder and the email send path safe.
-        trial_end = sub.trial_end
-        if trial_end is not None and trial_end.tzinfo is None:
-            trial_end = trial_end.replace(tzinfo=UTC)
-        plan = sub.plan
-        credits_granted = int(plan.credits_per_month or 0) if plan else 0
-        duration_days = int(plan.trial_days or 7) if plan else 7
-        sub_status = sub.status
-        session.commit()
-
-    # Fire-and-forget welcome email AFTER the commit so a transport blip
-    # cannot block (or roll back) the trial activation. The helper itself
-    # is defensive; this outer catch is the belt-and-braces guard.
-    try:
-        send_trial_welcome_email(
-            client.email,
-            name=client.name,
-            trial_end=trial_end or datetime.now(UTC),
-            credits=credits_granted,
-            duration_days=duration_days,
-        )
-    except Exception as mail_err:
-        logger.warning(
-            "trial_welcome_dispatch_failed for client %s: %s",
-            client.id,
-            mail_err,
-        )
-
-    days_remaining = trial_days_remaining(trial_end)
-    return {
-        "status": sub_status,
-        "plan_slug": body.plan_slug,
-        "trial_end_at": trial_end.isoformat() if trial_end else None,
-        "days_remaining": days_remaining,
-        "credits_granted": credits_granted,
-    }
-
-
 @router.get("/current")
 def get_current_subscription(
     auth: dict = Depends(get_current_client_or_operator),
@@ -597,10 +502,11 @@ def get_current_subscription(
                 "default_provider": BILLING_PROVIDER,
                 "razorpay_enabled": RAZORPAY_ENABLED,
             },
-            # Whether this client has already consumed their lifetime free
-            # trial. Lets the Billing UI gate the trial CTA (show "Subscribe"
-            # instead of "Start free trial") so it never offers a trial the
-            # start-trial endpoint would reject with ``already_trialed``.
+            # Whether this client has ever held a trial. Since the 14-day
+            # signup trial replaced the Standard-only offer there is no trial
+            # to start from the Billing page, so this no longer gates a CTA;
+            # it is retained as a read-only fact about the account, and the
+            # rest of the payload's consumers still receive the same shape.
             "trial_used": has_used_trial(session, client_id),
         }
 

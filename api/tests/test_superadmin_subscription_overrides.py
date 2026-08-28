@@ -84,8 +84,10 @@ def test_extend_trial_on_a_row_with_no_trial_is_409_and_changes_nothing(db, monk
     assert res.status_code == 409, res.text
     detail = res.json()["detail"]
     assert "no trial to extend" in detail
-    # The remedy is named, not left to the caller to guess.
-    assert "/subscriptions/start-trial" in detail
+    # The remedy is named, not left to the caller to guess, and it names a
+    # thing that exists: there is no start-a-trial route to send anyone to.
+    assert "set trial_start, trial_end and current_period_end on the row directly" in detail
+    assert "start-trial" not in detail
 
     db.expire_all()
     refreshed = db.get(Subscription, sub.id)
