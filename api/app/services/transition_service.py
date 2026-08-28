@@ -449,7 +449,7 @@ def gateway_cancel_is_due(sub: Subscription, *, now: datetime | None = None) -> 
     return sub.current_period_end <= now + timedelta(days=config.GATEWAY_CANCEL_LEAD_DAYS)
 
 
-def execute_gateway_cancellation(session: Session, sub: Subscription) -> bool:
+def execute_gateway_cancellation(session: Session, sub: Subscription, *, at_period_end: bool = True) -> bool:
     """Issue the real, irreversible Razorpay cancel for a cancel-pending row.
 
     Split out of ``/subscriptions/cancel`` so the gateway call happens at the
@@ -470,6 +470,13 @@ def execute_gateway_cancellation(session: Session, sub: Subscription) -> bool:
     failure to cancel it must not block the plan cancel that already
     succeeded. Log loudly for reconciliation instead.
 
+    ``at_period_end`` defaults to True, the customer-cancel case: they have
+    paid through the period and keep it. Pass False where there is no paid
+    period left to protect — the dunning expiry, where the grace window has
+    already elapsed unpaid. Cancelling that one at cycle end would leave
+    Razorpay free to keep retrying the card until the boundary, and a retry
+    that succeeds on an ``expired`` row takes the money and grants nothing.
+
     Returns True when this call performed the cancel, False when it was
     already done.
 
@@ -483,7 +490,7 @@ def execute_gateway_cancellation(session: Session, sub: Subscription) -> bool:
         return False
 
     if sub.razorpay_subscription_id:
-        razorpay_service.cancel_subscription(sub, at_period_end=True)
+        razorpay_service.cancel_subscription(sub, at_period_end=at_period_end)
 
     seat_cancel_failed = False
     if sub.seat_addon_subscription_id:
@@ -724,17 +731,15 @@ def promote_scheduled_change(session: Session, sub: Subscription) -> dict[str, A
     #   * Account-level downgrade (``bot_id IS NULL``, the common path): the
     #     activation sibling-cancel sweep already clears active-set rows WHERE
     #     ``bot_id IS NULL``, so it cancels this grace row for free.
-    #   * Per-bot downgrade (``bot_id IS NOT NULL``): that sweep does NOT touch
-    #     bot-scoped rows, and ``ix_subscriptions_client_bot_active`` is a UNIQUE
-    #     partial index allowing only ONE active-set row per (client, bot).
-    #     CONTRACT for the per-bot activation branch: before inserting the new
-    #     bot-scoped active row it MUST cancel any ``status='past_due'`` row for
-    #     the same (client_id, bot_id) whose ``cancel_reason`` equals
-    #     ``DOWNGRADE_REAUTH_GRACE_REASON``. Otherwise the insert collides on
-    #     that unique index and activation fails. Until that lands (today's
-    #     activation still creates a ``bot_id IS NULL`` row), a bot-scoped grace
-    #     row merely self-heals via the expire cron below (≤ 7 days): stale data
-    #     at worst, never a lost downgrade or a blocked re-auth.
+    #   * Per-bot downgrade (``bot_id IS NOT NULL``): the replacement mandate
+    #     minted below carries ``purpose=per_bot_subscription`` +
+    #     ``oyechats_bot_id``, so its activation resolves ``resume_bot_id`` and
+    #     runs the sweep scoped to THIS bot — retiring this grace row before the
+    #     INSERT (``ix_subscriptions_client_bot_active`` allows only one
+    #     active-set row per (client, bot)) and, crucially, never touching the
+    #     client's separate ACCOUNT subscription. ``cancel_bot_scoped_reauth_grace``
+    #     in the activation handler remains as belt-and-braces for mandates
+    #     minted before these markers shipped.
     #
     # If the customer never re-authorizes, ``task_expire_past_due_subscriptions``
     # flips this row to ``expired`` after ``PAYMENT_FAILED_GRACE_DAYS`` (7 days)
@@ -767,15 +772,29 @@ def promote_scheduled_change(session: Session, sub: Subscription) -> dict[str, A
     if client is not None:
         plan_entitlements_service.invalidate(client.id)
 
+    extra_notes: dict[str, str] = {
+        "prev_razorpay_subscription_id": sub.razorpay_subscription_id or "",
+        "carried_seat_count": str(carried_seats),
+    }
+    if sub.bot_id is not None:
+        # Name the bot this replacement funds, mirroring ``/resume`` Mode 2.
+        # Without these markers the activation handler takes the ACCOUNT-level
+        # branch, whose sibling sweep is scoped ``bot_id IS NULL`` — it would
+        # cancel the client's separate account subscription (and irreversibly
+        # cancel its mandate at Razorpay) while leaving this bot's grace row
+        # orphaned and the new row unscoped. With them, activation resolves
+        # ``resume_bot_id``, sweeps only this bot's rows (retiring the grace
+        # row below before the INSERT, satisfying the unique-index contract),
+        # and re-links ``Bot.subscription_id`` to the row that now funds it.
+        extra_notes["purpose"] = "per_bot_subscription"
+        extra_notes["oyechats_bot_id"] = str(sub.bot_id)
+
     payload = razorpay_service.create_subscription(
         session,
         client,
         new_plan,
         billing_cycle,
-        extra_notes={
-            "prev_razorpay_subscription_id": sub.razorpay_subscription_id or "",
-            "carried_seat_count": str(carried_seats),
-        },
+        extra_notes=extra_notes,
     )
     payload["prev_razorpay_subscription_id"] = sub.razorpay_subscription_id
     payload["status"] = "scheduled_change_promoted"
