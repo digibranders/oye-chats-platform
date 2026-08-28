@@ -382,7 +382,16 @@ export function ChatPane({
           live
             ? async (message) => {
                 if (message.dbId == null) return;
-                await translateForSession(sessionId, message.content, message.dbId);
+                // The endpoint persists the backfill and RETURNS it, but
+                // broadcasts nothing, so this tab applies its own result.
+                // Waiting for a `message_translation` frame that never comes
+                // left the bubble on "Translation unavailable" until the
+                // thread was rebuilt from history.
+                const result = await translateForSession(sessionId, message.content, message.dbId);
+                socket.applyTranslation(sessionId, message.dbId, result.target_locale, {
+                  content: result.translated,
+                  status: 'ok',
+                });
               }
             : undefined
         }

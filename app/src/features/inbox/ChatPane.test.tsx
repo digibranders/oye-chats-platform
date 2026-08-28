@@ -58,6 +58,7 @@ const SOCKET: OperatorSocketApi = {
   loadHistory: vi.fn(async () => {}),
   loadOlder: vi.fn(async () => {}),
   clearUnread: vi.fn(),
+  applyTranslation: vi.fn(),
   clearConnectResolution: vi.fn(),
 };
 

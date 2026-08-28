@@ -18,6 +18,7 @@ import {
   type QueueItem,
   reconnectDelay,
   type RosterOperator,
+  type TranslationEntry,
   type VisitorPresence,
   type SessionEnding,
 } from './liveChatProtocol';
@@ -92,6 +93,53 @@ export interface OperatorSocketApi extends OperatorSocketState {
   loadOlder: (sessionId: string) => Promise<void>;
   clearUnread: (sessionId: string) => void;
   clearConnectResolution: (sessionId: string) => void;
+  /**
+   * Apply a translation this tab fetched itself, rather than one that arrived
+   * on the socket. The operator's retry is the only caller: see
+   * `mergeTranslation` for why it has to.
+   */
+  applyTranslation: (
+    sessionId: string,
+    messageId: number,
+    language: string,
+    entry: TranslationEntry,
+  ) => void;
+}
+
+/**
+ * Merge one translation onto the message it belongs to.
+ *
+ * Shared by the `message_translation` frame and by the operator's own retry.
+ * The retry has to apply its own result: `POST /operators/translate` persists
+ * the backfill and RETURNS it, but broadcasts nothing, so a console that only
+ * listened for a frame would sit on "Translation unavailable" until the thread
+ * was rebuilt from history.
+ *
+ * IDEMPOTENT BY CONSTRUCTION. The same translation can legitimately arrive
+ * twice - a Redis backplane redelivery, or a retry landing next to the frame
+ * for the same message - and writing the same language key with the same value
+ * twice is a no-op. The `dbId` match also means a translation for a message
+ * this tab has not seen is dropped rather than creating a phantom bubble;
+ * history will carry it.
+ */
+function mergeTranslation(
+  bySession: Record<string, OperatorMessage[]>,
+  sessionId: string,
+  messageId: number,
+  language: string,
+  entry: TranslationEntry,
+): Record<string, OperatorMessage[]> {
+  const existing = bySession[sessionId];
+  if (!existing) return bySession;
+  let changed = false;
+  const next = existing.map((m) => {
+    if (m.dbId !== messageId) return m;
+    const current = m.translations?.[language];
+    if (current?.status === entry.status && current?.content === entry.content) return m;
+    changed = true;
+    return { ...m, translations: { ...(m.translations ?? {}), [language]: entry } };
+  });
+  return changed ? { ...bySession, [sessionId]: next } : bySession;
 }
 
 const TYPING_THROTTLE_MS = 2000;
@@ -266,31 +314,13 @@ export function useOperatorSocket({ enabled, isOperator }: UseOperatorSocketOpti
         // Arrives separately from, and after, the message it belongs to: the
         // visitor's original is persisted, routed and acknowledged before any
         // translation is attempted. Merge by `message_id`.
-        //
-        // IDEMPOTENT BY CONSTRUCTION. The same frame can legitimately arrive
-        // twice (a Redis backplane redelivery, an operator-initiated retry
-        // landing next to the original), and writing the same language key
-        // with the same value twice is a no-op. The `dbId` match also means a
-        // translation for a message this tab has not seen is simply dropped
-        // rather than creating a phantom bubble - history will carry it.
-        const sid = msg.session_id;
-        const entry =
+        const entry: TranslationEntry =
           msg.status === 'ok' && typeof msg.content === 'string' && msg.content
-            ? { content: msg.content, status: 'ok' as const }
-            : { status: 'failed' as const };
-        setMessagesBySession((prev) => {
-          const existing = prev[sid];
-          if (!existing) return prev;
-          let changed = false;
-          const next = existing.map((m) => {
-            if (m.dbId !== msg.message_id) return m;
-            const current = m.translations?.[msg.language];
-            if (current?.status === entry.status && current?.content === entry.content) return m;
-            changed = true;
-            return { ...m, translations: { ...(m.translations ?? {}), [msg.language]: entry } };
-          });
-          return changed ? { ...prev, [sid]: next } : prev;
-        });
+            ? { content: msg.content, status: 'ok' }
+            : { status: 'failed' };
+        setMessagesBySession((prev) =>
+          mergeTranslation(prev, msg.session_id, msg.message_id, msg.language, entry),
+        );
         break;
       }
 
@@ -797,6 +827,13 @@ export function useOperatorSocket({ enabled, isOperator }: UseOperatorSocketOpti
     });
   }, []);
 
+  const applyTranslation = useCallback(
+    (sessionId: string, messageId: number, language: string, entry: TranslationEntry): void => {
+      setMessagesBySession((prev) => mergeTranslation(prev, sessionId, messageId, language, entry));
+    },
+    [],
+  );
+
   return {
     status,
     operatorId,
@@ -826,5 +863,6 @@ export function useOperatorSocket({ enabled, isOperator }: UseOperatorSocketOpti
     loadOlder,
     clearUnread,
     clearConnectResolution,
+    applyTranslation,
   };
 }
