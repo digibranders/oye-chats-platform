@@ -63,6 +63,45 @@ router = APIRouter(prefix="/operators", tags=["operators"])
 OperatorRole = Literal["owner", "admin", "operator"]
 
 
+def resolve_operator_seat_limit(db, client_id: int, bot_id: int | None) -> int:
+    """The operator allowance for the scope the roster is counted in.
+
+    The seat gate counts operators bound to ONE bot (each agent has its own
+    allowance), so the limit has to come from the subscription that funds that
+    bot. It used to come from ``get_entitlements(client_id, ...)`` — the ACCOUNT
+    view, which resolves through ``get_client_subscription`` and therefore
+    follows the highest-PRICED subscription across every scope. On a workspace
+    with per-bot subscriptions the two scopes disagree, and both directions are
+    real defects:
+
+    * Seats bought on a cheaper agent raised ``operator_quantity`` on THAT row
+      while the gate kept reading a pricier sibling's. The customer was billed
+      every month and the seats never appeared anywhere — nothing reconciles
+      that, because the seat mandate has a live, legitimate parent.
+    * One purchase on the priciest row raised the account limit, and since the
+      count is per-bot, every other agent silently gained the same capacity free.
+
+    ``get_bot_entitlements`` is the documented tool for gates that are
+    inherently per-bot: it follows the bot's own subscription and falls back to
+    the account-level one when the bot has none, which is exactly the funding
+    story for an agent with no subscription of its own.
+    """
+    return resolve_operator_seat_entitlements(db, client_id, bot_id).limit_for("operators")
+
+
+def resolve_operator_seat_entitlements(db, client_id: int, bot_id: int | None):
+    """The entitlements object behind :func:`resolve_operator_seat_limit`.
+
+    Separate because the 403 body also names ``plan_slug``, and resolving the
+    scope twice would risk the limit and the plan name disagreeing.
+    """
+    from app.services.plan_entitlements_service import get_bot_entitlements, get_entitlements
+
+    if bot_id is None:
+        return get_entitlements(client_id, db, include_usage=True)
+    return get_bot_entitlements(bot_id, db, include_usage=True)
+
+
 def _require_team_management_access(auth: dict) -> None:
     """Only workspace owners, admins, and direct client logins can manage operators/departments."""
     if auth["type"] == "client":
@@ -398,12 +437,12 @@ def create_operator(request: CreateOperatorRequest, auth=Depends(get_current_cli
     # ── Plan enforcement: live_chat feature + operator count limit ──
     # ``enforce_feature`` is the legacy gate; the new entitlements service
     # adds quantitative limit checks (e.g. Starter = 1 operator included).
-    from app.services.plan_entitlements_service import UNLIMITED, get_entitlements
+    from app.services.plan_entitlements_service import UNLIMITED
     from app.services.plan_service import enforce_feature
 
     with get_session() as db:
         enforce_feature(db, client_id, "live_chat")
-        entitlements = get_entitlements(client_id, db, include_usage=True)
+        entitlements = resolve_operator_seat_entitlements(db, client_id, request.bot_id)
         operator_limit = entitlements.limit_for("operators")
         if operator_limit != UNLIMITED:
             # Seats are per-bot: count only the operators already bound to the
