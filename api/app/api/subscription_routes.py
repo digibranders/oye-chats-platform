@@ -248,6 +248,48 @@ def _resolve_provider() -> str:
 # ── Public: Pricing page ──
 
 
+# Mandate lead time for eMandate / UPI pre-debit notification. A first debit
+# scheduled sooner than this is one the gateway will not honour quietly.
+_TRIAL_DEFER_FLOOR = timedelta(hours=48)
+
+TRIAL_CONVERSION_NOTE = "oyechats_trial_conversion"
+
+
+def resolve_trial_defer_at(
+    *,
+    trial_end: datetime | None,
+    promo_start_at: datetime | None,
+    now: datetime | None = None,
+) -> datetime | None:
+    """When a mid-trial purchase should take its FIRST debit, or None.
+
+    The billing clock never moves: a customer who pays on day 3 keeps the
+    eleven free days they were promised, so the mandate is minted with
+    Razorpay's ``start_at`` at their trial end rather than charging today.
+
+    Two adjustments, both customer-favourable. A consumed promo slot must be
+    honoured, so the LATER of the two protections wins rather than the trial
+    silently cancelling a longer free period. And the result is floored at 48
+    hours out, because a date inside the eMandate pre-debit notice window is one
+    the gateway will not accept; a day-13 buyer therefore gets billing at
+    now+48h, up to a day of extra grace rather than a refusal.
+
+    None when there is nothing to defer: no trial, or one that has already
+    lapsed. Those buyers are charged normally.
+    """
+    reference = now or datetime.now(UTC)
+    if trial_end is None:
+        return None
+    if trial_end.tzinfo is None:
+        trial_end = trial_end.replace(tzinfo=UTC)
+    if trial_end <= reference:
+        return None
+    candidates = [trial_end, reference + _TRIAL_DEFER_FLOOR]
+    if promo_start_at is not None:
+        candidates.append(promo_start_at)
+    return max(candidates)
+
+
 @router.get("/plans")
 def list_plans():
     """Return every active PUBLIC plan for the pricing page. No auth required.
@@ -2008,8 +2050,34 @@ def create_checkout(
         # and later cycles no-op). Snapshot terms still freeze at subscribe
         # time. They travel in the immutable notes. Covers ANY attributed
         # code, not just discount-bearing ones (finding MED-2 preserved).
+        # Mid-trial purchase: defer the first debit to the end of the free days
+        # the customer was promised, and tell the webhook handlers that is what
+        # this mandate is. Without the note they cannot tell this deferred start
+        # from a resume (where the customer has ALREADY paid through start_at
+        # and must be granted nothing) and the buyer would sit unentitled until
+        # day 14, having just paid to stop being limited.
+        trial_defer_at: int | None = None
+        trialing_sub = session.execute(
+            select(Subscription)
+            .where(
+                Subscription.client_id == client.id,
+                Subscription.bot_id.is_(None),
+                Subscription.status == "trialing",
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+        if trialing_sub is not None:
+            defer_at = resolve_trial_defer_at(
+                trial_end=trialing_sub.trial_end,
+                promo_start_at=datetime.fromtimestamp(promo_start_at, UTC) if promo_start_at else None,
+            )
+            if defer_at is not None:
+                trial_defer_at = int(defer_at.timestamp())
+
         conv_meta = discount_service.resolve_referral_conversion_snapshot(session, client)
         extra_notes: dict[str, str] = dict(promo_extra_notes or {})
+        if trial_defer_at is not None:
+            extra_notes[TRIAL_CONVERSION_NOTE] = "1"
         if conv_meta:
             extra_notes.update(
                 {
@@ -2027,7 +2095,9 @@ def create_checkout(
                 plan,
                 request.billing_cycle,
                 discount_bps=discount_bps,
-                start_at=promo_start_at,
+                # ``resolve_trial_defer_at`` already took the LATER of the two,
+                # so this cannot shorten a consumed promo.
+                start_at=trial_defer_at if trial_defer_at is not None else promo_start_at,
                 extra_notes=extra_notes or None,
             )
         except ValueError as exc:

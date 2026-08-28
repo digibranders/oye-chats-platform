@@ -331,6 +331,12 @@ class TrialStatePayload(BaseModel):
     trial_end_at: str | None = None  # ISO-8601, UTC
     days_remaining: int | None = None  # ceil((trial_end - now) / 1 day), 0 once lapsed
     credits_granted: int | None = None
+    # Set when the customer has already BOUGHT during the trial. The mandate is
+    # authorised and their entitlements are live, but the first debit waits for
+    # the trial to run out, so the UI shows "Standard starts in N days" instead
+    # of a countdown and an Upgrade button they have already pressed.
+    paid_plan_starts_at: str | None = None  # ISO-8601, UTC
+    paid_plan_name: str | None = None
 
 
 class RegisterResponse(BaseModel):
@@ -550,6 +556,40 @@ def _build_trial_payload(session, client_id: int) -> "TrialStatePayload | None":
     from datetime import UTC
 
     from app.db.models import Subscription
+
+    # A mid-trial purchase first. Its activation RETIRES the trial row (one
+    # account-level row per client may sit in the active set), so by the time
+    # the mandate is authorised there is no trialing row left to find and the
+    # lookup below would answer None: no trial UI at all for the one customer
+    # who has just paid. The card needs "Standard starts in N days" here.
+    bought = (
+        session.execute(
+            select(Subscription)
+            .where(
+                Subscription.client_id == client_id,
+                Subscription.bot_id.is_(None),
+                Subscription.status == "active",
+            )
+            .order_by(Subscription.created_at.desc())
+            .limit(1)
+        )
+        .scalars()
+        .first()
+    )
+    if bought is not None and (bought.trial_emails_sent or {}).get("trial_conversion_granted"):
+        starts = bought.last_granted_period_end
+        if starts is not None and starts.tzinfo is None:
+            starts = starts.replace(tzinfo=UTC)
+        if starts is not None and starts > datetime.now(UTC):
+            plan_row = bought.plan
+            return TrialStatePayload(
+                status=bought.status,
+                trial_end_at=starts.isoformat(),
+                days_remaining=trial_days_remaining(starts),
+                credits_granted=int(plan_row.credits_per_month or 0) if plan_row else None,
+                paid_plan_starts_at=starts.isoformat(),
+                paid_plan_name=plan_row.name if plan_row else None,
+            )
 
     sub = (
         session.execute(

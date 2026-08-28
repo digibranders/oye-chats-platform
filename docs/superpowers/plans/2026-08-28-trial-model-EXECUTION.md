@@ -625,3 +625,71 @@ whole plan was written to avoid.
 Gates after the fixes: full backend suite **5913 passed, 4 skipped, zero
 failures**. `ruff check` and `ruff format --check` clean. Frontend `tsc` clean,
 `npm run lint` clean with zero warnings, `npx vitest run` 134 files / 1771 tests.
+
+### Task 6, mid-trial purchase
+
+Status: **done**, except the sandbox step, which is out of scope for this
+environment (see below).
+
+Seven tests written first and verified failing, in their own throwaway database
+because they drive the real webhook handler (mirroring
+`test_merge_promo_resume_regressions.py`).
+
+The five deltas, as the rewritten task specifies:
+
+1. **`start_at` for a trialing buyer.** `resolve_trial_defer_at` takes the LATER
+   of the trial's end and any consumed promo start, floored at 48 hours out for
+   eMandate and UPI pre-debit notice. A day-13 buyer therefore gets billing at
+   now+48h, up to a day of extra grace, rather than a date the gateway would
+   refuse. Returns None for a lapsed or absent trial, which charges normally.
+   Checkout stamps `oyechats_trial_conversion` so the handlers can tell this
+   deferred start from a resume.
+2. **Grant at authentication.** The distinction the note carries is real: a
+   resume's customer has ALREADY paid through `start_at` and must be granted
+   nothing, while a trial buyer has not, and paying early is precisely how they
+   stop being limited. So the conversion takes the granting branch and, like a
+   promo, does not inherit the swept trial row's period or grant marker
+   (inheriting the marker would no-op the grant and leave them on the
+   entitlements they just paid to leave). The grant is keyed on `start_at`,
+   which is what makes the day-14 `subscription.charged` a no-op.
+3. **The harvest, closed.** A conversion-marked mandate cancelled before its
+   first debit has spent credits no payment covered. The cancellation handler
+   forfeits the unspent remainder and converts the account to Free, which is
+   where day 14 would have put it anyway. That also removes the limbo the first
+   draft created: such a row matched neither the expiry sweep (which filters
+   `trialing`) nor `/auth/me`'s trial payload.
+4. **Client-level knowledge reactivation** was wired in the previous commit, as
+   the Task 5 review finding.
+5. **`/auth/me`** carries `paid_plan_starts_at` and `paid_plan_name`.
+
+One design correction found while writing the test, recorded rather than worked
+around: the plan's payload sketch adds these fields alongside the trial
+countdown, but `ix_subscriptions_client_legacy_active` admits one account-level
+row in the active set, so the activation sweep has already CANCELLED the trial
+row by the time the mandate is authorised. There is no trialing row left to
+decorate. `_build_trial_payload` therefore derives the whole "Standard starts in
+N days" state from the PURCHASED row, and returns it before the trialing lookup.
+Without that, the one customer who has just paid is the only one who sees no
+trial UI at all.
+
+No second retirement path was built. The plan's rewritten Task 6 is explicit
+that the activation handler already sweeps and cancels the sibling account row
+including a trialing one, and the test asserts that existing behaviour rather
+than adding to it.
+
+The verify fast path needed no new code: `reconcile_subscription_from_razorpay`
+already delegates to `_handle_subscription_activated` under a synthetic
+idempotency key, so verify and the webhook are one function and a double
+delivery grants once. Both facts are now pinned by a test.
+
+Mutation-tested: not recognising the conversion note, failing to set the
+grant-once marker, and removing the cancel forfeit each fail distinct tests.
+
+**Step 5, the Razorpay sandbox proof, is NOT done.** It needs live TEST keys and
+a human driving the checkout modal. Flagged for follow-up: one deferred checkout
+early in the trial and one at day 13 (the 48-hour floor case), confirming the
+mandate reaches `authenticated` with a future `start_at` and no charge, and that
+cancel-and-recreate still handles a sub in `authenticated`.
+
+Gates: full backend suite **5920 passed, 4 skipped, zero failures**. `ruff
+check` and `ruff format --check` clean.
