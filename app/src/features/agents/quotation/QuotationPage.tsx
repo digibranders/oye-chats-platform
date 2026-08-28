@@ -193,10 +193,8 @@ function QuotationContent({ agentId }: { agentId: number }) {
                             id: newServiceId(previous.services),
                             name: '',
                             description: '',
-                            unit_label: 'unit',
-                            price_per_unit: 0,
-                            default_quantity: 1,
-                            questions: [],
+                            // No price here: it lives on the service's lines.
+                            requirements: [],
                           },
                         ],
                       }))

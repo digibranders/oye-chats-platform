@@ -5,7 +5,6 @@ import {
   Card,
   CardBody,
   CardHeader,
-  Checkbox,
   Field,
   Grid,
   Input,
@@ -15,13 +14,16 @@ import {
 } from '../../../ui';
 import { NumberField } from '../advanced/NumberField';
 import {
-  MAX_OPTIONS,
-  MAX_QUESTIONS_PER_SERVICE,
-  QUESTION_TYPES,
-  type QuestionType,
+  MAX_OPTIONS_PER_REQUIREMENT,
+  MAX_REQUIREMENTS_PER_SERVICE,
+  QUANTITY_MODES,
+  REQUIREMENT_TYPES,
+  type QuantityMode,
+  type Requirement,
+  type RequirementType,
   type Service,
-  type ServiceQuestion,
-  newQuestionId,
+  newOptionId,
+  newRequirementId,
 } from './quotation.model';
 
 export interface ServiceEditorProps {
@@ -41,16 +43,41 @@ function money(currency: string, majorUnits: number): string {
 }
 
 /**
- * One priced service, with the questions the chatbot asks to scope it.
+ * What this service adds to a quote if the visitor takes every line.
  *
- * The questions are the part that earns the surface: a price alone is a
- * brochure, whereas "how many pages?" is the answer that makes the quote a
- * number the operator can pick the phone up about. They are edited inline
- * rather than behind a second dialog — a dialog inside an expanded row inside a
- * list is three levels of nesting for a text field and a type.
+ * A `choice` contributes its dearest option, because that is the ceiling, and a
+ * ceiling is the only figure that is true for every visitor. Quoting a floor
+ * next to a service the visitor will price higher reads as a bait.
+ */
+function ceilingFor(service: Service): number {
+  return service.requirements.reduce((total, requirement) => {
+    if (requirement.type === 'choice') {
+      const dearest = requirement.options.reduce(
+        (max, option) => Math.max(max, option.price * option.quantity),
+        0,
+      );
+      return total + dearest;
+    }
+    const quantity = requirement.quantity_mode === 'none' ? 1 : requirement.quantity;
+    return total + requirement.price * quantity;
+  }, 0);
+}
+
+/**
+ * One service and the priced lines that make it up.
+ *
+ * Pricing lives on the LINES, not the service: a service is a named grouping,
+ * and "Photography" is not a price, whereas "Second shooter" and "Drone" are.
+ * That is the server's model (`Requirement` in `quotation_routes.py`) and
+ * matching it here is what stops the editor writing a catalog the API silently
+ * discards.
+ *
+ * Lines are edited inline rather than behind a second dialog: a dialog inside
+ * an expanded row inside a list is three levels of nesting for a label and a
+ * number.
  *
  * Memoised because a catalog at its ceiling is twenty of these, each holding up
- * to eight questions with up to eight options: a keystroke in one price field
+ * to twenty lines with up to twelve options: a keystroke in one price field
  * should re-render one service, not the whole catalog.
  */
 function ServiceEditorInner({
@@ -61,13 +88,12 @@ function ServiceEditorInner({
   onChange,
   onRemove,
 }: ServiceEditorProps) {
-  const unit = service.unit_label.trim() || 'unit';
-  const subtotal = service.price_per_unit * service.default_quantity;
+  const requirements = service.requirements;
 
-  const patchQuestion = (questionIndex: number, patch: Partial<ServiceQuestion>) =>
+  const patchRequirement = (requirementIndex: number, patch: Partial<Requirement>) =>
     onChange({
-      questions: service.questions.map((question, i) =>
-        i === questionIndex ? { ...question, ...patch } : question,
+      requirements: requirements.map((requirement, i) =>
+        i === requirementIndex ? { ...requirement, ...patch } : requirement,
       ),
     });
 
@@ -77,9 +103,9 @@ function ServiceEditorInner({
         eyebrow={`Service ${index + 1}`}
         title={service.name.trim() || 'Untitled service'}
         titleAs="h3"
-        description={`${money(currency, service.price_per_unit)} per ${unit} · ${
-          service.questions.length === 1 ? '1 question' : `${service.questions.length} questions`
-        }`}
+        description={`${
+          requirements.length === 1 ? '1 line' : `${formatNumber(requirements.length)} lines`
+        } · up to ${money(currency, ceilingFor(service))}`}
         actions={
           <Button
             variant="danger"
@@ -93,24 +119,14 @@ function ServiceEditorInner({
         }
       />
       <CardBody className="space-y-4">
-        <Grid cols={2}>
-          <Field label="Name" required hint="What the visitor picks from.">
-            <Input
-              value={service.name}
-              onChange={(event) => onChange({ name: event.target.value })}
-              placeholder="Landing page design"
-              disabled={disabled}
-            />
-          </Field>
-          <Field label="Unit" hint="What one of it is billed against.">
-            <Input
-              value={service.unit_label}
-              onChange={(event) => onChange({ unit_label: event.target.value })}
-              placeholder="page, hour, seat"
-              disabled={disabled}
-            />
-          </Field>
-        </Grid>
+        <Field label="Name" required hint="What the visitor picks from.">
+          <Input
+            value={service.name}
+            onChange={(event) => onChange({ name: event.target.value })}
+            placeholder="Landing page design"
+            disabled={disabled}
+          />
+        </Field>
 
         <Field label="Description" optional hint="One line, shown under the name while quoting.">
           <Input
@@ -121,53 +137,30 @@ function ServiceEditorInner({
           />
         </Field>
 
-        <Grid cols={3}>
-          <NumberField
-            label={`Price per ${unit}`}
-            value={service.price_per_unit}
-            step={0.01}
-            min={0}
-            disabled={disabled}
-            onChange={(raw) => onChange({ price_per_unit: Math.max(0, Number(raw) || 0) })}
-          />
-          <NumberField
-            label="Default quantity"
-            hint="Pre-filled when the chatbot asks."
-            value={service.default_quantity}
-            step={1}
-            min={0}
-            disabled={disabled}
-            onChange={(raw) => onChange({ default_quantity: Math.max(0, Math.floor(Number(raw) || 0)) })}
-          />
-          <Field label="Subtotal at that quantity" hint="What the visitor would see.">
-            {/* Not an `Input`: it is derived, and a disabled field that looks
-                editable invites the reader to try. */}
-            <p className="figure pt-1.5 text-base text-text-primary">{money(currency, subtotal)}</p>
-          </Field>
-        </Grid>
-
         <section className="border-t border-border pt-4">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <h4 className="text-base font-semibold text-text-primary">Questions</h4>
+            <h4 className="text-base font-semibold text-text-primary">Lines</h4>
             <span className="figure text-xs text-text-tertiary">
-              {formatNumber(service.questions.length)} of {formatNumber(MAX_QUESTIONS_PER_SERVICE)}
+              {formatNumber(requirements.length)} of {formatNumber(MAX_REQUIREMENTS_PER_SERVICE)}
             </span>
           </div>
           <p className="mt-1 text-sm text-text-secondary">
-            Asked before the quote is locked in. Answers are saved on the lead, so whoever calls has
-            the visitor&rsquo;s own words in front of them.
+            Every line the visitor can take, and what each one costs. A line item is ticked on or
+            off; a priced choice asks them to pick one of several answers, each with its own price.
           </p>
 
-          {service.questions.length === 0 ? null : (
+          {requirements.length === 0 ? null : (
             <ul className="mt-3 space-y-3">
-              {service.questions.map((question, questionIndex) => (
-                <li key={question.id} className="rounded-md border border-border p-3">
+              {requirements.map((requirement, requirementIndex) => (
+                <li key={requirement.id} className="rounded-md border border-border p-3">
                   <div className="flex items-start justify-between gap-2">
-                    <Field label={`Question ${questionIndex + 1}`} required className="min-w-0 flex-1">
+                    <Field label={`Line ${requirementIndex + 1}`} required className="min-w-0 flex-1">
                       <Input
-                        value={question.text}
-                        onChange={(event) => patchQuestion(questionIndex, { text: event.target.value })}
-                        placeholder="How many pages do you need?"
+                        value={requirement.label}
+                        onChange={(event) =>
+                          patchRequirement(requirementIndex, { label: event.target.value })
+                        }
+                        placeholder="Second shooter"
                         disabled={disabled}
                       />
                     </Field>
@@ -176,59 +169,162 @@ function ServiceEditorInner({
                       size="sm"
                       className="mt-6"
                       disabled={disabled}
-                      aria-label={`Remove question ${questionIndex + 1}`}
+                      aria-label={`Remove line ${requirementIndex + 1}`}
                       onClick={() =>
-                        onChange({ questions: service.questions.filter((_, i) => i !== questionIndex) })
+                        onChange({
+                          requirements: requirements.filter((_, i) => i !== requirementIndex),
+                        })
                       }
                       iconLeft={<Trash2 aria-hidden />}
                     />
                   </div>
 
+                  <Field
+                    label="Question"
+                    optional
+                    hint="What the chatbot asks. Falls back to the label when blank."
+                    className="mt-3"
+                  >
+                    <Input
+                      value={requirement.question}
+                      onChange={(event) =>
+                        patchRequirement(requirementIndex, { question: event.target.value })
+                      }
+                      placeholder="Do you want a second shooter?"
+                      disabled={disabled}
+                    />
+                  </Field>
+
                   <Grid cols={2} className="mt-3">
-                    <Field label="Answer type">
+                    <Field label="Type">
                       <Select
-                        label="Answer type"
-                        value={question.type}
-                        options={QUESTION_TYPES}
+                        label="Type"
+                        value={requirement.type}
+                        options={REQUIREMENT_TYPES}
                         disabled={disabled}
                         onValueChange={(value) => {
-                          const type = value as QuestionType;
-                          patchQuestion(questionIndex, {
+                          const type = value as RequirementType;
+                          patchRequirement(requirementIndex, {
                             type,
-                            // A choice with no options can never be answered, so
-                            // switching to it seeds the first blank row.
-                            options: type === 'choice' && question.options.length === 0 ? [''] : question.options,
+                            // The API rejects a choice with no options, so
+                            // switching to it seeds the first blank row rather
+                            // than letting the reader save into a 422.
+                            options:
+                              type === 'choice' && requirement.options.length === 0
+                                ? [{ id: newOptionId([]), label: '', price: 0, quantity: 1 }]
+                                : requirement.options,
                           });
                         }}
                       />
                     </Field>
-                    <Field label="Requirement" hint="Untick for genuinely optional context.">
-                      <Checkbox
-                        checked={question.required}
+                    <Field label="Quantity" hint={QUANTITY_MODES.find((mode) => mode.value === requirement.quantity_mode)?.help}>
+                      <Select
+                        label="Quantity"
+                        value={requirement.quantity_mode}
+                        options={QUANTITY_MODES}
                         disabled={disabled}
-                        onCheckedChange={(checked) =>
-                          patchQuestion(questionIndex, { required: checked === true })
+                        onValueChange={(value) =>
+                          patchRequirement(requirementIndex, { quantity_mode: value as QuantityMode })
                         }
-                        label="They must answer this"
                       />
                     </Field>
                   </Grid>
 
-                  {question.type === 'choice' ? (
+                  {requirement.quantity_mode === 'none' ? null : (
+                    <Grid cols={2} className="mt-3">
+                      <NumberField
+                        label={requirement.quantity_mode === 'ask' ? 'Default quantity' : 'Quantity'}
+                        value={requirement.quantity}
+                        step={1}
+                        min={1}
+                        disabled={disabled}
+                        onChange={(raw) =>
+                          patchRequirement(requirementIndex, {
+                            quantity: Math.max(1, Math.floor(Number(raw) || 1)),
+                          })
+                        }
+                      />
+                      <Field label="Unit" hint="What one of it is counted in.">
+                        <Input
+                          value={requirement.unit_label}
+                          onChange={(event) =>
+                            patchRequirement(requirementIndex, { unit_label: event.target.value })
+                          }
+                          placeholder="hour, page, seat"
+                          disabled={disabled}
+                        />
+                      </Field>
+                    </Grid>
+                  )}
+
+                  {requirement.type === 'item' ? (
+                    <Grid cols={2} className="mt-3">
+                      <NumberField
+                        label="Price"
+                        value={requirement.price}
+                        step={0.01}
+                        min={0}
+                        disabled={disabled}
+                        onChange={(raw) =>
+                          patchRequirement(requirementIndex, { price: Math.max(0, Number(raw) || 0) })
+                        }
+                      />
+                      <Field label="Adds to the quote" hint="What the visitor would see.">
+                        {/* Not an `Input`: it is derived, and a disabled field
+                            that looks editable invites the reader to try. */}
+                        <p className="figure pt-1.5 text-base text-text-primary">
+                          {money(
+                            currency,
+                            requirement.price *
+                              (requirement.quantity_mode === 'none' ? 1 : requirement.quantity),
+                          )}
+                        </p>
+                      </Field>
+                    </Grid>
+                  ) : (
                     <div className="mt-3 border-t border-border pt-3">
-                      <p className="text-sm font-medium text-text-primary">Options</p>
+                      <div className="flex flex-wrap items-baseline justify-between gap-2">
+                        <p className="text-sm font-medium text-text-primary">Options</p>
+                        <span className="figure text-xs text-text-tertiary">
+                          {formatNumber(requirement.options.length)} of{' '}
+                          {formatNumber(MAX_OPTIONS_PER_REQUIREMENT)}
+                        </span>
+                      </div>
                       <ul className="mt-2 space-y-2">
-                        {question.options.map((option, optionIndex) => (
-                          <li key={optionIndex} className="flex items-center gap-2">
-                            <Input
-                              value={option}
-                              aria-label={`Option ${optionIndex + 1}`}
-                              placeholder={`Option ${optionIndex + 1}`}
+                        {requirement.options.map((option, optionIndex) => (
+                          <li key={option.id} className="flex items-end gap-2">
+                            <Field
+                              label={`Option ${optionIndex + 1}`}
+                              required
+                              className="min-w-0 flex-1"
+                            >
+                              <Input
+                                value={option.label}
+                                placeholder="Next.js"
+                                disabled={disabled}
+                                onChange={(event) =>
+                                  patchRequirement(requirementIndex, {
+                                    options: requirement.options.map((existing, i) =>
+                                      i === optionIndex
+                                        ? { ...existing, label: event.target.value }
+                                        : existing,
+                                    ),
+                                  })
+                                }
+                              />
+                            </Field>
+                            <NumberField
+                              label="Price"
+                              value={option.price}
+                              step={0.01}
+                              min={0}
                               disabled={disabled}
-                              onChange={(event) =>
-                                patchQuestion(questionIndex, {
-                                  options: question.options.map((existing, i) =>
-                                    i === optionIndex ? event.target.value : existing,
+                              onChange={(raw) =>
+                                patchRequirement(requirementIndex, {
+                                  options: requirement.options.map((existing, i) =>
+                                    i === optionIndex
+                                      ? { ...existing, price: Math.max(0, Number(raw) || 0) }
+                                      : existing,
                                   ),
                                 })
                               }
@@ -236,11 +332,12 @@ function ServiceEditorInner({
                             <Button
                               variant="ghost"
                               size="sm"
+                              className="mb-1"
                               disabled={disabled}
                               aria-label={`Remove option ${optionIndex + 1}`}
                               onClick={() =>
-                                patchQuestion(questionIndex, {
-                                  options: question.options.filter((_, i) => i !== optionIndex),
+                                patchRequirement(requirementIndex, {
+                                  options: requirement.options.filter((_, i) => i !== optionIndex),
                                 })
                               }
                               iconLeft={<X aria-hidden />}
@@ -252,16 +349,26 @@ function ServiceEditorInner({
                         variant="ghost"
                         size="sm"
                         className="mt-2"
-                        disabled={disabled || question.options.length >= MAX_OPTIONS}
+                        disabled={disabled || requirement.options.length >= MAX_OPTIONS_PER_REQUIREMENT}
                         onClick={() =>
-                          patchQuestion(questionIndex, { options: [...question.options, ''] })
+                          patchRequirement(requirementIndex, {
+                            options: [
+                              ...requirement.options,
+                              {
+                                id: newOptionId(requirement.options),
+                                label: '',
+                                price: 0,
+                                quantity: 1,
+                              },
+                            ],
+                          })
                         }
                         iconLeft={<Plus aria-hidden />}
                       >
                         Add option
                       </Button>
                     </div>
-                  ) : null}
+                  )}
                 </li>
               ))}
             </ul>
@@ -271,24 +378,28 @@ function ServiceEditorInner({
             variant="secondary"
             size="sm"
             className="mt-3"
-            disabled={disabled || service.questions.length >= MAX_QUESTIONS_PER_SERVICE}
+            disabled={disabled || requirements.length >= MAX_REQUIREMENTS_PER_SERVICE}
             onClick={() =>
               onChange({
-                questions: [
-                  ...service.questions,
+                requirements: [
+                  ...requirements,
                   {
-                    id: newQuestionId(service.questions),
-                    text: '',
-                    type: 'text',
+                    id: newRequirementId(requirements),
+                    label: '',
+                    question: '',
+                    type: 'item',
+                    price: 0,
+                    quantity_mode: 'fixed',
+                    unit_label: 'unit',
+                    quantity: 1,
                     options: [],
-                    required: true,
                   },
                 ],
               })
             }
             iconLeft={<Plus aria-hidden />}
           >
-            Add question
+            Add line
           </Button>
         </section>
       </CardBody>
