@@ -55,6 +55,15 @@ export interface MockOptions {
    * configuration, such as a locale the widget has no dictionary for.
    */
   bot?: Partial<typeof BOT>;
+  /**
+   * Rows returned by `GET /me/workspaces`.
+   *
+   * Defaults to the single owned workspace, which is what most of the console
+   * is exercised against. Pass two or more to reach the surfaces that only
+   * exist for an identity that can act in several — the rail's workspace
+   * switcher renders nothing below that threshold.
+   */
+  workspaces?: { id: number; name: string; role: string; operator_role?: string | null }[];
 }
 
 const ENTITLEMENTS = {
@@ -105,7 +114,14 @@ const BOT = {
  * Call BEFORE `page.goto`.
  */
 export async function mockBackend(page: Page, opts: MockOptions = {}): Promise<OperatorSocket> {
-  const { history = [], operatorLocale = 'en-IN', translate, online = true, bot: botOverrides } = opts;
+  const {
+    history = [],
+    operatorLocale = 'en-IN',
+    translate,
+    online = true,
+    bot: botOverrides,
+    workspaces = [{ id: 1, name: 'Acme Corporation', role: 'owner' }],
+  } = opts;
   const bot = { ...BOT, ...botOverrides };
 
   // Auth lives in localStorage and is read at app startup, so it has to be in
@@ -160,6 +176,7 @@ export async function mockBackend(page: Page, opts: MockOptions = {}): Promise<O
   await page.route(`${API}/**`, (route) => route.fulfill({ json: {} }));
 
   await page.route(`${API}/auth/me/entitlements*`, (route) => route.fulfill({ json: ENTITLEMENTS }));
+  await page.route(`${API}/me/workspaces*`, (route) => route.fulfill({ json: { workspaces } }));
   await page.route(`${API}/auth/me*`, (route) =>
     route.fulfill({ json: { id: 1, name: 'Owner', email: 'owner@example.com', is_verified: true } }),
   );
