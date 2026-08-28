@@ -1,4 +1,6 @@
 import axios from 'axios';
+import type { AxiosInstance, AxiosRequestHeaders, InternalAxiosRequestConfig } from 'axios';
+import { ApiError, type ApiAxiosError } from './apiTypes';
 import { t as translateNow } from '../i18n/i18n';
 import { getAuthItem, setAuthItem, clearAuthStorage } from '../utils/authStorage';
 import { clearTrialBannerDismissals } from '../utils/trialBanner';
@@ -10,17 +12,514 @@ import {
     isImpersonationSessionEnded,
 } from '../utils/impersonation';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
+import type {
+  ActivityPoint,
+  Bot,
+  CannedResponse,
+  CannedResponsesResult,
+  ChatMessage,
+  CrawlDiscovery,
+  CurrentUser,
+  Department,
+  Entitlements,
+  KnowledgeSource,
+  KnowledgeState,
+  Lead,
+  LeadsQuery,
+  LeadsResult,
+  NotificationItem,
+  OfflineMessagesResult,
+  Operator,
+  OperatorInvite,
+  OperatorInviteCreated,
+  OperatorStatus,
+  SelfOperatorResult,
+  SourcePagesResult,
+  TopQuestion,
+  UnansweredQuestion,
+  Webhook,
+  WebhookDeliveriesResult,
+  Workspace,
+} from '../types/domain';
+import type { FeedbackItem } from '../features/feedback/types';
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Response shapes
+ *
+ * Relocated verbatim from the api.d.ts shim, which is what consumers imported
+ * these from. They describe wire payloads, so they live with the client that
+ * parses them rather than in types/domain, which holds the app's own model.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The caller's in-flight crawl, from Redis. Never rejects: a network failure
+ * resolves to `idle`.
+ *
+ * `status` should be the `CrawlStatus` union (see `types/domain`), which is the
+ * exact vocabulary the worker writes. The `| string` tail collapses it to
+ * `string` and is why a consumer can still branch on `'completed'`, a status
+ * the backend has never emitted, without the compiler objecting. Narrowing it
+ * is a behaviour fix with call-site fallout, not part of this conversion, so it
+ * is left alone here.
+ */
+export interface CrawlProgress {
+  status: 'idle' | 'running' | 'completed' | 'failed' | 'cancelled' | string;
+  urls?: string[];
+  pages_crawled?: number;
+  max_pages?: number;
+  current_url?: string | null;
+  /** Epoch SECONDS as a float. The worker stamps `time.time()`
+   *  (crawl_orchestrator.py), so this is a number, not an ISO string. */
+  started_at?: number | null;
+  /** Server-side phase label, e.g. "Scanning pages" /
+   *  "Embedding 3,400/9,795 chunks". Written by `set_crawl_progress`. */
+  phase?: string | null;
+  cancellable?: boolean;
+  result?: Record<string, unknown> | null;
+  error?: string | null;
+}
+
+export interface UploadCostPreview {
+  per_file: Array<{
+    filename: string;
+    words: number;
+    credits: number;
+    reason?: string;
+    detail?: string;
+    size_bytes?: number;
+  }>;
+  total_credits: number;
+  current_balance: number;
+  sufficient: boolean;
+}
+
+/**
+ * One background ingestion job, as reported by `GET /ingest/status/{job_id}`.
+ *
+ * `status` mirrors ARQ's own job states. `not_found` is a real answer, not an
+ * error: ARQ drops finished job records after its retention window, so a job
+ * polled late reads as missing rather than as complete.
+ */
+export interface IngestJobStatus {
+  job_id: string;
+  status: 'queued' | 'in_progress' | 'complete' | 'failed' | 'not_found' | (string & {});
+  function?: string;
+  enqueue_time?: string | null;
+  start_time?: string;
+  finish_time?: string;
+  result?: unknown;
+}
+
+/** What `POST /bots/{botId}/install-invite` reports back. */
+export interface InstallInviteResult {
+  email: string;
+  sent_at: string;
+  /** True when this address had already been mailed for this chatbot. */
+  resent: boolean;
+}
+
+/** `POST /auth/login` — the customer/admin credential. */
+export interface ClientLoginResult {
+  access_token: string;
+  token_type?: string;
+  client_id: number;
+  name: string;
+  is_superadmin?: boolean;
+  is_verified?: boolean;
+  company_name?: string | null;
+  website?: string | null;
+}
+
+/**
+ * `POST /auth/operator-login` — the team-member credential.
+ *
+ * A separate endpoint with a separate password, and it answers a bad attempt
+ * with the same 401 the customer endpoint does, so nothing in the response
+ * distinguishes "wrong password" from "not an operator".
+ */
+export interface OperatorLoginResult {
+  access_token: string;
+  token_type?: string;
+  operator_id: number;
+  client_id: number;
+  default_bot_id?: number | null;
+  name: string;
+  role: string;
+  department_id?: number | null;
+  company_name?: string | null;
+  website?: string | null;
+}
+
+/** `POST /auth/register`. `is_verified` is true only where the backend auto-verifies. */
+export interface RegisterResult {
+  access_token: string;
+  token_type?: string;
+  client_id: number;
+  name: string;
+  is_superadmin?: boolean;
+  is_verified?: boolean;
+  company_name?: string | null;
+  website?: string | null;
+  message?: string;
+}
+
+/** The OTP endpoints all answer with the server's own wording under `message`. */
+export interface AuthMessageResult {
+  message?: string;
+}
+
+export interface SessionAuditEntry {
+  action: string;
+  operator_id: number | null;
+  details: Record<string, unknown> | null;
+  created_at: string | null;
+}
+
+export interface QueueSummary {
+  current_depth: number;
+  avg_wait_seconds: number | null;
+  resolved_count: number;
+  abandoned_count: number;
+}
+
+/** One agent's activity in the reporting window. Agents with no activity at
+ *  all are omitted by the backend, so a row always has a non-zero metric. */
+export interface PerAgentReportRow {
+  bot_id: number;
+  bot_name: string;
+  /** Consumption credits only - grants, top-ups, refunds and expiries excluded. */
+  credits_spent: number;
+  conversations: number;
+  leads: number;
+}
+
+export interface PerAgentReport {
+  /** ISO-8601 window bounds, both inclusive. */
+  since: string;
+  until: string;
+  rows: PerAgentReportRow[];
+  totals: {
+    credits_spent: number;
+    conversations: number;
+    leads: number;
+  };
+}
+
+export type JourneyPeriod = string;
+
+export type JourneyPhase = 'pre' | 'chat' | 'post';
+
+export type JourneyConversionType =
+  | 'meeting_booked'
+  | 'handoff_requested'
+  | 'offline_message_sent';
+
+export interface JourneySummary {
+  sessions_with_journey: number;
+  meeting_booked: number;
+  handoff_requested: number;
+  offline_message_sent: number;
+  /** Sessions with a journey but no conversion event AND no post-chat
+   *  page, the honest drop-off count. Prefer this over deriving
+   *  drop-off by subtraction; subtraction double-counts sessions that
+   *  both converted AND kept browsing. Optional for backward compat
+   *  with older API builds. */
+  sessions_no_activity?: number;
+  /** Sessions with a journey that fired NO conversion event but DID
+   *  visit at least one post-chat page. "kept browsing, no outcome".
+   *  The right-hand outcome column needs this bucket to reconcile with
+   *  `sessions_with_journey`: conversions + this + `sessions_no_activity`
+   *  partition every journey exactly once. Optional for backward compat
+   *  with older API builds (card is simply omitted when absent). */
+  sessions_browsed_no_conversion?: number;
+  leads_captured: number;
+}
+
+export interface JourneyTopPageRow {
+  path: string;
+  sessions: number;
+  visits: number;
+}
+
+export interface JourneyTopPagesResponse {
+  period: JourneyPeriod;
+  phase: JourneyPhase | null;
+  rows: JourneyTopPageRow[];
+}
+
+export interface JourneyPathRow {
+  sequence: string[];
+  sessions: number;
+  conversion_rate: number;
+}
+
+export interface JourneyConversionPathsResponse {
+  period: JourneyPeriod;
+  conversion_type: JourneyConversionType;
+  total_conversions: number;
+  total_sessions: number;
+  paths: JourneyPathRow[];
+}
+
+export interface JourneyPostChatResponse {
+  period: JourneyPeriod;
+  sessions_with_post_chat_activity: number;
+  /** DISTINCT sessions where each page was the visitor's FIRST post-chat stop. */
+  first_hops: Array<{ path: string; sessions: number }>;
+  /** DISTINCT sessions where each page appeared ANYWHERE in the post-chat path. */
+  all_hops: Array<{ path: string; sessions: number }>;
+  full_sequences: Array<{ sequence: string[]; sessions: number }>;
+}
+
+export interface JourneyPreChatSequencesResponse {
+  period: JourneyPeriod;
+  total_sessions: number;
+  sessions_with_pre_chat: number;
+  sequences: Array<{
+    sequence: string[];
+    /** Top post-chat continuation for THIS pre-chat pattern,
+     *  the ordered pages visitors most commonly took after opening
+     *  chat. Empty array when no session with this pre-pattern had
+     *  any post-chat activity. Drives the per-row post-chain that
+     *  flows rightward from the chatbot in the diagram. */
+    post_sequence: string[];
+    /** Number of sessions that ACTUALLY took the winning post_sequence
+     *  above. Distinct from `sessions` (which is the pre-pattern's
+     *  total): a pre-pattern with 100 sessions where only 3 took the
+     *  top post-continuation has `sessions: 100` and `post_sessions: 3`.
+     *  The diagram labels post-chain cards with this count so numbers
+     *  don't overstate reach. Optional for backward compat with older
+     *  API builds. */
+    post_sessions?: number;
+    sessions: number;
+  }>;
+}
+
+export interface SendFollowUpResult {
+  success: boolean;
+}
+
+/** One address on a bot's permanent do-not-email list. */
+export interface EmailSuppression {
+  id: number;
+  bot_id: number;
+  bot_name: string | null;
+  email: string;
+  reason: string;
+  created_at: string | null;
+}
+
+export interface EmailSuppressionsResult {
+  suppressions: EmailSuppression[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+/** What the server recomputes after an operator corrects one dimension's score. */
+export interface QualificationOverrideResult {
+  session_id: string;
+  dimension: string;
+  score_before: number;
+  score_after: number;
+  bant_score: number;
+  bant_tier: string;
+}
+
+/** Per-event push opt-outs. Mirrors `_PUSH_EVENT_KEYS` in `operator_routes.py`. */
+export interface PushEventPreferences {
+  handoff_request: boolean;
+  chat_transferred: boolean;
+  offline_message: boolean;
+}
+
+/** A nightly window during which push is withheld. `HH:MM`, 24-hour. */
+export interface PushQuietHours {
+  start: string;
+  end: string;
+  tz: string;
+}
+
+export interface NotificationPreferences {
+  push: {
+    enabled: boolean;
+    events: PushEventPreferences;
+    quiet_hours: PushQuietHours | null;
+  };
+}
+
+/**
+ * Subscription geo/currency profile: `{ country, display_currency, display_rate, checkout_available, … }`.
+ * `display_currency` tracks the charge path: `"INR"` for India and for an unresolved country
+ * (an unconfirmed buyer is domestic), `"USD"` only for a stored/detected non-IN country.
+ */
+export interface BillingGeoResponse extends Record<string, unknown> {
+  /** ISO-2 billing country, or null when nothing resolved it. */
+  country?: string | null;
+  /** Trust grade of `country`. A 'detected' country is DISPLAY-ONLY. */
+  country_source?: 'stored' | 'detected' | null;
+  /** 'INR' | 'USD'. */
+  display_currency?: string;
+  display_rate?: number;
+  /**
+   * Tax ADDED to this caller's charges, in basis points (1800 = 18%), because
+   * every published price is exclusive of tax. Absent on builds that predate
+   * the field. **0 is a real answer**: an export pays no Indian GST, and an
+   * unregistered seller adds none. Never assume 18.
+   */
+  tax_rate_bps?: number;
+  checkout_available?: boolean;
+  razorpay_enabled?: boolean;
+  razorpay_key_id?: string | null;
+  contact_sales_email?: string;
+}
+
+/**
+ * Honest pre-checkout quote. No proration.
+ *
+ * Carries THREE amounts on every branch, not one, because published prices are
+ * exclusive of tax: the taxable base (`amount_minor` / `amount_display`), the
+ * tax (`tax_minor` at `tax_rate_bps`), and the gross the mandate actually
+ * debits (`gross_minor` / `gross_display`). A surface showing the customer one
+ * number before the Razorpay sheet opens must show the GROSS; quoting
+ * `amount_display` as the amount payable understates it by the tax.
+ */
+export interface CheckoutQuoteResponse extends Record<string, unknown> {
+  country?: string | null;
+  /** 'INR' | 'USD' - the currency all four amounts below are denominated in. */
+  currency?: string;
+  /** BASE price, minor units, exclusive of tax. NOT the amount payable. */
+  amount_minor?: number;
+  /** BASE price, preformatted. NOT the amount payable. */
+  amount_display?: string;
+  /** Tax on the base, minor units. 0 on the export rail. */
+  tax_minor?: number;
+  /** Rate applied to the base, basis points (1800 = 18%). 0 on the export rail. */
+  tax_rate_bps?: number;
+  /** Base + tax, minor units: what the mandate debits. */
+  gross_minor?: number;
+  /** Base + tax, preformatted: what the mandate debits. */
+  gross_display?: string;
+  billing_cycle?: string;
+  provider?: string | null;
+  methods?: string[];
+  /** False → render Contact Sales instead of a pay button. */
+  checkout_supported?: boolean;
+  reason?: string;
+  contact_sales?: string | null;
+}
+
+/**
+ * Add (delta > 0) or remove (delta < 0) operator seats; may return
+ * `{ requires_authorization, checkout }` on the first extra seat.
+ *
+ * `extra_seat_price_cents` is the BASE per-seat price. The add-on mandate
+ * collects base + tax, so `gross_extra_seat_price_cents` is the figure that
+ * matches the Razorpay sheet opened from this same response.
+ */
+export interface SeatChangeResponse extends Record<string, unknown> {
+  message?: string;
+  requires_authorization?: boolean;
+  checkout?: Record<string, unknown>;
+  pending_seats?: number;
+  total_seats?: number;
+  extra_seats?: number;
+  operator_quantity?: number;
+  included_operator_seats?: number;
+  /** BASE per-seat price, minor units, exclusive of tax. */
+  extra_seat_price_cents?: number;
+  /** Base + tax per seat, minor units: what the seat mandate debits. */
+  gross_extra_seat_price_cents?: number;
+  /** Rate applied to the base, basis points. 0 on the export rail. */
+  tax_rate_bps?: number;
+  /** ISO-4217 code the seat prices are denominated in. */
+  currency?: string;
+}
+
+/**
+ * Buy the branding-removal add-on → `{ message, active, pending,
+ * requires_authorization, checkout, price_cents, gross_price_cents,
+ * tax_rate_bps, currency }`. The entitlement is granted by the activation
+ * webhook, never by this response, so `active` stays false until the mandate is
+ * authorized.
+ *
+ * `price_cents` is the BASE. `gross_price_cents` is base + tax, the figure the
+ * add-on mandate actually debits, and the one any label beside a buy button
+ * should quote.
+ */
+export interface BrandingAddonResponse extends Record<string, unknown> {
+  message?: string;
+  active?: boolean;
+  pending?: boolean;
+  requires_authorization?: boolean;
+  checkout?: Record<string, unknown>;
+  /** BASE add-on price, minor units, exclusive of tax. */
+  price_cents?: number;
+  /** Base + tax, minor units: what the add-on mandate debits. */
+  gross_price_cents?: number;
+  /** Rate applied to the base, basis points. 0 on the export rail. */
+  tax_rate_bps?: number;
+  /** ISO-4217 code both prices are denominated in. */
+  currency?: string;
+}
+
+/**
+ * One-off credit pack.
+ *
+ * `inr` is the BASE rupee price and stays the amount posted to
+ * {@link initiateTopup}; the server adds tax when it mints the order. `gross_inr`
+ * is base + tax, the figure the Razorpay sheet shows, and the one a tile should
+ * display. `usd` needs no gross twin: an export carries no Indian GST, so the
+ * listed dollar figure is already the full charge.
+ */
+export interface TopupPackResponse extends Record<string, unknown> {
+  /** BASE rupee price (major units). What {@link initiateTopup} is called with. */
+  inr?: number;
+  /** Base + tax in rupees (major units): what Razorpay debits. */
+  gross_inr?: number;
+  /** Legacy alias for `inr`. */
+  amount?: number;
+  /** USD display price. Export rail, so no Indian GST is added on top. */
+  usd?: number;
+  credits?: number;
+  bonus_pct?: number;
+  badge?: string;
+}
+
+/** A single feedback attachment as persisted/returned by the backend. */
+export interface PlatformFeedbackAttachment {
+  url: string;
+  name?: string;
+  content_type?: string;
+}
+
+/** One row from `GET /client/feedback` - the caller's own submitted feedback. */
+export interface PlatformFeedbackItem {
+  id: number;
+  message: string;
+  type: 'bug' | 'feature_request' | 'question' | 'other';
+  area: 'billing' | 'bots' | 'knowledge' | 'live_chat' | 'dashboard' | 'widget' | 'other' | null;
+  severity: 'low' | 'medium' | 'high' | 'critical' | null;
+  context: Record<string, unknown> | null;
+  attachments: PlatformFeedbackAttachment[] | null;
+  status: 'open' | 'in_progress' | 'resolved' | 'closed';
+  admin_response: string | null;
+  created_at: string;
+  resolved_at: string | null;
+}
+
+
+const API_BASE_URL: string = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
 /** Returns the backend endpoint configured for this dashboard build. */
-export const getApiBaseUrl = () => API_BASE_URL;
+export const getApiBaseUrl = (): string => API_BASE_URL;
 
 // Public / auth routes where a background 401 (e.g. a stale token left in
 // storage) must NOT force-redirect the visitor to /login. Otherwise landing
 // on /register from the marketing "Start free" CTA with a lapsed token would
 // bounce straight to /login. On these pages we still clear the bad token, we
 // just leave the user where they intended to be.
-const PUBLIC_AUTH_PATHS = [
+const PUBLIC_AUTH_PATHS: readonly string[] = [
     '/login',
     '/register',
     '/forgot-password',
@@ -31,7 +530,7 @@ const PUBLIC_AUTH_PATHS = [
     '/invite',
 ];
 
-function isOnPublicAuthPath() {
+function isOnPublicAuthPath(): boolean {
     if (typeof window === 'undefined') return false;
     const path = window.location.pathname;
     return PUBLIC_AUTH_PATHS.some((p) => path === p || path.startsWith(`${p}/`));
@@ -59,16 +558,23 @@ const api = axios.create({
  * the moment this module is evaluated — which takes down every screen in the
  * app, not just the console. That is exactly what it did.
  */
-export const httpClient = api;
+export const httpClient: AxiosInstance = api;
 
-const buildApiError = (error, fallbackMessage = translateNow('app.requestFailed') || 'Request failed') => {
-    const status = error.response?.status;
-    const data = error.response?.data;
-    let detail = data?.detail;
+const buildApiError = (
+    error: unknown,
+    fallbackMessage: string = translateNow('app.requestFailed') || 'Request failed',
+): ApiError => {
+    // Every caller passes an axios rejection, but `catch` binds `unknown` and a
+    // non-axios throw (a bug in a then-handler) must not crash the builder.
+    const axiosError = error as ApiAxiosError;
+    const status = axiosError.response?.status;
+    const data = axiosError.response?.data;
+    let detail: unknown = data?.detail;
 
     // Handle Pydantic 422 validation errors (detail is an array of error objects)
     if (status === 422 && Array.isArray(detail) && detail.length > 0) {
-        const msg = detail[0]?.msg || detail[0]?.message || translateNow('app.validationError') || 'Validation error';
+        const first = detail[0] as { msg?: string; message?: string } | undefined;
+        const msg = first?.msg || first?.message || translateNow('app.validationError') || 'Validation error';
         // @i18n-exempt: this strips a prefix the SERVER emits (FastAPI's
         // pydantic message). Translating it would stop the replace matching
         // and leak "Value error, " into the message shown to the user.
@@ -78,25 +584,25 @@ const buildApiError = (error, fallbackMessage = translateNow('app.requestFailed'
     // Structured FastAPI errors (e.g. 402 insufficient_credits) put a
     // human-readable string under detail.message - surface that instead of
     // letting axios's "Request failed with status code 402" leak through.
-    let message;
+    let message: string;
     if (typeof detail === 'string') {
         message = detail;
-    } else if (detail && typeof detail === 'object' && typeof detail.message === 'string') {
-        message = detail.message;
+    } else if (
+        detail
+        && typeof detail === 'object'
+        && typeof (detail as { message?: unknown }).message === 'string'
+    ) {
+        message = (detail as { message: string }).message;
     } else if (status === 429) {
         // SlowAPI uses {"error": "Rate limit exceeded: ..."} - not FastAPI's {"detail": "..."}
         message = (typeof data?.error === 'string' && data.error)
             ? data.error
             : translateNow('app.tooManyRequestsPleaseWait') || 'Too many requests - please wait a moment and try again.';
     } else {
-        message = error.message || fallbackMessage;
+        message = axiosError.message || fallbackMessage;
     }
 
-    const apiError = new Error(message);
-    apiError.status = status;
-    apiError.detail = data?.detail ?? null;
-    apiError.data = data;
-    return apiError;
+    return new ApiError(message, { status, detail: data?.detail ?? null, data });
 };
 
 // The active AbortController for the current workspace context. Every API
@@ -106,14 +612,14 @@ const buildApiError = (error, fallbackMessage = translateNow('app.requestFailed'
 // the previous workspace abort atomically - this prevents cross-tenant data
 // leaks where a slow response for workspace A lands after the UI switched
 // to workspace B.
-let currentWorkspaceAbortController = null;
+let currentWorkspaceAbortController: AbortController | null = null;
 
 /**
  * Return the AbortSignal that new requests should use, minting a fresh
  * controller lazily. Exported so ``WorkspaceContext`` can call
  * ``rotateWorkspaceAbort`` on switch.
  */
-export function rotateWorkspaceAbort() {
+export function rotateWorkspaceAbort(): AbortSignal {
     if (currentWorkspaceAbortController) {
         try { currentWorkspaceAbortController.abort(); } catch { /* noop */ }
     }
@@ -121,7 +627,7 @@ export function rotateWorkspaceAbort() {
     return currentWorkspaceAbortController.signal;
 }
 
-function getWorkspaceAbortSignal() {
+function getWorkspaceAbortSignal(): AbortSignal {
     if (!currentWorkspaceAbortController) {
         currentWorkspaceAbortController = new AbortController();
     }
@@ -137,14 +643,23 @@ function getWorkspaceAbortSignal() {
  */
 const IMPERSONATED_REQUEST = Symbol('oyechats.impersonatedRequest');
 
+declare module 'axios' {
+    interface InternalAxiosRequestConfig {
+        /** Set on every request issued under an impersonation credential, so the
+         *  response interceptor can classify a failure by the credential the
+         *  request ACTUALLY carried rather than by re-reading storage. */
+        [IMPERSONATED_REQUEST]?: boolean;
+    }
+}
+
 /**
  * Drop a header regardless of whether ``headers`` is a plain object or an
  * ``AxiosHeaders`` instance (the latter matches case-insensitively).
  */
-function dropHeader(headers, name) {
+function dropHeader(headers: AxiosRequestHeaders | undefined, name: string): void {
     if (!headers) return;
     if (typeof headers.delete === 'function') headers.delete(name);
-    else delete headers[name];
+    else delete (headers as Record<string, unknown>)[name];
 }
 
 // Request interceptor: inject API key (supports both Client and Operator auth).
@@ -154,7 +669,7 @@ function dropHeader(headers, name) {
 // which workspace the caller is acting in (their own vs. a linked-operator
 // workspace they joined via an invite).
 api.interceptors.request.use(
-    (config) => {
+    (config: InternalAxiosRequestConfig) => {
         // ── Impersonation: the token IS the session ──────────────────────
         // A super-admin support session authenticates with a short-lived,
         // revocable ``X-Impersonation-Token`` and NOTHING else. The permanent
@@ -226,14 +741,14 @@ api.interceptors.request.use(
         }
         return config;
     },
-    (error) => Promise.reject(error)
+    (error: unknown) => Promise.reject(error)
 );
 
 /** Structured error code the backend's impersonation write guard returns on 403. */
 const IMPERSONATION_READ_ONLY_CODE = 'impersonation_read_only';
 
 /** Methods the impersonation write guard always permits (read-only verbs). */
-const IMPERSONATION_SAFE_METHODS = ['get', 'head', 'options'];
+const IMPERSONATION_SAFE_METHODS: readonly string[] = ['get', 'head', 'options'];
 
 /**
  * True when a 403 under impersonation is the backend's write guard refusing a
@@ -245,9 +760,9 @@ const IMPERSONATION_SAFE_METHODS = ['get', 'head', 'options'];
  * 403 on a safe method came from somewhere else (plan gating, ownership) and
  * must keep its own message.
  */
-function isImpersonationBlockedWrite(error) {
+function isImpersonationBlockedWrite(error: ApiAxiosError): boolean {
     const detail = error.response?.data?.detail;
-    if (detail && typeof detail === 'object') {
+    if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
         return detail.error === IMPERSONATION_READ_ONLY_CODE;
     }
     const method = (error.config?.method || '').toString().toLowerCase();
@@ -265,11 +780,14 @@ function isImpersonationBlockedWrite(error) {
  * failed with status code 403". The backend's own copy wins when present; the
  * constant is the fallback when the denial carries no message at all.
  */
-function applyImpersonationForbiddenCopy(error) {
+function applyImpersonationForbiddenCopy(error: ApiAxiosError): void {
     const detail = error.response?.data?.detail;
     let message = '';
     if (typeof detail === 'string') message = detail;
-    else if (detail && typeof detail.message === 'string') message = detail.message;
+    else if (
+        detail
+        && typeof (detail as { message?: unknown }).message === 'string'
+    ) message = (detail as { message: string }).message;
     error.message = message || IMPERSONATION_FORBIDDEN_MESSAGE;
 }
 
@@ -393,7 +911,17 @@ api.interceptors.response.use(
  * @returns {Promise<Object>} ``{ client_id, name, email, expires_at, actor_email, is_impersonation }``
  * @throws {Error} decorated with ``.status`` - 401 means expired, revoked or unknown.
  */
-export const redeemImpersonation = async (token) => {
+export const redeemImpersonation = async (
+    token: string,
+): Promise<{
+  client_id: number;
+  name: string;
+  email: string;
+  /** ISO-8601 instant at which the token stops being accepted. */
+  expires_at: string;
+  actor_email: string;
+  is_impersonation: boolean;
+}> => {
     try {
         const response = await axios.post(
             `${API_BASE_URL}/auth/impersonation/redeem`,
@@ -417,19 +945,19 @@ export const redeemImpersonation = async (token) => {
  * dataclass payload from /auth/me/entitlements with derived helper booleans.
  * Used by useEntitlements() - components should NOT call this directly.
  */
-export const getEntitlements = async () => {
+export const getEntitlements = async (): Promise<Entitlements> => {
     try {
         const response = await api.get('/auth/me/entitlements');
         return response.data;
     } catch (error) {
         // Fail open on the client - caller falls back to "Free" defaults
         // baked into the hook so the UI never crashes if the endpoint is down.
-        console.warn('[OyeChats] getEntitlements failed:', error?.message);
+        console.warn('[OyeChats] getEntitlements failed:', (error as Error | null)?.message);
         throw error;
     }
 };
 
-export const loginAdmin = async (email, password) => {
+export const loginAdmin = async (email: string, password: string): Promise<ClientLoginResult> => {
     try {
         const response = await api.post('/auth/login', { email, password });
         return response.data;
@@ -449,16 +977,16 @@ export const loginAdmin = async (email, password) => {
  * @returns {Promise<Object>} The API response with access_token, client_id, name
  */
 export const registerClient = async (
-    name,
-    email,
-    password,
-    companyName = null,
-    website = null,
-    billingCountry = null,
-    promoCode = null,
-) => {
+    name: string,
+    email: string,
+    password: string,
+    companyName: string | null = null,
+    website: string | null = null,
+    billingCountry: string | null = null,
+    promoCode: string | null = null,
+): Promise<RegisterResult> => {
     try {
-        const payload = { name, email, password, company_name: companyName, website };
+        const payload: Record<string, unknown> = { name, email, password, company_name: companyName, website };
         if (billingCountry) payload.billing_country = billingCountry;
         // Launch-promo code from the campaign link (?code=). Makes the offer
         // link-exclusive. Silently ignored server-side when unknown.
@@ -477,7 +1005,7 @@ export const registerClient = async (
  * Returns `null` when no edge signal is present (e.g. local dev) - never throws.
  * @returns {Promise<string|null>} 2-letter country code, or null.
  */
-export const detectCountry = async () => {
+export const detectCountry = async (): Promise<string | null> => {
     try {
         const response = await api.get('/auth/detect-country');
         const country = response.data?.country;
@@ -493,7 +1021,7 @@ export const detectCountry = async () => {
  * @param {string} email
  * @param {string} otp
  */
-export const verifyEmail = async (email, otp) => {
+export const verifyEmail = async (email: string, otp: string): Promise<AuthMessageResult> => {
     try {
         const response = await api.post('/auth/verify-email', { email, otp });
         return response.data;
@@ -506,7 +1034,7 @@ export const verifyEmail = async (email, otp) => {
  * Re-send the email verification OTP.
  * @param {string} email
  */
-export const resendVerification = async (email) => {
+export const resendVerification = async (email: string): Promise<AuthMessageResult> => {
     try {
         const response = await api.post('/auth/resend-verification', { email });
         return response.data;
@@ -527,7 +1055,8 @@ export const resendVerification = async (email) => {
  * permanent-discount badge in the checkout modal - attribution is first-touch
  * and cannot be removed, so the UI must never render it as an editable field.
  */
-export const getReferralStatus = async () => {
+export const getReferralStatus = async (
+): Promise<{ attributed?: boolean; code?: string | null; discount_pct?: number | null } | null> => {
     try {
         const response = await api.get('/affiliate/referral-status');
         return response.data;
@@ -538,7 +1067,9 @@ export const getReferralStatus = async () => {
     }
 };
 
-export const applyReferralCode = async (code) => {
+export const applyReferralCode = async (
+    code: string,
+): Promise<{ code: string | null; message: string; discount_pct?: number }> => {
     try {
         const response = await api.post('/affiliate/apply-referral', { code });
         return response.data;
@@ -552,7 +1083,7 @@ export const applyReferralCode = async (code) => {
  * @param {string} email
  * @returns {Promise<Object>} API response
  */
-export const requestPasswordReset = async (email) => {
+export const requestPasswordReset = async (email: string): Promise<AuthMessageResult> => {
     try {
         const response = await api.post('/auth/request-password-reset', { email });
         return response.data;
@@ -569,7 +1100,11 @@ export const requestPasswordReset = async (email) => {
  * @param {string} new_password
  * @returns {Promise<Object>} API response
  */
-export const resetPassword = async (email, otp, new_password) => {
+export const resetPassword = async (
+    email: string,
+    otp: string,
+    new_password: string,
+): Promise<AuthMessageResult> => {
     try {
         const response = await api.post('/auth/reset-password', { email, otp, new_password });
         return response.data;
@@ -605,7 +1140,7 @@ export const resetPassword = async (email, otp, new_password) => {
  *   sufficient: boolean,
  * }>}
  */
-export const previewUploadCost = async (files, botId) => {
+export const previewUploadCost = async (files: File[], botId?: number): Promise<UploadCostPreview | null> => {
     if (!files || files.length === 0) return null;
     const formData = new FormData();
     files.forEach((file) => {
@@ -623,7 +1158,7 @@ export const previewUploadCost = async (files, botId) => {
     }
 };
 
-export const uploadDocuments = async (files, botId) => {
+export const uploadDocuments = async (files: File[], botId?: number): Promise<unknown> => {
     const formData = new FormData();
 
     files.forEach((file) => {
@@ -660,7 +1195,7 @@ export const uploadDocuments = async (files, botId) => {
  * @param {string} jobId - the `job_id` returned by uploadDocuments
  * @returns {Promise<{job_id: string, status: string, function?: string, enqueue_time?: string|null, start_time?: string, finish_time?: string, result?: unknown}>}
  */
-export const getIngestStatus = async (jobId) => {
+export const getIngestStatus = async (jobId: string): Promise<IngestJobStatus> => {
     try {
         const response = await api.get(`/ingest/status/${encodeURIComponent(jobId)}`);
         return response.data;
@@ -679,7 +1214,7 @@ export const getIngestStatus = async (jobId) => {
  * network error so callers can render safely.
  * @returns {Promise<Object>}
  */
-export const getCrawlProgress = async () => {
+export const getCrawlProgress = async (): Promise<CrawlProgress> => {
     try {
         const response = await api.get('/crawl/progress');
         return response.data;
@@ -695,7 +1230,7 @@ export const getCrawlProgress = async () => {
  * @param {number|undefined} botId - Optional bot ID for ownership check
  * @returns {Promise<{status: string, message: string}>}
  */
-export const cancelCrawl = async (botId) => {
+export const cancelCrawl = async (botId?: number): Promise<Record<string, unknown>> => {
     try {
         const endpoint = botId ? `/crawl/cancel?bot_id=${botId}` : '/crawl/cancel';
         const response = await api.post(endpoint);
@@ -713,7 +1248,7 @@ export const cancelCrawl = async (botId) => {
  * @param {number|undefined} botId - Optional bot ID scope
  * @returns {Promise<{url: string, total_found: number, capped: boolean, plan_max: number}>}
  */
-export const discoverCrawlUrls = async (url, botId) => {
+export const discoverCrawlUrls = async (url: string, botId?: number): Promise<CrawlDiscovery> => {
     try {
         const endpoint = botId ? `/crawl/discover?bot_id=${botId}` : '/crawl/discover';
         const response = await api.post(endpoint, { url }, { timeout: 30000 });
@@ -735,7 +1270,12 @@ export const discoverCrawlUrls = async (url, botId) => {
  *   and previews the total pages a full re-crawl would fetch.
  * @returns {Promise<{url: string, replace_source: string, mode: string, sitemap_total: number, existing_total: number, unchanged: number, new_pages: number, removed_pages: number, capped: boolean, plan_max: number}>}
  */
-export const diffRecrawl = async (url, replaceSource, botId, mode = 'delta') => {
+export const diffRecrawl = async (
+    url: string,
+    replaceSource?: string | null,
+    botId?: number,
+    mode: string = 'delta',
+): Promise<Record<string, unknown>> => {
     try {
         const endpoint = botId ? `/crawl/diff?bot_id=${botId}` : '/crawl/diff';
         // The backend caps HEAD-liveness + sitemap discovery at ~22s each and
@@ -761,25 +1301,25 @@ export const diffRecrawl = async (url, replaceSource, botId, mode = 'delta') => 
  * @returns {Promise<Object>} The API response with crawling results
  */
 export const crawlWebsite = async (
-    url,
-    botId,
-    useJs = false,
-    replaceSource = null,
-    expectedNewPages = null,
-    orderedUrls = null,
-    maxPages = null,
-    mode = 'delta',
-    discoveredPages = null,
-) => {
+    url: string,
+    botId?: number,
+    useJs: boolean = false,
+    replaceSource: string | null = null,
+    expectedNewPages: number | null = null,
+    orderedUrls: string[] | null = null,
+    maxPages: number | null = null,
+    mode: 'full' | 'delta' = 'delta',
+    discoveredPages: number | null = null,
+): Promise<Record<string, unknown>> => {
     try {
         const endpoint = botId ? `/crawl?bot_id=${botId}` : '/crawl';
-        const body = { url, use_js: useJs, mode };
+        const body: Record<string, unknown> = { url, use_js: useJs, mode };
         if (replaceSource) body.replace_source = replaceSource;
         // Recrawls send the diff's new-page count so the backend pre-flight
         // sizes the credit reservation to (new_pages + buffer) instead of the
         // plan's full max-pages ceiling. Per-page atomic deduction inside the
         // pipeline still enforces the real spend.
-        if (replaceSource && Number.isFinite(expectedNewPages) && expectedNewPages >= 0) {
+        if (replaceSource && expectedNewPages != null && Number.isFinite(expectedNewPages) && expectedNewPages >= 0) {
             body.expected_new_pages = expectedNewPages;
         }
         // Initial crawls send the discovered sitemap page count so the backend
@@ -787,7 +1327,7 @@ export const crawlWebsite = async (
         // plan's full max-pages ceiling (fixes small sites being gated at
         // plan_max × cost_per_page). Only for first-time crawls (no
         // replaceSource); per-page atomic deduction stays the real safety net.
-        if (!replaceSource && Number.isFinite(discoveredPages) && discoveredPages > 0) {
+        if (!replaceSource && discoveredPages != null && Number.isFinite(discoveredPages) && discoveredPages > 0) {
             body.discovered_pages = discoveredPages;
         }
         // Credit-aware partial crawl: an explicit, pre-ordered slice of the
@@ -796,7 +1336,7 @@ export const crawlWebsite = async (
         if (Array.isArray(orderedUrls) && orderedUrls.length > 0) {
             body.ordered_urls = orderedUrls;
         }
-        if (Number.isFinite(maxPages) && maxPages >= 1) {
+        if (maxPages != null && Number.isFinite(maxPages) && maxPages >= 1) {
             body.max_pages = maxPages;
         }
         const response = await api.post(endpoint, body, { timeout: 300000 });
@@ -811,7 +1351,7 @@ export const crawlWebsite = async (
  * Fetches the list of ingested documents and their chunk counts.
  * @returns {Promise<Array>} List of document objects
  */
-export const getDocuments = async (botId) => {
+export const getDocuments = async (botId?: number): Promise<KnowledgeSource[]> => {
     try {
         const url = botId ? `/documents?bot_id=${botId}` : '/documents';
         const response = await api.get(url);
@@ -829,7 +1369,7 @@ export const getDocuments = async (botId) => {
  * @param {number} botId
  * @returns {Promise<{active_count:number, inactive_count:number, deactivated:boolean}>}
  */
-export const getKnowledgeState = async (botId) => {
+export const getKnowledgeState = async (botId?: number): Promise<KnowledgeState> => {
     try {
         const url = botId ? `/documents/knowledge-state?bot_id=${botId}` : '/documents/knowledge-state';
         const response = await api.get(url);
@@ -845,7 +1385,10 @@ export const getKnowledgeState = async (botId) => {
  * @param {string} documentName - The document name (filename or URL)
  * @returns {Promise<Object>} Deletion result
  */
-export const deleteDocument = async (documentName, botId) => {
+export const deleteDocument = async (
+    documentName: string,
+    botId?: number,
+): Promise<Record<string, unknown>> => {
     try {
         const url = botId
             ? `/documents/${encodeURIComponent(documentName)}?bot_id=${botId}`
@@ -866,7 +1409,7 @@ export const deleteDocument = async (documentName, botId) => {
 // flow. The ARQ sweep fires on schedule - there is no manual trigger.
 
 /** Get the current auto-recrawl state and last-run summary for a bot. */
-export const getRecrawlStatus = async (botId) => {
+export const getRecrawlStatus = async (botId: number): Promise<Record<string, unknown>> => {
     try {
         const response = await api.get(`/bots/${botId}/recrawl`);
         return response.data;
@@ -877,7 +1420,7 @@ export const getRecrawlStatus = async (botId) => {
 };
 
 /** Toggle auto-recrawl on or off for a bot. */
-export const updateRecrawl = async (botId, enabled) => {
+export const updateRecrawl = async (botId: number, enabled: boolean): Promise<Record<string, unknown>> => {
     try {
         const response = await api.patch(`/bots/${botId}/recrawl`, { enabled });
         return response.data;
@@ -894,10 +1437,10 @@ export const updateRecrawl = async (botId, enabled) => {
  * @param {number|null} botId - Optional bot ID
  * @returns {Promise<Object>} { domain, total_pages, total_chunks, pages: [...] }
  */
-export const getDocumentPages = async (source, botId) => {
+export const getDocumentPages = async (source: string, botId?: number): Promise<SourcePagesResult> => {
     try {
         const params = new URLSearchParams({ source });
-        if (botId) params.set('bot_id', botId);
+        if (botId) params.set('bot_id', String(botId));
         const response = await api.get(`/documents/pages?${params.toString()}`);
         return response.data;
     } catch (error) {
@@ -910,11 +1453,14 @@ export const getDocumentPages = async (source, botId) => {
  * Fetches aggregate statistics for the admin dashboard.
  * @returns {Promise<Object>} Object containing total counts
  */
-export const getDashboardStats = async (botId, days = null) => {
+export const getDashboardStats = async (
+    botId?: number,
+    days: number | null = null,
+): Promise<Record<string, unknown>> => {
     try {
         const params = new URLSearchParams();
-        if (botId) params.set('bot_id', botId);
-        if (days) params.set('days', days);
+        if (botId) params.set('bot_id', String(botId));
+        if (days) params.set('days', String(days));
         const query = params.toString();
         const url = query ? `/analytics/dashboard?${query}` : '/analytics/dashboard';
         const response = await api.get(url);
@@ -930,7 +1476,7 @@ export const getDashboardStats = async (botId, days = null) => {
  * @param {number} days - Number of days to fetch (optional, handled by backend)
  * @returns {Promise<Array>} Array of { date, messages }
  */
-export const getActivityStats = async (botId) => {
+export const getActivityStats = async (botId?: number): Promise<ActivityPoint[]> => {
     try {
         const url = botId ? `/analytics/activity?bot_id=${botId}` : '/analytics/activity';
         const response = await api.get(url);
@@ -941,7 +1487,7 @@ export const getActivityStats = async (botId) => {
     }
 };
 
-export const getRatingsSummary = async (botId) => {
+export const getRatingsSummary = async (botId?: number): Promise<Record<string, unknown>> => {
     try {
         const url = botId ? `/analytics/ratings-summary?bot_id=${botId}` : '/analytics/ratings-summary';
         const response = await api.get(url);
@@ -952,7 +1498,7 @@ export const getRatingsSummary = async (botId) => {
     }
 };
 
-export const getResolutionSummary = async (botId) => {
+export const getResolutionSummary = async (botId?: number): Promise<Record<string, unknown>> => {
     try {
         const url = botId ? `/analytics/resolution-summary?bot_id=${botId}` : '/analytics/resolution-summary';
         const response = await api.get(url);
@@ -963,7 +1509,7 @@ export const getResolutionSummary = async (botId) => {
     }
 };
 
-export const getSessionAuditTrail = async (sessionId) => {
+export const getSessionAuditTrail = async (sessionId: string): Promise<{ entries: SessionAuditEntry[] }> => {
     try {
         const response = await api.get(`/chat/sessions/${sessionId}/audit`);
         return response.data;
@@ -973,7 +1519,7 @@ export const getSessionAuditTrail = async (sessionId) => {
     }
 };
 
-export const getQueueSummary = async (botId, days = 30) => {
+export const getQueueSummary = async (botId?: number, days: number = 30): Promise<QueueSummary> => {
     try {
         const params = new URLSearchParams();
         if (botId) params.set('bot_id', String(botId));
@@ -998,7 +1544,10 @@ export const getQueueSummary = async (botId, days = 30) => {
  * @param {number} botId
  * @param {'7d'|'30d'|'90d'|'all'} [period]
  */
-export const getLanguageBreakdown = async (botId, period = '30d') => {
+export const getLanguageBreakdown = async (
+    botId: number,
+    period: '7d' | '30d' | '90d' | 'all' = '30d',
+): Promise<Record<string, unknown>> => {
     try {
         const response = await api.get('/analytics/language-breakdown', {
             params: { bot_id: botId, period },
@@ -1020,7 +1569,7 @@ export const getLanguageBreakdown = async (botId, period = '30d') => {
  * @param {number} days - Trailing window, 1-365. Backend 422s outside that.
  * @returns {Promise<Object>} `{ since, until, rows[], totals }`
  */
-export const getPerAgentReport = async (days = 30) => {
+export const getPerAgentReport = async (days: number = 30): Promise<PerAgentReport> => {
     try {
         const response = await api.get(`/analytics/by-bot?days=${days}`);
         return response.data;
@@ -1043,7 +1592,7 @@ export const getPerAgentReport = async (days = 30) => {
  * @returns {string|null} The filename, or null when the header is absent
  *   (cross-origin responses hide it unless the API exposes it) or unparseable.
  */
-const parseContentDispositionFilename = (header) => {
+const parseContentDispositionFilename = (header: unknown): string | null => {
     if (typeof header !== 'string') return null;
     const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(header);
     if (!match) return null;
@@ -1062,7 +1611,10 @@ const parseContentDispositionFilename = (header) => {
  * @param {string} fallbackFilename - Used only when the server sends no name.
  * @returns {Promise<void>} Resolves once the download has been triggered.
  */
-export const downloadPerAgentReportCsv = async (days = 30, fallbackFilename = 'oyechats-report.csv') => {
+export const downloadPerAgentReportCsv = async (
+    days: number = 30,
+    fallbackFilename: string = 'oyechats-report.csv',
+): Promise<void> => {
     try {
         const response = await api.get(`/analytics/by-bot.csv?days=${days}`, { responseType: 'blob' });
         const filename = parseContentDispositionFilename(response.headers?.['content-disposition']) ?? fallbackFilename;
@@ -1085,7 +1637,7 @@ export const downloadPerAgentReportCsv = async (days = 30, fallbackFilename = 'o
 // returns HTTP 402 for Free / Starter. The hook layer catches that and
 // switches the UI into an upgrade teaser.
 
-const _journeyQuery = (botId, extras = {}) => {
+const _journeyQuery = (botId: number, extras: Record<string, unknown> = {}): string => {
     const params = new URLSearchParams();
     params.set('bot_id', String(botId));
     for (const [key, value] of Object.entries(extras)) {
@@ -1095,7 +1647,10 @@ const _journeyQuery = (botId, extras = {}) => {
     return params.toString();
 };
 
-export const getJourneySummary = async (botId, period = '30d') => {
+export const getJourneySummary = async (
+    botId: number,
+    period: JourneyPeriod = '30d',
+): Promise<JourneySummary> => {
     try {
         const response = await api.get(`/analytics/journey/summary?${_journeyQuery(botId, { period })}`);
         return response.data;
@@ -1105,7 +1660,10 @@ export const getJourneySummary = async (botId, period = '30d') => {
     }
 };
 
-export const getJourneyTopPages = async (botId, { period = '30d', phase = null, limit = 20 } = {}) => {
+export const getJourneyTopPages = async (
+    botId: number,
+    { period = '30d', phase = null, limit = 20 }: { period?: JourneyPeriod; phase?: JourneyPhase | null; limit?: number } = {},
+): Promise<JourneyTopPagesResponse> => {
     try {
         const response = await api.get(
             `/analytics/journey/top-pages?${_journeyQuery(botId, { period, phase, limit })}`,
@@ -1117,7 +1675,11 @@ export const getJourneyTopPages = async (botId, { period = '30d', phase = null, 
     }
 };
 
-export const getJourneyConversionPaths = async (botId, conversionType, { period = '30d', limit = 5 } = {}) => {
+export const getJourneyConversionPaths = async (
+    botId: number,
+    conversionType: JourneyConversionType,
+    { period = '30d', limit = 5 }: { period?: JourneyPeriod; limit?: number } = {},
+): Promise<JourneyConversionPathsResponse> => {
     try {
         const response = await api.get(
             `/analytics/journey/conversion-paths?${_journeyQuery(botId, {
@@ -1133,7 +1695,10 @@ export const getJourneyConversionPaths = async (botId, conversionType, { period 
     }
 };
 
-export const getJourneyPreChatSequences = async (botId, { period, limit = 5 } = {}) => {
+export const getJourneyPreChatSequences = async (
+    botId: number,
+    { period, limit = 5 }: { period: JourneyPeriod; limit?: number },
+): Promise<JourneyPreChatSequencesResponse> => {
     try {
         const response = await api.get(
             `/analytics/journey/pre-chat-sequences?${_journeyQuery(botId, { period, limit })}`,
@@ -1145,7 +1710,10 @@ export const getJourneyPreChatSequences = async (botId, { period, limit = 5 } = 
     }
 };
 
-export const getJourneyPostChat = async (botId, { period = '30d', limit = 10 } = {}) => {
+export const getJourneyPostChat = async (
+    botId: number,
+    { period = '30d', limit = 10 }: { period?: JourneyPeriod; limit?: number } = {},
+): Promise<JourneyPostChatResponse> => {
     try {
         const response = await api.get(
             `/analytics/journey/post-chat?${_journeyQuery(botId, { period, limit })}`,
@@ -1162,7 +1730,7 @@ export const getJourneyPostChat = async (botId, { period = '30d', limit = 10 } =
  * Fetches the list of visitors/sessions for the admin dashboard.
  * @returns {Promise<Array>} List of visitor session objects
  */
-export const getVisitorsData = async (botId) => {
+export const getVisitorsData = async (botId?: number): Promise<Array<Record<string, unknown>>> => {
     try {
         const url = botId ? `/analytics/visitors?bot_id=${botId}` : '/analytics/visitors';
         const response = await api.get(url);
@@ -1181,12 +1749,15 @@ export const getVisitorsData = async (botId) => {
  * @param {{ limit?: number, days?: number }} [options]
  * @returns {Promise<Array<{ question: string, count: number, last_asked: string | null }>>}
  */
-export const getUnansweredQuestions = async (botId, { limit, days } = {}) => {
+export const getUnansweredQuestions = async (
+    botId?: number,
+    { limit, days }: { limit?: number; days?: number } = {},
+): Promise<UnansweredQuestion[]> => {
     try {
         const params = new URLSearchParams();
-        if (botId) params.set('bot_id', botId);
-        if (limit != null) params.set('limit', limit);
-        if (days != null) params.set('days', days);
+        if (botId) params.set('bot_id', String(botId));
+        if (limit != null) params.set('limit', String(limit));
+        if (days != null) params.set('days', String(days));
         const query = params.toString();
         const url = query ? `/analytics/unanswered-questions?${query}` : '/analytics/unanswered-questions';
         const response = await api.get(url);
@@ -1203,9 +1774,12 @@ export const getUnansweredQuestions = async (botId, { limit, days } = {}) => {
  * @param {{ beforeId?: number, limit?: number }} options - Pagination options
  * @returns {Promise<Array>} Array of chat message objects
  */
-export const getChatHistory = async (sessionId, { beforeId, limit = 50 } = {}) => {
+export const getChatHistory = async (
+    sessionId: string,
+    { beforeId, limit = 50 }: { beforeId?: number; limit?: number } = {},
+): Promise<ChatMessage[]> => {
     try {
-        const params = { limit };
+        const params: Record<string, unknown> = { limit };
         if (beforeId != null) params.before = beforeId;
         const response = await api.get(`/chat/history/${sessionId}`, { params });
         return response.data;
@@ -1224,7 +1798,17 @@ export const getChatHistory = async (sessionId, { beforeId, limit = 50 } = {}) =
  *
  * @returns {Promise<{locales: Array<{code: string, locale: string, name: string, native_name: string, direction: 'ltr'|'rtl'}>, languages: Record<string, string>}>}
  */
-export const getLocales = async () => {
+export const getLocales = async (
+): Promise<{
+  locales: Array<{
+    code: string;
+    locale: string;
+    name: string;
+    native_name: string;
+    direction: 'ltr' | 'rtl';
+  }>;
+  languages: Record<string, string>;
+}> => {
     const response = await api.get('/locales');
     return response.data;
 };
@@ -1233,7 +1817,13 @@ export const getLocales = async () => {
  * Reads the caller's own live-chat working language.
  * @returns {Promise<{preferred_locale: string|null, supported_languages: string[]}>}
  */
-export const getMyLanguage = async () => {
+export const getMyLanguage = async (
+): Promise<{
+  preferred_locale: string | null;
+  supported_languages: string[];
+  /** Locales the caller's bot supports - what the translation picker offers. */
+  available_locales: string[];
+}> => {
     const response = await api.get('/operators/me/language');
     return response.data;
 };
@@ -1244,7 +1834,9 @@ export const getMyLanguage = async () => {
  * @param {string|null} preferredLocale - BCP-47 tag, e.g. 'en-IN'
  * @returns {Promise<{preferred_locale: string|null}>}
  */
-export const setMyLanguage = async (preferredLocale) => {
+export const setMyLanguage = async (
+    preferredLocale: string | null,
+): Promise<{ preferred_locale: string | null }> => {
     try {
         const response = await api.put('/operators/me/language', { preferred_locale: preferredLocale ?? '' });
         return response.data;
@@ -1266,9 +1858,13 @@ export const setMyLanguage = async (preferredLocale) => {
  * @param {number} [messageId] - persist the result onto this message
  * @returns {Promise<{translated: string, target_locale: string, cached: boolean, status: string}>}
  */
-export const translateForSession = async (sessionId, text, messageId) => {
+export const translateForSession = async (
+    sessionId: string,
+    text: string,
+    messageId?: number,
+): Promise<{ translated: string; target_locale: string; cached: boolean; status: string }> => {
     try {
-        const body = { session_id: sessionId, text };
+        const body: Record<string, unknown> = { session_id: sessionId, text };
         if (messageId != null) body.message_id = messageId;
         const response = await api.post('/operators/translate', body);
         return response.data;
@@ -1281,7 +1877,7 @@ export const translateForSession = async (sessionId, text, messageId) => {
  * Fetches all feedback data for the admin dashboard.
  * @returns {Promise<Array>} Array of feedback objects
  */
-export const getFeedbackData = async (botId) => {
+export const getFeedbackData = async (botId?: number): Promise<FeedbackItem[]> => {
     try {
         const url = botId ? `/analytics/feedback?bot_id=${botId}` : '/analytics/feedback';
         const response = await api.get(url);
@@ -1296,7 +1892,7 @@ export const getFeedbackData = async (botId) => {
  * Fetches the most common user queries.
  * @returns {Promise<Array>} Array of { question, count }
  */
-export const getTopQuestions = async (botId) => {
+export const getTopQuestions = async (botId?: number): Promise<TopQuestion[]> => {
     try {
         const url = botId ? `/analytics/top-questions?bot_id=${botId}` : '/analytics/top-questions';
         const response = await api.get(url);
@@ -1321,7 +1917,7 @@ export const getTopQuestions = async (botId) => {
  * @returns {Promise<Object>} { id, name, email, company_name, website,
  *   created_at, bot_count, is_superadmin }
  */
-export const getCurrentUser = async () => {
+export const getCurrentUser = async (): Promise<CurrentUser> => {
     try {
         const response = await api.get('/auth/me');
         return response.data;
@@ -1331,7 +1927,7 @@ export const getCurrentUser = async () => {
     }
 };
 
-export const getClientSettings = async (botId) => {
+export const getClientSettings = async (botId?: number): Promise<Record<string, unknown>> => {
     try {
         if (botId) {
             const response = await api.get(`/bots/${botId}`);
@@ -1346,8 +1942,10 @@ export const getClientSettings = async (botId) => {
                 bot_name: bot.name,
                 services: Array.isArray(bot.services)
                     ? bot.services
-                          .map((s) => (typeof s === 'string' ? { name: s, url: '' } : { name: s?.name || '', url: s?.url || '' }))
-                          .filter((s) => s.name.trim() !== '' || s.url.trim() !== '')
+                          .map((s: unknown) => (typeof s === 'string'
+                              ? { name: s, url: '' }
+                              : { name: (s as { name?: string })?.name || '', url: (s as { url?: string })?.url || '' }))
+                          .filter((s: { name: string; url: string }) => s.name.trim() !== '' || s.url.trim() !== '')
                     : [],
                 services_url: bot.services_url || '',
             };
@@ -1367,7 +1965,10 @@ export const getClientSettings = async (botId) => {
  * @param {number} [botId] - Optional bot ID
  * @returns {Promise<Object>} Result message
  */
-export const updateClientSettings = async (settings, botId) => {
+export const updateClientSettings = async (
+    settings: Record<string, unknown>,
+    botId?: number,
+): Promise<Record<string, unknown>> => {
     try {
         if (botId) {
             // Map legacy field names to bot model fields
@@ -1391,7 +1992,7 @@ export const updateClientSettings = async (settings, botId) => {
  * Fetch the curated brand-tone preset catalog (chips + prefill text).
  * @returns {Promise<Array<{key: string, label: string, text: string}>>}
  */
-export const getBrandTonePresets = async () => {
+export const getBrandTonePresets = async (): Promise<Array<Record<string, unknown>>> => {
     try {
         const response = await api.get('/bots/brand-tone-presets');
         return Array.isArray(response.data?.presets) ? response.data.presets : [];
@@ -1407,7 +2008,7 @@ export const getBrandTonePresets = async () => {
  * @param {number} botId
  * @returns {Promise<{brand_tone: string, brand_tone_preset: string}>}
  */
-export const detectBrandTone = async (botId) => {
+export const detectBrandTone = async (botId: number): Promise<Record<string, unknown>> => {
     try {
         const response = await api.post(`/bots/${botId}/brand-tone/detect`);
         return response.data;
@@ -1423,7 +2024,7 @@ export const detectBrandTone = async (botId) => {
  * @param {string} brandTone - the current draft tone text
  * @returns {Promise<{sample: string}>}
  */
-export const previewBrandTone = async (botId, brandTone) => {
+export const previewBrandTone = async (botId: number, brandTone: string): Promise<{ sample?: string }> => {
     try {
         const response = await api.post(`/bots/${botId}/brand-tone/preview`, { brand_tone: brandTone });
         return response.data;
@@ -1438,7 +2039,7 @@ export const previewBrandTone = async (botId, brandTone) => {
  * @param {File} file - The image file to upload
  * @returns {Promise<Object>} The API response with the public URL
  */
-export const uploadLogo = async (file) => {
+export const uploadLogo = async (file: File): Promise<{ url: string }> => {
     const formData = new FormData();
     formData.append('file', file);
     try {
@@ -1460,7 +2061,7 @@ export const uploadLogo = async (file) => {
  * @param {File} file - The image file to upload
  * @returns {Promise<{avatar_url: string}>}
  */
-export const uploadOperatorAvatar = async (file) => {
+export const uploadOperatorAvatar = async (file: File): Promise<{ avatar_url: string }> => {
     const formData = new FormData();
     formData.append('file', file);
     try {
@@ -1480,7 +2081,7 @@ export const uploadOperatorAvatar = async (file) => {
  * Removes the current operator's own profile picture, reverting to initials.
  * @returns {Promise<{success: boolean}>}
  */
-export const removeOperatorAvatar = async () => {
+export const removeOperatorAvatar = async (): Promise<{ success: boolean }> => {
     try {
         const response = await api.delete('/operators/me/avatar');
         return response.data;
@@ -1502,14 +2103,23 @@ export const removeOperatorAvatar = async () => {
  * @param {object|null} [payload.context] - { page_url, app_version, plan_tier, user_agent }
  * @param {Array|null} [payload.attachments] - [{ url, name?, content_type? }]
  */
-export const submitPlatformFeedback = async ({
+export const submitPlatformFeedback = async (
+    {
     message,
     type = 'other',
     area = null,
     severity = null,
     context = null,
     attachments = null,
-} = {}) => {
+}: {
+  message: string;
+  type?: string;
+  area?: string | null;
+  severity?: string | null;
+  context?: Record<string, unknown> | null;
+  attachments?: PlatformFeedbackAttachment[] | null;
+},
+): Promise<{ ok: true }> => {
     try {
         const response = await api.post('/client/feedback', {
             message,
@@ -1526,7 +2136,7 @@ export const submitPlatformFeedback = async ({
     }
 };
 
-export const uploadFeedbackAttachment = async (file) => {
+export const uploadFeedbackAttachment = async (file: File): Promise<{ url: string }> => {
     const formData = new FormData();
     formData.append('file', file);
     try {
@@ -1548,7 +2158,7 @@ export const uploadFeedbackAttachment = async (file) => {
  * so the customer can see that their issue was handled.
  * @returns {Promise<Array>} List of the caller's feedback objects
  */
-export const getMyFeedback = async () => {
+export const getMyFeedback = async (): Promise<PlatformFeedbackItem[]> => {
     try {
         const response = await api.get('/client/feedback');
         return response.data;
@@ -1564,7 +2174,7 @@ export const getMyFeedback = async () => {
  * Fetches all bots for the authenticated client.
  * @returns {Promise<Array>} List of bot objects
  */
-export const getBots = async () => {
+export const getBots = async (): Promise<Bot[]> => {
     try {
         const response = await api.get('/bots');
         return response.data;
@@ -1579,7 +2189,9 @@ export const getBots = async () => {
  * @param {Object} data - { name, website?, system_prompt? }
  * @returns {Promise<Object>} Created bot info
  */
-export const createBot = async (data) => {
+export const createBot = async (
+    data: { name: string; website?: string; system_prompt?: string },
+): Promise<Bot> => {
     try {
         const response = await api.post('/bots', data);
         return response.data;
@@ -1598,7 +2210,7 @@ export const createBot = async (data) => {
  * @param {number} botId
  * @returns {Promise<string[]>}
  */
-export const getSeedQuestions = async (botId) => {
+export const getSeedQuestions = async (botId: number): Promise<string[]> => {
     try {
         const response = await api.post(`/bots/${botId}/seed-questions`);
         const questions = response.data?.questions;
@@ -1620,7 +2232,7 @@ export const getSeedQuestions = async (botId) => {
  * @param {number} botId
  * @returns {Promise<string[]>} 0 to 3 freshly-generated questions
  */
-export const refreshSeedQuestions = async (botId) => {
+export const refreshSeedQuestions = async (botId: number): Promise<string[]> => {
     try {
         const response = await api.post(`/bots/${botId}/seed-questions`, null, {
             params: { force: true },
@@ -1639,7 +2251,10 @@ export const refreshSeedQuestions = async (botId) => {
  * @param {string} eventType - e.g. 'studio_opened', 'bot_created', 'crawl_completed'
  * @param {{ botId?: number|null, eventData?: Object|null }} [opts]
  */
-export const recordActivationEvent = async (eventType, { botId = null, eventData = null } = {}) => {
+export const recordActivationEvent = async (
+    eventType: string,
+    { botId = null, eventData = null }: { botId?: number | null; eventData?: unknown } = {},
+): Promise<void> => {
     try {
         await api.post('/activation/events', {
             event_type: eventType,
@@ -1648,7 +2263,7 @@ export const recordActivationEvent = async (eventType, { botId = null, eventData
         });
     } catch (error) {
         // Instrumentation is fire-and-forget - swallow failures.
-        console.warn('Activation event failed (non-fatal):', eventType, error?.message);
+        console.warn('Activation event failed (non-fatal):', eventType, (error as Error | null)?.message);
     }
 };
 
@@ -1662,7 +2277,7 @@ export const recordActivationEvent = async (eventType, { botId = null, eventData
  * Not fire-and-forget, unlike `recordActivationEvent`: the customer is waiting
  * on this one and a silent failure would look like a delivered email.
  */
-export const sendInstallInvite = async (botId, email) => {
+export const sendInstallInvite = async (botId: number, email: string): Promise<InstallInviteResult> => {
     try {
         const response = await api.post(`/bots/${botId}/install-invite`, { email });
         return response.data;
@@ -1674,7 +2289,7 @@ export const sendInstallInvite = async (botId, email) => {
 
 /** Auth headers for the raw-fetch streaming preview (mirrors the axios interceptor). */
 function previewStreamHeaders() {
-    const headers = { 'Content-Type': 'application/json' };
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 
     // Impersonation MUST be handled here as well as in the axios interceptor:
     // this path uses raw fetch(), so the interceptor never runs. Sending the
@@ -1715,7 +2330,16 @@ function previewStreamHeaders() {
  * `onChunk(text)` fires per visible token; `onFinal(meta)` once at the end with
  * `{ sources, ... }`; `onError(err)` on a hard failure. Resolves when done.
  */
-export const previewChatStream = async (botId, question, sessionId, { onChunk, onFinal, onError } = {}) => {
+export const previewChatStream = async (
+    botId: number,
+    question: string,
+    sessionId?: string | null,
+    { onChunk, onFinal, onError }: {
+    onChunk?: (text: string) => void;
+    onFinal?: (meta: unknown) => void;
+    onError?: (err: unknown) => void;
+  } = {},
+): Promise<void> => {
     const controller = new AbortController();
     // Overall guard so a hung stream can't spin forever (tokens normally arrive
     // well within this; a healthy stream clears the timer on completion).
@@ -1723,8 +2347,8 @@ export const previewChatStream = async (botId, question, sessionId, { onChunk, o
     let finalMeta = null;
     // Strip widget-only inline-card sentinels (e.g. [LEAVE_MESSAGE_CARD]) so they
     // never leak into the preview text.
-    const clean = (t) => t.replace(/\[[A-Z0-9_]+_CARD\]/g, '');
-    const emit = (t) => {
+    const clean = (t: string): string => t.replace(/\[[A-Z0-9_]+_CARD\]/g, '');
+    const emit = (t: string): void => {
         const c = clean(t);
         if (c) onChunk?.(c);
     };
@@ -1741,7 +2365,7 @@ export const previewChatStream = async (botId, question, sessionId, { onChunk, o
         const decoder = new TextDecoder();
         let buffer = '';
         let metadataReceived = false;
-        const takeFinal = (line, sliceAt) => {
+        const takeFinal = (line: string, sliceAt: number): void => {
             try {
                 finalMeta = JSON.parse(line.slice(sliceAt));
             } catch {
@@ -1754,7 +2378,7 @@ export const previewChatStream = async (botId, question, sessionId, { onChunk, o
             if (done) break;
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split('\n');
-            buffer = lines.pop();
+            buffer = lines.pop() ?? '';
             for (const line of lines) {
                 if (!line.trim()) continue;
                 if (line.startsWith('METADATA:')) {
@@ -1790,12 +2414,12 @@ export const previewChatStream = async (botId, question, sessionId, { onChunk, o
  * Marks the account's guided onboarding (Build Studio) as complete. Best-effort -
  * never throws, so finishing the flow can't be blocked by a transient failure.
  */
-export const completeOnboarding = async () => {
+export const completeOnboarding = async (): Promise<Record<string, unknown> | null> => {
     try {
         const { data } = await api.post('/auth/onboarding/complete');
         return data;
     } catch (error) {
-        console.warn('completeOnboarding failed (non-fatal):', error?.message);
+        console.warn('completeOnboarding failed (non-fatal):', (error as Error | null)?.message);
         return null;
     }
 };
@@ -1805,7 +2429,7 @@ export const completeOnboarding = async () => {
  * @param {number} botId
  * @returns {Promise<Object>} Bot details
  */
-export const getBot = async (botId) => {
+export const getBot = async (botId: number): Promise<Bot> => {
     try {
         const response = await api.get(`/bots/${botId}`);
         return response.data;
@@ -1815,7 +2439,7 @@ export const getBot = async (botId) => {
     }
 };
 
-export const getFrameworkPresets = async (botId) => {
+export const getFrameworkPresets = async (botId: number): Promise<Record<string, unknown>> => {
     try {
         const response = await api.get(`/bots/${botId}/framework-presets`);
         return response.data;
@@ -1831,7 +2455,10 @@ export const getFrameworkPresets = async (botId) => {
  * @param {Object} data - Settings to update
  * @returns {Promise<Object>} Result message
  */
-export const updateBot = async (botId, data) => {
+export const updateBot = async (
+    botId: number,
+    data: Record<string, unknown>,
+): Promise<{ message: string }> => {
     try {
         const response = await api.patch(`/bots/${botId}`, data);
         return response.data;
@@ -1846,7 +2473,7 @@ export const updateBot = async (botId, data) => {
  * @param {number} botId
  * @returns {Promise<Object>} Result message
  */
-export const deleteBot = async (botId) => {
+export const deleteBot = async (botId: number): Promise<Record<string, unknown>> => {
     try {
         const response = await api.delete(`/bots/${botId}`);
         return response.data;
@@ -1856,21 +2483,25 @@ export const deleteBot = async (botId) => {
     }
 };
 
-export const getBotDemoUrl = (botKey) => `${API_BASE_URL}/demo/${botKey}`;
+export const getBotDemoUrl = (botKey: string): string => `${API_BASE_URL}/demo/${botKey}`;
 
-export const getBotPreviewUrl = (botKey, websiteUrl, { edit = false } = {}) => {
+export const getBotPreviewUrl = (
+    botKey: string,
+    websiteUrl?: string,
+    { edit = false }: { edit?: boolean } = {},
+): string => {
     const base = `${API_BASE_URL}/demo/${botKey}`;
     const params = new URLSearchParams();
     if (websiteUrl) {
         const normalized = /^https?:\/\//i.test(websiteUrl) ? websiteUrl : `https://${websiteUrl}`;
-        params.set('url', normalized);
+        params.set('url', String(normalized));
     }
     if (edit) params.set('edit', '1');
     const qs = params.toString();
     return qs ? `${base}?${qs}` : base;
 };
 
-export const trackDemoShareClick = async (botId) => {
+export const trackDemoShareClick = async (botId: number): Promise<Record<string, unknown>> => {
     try {
         const response = await api.post(`/bots/${botId}/demo-share-click`);
         return response.data;
@@ -1892,7 +2523,9 @@ export const trackDemoShareClick = async (botId) => {
  * matching body would say the same thing twice and tell the reader nothing
  * about what to do next.
  */
-export const recaptureDemoScreenshot = async (botId) => {
+export const recaptureDemoScreenshot = async (
+    botId: number,
+): Promise<{ success: boolean; status: string; website: string }> => {
     try {
         const response = await api.post(`/bots/${botId}/demo-screenshot`);
         return response.data;
@@ -1904,17 +2537,17 @@ export const recaptureDemoScreenshot = async (botId) => {
 
 // ── Lead Management ──
 
-export const getLeads = async (botId, params = {}) => {
+export const getLeads = async (botId?: number, params: LeadsQuery = {}): Promise<LeadsResult> => {
     try {
         const query = new URLSearchParams();
-        if (botId) query.set('bot_id', botId);
+        if (botId) query.set('bot_id', String(botId));
         if (params.status) query.set('status', params.status);
-        if (params.min_score != null) query.set('min_score', params.min_score);
-        if (params.days != null) query.set('days', params.days);
+        if (params.min_score != null) query.set('min_score', String(params.min_score));
+        if (params.days != null) query.set('days', String(params.days));
         if (params.from_date) query.set('from_date', params.from_date);
         if (params.to_date) query.set('to_date', params.to_date);
-        if (params.page) query.set('page', params.page);
-        if (params.limit) query.set('limit', params.limit);
+        if (params.page) query.set('page', String(params.page));
+        if (params.limit) query.set('limit', String(params.limit));
         const response = await api.get(`/leads?${query.toString()}`);
         return response.data;
     } catch (error) {
@@ -1923,7 +2556,7 @@ export const getLeads = async (botId, params = {}) => {
     }
 };
 
-export const getLeadDetail = async (sessionId) => {
+export const getLeadDetail = async (sessionId: string): Promise<Lead & { messages?: ChatMessage[] }> => {
     try {
         const response = await api.get(`/leads/${sessionId}`);
         return response.data;
@@ -1933,11 +2566,16 @@ export const getLeadDetail = async (sessionId) => {
     }
 };
 
-export const getLeadStats = async (botId, days, fromDate, toDate) => {
+export const getLeadStats = async (
+    botId?: number,
+    days?: number,
+    fromDate?: string,
+    toDate?: string,
+): Promise<Record<string, unknown>> => {
     try {
         const query = new URLSearchParams();
-        if (botId) query.set('bot_id', botId);
-        if (days != null) query.set('days', days);
+        if (botId) query.set('bot_id', String(botId));
+        if (days != null) query.set('days', String(days));
         if (fromDate) query.set('from_date', fromDate);
         if (toDate) query.set('to_date', toDate);
         const suffix = query.toString();
@@ -1949,7 +2587,10 @@ export const getLeadStats = async (botId, days, fromDate, toDate) => {
     }
 };
 
-export const getQualificationFunnel = async (botId, period = '30d') => {
+export const getQualificationFunnel = async (
+    botId: number,
+    period: string = '30d',
+): Promise<Record<string, unknown>> => {
     try {
         const response = await api.get(`/analytics/qualification-funnel?bot_id=${botId}&period=${period}`);
         return response.data;
@@ -1959,7 +2600,7 @@ export const getQualificationFunnel = async (botId, period = '30d') => {
     }
 };
 
-export const exportLeadsCsv = async (botId) => {
+export const exportLeadsCsv = async (botId?: number): Promise<void> => {
     try {
         const query = botId ? `?bot_id=${botId}` : '';
         const response = await api.get(`/leads/export${query}`, { responseType: 'blob' });
@@ -1978,7 +2619,7 @@ export const exportLeadsCsv = async (botId) => {
 };
 
 // Mark a single lead as viewed (idempotent, 204 no body). Fire-and-forget on drawer open.
-export const markLeadViewed = async (sessionId) => {
+export const markLeadViewed = async (sessionId: string): Promise<void> => {
     try {
         await api.post(`/leads/${sessionId}/view`);
     } catch (error) {
@@ -1988,7 +2629,7 @@ export const markLeadViewed = async (sessionId) => {
 };
 
 // Bulk-clear unread leads for a bot (or all of the caller's bots).
-export const markAllLeadsViewed = async (botId) => {
+export const markAllLeadsViewed = async (botId?: number): Promise<void> => {
     try {
         const query = botId ? `?bot_id=${botId}` : '';
         await api.post(`/leads/mark-all-viewed${query}`);
@@ -2002,7 +2643,10 @@ export const markAllLeadsViewed = async (botId) => {
 // email, cooldown, unsubscribe, bot pause) is enforced server-side. This
 // call can come back 400/403/409/423 with a human-readable `detail`, which
 // callers should surface rather than treat as a generic failure.
-export const sendLeadFollowUp = async (sessionId, confirmOverride = false) => {
+export const sendLeadFollowUp = async (
+    sessionId: string,
+    confirmOverride: boolean = false,
+): Promise<SendFollowUpResult> => {
     try {
         const response = await api.post(`/leads/${sessionId}/follow-up`, {
             confirm_override: confirmOverride,
@@ -2023,12 +2667,19 @@ export const sendLeadFollowUp = async (sessionId, confirmOverride = false) => {
 // exposes no DELETE: re-enabling mail to somebody who asked for it to stop is a
 // consent decision under India's DPDP Act, not a CRUD operation. Any UI over
 // this has to say so rather than leave the reader hunting for a button.
-export const getEmailSuppressions = async (params = {}) => {
+export const getEmailSuppressions = async (
+    params: {
+  botId?: number | null;
+  page?: number;
+  limit?: number;
+  search?: string | null;
+} = {},
+): Promise<EmailSuppressionsResult> => {
     try {
         const query = new URLSearchParams();
-        if (params.botId != null) query.set('bot_id', params.botId);
-        if (params.page) query.set('page', params.page);
-        if (params.limit) query.set('limit', params.limit);
+        if (params.botId != null) query.set('bot_id', String(params.botId));
+        if (params.page) query.set('page', String(params.page));
+        if (params.limit) query.set('limit', String(params.limit));
         if (params.search) query.set('search', params.search);
         const suffix = query.toString();
         const response = await api.get(`/leads/suppressions${suffix ? `?${suffix}` : ''}`);
@@ -2041,7 +2692,13 @@ export const getEmailSuppressions = async (params = {}) => {
 
 // Suppress an address for one bot. Idempotent: suppressing an already-suppressed
 // address returns the existing row rather than failing.
-export const createEmailSuppression = async ({ botId, email, reason = 'unsubscribe' }) => {
+export const createEmailSuppression = async (
+    { botId, email, reason = 'unsubscribe' }: {
+  botId: number;
+  email: string;
+  reason?: 'unsubscribe' | 'hard_bounce' | 'spam_complaint';
+},
+): Promise<EmailSuppression> => {
     try {
         const response = await api.post('/leads/suppressions', {
             bot_id: botId,
@@ -2063,7 +2720,11 @@ export const createEmailSuppression = async ({ botId, email, reason = 'unsubscri
 // composite score and tier, which it returns. `score` is bounded server-side by
 // the dimension's own configured maximum, so a 400 here means the caller sent a
 // score the bot's framework does not allow.
-export const overrideLeadQualification = async (sessionId, dimension, score) => {
+export const overrideLeadQualification = async (
+    sessionId: string,
+    dimension: string,
+    score: number,
+): Promise<QualificationOverrideResult> => {
     try {
         const response = await api.patch(`/operators/session/${sessionId}/qualification`, {
             dimension,
@@ -2078,7 +2739,7 @@ export const overrideLeadQualification = async (sessionId, dimension, score) => 
 
 // ── Webhooks ──
 
-export const getWebhooks = async (botId) => {
+export const getWebhooks = async (botId?: number): Promise<Webhook[]> => {
     try {
         const response = await api.get(`/webhooks?bot_id=${botId}`);
         return response.data;
@@ -2088,7 +2749,7 @@ export const getWebhooks = async (botId) => {
     }
 };
 
-export const createWebhook = async (botId, data) => {
+export const createWebhook = async (botId: number, data: Record<string, unknown>): Promise<Webhook> => {
     try {
         const response = await api.post(`/webhooks?bot_id=${botId}`, data);
         return response.data;
@@ -2098,7 +2759,7 @@ export const createWebhook = async (botId, data) => {
     }
 };
 
-export const updateWebhook = async (webhookId, data) => {
+export const updateWebhook = async (webhookId: number, data: Record<string, unknown>): Promise<Webhook> => {
     try {
         const response = await api.patch(`/webhooks/${webhookId}`, data);
         return response.data;
@@ -2108,7 +2769,7 @@ export const updateWebhook = async (webhookId, data) => {
     }
 };
 
-export const deleteWebhook = async (webhookId) => {
+export const deleteWebhook = async (webhookId: number): Promise<Record<string, unknown>> => {
     try {
         const response = await api.delete(`/webhooks/${webhookId}`);
         return response.data;
@@ -2118,7 +2779,10 @@ export const deleteWebhook = async (webhookId) => {
     }
 };
 
-export const getWebhookDeliveries = async (webhookId, page = 1) => {
+export const getWebhookDeliveries = async (
+    webhookId: number,
+    page: number = 1,
+): Promise<WebhookDeliveriesResult> => {
     try {
         const response = await api.get(`/webhooks/${webhookId}/deliveries?page=${page}&limit=50`);
         return response.data;
@@ -2128,7 +2792,7 @@ export const getWebhookDeliveries = async (webhookId, page = 1) => {
     }
 };
 
-export const testWebhook = async (webhookId) => {
+export const testWebhook = async (webhookId: number): Promise<Record<string, unknown>> => {
     try {
         const response = await api.post(`/webhooks/${webhookId}/test`);
         return response.data;
@@ -2140,7 +2804,7 @@ export const testWebhook = async (webhookId) => {
 
 // ── Live Chat / Operator ──
 
-export const getOperatorQueue = async () => {
+export const getOperatorQueue = async (): Promise<Record<string, unknown>> => {
     try {
         const response = await api.get('/operators/queue');
         return response.data;
@@ -2150,7 +2814,7 @@ export const getOperatorQueue = async () => {
     }
 };
 
-export const getQualifiedBotSessions = async (limit = 50) => {
+export const getQualifiedBotSessions = async (limit: number = 50): Promise<Record<string, unknown>> => {
     try {
         const response = await api.get(`/operators/qualified-bot-sessions?limit=${limit}`);
         return response.data;
@@ -2160,7 +2824,10 @@ export const getQualifiedBotSessions = async (limit = 50) => {
     }
 };
 
-export const sendConnectRequest = async (sessionId, operatorId = null) => {
+export const sendConnectRequest = async (
+    sessionId: string,
+    operatorId: number | null = null,
+): Promise<Record<string, unknown>> => {
     try {
         const body = operatorId ? { operator_id: operatorId } : {};
         const response = await api.post(`/operators/connect-request/${sessionId}`, body);
@@ -2171,7 +2838,7 @@ export const sendConnectRequest = async (sessionId, operatorId = null) => {
     }
 };
 
-export const cancelConnectRequest = async (sessionId) => {
+export const cancelConnectRequest = async (sessionId: string): Promise<Record<string, unknown>> => {
     try {
         const response = await api.post(`/operators/connect-request/${sessionId}/cancel`);
         return response.data;
@@ -2181,7 +2848,10 @@ export const cancelConnectRequest = async (sessionId) => {
     }
 };
 
-export const acceptChat = async (sessionId, operatorId = null) => {
+export const acceptChat = async (
+    sessionId: string,
+    operatorId: number | null = null,
+): Promise<Record<string, unknown>> => {
     try {
         // Pass operatorId in the body so the backend uses the exact operator record
         // rather than the fragile `.limit(1)` fallback (critical for owner accounts).
@@ -2194,7 +2864,7 @@ export const acceptChat = async (sessionId, operatorId = null) => {
     }
 };
 
-export const closeOperatorChat = async (sessionId) => {
+export const closeOperatorChat = async (sessionId: string): Promise<Record<string, unknown>> => {
     try {
         const response = await api.post(`/operators/close/${sessionId}`);
         return response.data;
@@ -2210,7 +2880,7 @@ export const closeOperatorChat = async (sessionId) => {
  * the bot (`status='bot'`). Visitor-facing teardown is identical.
  * @param {string} sessionId
  */
-export const resolveOperatorChat = async (sessionId) => {
+export const resolveOperatorChat = async (sessionId: string): Promise<Record<string, unknown>> => {
     try {
         const response = await api.post(`/operators/resolve/${sessionId}`);
         return response.data;
@@ -2220,7 +2890,10 @@ export const resolveOperatorChat = async (sessionId) => {
     }
 };
 
-export const transferChat = async (sessionId, data) => {
+export const transferChat = async (
+    sessionId: string,
+    data: Record<string, unknown>,
+): Promise<Record<string, unknown>> => {
     try {
         const response = await api.post(`/operators/transfer/${sessionId}`, data);
         return response.data;
@@ -2230,9 +2903,11 @@ export const transferChat = async (sessionId, data) => {
     }
 };
 
-export const toggleOperatorStatus = async ({ isOnline, botId } = {}) => {
+export const toggleOperatorStatus = async (
+    { isOnline, botId }: { isOnline?: boolean; botId?: number } = {},
+): Promise<Record<string, unknown>> => {
     try {
-        const body = {};
+        const body: Record<string, unknown> = {};
         if (typeof isOnline === 'boolean') body.is_online = isOnline;
         if (botId) body.bot_id = botId;
         // Only send a body when the caller actually populated a field -
@@ -2248,7 +2923,9 @@ export const toggleOperatorStatus = async ({ isOnline, botId } = {}) => {
     }
 };
 
-export const getMyOperatorStatus = async ({ botId } = {}) => {
+export const getMyOperatorStatus = async (
+    { botId }: { botId?: number } = {},
+): Promise<OperatorStatus | null> => {
     try {
         const params = botId ? { bot_id: botId } : {};
         const response = await api.get('/operators/me/status', { params });
@@ -2271,7 +2948,7 @@ export const getMyOperatorStatus = async ({ botId } = {}) => {
 // always fully defaulted, so the caller never has to infer a missing field.
 
 /** Read the signed-in user's own push preferences (events + quiet hours). */
-export const getNotificationPreferences = async () => {
+export const getNotificationPreferences = async (): Promise<NotificationPreferences> => {
     try {
         const response = await api.get('/operators/me/notification-preferences');
         return response.data;
@@ -2285,7 +2962,9 @@ export const getNotificationPreferences = async () => {
  * whole ``push`` object, so callers must send the complete state - a partial
  * body silently resets the fields it omits to their defaults.
  */
-export const updateNotificationPreferences = async (preferences) => {
+export const updateNotificationPreferences = async (
+    preferences: NotificationPreferences,
+): Promise<NotificationPreferences> => {
     try {
         const response = await api.put('/operators/me/notification-preferences', preferences);
         return response.data;
@@ -2294,7 +2973,7 @@ export const updateNotificationPreferences = async (preferences) => {
     }
 };
 
-export const getSessionDetails = async (sessionId) => {
+export const getSessionDetails = async (sessionId: string): Promise<Record<string, unknown>> => {
     try {
         const response = await api.get(`/operators/session/${sessionId}/details`);
         return response.data;
@@ -2306,7 +2985,7 @@ export const getSessionDetails = async (sessionId) => {
 
 // ── Operator Login ──
 
-export const loginOperator = async (email, password) => {
+export const loginOperator = async (email: string, password: string): Promise<OperatorLoginResult> => {
     try {
         const response = await api.post('/auth/operator-login', { email, password });
         return response.data;
@@ -2323,7 +3002,10 @@ export const loginOperator = async (email, password) => {
  * so other sessions are revoked, and returns the replacement as
  * ``access_token``. Swap it into storage so this tab survives the rotation.
  */
-export const operatorChangePassword = async (currentPassword, newPassword) => {
+export const operatorChangePassword = async (
+    currentPassword: string,
+    newPassword: string,
+): Promise<{ message: string; access_token?: string }> => {
     try {
         const response = await api.post('/auth/operator-change-password', {
             current_password: currentPassword,
@@ -2341,7 +3023,7 @@ export const operatorChangePassword = async (currentPassword, newPassword) => {
 
 // ── Operator Management ──
 
-export const getOperators = async () => {
+export const getOperators = async (): Promise<Operator[]> => {
     try {
         const response = await api.get('/operators');
         return response.data;
@@ -2351,7 +3033,7 @@ export const getOperators = async () => {
     }
 };
 
-export const createOperator = async (data) => {
+export const createOperator = async (data: Record<string, unknown>): Promise<Operator> => {
     try {
         const response = await api.post('/operators/create', data);
         return response.data;
@@ -2361,7 +3043,10 @@ export const createOperator = async (data) => {
     }
 };
 
-export const updateOperator = async (operatorId, data) => {
+export const updateOperator = async (
+    operatorId: number,
+    data: Record<string, unknown>,
+): Promise<Operator> => {
     try {
         const response = await api.patch(`/operators/${operatorId}`, data);
         return response.data;
@@ -2371,7 +3056,7 @@ export const updateOperator = async (operatorId, data) => {
     }
 };
 
-export const deleteOperator = async (operatorId) => {
+export const deleteOperator = async (operatorId: number): Promise<Record<string, unknown>> => {
     try {
         const response = await api.delete(`/operators/${operatorId}`);
         return response.data;
@@ -2383,7 +3068,7 @@ export const deleteOperator = async (operatorId) => {
 
 // ── Department Management ──
 
-export const getDepartments = async () => {
+export const getDepartments = async (): Promise<Department[]> => {
     try {
         const response = await api.get('/operators/departments');
         return response.data;
@@ -2393,7 +3078,7 @@ export const getDepartments = async () => {
     }
 };
 
-export const createDepartment = async (data) => {
+export const createDepartment = async (data: Record<string, unknown>): Promise<Department> => {
     try {
         const response = await api.post('/operators/departments', data);
         return response.data;
@@ -2403,7 +3088,10 @@ export const createDepartment = async (data) => {
     }
 };
 
-export const updateDepartment = async (departmentId, data) => {
+export const updateDepartment = async (
+    departmentId: number,
+    data: Record<string, unknown>,
+): Promise<Department> => {
     try {
         const response = await api.patch(`/operators/departments/${departmentId}`, data);
         return response.data;
@@ -2413,7 +3101,7 @@ export const updateDepartment = async (departmentId, data) => {
     }
 };
 
-export const deleteDepartment = async (departmentId) => {
+export const deleteDepartment = async (departmentId: number): Promise<Record<string, unknown>> => {
     try {
         const response = await api.delete(`/operators/departments/${departmentId}`);
         return response.data;
@@ -2425,7 +3113,9 @@ export const deleteDepartment = async (departmentId) => {
 
 // ── Offline Messages ──
 
-export const getOfflineMessages = async (params = {}) => {
+export const getOfflineMessages = async (
+    params: Record<string, unknown> = {},
+): Promise<OfflineMessagesResult> => {
     try {
         const response = await api.get('/offline-messages', { params });
         return response.data;
@@ -2435,7 +3125,10 @@ export const getOfflineMessages = async (params = {}) => {
     }
 };
 
-export const updateOfflineMessage = async (messageId, data) => {
+export const updateOfflineMessage = async (
+    messageId: number,
+    data: Record<string, unknown>,
+): Promise<{ success: boolean; status?: string }> => {
     try {
         const response = await api.patch(`/offline-messages/${messageId}`, data);
         return response.data;
@@ -2445,7 +3138,7 @@ export const updateOfflineMessage = async (messageId, data) => {
     }
 };
 
-export const deleteOfflineMessage = async (messageId) => {
+export const deleteOfflineMessage = async (messageId: number): Promise<{ success: boolean }> => {
     try {
         const response = await api.delete(`/offline-messages/${messageId}`);
         return response.data;
@@ -2457,7 +3150,7 @@ export const deleteOfflineMessage = async (messageId) => {
 
 // ── Canned Responses ──
 
-export const getCannedResponses = async (category = null) => {
+export const getCannedResponses = async (category: string | null = null): Promise<CannedResponsesResult> => {
     try {
         const params = category ? { category } : {};
         const response = await api.get('/canned-responses', { params });
@@ -2468,7 +3161,14 @@ export const getCannedResponses = async (category = null) => {
     }
 };
 
-export const createCannedResponse = async (data) => {
+export const createCannedResponse = async (
+    data: {
+  title: string;
+  content: string;
+  shortcut?: string;
+  category?: string | null;
+},
+): Promise<CannedResponse> => {
     try {
         const response = await api.post('/canned-responses', data);
         return response.data;
@@ -2478,7 +3178,10 @@ export const createCannedResponse = async (data) => {
     }
 };
 
-export const updateCannedResponse = async (responseId, data) => {
+export const updateCannedResponse = async (
+    responseId: number,
+    data: Record<string, unknown>,
+): Promise<Record<string, unknown>> => {
     try {
         const response = await api.patch(`/canned-responses/${responseId}`, data);
         return response.data;
@@ -2488,7 +3191,7 @@ export const updateCannedResponse = async (responseId, data) => {
     }
 };
 
-export const deleteCannedResponse = async (responseId) => {
+export const deleteCannedResponse = async (responseId: number): Promise<{ success: boolean }> => {
     try {
         const response = await api.delete(`/canned-responses/${responseId}`);
         return response.data;
@@ -2505,7 +3208,10 @@ export const deleteCannedResponse = async (responseId) => {
  * @param {string} sessionId
  * @returns {Promise<{ file_url: string, filename: string, content_type: string }>}
  */
-export const uploadOperatorChatFile = async (file, sessionId) => {
+export const uploadOperatorChatFile = async (
+    file: File,
+    sessionId: string,
+): Promise<{ file_url: string; filename: string; content_type: string; size: number }> => {
     try {
         const formData = new FormData();
         formData.append('file', file);
@@ -2523,7 +3229,7 @@ export const uploadOperatorChatFile = async (file, sessionId) => {
 
 // --- SUBSCRIPTION & BILLING ENDPOINTS ---
 
-export const getSubscriptionPlans = async () => {
+export const getSubscriptionPlans = async (): Promise<Array<Record<string, unknown>>> => {
     try {
         const response = await api.get('/subscriptions/plans');
         return response.data;
@@ -2536,7 +3242,7 @@ export const getSubscriptionPlans = async () => {
 // Returns `{ active: false }` or the promo projection
 // `{ active: true, id, name, free_cycles, ends_at, eligible_plan_ids }`.
 // Checkout re-validates server-side, so this is never the gate.
-export const getActivePromotion = async () => {
+export const getActivePromotion = async (): Promise<Record<string, unknown>> => {
     try {
         const response = await api.get('/subscriptions/promo');
         return response.data;
@@ -2551,14 +3257,23 @@ export const getActivePromotion = async () => {
 // webhook, or synchronously via verifyBotCheckout when the webhook can't
 // reach localhost).
 
-export const createBotCheckout = async ({
+export const createBotCheckout = async (
+    {
     name,
     website,
     plan_slug,
     billing_cycle = 'monthly',
     allowed_domains,
     domain_check_enabled,
-}) => {
+}: {
+  name: string;
+  website?: string;
+  plan_slug: string;
+  billing_cycle?: string;
+  allowed_domains?: string[] | null;
+  domain_check_enabled?: boolean | null;
+},
+): Promise<Record<string, unknown>> => {
     try {
         const response = await api.post('/bots/checkout', {
             name,
@@ -2574,11 +3289,17 @@ export const createBotCheckout = async ({
     }
 };
 
-export const verifyBotCheckout = async ({
+export const verifyBotCheckout = async (
+    {
     razorpay_payment_id,
     razorpay_subscription_id,
     razorpay_signature,
-}) => {
+}: {
+  razorpay_payment_id: string;
+  razorpay_subscription_id: string;
+  razorpay_signature: string;
+},
+): Promise<Record<string, unknown>> => {
     try {
         const response = await api.post('/bots/checkout/verify', {
             razorpay_payment_id,
@@ -2591,9 +3312,9 @@ export const verifyBotCheckout = async ({
     }
 };
 
-export const getCurrentSubscription = async (botId) => {
+export const getCurrentSubscription = async (botId?: number | null): Promise<Record<string, unknown>> => {
     try {
-        const params = {};
+        const params: Record<string, unknown> = {};
         if (botId != null) params.bot_id = botId;
         const response = await api.get('/subscriptions/current', { params });
         return response.data;
@@ -2602,7 +3323,7 @@ export const getCurrentSubscription = async (botId) => {
     }
 };
 
-export const getSubscriptionUsage = async () => {
+export const getSubscriptionUsage = async (): Promise<Record<string, unknown>> => {
     try {
         const response = await api.get('/subscriptions/usage');
         return response.data;
@@ -2611,9 +3332,9 @@ export const getSubscriptionUsage = async () => {
     }
 };
 
-export const getInvoices = async (botId) => {
+export const getInvoices = async (botId?: number | null): Promise<Array<Record<string, unknown>>> => {
     try {
-        const params = {};
+        const params: Record<string, unknown> = {};
         if (botId != null) params.bot_id = botId;
         const response = await api.get('/subscriptions/invoices', { params });
         return response.data;
@@ -2642,7 +3363,9 @@ export const getInvoices = async (botId) => {
  * subscription, so changing THAT runs the re-mandate flow via /resume.
  * Conflating the two would promise a swap the gateway cannot perform.
  */
-export const getPaymentMethods = async ({ refresh = false } = {}) => {
+export const getPaymentMethods = async (
+    { refresh = false }: { refresh?: boolean } = {},
+): Promise<Record<string, unknown>[]> => {
     try {
         const params = refresh ? { refresh: 'true' } : {};
         const response = await api.get('/payment-methods', { params });
@@ -2653,7 +3376,7 @@ export const getPaymentMethods = async ({ refresh = false } = {}) => {
 };
 
 /** Revoke a saved instrument at Razorpay, then drop our mirror row. */
-export const deletePaymentMethod = async (tokenId) => {
+export const deletePaymentMethod = async (tokenId: string): Promise<Record<string, unknown>> => {
     try {
         const response = await api.delete(`/payment-methods/${encodeURIComponent(tokenId)}`);
         return response.data;
@@ -2662,9 +3385,9 @@ export const deletePaymentMethod = async (tokenId) => {
     }
 };
 
-export const getPaymentRecovery = async (botId) => {
+export const getPaymentRecovery = async (botId?: number | null): Promise<Record<string, unknown>> => {
     try {
-        const params = {};
+        const params: Record<string, unknown> = {};
         if (botId != null) params.bot_id = botId;
         const response = await api.get('/subscriptions/payment-recovery', { params });
         return response.data;
@@ -2673,7 +3396,7 @@ export const getPaymentRecovery = async (botId) => {
     }
 };
 
-export const getBillingDetails = async () => {
+export const getBillingDetails = async (): Promise<Record<string, unknown>> => {
     try {
         const response = await api.get('/subscriptions/billing-details');
         return response.data;
@@ -2689,7 +3412,9 @@ export const getBillingDetails = async () => {
  * and returns 422 with a human-readable ``detail`` on invalid combinations.
  * @param {object} patch - Subset of billing-details fields to change.
  */
-export const updateBillingDetails = async (patch) => {
+export const updateBillingDetails = async (
+    patch: Record<string, unknown>,
+): Promise<Record<string, unknown>> => {
     try {
         const response = await api.put('/subscriptions/billing-details', patch);
         return response.data;
@@ -2707,7 +3432,11 @@ export const updateBillingDetails = async (patch) => {
  * of a pay button). Proration is applied server-side at activation and is
  * intentionally NOT part of this quote.
  */
-export const getCheckoutQuote = async (planId, billingCycle = 'monthly', billingCountry = null) => {
+export const getCheckoutQuote = async (
+    planId: number,
+    billingCycle: 'monthly' | 'annual' = 'monthly',
+    billingCountry: string | null = null,
+): Promise<CheckoutQuoteResponse> => {
     try {
         const response = await api.get('/subscriptions/checkout/quote', {
             params: {
@@ -2727,7 +3456,11 @@ export const getCheckoutQuote = async (planId, billingCycle = 'monthly', billing
  * sheet ('checkout_abandoned') or the gateway declined ('payment_failed').
  * Never throws. Losing a telemetry event must not affect the checkout UX.
  */
-export const recordBillingEvent = (event, surface, meta) => {
+export const recordBillingEvent = (
+    event: 'checkout_abandoned' | 'payment_failed',
+    surface: 'plan' | 'topup' | 'seat' | 'resume' | 'branding',
+    meta?: Record<string, unknown> | null,
+): Promise<unknown> => {
     try {
         return api
             .post('/subscriptions/billing-events', { event, surface, meta: meta ?? null })
@@ -2737,7 +3470,11 @@ export const recordBillingEvent = (event, surface, meta) => {
     }
 };
 
-export const createCheckoutSession = async (planId, billingCycle = 'monthly', billingCountry = null) => {
+export const createCheckoutSession = async (
+    planId: number,
+    billingCycle: 'monthly' | 'annual' = 'monthly',
+    billingCountry: string | null = null,
+): Promise<Record<string, unknown>> => {
     try {
         const response = await api.post('/subscriptions/checkout', {
             plan_id: planId,
@@ -2763,7 +3500,7 @@ export const createCheckoutSession = async (planId, billingCycle = 'monthly', bi
  * grants the plan's full monthly credit allowance. No card is collected
  * - the conversion path runs through createCheckoutSession on day 14.
  */
-export const startTrial = async (planSlug) => {
+export const startTrial = async (planSlug: string): Promise<Record<string, unknown>> => {
     try {
         const response = await api.post('/subscriptions/start-trial', { plan_slug: planSlug });
         return response.data;
@@ -2772,7 +3509,11 @@ export const startTrial = async (planSlug) => {
     }
 };
 
-export const changePlan = async (planId, billingCycle = null, botId = null) => {
+export const changePlan = async (
+    planId: number,
+    billingCycle: string | null = null,
+    botId: number | null = null,
+): Promise<Record<string, unknown>> => {
     try {
         const response = await api.post('/subscriptions/change-plan', {
             plan_id: planId,
@@ -2785,7 +3526,7 @@ export const changePlan = async (planId, billingCycle = null, botId = null) => {
     }
 };
 
-export const cancelScheduledChange = async () => {
+export const cancelScheduledChange = async (): Promise<Record<string, unknown>> => {
     try {
         const response = await api.post('/subscriptions/cancel-scheduled-change');
         return response.data;
@@ -2794,9 +3535,12 @@ export const cancelScheduledChange = async () => {
     }
 };
 
-export const cancelSubscription = async (reason = null, botId = null) => {
+export const cancelSubscription = async (
+    reason: string | null = null,
+    botId: number | null = null,
+): Promise<Record<string, unknown>> => {
     try {
-        const body = { reason };
+        const body: Record<string, unknown> = { reason };
         if (botId != null) body.bot_id = botId;
         const response = await api.post('/subscriptions/cancel', body);
         return response.data;
@@ -2814,9 +3558,9 @@ export const cancelSubscription = async (reason = null, botId = null) => {
  * Reactivate either 400s ("not scheduled for cancellation") or mints a fresh
  * Razorpay mandate against the wrong subscription.
  */
-export const resumeSubscription = async (botId = null) => {
+export const resumeSubscription = async (botId: number | null = null): Promise<Record<string, unknown>> => {
     try {
-        const body = {};
+        const body: Record<string, unknown> = {};
         if (botId != null) body.bot_id = botId;
         const response = await api.post('/subscriptions/resume', body);
         return response.data;
@@ -2827,7 +3571,7 @@ export const resumeSubscription = async (botId = null) => {
 
 // --- CREDITS & TOP-UPS ---
 
-export const getCreditBalance = async () => {
+export const getCreditBalance = async (): Promise<Record<string, unknown>> => {
     try {
         const response = await api.get('/credits/balance');
         return response.data;
@@ -2836,9 +3580,11 @@ export const getCreditBalance = async () => {
     }
 };
 
-export const getCreditHistory = async ({ page = 1, limit = 50, botId } = {}) => {
+export const getCreditHistory = async (
+    { page = 1, limit = 50, botId }: { page?: number; limit?: number; botId?: number | null } = {},
+): Promise<Record<string, unknown>> => {
     try {
-        const params = { page, limit };
+        const params: Record<string, unknown> = { page, limit };
         if (botId != null) params.bot_id = botId;
         const response = await api.get('/credits/history', { params });
         return response.data;
@@ -2852,9 +3598,11 @@ export const getCreditHistory = async ({ page = 1, limit = 50, botId } = {}) => 
  * credits_used }] }`. The series is zero-filled and ascending (one entry per
  * day in the window), summing only metered consumption debits.
  */
-export const getCreditDaily = async ({ days = 30, botId } = {}) => {
+export const getCreditDaily = async (
+    { days = 30, botId }: { days?: number; botId?: number | null } = {},
+): Promise<Record<string, unknown>> => {
     try {
-        const params = { days };
+        const params: Record<string, unknown> = { days };
         if (botId != null) params.bot_id = botId;
         const response = await api.get('/credits/daily', { params });
         return response.data;
@@ -2863,7 +3611,7 @@ export const getCreditDaily = async ({ days = 30, botId } = {}) => {
     }
 };
 
-export const getTopupPacks = async () => {
+export const getTopupPacks = async (): Promise<TopupPackResponse[]> => {
     try {
         const response = await api.get('/credits/packs');
         return response.data;
@@ -2882,7 +3630,10 @@ export const getTopupPacks = async () => {
  * The caller passes `amount` matching one of the configured packs.
  * `pack_usd` is accepted as a legacy alias.
  */
-export const initiateTopup = async (amount, { botId } = {}) => {
+export const initiateTopup = async (
+    amount: number,
+    { botId }: { botId?: number | null } = {},
+): Promise<Record<string, unknown>> => {
     try {
         const response = await api.post('/credits/topup', { amount, bot_id: botId ?? null });
         return response.data;
@@ -2895,7 +3646,13 @@ export const initiateTopup = async (amount, { botId } = {}) => {
  * Server-verify the Razorpay Checkout success callback.
  * Required for defence-in-depth - never trust the modal-only success path.
  */
-export const verifyTopupPayment = async ({ razorpay_order_id, razorpay_payment_id, razorpay_signature }) => {
+export const verifyTopupPayment = async (
+    { razorpay_order_id, razorpay_payment_id, razorpay_signature }: {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+},
+): Promise<Record<string, unknown>> => {
     try {
         const response = await api.post('/credits/topup/verify', {
             razorpay_order_id,
@@ -2917,7 +3674,7 @@ export const verifyTopupPayment = async ({ razorpay_order_id, razorpay_payment_i
  * country. Also returns ``checkout_available`` - whether checkout is wired
  * (Razorpay enabled). Cached at call sites - geo doesn't change mid-session.
  */
-export const getBillingGeo = async (overrideCountry) => {
+export const getBillingGeo = async (overrideCountry?: string): Promise<BillingGeoResponse> => {
     try {
         const params = overrideCountry ? { country: overrideCountry.toUpperCase() } : undefined;
         const response = await api.get('/subscriptions/geo', { params });
@@ -2934,11 +3691,17 @@ export const getBillingGeo = async (overrideCountry) => {
  * still the authoritative reconciler - this endpoint exists so the modal
  * can flip to a success state instantly instead of polling.
  */
-export const verifyRazorpaySubscription = async ({
+export const verifyRazorpaySubscription = async (
+    {
     razorpay_payment_id,
     razorpay_subscription_id,
     razorpay_signature,
-}) => {
+}: {
+  razorpay_payment_id: string;
+  razorpay_subscription_id: string;
+  razorpay_signature: string;
+},
+): Promise<Record<string, unknown>> => {
     try {
         const response = await api.post('/subscriptions/verify-razorpay-subscription', {
             razorpay_payment_id,
@@ -2952,9 +3715,12 @@ export const verifyRazorpaySubscription = async ({
 };
 
 
-export const changeOperatorSeats = async (delta, botId = null) => {
+export const changeOperatorSeats = async (
+    delta: number,
+    botId: number | null = null,
+): Promise<SeatChangeResponse> => {
     try {
-        const body = { delta };
+        const body: Record<string, unknown> = { delta };
         if (botId != null) body.bot_id = botId;
         const response = await api.post('/subscriptions/seats', body);
         return response.data;
@@ -2976,7 +3742,7 @@ export const changeOperatorSeats = async (delta, botId = null) => {
  * 400 when the subscription is on the Free plan.
  * @param {number|null} botId - Target that agent's subscription; null = account.
  */
-export const purchaseBrandingAddon = async (botId = null) => {
+export const purchaseBrandingAddon = async (botId: number | null = null): Promise<BrandingAddonResponse> => {
     try {
         const response = await api.post('/subscriptions/branding-addon', { bot_id: botId ?? null });
         return response.data;
@@ -2991,7 +3757,7 @@ export const purchaseBrandingAddon = async (botId = null) => {
  * widget within the entitlements cache TTL.
  * @param {number|null} botId - Target that agent's subscription; null = account.
  */
-export const cancelBrandingAddon = async (botId = null) => {
+export const cancelBrandingAddon = async (botId: number | null = null): Promise<BrandingAddonResponse> => {
     try {
         const response = await api.delete('/subscriptions/branding-addon', {
             data: { bot_id: botId ?? null },
@@ -3015,7 +3781,7 @@ export const cancelBrandingAddon = async (botId = null) => {
 // All require X-API-Key + an active affiliates row (backend enforces 403).
 
 /** Return the logged-in affiliate's profile + cap. */
-export const getAffiliateMe = async () => {
+export const getAffiliateMe = async (): Promise<Record<string, unknown>> => {
     try {
         const response = await api.get('/affiliate/me');
         return response.data;
@@ -3025,7 +3791,7 @@ export const getAffiliateMe = async () => {
 };
 
 /** List the current affiliate's codes with per-code click + signup counts. */
-export const getAffiliateCodes = async () => {
+export const getAffiliateCodes = async (): Promise<Array<Record<string, unknown>>> => {
     try {
         const response = await api.get('/affiliate/codes');
         return response.data;
@@ -3039,7 +3805,7 @@ export const getAffiliateCodes = async () => {
  * Emails are masked server-side on this route (affiliate scope) so the
  * raw PII never reaches the browser.
  */
-export const getAffiliateCodeReferrals = async (codeId) => {
+export const getAffiliateCodeReferrals = async (codeId: number): Promise<Record<string, unknown>> => {
     try {
         const response = await api.get(`/affiliate/codes/${codeId}/referrals`);
         return response.data;
@@ -3057,12 +3823,12 @@ export const getAffiliateCodeReferrals = async (codeId) => {
  *     must not exceed the affiliate's pool (set by super-admin).
  */
 export const createAffiliateCode = async (
-    code,
-    label = null,
-    { affiliateCommissionPct, customerDiscountPct } = {},
-) => {
+    code: string,
+    label: string | null = null,
+    { affiliateCommissionPct, customerDiscountPct }: { affiliateCommissionPct?: number; customerDiscountPct?: number } = {},
+): Promise<Record<string, unknown>> => {
     try {
-        const payload = { code, label };
+        const payload: Record<string, unknown> = { code, label };
         if (affiliateCommissionPct != null) payload.affiliate_commission_pct = affiliateCommissionPct;
         if (customerDiscountPct != null) payload.customer_discount_pct = customerDiscountPct;
         const response = await api.post('/affiliate/codes', payload);
@@ -3084,11 +3850,17 @@ export const createAffiliateCode = async (
  * affiliate's commission pool.
  */
 export const updateAffiliateCode = async (
-    codeId,
-    { code, label, active, affiliateCommissionPct, customerDiscountPct } = {},
-) => {
+    codeId: number,
+    { code, label, active, affiliateCommissionPct, customerDiscountPct }: {
+    code?: string;
+    label?: string;
+    active?: boolean;
+    affiliateCommissionPct?: number;
+    customerDiscountPct?: number;
+  } = {},
+): Promise<Record<string, unknown>> => {
     try {
-        const payload = {};
+        const payload: Record<string, unknown> = {};
         if (code !== undefined) payload.code = code;
         if (label !== undefined) payload.label = label;
         if (active !== undefined) payload.active = active;
@@ -3102,7 +3874,7 @@ export const updateAffiliateCode = async (
 };
 
 /** Aggregate stats for the affiliate dashboard header card. */
-export const getAffiliateStats = async () => {
+export const getAffiliateStats = async (): Promise<Record<string, unknown>> => {
     try {
         const response = await api.get('/affiliate/stats');
         return response.data;
@@ -3125,7 +3897,9 @@ export const getAffiliateStats = async () => {
  * Throws on invalid (404) / expired or revoked (410). The caller inspects
  * `error.status` to render the right empty state.
  */
-export const lookupAffiliateInvite = async (token) => {
+export const lookupAffiliateInvite = async (
+    token: string,
+): Promise<{ email: string; expires_at: string }> => {
     try {
         const response = await api.get('/affiliate-invites/lookup', { params: { token } });
         return response.data;
@@ -3139,9 +3913,22 @@ export const lookupAffiliateInvite = async (token) => {
  * an access_token with the same shape as /auth/register so the admin app
  * can log the user in immediately.
  */
-export const acceptAffiliateInvite = async ({ token, name, password, companyName = null, website = null }) => {
+export const acceptAffiliateInvite = async (
+    { token, name, password, companyName = null, website = null }: {
+  token: string;
+  name: string;
+  password: string;
+  companyName?: string | null;
+  website?: string | null;
+},
+): Promise<{
+  access_token: string;
+  client_id: number;
+  name: string;
+  is_affiliate: boolean;
+}> => {
     try {
-        const payload = { token, name, password };
+        const payload: Record<string, unknown> = { token, name, password };
         if (companyName) payload.company_name = companyName;
         if (website) payload.website = website;
         const response = await api.post('/affiliate-invites/accept', payload);
@@ -3156,7 +3943,9 @@ export const acceptAffiliateInvite = async ({ token, name, password, companyName
  * row to the currently-authenticated client (no Client row created).
  * Returns 403 if the token's email doesn't match the logged-in client.
  */
-export const acceptAffiliateInviteExisting = async (token) => {
+export const acceptAffiliateInviteExisting = async (
+    token: string,
+): Promise<{ is_affiliate: boolean; message: string }> => {
     try {
         const response = await api.post('/affiliate-invites/accept-existing', { token });
         return response.data;
@@ -3175,7 +3964,7 @@ export const acceptAffiliateInviteExisting = async (token) => {
 // ─────────────────────────────────────────────────────────────────────────
 
 /** Fetch the server's VAPID public key for pushManager.subscribe(). */
-export const getVapidPublicKey = async () => {
+export const getVapidPublicKey = async (): Promise<{ public_key: string; enabled: boolean }> => {
     try {
         const response = await api.get('/operators/push/vapid-public-key');
         return response.data; // { public_key: string, enabled: boolean }
@@ -3185,14 +3974,23 @@ export const getVapidPublicKey = async () => {
 };
 
 /** Register a PushSubscription with the backend. */
-export const subscribePush = async (subscription) => {
+export const subscribePush = async (subscription: PushSubscription): Promise<boolean> => {
     // PushSubscription.toJSON() returns { endpoint, expirationTime, keys: { p256dh, auth } }
     // - exactly the shape the backend expects, minus expirationTime which we drop.
     const json = subscription.toJSON();
+    // The browser always populates `keys` for a real subscription; the type
+    // marks them optional because PushSubscriptionJSON also describes a bare
+    // endpoint. One without them cannot be encrypted to, so this fails loudly
+    // rather than posting a record the push sender can never use. Previously
+    // it threw a bare TypeError on the same input.
+    const { p256dh, auth } = json.keys ?? {};
+    if (!p256dh || !auth) {
+        throw new ApiError('This push subscription is missing its encryption keys.');
+    }
     try {
         await api.post('/operators/push/subscribe', {
             endpoint: json.endpoint,
-            keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
+            keys: { p256dh, auth },
         });
         return true;
     } catch (error) {
@@ -3203,9 +4001,18 @@ export const subscribePush = async (subscription) => {
 // ── In-app notifications (bell + dropdown) ─────────────────────────────────
 
 /** Fetch the most recent notifications + the unread count. */
-export const listNotifications = async ({ limit = 30, beforeId, unreadOnly = false } = {}) => {
+export const listNotifications = async (
+    { limit = 30, beforeId, unreadOnly = false }: {
+  /** Page size. Defaults to 30. */
+  limit?: number;
+  /** Cursor: return notifications older than this id. */
+  beforeId?: number;
+  /** Restrict to unread only. Defaults to false. */
+  unreadOnly?: boolean;
+} = {},
+): Promise<{ items: NotificationItem[]; unread_count: number }> => {
     try {
-        const params = { limit };
+        const params: Record<string, unknown> = { limit };
         if (beforeId) params.before_id = beforeId;
         if (unreadOnly) params.unread_only = true;
         const response = await api.get('/notifications', { params });
@@ -3216,7 +4023,7 @@ export const listNotifications = async ({ limit = 30, beforeId, unreadOnly = fal
 };
 
 /** Cheap polling endpoint - returns ``{unread_count}``. */
-export const getUnreadNotificationCount = async () => {
+export const getUnreadNotificationCount = async (): Promise<number> => {
     try {
         const response = await api.get('/notifications/unread-count');
         return response.data.unread_count;
@@ -3226,7 +4033,7 @@ export const getUnreadNotificationCount = async () => {
 };
 
 /** Mark every unread notification as read. */
-export const markAllNotificationsRead = async () => {
+export const markAllNotificationsRead = async (): Promise<{ updated: number; unread_count: number }> => {
     try {
         const response = await api.post('/notifications/mark-all-read');
         return response.data;
@@ -3236,7 +4043,9 @@ export const markAllNotificationsRead = async () => {
 };
 
 /** Mark a single notification as read. Safe to call on already-read rows. */
-export const markNotificationRead = async (notificationId) => {
+export const markNotificationRead = async (
+    notificationId: number,
+): Promise<{ updated: boolean; unread_count: number }> => {
     try {
         const response = await api.patch(`/notifications/${notificationId}/read`);
         return response.data;
@@ -3246,7 +4055,9 @@ export const markNotificationRead = async (notificationId) => {
 };
 
 /** Delete one notification from the feed. */
-export const deleteNotification = async (notificationId) => {
+export const deleteNotification = async (
+    notificationId: number,
+): Promise<{ deleted: boolean; unread_count: number }> => {
     try {
         const response = await api.delete(`/notifications/${notificationId}`);
         return response.data;
@@ -3256,7 +4067,7 @@ export const deleteNotification = async (notificationId) => {
 };
 
 /** Clear the entire feed for this workspace. */
-export const clearAllNotifications = async () => {
+export const clearAllNotifications = async (): Promise<{ deleted: number; unread_count: number }> => {
     try {
         const response = await api.delete('/notifications');
         return response.data;
@@ -3266,7 +4077,7 @@ export const clearAllNotifications = async () => {
 };
 
 /** Unregister a PushSubscription from the backend. */
-export const unsubscribePush = async (endpoint, keys) => {
+export const unsubscribePush = async (endpoint: string, keys?: unknown): Promise<boolean> => {
     try {
         await api.delete('/operators/push/subscribe', {
             data: { endpoint, keys },
@@ -3276,7 +4087,8 @@ export const unsubscribePush = async (endpoint, keys) => {
         // Treat 4xx as best-effort cleanup - the subscription may already be
         // gone server-side (different device or 410 prune), and we still want
         // the local unsubscribe to proceed.
-        if (error?.status >= 400 && error?.status < 500) {
+        const status = (error as { status?: number } | null)?.status;
+        if (status !== undefined && status >= 400 && status < 500) {
             return false;
         }
         throw buildApiError(error, 'Failed to remove push subscription');
@@ -3291,7 +4103,20 @@ export const unsubscribePush = async (endpoint, keys) => {
  * @param {{ name?: string }} patch
  * @returns {Promise<{ id: number, name: string, email: string, pending_email: string|null }>}
  */
-export const updateClientProfile = async (patch) => {
+export const updateClientProfile = async (
+    patch: {
+  name?: string;
+  company_name?: string;
+  website?: string;
+},
+): Promise<{
+  id: number;
+  name: string;
+  email: string;
+  company_name?: string | null;
+  website?: string | null;
+  pending_email: string | null;
+}> => {
     try {
         const response = await api.patch('/client/profile', patch);
         return response.data;
@@ -3309,7 +4134,10 @@ export const updateClientProfile = async (patch) => {
  * @param {string} currentPassword
  * @returns {Promise<{ message: string, pending_email: string }>}
  */
-export const requestClientEmailChange = async (newEmail, currentPassword) => {
+export const requestClientEmailChange = async (
+    newEmail: string,
+    currentPassword: string,
+): Promise<{ message: string; pending_email: string }> => {
     try {
         const response = await api.post('/client/change-email/request', {
             new_email: newEmail,
@@ -3327,7 +4155,9 @@ export const requestClientEmailChange = async (newEmail, currentPassword) => {
  * @param {string} otp
  * @returns {Promise<{ id: number, name: string, email: string, pending_email: null }>}
  */
-export const confirmClientEmailChange = async (otp) => {
+export const confirmClientEmailChange = async (
+    otp: string,
+): Promise<{ id: number; name: string; email: string; pending_email: null }> => {
     try {
         const response = await api.post('/client/change-email/confirm', { otp });
         return response.data;
@@ -3341,7 +4171,7 @@ export const confirmClientEmailChange = async (otp) => {
  * Cancel a pending email change before it's confirmed.
  * @returns {Promise<{ ok: boolean }>}
  */
-export const cancelClientEmailChange = async () => {
+export const cancelClientEmailChange = async (): Promise<{ ok: boolean }> => {
     try {
         const response = await api.post('/client/change-email/cancel');
         return response.data;
@@ -3365,7 +4195,10 @@ export const cancelClientEmailChange = async () => {
  * @param {string} newPassword
  * @returns {Promise<{ ok: boolean, api_key?: string }>}
  */
-export const changeClientPassword = async (currentPassword, newPassword) => {
+export const changeClientPassword = async (
+    currentPassword: string,
+    newPassword: string,
+): Promise<{ ok: boolean; api_key?: string }> => {
     try {
         const response = await api.post('/client/change-password', {
             current_password: currentPassword,
@@ -3385,7 +4218,7 @@ export const changeClientPassword = async (currentPassword, newPassword) => {
  * Fetch the authenticated client's API key in masked form.
  * @returns {Promise<{ api_key_masked: string }>}
  */
-export const getClientApiKey = async () => {
+export const getClientApiKey = async (): Promise<{ api_key_masked: string }> => {
     try {
         const response = await api.get('/client/api-key');
         return response.data;
@@ -3400,7 +4233,8 @@ export const getClientApiKey = async () => {
  * once so the UI can offer a copy-to-clipboard reveal; later reads are masked.
  * @returns {Promise<{ ok: boolean, api_key: string, api_key_masked: string }>}
  */
-export const regenerateClientApiKey = async () => {
+export const regenerateClientApiKey = async (
+): Promise<{ ok: boolean; api_key: string; api_key_masked: string }> => {
     try {
         const response = await api.post('/client/api-key/regenerate');
         return response.data;
@@ -3424,7 +4258,14 @@ export const regenerateClientApiKey = async () => {
  * Returns ``{ invite, accept_url }`` - the URL is included so a copy-to-clipboard
  * affordance is possible; the email is fired backend-side.
  */
-export const createOperatorInvite = async ({ email, botId, role = 'operator', departmentId = null }) => {
+export const createOperatorInvite = async (
+    { email, botId, role = 'operator', departmentId = null }: {
+  email: string;
+  botId: number;
+  role?: 'operator' | 'admin' | string;
+  departmentId?: number | null;
+},
+): Promise<OperatorInviteCreated> => {
     try {
         const response = await api.post('/invites', {
             email,
@@ -3442,7 +4283,7 @@ export const createOperatorInvite = async ({ email, botId, role = 'operator', de
  * List invites for the current workspace. ``statusFilter`` narrows to
  * pending / accepted / revoked / expired / all (default = all).
  */
-export const listOperatorInvites = async (statusFilter = null) => {
+export const listOperatorInvites = async (statusFilter: string | null = null): Promise<OperatorInvite[]> => {
     try {
         const params = statusFilter ? { status_filter: statusFilter } : {};
         const response = await api.get('/invites', { params });
@@ -3453,7 +4294,7 @@ export const listOperatorInvites = async (statusFilter = null) => {
 };
 
 /** Regenerate the token and resend the invite email. */
-export const resendOperatorInvite = async (inviteId) => {
+export const resendOperatorInvite = async (inviteId: number): Promise<OperatorInviteCreated> => {
     try {
         const response = await api.post(`/invites/${inviteId}/resend`);
         return response.data;
@@ -3463,7 +4304,7 @@ export const resendOperatorInvite = async (inviteId) => {
 };
 
 /** Revoke a pending invite. Idempotent - resolved invites are no-ops. */
-export const revokeOperatorInvite = async (inviteId) => {
+export const revokeOperatorInvite = async (inviteId: number): Promise<boolean> => {
     try {
         await api.delete(`/invites/${inviteId}`);
         return true;
@@ -3477,7 +4318,7 @@ export const revokeOperatorInvite = async (inviteId) => {
  * to render workspace name + inviter + status so the invitee can decide
  * whether to sign up or log in.
  */
-export const getInvitePublic = async (token) => {
+export const getInvitePublic = async (token: string): Promise<Record<string, unknown>> => {
     try {
         const response = await api.get(`/invites/by-token/${encodeURIComponent(token)}`);
         return response.data;
@@ -3491,7 +4332,7 @@ export const getInvitePublic = async (token) => {
  * Backend validates email match (case-insensitive) and creates the linked
  * Operator row atomically.
  */
-export const acceptInvitePublic = async (token) => {
+export const acceptInvitePublic = async (token: string): Promise<Record<string, unknown>> => {
     try {
         const response = await api.post(`/invites/by-token/${encodeURIComponent(token)}/accept`);
         return response.data;
@@ -3506,7 +4347,7 @@ export const acceptInvitePublic = async (token) => {
  * Bypasses the workspace abort controller so it isn't cancelled during
  * a switch (workspace list is orthogonal to the workspace being switched).
  */
-export const getMyWorkspaces = async () => {
+export const getMyWorkspaces = async (): Promise<{ workspaces: Workspace[] }> => {
     try {
         // Ignore the workspace-scoped AbortController for THIS call - otherwise
         // a switch mid-flight would cancel the list refresh we just triggered.
@@ -3525,7 +4366,7 @@ export const getMyWorkspaces = async () => {
  * Returns ``{ operator_id, role, is_active, was_existing }``. UI can toast
  * "Welcome back to live chat" when ``was_existing`` is true.
  */
-export const addSelfAsOperator = async (botId) => {
+export const addSelfAsOperator = async (botId?: number): Promise<SelfOperatorResult> => {
     try {
         const response = await api.post('/me/self-operator', { bot_id: botId });
         return response.data;
@@ -3538,7 +4379,7 @@ export const addSelfAsOperator = async (botId) => {
  * Read the quotation catalog for a bot.
  * Returns { enabled, currency, services[] }.
  */
-export const getQuotationCatalog = async (botId) => {
+export const getQuotationCatalog = async (botId: number): Promise<unknown> => {
     try {
         const response = await api.get(`/bots/${botId}/quotation-catalog`);
         return response.data;
@@ -3548,7 +4389,7 @@ export const getQuotationCatalog = async (botId) => {
 };
 
 /** Replace the quotation catalog for a bot. */
-export const putQuotationCatalog = async (botId, catalog) => {
+export const putQuotationCatalog = async (botId: number, catalog: unknown): Promise<unknown> => {
     try {
         const response = await api.put(`/bots/${botId}/quotation-catalog`, catalog);
         return response.data;
@@ -3562,7 +4403,7 @@ export const putQuotationCatalog = async (botId, catalog) => {
  * Sets ``is_active=False`` - historical chats stay linked, in-flight chats
  * complete naturally. Idempotent.
  */
-export const removeSelfAsOperator = async () => {
+export const removeSelfAsOperator = async (): Promise<boolean> => {
     try {
         await api.delete('/me/self-operator');
         return true;
@@ -3570,3 +4411,6 @@ export const removeSelfAsOperator = async () => {
         throw buildApiError(error, 'Failed to leave live chat');
     }
 };
+
+/** Re-exported so consumers can narrow a rejection without a second import. */
+export { ApiError, isApiError } from './apiTypes';

@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest';
  */
 describe('services/api module evaluation', () => {
   it('evaluates, and exposes the shared axios instance', async () => {
-    const module = await import('./api.js');
+    const module = await import('./api');
     expect(module.httpClient).toBeDefined();
     expect(typeof module.httpClient.get).toBe('function');
     expect(typeof module.getApiBaseUrl()).toBe('string');
