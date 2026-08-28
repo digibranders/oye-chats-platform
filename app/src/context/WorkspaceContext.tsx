@@ -32,12 +32,47 @@
  *      roles, ``/`` for owner) - controlled by the caller.
  */
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { getMyWorkspaces, rotateWorkspaceAbort } from '../services/api';
 import { getAuthItem, setAuthBundle } from '../utils/authStorage';
 import { isImpersonating } from '../utils/impersonation';
+import type { Workspace } from '../types/domain';
 
-const WorkspaceContext = createContext(null);
+/** Router navigate, structurally: the caller passes react-router's, but this
+ *  context has no reason to depend on the router to describe it. */
+type NavigateFn = (path: string, options?: { replace?: boolean }) => void;
+
+export interface WorkspaceContextValue {
+  workspaces: Workspace[];
+  currentWorkspaceId: number | null;
+  currentWorkspaceName: string | null;
+  /**
+   * Persisted effective seat role. Left as a plain string rather than an
+   * `owner | admin | operator` union: it is read back from browser storage,
+   * and `Workspace.operator_role` upstream is itself `string | null`, so a
+   * union here would be an assertion rather than a guarantee.
+   */
+  currentRole: string | null;
+  /** Effective seat role in the active workspace. Same caveat as `currentRole`. */
+  effectiveRole: string | null;
+  /** True when acting as a plain operator (drives operator-scoped nav + route gating). */
+  isOperator: boolean;
+  isLoading: boolean;
+  /** The raw rejection from `/me/workspaces`, stored unexamined. */
+  error: unknown;
+  accessDeniedForWorkspaceId: number | null;
+  clearAccessDenied: () => void;
+  refresh: () => Promise<Workspace[]>;
+  /**
+   * Resolves the workspace switched to, or `null` from the outside-provider
+   * fallback below. Throws when `id` is not in the membership list.
+   */
+  switchWorkspace: (id: number, opts?: { navigate?: NavigateFn }) => Promise<Workspace | null>;
+  hasMultipleWorkspaces: boolean;
+  isInvitedOnly: boolean;
+}
+
+const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
 /** Event name broadcast on every workspace switch. */
 export const WORKSPACE_SWITCHED_EVENT = 'oyechats:workspace-switched';
@@ -45,7 +80,7 @@ export const WORKSPACE_SWITCHED_EVENT = 'oyechats:workspace-switched';
 /** Event name broadcast when the backend reports the current workspace is inaccessible. */
 export const WORKSPACE_ACCESS_DENIED_EVENT = 'oyechats:workspace-access-denied';
 
-function _restoreFromStorage() {
+function _restoreFromStorage(): { id: number | null; name: string | null; role: string | null } {
     // An impersonated tab must NOT inherit the persisted workspace from the
     // shared localStorage bundle - that entry belongs to the super-admin's own
     // identity, not to the Account being supported. Start empty and let
@@ -57,7 +92,7 @@ function _restoreFromStorage() {
     return { id, name, role };
 }
 
-function _clientOwnedWorkspace(workspaces) {
+function _clientOwnedWorkspace(workspaces: Workspace[]): Workspace | null {
     // First-time users have no persisted workspace - pick their owned one
     // (there's always exactly one owned entry per Client identity).
     return workspaces.find((w) => w.role === 'owner') || null;
@@ -69,26 +104,29 @@ function _clientOwnedWorkspace(workspaces) {
  * linked membership uses its granular ``operator_role`` (an admin invited into
  * another workspace keeps admin-level access), defaulting to ``operator``.
  */
-function _effectiveRole(workspace) {
+function _effectiveRole(workspace: Workspace | null | undefined): string | null {
     if (!workspace) return null;
     if (workspace.role === 'owner') return 'owner';
     return workspace.operator_role || 'operator';
 }
 
-export function WorkspaceProvider({ children }) {
-    const [workspaces, setWorkspaces] = useState([]);
+export function WorkspaceProvider({ children }: { children: ReactNode }) {
+    const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
     const [currentWorkspaceId, setCurrentWorkspaceId] = useState(() => _restoreFromStorage().id);
     const [currentWorkspaceName, setCurrentWorkspaceName] = useState(() => _restoreFromStorage().name);
     const [currentRole, setCurrentRole] = useState(() => _restoreFromStorage().role);
     const [isLoading, setIsLoading] = useState(true);
-    const [error, setError] = useState(null);
-    const [accessDeniedForWorkspaceId, setAccessDeniedForWorkspaceId] = useState(null);
+    const [error, setError] = useState<unknown>(null);
+    const [accessDeniedForWorkspaceId, setAccessDeniedForWorkspaceId] = useState<number | null>(null);
     // Guard so ``persistWorkspace`` doesn't clobber a fresh switch with a
     // stale ``getMyWorkspaces`` response for the previous context.
     const currentIdRef = useRef(currentWorkspaceId);
     currentIdRef.current = currentWorkspaceId;
 
-    const persistWorkspace = useCallback((workspace, { persistent = true } = {}) => {
+    const persistWorkspace = useCallback((
+        workspace: Workspace | null | undefined,
+        { persistent = true }: { persistent?: boolean } = {},
+    ): void => {
         if (!workspace) return;
         // A super-admin impersonation session is tab-scoped by design, and
         // ``setAuthBundle`` writes to the localStorage bundle SHARED by every
@@ -117,7 +155,7 @@ export function WorkspaceProvider({ children }) {
         setCurrentRole(_effectiveRole(workspace));
     }, []);
 
-    const refresh = useCallback(async () => {
+    const refresh = useCallback(async (): Promise<Workspace[]> => {
         setIsLoading(true);
         setError(null);
         try {
@@ -153,7 +191,10 @@ export function WorkspaceProvider({ children }) {
         }
     }, [currentRole, currentWorkspaceName, persistWorkspace]);
 
-    const switchWorkspace = useCallback(async (workspaceId, { navigate } = {}) => {
+    const switchWorkspace = useCallback(async (
+        workspaceId: number,
+        { navigate }: { navigate?: NavigateFn } = {},
+    ): Promise<Workspace> => {
         const next = workspaces.find((w) => w.id === workspaceId);
         if (!next) {
             throw new Error(`Workspace ${workspaceId} is not in the current membership list.`);
@@ -187,8 +228,9 @@ export function WorkspaceProvider({ children }) {
     // AccessDeniedScreen component consumes ``accessDeniedForWorkspaceId``
     // and gives the user a way to switch to a still-valid workspace.
     useEffect(() => {
-        function onAccessDenied(event) {
-            const denied = Number(event?.detail?.workspaceId || 0);
+        function onAccessDenied(event: Event) {
+            const detail = (event as CustomEvent<{ workspaceId?: number }>).detail;
+            const denied = Number(detail?.workspaceId || 0);
             if (!denied) return;
             setAccessDeniedForWorkspaceId(denied);
             // Drop the persisted workspace so the next refresh picks a valid one.
@@ -243,7 +285,7 @@ export function WorkspaceProvider({ children }) {
     const effectiveRole = currentWorkspace ? _effectiveRole(currentWorkspace) : (currentRole || null);
     const isOperator = effectiveRole === 'operator';
 
-    const value = useMemo(() => ({
+    const value = useMemo<WorkspaceContextValue>(() => ({
         workspaces,
         currentWorkspaceId,
         currentWorkspaceName,
@@ -294,7 +336,7 @@ export function WorkspaceProvider({ children }) {
  * Callers outside the provider get sensible defaults so components mounted
  * before the provider (e.g. login screen) don't need to guard.
  */
-export function useWorkspace() {
+export function useWorkspace(): WorkspaceContextValue {
     const ctx = useContext(WorkspaceContext);
     if (!ctx) {
         return {
