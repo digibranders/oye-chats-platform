@@ -59,6 +59,9 @@ import {
   CONTROL_BASE,
   CONTROL_SIZE,
   ConfirmDialog,
+  PurchaseDialog,
+  PurchaseSuccess,
+  type PurchasePhase,
   controlClass,
   CopyField,
   DataTable,
@@ -2633,6 +2636,8 @@ function OverlaysPanel() {
   const [stubbornOpen, setStubbornOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [simpleConfirmOpen, setSimpleConfirmOpen] = useState(false);
+  const [purchaseOpen, setPurchaseOpen] = useState(false);
+  const [purchasePhase, setPurchasePhase] = useState<PurchasePhase>('confirm');
   const [columns, setColumns] = useState({ status: true, owner: false });
   const [onlyQualified, setOnlyQualified] = useState(false);
 
@@ -2676,6 +2681,32 @@ function OverlaysPanel() {
                 <Button variant="secondary" onClick={() => setSimpleConfirmOpen(true)}>
                   Discard draft…
                 </Button>
+              </div>
+            </Demo>
+            <Demo label="PurchaseDialog">
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    setPurchasePhase('confirm');
+                    setPurchaseOpen(true);
+                  }}
+                >
+                  Buy branding removal…
+                </Button>
+                <p className="text-xs text-text-tertiary">
+                  Cycle confirm → processing → activating → done with the footer inside.
+                </p>
+              </div>
+            </Demo>
+            <Demo label="PurchaseSuccess">
+              {/* The shared celebration, also used by the plan picker's settled
+                  state. Shown here without a dialog around it. */}
+              <div className="max-w-xs rounded-lg border border-border bg-surface p-5">
+                <PurchaseSuccess
+                  greetingName="Priya"
+                  message="You’re on Standard. Your new credits and limits are available now."
+                />
               </div>
             </Demo>
           </CardBody>
@@ -3032,6 +3063,35 @@ function OverlaysPanel() {
         confirmLabel="Discard"
         cancelLabel="Keep editing"
         onConfirm={() => setSimpleConfirmOpen(false)}
+      />
+
+      <PurchaseDialog
+        open={purchaseOpen}
+        onOpenChange={setPurchaseOpen}
+        phase={purchasePhase}
+        title="Remove OyeChats branding"
+        summary={
+          <div className="space-y-2 text-prose text-text-secondary">
+            <p>
+              Hides the “Powered by OyeChats” badge on your widget. A recurring charge on your
+              subscription until you cancel.
+            </p>
+            <p className="font-medium text-text-primary">₹499/mo</p>
+            <p className="text-xs text-text-tertiary">Excludes GST. 18% GST is added at checkout.</p>
+          </div>
+        }
+        confirmLabel="Continue to secure checkout"
+        onConfirm={() => {
+          // Walk the real sequence a paid purchase produces, so the demo shows
+          // the activation gap rather than jumping straight to success.
+          setPurchasePhase('processing');
+          window.setTimeout(() => setPurchasePhase('activating'), 800);
+          window.setTimeout(() => setPurchasePhase('done'), 1800);
+        }}
+        activatingMessage="Payment received. Switching branding removal on…"
+        doneTitle="Branding removed"
+        doneMessage="The “Powered by OyeChats” badge is gone from your widget."
+        greetingName="Priya"
       />
     </Stack>
   );

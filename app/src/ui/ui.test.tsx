@@ -23,6 +23,7 @@ import { Tabs, TabPanel } from './layout/Tabs';
 import { DataTable, type Column } from './data/DataTable';
 import { RankedBars } from './charts/RankedBars';
 import { ConfirmDialog } from './overlays/ConfirmDialog';
+import { PurchaseDialog } from './overlays/PurchaseDialog';
 import { formatDuration, formatMoney, formatNumber, truncateId, ABSENT } from './lib/formatters';
 
 /**
@@ -435,6 +436,68 @@ describe('ConfirmDialog', () => {
     expect(confirm).toBeEnabled();
     await user.click(confirm);
     expect(onConfirm).toHaveBeenCalled();
+  });
+});
+
+describe('PurchaseDialog', () => {
+  const base = {
+    open: true,
+    onOpenChange: () => {},
+    title: 'Remove OyeChats branding',
+    summary: <p>₹499/mo</p>,
+    confirmLabel: 'Continue to secure checkout',
+    onConfirm: () => {},
+    doneTitle: "You're all set",
+    doneMessage: 'The badge is gone from your widget.',
+  } as const;
+
+  it('starts the purchase from the confirm phase', async () => {
+    const user = userEvent.setup();
+    const onConfirm = vi.fn();
+    render(<PurchaseDialog {...base} phase="confirm" onConfirm={onConfirm} />);
+    await user.click(screen.getByRole('button', { name: 'Continue to secure checkout' }));
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it('cannot be dismissed while activation is in flight', () => {
+    // No close control and no confirm button: money has moved and the customer
+    // must not be able to close the dialog before it settles.
+    render(<PurchaseDialog {...base} phase="activating" />);
+    expect(screen.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Continue to secure checkout' }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('Payment received. Finishing up…')).toBeInTheDocument();
+  });
+
+  it('never shows the success copy before activation settles', () => {
+    render(<PurchaseDialog {...base} phase="activating" />);
+    expect(screen.queryByText('The badge is gone from your widget.')).not.toBeInTheDocument();
+  });
+
+  it('celebrates only in the done phase, and closes from it', async () => {
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+    render(
+      <PurchaseDialog {...base} phase="done" greetingName="Priya" onOpenChange={onOpenChange} />,
+    );
+    expect(screen.getByText('Nice one, Priya.')).toBeInTheDocument();
+    expect(screen.getByText('The badge is gone from your widget.')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it('offers a retry only when the error phase is given one', () => {
+    const onRetry = vi.fn();
+    const { rerender } = render(
+      <PurchaseDialog {...base} phase="error" error="The gateway is unreachable." />,
+    );
+    expect(screen.getByText('The gateway is unreachable.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
+    rerender(
+      <PurchaseDialog {...base} phase="error" error="The gateway is unreachable." onRetry={onRetry} />,
+    );
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
   });
 });
 
