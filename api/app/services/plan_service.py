@@ -345,7 +345,7 @@ def enforce_feature(session: Session, client_id: int, feature: str) -> None:
 # the agency tier with pooled credits across many client sites, so falling back
 # to a full recrawl would re-embed every page of every site and charge for all
 # of them on the plan sold with the largest ingestion volume.
-_DELTA_RECRAWL_PLAN_SLUGS: frozenset[str] = frozenset({"standard", "professional", "enterprise"})
+_DELTA_RECRAWL_PLAN_SLUGS: frozenset[str] = frozenset({"trial", "standard", "professional", "enterprise"})
 
 
 def can_use_delta_recrawl(plan: Plan) -> bool:

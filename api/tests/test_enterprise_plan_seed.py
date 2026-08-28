@@ -98,8 +98,18 @@ def test_limits_credits_mirrors_credits_per_month(slug: str):
 
 
 def test_the_ladder_covers_every_seeded_plan():
-    """``_LADDER`` is the subject of every guard below. Keep it total and ordered."""
-    assert {p["slug"] for p in _PLANS} == set(_LADDER)
+    """``_LADDER`` is the subject of every guard below. Keep it total and ordered.
+
+    Only PUBLIC rows belong on it. Every guard here reasons about what a
+    customer can buy: prices that never invert, credits that ladder up, an
+    annual saving the prices back. The signup trial is seeded ``is_public:
+    False`` precisely because it is none of those things, it is priced at zero,
+    never listed, and never sold. The second assertion keeps that exemption
+    explicit, so a future non-public row still has to be named here rather than
+    quietly escaping the ladder.
+    """
+    assert {p["slug"] for p in _PLANS if p["is_public"]} == set(_LADDER)
+    assert {p["slug"] for p in _PLANS if not p["is_public"]} == {"trial"}
     sort_orders = [_plan(slug)["sort_order"] for slug in _LADDER]
     assert sort_orders == sorted(sort_orders), f"_LADDER disagrees with sort_order: {sort_orders}"
 

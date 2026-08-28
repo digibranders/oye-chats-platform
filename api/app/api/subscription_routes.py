@@ -250,7 +250,12 @@ def _resolve_provider() -> str:
 
 @router.get("/plans")
 def list_plans():
-    """Return all active plans for the pricing page. No auth required."""
+    """Return every active PUBLIC plan for the pricing page. No auth required.
+
+    ``is_public`` is the second filter. A row can be active (assignable, so
+    ``get_default_plan`` can hand it to a signup) without ever being for sale,
+    which is exactly what the 14-day trial row is.
+    """
     with get_session() as session:
         plans = get_active_plans(session)
         return [

@@ -128,7 +128,15 @@ _LIMIT_LABELS: list[tuple[str, str]] = [
 
 
 def build_matrix() -> dict[str, Any]:
-    plans = _load_seed_plans()
+    # Non-public rows are excluded wholesale. This feed renders the public
+    # documentation's plan and capability tables, and the signup trial is
+    # seeded ``is_public: False`` precisely so it never appears anywhere a
+    # reader would take it for a tier they can choose. Capability rows are
+    # clamped to the same set below, because a ladder constant that names the
+    # trial (it carries Professional's entitlements) would otherwise leak the
+    # slug into a published column with no plan row to explain it.
+    plans = [p for p in _load_seed_plans() if p["is_public"]]
+    published = {p["slug"] for p in plans}
     paid_slugs = [p["slug"] for p in plans if p["slug"] != "free"]
 
     capabilities: list[dict[str, Any]] = [
@@ -151,7 +159,10 @@ def build_matrix() -> dict[str, Any]:
             "slugs": paid_slugs,
         }
     )
-    capabilities.extend(_external_capabilities())
+    capabilities.extend(
+        {**capability, "slugs": [slug for slug in capability["slugs"] if slug in published]}
+        for capability in _external_capabilities()
+    )
 
     return {
         "$comment": (

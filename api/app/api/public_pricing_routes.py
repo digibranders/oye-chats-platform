@@ -1,8 +1,12 @@
 """Public, unauthenticated pricing catalog for the marketing website.
 
-Single source the website renders against: active plans (structured + marketing
-copy) plus the editable site-content blobs. Mirrors GET /subscriptions/plans but
-adds marketing copy + FAQ/matrix/top-ups so the website is fully DB-driven.
+Single source the website renders against: active PUBLIC plans (structured +
+marketing copy) plus the editable site-content blobs. Mirrors GET
+/subscriptions/plans but adds marketing copy + FAQ/matrix/top-ups so the website
+is fully DB-driven.
+
+"Public" is a filter of its own. The signup trial is an active plan row, because
+it has to be assignable, and it must never render here.
 """
 
 from fastapi import APIRouter

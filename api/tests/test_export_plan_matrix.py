@@ -32,10 +32,31 @@ def matrix() -> dict:
     return _load_exporter().build_matrix()
 
 
-def test_every_seeded_plan_is_exported(matrix: dict) -> None:
-    from app.services.plan_entitlements_service import _SEEDED_PLAN_SLUGS
+def test_every_public_seeded_plan_is_exported(matrix: dict) -> None:
+    """The docs publish every tier a customer can choose, and only those.
 
-    assert {p["slug"] for p in matrix["plans"]} == set(_SEEDED_PLAN_SLUGS)
+    ``_SEEDED_PLAN_SLUGS`` also carries the non-public signup trial, which the
+    exporter drops on purpose: it is assignable but never listed, so a row for
+    it in the published plan table would advertise something nobody can pick.
+    """
+    from scripts.seed_plans import _PLANS
+
+    public = {p["slug"] for p in _PLANS if p["is_public"]}
+    assert {p["slug"] for p in matrix["plans"]} == public
+
+
+def test_every_seeded_slug_is_declared_to_the_entitlements_service() -> None:
+    """A seeded slug missing from ``_SEEDED_PLAN_SLUGS`` is read as bespoke.
+
+    ``plan_entitlements_service._paid_tier_includes`` treats an unknown slug as
+    a per-contract enterprise row and grants it every gated feature. A tier
+    added to the seed but not declared there would therefore collect
+    capabilities no ladder names, silently.
+    """
+    from app.services.plan_entitlements_service import _SEEDED_PLAN_SLUGS
+    from scripts.seed_plans import _PLANS
+
+    assert {p["slug"] for p in _PLANS} == set(_SEEDED_PLAN_SLUGS)
 
 
 def test_capability_slugs_are_real_plans(matrix: dict) -> None:
@@ -79,7 +100,12 @@ def test_labelled_limits_still_exist_on_the_seeded_plans() -> None:
 
 def test_external_gates_match_the_live_constants(matrix: dict) -> None:
     """The capabilities gated outside ``Plan.features`` are the ones that drifted
-    before. Assert the exported slugs equal the constants the platform enforces.
+    before. Assert the exported slugs equal the constants the platform enforces,
+    narrowed to the tiers the docs publish.
+
+    The narrowing is the same one ``build_matrix`` applies: a ladder may name
+    the non-public signup trial, and that is a real entitlement, but it is not
+    a column in a published table.
     """
     from app.services.plan_entitlements_service import (
         EMAIL_VERIFICATION_SLUGS,
@@ -97,10 +123,11 @@ def test_external_gates_match_the_live_constants(matrix: dict) -> None:
         "delta_recrawl": _DELTA_RECRAWL_PLAN_SLUGS,
     }
     by_key = {c["key"]: c for c in matrix["capabilities"]}
+    published = {p["slug"] for p in matrix["plans"]}
 
     for key, slugs in expected.items():
         assert key in by_key, f"{key} missing from the exported matrix"
-        assert set(by_key[key]["slugs"]) == set(slugs)
+        assert set(by_key[key]["slugs"]) == set(slugs) & published
 
 
 def test_prices_are_not_exported(matrix: dict) -> None:
