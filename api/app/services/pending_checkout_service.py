@@ -279,6 +279,13 @@ def reuse_or_supersede(
             client.id,
             exc_info=True,
         )
+        # The marker is overwritten below, so this log would be the only trace.
+        # Land the orphan in the dead-letter list ops already triages.
+        razorpay_service.dead_letter_orphaned_checkout_handle(
+            razorpay_sub_id=pending_id,
+            client_id=client.id,
+            context="first-mandate supersede (per-agent checkout)",
+        )
     else:
         if status == "active":
             # Defence in depth: the paid check above already refuses this, but it
@@ -438,6 +445,13 @@ def reuse_pending_upgrade(
             client.id,
             sub.id,
             exc_info=True,
+        )
+        # Same durable record as the first-mandate twin: the marker is
+        # overwritten below, so the log alone would be the only trace.
+        razorpay_service.dead_letter_orphaned_checkout_handle(
+            razorpay_sub_id=pending_id,
+            client_id=client.id,
+            context=f"replacement-mandate supersede (sub {sub.id})",
         )
     else:
         if status == "active":

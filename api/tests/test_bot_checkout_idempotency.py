@@ -51,7 +51,7 @@ from app.api.auth import (
     require_verified_email_for_workspace,
 )
 from app.core.middleware import subscription_activation_conflict_handler
-from app.db.models import Client, Plan
+from app.db.models import Client, Plan, Subscription
 from app.services import pending_checkout_service, plan_service
 from app.services import razorpay_service as rzp
 
@@ -480,6 +480,80 @@ def test_a_failed_cancel_does_not_block_the_purchase(db, monkeypatch):
     assert mint.call_count == 1
     db.refresh(client)
     assert client.pending_checkout_subscription_id == "sub_botidem_after_stuck"
+
+
+def test_a_failed_cancel_leaves_a_durable_dead_letter(db, monkeypatch):
+    """Tolerating the failed cancel (above) must not mean forgetting it.
+
+    The caller overwrites the marker with the fresh mandate, so without a
+    durable record the ERROR log is the only trace that the old handle is STILL
+    AUTHORIZABLE at Razorpay and can charge if the customer reopens that
+    checkout. Same doctrine as the pooled-scope refusal: an ERROR log is not
+    enough on its own, the orphaned handle must land in the dead-letter list
+    ops already triages.
+    """
+    api, client = _mk(db, monkeypatch)
+    plan_a = _plan(db, slug="std-botidem-dl-a")
+    plan_b = _plan(db, slug="std-botidem-dl-b", monthly=179900)
+    pending_checkout_service.record(
+        client,
+        subscription_id="sub_botidem_orphaned",
+        plan_id=plan_a.id,
+        billing_cycle="monthly",
+        country="IN",
+        bot_id=pending_checkout_service.NEW_BOT_SCOPE,
+    )
+    db.flush()
+
+    captured: list[dict] = []
+    with (
+        patch.object(rzp, "create_per_bot_subscription", return_value=_mint("sub_botidem_after_orphan")),
+        patch.object(rzp, "cancel_superseded_checkout", side_effect=rzp.RazorpayBillingError("cancel failed")),
+        patch.object(rzp, "_dead_letter_synthetic", side_effect=lambda **kw: captured.append(kw)),
+    ):
+        res = api.post("/bots/checkout", json=_body(plan_b))
+
+    assert res.status_code == 200, res.text
+    assert len(captured) == 1
+    assert "sub_botidem_orphaned" in captured[0]["dedup_key"]
+    assert captured[0]["context"]["razorpay_subscription_id"] == "sub_botidem_orphaned"
+
+
+def test_upgrade_twin_failed_cancel_also_dead_letters(db, monkeypatch):
+    """``reuse_pending_upgrade`` makes the same non-fatal call and leaves the
+    same live-handle residue; it must leave the same durable record."""
+    plan_a = _plan(db, slug="std-botidem-dlup-a")
+    plan_b = _plan(db, slug="std-botidem-dlup-b", monthly=179900)
+    client = Client(name="U", email="botidem-dlup@test.example", api_key="key-botidem-dlup")
+    db.add(client)
+    db.flush()
+    sub = Subscription(
+        client_id=client.id,
+        plan_id=plan_a.id,
+        status="active",
+        billing_cycle="monthly",
+        operator_quantity=1,
+        payment_provider="razorpay",
+        razorpay_subscription_id="sub_botidem_dlup_live",
+        upgrade_pending_subscription_id="sub_botidem_dlup_orphan",
+        upgrade_pending_plan_id=plan_a.id,
+    )
+    db.add(sub)
+    db.flush()
+
+    captured: list[dict] = []
+    with (
+        patch.object(rzp, "checkout_already_paid", return_value=False),
+        patch.object(rzp, "cancel_superseded_checkout", side_effect=rzp.RazorpayBillingError("cancel failed")),
+        patch.object(rzp, "_dead_letter_synthetic", side_effect=lambda **kw: captured.append(kw)),
+    ):
+        result = pending_checkout_service.reuse_pending_upgrade(
+            db, sub=sub, client=client, plan=plan_b, billing_cycle="monthly"
+        )
+
+    assert result is None  # caller proceeds to mint, exactly as before
+    assert len(captured) == 1
+    assert "sub_botidem_dlup_orphan" in captured[0]["dedup_key"]
 
 
 def test_the_account_routes_still_refuse_on_a_failed_cancel(db, monkeypatch):
