@@ -107,14 +107,15 @@ describe('draftFromBot', () => {
 });
 
 describe('metaFromBot', () => {
-  it('keeps the saved wording for the preview, and puts the editable pair in the draft', () => {
-    /* The wording and the URL used to live on Deploy, under a second card with
-       the same title as the switch's card here. One entitlement governs both
-       halves, so both halves are one card and one draft now. */
+  it('keeps the saved wording for the preview, but never as an editable field', () => {
+    /* The credit line is show-or-hide only: the wording is OyeChats' own mark,
+       so it is read for display via the meta and is not part of the editable
+       draft. The draft carries just the on/off switch. */
     expect(metaFromBot(RAW).brandingText).toBe('Powered by Acme');
     const draft = draftFromBot(RAW);
-    expect(draft.brandingText).toBe('Powered by Acme');
-    expect(draft.brandingUrl).toBe('https://acme.test');
+    expect(draft.showBranding).toBe(false);
+    expect('brandingText' in draft).toBe(false);
+    expect('brandingUrl' in draft).toBe(false);
   });
 
   it('drops a recommended colour that is not a colour', () => {

@@ -110,21 +110,16 @@ export interface ExperienceDraft {
   avatarType: AvatarType;
   orbColor: string;
   botLogo: string | null;
-  /** `feature_flags.show_branding`. Only a workspace with `branding_removable`
-   *  may turn it off; the widget config endpoint forces it back on otherwise. */
-  showBranding: boolean;
   /**
-   * The in-widget credit line's wording and destination.
+   * `feature_flags.show_branding`. Only a workspace with `branding_removable`
+   * may turn it off; the widget config endpoint forces it back on otherwise.
    *
-   * Editable here, on the same card as the switch that hides it. Both halves are
-   * gated on `branding_removable` — `bot_routes.py` forces both back to the
-   * defaults for any plan without it — and they used to be split across two
-   * pages, with the switch on Experience and the wording on Deploy under a card
-   * with the same title. A customer who turned the badge off here was still
-   * shown "Change the wording", linking to Deploy, for a badge that was hidden.
+   * This is the whole of the credit line's editable surface. The wording and its
+   * link are not: the credit is OyeChats' own mark, so the product offers show
+   * or hide and never a rewrite. The saved wording is read for display only, via
+   * `ExperienceMeta.brandingText`.
    */
-  brandingText: string;
-  brandingUrl: string;
+  showBranding: boolean;
 
   // Messages
   displayName: string;
@@ -202,8 +197,6 @@ export const FIELD_SECTION: Record<DraftField, SectionKey> = {
   orbColor: 'branding',
   botLogo: 'branding',
   showBranding: 'branding',
-  brandingText: 'branding',
-  brandingUrl: 'branding',
 
   displayName: 'messages',
   launcherName: 'messages',
@@ -249,9 +242,9 @@ export const FIELD_SECTION: Record<DraftField, SectionKey> = {
  */
 export interface ExperienceMeta {
   /**
-   * The credit line's **saved** wording, for the preview to render before the
-   * draft has been touched. The editable pair lives in the draft — see
-   * `ExperienceDraft.brandingText`.
+   * The credit line's **saved** wording, for the preview to render. It is
+   * display-only: the product offers show-or-hide, never a rewrite, so nothing
+   * on this page edits it. See `ExperienceDraft.showBranding`.
    */
   brandingText: string;
   /** Who set `botLogo`: `'derived'` means a crawl took it from the site's
@@ -515,8 +508,6 @@ export function draftFromBot(raw: Record<string, unknown>): ExperienceDraft {
     orbColor: asColor(raw.orb_color, ''),
     botLogo: typeof raw.bot_logo === 'string' && raw.bot_logo.length > 0 ? raw.bot_logo : null,
     showBranding: asBoolean(flags.show_branding, true),
-    brandingText: asString(raw.branding_text),
-    brandingUrl: asString(raw.branding_url),
 
     displayName: asString(raw.name),
     launcherName: asString(raw.launcher_name),
@@ -747,13 +738,6 @@ export function patchFromDraft(
   // `launcher_logo` is not sent: the handler mirrors `bot_logo` onto it.
   if (changed.has('botLogo')) patch.bot_logo = draft.botLogo;
   if (changed.has('showBranding')) flags.show_branding = draft.showBranding;
-  if (changed.has('brandingText')) patch.branding_text = draft.brandingText.trim();
-  // The backend takes an `HttpUrlStr`: an http(s) scheme is mandatory and a bare
-  // host is rejected, so it is added here rather than surfaced as a 422.
-  if (changed.has('brandingUrl')) {
-    const url = draft.brandingUrl.trim();
-    patch.branding_url = url && !/^https?:\/\//i.test(url) ? `https://${url}` : url;
-  }
 
   if (changed.has('welcomeGreeting')) messages.welcome_greeting = draft.welcomeGreeting;
   if (changed.has('welcomeSubtitle')) messages.welcome_subtitle = draft.welcomeSubtitle;
