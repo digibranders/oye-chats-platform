@@ -68,7 +68,13 @@ if (SENTRY_DSN && import.meta.env.PROD && !isLocalHostname(window.location.hostn
   });
 }
 
-const root = createRoot(document.getElementById('root'));
+const container = document.getElementById('root');
+// Authored directly in index.html, so a null here means the HTML shell itself
+// failed to load. Throwing names the fault instead of surfacing later as a
+// null dereference from inside React.
+if (!container) throw new Error('Root element #root not found in index.html');
+
+const root = createRoot(container);
 
 function renderApp() {
   root.render(
@@ -80,7 +86,7 @@ function renderApp() {
   );
 }
 
-function renderImpersonationNotice(title, message, busy = false) {
+function renderImpersonationNotice(title: string, message: string, busy = false) {
   root.render(
     <StrictMode>
       <ImpersonationNotice title={title} message={message} busy={busy} />
@@ -97,7 +103,7 @@ if (impersonationHandoffToken) {
   redeemImpersonation(impersonationHandoffToken)
     .then((profile) => {
       // sessionStorage, never the shared localStorage bundle - see
-      // utils/impersonation.js for why the two stores must not mix.
+      // utils/impersonation.ts for why the two stores must not mix.
       startImpersonationSession(impersonationHandoffToken, profile);
       renderApp();
     })
@@ -105,12 +111,15 @@ if (impersonationHandoffToken) {
       // A dead end on purpose: falling through to the app would land the
       // super-admin on /login, where the only way forward is the customer's
       // own password.
-      const rejectedByServer = error?.status === 401 || error?.status === 404;
+      // The rejection comes from the JS API client, so its shape is not yet
+      // proven to the compiler. Read defensively.
+      const apiErr = error as { status?: number; message?: string } | null;
+      const rejectedByServer = apiErr?.status === 401 || apiErr?.status === 404;
       renderImpersonationNotice(
         translateNow('app.impersonationLinkRejected') || 'Impersonation link not accepted',
         rejectedByServer
           ? translateNow('app.impersonationLinkExpired') || 'This impersonation link has expired or been revoked.'
-          : error?.message || translateNow('app.impersonationCouldNotStart') || 'This impersonation session could not be started.',
+          : apiErr?.message || translateNow('app.impersonationCouldNotStart') || 'This impersonation session could not be started.',
       );
     });
 } else {

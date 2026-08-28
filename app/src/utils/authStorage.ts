@@ -11,7 +11,7 @@
  * per-tab store: remembered → 30 days, not-remembered → 1 day. The expiry is
  * armed whenever a login bundle (one carrying ``admin_token``) is written and
  * enforced once at app startup (see ``isSessionExpired`` + the guard in
- * main.jsx). A session with no expiry recorded (pre-migration) is treated as
+ * main.tsx). A session with no expiry recorded (pre-migration) is treated as
  * valid so this change never force-logs-out an existing user.
  *
  * Reads still fall back to sessionStorage so any legacy per-tab session from
