@@ -1,4 +1,5 @@
-/**
+
+import { t as translateNow } from '../../i18n/i18n';/**
  * Visitors — a deduped view of the people who talked to the chatbots.
  *
  * `GET /analytics/visitors` has always returned this and the product has never
@@ -48,9 +49,9 @@ export function parseVisitors(
     const sessions = Array.isArray(record.all_session_ids) ? record.all_session_ids.length : 1;
     rows.push({
       id,
-      visitor: readString(record, 'visitor') ?? 'Unknown visitor',
-      location: readString(record, 'location') ?? 'Unknown',
-      device: readString(record, 'device') ?? 'Unknown',
+      visitor: readString(record, 'visitor') ?? (translateNow('analytics.unknownVisitor') || 'Unknown visitor'),
+      location: readString(record, 'location') ?? (translateNow('analytics.unknown') || 'Unknown'),
+      device: readString(record, 'device') ?? (translateNow('analytics.unknown') || 'Unknown'),
       messages: readNumber(record, 'chats'),
       conversations: sessions,
       lastActiveAt: readString(record, 'last_active_at'),

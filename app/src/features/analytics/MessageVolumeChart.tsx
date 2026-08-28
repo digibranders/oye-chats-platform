@@ -22,6 +22,7 @@ import {
 } from '../../ui';
 import { seriesColor, seriesDash } from '../../ui';
 import type { ComparisonPoint } from './series';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * Messages per day, against the same number of days before them.
@@ -82,6 +83,7 @@ function buildSummary(props: MessageVolumeChartProps): string {
 }
 
 export function MessageVolumeChart(props: MessageVolumeChartProps) {
+  const { t } = useTranslation();
   const { points, comparisonLabel, loading = false, error = null, onRetry } = props;
   const hasComparison = points.some((point) => point.previous !== null);
   // A `LineChart` with one datum and `dot={false}` draws nothing at all, so a
@@ -98,12 +100,12 @@ export function MessageVolumeChart(props: MessageVolumeChartProps) {
       onRetry={onRetry}
       empty={!plottable}
       emptyTitle={
-        points.length === 1 ? 'Not enough days to plot' : 'No messages in this period'
+        points.length === 1 ? t('analytics.notEnoughDaysToPlot') || 'Not enough days to plot' : t('analytics.noMessagesInThisPeriod') || 'No messages in this period'
       }
       emptyDescription={
         points.length === 1
-          ? 'A line needs more than one day. The figures above already state this day’s total.'
-          : 'Nobody sent the chatbot anything in this window. Try a wider period, or check that the widget is still on your site.'
+          ? t('analytics.aLineNeedsMoreThan') || 'A line needs more than one day. The figures above already state this day’s total.'
+          : t('analytics.nobodySentTheChatbotAnything') || 'Nobody sent the chatbot anything in this window. Try a wider period, or check that the widget is still on your site.'
       }
       summary={buildSummary(props)}
       legend={
@@ -111,21 +113,21 @@ export function MessageVolumeChart(props: MessageVolumeChartProps) {
           items={
             hasComparison
               ? [
-                  { label: 'This period', seriesIndex: CURRENT_SERIES },
-                  { label: comparisonLabel ?? 'Previous period', seriesIndex: PREVIOUS_SERIES },
+                  { label: t('analytics.thisPeriod') || 'This period', seriesIndex: CURRENT_SERIES },
+                  { label: comparisonLabel ?? (t('analytics.previousPeriod') || 'Previous period'), seriesIndex: PREVIOUS_SERIES },
                 ]
-              : [{ label: 'This period', seriesIndex: CURRENT_SERIES }]
+              : [{ label: t('analytics.thisPeriod') || 'This period', seriesIndex: CURRENT_SERIES }]
           }
         />
       }
       dataTable={
         <ChartDataTable
-          caption="Messages per day, with the previous period"
+          caption={t('analytics.messagesPerDayWithThe') || 'Messages per day, with the previous period'}
           columns={[
-            { key: 'day', header: 'Day' },
-            { key: 'messages', header: 'Messages', numeric: true },
+            { key: 'day', header: t('analytics.day') || 'Day' },
+            { key: 'messages', header: t('analytics.messages') || 'Messages', numeric: true },
             ...(hasComparison
-              ? [{ key: 'previous', header: 'Previous period', numeric: true }]
+              ? [{ key: 'previous', header: t('analytics.previousPeriod') || 'Previous period', numeric: true }]
               : []),
           ]}
           rowKey={(_row, index) => points[index].date}
@@ -152,7 +154,7 @@ export function MessageVolumeChart(props: MessageVolumeChartProps) {
             <Line
               type="monotone"
               dataKey="previous"
-              name={comparisonLabel ?? 'Previous period'}
+              name={comparisonLabel ?? (t('analytics.previousPeriod') || 'Previous period')}
               stroke={seriesColor(PREVIOUS_SERIES)}
               strokeDasharray={seriesDash(4)}
               strokeWidth={1.5}

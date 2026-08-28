@@ -17,6 +17,7 @@ import type { UnansweredQuestion } from '../../types/domain';
 import { csvFilename, exportRows } from './exportCsv';
 import { errorMessage, useUnansweredQuestions } from './useAnalyticsData';
 import type { ResolvedRange } from './range';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * Questions the chatbot could not answer, inside the selected window.
@@ -34,6 +35,7 @@ export function KnowledgeGapsPanel({
   botId: number | null;
   range: ResolvedRange;
 }) {
+  const { t } = useTranslation();
   const { questions, loading, error, refetch } = useUnansweredQuestions(botId, range.days);
   const now = new Date();
 
@@ -47,13 +49,13 @@ export function KnowledgeGapsPanel({
   const columns: readonly Column<UnansweredQuestion>[] = [
     {
       key: 'question',
-      header: 'Question',
+      header: t('analytics.question') || 'Question',
       render: (row) => <span className="text-text-primary">{row.question}</span>,
       sortable: (a, b) => a.question.localeCompare(b.question),
     },
     {
       key: 'count',
-      header: 'Times asked',
+      header: t('analytics.timesAsked') || 'Times asked',
       align: 'right',
       width: '9rem',
       render: (row) => <span className="figure">{formatNumber(row.count)}</span>,
@@ -61,7 +63,7 @@ export function KnowledgeGapsPanel({
     },
     {
       key: 'last_asked',
-      header: 'Last asked',
+      header: t('analytics.lastAsked') || 'Last asked',
       align: 'right',
       width: '11rem',
       secondary: true,
@@ -76,7 +78,7 @@ export function KnowledgeGapsPanel({
   function onExport() {
     exportRows(
       csvFilename('unanswered-questions', range.label),
-      ['Question', 'Times asked', 'Last asked'],
+      [t('analytics.question') || 'Question', t('analytics.timesAsked') || 'Times asked', t('analytics.lastAsked') || 'Last asked'],
       questions.map((question) => [question.question, question.count, question.last_asked ?? '']),
     );
   }
@@ -85,24 +87,24 @@ export function KnowledgeGapsPanel({
     <Card>
       <CardHeader
         eyebrow="Knowledge gaps"
-        title="What it could not answer"
+        title={t('analytics.whatItCouldNotAnswer') || 'What it could not answer'}
         titleAs="h2"
         // Short enough to leave the header's action slot on the same line.
         // With the window appended, the description and the two buttons came
         // to 548px in a 512px header, so `CardHeader` wrapped the actions onto
         // their own row at the *left* — while the identical Export on the panel
         // beside it sat top-right. The window is on the page's period control.
-        description="Questions the chatbot had nothing to answer from"
+        description={t('analytics.questionsTheChatbotHadNothing') || 'Questions the chatbot had nothing to answer from'}
         actions={
           <>
             {questions.length > 0 ? (
               <Button size="sm" variant="ghost" onClick={onExport} iconLeft={<Download aria-hidden />}>
-                Export
+                {t('analytics.export') || 'Export'}
               </Button>
             ) : null}
             {botId != null ? (
               <Link to={agentPath(botId, 'knowledge')} className={buttonClass('secondary', 'sm')}>
-                Add knowledge
+                {t('analytics.addKnowledge') || 'Add knowledge'}
               </Link>
             ) : null}
           </>
@@ -112,12 +114,12 @@ export function KnowledgeGapsPanel({
         <DataTable
           seated
           fit
-          caption="Questions the chatbot could not answer in the selected period"
+          caption={t('analytics.questionsTheChatbotCouldNot') || 'Questions the chatbot could not answer in the selected period'}
           columns={columns}
           rows={questions}
           rowKey={(row) => row.question}
           loading={loading}
-          error={error ? errorMessage(error, 'The request for knowledge gaps failed.') : null}
+          error={error ? errorMessage(error, t('analytics.theRequestForKnowledgeGaps') || 'The request for knowledge gaps failed.') : null}
           onRetry={() => void refetch()}
           defaultSort={{ key: 'count', direction: 'desc' }}
           pageSize={10}
@@ -126,7 +128,7 @@ export function KnowledgeGapsPanel({
             <EmptyState
               size="inline"
               icon={HelpCircle}
-              title="Nothing went unanswered"
+              title={t('analytics.nothingWentUnanswered') || 'Nothing went unanswered'}
               description={`Every question asked in ${range.label.toLowerCase()} was answered from what the chatbot already knows.`}
             />
           }

@@ -13,6 +13,7 @@ import {
 } from '../../ui';
 import type { JourneyTopPageRow } from '../../services/api';
 import { csvFilename, exportRows } from './exportCsv';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * Which pages send people to the chatbot.
@@ -32,17 +33,18 @@ export function JourneyPagesPanel({
   journeys: number;
   monthLabel: string;
 }) {
+  const { t } = useTranslation();
   const columns: readonly Column<JourneyTopPageRow>[] = [
     {
       key: 'path',
-      header: 'Page',
+      header: t('analytics.page') || 'Page',
       pinned: true,
       render: (row) => <span className="figure text-text-primary">{row.path}</span>,
       sortable: (a, b) => a.path.localeCompare(b.path),
     },
     {
       key: 'sessions',
-      header: 'Conversations',
+      header: t('analytics.conversations') || 'Conversations',
       align: 'right',
       width: '9rem',
       render: (row) => <span className="figure">{formatNumber(row.sessions)}</span>,
@@ -50,7 +52,7 @@ export function JourneyPagesPanel({
     },
     {
       key: 'share',
-      header: 'Share of journeys',
+      header: t('analytics.shareOfJourneys2') || 'Share of journeys',
       align: 'right',
       width: '11rem',
       render: (row) => (
@@ -62,7 +64,7 @@ export function JourneyPagesPanel({
     },
     {
       key: 'visits',
-      header: 'Page views',
+      header: t('analytics.pageViews') || 'Page views',
       align: 'right',
       width: '9rem',
       secondary: true,
@@ -74,7 +76,7 @@ export function JourneyPagesPanel({
   function onExport() {
     exportRows(
       csvFilename('journey-pages', monthLabel),
-      ['Page', 'Conversations', 'Share of journeys (%)', 'Page views'],
+      [t('analytics.page') || 'Page', t('analytics.conversations') || 'Conversations', t('analytics.shareOfJourneys') || 'Share of journeys (%)', t('analytics.pageViews') || 'Page views'],
       rows.map((row) => [
         row.path,
         row.sessions,
@@ -88,13 +90,13 @@ export function JourneyPagesPanel({
     <Card>
       <CardHeader
         eyebrow="Influence"
-        title="Pages that lead to a chat"
+        title={t('analytics.pagesThatLeadToA') || 'Pages that lead to a chat'}
         titleAs="h2"
         description={`Where visitors were before they opened the chatbot · ${monthLabel}`}
         actions={
           rows.length > 0 ? (
             <Button size="sm" variant="ghost" onClick={onExport} iconLeft={<Download aria-hidden />}>
-              Export
+              {t('analytics.export') || 'Export'}
             </Button>
           ) : undefined
         }
@@ -102,7 +104,7 @@ export function JourneyPagesPanel({
       <CardBody flush>
         <DataTable
           seated
-          caption="Pages visitors were on before opening the chatbot"
+          caption={t('analytics.pagesVisitorsWereOnBefore') || 'Pages visitors were on before opening the chatbot'}
           columns={columns}
           rows={rows}
           rowKey={(row) => row.path}
@@ -113,8 +115,8 @@ export function JourneyPagesPanel({
             <EmptyState
               size="inline"
               icon={Compass}
-              title="No pages tracked this month"
-              description="This needs visitors who browsed at least one page before opening the chat. Nobody did in this month."
+              title={t('analytics.noPagesTrackedThisMonth') || 'No pages tracked this month'}
+              description={t('analytics.thisNeedsVisitorsWhoBrowsed') || 'This needs visitors who browsed at least one page before opening the chat. Nobody did in this month.'}
             />
           }
         />

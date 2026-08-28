@@ -23,6 +23,7 @@ import { ConversationsTab } from './ConversationsTab';
 import { VisitorsTab } from './VisitorsTab';
 import { FeedbackTab } from './FeedbackTab';
 import { LanguagesTab } from './LanguagesTab';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * Analytics — one surface, one period.
@@ -56,6 +57,7 @@ import { LanguagesTab } from './LanguagesTab';
  * instead of an `useOutletContext()` cast that no compiler checks.
  */
 export function AnalyticsPage() {
+  const { t } = useTranslation();
   const { bots, selectedBot, loading: botsLoading, error: botsError, refreshBots } = useBotContext();
   const [params, setParams] = useSearchParams();
   const refresh = useAnalyticsRefresh();
@@ -98,7 +100,7 @@ export function AnalyticsPage() {
   const rangeControl = (
     <SegmentedControl<RangeKey>
       size="sm"
-      label="Reporting period"
+      label={t('analytics.reportingPeriod') || 'Reporting period'}
       items={RANGE_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
       value={rangeKey}
       onChange={(value) => setParam('range', value, DEFAULT_RANGE)}
@@ -112,7 +114,7 @@ export function AnalyticsPage() {
           only once the page had already loaded, which is the one state in
           which nobody needs it. */}
       <Button size="sm" onClick={refresh} iconLeft={<RefreshCw aria-hidden />}>
-        Refresh
+        {t('analytics.refresh') || 'Refresh'}
       </Button>
     </>
   );
@@ -123,7 +125,7 @@ export function AnalyticsPage() {
   if (botsLoading) {
     return (
       <Page width="wide">
-        <PageHeader title="Analytics" titleVisuallyHidden />
+        <PageHeader title={t('analytics.analytics') || 'Analytics'} titleVisuallyHidden />
         <Card>
           <CardBody>
             <LoadingRows rows={4} />
@@ -136,11 +138,11 @@ export function AnalyticsPage() {
   if (botsError) {
     return (
       <Page width="wide">
-        <PageHeader title="Analytics" titleVisuallyHidden />
+        <PageHeader title={t('analytics.analytics') || 'Analytics'} titleVisuallyHidden />
         <Card>
           <ErrorState
-            title="Your chatbots could not be loaded"
-            description="Analytics is scoped to one chatbot, and the list of them did not arrive."
+            title={t('analytics.yourChatbotsCouldNotBe') || 'Your chatbots could not be loaded'}
+            description={t('analytics.analyticsIsScopedToOne') || 'Analytics is scoped to one chatbot, and the list of them did not arrive.'}
             onRetry={() => void refreshBots()}
           />
         </Card>
@@ -153,15 +155,15 @@ export function AnalyticsPage() {
   if (bots.length === 0) {
     return (
       <Page width="wide">
-        <PageHeader title="Analytics" titleVisuallyHidden />
+        <PageHeader title={t('analytics.analytics') || 'Analytics'} titleVisuallyHidden />
         <Card>
           <EmptyState
             icon={BarChart3}
-            title="Nothing measured yet"
-            description="Create a chatbot and put it on your site. Conversations, leads and visitor journeys all start appearing here within minutes of the first visitor."
+            title={t('analytics.nothingMeasuredYet') || 'Nothing measured yet'}
+            description={t('analytics.createAChatbotAndPut') || 'Create a chatbot and put it on your site. Conversations, leads and visitor journeys all start appearing here within minutes of the first visitor.'}
             action={
               <Link to="/chatbots?new=1" className={buttonClass('primary', 'sm')}>
-                Create a chatbot
+                {t('analytics.createAChatbot') || 'Create a chatbot'}
               </Link>
             }
           />
@@ -184,9 +186,9 @@ export function AnalyticsPage() {
           views sit on — the same call every `NavTabs` row in the super-admin
           console makes. */}
       <PageHeader
-        title="Analytics" titleVisuallyHidden
+        title={t('analytics.analytics') || 'Analytics'} titleVisuallyHidden
         toolbarBleed
-        toolbar={<NavTabs label="Analytics views" items={tabItems} trailing={actions} />}
+        toolbar={<NavTabs label={t('analytics.analyticsViews') || 'Analytics views'} items={tabItems} trailing={actions} />}
       />
 
       <Routes>

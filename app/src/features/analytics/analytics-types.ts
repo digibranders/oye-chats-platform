@@ -1,4 +1,5 @@
-/**
+
+import { t as translateNow } from '../../i18n/i18n';/**
  * Typed views over the loose analytics endpoints.
  *
  * Several of them are declared as `Record<string, unknown>` because their server
@@ -186,7 +187,7 @@ export function parseLanguageBreakdown(record: Record<string, unknown>): Languag
       languageCode: code,
       // The server always sends a label, including for the null row. Falling
       // back keeps a malformed payload readable rather than blank.
-      label: typeof row.label === 'string' && row.label ? row.label : (code?.toUpperCase() ?? 'Not detected'),
+      label: typeof row.label === 'string' && row.label ? row.label : (code?.toUpperCase() ?? (translateNow('analytics.notDetected') || 'Not detected')),
       total: toNumber(row.total),
       resolved: toNumber(row.resolved),
       liveChat: toNumber(row.live_chat),

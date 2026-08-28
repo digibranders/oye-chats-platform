@@ -29,6 +29,7 @@ import { JourneyDiagram } from './JourneyDiagram';
 import { JourneyFlow } from './JourneyFlow';
 import { JourneyOutcomesDonut } from './JourneyOutcomesDonut';
 import { JourneyPagesPanel } from './JourneyPagesPanel';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * Journey — one month of one chatbot, fetched once.
@@ -53,6 +54,7 @@ import { JourneyPagesPanel } from './JourneyPagesPanel';
  * a plan on the server meant remembering to add it here too.
  */
 export function JourneyPage() {
+  const { t } = useTranslation();
   const { bots, selectedBot, loading: botsLoading, error: botsError, refreshBots } = useBotContext();
   const [params, setParams] = useSearchParams();
   const botId = selectedBot?.id ?? null;
@@ -93,11 +95,11 @@ export function JourneyPage() {
   const actions = (
     <>
       <div className="flex items-center gap-2">
-        <span className="text-xs text-text-tertiary">Month</span>
+        <span className="text-xs text-text-tertiary">{t('analytics.month') || 'Month'}</span>
         <div className="w-40">
           <Select
             size="sm"
-            label="Month"
+            label={t('analytics.month') || 'Month'}
             options={months}
             value={month}
             onValueChange={(value) => setParam('month', value, months[0]?.value ?? month)}
@@ -106,16 +108,16 @@ export function JourneyPage() {
       </div>
       <SegmentedControl<'list' | 'diagram'>
         size="sm"
-        label="Journey view"
+        label={t('analytics.journeyView') || 'Journey view'}
         value={view}
         onChange={setView}
         items={[
-          { value: 'list', label: 'List' },
-          { value: 'diagram', label: 'Diagram' },
+          { value: 'list', label: t('analytics.list') || 'List' },
+          { value: 'diagram', label: t('analytics.diagram') || 'Diagram' },
         ]}
       />
       <Button size="sm" onClick={() => void journey.refetch()} iconLeft={<RefreshCw aria-hidden />}>
-        Refresh
+        {t('analytics.refresh') || 'Refresh'}
       </Button>
     </>
   );
@@ -125,7 +127,7 @@ export function JourneyPage() {
   if (botsLoading) {
     return (
       <Page width="wide">
-        <PageHeader title="Journey" description="Visitor journey flow." titleVisuallyHidden />
+        <PageHeader title={t('analytics.journey') || 'Journey'} description={t('analytics.visitorJourneyFlow') || 'Visitor journey flow.'} titleVisuallyHidden />
         <Card>
           <CardBody>
             <LoadingRows rows={4} />
@@ -138,11 +140,11 @@ export function JourneyPage() {
   if (botsError) {
     return (
       <Page width="wide">
-        <PageHeader title="Journey" description="Visitor journey flow." titleVisuallyHidden />
+        <PageHeader title={t('analytics.journey') || 'Journey'} description={t('analytics.visitorJourneyFlow') || 'Visitor journey flow.'} titleVisuallyHidden />
         <Card>
           <ErrorState
-            title="Your chatbots could not be loaded"
-            description="Journey is scoped to one chatbot, and the list of them did not arrive."
+            title={t('analytics.yourChatbotsCouldNotBe') || 'Your chatbots could not be loaded'}
+            description={t('analytics.journeyIsScopedToOne') || 'Journey is scoped to one chatbot, and the list of them did not arrive.'}
             onRetry={() => void refreshBots()}
           />
         </Card>
@@ -153,15 +155,15 @@ export function JourneyPage() {
   if (bots.length === 0) {
     return (
       <Page width="wide">
-        <PageHeader title="Journey" description="Visitor journey flow." titleVisuallyHidden />
+        <PageHeader title={t('analytics.journey') || 'Journey'} description={t('analytics.visitorJourneyFlow') || 'Visitor journey flow.'} titleVisuallyHidden />
         <Card>
           <EmptyState
             icon={BarChart3}
-            title="Nothing measured yet"
-            description="Create a chatbot and put it on your site. Visitor journeys start appearing here within minutes of the first visitor."
+            title={t('analytics.nothingMeasuredYet') || 'Nothing measured yet'}
+            description={t('analytics.createAChatbotAndPut2') || 'Create a chatbot and put it on your site. Visitor journeys start appearing here within minutes of the first visitor.'}
             action={
               <Link to="/chatbots?new=1" className={buttonClass('primary', 'sm')}>
-                Create a chatbot
+                {t('analytics.createAChatbot') || 'Create a chatbot'}
               </Link>
             }
           />
@@ -172,7 +174,7 @@ export function JourneyPage() {
 
   return (
     <Page width="wide">
-      <PageHeader title="Journey" description="Visitor journey flow." titleVisuallyHidden actions={actions} />
+      <PageHeader title={t('analytics.journey') || 'Journey'} description={t('analytics.visitorJourneyFlow') || 'Visitor journey flow.'} titleVisuallyHidden actions={actions} />
 
       {journey.loading ? (
         <Card>
@@ -184,19 +186,19 @@ export function JourneyPage() {
         isPlanGate(journey.error) ? (
           <LockedState
             size="page"
-            title="Visitor journeys are on Standard and above"
-            description="Journeys show the pages someone read before they opened the chat and what they did afterwards. Collection is already running on your workspace, so the history appears the moment you upgrade."
+            title={t('analytics.visitorJourneysAreOnStandard') || 'Visitor journeys are on Standard and above'}
+            description={t('analytics.journeysShowThePagesSomeone') || 'Journeys show the pages someone read before they opened the chat and what they did afterwards. Collection is already running on your workspace, so the history appears the moment you upgrade.'}
             action={
               <Link to="/billing" className={buttonClass('primary', 'sm')}>
-                See plans
+                {t('analytics.seePlans') || 'See plans'}
               </Link>
             }
           />
         ) : (
           <Card>
             <ErrorState
-              title="Journeys could not be loaded"
-              description={errorMessage(journey.error, 'The request for visitor journeys failed.')}
+              title={t('analytics.journeysCouldNotBeLoaded') || 'Journeys could not be loaded'}
+              description={errorMessage(journey.error, t('analytics.theRequestForVisitorJourneys') || 'The request for visitor journeys failed.')}
               onRetry={() => void journey.refetch()}
             />
           </Card>
@@ -220,24 +222,24 @@ export function JourneyPage() {
                       and none is printed anywhere in the strip. */}
                   <div
                     role="group"
-                    aria-label="Journey totals"
+                    aria-label={t('analytics.journeyTotals') || 'Journey totals'}
                     className="grid grid-cols-2 overflow-hidden lg:grid-cols-4"
                   >
                     {[
                       {
-                        label: 'Tracked journeys',
+                        label: t('analytics.trackedJourneys') || 'Tracked journeys',
                         value: formatNumber(summary.sessions_with_journey),
                       },
                       {
-                        label: 'Reached an outcome',
+                        label: t('analytics.reachedAnOutcome') || 'Reached an outcome',
                         value: formatNumber(conversions),
-                        hint: 'Booked a meeting, handed off, or messaged',
+                        hint: t('analytics.bookedAMeetingHandedOff') || 'Booked a meeting, handed off, or messaged',
                       },
-                      { label: 'Left their details', value: formatNumber(summary.leads_captured) },
+                      { label: t('analytics.leftTheirDetails') || 'Left their details', value: formatNumber(summary.leads_captured) },
                       {
-                        label: 'Started on a page',
+                        label: t('analytics.startedOnAPage') || 'Started on a page',
                         value: formatNumber(preChatSequences.sessions_with_pre_chat),
-                        hint: 'Browsed a page before opening the chat',
+                        hint: t('analytics.browsedAPageBeforeOpening') || 'Browsed a page before opening the chat',
                       },
                     ].map((item) => (
                       <div
@@ -264,7 +266,7 @@ export function JourneyPage() {
                   pathsLoading={paths.loading}
                   pathsError={
                     paths.error
-                      ? errorMessage(paths.error, 'The request for these routes failed.')
+                      ? errorMessage(paths.error, t('analytics.theRequestForTheseRoutes') || 'The request for these routes failed.')
                       : null
                   }
                 />
@@ -287,7 +289,7 @@ export function JourneyPage() {
                 <Card>
                   <CardHeader
                     eyebrow="Outcomes"
-                    title="Journey outcomes"
+                    title={t('analytics.journeyOutcomes') || 'Journey outcomes'}
                     titleAs="h2"
                     description={`Where visitor journeys ended · ${label}`}
                   />

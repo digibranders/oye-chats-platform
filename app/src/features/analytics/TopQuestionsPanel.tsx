@@ -11,6 +11,7 @@ import {
 } from '../../ui';
 import { csvFilename, exportRows } from './exportCsv';
 import { errorMessage, useTopQuestions } from './useAnalyticsData';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * What visitors ask most.
@@ -24,12 +25,13 @@ import { errorMessage, useTopQuestions } from './useAnalyticsData';
  * fills, two of them on the same page.
  */
 export function TopQuestionsPanel({ botId }: { botId: number | null }) {
+  const { t } = useTranslation();
   const { questions, loading, error, refetch } = useTopQuestions(botId);
 
   function onExport() {
     exportRows(
       csvFilename('top-questions', 'all time'),
-      ['Question', 'Times asked'],
+      [t('analytics.question') || 'Question', t('analytics.timesAsked') || 'Times asked'],
       questions.map((question) => [question.question, question.count]),
     );
   }
@@ -38,13 +40,13 @@ export function TopQuestionsPanel({ botId }: { botId: number | null }) {
     <Card>
       <CardHeader
         eyebrow="Demand"
-        title="What visitors ask most"
+        title={t('analytics.whatVisitorsAskMost') || 'What visitors ask most'}
         titleAs="h2"
-        description="The questions your chatbot answers most often · all time"
+        description={t('analytics.theQuestionsYourChatbotAnswers') || 'The questions your chatbot answers most often · all time'}
         actions={
           questions.length > 0 ? (
             <Button size="sm" variant="ghost" onClick={onExport} iconLeft={<Download aria-hidden />}>
-              Export
+              {t('analytics.export') || 'Export'}
             </Button>
           ) : undefined
         }
@@ -53,21 +55,21 @@ export function TopQuestionsPanel({ botId }: { botId: number | null }) {
         <ErrorState
           size="panel"
           polite
-          title="Questions could not be loaded"
-          description={errorMessage(error, 'The request for your top questions failed.')}
+          title={t('analytics.questionsCouldNotBeLoaded') || 'Questions could not be loaded'}
+          description={errorMessage(error, t('analytics.theRequestForYourTop') || 'The request for your top questions failed.')}
           onRetry={() => void refetch()}
         />
       ) : !loading && questions.length === 0 ? (
         <EmptyState
           size="panel"
           icon={MessageSquare}
-          title="No questions yet"
-          description="Once visitors start chatting, the questions they repeat will collect here."
+          title={t('analytics.noQuestionsYet') || 'No questions yet'}
+          description={t('analytics.onceVisitorsStartChattingThe') || 'Once visitors start chatting, the questions they repeat will collect here.'}
         />
       ) : (
         <CardBody flush>
           <RankedBars
-            label="Most asked questions"
+            label={t('analytics.mostAskedQuestions') || 'Most asked questions'}
             loading={loading}
             items={questions.map((question, index) => ({
               id: `${index}-${question.question}`,

@@ -10,6 +10,7 @@ import { errorMessage, useMessageSeries } from './useAnalyticsData';
 import { MessageVolumeChart } from './MessageVolumeChart';
 import { TopQuestionsPanel } from './TopQuestionsPanel';
 import { KnowledgeGapsPanel } from './KnowledgeGapsPanel';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * Conversations — the volume, and what was in it.
@@ -29,6 +30,7 @@ export function ConversationsTab({
   range?: ResolvedRange;
   days?: number;
 }) {
+  const { t } = useTranslation();
   const effectiveRange = useMemo(
     () => range ?? resolveRange('30d'),
     [range],
@@ -57,7 +59,7 @@ export function ConversationsTab({
   function onExport() {
     exportRows(
       csvFilename('message-volume', effectiveRange.label),
-      ['Day', 'Messages', 'Previous period day', 'Previous period messages'],
+      [t('analytics.day') || 'Day', t('analytics.messages') || 'Messages', t('analytics.previousPeriodDay') || 'Previous period day', t('analytics.previousPeriodMessages') || 'Previous period messages'],
       points.map((point) => [point.date, point.messages, point.previousLabel ?? '', point.previous]),
     );
   }
@@ -67,30 +69,30 @@ export function ConversationsTab({
       <Card>
         <CardHeader
           eyebrow="Volume"
-          title="Messages per day"
+          title={t('analytics.messagesPerDay') || 'Messages per day'}
           titleAs="h2"
           description={
             effectiveRange.comparisonLabel
               ? `Against ${effectiveRange.comparisonLabel}, day for day`
-              : 'Every day since the first conversation'
+              : t('analytics.everyDaySinceTheFirst') || 'Every day since the first conversation'
           }
           actions={
             points.length > 0 ? (
               <Button size="sm" variant="ghost" onClick={onExport} iconLeft={<Download aria-hidden />}>
-                Export
+                {t('analytics.export') || 'Export'}
               </Button>
             ) : undefined
           }
         />
         <CardBody flush>
           <StatRow
-            label="Message volume"
+            label={t('analytics.messageVolume') || 'Message volume'}
             period={effectiveRange.label}
             columns={3}
             loading={messages.loading}
             items={[
               {
-                label: 'Messages',
+                label: t('analytics.messages') || 'Messages',
                 value: formatNumber(current.total),
                 delta: messageDelta
                   ? {
@@ -100,9 +102,9 @@ export function ConversationsTab({
                     }
                   : undefined,
               },
-              { label: 'Daily average', value: formatNumber(current.dailyAverage) },
+              { label: t('analytics.dailyAverage') || 'Daily average', value: formatNumber(current.dailyAverage) },
               {
-                label: 'Busiest day',
+                label: t('analytics.busiestDay') || 'Busiest day',
                 value: current.peakLabel ? formatNumber(current.peak) : undefined,
                 period: current.peakLabel ?? effectiveRange.label,
               },
@@ -122,7 +124,7 @@ export function ConversationsTab({
             loading={messages.loading}
             error={
               messages.error
-                ? errorMessage(messages.error, 'The request for message activity failed.')
+                ? errorMessage(messages.error, t('analytics.theRequestForMessageActivity') || 'The request for message activity failed.')
                 : null
             }
             onRetry={() => void messages.refetch()}
@@ -133,34 +135,34 @@ export function ConversationsTab({
       <Card>
         <CardHeader
           eyebrow="Live chat"
-          title="Live chat queue"
+          title={t('analytics.liveChatQueue') || 'Live chat queue'}
           titleAs="h2"
-          description="Current queue depth and wait times"
+          description={t('analytics.currentQueueDepthAndWait') || 'Current queue depth and wait times'}
         />
         <CardBody flush>
           <StatRow
-            label="Live chat queue"
+            label={t('analytics.liveChatQueue') || 'Live chat queue'}
             period={effectiveRange.label}
             columns={4}
             loading={queueQuery.isLoading}
             items={[
               {
-                label: 'Waiting now',
+                label: t('analytics.waitingNow') || 'Waiting now',
                 value: queueData ? formatNumber(queueData.current_depth) : '0',
               },
               {
-                label: 'Average wait',
+                label: t('analytics.averageWait') || 'Average wait',
                 value:
                   queueData && queueData.avg_wait_seconds !== null
                     ? `${queueData.avg_wait_seconds}s`
                     : '—',
               },
               {
-                label: 'Resolved',
+                label: t('analytics.resolved') || 'Resolved',
                 value: queueData ? formatNumber(queueData.resolved_count) : '0',
               },
               {
-                label: 'Left queue',
+                label: t('analytics.leftQueue') || 'Left queue',
                 value: queueData ? formatNumber(queueData.abandoned_count) : '0',
               },
             ]}

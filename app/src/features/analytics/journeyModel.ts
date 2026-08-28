@@ -229,11 +229,11 @@ export function buildOutcomes(input: OutcomeInput): JourneyOutcome[] {
   if (typeof summary.sessions_browsed_no_conversion === 'number') {
     outcomes.push({
       id: 'kept_browsing',
-      label: 'Kept browsing',
+      label: translateNow('analytics.keptBrowsing') || 'Kept browsing',
       sessions: Math.max(0, summary.sessions_browsed_no_conversion),
       share: share(Math.max(0, summary.sessions_browsed_no_conversion)),
       filterable: false,
-      note: 'Left the chat and carried on around the site. No paths are attributed to it.',
+      note: translateNow('analytics.leftTheChatAndCarried') || 'Left the chat and carried on around the site. No paths are attributed to it.',
     });
   }
 

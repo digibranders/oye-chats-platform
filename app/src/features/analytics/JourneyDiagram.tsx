@@ -35,6 +35,7 @@ import {
   type ToneKey,
   type TrieVizNode,
 } from './journeyTrie';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /** Hard ceiling on visible leaves per side. Also the fetch shape's own cap
  * (`sequences` is already limited server-side) and the "All" option's value. */
@@ -199,12 +200,16 @@ export interface JourneyDiagramProps {
 
 export function JourneyDiagram({
   sequences,
-  centerLabel = 'Opened Chatbot',
+  centerLabel,
   centerValue = 0,
   selectedOutcome,
   onSelectOutcome,
   className,
 }: JourneyDiagramProps) {
+  const { t } = useTranslation();
+  // Defaulted in the body: a default parameter is evaluated before the hook
+  // runs, so `t` does not exist in the signature yet.
+  const center = centerLabel ?? (t('analytics.openedChatbot') || 'Opened Chatbot');
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   // How many page flows to render. Defaults to the top few so the pre-chat
@@ -393,7 +398,7 @@ export function JourneyDiagram({
           <div className="mb-1 flex h-10 w-10 items-center justify-center rounded-full bg-white/15">
             <Bot aria-hidden className="h-6 w-6" strokeWidth={1.75} />
           </div>
-          <p className="text-2xs font-medium leading-tight opacity-90">{centerLabel}</p>
+          <p className="text-2xs font-medium leading-tight opacity-90">{center}</p>
           <p className="tabular-nums text-base font-semibold leading-tight">
             {centerValue.toLocaleString()}
           </p>
@@ -435,12 +440,12 @@ export function JourneyDiagram({
     <>
       <div className="flex items-center gap-1.5">
         <span aria-hidden className="text-xs text-text-tertiary">
-          Flows
+          {t('analytics.flows') || 'Flows'}
         </span>
         <div className="w-24">
           <Select
             size="sm"
-            label="Page flows shown"
+            label={t('analytics.pageFlowsShown') || 'Page flows shown'}
             value={String(maxFlows)}
             options={FLOW_COUNT_OPTIONS}
             onValueChange={(value) => setMaxFlows(Number(value))}
@@ -450,12 +455,12 @@ export function JourneyDiagram({
       {startingPages.length > 1 ? (
         <div className="flex items-center gap-1.5">
           <span aria-hidden className="text-xs text-text-tertiary">
-            Starts on
+            {t('analytics.startsOn') || 'Starts on'}
           </span>
           <div className="w-36">
             <Select
               size="sm"
-              label="Filter by starting page"
+              label={t('analytics.filterByStartingPage') || 'Filter by starting page'}
               value={effectiveStartFilter ?? ''}
               emptyOption="Any page"
               options={startingPages.map((p) => ({
@@ -473,7 +478,7 @@ export function JourneyDiagram({
       <Button
         variant="ghost"
         size="icon-sm"
-        aria-label="Expand journey diagram"
+        aria-label={t('analytics.expandJourneyDiagram') || 'Expand journey diagram'}
         onClick={() => setExpanded(true)}
       >
         <Maximize2 aria-hidden className="h-icon-sm w-icon-sm" />
@@ -484,19 +489,19 @@ export function JourneyDiagram({
   return (
     <Card className={cn('relative', className)}>
       <CardHeader
-        title="Visitor journey diagram"
-        description="Interactive path flows before and after opening chat. Thicker curves represent more visitors. Drag to pan, scroll to zoom."
+        title={t('analytics.visitorJourneyDiagram') || 'Visitor journey diagram'}
+        description={t('analytics.interactivePathFlowsBeforeAnd') || 'Interactive path flows before and after opening chat. Thicker curves represent more visitors. Drag to pan, scroll to zoom.'}
         actions={headerActions}
       />
       {filteredToNothing ? (
         <CardBody>
           <EmptyState
             icon={Compass}
-            title="No journeys match this filter"
+            title={t('analytics.noJourneysMatchThisFilter') || 'No journeys match this filter'}
             description={`No visitors starting on "${effectiveStartFilter}" were tracked in this window.`}
             action={
               <Button variant="secondary" size="sm" onClick={() => setStartFilter(null)}>
-                Clear filter
+                {t('analytics.clearFilter') || 'Clear filter'}
               </Button>
             }
           />
@@ -515,7 +520,7 @@ export function JourneyDiagram({
               aspect means the drawing is always as large as the width
               allows and there is no dead band under it. */}
           <ZoomPanCanvas
-            label="Visitor journey flow diagram"
+            label={t('analytics.visitorJourneyFlowDiagram') || 'Visitor journey flow diagram'}
             viewBoxWidth={VB_W}
             viewBoxHeight={effVBH}
             className="min-h-60"
@@ -529,12 +534,12 @@ export function JourneyDiagram({
       <Dialog
         open={expanded}
         onOpenChange={setExpanded}
-        title="Visitor journey flow diagram"
-        description="Arrow keys to pan · +/- to zoom · 0 to reset view"
+        title={t('analytics.visitorJourneyFlowDiagram') || 'Visitor journey flow diagram'}
+        description={t('analytics.arrowKeysToPanTo') || 'Arrow keys to pan · +/- to zoom · 0 to reset view'}
         size="full"
       >
         <ZoomPanCanvas
-          label="Expanded journey diagram"
+          label={t('analytics.expandedJourneyDiagram') || 'Expanded journey diagram'}
           viewBoxWidth={VB_W}
           viewBoxHeight={effVBH}
           className="h-[calc(100vh-12rem)] min-h-[420px]"

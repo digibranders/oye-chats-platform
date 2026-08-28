@@ -31,6 +31,7 @@ import {
   type FilterableOutcome,
   type JourneyOutcome,
 } from './journeyModel';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * How visitors moved: before the chat, the chat, and after it.
@@ -70,7 +71,8 @@ interface RouteRow {
  * the full string can actually read it.
  */
 function PathTrail({ pages }: { pages: readonly string[] }) {
-  if (pages.length === 0) return <span className="text-xs text-text-tertiary">Direct</span>;
+  const { t } = useTranslation();
+  if (pages.length === 0) return <span className="text-xs text-text-tertiary">{t('analytics.direct') || 'Direct'}</span>;
   return (
     <Tooltip content={pages.join(' → ')}>
       <span className="flex min-w-0 items-center gap-1">
@@ -112,6 +114,7 @@ export function JourneyFlow({
   pathsLoading,
   pathsError,
 }: JourneyFlowProps) {
+  const { t } = useTranslation();
   const [visible, setVisible] = useState(PAGE_STEP);
 
   const rows = useMemo<RouteRow[]>(() => {
@@ -141,7 +144,7 @@ export function JourneyFlow({
     <Card>
       <CardHeader
         eyebrow="Flow"
-        title="How visitors moved"
+        title={t('analytics.howVisitorsMoved') || 'How visitors moved'}
         titleAs="h2"
         description={`Where people were before they opened the chat, and what happened afterwards · ${monthLabel}`}
       />
@@ -153,7 +156,7 @@ export function JourneyFlow({
           {/* Before the chat */}
           <section aria-labelledby="journey-before">
             <h3 id="journey-before" className="text-base font-semibold text-text-primary">
-              Before the chat
+              {t('analytics.beforeTheChat') || 'Before the chat'}
             </h3>
             <p aria-live="polite" className="mt-1 text-xs text-text-secondary">
               {selectedOutcome ? (
@@ -166,7 +169,7 @@ export function JourneyFlow({
                 <>
                   <span className="figure">{formatNumber(sequences.sessions_with_pre_chat)}</span> of{' '}
                   <span className="figure">{formatNumber(sequences.total_sessions)}</span>{' '}
-                  conversations were browsing first
+                  {t('analytics.conversationsWereBrowsingFirst') || 'conversations were browsing first'}
                 </>
               )}
             </p>
@@ -181,7 +184,7 @@ export function JourneyFlow({
                   setVisible(PAGE_STEP);
                 }}
               >
-                Clear filter
+                {t('analytics.clearFilter') || 'Clear filter'}
               </Button>
             ) : null}
 
@@ -192,13 +195,13 @@ export function JourneyFlow({
                 <ErrorState
                   size="inline"
                   polite
-                  title="These routes could not be loaded"
+                  title={t('analytics.theseRoutesCouldNotBe') || 'These routes could not be loaded'}
                   description={pathsError}
                 />
               ) : shown.length === 0 ? (
                 <EmptyState
                   size="inline"
-                  title="No routes to show"
+                  title={t('analytics.noRoutesToShow') || 'No routes to show'}
                   description={filterEmptyDescription({
                     outcome: selectedOutcome,
                     startPage: null,
@@ -246,20 +249,20 @@ export function JourneyFlow({
           {/* The chat itself */}
           <section aria-labelledby="journey-chat">
             <h3 id="journey-chat" className="text-base font-semibold text-text-primary">
-              The chat
+              {t('analytics.theChat') || 'The chat'}
             </h3>
             {/* A `StatTile` and a `FigureRow`, not a bordered well with a
                 hand-set 20px figure and a decorative glyph inside it. */}
             <div className="mt-3">
               <StatTile
                 size="lg"
-                label={summary.sessions_with_journey === 1 ? 'Tracked journey' : 'Tracked journeys'}
+                label={summary.sessions_with_journey === 1 ? t('analytics.trackedJourney') || 'Tracked journey' : t('analytics.trackedJourneys') || 'Tracked journeys'}
                 value={formatNumber(summary.sessions_with_journey)}
                 period={monthLabel}
               />
               <FigureList className="mt-2">
                 <FigureRow
-                  label="Left their details"
+                  label={t('analytics.leftTheirDetails') || 'Left their details'}
                   value={formatNumber(summary.leads_captured)}
                 />
               </FigureList>
@@ -269,10 +272,10 @@ export function JourneyFlow({
           {/* After the chat */}
           <section aria-labelledby="journey-after">
             <h3 id="journey-after" className="text-base font-semibold text-text-primary">
-              After the chat
+              {t('analytics.afterTheChat') || 'After the chat'}
             </h3>
             <p className="mt-1 text-xs text-text-secondary">
-              Select an outcome to see only the routes behind it.
+              {t('analytics.selectAnOutcomeToSee') || 'Select an outcome to see only the routes behind it.'}
             </p>
             <ul className="mt-3 space-y-1.5">
               {outcomes.map((outcome) => {
@@ -343,11 +346,11 @@ export function JourneyFlow({
                 the eyebrow's own treatment rather than a 12px semibold rung the
                 type scale does not have. */}
             <Eyebrow as="h4" className="mt-5">
-              Where they went next
+              {t('analytics.whereTheyWentNext') || 'Where they went next'}
             </Eyebrow>
             {postChat.first_hops.length === 0 ? (
               <p className="mt-1 text-xs text-text-secondary">
-                Nobody was seen on another page after closing the chat in this month.
+                {t('analytics.nobodyWasSeenOnAnother') || 'Nobody was seen on another page after closing the chat in this month.'}
               </p>
             ) : (
               <ul className="mt-2 space-y-1.5">

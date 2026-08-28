@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useAnimatedProgress } from '../../hooks/useAnimatedProgress';
 import type { JourneyOutcome } from './journeyModel';
+import { useTranslation } from '../../i18n/useTranslation';
 
 const DONUT_VB = 160;
 const DONUT_R = 62;
@@ -22,6 +23,7 @@ export interface JourneyOutcomesDonutProps {
 }
 
 export function JourneyOutcomesDonut({ outcomes = [], total = 0 }: JourneyOutcomesDonutProps) {
+  const { t } = useTranslation();
   const safeTotal = typeof total === 'number' && !isNaN(total) && total > 0 ? total : 0;
   const progress = useAnimatedProgress(1400, safeTotal);
   const animatedTotal = Math.round(safeTotal * progress);
@@ -87,7 +89,7 @@ export function JourneyOutcomesDonut({ outcomes = [], total = 0 }: JourneyOutcom
         </svg>
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
           <p className="text-2xs font-medium uppercase tracking-wider text-text-tertiary">
-            Total
+            {t('analytics.total') || 'Total'}
           </p>
           <p className="tabular-nums text-lg font-semibold text-text-primary">
             {animatedTotal.toLocaleString()}
@@ -116,12 +118,12 @@ export function JourneyOutcomesDonut({ outcomes = [], total = 0 }: JourneyOutcom
 
       {/* Accessible data table for screen readers */}
       <table className="sr-only">
-        <caption>Journey outcomes</caption>
+        <caption>{t('analytics.journeyOutcomes') || 'Journey outcomes'}</caption>
         <thead>
           <tr>
-            <th scope="col">Outcome</th>
-            <th scope="col">Sessions</th>
-            <th scope="col">Share</th>
+            <th scope="col">{t('analytics.outcomeColumn') || 'Outcome'}</th>
+            <th scope="col">{t('analytics.sessions') || 'Sessions'}</th>
+            <th scope="col">{t('analytics.share') || 'Share'}</th>
           </tr>
         </thead>
         <tbody>

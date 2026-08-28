@@ -18,6 +18,7 @@ import { csvFilename, exportRows } from './exportCsv';
 import { errorMessage, useVisitors } from './useAnalyticsData';
 import { filterVisitorsToWindow, type VisitorRow } from './visitors';
 import type { ResolvedRange } from './range';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * Visitors — who actually turned up.
@@ -33,6 +34,7 @@ import type { ResolvedRange } from './range';
  * the surface instead of being the one panel that is always all-time.
  */
 export function VisitorsTab({ botId, range }: { botId: number | null; range: ResolvedRange }) {
+  const { t } = useTranslation();
   const { visitors, loading, locked, error, refetch } = useVisitors(botId);
 
   const rows = useMemo(
@@ -43,27 +45,27 @@ export function VisitorsTab({ botId, range }: { botId: number | null; range: Res
   const columns: readonly Column<VisitorRow>[] = [
     {
       key: 'visitor',
-      header: 'Visitor',
+      header: t('analytics.visitor') || 'Visitor',
       pinned: true,
       render: (row) => <span className="figure text-text-primary">{row.visitor}</span>,
       sortable: (a, b) => a.visitor.localeCompare(b.visitor, undefined, { numeric: true }),
     },
     {
       key: 'location',
-      header: 'Location',
+      header: t('analytics.location') || 'Location',
       render: (row) => <span className="text-text-secondary">{row.location}</span>,
       sortable: (a, b) => a.location.localeCompare(b.location),
     },
     {
       key: 'device',
-      header: 'Device',
+      header: t('analytics.device') || 'Device',
       secondary: true,
       render: (row) => <span className="text-text-secondary">{row.device}</span>,
       sortable: (a, b) => a.device.localeCompare(b.device),
     },
     {
       key: 'conversations',
-      header: 'Conversations',
+      header: t('analytics.conversations') || 'Conversations',
       align: 'right',
       width: '9rem',
       render: (row) => <span className="figure">{formatNumber(row.conversations)}</span>,
@@ -71,7 +73,7 @@ export function VisitorsTab({ botId, range }: { botId: number | null; range: Res
     },
     {
       key: 'messages',
-      header: 'Messages',
+      header: t('analytics.messages') || 'Messages',
       align: 'right',
       width: '8rem',
       secondary: true,
@@ -80,7 +82,7 @@ export function VisitorsTab({ botId, range }: { botId: number | null; range: Res
     },
     {
       key: 'lastActiveAt',
-      header: 'Last active',
+      header: t('analytics.lastActive') || 'Last active',
       align: 'right',
       width: '13rem',
       render: (row) => (
@@ -94,7 +96,7 @@ export function VisitorsTab({ botId, range }: { botId: number | null; range: Res
   function onExport() {
     exportRows(
       csvFilename('visitors', range.label),
-      ['Visitor', 'Location', 'Device', 'Conversations', 'Messages', 'Last active'],
+      [t('analytics.visitor') || 'Visitor', t('analytics.location') || 'Location', t('analytics.device') || 'Device', t('analytics.conversations') || 'Conversations', t('analytics.messages') || 'Messages', t('analytics.lastActive') || 'Last active'],
       rows.map((row) => [
         row.visitor,
         row.location,
@@ -110,11 +112,11 @@ export function VisitorsTab({ botId, range }: { botId: number | null; range: Res
     return (
       <LockedState
         size="page"
-        title="Visitor history is limited on your plan"
-        description="Your plan keeps a short window of conversation history, and this list is built from it. A longer retention window comes with Standard and above."
+        title={t('analytics.visitorHistoryIsLimitedOn') || 'Visitor history is limited on your plan'}
+        description={t('analytics.yourPlanKeepsAShort') || 'Your plan keeps a short window of conversation history, and this list is built from it. A longer retention window comes with Standard and above.'}
         action={
           <Link to="/billing" className={buttonClass('primary', 'sm')}>
-            See plans
+            {t('analytics.seePlans') || 'See plans'}
           </Link>
         }
       />
@@ -125,13 +127,13 @@ export function VisitorsTab({ botId, range }: { botId: number | null; range: Res
     <Card>
       <CardHeader
         eyebrow="Audience"
-        title="Who visited"
+        title={t('analytics.whoVisited') || 'Who visited'}
         titleAs="h2"
         description={`One row per visitor, last seen in ${range.label.toLowerCase()}`}
         actions={
           rows.length > 0 ? (
             <Button size="sm" variant="ghost" onClick={onExport} iconLeft={<Download aria-hidden />}>
-              Export
+              {t('analytics.export') || 'Export'}
             </Button>
           ) : undefined
         }
@@ -139,12 +141,12 @@ export function VisitorsTab({ botId, range }: { botId: number | null; range: Res
       <CardBody flush>
         <DataTable
           seated
-          caption="Visitors who spoke to the chatbot in the selected period"
+          caption={t('analytics.visitorsWhoSpokeToThe') || 'Visitors who spoke to the chatbot in the selected period'}
           columns={columns}
           rows={rows}
           rowKey={(row) => row.id}
           loading={loading}
-          error={error ? errorMessage(error, 'The request for visitors failed.') : null}
+          error={error ? errorMessage(error, t('analytics.theRequestForVisitorsFailed') || 'The request for visitors failed.') : null}
           onRetry={() => void refetch()}
           defaultSort={{ key: 'lastActiveAt', direction: 'desc' }}
           pageSize={25}
@@ -153,11 +155,11 @@ export function VisitorsTab({ botId, range }: { botId: number | null; range: Res
             <EmptyState
               size="inline"
               icon={Users}
-              title={visitors.length > 0 ? 'Nobody in this period' : 'No visitors yet'}
+              title={visitors.length > 0 ? t('analytics.nobodyInThisPeriod') || 'Nobody in this period' : t('analytics.noVisitorsYet') || 'No visitors yet'}
               description={
                 visitors.length > 0
-                  ? 'Visitors have used the chatbot, but none of them in this window. Try a wider period.'
-                  : 'Nobody has opened the chatbot yet. Once someone does, they will appear here with where they were and how much they asked.'
+                  ? t('analytics.visitorsHaveUsedTheChatbot') || 'Visitors have used the chatbot, but none of them in this window. Try a wider period.'
+                  : t('analytics.nobodyHasOpenedTheChatbot') || 'Nobody has opened the chatbot yet. Once someone does, they will appear here with where they were and how much they asked.'
               }
             />
           }

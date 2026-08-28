@@ -14,6 +14,7 @@ import {
 } from '../../ui';
 import { errorMessage, useLanguageBreakdown } from './useAnalyticsData';
 import type { ResolvedRange } from './range';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * Which languages this chatbot's visitors actually chat in, and what
@@ -38,14 +39,15 @@ export function LanguagesTab({
   botId: number | null;
   range: ResolvedRange;
 }) {
+  const { t } = useTranslation();
   const { breakdown, loading, error, refetch } = useLanguageBreakdown(botId, range.key);
 
   if (error) {
     return (
       <ErrorState
         framed
-        title="We could not load the language breakdown"
-        description={errorMessage(error, 'Something went wrong on the way to the server.')}
+        title={t('analytics.weCouldNotLoadThe') || 'We could not load the language breakdown'}
+        description={errorMessage(error, t('analytics.somethingWentWrongOnThe') || 'Something went wrong on the way to the server.')}
         onRetry={() => void refetch()}
       />
     );
@@ -57,8 +59,8 @@ export function LanguagesTab({
     return (
       <EmptyState
         framed
-        title="This chatbot answers in one language"
-        description="Turn multilingual on under the chatbot's Experience settings, and the languages your visitors write in will appear here."
+        title={t('analytics.thisChatbotAnswersInOne') || 'This chatbot answers in one language'}
+        description={t('analytics.turnMultilingualOnUnderThe') || 'Turn multilingual on under the chatbot\'s Experience settings, and the languages your visitors write in will appear here.'}
       />
     );
   }
@@ -79,14 +81,14 @@ export function LanguagesTab({
     <Stack>
       <StatRow
         period={range.label}
-        label="Language mix"
+        label={t('analytics.languageMix') || 'Language mix'}
         columns={4}
         items={[
-          { label: 'Conversations', value: formatNumber(totals.total) },
-          { label: 'Languages used', value: formatNumber(totals.languages) },
-          { label: 'Marked resolved', value: formatNumber(totals.resolved) },
+          { label: t('analytics.conversations') || 'Conversations', value: formatNumber(totals.total) },
+          { label: t('analytics.languagesUsed') || 'Languages used', value: formatNumber(totals.languages) },
+          { label: t('analytics.markedResolved') || 'Marked resolved', value: formatNumber(totals.resolved) },
           {
-            label: 'Translation credits',
+            label: t('analytics.translationCredits') || 'Translation credits',
             value: formatNumber(breakdown.creditsSpent),
           },
         ]}
@@ -94,19 +96,19 @@ export function LanguagesTab({
 
       <Card>
         <CardHeader
-          title="Conversations by language"
+          title={t('analytics.conversationsByLanguage') || 'Conversations by language'}
           titleAs="h2"
-          description="Bars are proportional to the busiest language, so a long tail stays readable."
+          description={t('analytics.barsAreProportionalToThe') || 'Bars are proportional to the busiest language, so a long tail stays readable.'}
         />
         <CardBody>
           {rows.length === 0 ? (
             <EmptyState
               size="panel"
-              title="No conversations in this window"
-              description="Widen the range, or wait for visitors to arrive."
+              title={t('analytics.noConversationsInThisWindow') || 'No conversations in this window'}
+              description={t('analytics.widenTheRangeOrWait') || 'Widen the range, or wait for visitors to arrive.'}
             />
           ) : (
-            <RankedBars items={bars} label="Conversations by language" />
+            <RankedBars items={bars} label={t('analytics.conversationsByLanguage') || 'Conversations by language'} />
           )}
         </CardBody>
       </Card>
@@ -114,7 +116,7 @@ export function LanguagesTab({
       {breakdown.operatorTranslationEnabled ? (
         <Card>
           <CardHeader
-            title="Live-chat translation"
+            title={t('analytics.liveChatTranslation') || 'Live-chat translation'}
             titleAs="h2"
             // The window is stated here, not inherited, because these counters
             // do not follow the page's range and never can.
@@ -122,10 +124,10 @@ export function LanguagesTab({
           />
           <CardBody>
             <Grid cols={4}>
-              <Figure label="Requests" value={translation.requests} />
-              <Figure label="Delivered" value={translation.ok} />
-              <Figure label="Failed" value={translation.failed} />
-              <Figure label="Timed out" value={translation.timeout} />
+              <Figure label={t('analytics.requests') || 'Requests'} value={translation.requests} />
+              <Figure label={t('analytics.delivered') || 'Delivered'} value={translation.ok} />
+              <Figure label={t('analytics.failed') || 'Failed'} value={translation.failed} />
+              <Figure label={t('analytics.timedOut') || 'Timed out'} value={translation.timeout} />
             </Grid>
           </CardBody>
         </Card>

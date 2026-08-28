@@ -12,6 +12,7 @@ import {
 } from '../../ui';
 import { csvFilename, exportRows } from './exportCsv';
 import { errorMessage, useRatings } from './useAnalyticsData';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * Post-chat visitor ratings.
@@ -29,6 +30,7 @@ import { errorMessage, useRatings } from './useAnalyticsData';
 const STARS: ReadonlyArray<1 | 2 | 3 | 4 | 5> = [5, 4, 3, 2, 1];
 
 export function SatisfactionPanel({ botId }: { botId: number | null }) {
+  const { t } = useTranslation();
   const { ratings, loading, error, refetch } = useRatings(botId);
   const empty = !ratings || ratings.total === 0;
 
@@ -36,7 +38,7 @@ export function SatisfactionPanel({ botId }: { botId: number | null }) {
     if (!ratings) return;
     exportRows(
       csvFilename('ratings', 'all time'),
-      ['Rating', 'Ratings', 'Share (%)'],
+      [t('analytics.rating') || 'Rating', t('analytics.ratings') || 'Ratings', 'Share (%)'],
       STARS.map((star) => [
         star,
         ratings.distribution[star],
@@ -49,13 +51,13 @@ export function SatisfactionPanel({ botId }: { botId: number | null }) {
     <Card>
       <CardHeader
         eyebrow="Satisfaction"
-        title="What visitors thought"
+        title={t('analytics.whatVisitorsThought') || 'What visitors thought'}
         titleAs="h2"
-        description="Ratings visitors left after a conversation · all time"
+        description={t('analytics.ratingsVisitorsLeftAfterA') || 'Ratings visitors left after a conversation · all time'}
         actions={
           !loading && !error && !empty ? (
             <Button size="sm" variant="ghost" onClick={onExport} iconLeft={<Download aria-hidden />}>
-              Export
+              {t('analytics.export') || 'Export'}
             </Button>
           ) : undefined
         }
@@ -64,16 +66,16 @@ export function SatisfactionPanel({ botId }: { botId: number | null }) {
         <ErrorState
           size="panel"
           polite
-          title="Ratings could not be loaded"
-          description={errorMessage(error, 'The request for your visitor ratings failed.')}
+          title={t('analytics.ratingsCouldNotBeLoaded') || 'Ratings could not be loaded'}
+          description={errorMessage(error, t('analytics.theRequestForYourVisitor') || 'The request for your visitor ratings failed.')}
           onRetry={() => void refetch()}
         />
       ) : !loading && empty ? (
         <EmptyState
           size="panel"
           icon={Star}
-          title="No ratings yet"
-          description="Visitors can rate a conversation when it ends. Nobody has yet, so there is nothing to summarise."
+          title={t('analytics.noRatingsYet') || 'No ratings yet'}
+          description={t('analytics.visitorsCanRateAConversation') || 'Visitors can rate a conversation when it ends. Nobody has yet, so there is nothing to summarise.'}
         />
       ) : (
         <>
@@ -83,7 +85,7 @@ export function SatisfactionPanel({ botId }: { botId: number | null }) {
                 <span className="figure text-2xl font-semibold text-text-primary">
                   {ratings.average.toFixed(1)}
                 </span>
-                <span className="text-xs text-text-tertiary">out of 5</span>
+                <span className="text-xs text-text-tertiary">{t('analytics.outOf5') || 'out of 5'}</span>
                 <span className="text-xs text-text-secondary">
                   from <span className="figure">{formatNumber(ratings.total)}</span>{' '}
                   {ratings.total === 1 ? 'rating' : 'ratings'}
@@ -93,7 +95,7 @@ export function SatisfactionPanel({ botId }: { botId: number | null }) {
           ) : null}
           <CardBody flush>
             <RankedBars
-              label="Ratings by number of stars"
+              label={t('analytics.ratingsByNumberOfStars') || 'Ratings by number of stars'}
               loading={loading}
               loadingRows={STARS.length}
               max={ratings?.total}

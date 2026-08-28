@@ -1,4 +1,5 @@
 import { delta } from './range';
+import { t as translateNow } from '../../i18n/i18n';
 
 /**
  * What changed, said in a sentence.
@@ -93,7 +94,7 @@ export function deriveInsights(input: InsightInput): Insight[] {
         input.unansweredCount === 1 ? 'question went' : 'questions went'
       } unanswered`,
       body: `"${input.topUnanswered.question}" came up ${input.topUnanswered.count.toLocaleString()} times in ${input.rangeLabel.toLowerCase()} and the chatbot had nothing to answer from.`,
-      action: input.knowledgeTo ? { label: 'Add knowledge', to: input.knowledgeTo } : undefined,
+      action: input.knowledgeTo ? { label: translateNow('analytics.addKnowledge') || 'Add knowledge', to: input.knowledgeTo } : undefined,
     });
   }
 

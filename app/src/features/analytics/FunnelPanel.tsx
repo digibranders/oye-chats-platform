@@ -17,6 +17,7 @@ import { funnelHasData, readFunnel } from '../leads/leadModel';
 import { csvFilename, exportRows } from './exportCsv';
 import { errorMessage, useQualificationFunnel } from './useAnalyticsData';
 import type { ResolvedRange } from './range';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * The visitor-to-booked-call funnel, for the period the page is set to.
@@ -41,6 +42,7 @@ export interface FunnelPanelProps {
 }
 
 export function FunnelPanel({ botId, range, unlocked }: FunnelPanelProps) {
+  const { t } = useTranslation();
   const { funnel, loading, locked, error, refetch } = useQualificationFunnel(
     botId,
     range.key,
@@ -52,7 +54,7 @@ export function FunnelPanel({ botId, range, unlocked }: FunnelPanelProps) {
   function onExport() {
     exportRows(
       csvFilename('funnel', range.label),
-      ['Stage', 'What it means', 'Count', 'Conversion from previous (%)'],
+      [t('analytics.stage') || 'Stage', t('analytics.whatItMeans') || 'What it means', t('analytics.count') || 'Count', t('analytics.conversionFromPrevious') || 'Conversion from previous (%)'],
       stages.map((stage) => [
         stage.label,
         stage.sublabel,
@@ -66,13 +68,13 @@ export function FunnelPanel({ botId, range, unlocked }: FunnelPanelProps) {
     <Card>
       <CardHeader
         eyebrow="Qualification"
-        title="How visitors become buyers"
+        title={t('analytics.howVisitorsBecomeBuyers') || 'How visitors become buyers'}
         titleAs="h2"
         description={`Where people drop off between a first visit and a booked call · ${range.label.toLowerCase()}`}
         actions={
           !planLocked && funnelHasData(stages) ? (
             <Button size="sm" variant="ghost" onClick={onExport} iconLeft={<Download aria-hidden />}>
-              Export
+              {t('analytics.export') || 'Export'}
             </Button>
           ) : undefined
         }
@@ -80,11 +82,11 @@ export function FunnelPanel({ botId, range, unlocked }: FunnelPanelProps) {
       {planLocked ? (
         <LockedState
           size="panel"
-          title="Lead qualification is on Standard and above"
-          description="Standard scores every conversation against budget, authority, need and timing, and this funnel shows you where the ones that matter fall out."
+          title={t('analytics.leadQualificationIsOnStandard') || 'Lead qualification is on Standard and above'}
+          description={t('analytics.standardScoresEveryConversationAgainst') || 'Standard scores every conversation against budget, authority, need and timing, and this funnel shows you where the ones that matter fall out.'}
           action={
             <Link to="/billing" className={buttonClass('primary', 'sm')}>
-              See plans
+              {t('analytics.seePlans') || 'See plans'}
             </Link>
           }
         />
@@ -92,21 +94,21 @@ export function FunnelPanel({ botId, range, unlocked }: FunnelPanelProps) {
         <ErrorState
           size="panel"
           polite
-          title="The funnel could not be loaded"
-          description={errorMessage(error, 'The request for your qualification funnel failed.')}
+          title={t('analytics.theFunnelCouldNotBe') || 'The funnel could not be loaded'}
+          description={errorMessage(error, t('analytics.theRequestForYourQualification') || 'The request for your qualification funnel failed.')}
           onRetry={() => void refetch()}
         />
       ) : !loading && !funnelHasData(stages) ? (
         <EmptyState
           size="panel"
           icon={Filter}
-          title="No funnel activity in this period"
-          description="Nobody reached the chatbot in this window. Try a wider period, or check the widget is still installed."
+          title={t('analytics.noFunnelActivityInThis') || 'No funnel activity in this period'}
+          description={t('analytics.nobodyReachedTheChatbotIn') || 'Nobody reached the chatbot in this window. Try a wider period, or check the widget is still installed.'}
         />
       ) : (
         <CardBody flush>
           <RankedBars
-            label="Qualification funnel stages"
+            label={t('analytics.qualificationFunnelStages') || 'Qualification funnel stages'}
             loading={loading}
             loadingRows={stages.length || 5}
             max={stages[0]?.count}

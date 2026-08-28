@@ -1,4 +1,5 @@
-/**
+
+import { t as translateNow } from '../../i18n/i18n';/**
  * The one reporting window this surface has.
  *
  * The page it replaces ran three independent time vocabularies at once — a
@@ -122,7 +123,7 @@ export function delta(current: number, previous: number | null | undefined): Del
   if (previous == null || !Number.isFinite(previous) || previous === 0) return null;
   if (!Number.isFinite(current)) return null;
   const percent = Math.round(((current - previous) / previous) * 100);
-  if (percent === 0) return { value: 'No change', direction: 'flat', percent: 0 };
+  if (percent === 0) return { value: translateNow('analytics.noChange') || 'No change', direction: 'flat', percent: 0 };
   return {
     value: `${percent > 0 ? '+' : ''}${percent}%`,
     direction: percent > 0 ? 'up' : 'down',

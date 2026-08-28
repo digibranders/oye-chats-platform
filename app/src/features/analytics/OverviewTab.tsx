@@ -26,6 +26,7 @@ import {
 } from './useAnalyticsData';
 import { FunnelPanel } from './FunnelPanel';
 import { SatisfactionPanel } from './SatisfactionPanel';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * Overview — the period, and the period before it.
@@ -38,6 +39,7 @@ import { SatisfactionPanel } from './SatisfactionPanel';
  * none.
  */
 export function OverviewTab({ botId, range }: { botId: number | null; range: ResolvedRange }) {
+  const { t } = useTranslation();
   const { hasFeature } = useEntitlements();
   const headline = useHeadlineTotals(botId, range);
   const messages = useMessageSeries(botId);
@@ -77,8 +79,8 @@ export function OverviewTab({ botId, range }: { botId: number | null; range: Res
     return (
       <Card>
         <ErrorState
-          title="Your figures could not be loaded"
-          description={errorMessage(headline.error, 'The request for your workspace totals failed.')}
+          title={t('analytics.yourFiguresCouldNotBe') || 'Your figures could not be loaded'}
+          description={errorMessage(headline.error, t('analytics.theRequestForYourWorkspace') || 'The request for your workspace totals failed.')}
           onRetry={() => void headline.refetch()}
         />
       </Card>
@@ -90,11 +92,11 @@ export function OverviewTab({ botId, range }: { botId: number | null; range: Res
       <Card>
         <CardBody flush>
           <StatRow
-            label="Headline figures"
+            label={t('analytics.headlineFigures') || 'Headline figures'}
             period={range.label}
             items={[
               {
-                label: 'Conversations',
+                label: t('analytics.conversations') || 'Conversations',
                 value: formatNumber(headline.totals?.totalConversations ?? null),
                 delta: conversationDelta
                   ? {
@@ -108,11 +110,11 @@ export function OverviewTab({ botId, range }: { botId: number | null; range: Res
                 // wrapped to two lines under a four-up strip and made that one
                 // tile 32px taller than its three peers.
                 hint:
-                  range.comparisonLabel && !conversationDelta ? 'No earlier data' : undefined,
+                  range.comparisonLabel && !conversationDelta ? t('analytics.noEarlierData') || 'No earlier data' : undefined,
                 loading: headline.loading,
               },
               {
-                label: 'Messages',
+                label: t('analytics.messages') || 'Messages',
                 value: formatNumber(current.total),
                 delta: messageDelta
                   ? {
@@ -124,18 +126,18 @@ export function OverviewTab({ botId, range }: { botId: number | null; range: Res
                 loading: messages.loading,
               },
               {
-                label: 'Qualified leads',
+                label: t('analytics.qualifiedLeads') || 'Qualified leads',
                 value: leads.locked ? undefined : formatNumber(leads.leads?.sql ?? null),
-                period: 'All time',
-                hint: leads.locked ? 'Lead scoring is on Standard and above' : undefined,
+                period: t('analytics.allTime') || 'All time',
+                hint: leads.locked ? t('analytics.leadScoringIsOnStandard') || 'Lead scoring is on Standard and above' : undefined,
                 loading: leads.loading,
               },
               {
-                label: 'Answers rated helpful',
+                label: t('analytics.answersRatedHelpful') || 'Answers rated helpful',
                 value: headline.totals
                   ? formatPercent(headline.totals.positiveFeedbackRate / 100)
                   : undefined,
-                period: 'All time',
+                period: t('analytics.allTime') || 'All time',
                 loading: headline.loading,
               },
             ]}
