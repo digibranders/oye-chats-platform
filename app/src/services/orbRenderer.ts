@@ -120,13 +120,48 @@ void main() {
 
 const MAX_SIZE = 512;
 
-class OrbRenderer {
-    constructor() {
-        this.available = false;
-        this.orbs = new Set();
-        this.raf = 0;
-        this.reduced = false;
+/**
+ * One registered orb instance: a destination canvas the shared WebGL surface
+ * is blitted into, plus the state the render loop reads each frame.
+ *
+ * `destCtx` is nullable because `getContext('2d')` can return null (a browser
+ * refusing the surface under memory pressure); `_renderOne` skips those.
+ */
+export interface Orb {
+    destCanvas: HTMLCanvasElement;
+    destCtx: CanvasRenderingContext2D | null;
+    /** Normalised RGB, three floats in 0..1. */
+    color: Float32Array;
+    /** Device-pixel edge length; also the WebGL viewport size. */
+    pxSize: number;
+    visible: boolean;
+}
 
+interface ProgramLocations {
+    orbColor: WebGLUniformLocation | null;
+    uTime: WebGLUniformLocation | null;
+    uSize: WebGLUniformLocation | null;
+    aPos: GLint;
+}
+
+class OrbRenderer {
+    /** False when WebGL is unavailable or the context was lost. Consumers
+     *  branch on this to render a CSS fallback instead. */
+    available = false;
+
+    private orbs = new Set<Orb>();
+    private raf = 0;
+    private reduced = false;
+    private startTime = 0;
+
+    // Left optional rather than definitely-assigned: the constructor returns
+    // early on a server render or a refused context, and every consumer of
+    // these already gates on `available`.
+    private canvas?: HTMLCanvasElement;
+    private gl?: WebGLRenderingContext;
+    private locs?: ProgramLocations;
+
+    constructor() {
         if (typeof window === 'undefined' || typeof document === 'undefined') return;
 
         this.canvas = document.createElement('canvas');
@@ -153,7 +188,7 @@ class OrbRenderer {
         if (typeof matchMedia !== 'undefined') {
             const mq = matchMedia('(prefers-reduced-motion: reduce)');
             this.reduced = !!mq.matches;
-            const onChange = (e) => {
+            const onChange = (e: MediaQueryListEvent) => {
                 this.reduced = !!e.matches;
                 if (!this.reduced) this._ensureLoop();
                 else this._renderOnce();
@@ -175,10 +210,17 @@ class OrbRenderer {
         }, false);
     }
 
-    _compile() {
+    private _compile(): void {
         const gl = this.gl;
-        const mk = (src, type) => {
+        // Only reachable once the constructor has a context, and on
+        // contextrestored where it still holds one. Throwing rather than
+        // returning keeps the caller's try/catch as the single failure path,
+        // which leaves `available` false exactly as before.
+        if (!gl) throw new Error('orbRenderer: no WebGL context');
+
+        const mk = (src: string, type: GLenum): WebGLShader => {
             const s = gl.createShader(type);
+            if (!s) throw new Error('shader: allocation failed');
             gl.shaderSource(s, src);
             gl.compileShader(s);
             if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
@@ -191,6 +233,7 @@ class OrbRenderer {
         const v = mk(VERTEX_SRC, gl.VERTEX_SHADER);
         const f = mk(FRAGMENT_SRC, gl.FRAGMENT_SHADER);
         const p = gl.createProgram();
+        if (!p) throw new Error('program: allocation failed');
         gl.attachShader(p, v);
         gl.attachShader(p, f);
         gl.linkProgram(p);
@@ -199,7 +242,8 @@ class OrbRenderer {
             gl.deleteProgram(p);
             throw new Error('program: ' + log);
         }
-        this.program = p;
+        // The linked program is bound immediately below via useProgram and
+        // never referenced again, so it is not retained as state.
         this.locs = {
             orbColor: gl.getUniformLocation(p, 'orbColor'),
             uTime:    gl.getUniformLocation(p, 'uTime'),
@@ -219,7 +263,7 @@ class OrbRenderer {
         gl.disable(gl.BLEND);
     }
 
-    register(orb) {
+    register(orb: Orb): boolean {
         if (!this.available) return false;
         this.orbs.add(orb);
         if (this.reduced) this._renderOne(orb, 0);
@@ -227,7 +271,7 @@ class OrbRenderer {
         return true;
     }
 
-    unregister(orb) {
+    unregister(orb: Orb): void {
         this.orbs.delete(orb);
         if (!this.orbs.size && this.raf) {
             cancelAnimationFrame(this.raf);
@@ -235,18 +279,22 @@ class OrbRenderer {
         }
     }
 
-    poke(orb) {
+    poke(orb: Orb): void {
         if (this.reduced) this._renderOne(orb, 0);
     }
 
-    _renderOnce() {
+    private _renderOnce(): void {
         const t = (performance.now() - this.startTime) / 1000;
         for (const orb of this.orbs) this._renderOne(orb, t);
     }
 
-    _renderOne(orb, t) {
+    private _renderOne(orb: Orb, t: number): void {
         if (!orb.visible || !orb.destCtx || orb.pxSize <= 0) return;
         const gl = this.gl;
+        // Same shape as the guard above: a renderer without a live context or
+        // a linked program has nothing to draw, and every caller already
+        // tolerates a skipped frame.
+        if (!gl || !this.locs || !this.canvas) return;
         gl.viewport(0, 0, orb.pxSize, orb.pxSize);
         gl.clearColor(0, 0, 0, 0);
         gl.clear(gl.COLOR_BUFFER_BIT);
@@ -264,7 +312,7 @@ class OrbRenderer {
         );
     }
 
-    _ensureLoop() {
+    private _ensureLoop(): void {
         if (this.raf || !this.orbs.size || this.reduced) return;
         const tick = () => {
             const t = (performance.now() - this.startTime) / 1000;
