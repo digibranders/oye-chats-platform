@@ -2,6 +2,21 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **STATUS: COMPLETE (2026-08-28).** All six phases landed in 24 commits on
+> `claude/admin-redesign`, ending at the "keep JavaScript out of app/src" commit.
+> `app/src` is 0 `.js`, 0 `.jsx`, 0 `.d.ts` shims, 649 TypeScript files. Verified
+> in an isolated worktree: lint (with the new guard) clean, `tsc --noEmit` 0
+> errors, 168 test files / 2,240 tests passing, build green, bundle +282 bytes
+> (the real `ApiError` class, since types themselves erase).
+>
+> Two checks in this plan could NOT be run and were not faked: `npm run size`
+> and `npm run e2e`. Neither `size-limit` nor `@playwright/test` is present in
+> this checkout's `node_modules`, though both are declared in `devDependencies`.
+> That predates this work; nothing here touched either dependency. A manual boot
+> check stood in for e2e: the built app renders the login screen with a clean
+> console, and the outbound `/auth/google/status` request proves the converted
+> API client loads and executes.
+
 **Goal:** Convert the last 16 legacy `.js`/`.jsx` files in `app/src` to TypeScript and delete the 14 hand-written `.d.ts` shims, so every module in the admin dashboard has exactly one checked definition instead of two unchecked ones.
 
 **Architecture:** The `app/` codebase is already 95% TypeScript (646 TS files / 137k lines vs 16 JS files / 7,333 lines) under a `strict: true`, `allowJs: false` tsconfig that passes clean today. New TS code sees the remaining JS through hand-written `.d.ts` shims. Nothing binds a shim to its implementation, so the shims can lie, and `services/api.d.ts` has already drifted (28 of 214 runtime exports are undeclared). This plan works leaves-first: kill the drift that exists, convert dependency-free utilities, then React contexts, then the entry point, then the 3,817-line API client, then seal the door with a CI guard so `.js` cannot come back.
