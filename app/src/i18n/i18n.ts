@@ -172,9 +172,23 @@ export function setLocale(next: string | null | undefined): void {
   });
 }
 
-/** Fetch a dictionary without switching to it, to avoid a flash of English. */
-export function preloadDictionary(locale: string): Promise<boolean> {
-  return ensureDictionary(locale);
+/**
+ * Fetch a dictionary without switching to it, to avoid a flash of English.
+ *
+ * MUST notify when the fetch lands. `I18nProvider` calls this on mount for a
+ * RESTORED preference, at which point the tree has already painted English
+ * because the dictionary was not in memory yet. Without the notify the flash
+ * never ends: the chunk arrives, `t()` would resolve, and nothing re-renders,
+ * so a reader who picked Hindi and reloaded sat looking at an English
+ * dashboard until some unrelated state change happened to flush the tree.
+ *
+ * `setLocale` already does this for an in-session switch, which is why the
+ * language picker appeared to work and a reload appeared not to.
+ */
+export async function preloadDictionary(locale: string): Promise<boolean> {
+  const loaded = await ensureDictionary(locale);
+  if (loaded && baseLanguage(currentLocale) === baseLanguage(locale)) notify();
+  return loaded;
 }
 
 /** Subscribe to locale changes. Returns an unsubscribe function. */
@@ -259,6 +273,16 @@ export function t(key: string, params?: Record<string, unknown>): string | null 
 }
 
 /** Test-only reset. Not referenced by application code. */
+/**
+ * Drop loaded dictionaries but keep the active locale.
+ *
+ * Reproduces the cold-load state a full reset cannot: the reader's language is
+ * known from storage, and its dictionary has not arrived yet.
+ */
+export function __clearDictionariesForTests(): void {
+  for (const lang of Object.keys(dictionaries)) delete dictionaries[lang];
+}
+
 export function __resetI18nForTests(): void {
   currentLocale = DEFAULT_UI_LOCALE;
   version = 0;
