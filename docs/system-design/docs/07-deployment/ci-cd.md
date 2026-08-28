@@ -1,10 +1,12 @@
 # CI / CD pipelines
 
-> **Audience:** Ops · New engineers · **Read time:** 5 min · **Last updated:** 2026-04-28
+> **Audience:** Ops · New engineers · **Read time:** 5 min · **Last updated:** 2026-08-28
 
 ## TL;DR
 
-Three GitHub Actions workflows. **`ci.yml`** runs on every push to `development` and PRs to `main` (lint + tests + builds). **`deploy-api.yml`** runs on `main` API changes (SSH deploy + Alembic + systemd restart + health gate). **`deploy-widget.yml`** runs on `main` widget changes (Vite build → Cloudflare R2 upload in strict order → cache purge → smoke test).
+Four GitHub Actions workflows. **`ci.yml`** runs on every push to `development` and PRs to `main` (lint + tests + builds). **`deploy-api.yml`** runs on `main` API changes (SSH deploy + Alembic + systemd restart + health gate). **`deploy-widget.yml`** runs on `main` widget changes (Vite build → Cloudflare R2 upload in strict order → cache purge → smoke test). **`deploy-app.yml`** runs on `main` dashboard changes and fires a Vercel Deploy Hook, but only after the backend for that same commit is deployed and healthy.
+
+The admin dashboard is the one deploy Vercel does not start by itself. Its Git integration is switched off in `app/vercel.json` precisely so that the ordering below can be enforced.
 
 ## Workflow overview
 
@@ -143,6 +145,46 @@ sequenceDiagram
 19 secrets fed in: `DB_URL`, `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `CORS_ORIGINS`, `R2_*` (Cloudflare R2; legacy `B2_*` env names also accepted as fallback — see [`config.py`](../../../api/app/config.py)), `SENTRY_DSN_BACKEND`, `LANGFUSE_*`, `BREVO_API_KEY`, `REDIS_URL`, `RELEVANCE_GATE_ENABLED`, `CHUNK_ENRICHMENT_ENABLED`, `CRAWLER_JS_ALL_PAGES`, `RERANK_ENABLED`, plus SSH (`DO_HOST`, `DO_USER`, `DO_SSH_KEY`).
 
 Hardcoded prod values inside the deploy script: `LLM_MODEL=openai/gpt-5.4-mini`, `FALLBACK_MODEL=gemini/gemini-2.5-flash`, `GATE_MODEL=gemini/gemini-2.5-flash`, `ENRICHMENT_MODEL=gemini/gemini-2.5-flash`, `CHUNK_SIZE=1000`, `CHUNK_OVERLAP=200`, `RELEVANCE_THRESHOLD=0.55`, `RERANK_TOP_N=5`, `CAG_LITE_THRESHOLD=20`, `CRAWLER_BROWSER_RECYCLE=10`, `WORKER_ENABLED=true`, `MODERATION_ENABLED=true`.
+
+## `deploy-app.yml` (admin dashboard)
+
+Path: [`.github/workflows/deploy-app.yml`](../../../.github/workflows/deploy-app.yml)
+
+Triggers: `push` to `main` (paths: `app/**`) · manual.
+
+**Why this workflow exists at all.** Vercel deployed the SPA itself, on its Git
+integration, the moment `main` moved. That put the dashboard and the API in a
+race the dashboard usually won: Vercel builds a Vite SPA in a couple of
+minutes, while `deploy-api.yml` runs the full CI suite, migrates the database
+and then waits for `/health/full`. A release that added an endpoint therefore
+put a dashboard live against a backend that did not have it yet, and users in
+that window got 404s from a screen that looked fine.
+
+Order of operations:
+
+1. `ci` — the same reusable `ci.yml` gate the other two deploys use.
+2. `wait-for-backend` — polls the GitHub API for a `deploy-api.yml` run on
+   **this commit**. It runs beside `ci`, not after it, so the wait overlaps the
+   suite. Three outcomes:
+   - no such run appears within 120s → the commit does not touch `api/**`, so
+     there is nothing to wait for and the dashboard ships on its own;
+   - the run succeeds → the dashboard ships;
+   - the run fails → **the dashboard does not ship.** `deploy-api.yml` rolls
+     the droplet back to the previous healthy release on failure, so what is
+     live is the *old* backend, and a new dashboard against it is the exact
+     breakage this workflow prevents.
+3. `deploy` — `POST`s the Vercel Deploy Hook.
+
+**Setup.** The hook URL lives in the repository secret
+`VERCEL_DEPLOY_HOOK_URL`, created under the Vercel project's Settings → Git on
+the `main` branch. It is a credential: anyone holding it can deploy the
+project. Without it the `deploy` job fails loudly rather than silently doing
+nothing, because with the Git integration off there is no other path to
+production.
+
+> `git.deploymentEnabled` only suppresses deployments made *upon commits*, so
+> Deploy Hooks still fire. The deprecated `github.enabled: false` is the
+> setting that would break the hook — do not add it to `app/vercel.json`.
 
 ## `deploy-widget.yml` (CDN publish)
 
