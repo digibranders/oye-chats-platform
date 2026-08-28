@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { API, SESSION_ID, assertApiOrigin, mockBackend, type HistoryMessage } from './mockBackend';
 
 /**
@@ -59,6 +59,19 @@ async function openConversation(
   await chat.click();
 }
 
+/**
+ * The open conversation, not the whole page.
+ *
+ * The console renders every message twice: once as a one-line preview in the
+ * conversation list and once as a bubble in the transcript. An unscoped
+ * `getByText` therefore resolves to two elements and fails strict mode, so
+ * message assertions are scoped to the transcript panel - which is also the
+ * only one of the two that these tests are actually about.
+ */
+function transcript(page: Page): Locator {
+  return page.getByRole('region', { name: /^Conversation with / });
+}
+
 test.describe('Phase 4 - operator sees translated visitor messages', () => {
   test('a Hindi message arrives as the original, then becomes English when the translation lands', async ({
     page,
@@ -77,8 +90,8 @@ test.describe('Phase 4 - operator sees translated visitor messages', () => {
       id: 101,
       source_language: 'hi',
     });
-    await expect(page.getByText(VISITOR_HI)).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText(VISITOR_EN)).toHaveCount(0);
+    await expect(transcript(page).getByText(VISITOR_HI)).toBeVisible({ timeout: 15_000 });
+    await expect(transcript(page).getByText(VISITOR_EN)).toHaveCount(0);
 
     // 2. The translation follows as its own frame and replaces what is rendered.
     socket.send({
@@ -89,26 +102,26 @@ test.describe('Phase 4 - operator sees translated visitor messages', () => {
       content: VISITOR_EN,
       status: 'ok',
     });
-    await expect(page.getByText(VISITOR_EN)).toBeVisible({ timeout: 15_000 });
+    await expect(transcript(page).getByText(VISITOR_EN)).toBeVisible({ timeout: 15_000 });
 
     // 3. The original is one click away, and clicking back returns to English.
     const viewOriginal = page.getByRole('button', { name: /view original/i });
     await expect(viewOriginal).toBeVisible();
     await viewOriginal.click();
-    await expect(page.getByText(VISITOR_HI)).toBeVisible();
+    await expect(transcript(page).getByText(VISITOR_HI)).toBeVisible();
 
     await page.getByRole('button', { name: /view translation/i }).click();
-    await expect(page.getByText(VISITOR_EN)).toBeVisible();
+    await expect(transcript(page).getByText(VISITOR_EN)).toBeVisible();
   });
 
   test('the operator replies in English and the reply leaves on the socket', async ({ page }) => {
     const socket = await mockBackend(page, { history: TRANSLATED_HISTORY, operatorLocale: 'en-IN' });
     await openConversation(page, socket);
-    await expect(page.getByText(VISITOR_EN)).toBeVisible({ timeout: 15_000 });
+    await expect(transcript(page).getByText(VISITOR_EN)).toBeVisible({ timeout: 15_000 });
 
     // The composer is disabled until the socket reports `connected`, so target
-    // it by its own placeholder rather than "the last textbox on the page".
-    const composer = page.getByPlaceholder(/type a reply/i);
+    // it by its own accessible name rather than "the last textbox on the page".
+    const composer = page.getByRole('textbox', { name: 'Reply to this visitor' });
     await expect(composer).toBeEnabled({ timeout: 15_000 });
     await composer.fill(OPERATOR_REPLY);
     await page.getByRole('button', { name: 'Send reply' }).click();
@@ -125,11 +138,14 @@ test.describe('Phase 4 - operator sees translated visitor messages', () => {
   test('the conversation language badge names the visitor language', async ({ page }) => {
     const socket = await mockBackend(page, { history: TRANSLATED_HISTORY, operatorLocale: 'en-IN' });
     await openConversation(page, socket);
-    // Sourced from `ChatSession.language_code` via the session-details endpoint.
-    // Targeted by its title, not by loose text: the operator's own language
-    // picker sits in the same view and renders language names of its own, so a
-    // bare getByText would be ambiguous about which one it matched.
-    await expect(page.getByTitle('Visitor is writing in Hindi')).toBeVisible({ timeout: 15_000 });
+    // Sourced from `ChatSession.language_code` via the session-details endpoint,
+    // and rendered beside the visitor's name in the details panel. Scoped to
+    // that panel, not matched loosely: the operator's own language picker sits
+    // in the same view and renders language names of its own, so a bare
+    // getByText would be ambiguous about which one it matched.
+    await page.getByRole('button', { name: 'Show visitor details' }).click();
+    const details = page.getByRole('complementary', { name: 'Visitor details' });
+    await expect(details.getByText('Hindi', { exact: true })).toBeVisible({ timeout: 15_000 });
   });
 });
 
@@ -139,7 +155,7 @@ test.describe('Phase 4 - operator reconnect', () => {
     // assertion that the wire is not the only carrier.
     const socket = await mockBackend(page, { history: TRANSLATED_HISTORY, operatorLocale: 'en-IN' });
     await openConversation(page, socket);
-    await expect(page.getByText(VISITOR_EN)).toBeVisible({ timeout: 15_000 });
+    await expect(transcript(page).getByText(VISITOR_EN)).toBeVisible({ timeout: 15_000 });
 
     const connectionsBefore = socket.opened;
     socket.drop();
@@ -149,9 +165,9 @@ test.describe('Phase 4 - operator reconnect', () => {
     await page.getByText('Priya').first().click();
 
     // Still translated, and the toggle is still functional afterwards.
-    await expect(page.getByText(VISITOR_EN)).toBeVisible({ timeout: 15_000 });
+    await expect(transcript(page).getByText(VISITOR_EN)).toBeVisible({ timeout: 15_000 });
     await page.getByRole('button', { name: /view original/i }).click();
-    await expect(page.getByText(VISITOR_HI)).toBeVisible();
+    await expect(transcript(page).getByText(VISITOR_HI)).toBeVisible();
   });
 
   test('a duplicate translation frame does not double-render', async ({ page }) => {
@@ -178,13 +194,13 @@ test.describe('Phase 4 - operator reconnect', () => {
       status: 'ok',
     };
     socket.send(translation);
-    await expect(page.getByText(VISITOR_EN)).toBeVisible({ timeout: 15_000 });
+    await expect(transcript(page).getByText(VISITOR_EN)).toBeVisible({ timeout: 15_000 });
 
     socket.send(translation);
     socket.send(translation);
     await page.waitForTimeout(1000);
 
-    expect(await page.getByText(VISITOR_EN).count()).toBe(1);
+    expect(await transcript(page).getByText(VISITOR_EN).count()).toBe(1);
   });
 });
 
@@ -211,7 +227,7 @@ test.describe('Phase 4 - translation provider failure', () => {
     });
 
     // The message is NOT lost: the operator can still read and act on it.
-    await expect(page.getByText(VISITOR_HI)).toBeVisible({ timeout: 15_000 });
+    await expect(transcript(page).getByText(VISITOR_HI)).toBeVisible({ timeout: 15_000 });
     // And the failure is surfaced honestly rather than looking like silence.
     await expect(page.getByText(/translation unavailable/i)).toBeVisible();
     await expect(page.getByRole('button', { name: /retry/i })).toBeVisible();
@@ -222,8 +238,8 @@ test.describe('Phase 4 - translation provider failure', () => {
     const socket = await mockBackend(page, { history: FAILED_HISTORY, operatorLocale: 'en-IN' });
     await openConversation(page, socket);
 
-    await expect(page.getByText(VISITOR_HI)).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText(VISITOR_EN)).toHaveCount(0);
+    await expect(transcript(page).getByText(VISITOR_HI)).toBeVisible({ timeout: 15_000 });
+    await expect(transcript(page).getByText(VISITOR_EN)).toHaveCount(0);
   });
 
   test('retry calls the backfill endpoint and renders the result', async ({ page }) => {
@@ -260,7 +276,7 @@ test.describe('Phase 4 - translation provider failure', () => {
     await page.getByRole('button', { name: /retry/i }).click();
 
     await expect.poll(() => translateCalls, { timeout: 15_000 }).toBeGreaterThan(0);
-    await expect(page.getByText(VISITOR_EN)).toBeVisible({ timeout: 15_000 });
+    await expect(transcript(page).getByText(VISITOR_EN)).toBeVisible({ timeout: 15_000 });
   });
 });
 
@@ -290,8 +306,8 @@ test.describe('Phase 4 - operator without a language preference', () => {
     });
     await page.waitForTimeout(1000);
 
-    await expect(page.getByText(VISITOR_HI)).toBeVisible();
-    await expect(page.getByText(VISITOR_EN)).toHaveCount(0);
+    await expect(transcript(page).getByText(VISITOR_HI)).toBeVisible();
+    await expect(transcript(page).getByText(VISITOR_EN)).toHaveCount(0);
     await expect(page.getByRole('button', { name: /view original/i })).toHaveCount(0);
   });
 });
@@ -305,13 +321,17 @@ test.describe('Phase 5A - the working language is a property of the operator', (
     await mockBackend(page, { history: [], operatorLocale: 'en-IN', online: false });
     await page.goto('/inbox?view=yours');
 
-    // Offline: the availability action offers to put them ON duty.
-    await expect(page.getByRole('button', { name: 'Go online' })).toBeVisible({ timeout: 20_000 });
+    // Offline: the availability switch reads as off. Asserting the state
+    // rather than the presence of an opposite-facing button is what survives
+    // the control being a toggle instead of two buttons.
+    const availability = page.getByRole('switch', { name: 'Taking chats' });
+    await expect(availability).toBeVisible({ timeout: 20_000 });
+    await expect(availability).not.toBeChecked();
 
     const picker = page.getByRole('combobox', { name: 'Read live chat in' });
     await expect(picker).toHaveText(/English \(India\)/, { timeout: 20_000 });
-    await expect(page.getByText(/translated into English/i)).toBeVisible();
-    await expect(page.getByText(/original language/i)).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /translated into English/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /language they were written in/i })).toHaveCount(0);
   });
 
   test('an offline operator with no preference still reads as untranslated', async ({ page }) => {
@@ -320,10 +340,12 @@ test.describe('Phase 5A - the working language is a property of the operator', (
     await mockBackend(page, { history: [], operatorLocale: null, online: false });
     await page.goto('/inbox?view=yours');
 
-    await expect(page.getByRole('button', { name: 'Go online' })).toBeVisible({ timeout: 20_000 });
+    const availability = page.getByRole('switch', { name: 'Taking chats' });
+    await expect(availability).toBeVisible({ timeout: 20_000 });
+    await expect(availability).not.toBeChecked();
     const picker = page.getByRole('combobox', { name: 'Read live chat in' });
-    await expect(picker).toHaveText(/Don’t translate/, { timeout: 20_000 });
-    await expect(page.getByText(/original language/i)).toBeVisible();
+    await expect(picker).toHaveText(/Do not translate/, { timeout: 20_000 });
+    await expect(page.getByRole('button', { name: /language they were written in/i })).toBeVisible();
   });
 
   test('the picker offers the locales the bot supports', async ({ page }) => {
@@ -333,6 +355,6 @@ test.describe('Phase 5A - the working language is a property of the operator', (
 
     await page.getByRole('combobox', { name: 'Read live chat in' }).click();
     const options = page.getByRole('option');
-    await expect(options).toHaveText([/Don’t translate/, /English \(India\)/, /Hindi \(India\)/]);
+    await expect(options).toHaveText([/Do not translate/, /English \(India\)/, /Hindi \(India\)/]);
   });
 });
