@@ -11,7 +11,7 @@
 const DISMISS_STORAGE_PREFIX = 'trial_banner_dismissed_';
 
 /** Build the sessionStorage key for a given subscription status. */
-export function bannerDismissKey(status) {
+export function bannerDismissKey(status: string): string {
     return `${DISMISS_STORAGE_PREFIX}${status}`;
 }
 
@@ -20,7 +20,7 @@ export function bannerDismissKey(status) {
  * this session. Defaults to ``false`` if sessionStorage is unavailable
  * (private browsing, embedded webviews) so the banner stays visible.
  */
-export function readBannerDismissed(status) {
+export function readBannerDismissed(status: string | null | undefined): boolean {
     if (!status) return false;
     try {
         return sessionStorage.getItem(bannerDismissKey(status)) === '1';
@@ -30,7 +30,7 @@ export function readBannerDismissed(status) {
 }
 
 /** Mark the ``status`` banner as dismissed for the rest of this session. */
-export function markBannerDismissed(status) {
+export function markBannerDismissed(status: string | null | undefined): void {
     if (!status) return;
     try {
         sessionStorage.setItem(bannerDismissKey(status), '1');
@@ -49,7 +49,7 @@ export function markBannerDismissed(status) {
  * leaving the next user permanently blind to "trial ends tomorrow"
  * after the previous user dismissed it once.
  */
-export function clearTrialBannerDismissals() {
+export function clearTrialBannerDismissals(): void {
     try {
         const keys = Object.keys(sessionStorage).filter((k) => k.startsWith(DISMISS_STORAGE_PREFIX));
         keys.forEach((k) => sessionStorage.removeItem(k));
