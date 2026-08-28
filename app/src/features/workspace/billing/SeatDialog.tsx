@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Alert, Button, Dialog, Field, Input } from '../../../ui';
-import { changeOperatorSeats } from '../../../services/api';
+import { changeOperatorSeats, verifyRazorpaySubscription } from '../../../services/api';
+import { openRazorpayCheckout } from '../../../lib/razorpay';
 import {
   CHARGE_CURRENCY,
   formatMoneyMinor,
@@ -43,6 +44,11 @@ export function SeatDialog({
   const [target, setTarget] = useState(String(currentSeats));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  // A ref latch, not just `busy`: two clicks dispatched in the same React batch
+  // both read the pre-update state, and each would mint its own seat mandate.
+  // Same contract `usePlanCheckout` documents for the plan path.
+  const inFlight = useRef(false);
 
   const included = plan?.includedSeats ?? 0;
   const unlimited = included === UNLIMITED_LIMIT;
@@ -54,11 +60,70 @@ export function SeatDialog({
   const belowUsed = valid && parsed < seatsUsed;
 
   async function submit() {
-    if (!valid || delta === 0 || belowUsed) return;
+    if (!valid || delta === 0 || belowUsed || inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
-      await changeOperatorSeats(delta, botId);
+      const result = (await changeOperatorSeats(delta, botId)) as Record<string, unknown>;
+
+      // The FIRST extra seat has no mandate yet, so the server answers
+      // `requires_authorization` with a checkout and deliberately leaves
+      // `operator_quantity` untouched. Discarding that (as this dialog used to)
+      // told the customer their seats were added while no payment sheet had
+      // opened and the backend had granted nothing.
+      if (result.requires_authorization && result.checkout) {
+        const checkout = result.checkout as Record<string, unknown>;
+        let callback: Awaited<ReturnType<typeof openRazorpayCheckout>>;
+        try {
+          callback = await openRazorpayCheckout({
+            key: String(checkout.key_id),
+            subscription_id: String(checkout.subscription_id),
+            name: typeof checkout.name === 'string' ? checkout.name : 'OyeChats operator seats',
+            description: typeof checkout.description === 'string' ? checkout.description : undefined,
+            prefill: checkout.prefill as Record<string, unknown> | undefined,
+            theme: checkout.theme as Record<string, unknown> | undefined,
+          });
+        } catch (checkoutErr: unknown) {
+          // A dismissed sheet is a decision, not a failure: nothing was
+          // authorised and nothing was charged. Say exactly that, and do NOT
+          // report a seat change upstream.
+          if ((checkoutErr as { code?: string })?.code === 'dismissed') {
+            setNotice('Seat purchase cancelled. You have not been charged.');
+            return;
+          }
+          throw checkoutErr;
+        }
+
+        // Verify server-side like every other checkout here. The activation
+        // webhook stays the canonical reconciler and is idempotent against
+        // this, so a verification failure is NOT a purchase failure.
+        let reconciled = true;
+        try {
+          await verifyRazorpaySubscription({
+            razorpay_payment_id: callback.razorpay_payment_id,
+            razorpay_subscription_id:
+              callback.razorpay_subscription_id || String(checkout.subscription_id),
+            razorpay_signature: callback.razorpay_signature,
+          });
+        } catch {
+          reconciled = false;
+        }
+
+        // Deliberately does NOT name a new seat total: the entitlement moves
+        // when the seat add-on's `activated` webhook lands, seconds from now.
+        onChanged(
+          reconciled
+            ? 'Payment authorised. Your new seats switch on in a moment.'
+            : 'Payment authorised. We are finalising your seats.',
+        );
+        onOpenChange(false);
+        return;
+      }
+
+      // No mandate to authorise: a reduction, or an edit against an already
+      // authorised add-on. The server applied it, so the count is real.
       onChanged(
         delta > 0
           ? `Added ${delta} seat${delta === 1 ? '' : 's'}. Your workspace now has ${parsed}.`
@@ -68,6 +133,7 @@ export function SeatDialog({
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'We could not change your seat count.');
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   }
@@ -136,6 +202,14 @@ export function SeatDialog({
             staying inside the plan allowance both name no figure, and a tax
             note there would qualify nothing. */}
         {valid && delta > 0 && monthlyExtraMinor > 0 ? <TaxNote /> : null}
+
+        {/* An abandoned checkout is not a failure, so it gets neutral tone and
+            its own line — red here would read as "your payment broke". */}
+        {notice && !error ? (
+          <Alert tone="neutral" live>
+            {notice}
+          </Alert>
+        ) : null}
 
         {error ? (
           <Alert tone="danger" live>

@@ -8,10 +8,8 @@ import {
   Dialog,
   EmptyState,
   ErrorState,
-  Grid,
   LoadingRows,
-  Spinner,
-  cn,
+  RadioCards,
   formatNumber,
 } from '../../../ui';
 import {
@@ -104,6 +102,9 @@ export function TopupDialog({
   const [busyAmount, setBusyAmount] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // The pack the customer has selected, by index. Null means "fall back to the
+  // recommended one", so the dialog always opens with a live, actionable choice.
+  const [selectedValue, setSelectedValue] = useState<string | null>(null);
 
   const packs = useQuery({
     queryKey: ['billing', 'topup-packs'] as const,
@@ -119,6 +120,9 @@ export function TopupDialog({
     if (open) {
       setError(null);
       setNotice(null);
+      // Re-open with the recommended pack, not whatever was left selected last
+      // time — the recommendation may have changed and the balance certainly has.
+      setSelectedValue(null);
     }
   }, [open]);
 
@@ -207,8 +211,46 @@ export function TopupDialog({
     }
   }
 
-  const featured = featuredIndex(packs.data ?? []);
+  const packsData = packs.data ?? [];
+  const featured = featuredIndex(packsData);
   const busy = busyAmount !== null;
+
+  // The selection, resolved: an explicit choice, else the recommended pack, else
+  // the first one. Kept as a string because that is what a radiogroup value is.
+  const defaultValue = packsData.length > 0 ? String(featured >= 0 ? featured : 0) : '';
+  const effectiveValue = selectedValue ?? defaultValue;
+  const selectedPack = packsData[Number(effectiveValue)] ?? null;
+
+  const packItems = packsData.map((pack, index) => {
+    const amountInr = chargeInr(pack);
+    const usdMajor = Number(pack.usd ?? pack.display_amount ?? 0);
+    const showUsd = showsUsd && usdMajor > 0;
+    const price = showUsd
+      ? formatMoneyMinor(Math.round(usdMajor * 100), 'USD')
+      : formatMoneyMinor(amountInr * 100, CHARGE_CURRENCY);
+    return {
+      value: String(index),
+      // The price leads; the badge names the one worth recommending, which is
+      // how "best value" is highlighted now that the border means "selected".
+      label: price,
+      badge: pack.badge ? <Badge tone="plan">{pack.badge}</Badge> : undefined,
+      description: (
+        <span className="flex flex-wrap items-center gap-1.5">
+          <span className="figure font-semibold text-text-primary">
+            {formatNumber(pack.credits)}
+          </span>
+          credits
+          {(pack.bonus_pct ?? 0) > 0 ? <Badge tone="success">+{pack.bonus_pct}% bonus</Badge> : null}
+          {showUsd ? (
+            <span className="block w-full text-text-tertiary">
+              Charged as {formatMoneyMinor(amountInr * 100, CHARGE_CURRENCY)}
+            </span>
+          ) : null}
+        </span>
+      ),
+      disabled: amountInr <= 0,
+    };
+  });
 
   return (
     <Dialog
@@ -226,12 +268,24 @@ export function TopupDialog({
           : 'A one-time purchase, on top of your plan allowance.'
       } Paid through Razorpay by UPI, card, NetBanking or wallet.${expiryNote ? ` ${expiryNote}` : ''}`}
       size="lg"
-      // The two sentences are in the description, not alone on the sunken
-      // button bar the footer slot paints — a bar with no control in it.
+      // The purchase is now a deliberate two-step: choose a pack above, pay from
+      // the footer. The primary action names the credits it buys rather than a
+      // price, because the button commits to the gross (base + GST) while the
+      // cards quote the base — naming a figure here would understate the debit.
       footer={
-        <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
-          Done
-        </Button>
+        <>
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            onClick={() => selectedPack && void buy(selectedPack)}
+            loading={busy}
+            disabled={busy || !selectedPack}
+          >
+            {selectedPack ? `Buy ${formatNumber(selectedPack.credits)} credits` : 'Buy credits'}
+          </Button>
+        </>
       }
     >
       <div className="space-y-4">
@@ -255,7 +309,7 @@ export function TopupDialog({
             description={errorMessage(packs.error, 'The pricing service did not answer.')}
             onRetry={() => void packs.refetch()}
           />
-        ) : (packs.data?.length ?? 0) === 0 ? (
+        ) : packsData.length === 0 ? (
           <EmptyState
             size="panel"
             icon={Zap}
@@ -263,68 +317,17 @@ export function TopupDialog({
             description="This is usually temporary. If it persists, contact support and we will arrange a top-up manually."
           />
         ) : (
-          // `pairs`, not `cols={2}`: the card ramp's 2-up step is `@3xl/page`
-          // (768) and this dialog's body is 632px, so `cols={2}` would render
-          // one pack a row. `pairs` asks the panel rather than the viewport.
-          <Grid as="ul" cols="pairs" label="Credit packs">
-            {(packs.data ?? []).map((pack, index) => {
-              const amountInr = chargeInr(pack);
-              const usdMajor = Number(pack.usd ?? pack.display_amount ?? 0);
-              const showUsd = showsUsd && usdMajor > 0;
-              const isBusy = busyAmount === amountInr;
-              return (
-                <li key={`${amountInr}-${pack.credits}-${index}`}>
-                  <button
-                    type="button"
-                    onClick={() => void buy(pack)}
-                    disabled={busy}
-                    aria-busy={isBusy || undefined}
-                    className={cn(
-                      'w-full rounded-lg border bg-surface p-4 text-left transition-colors',
-                      'hover:border-border-strong hover:bg-surface-hover',
-                      // Tokens, not an opacity wash — see `DISABLED_CONTROL`.
-                      // The card holds a price, a credit count and a plan-toned
-                      // border, and 0.6 over all four takes the price to about
-                      // 2.9:1 while leaving the brass border reading as live.
-                      'disabled:cursor-not-allowed disabled:border-border',
-                      'disabled:bg-surface-sunken disabled:text-text-disabled',
-                      index === featured
-                        ? 'border-plan shadow-[inset_0_0_0_1px_var(--color-plan)]'
-                        : 'border-border',
-                    )}
-                  >
-                    <span className="flex items-baseline justify-between gap-2">
-                      <span className="figure text-lg font-semibold text-text-primary">
-                        {showUsd
-                          ? formatMoneyMinor(Math.round(usdMajor * 100), 'USD')
-                          : formatMoneyMinor(amountInr * 100, CHARGE_CURRENCY)}
-                      </span>
-                      {pack.badge ? <Badge tone="plan">{pack.badge}</Badge> : null}
-                    </span>
-                    {showUsd ? (
-                      <span className="mt-0.5 block text-xs text-text-secondary">
-                        Charged as {formatMoneyMinor(amountInr * 100, CHARGE_CURRENCY)}
-                      </span>
-                    ) : null}
-                    <span className="mt-2 flex flex-wrap items-center gap-1.5 text-base text-text-secondary">
-                      {/* No pseudo-CTA. A blue "Pay securely" that is neither a
-                          link nor focusable, inside a card that *is* the button,
-                          makes blue mean "the thing around me is interactive" —
-                          the collision DESIGN.md §2 exists to prevent. */}
-                      {isBusy ? <Spinner /> : null}
-                      <span className="figure font-semibold text-text-primary">
-                        {formatNumber(pack.credits)}
-                      </span>
-                      credits
-                      {(pack.bonus_pct ?? 0) > 0 ? (
-                        <Badge tone="success">+{pack.bonus_pct}% bonus</Badge>
-                      ) : null}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </Grid>
+          // Selecting a pack no longer starts a checkout: it marks the choice,
+          // and the footer's pay button commits it. A card that charged money on
+          // its first click had no control saying so, and its recommended pack
+          // wore the same heavy border that now means "selected".
+          <RadioCards
+            label="Credit pack"
+            columns={2}
+            value={effectiveValue}
+            onChange={setSelectedValue}
+            items={packItems}
+          />
         )}
 
         {/* The pack prices above are BASE prices; Razorpay debits the gross.

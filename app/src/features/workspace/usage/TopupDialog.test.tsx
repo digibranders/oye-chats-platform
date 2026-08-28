@@ -71,6 +71,12 @@ function renderDialog(props: Partial<React.ComponentProps<typeof TopupDialog>> =
   return { ...utils, onOpenChange };
 }
 
+/** Select a pack by its priced radio, then commit it from the footer pay button. */
+async function pickAndPay(radioName: string | RegExp, buyName: RegExp) {
+  await userEvent.click(await screen.findByRole('radio', { name: radioName }));
+  await userEvent.click(screen.getByRole('button', { name: buyName }));
+}
+
 beforeEach(() => {
   for (const fn of Object.values(api)) fn.mockReset();
   razorpay.openRazorpayCheckout.mockReset();
@@ -93,7 +99,7 @@ describe('currency', () => {
   it('sends the rupee price to the server, never the dollar figure', async () => {
     api.initiateTopup.mockResolvedValue({});
     renderDialog({ displayCurrency: 'USD' });
-    await userEvent.click(await screen.findByRole('button', { name: /\$13/ }));
+    await pickAndPay('$13', /buy 1,000 credits/i);
     await waitFor(() => expect(api.initiateTopup).toHaveBeenCalledWith(1000, { botId: undefined }));
   });
 });
@@ -117,13 +123,29 @@ describe('expiry, which is a term of sale', () => {
   });
 });
 
+describe('choosing a pack', () => {
+  it('opens with the recommended pack selected and does not charge on card click', async () => {
+    api.initiateTopup.mockResolvedValue({});
+    renderDialog();
+    // The "Best value" pack (5,000 credits) is pre-selected, so the pay button
+    // is immediately actionable.
+    expect(await screen.findByRole('button', { name: /buy 5,000 credits/i })).toBeInTheDocument();
+
+    // Clicking a card selects it — it must not start a checkout.
+    await userEvent.click(screen.getByRole('radio', { name: '₹1,000' }));
+    expect(screen.getByRole('radio', { name: '₹1,000' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('button', { name: /buy 1,000 credits/i })).toBeInTheDocument();
+    expect(api.initiateTopup).not.toHaveBeenCalled();
+  });
+});
+
 describe('a purchase in flight', () => {
   it('cannot be dismissed with Escape', async () => {
     api.initiateTopup.mockResolvedValue({ key_id: 'rzp', order_id: 'order_1', amount: 100000 });
     razorpay.openRazorpayCheckout.mockReturnValue(new Promise(() => {}));
 
     const { onOpenChange } = renderDialog();
-    await userEvent.click(await screen.findByRole('button', { name: /₹1,000/ }));
+    await pickAndPay('₹1,000', /buy 1,000 credits/i);
     await waitFor(() => expect(razorpay.openRazorpayCheckout).toHaveBeenCalled());
 
     await userEvent.keyboard('{Escape}');
@@ -136,9 +158,10 @@ describe('a purchase in flight', () => {
     razorpay.openRazorpayCheckout.mockReturnValue(new Promise(() => {}));
 
     renderDialog();
-    const pack = await screen.findByRole('button', { name: /₹1,000/ });
-    await userEvent.click(pack);
-    await userEvent.click(pack);
+    await userEvent.click(await screen.findByRole('radio', { name: '₹1,000' }));
+    const pay = screen.getByRole('button', { name: /buy 1,000 credits/i });
+    await userEvent.click(pay);
+    await userEvent.click(pay);
     await waitFor(() => expect(api.initiateTopup).toHaveBeenCalledTimes(1));
   });
 });
@@ -149,7 +172,7 @@ describe('outcomes', () => {
     razorpay.openRazorpayCheckout.mockRejectedValue(Object.assign(new Error('closed'), { code: 'dismissed' }));
 
     renderDialog();
-    await userEvent.click(await screen.findByRole('button', { name: /₹1,000/ }));
+    await pickAndPay('₹1,000', /buy 1,000 credits/i);
     expect(await screen.findByText(/you have not been charged/i)).toBeInTheDocument();
   });
 
@@ -163,7 +186,7 @@ describe('outcomes', () => {
     api.verifyTopupPayment.mockRejectedValue(new Error('verification timed out'));
 
     renderDialog();
-    await userEvent.click(await screen.findByRole('button', { name: /₹1,000/ }));
+    await pickAndPay('₹1,000', /buy 1,000 credits/i);
     const message = await screen.findByText(/payment went through but we could not confirm it/i);
     expect(message).toBeInTheDocument();
     expect(message.textContent).toMatch(/do not pay again/i);
@@ -172,7 +195,7 @@ describe('outcomes', () => {
   it('refuses to open a broken checkout rather than showing an empty payment sheet', async () => {
     api.initiateTopup.mockResolvedValue({});
     renderDialog();
-    await userEvent.click(await screen.findByRole('button', { name: /₹1,000/ }));
+    await pickAndPay('₹1,000', /buy 1,000 credits/i);
     expect(await screen.findByText(/checkout is temporarily unavailable/i)).toBeInTheDocument();
     expect(razorpay.openRazorpayCheckout).not.toHaveBeenCalled();
   });
