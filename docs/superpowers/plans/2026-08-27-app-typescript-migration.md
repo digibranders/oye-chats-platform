@@ -2098,7 +2098,52 @@ One file, 3,859 lines before Task 0.2 and roughly 3,470 after, with fan-in 119 a
 
 **Why it still needs care.** The first ~300 lines are not endpoint functions. They are the axios instance, the error builder, the workspace abort controller, and three interceptors implementing impersonation header suppression and read-only write blocking. That is where all the actual type design lives.
 
-**Sequencing.** One commit for the module head, then batched commits for the endpoint functions. Do not attempt this as a single commit: a 3,400-line diff is unreviewable and unbisectable.
+**Sequencing: corrected by measurement.** The original plan split this into a green Task 4.2 (module head) and a batched Task 4.3. **That is not possible.** A trial rename measured the following:
+
+| | |
+| --- | --- |
+| Errors from a bare `git mv api.js api.ts` | 428 |
+| ...inside `api.ts` | 309 |
+| ...in **other** files | 119 |
+
+The 119 external errors exist because `api.d.ts` declares 36 `interface`/`type` blocks (`CrawlProgress`, `BillingGeoResponse`, `IngestJobStatus`, `UploadCostPreview`, the six `Journey*` types, `NotificationPreferences`, …) that consumers import as types. The moment `api.ts` exists, `./api` resolves to it and those imports break. Moving the 36 blocks into `api.ts` drops the total to 368 and the external count to 59.
+
+Those remaining 59 are all **symptomatic**, not separate work: they are downstream of `api.ts` functions being inferred from their JS bodies rather than from the shim. `crawlWebsite(url, botId, useJs, replaceSource = null, …)` infers `replaceSource: null`, so every caller passing a string is rejected; `getBots()` infers `Promise<any>`, so `data.find((bot) => …)` is an implicit any. Annotating the 194 signatures clears all 59 without touching those files.
+
+So **Phase 4 lands as one commit.** A knowingly-red intermediate commit is worse than a large one: it breaks `git bisect` on the file with the highest fan-in in the app. Review it by reading `api.d.ts` against `api.ts` side by side, which is a signature-for-signature comparison, not a 3,400-line read.
+
+**Shape of the work, measured:**
+
+- `api.ts` has **193 `export const NAME = async (…) => {}`** implementations and **1 `export function`** (`rotateWorkspaceAbort`).
+- `api.d.ts` has **193 `export function NAME(…): R;`** declarations and **1 `export const`** (`httpClient: AxiosInstance`).
+- **53 of the 193 declarations span multiple lines**, so any parser over them must brace/paren-match rather than work line-wise.
+- The implementations already carry their own JSDoc, usually richer than the shim's. Where the shim adds something the implementation lacks (e.g. `updateBot`'s "returns a status message, NOT the bot - re-fetch/merge for fresh fields"), carry that sentence across; it is the only documentation of that behaviour.
+
+**Annotate parameters, do not inline function types.** Converting `export const updateBot = async (botId, data) => {` to `export const updateBot: (botId: number, data: Record<string, unknown>) => Promise<{ message: string }> = async (botId, data) => {` is the fully mechanical transform and needs no positional mapping, but 194 of them is unreadable. Write the idiomatic form instead:
+
+```ts
+export const updateBot = async (
+  botId: number,
+  data: Record<string, unknown>,
+): Promise<{ message: string }> => {
+```
+
+Mapping the shim's parameter types onto the implementation's parameter names is positional and reliable (both were written by the same hand, against each other), with one rule to respect: **a parameter that has a default cannot also carry `?`.** Where the shim says `params?: LeadsQuery` and the implementation says `params = {}`, the result is `params: LeadsQuery = {}`, never `params?: LeadsQuery = {}`, which is a syntax error.
+
+**Scratchpad artefacts from the trial run** (regenerate rather than trust if the file has moved on): `phase4-extract-types.py` extracts the 36 type blocks with their JSDoc and brace-matches interface bodies; `phase4-moved-types.ts` is its 447-line output, verified brace-balanced.
+
+**Order of work inside the single commit:**
+
+1. `git mv src/services/api.js src/services/api.ts`
+2. Fix `src/services/api.smoke.test.ts:15` — `import('./api.js')` → `import('./api')`
+3. Move the 36 type blocks from `api.d.ts` into `api.ts`, below the imports
+4. Replace `buildApiError`'s plain-Error construction with `new ApiError(...)` from `./apiTypes`
+5. Type the module head: `API_BASE_URL`, `PUBLIC_AUTH_PATHS`, `currentWorkspaceAbortController`, `dropHeader`, the two impersonation predicates, and the `IMPERSONATED_REQUEST` symbol on the axios config
+6. Annotate all 194 signatures from the shim
+7. Delete `api.d.ts`, add the `ApiError`/`isApiError` re-export to `api.ts`
+8. Delete `src/test/shimDrift.test.ts` — this is Task 5.1, pulled forward because `it.each([])` on an empty `SHIMMED_MODULES` fails vitest with "No test found in suite"
+
+**Do not re-export `ApiError` from `api.d.ts` as an interim step.** It was tried; `api.js` does not export it, so the shim would be claiming an export its module lacks. The drift guard was extended to catch exactly that (value re-exports, not just declarations) after it let the first attempt through.
 
 ### Task 4.1: Extract shared API types into `apiTypes.ts`
 
