@@ -77,9 +77,30 @@ export const IMPERSONATION_EXIT_MESSAGE = translateNow('app.impersonationEndedCl
  * stale poller can never silently re-issue itself under the admin's own
  * ``X-API-Key``.
  */
+/**
+ * The redeem endpoint's 200 payload, as persisted for the tab.
+ *
+ * Note what {@link getImpersonationProfile} returns: a PARTIAL of this, not
+ * this. sessionStorage is console-writable and the stored blob can be a
+ * truncated or hand-edited object, so every field is best-effort. The banner
+ * renders on the credential alone and falls back per field, deliberately -
+ * an unlabelled impersonated session is the one state it exists to prevent.
+ */
+export interface ImpersonationProfile {
+  client_id: number;
+  /** Account name shown in the banner. */
+  name: string;
+  email: string;
+  /** ISO-8601 instant at which the token stops being accepted. */
+  expires_at: string;
+  /** Super-admin who opened the session. */
+  actor_email: string;
+  is_impersonation: boolean;
+}
+
 let sessionEnded = false;
 
-function readSessionValue(key) {
+function readSessionValue(key: string): string | null {
     try {
         return window.sessionStorage.getItem(key);
     } catch {
@@ -100,7 +121,7 @@ function readSessionValue(key) {
  *
  * @returns {string|null} the raw token, or null when the URL carries none.
  */
-export function takeImpersonationTokenFromUrl() {
+export function takeImpersonationTokenFromUrl(): string | null {
     if (typeof window === 'undefined') return null;
 
     const url = new URL(window.location.href);
@@ -117,7 +138,7 @@ export function takeImpersonationTokenFromUrl() {
 }
 
 /** The raw impersonation token for this tab, or null when not impersonating. */
-export function getImpersonationToken() {
+export function getImpersonationToken(): string | null {
     return readSessionValue(IMPERSONATION_TOKEN_KEY);
 }
 
@@ -127,19 +148,21 @@ export function getImpersonationToken() {
  * Returns null when absent or unparseable (a corrupt value is treated as no
  * profile rather than crashing the banner).
  */
-export function getImpersonationProfile() {
+export function getImpersonationProfile(): Partial<ImpersonationProfile> | null {
     const raw = readSessionValue(IMPERSONATION_PROFILE_KEY);
     if (!raw) return null;
     try {
-        const parsed = JSON.parse(raw);
-        return parsed && typeof parsed === 'object' ? parsed : null;
+        const parsed: unknown = JSON.parse(raw);
+        return parsed && typeof parsed === 'object'
+            ? (parsed as Partial<ImpersonationProfile>)
+            : null;
     } catch {
         return null;
     }
 }
 
 /** True while this tab holds a live impersonation credential. */
-export function isImpersonating() {
+export function isImpersonating(): boolean {
     return getImpersonationToken() !== null;
 }
 
@@ -148,7 +171,7 @@ export function isImpersonating() {
  * Consumers use it to keep treating the tab as an impersonation context even
  * after the credential has been cleared.
  */
-export function isImpersonationSessionEnded() {
+export function isImpersonationSessionEnded(): boolean {
     return sessionEnded;
 }
 
@@ -161,7 +184,7 @@ export function isImpersonationSessionEnded() {
  *   both mean the session cannot be started, and the caller must surface that
  *   rather than boot into a half-authenticated app.
  */
-export function startImpersonationSession(token, profile) {
+export function startImpersonationSession(token: string, profile: unknown): void {
     if (!token) {
         throw new Error('Cannot start an impersonation session without a redeemed token.');
     }
@@ -178,7 +201,7 @@ export function startImpersonationSession(token, profile) {
  * never ``clearAuthStorage()``, which would log the super-admin out of every
  * other tab in this browser.
  */
-export function clearImpersonationSession() {
+export function clearImpersonationSession(): void {
     try {
         window.sessionStorage.removeItem(IMPERSONATION_TOKEN_KEY);
         window.sessionStorage.removeItem(IMPERSONATION_PROFILE_KEY);
@@ -196,7 +219,7 @@ export function clearImpersonationSession() {
  *
  * @param {string} [message] - user-facing reason shown on the terminal screen.
  */
-export function endImpersonationSession(message = IMPERSONATION_ENDED_MESSAGE) {
+export function endImpersonationSession(message: string = IMPERSONATION_ENDED_MESSAGE): void {
     if (sessionEnded) return;
     const hadSession = isImpersonating();
     clearImpersonationSession();
@@ -227,7 +250,7 @@ export function endImpersonationSession(message = IMPERSONATION_ENDED_MESSAGE) {
  * @returns {boolean} true if this was an impersonated tab and the support
  *   session was ended; false if the caller should proceed with a normal logout.
  */
-export function endImpersonationSessionFromSignOut() {
+export function endImpersonationSessionFromSignOut(): boolean {
     if (!isImpersonating()) return false;
     endImpersonationSession(IMPERSONATION_EXIT_MESSAGE);
     return true;
