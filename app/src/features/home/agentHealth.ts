@@ -1,4 +1,5 @@
 import type { Bot } from '../../types/domain';
+import { t as translateNow } from '../../i18n/i18n';
 
 export type HealthState =
   | 'paused'
@@ -49,8 +50,8 @@ export function agentHealth(bot: Bot): AgentHealth {
   if (bot.is_active === false) {
     return {
       state: 'paused',
-      label: 'Paused',
-      detail: 'Not answering visitors.',
+      label: translateNow('home.paused') || 'Paused',
+      detail: translateNow('home.notAnsweringVisitors') || 'Not answering visitors.',
       tone: 'neutral',
       needsAttention: false,
     };
@@ -64,8 +65,8 @@ export function agentHealth(bot: Bot): AgentHealth {
   if (crawling && indexed === 0) {
     return {
       state: 'training',
-      label: 'Training',
-      detail: 'Reading your site — a few minutes.',
+      label: translateNow('home.training') || 'Training',
+      detail: translateNow('home.readingYourSiteAFew') || 'Reading your site — a few minutes.',
       tone: 'neutral',
       needsAttention: false,
     };
@@ -75,17 +76,17 @@ export function agentHealth(bot: Bot): AgentHealth {
     return crawlFailed
       ? {
           state: 'broken',
-          label: 'Training failed',
-          detail: 'Could not read your site. Nothing to answer from.',
-          action: { label: 'Fix training', segment: 'knowledge' },
+          label: translateNow('home.trainingFailed') || 'Training failed',
+          detail: translateNow('home.couldNotReadYourSite') || 'Could not read your site. Nothing to answer from.',
+          action: { label: translateNow('home.fixTraining') || 'Fix training', segment: 'knowledge' },
           tone: 'danger',
           needsAttention: true,
         }
       : {
           state: 'untrained',
-          label: 'Nothing to answer from',
-          detail: 'It will tell visitors it does not know.',
-          action: { label: 'Add knowledge', segment: 'knowledge' },
+          label: translateNow('home.nothingToAnswerFrom') || 'Nothing to answer from',
+          detail: translateNow('home.itWillTellVisitorsIt') || 'It will tell visitors it does not know.',
+          action: { label: translateNow('home.addKnowledge') || 'Add knowledge', segment: 'knowledge' },
           tone: 'warning',
           needsAttention: true,
         };
@@ -96,9 +97,9 @@ export function agentHealth(bot: Bot): AgentHealth {
   if (crawlFailed) {
     return {
       state: 'stale',
-      label: 'Answers may be out of date',
-      detail: 'Still answering; the last refresh failed.',
-      action: { label: 'Retry training', segment: 'knowledge' },
+      label: translateNow('home.answersMayBeOutOf') || 'Answers may be out of date',
+      detail: translateNow('home.stillAnsweringTheLastRefresh') || 'Still answering; the last refresh failed.',
+      action: { label: translateNow('home.retryTraining') || 'Retry training', segment: 'knowledge' },
       tone: 'warning',
       needsAttention: true,
     };
@@ -107,9 +108,9 @@ export function agentHealth(bot: Bot): AgentHealth {
   if (!bot.widget_installed_at) {
     return {
       state: 'ready',
-      label: 'Ready, not installed',
-      detail: 'Trained. Not on your site yet.',
-      action: { label: 'Install it', segment: 'deploy' },
+      label: translateNow('home.readyNotInstalled') || 'Ready, not installed',
+      detail: translateNow('home.trainedNotOnYourSite') || 'Trained. Not on your site yet.',
+      action: { label: translateNow('home.installIt') || 'Install it', segment: 'deploy' },
       tone: 'warning',
       needsAttention: true,
     };
@@ -117,8 +118,8 @@ export function agentHealth(bot: Bot): AgentHealth {
 
   return {
     state: 'live',
-    label: 'Live',
-    detail: 'Answering visitors.',
+    label: translateNow('home.live') || 'Live',
+    detail: translateNow('home.answeringVisitors') || 'Answering visitors.',
     tone: 'success',
     needsAttention: false,
   };

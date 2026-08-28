@@ -76,3 +76,21 @@ describe('the rail follows the dashboard language', () => {
     });
   });
 });
+
+/**
+ * The greeting lives in a module-level table, so it cannot be translated where
+ * it is declared. The inventory cannot see a key/text pair inside an object
+ * literal either — it only recognises the one-line `t('k') || 'English'` shape
+ * — so this is the only thing that proves the table resolves at render.
+ */
+describe('the home greeting resolves from its table', () => {
+  it('translates the greeting word without touching the customer name', async () => {
+    const { greetingFor } = await import('../features/home/greeting');
+    __resetI18nForTests();
+    expect(greetingFor(new Date('2026-08-28T09:00:00'))).toBe('Good morning');
+    await preloadDictionary('hi-IN');
+    setLocale('hi-IN');
+    expect(greetingFor(new Date('2026-08-28T09:00:00'))).toBe('सुप्रभात');
+    __resetI18nForTests();
+  });
+});

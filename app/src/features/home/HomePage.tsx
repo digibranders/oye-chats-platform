@@ -26,6 +26,7 @@ import {
   type Column,
 } from '../../ui';
 import { agentPath } from '../../shell/nav';
+import { greeting } from './greeting';
 import { AgentAvatar } from '../agents/AgentAvatar';
 import { useSetupChecklist } from '../../onboarding/useSetupChecklist';
 import { wantsEmptyHome } from '../../onboarding/firstRun';
@@ -35,6 +36,8 @@ import type { Lead } from '../../types/domain';
 import { useHomeData, type HomeAgent } from './useHomeData';
 import { getCurrentUser } from '../../services/api';
 import { keys } from '../../query/keys';
+import { useTranslation } from '../../i18n/useTranslation';
+import { Trans } from '../../i18n/Trans';
 
 /**
  * Home is today's work, not a dashboard.
@@ -69,24 +72,6 @@ import { keys } from '../../query/keys';
  * the tiles are gone.
  */
 
-/**
- * The greeting, and the glyph that goes with it.
- *
- * One table rather than three `if`s returning bare strings, so the word and
- * its emoji cannot drift apart — they are the same fact stated twice, and the
- * afternoon sun turning up beside "Good evening" is the kind of thing nobody
- * notices in review because reviews do not happen at 19:00.
- */
-const GREETINGS = [
-  { before: 12, text: 'Good morning', emoji: '🌅' },
-  { before: 18, text: 'Good afternoon', emoji: '☀️' },
-  { before: 24, text: 'Good evening', emoji: '🌙' },
-] as const;
-
-function greeting(now: Date): (typeof GREETINGS)[number] {
-  const hour = now.getHours();
-  return GREETINGS.find((slot) => hour < slot.before) ?? GREETINGS[GREETINGS.length - 1];
-}
 
 /**
  * The name to greet somebody by, or `null` to greet them without one.
@@ -126,10 +111,12 @@ function readDismissed(key: string): boolean {
 }
 
 export function HomePage() {
+  const { t } = useTranslation();
   // Computed once. In the render body it changed on any unrelated re-render, so
   // the page's own byline could flip from "Good afternoon" to "Good evening"
   // while somebody was typing somewhere else on the screen.
   const hello = useMemo(() => greeting(new Date()), []);
+  const greetingText = t(hello.key) || hello.text;
   // The same cached `/auth/me` the account menu reads, so putting a name in
   // the greeting costs no extra request — `keys.session.me()` is already warm
   // by the time Home paints.
@@ -181,7 +168,9 @@ export function HomePage() {
         title={
           <span className="flex min-w-0 flex-wrap items-center gap-x-2">
             <span className="min-w-0 truncate">
-              {name ? `${hello.text}, ${name}` : hello.text}
+              {/* The name is the customer's own text and is never translated;
+                  only the greeting around it is. */}
+              {name ? `${greetingText}, ${name}` : greetingText}
             </span>
             {/* Decoration. A screen reader should hear the greeting, not
                 "sun behind cloud" appended to it. */}
@@ -197,7 +186,7 @@ export function HomePage() {
             className={buttonClass('primary', 'md', BUTTON_ICON_SLOT.md)}
           >
             <Plus aria-hidden />
-            New chatbot
+            {t('home.newChatbot') || 'New chatbot'}
           </Link>
         }
       />
@@ -205,7 +194,7 @@ export function HomePage() {
       {home.error ? (
         <Card>
           <ErrorState
-            title="We could not load your workspace"
+            title={t('home.weCouldNotLoadYour') || 'We could not load your workspace'}
             description={home.error.message}
             onRetry={() => void home.retry()}
           />
@@ -219,37 +208,40 @@ export function HomePage() {
               learned to say it itself. A tile whose window genuinely differs
               still states its own. */}
           <Card className="mb-6">
-            <CardHeader size="sm" title="Workspace" titleAs="h2" />
+            <CardHeader size="sm" title={t('home.workspace') || 'Workspace'} titleAs="h2" />
             <CardBody flush>
               <StatRow
-                label="Workspace at a glance"
-                period={`Last ${home.windowDays} days`}
+                label={t('home.workspaceAtAGlance') || 'Workspace at a glance'}
+                period={
+                  t('home.lastNDays', { count: home.windowDays })
+                  || `Last ${home.windowDays} days`
+                }
                 items={[
                   {
-                    label: 'Conversations',
+                    label: t('home.conversations') || 'Conversations',
                     value: formatNumber(home.conversations),
                     delta: home.conversationsDelta ?? undefined,
                     size: 'lg',
                     loading: home.conversationsLoading,
                   },
                   {
-                    label: 'Qualified leads',
+                    label: t('home.qualifiedLeads') || 'Qualified leads',
                     value: home.leadsLocked ? undefined : formatNumber(home.qualifiedLeads),
-                    period: 'All time',
-                    hint: home.leadsLocked ? 'On Starter and above' : undefined,
+                    period: t('home.allTime') || 'All time',
+                    hint: home.leadsLocked ? t('home.onStarterAndAbove') || 'On Starter and above' : undefined,
                     loading: home.leadsLoading,
                   },
                   {
-                    label: 'Unread messages',
+                    label: t('home.unreadMessages') || 'Unread messages',
                     value: formatNumber(home.unreadMessages),
-                    period: 'Right now',
+                    period: t('home.rightNow') || 'Right now',
                     tone: home.unreadMessages > 0 ? 'warning' : 'neutral',
                     loading: home.unreadLoading,
                   },
                   {
-                    label: 'Chatbots live',
+                    label: t('home.chatbotsLive') || 'Chatbots live',
                     value: `${home.live}/${home.agents.length}`,
-                    period: 'Right now',
+                    period: t('home.rightNow') || 'Right now',
                     loading: home.loading,
                   },
                 ]}
@@ -257,7 +249,7 @@ export function HomePage() {
             </CardBody>
             {home.statsIncomplete ? (
               <CardSection className="text-xs text-text-secondary">
-                Some chatbots did not report — totals are low.
+                {t('home.someChatbotsDidNotReport') || 'Some chatbots did not report — totals are low.'}
               </CardSection>
             ) : null}
           </Card>
@@ -315,12 +307,13 @@ export function HomePage() {
  * not that; it is a list.
  */
 function NeedsAttention({ agents }: { agents: readonly HomeAgent[] }) {
+  const { t } = useTranslation();
   if (agents.length === 0) return null;
 
   return (
     <Card>
       <CardHeader
-        title="Needs attention"
+        title={t('home.needsAttention') || 'Needs attention'}
         titleAs="h2"
         actions={<Badge tone="danger">{agents.length}</Badge>}
       />
@@ -378,11 +371,12 @@ function AgentTable({
   loading: boolean;
   hasAgents: boolean;
 }) {
+  const { t } = useTranslation();
   const columns = useMemo<Column<HomeAgent>[]>(
     () => [
       {
         key: 'chatbot',
-        header: 'Chatbot',
+        header: t('home.chatbot') || 'Chatbot',
         rowHeader: true,
         render: ({ bot }) => (
           <span className="flex items-center gap-2.5">
@@ -400,7 +394,7 @@ function AgentTable({
       },
       {
         key: 'website',
-        header: 'Website',
+        header: t('home.website') || 'Website',
         secondary: true,
         width: '11rem',
         render: ({ bot }) =>
@@ -416,7 +410,7 @@ function AgentTable({
         // scrolls — at 11rem the status this card exists to report read
         // "Nothing to answer from …".
         key: 'status',
-        header: 'Status',
+        header: t('home.status') || 'Status',
         width: '13rem',
         render: ({ health }) => (
           <Badge tone={health.tone} dot>
@@ -426,25 +420,28 @@ function AgentTable({
       },
       {
         key: 'chats',
-        header: 'Chats',
+        header: t('home.chats') || 'Chats',
         type: 'number',
         width: '5rem',
         render: (agent) =>
           agent.conversationsLoading ? ABSENT : formatNumber(agent.conversations),
       },
     ],
-    [],
+    // `t` changes identity with the locale, so the headers below are rebuilt on
+    // a language switch. Without it they would keep whatever language the table
+    // first mounted in.
+    [t],
   );
 
   return (
     <Card as="section">
       <CardHeader
-        title="Your chatbots"
+        title={t('home.yourChatbots') || 'Your chatbots'}
         titleAs="h2"
         actions={
           hasAgents ? (
             <Link to="/chatbots" className={buttonClass('ghost', 'sm')}>
-              See all
+              {t('home.seeAll') || 'See all'}
             </Link>
           ) : undefined
         }
@@ -453,7 +450,7 @@ function AgentTable({
         <DataTable
           seated
           fit
-          caption="Your chatbots and how each one is doing"
+          caption={t('home.yourChatbotsAndHowEach') || 'Your chatbots and how each one is doing'}
           columns={columns}
           rows={agents}
           rowKey={(agent) => String(agent.bot.id)}
@@ -463,11 +460,11 @@ function AgentTable({
             <EmptyState
               size="inline"
               icon={BotIcon}
-              title="No chatbots yet"
-              description="Point one at your website and it will start reading."
+              title={t('home.noChatbotsYet') || 'No chatbots yet'}
+              description={t('home.pointOneAtYourWebsite') || 'Point one at your website and it will start reading.'}
               action={
                 <Link to="/welcome" className={buttonClass('primary', 'sm')}>
-                  Create your first chatbot
+                  {t('home.createYourFirstChatbot') || 'Create your first chatbot'}
                 </Link>
               }
             />
@@ -497,19 +494,26 @@ function SetupCard({
   steps: ReturnType<typeof useSetupChecklist>['steps'];
   onDismiss: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <Card>
       <CardHeader
         size="sm"
         title={
           <>
-            Finish getting set up · <span className="figure">{done}</span> of{' '}
-            <span className="figure">{total}</span>
+            <Trans
+              k="home.finishSetup"
+              fallback="Finish getting set up · {done} of {total}"
+              values={{
+                done: <span className="figure">{done}</span>,
+                total: <span className="figure">{total}</span>,
+              }}
+            />
           </>
         }
         titleAs="h2"
         actions={
-          <Button variant="ghost" size="icon-xs" aria-label="Hide setup" onClick={onDismiss}>
+          <Button variant="ghost" size="icon-xs" aria-label={t('home.hideSetup') || 'Hide setup'} onClick={onDismiss}>
             <X aria-hidden />
           </Button>
         }
@@ -534,7 +538,7 @@ function SetupCard({
       </ul>
       <CardSection className="py-2">
         <Link to="/setup" className={buttonClass('link', 'sm')}>
-          See all steps
+          {t('home.seeAllSteps') || 'See all steps'}
         </Link>
       </CardSection>
     </Card>
@@ -549,28 +553,29 @@ function SetupCard({
  * links into the lead's own drawer.
  */
 function RecentActivity({ leads, loading }: { leads: readonly Lead[]; loading: boolean }) {
+  const { t } = useTranslation();
   return (
     <Card as="section">
       <CardHeader
         size="sm"
-        title="Recent leads"
+        title={t('home.recentLeads') || 'Recent leads'}
         titleAs="h2"
         actions={
           leads.length > 0 ? (
             <Link to="/leads" className={buttonClass('ghost', 'sm')}>
-              See all
+              {t('home.seeAll') || 'See all'}
             </Link>
           ) : undefined
         }
       />
       {loading ? (
-        <CardBody className="text-xs text-text-secondary">Loading…</CardBody>
+        <CardBody className="text-xs text-text-secondary">{t('home.loading') || 'Loading…'}</CardBody>
       ) : leads.length === 0 ? (
         <CardBody>
           <EmptyState
             size="inline"
-            title="Nothing yet"
-            description="Visitors appear here as soon as they start a conversation."
+            title={t('home.nothingYet') || 'Nothing yet'}
+            description={t('home.visitorsAppearHereAsSoon') || 'Visitors appear here as soon as they start a conversation.'}
           />
         </CardBody>
       ) : (

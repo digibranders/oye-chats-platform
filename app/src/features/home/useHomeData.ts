@@ -1,3 +1,4 @@
+import { t as translateNow } from '../../i18n/i18n';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { getDashboardStats, getLeadStats, getLeads, getOfflineMessages } from '../../services/api';
 import { useBotContext } from '../../context/BotContext';
@@ -51,7 +52,9 @@ function delta(current: number, previous: number): HomeDelta | null {
   return {
     value: `${change > 0 ? '+' : ''}${change}%`,
     direction: change > 0 ? 'up' : change < 0 ? 'down' : 'flat',
-    label: `vs previous ${HOME_WINDOW_DAYS} days`,
+    label:
+      translateNow('home.vsPreviousDays', { count: HOME_WINDOW_DAYS })
+      || `vs previous ${HOME_WINDOW_DAYS} days`,
   };
 }
 
