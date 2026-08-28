@@ -860,7 +860,7 @@ async def run_full_crawl(
             ingest_totals["credits_deducted"] += ingest_result["credits_deducted"]
             if ingest_result.get("aborted"):
                 ingest_state["billing_aborted"] = True
-                ingest_state["abort_reason"] = ingest_state["abort_reason"] or ingest_result.get("abort_reason")
+                ingest_state["abort_reason"] = ingest_state.get("abort_reason") or ingest_result.get("abort_reason")
         total_chunks = ingest_totals["chunks"]
         pages_charged = ingest_totals["pages_charged"]
         credits_deducted = ingest_totals["credits_deducted"]
@@ -1042,7 +1042,7 @@ async def run_full_crawl(
                     exc_info=True,
                 )
                 bot_content_count = 1  # fail safe toward "done", never show a false no-content error
-        crawl_status = _terminal_status(total_chunks, bot_content_count, ingest_state["abort_reason"])
+        crawl_status = _terminal_status(total_chunks, bot_content_count, ingest_state.get("abort_reason"))
         if crawl_status == "no_content":
             result_payload["message"] = (
                 "We reached your pages but couldn't extract readable text to train on. "
@@ -1053,14 +1053,14 @@ async def run_full_crawl(
             # The customer's site is fine. They ran out of something. Saying
             # "we couldn't extract readable text" here sent people to debug
             # their JavaScript when the answer was to upgrade or top up.
-            result_payload["limit_reason"] = ingest_state["abort_reason"]
+            result_payload["limit_reason"] = ingest_state.get("abort_reason")
             result_payload["message"] = (
                 "We stopped before training on your pages because this workspace reached a "
                 "limit. Nothing was charged for the pages we could not train on."
-                if ingest_state["abort_reason"] == ABORT_REASON_KILL_SWITCH
+                if ingest_state.get("abort_reason") == ABORT_REASON_KILL_SWITCH
                 else (
                     "We stopped before training on your pages because this workspace ran out of credits."
-                    if ingest_state["abort_reason"] == ABORT_REASON_CREDITS
+                    if ingest_state.get("abort_reason") == ABORT_REASON_CREDITS
                     else "We stopped before training on your pages because this workspace reached "
                     "its knowledge base size limit."
                 )

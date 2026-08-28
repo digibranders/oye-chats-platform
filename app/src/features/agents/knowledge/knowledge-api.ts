@@ -82,7 +82,8 @@ export async function fetchRecrawlDiff(
     unchangedUrls: asStringArray(raw.unchanged_urls),
     newUrls: asStringArray(raw.new_urls),
     removedUrls: asStringArray(raw.removed_urls),
-    // Zero is a real price here too: re-crawls are free on every tier.
+    // Zero is a real price here too: the trial's first website training is
+    // free, and this endpoint prices it through the same resolver.
     costPerPage: Math.max(0, asNumber(raw.cost_per_page, 1)),
     balance: asNumber(raw.balance),
     capped: raw.capped === true,

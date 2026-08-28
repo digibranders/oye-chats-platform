@@ -89,6 +89,12 @@ def reactivate_client_knowledge(session: Session, client_id: int) -> int:
     bot_ids = session.execute(select(Bot.id).where(Bot.client_id == client_id)).scalars().all()
     for bot_id in bot_ids:
         total += reactivate_bot_knowledge(session, bot_id)
+    result = session.execute(
+        update(Document)
+        .where(Document.client_id == client_id, Document.bot_id.is_(None), Document.is_active.is_(False))
+        .values(is_active=True)
+    )
+    total += result.rowcount or 0
     return total
 
 
@@ -111,6 +117,15 @@ def deactivate_client_knowledge(session: Session, client_id: int) -> int:
     bot_ids = session.execute(select(Bot.id).where(Bot.client_id == client_id)).scalars().all()
     for bot_id in bot_ids:
         total += deactivate_bot_knowledge(session, bot_id)
+    # Chunks with a NULL ``bot_id``, which the crawl routes create whenever the
+    # optional ``bot_id`` parameter is omitted. No per-bot call can reach them,
+    # and "your knowledge base is paused" has to be true of the whole base.
+    result = session.execute(
+        update(Document)
+        .where(Document.client_id == client_id, Document.bot_id.is_(None), Document.is_active.is_(True))
+        .values(is_active=False)
+    )
+    total += result.rowcount or 0
     return total
 
 

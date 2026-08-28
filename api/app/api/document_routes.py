@@ -1362,11 +1362,14 @@ async def crawl_diff_endpoint(
     # (sitemap_total × cost_per_page). For delta mode the true billed amount
     # depends on how many pages actually changed at ingest time, so we don't
     # try to invent a number: the frontend only shows the exact "will charge"
-    # copy for ``mode == 'full'``. ``per_page`` is clamped to ``>= 1`` so a
-    # zero-cost misconfiguration in ``pricing_configs`` still produces a
-    # non-zero credits_required (matching the /crawl route's own guard).
-    per_page = max(int(cost_per_page), 1)
-    credits_required_full = len(discovery_norm_to_raw) * per_page
+    # copy for ``mode == 'full'``.
+    #
+    # A zero price is REAL here, not a misconfiguration: the trial's first
+    # website training is free. Clamping it up quoted a customer credits that
+    # were never going to be charged, which is exactly the deterrent the free
+    # training removes. The multiplication needs no clamp; the division that
+    # once did is elsewhere.
+    credits_required_full = len(discovery_norm_to_raw) * int(cost_per_page)
 
     return {
         "url": diff_request.url,

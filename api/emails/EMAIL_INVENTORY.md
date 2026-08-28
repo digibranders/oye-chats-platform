@@ -116,7 +116,7 @@ Grouped by category. All emails render raw HTML in code (see above). Any `#NN` i
 | Trigger | ARQ cron `task_trial_reminder_emails` — **daily 09:00** — fires when `days_remaining == 7`, i.e. day 7 of the 14-day trial, which is genuinely halfway (marker key `day_7`, preserved across every cadence change so an in-flight subscription is never sent the same slot twice; the key names the SLOT, not the day) |
 | Metered | No |
 
-#### B3. Trial "X days left" (T-2 warning and final-day alarm)
+#### B3. Trial "X days left" (T-3 warning and final-day alarm)
 | | |
 |---|---|
 | Function | `send_trial_days_left_email(to_email, name, days_remaining, plan_name)` |

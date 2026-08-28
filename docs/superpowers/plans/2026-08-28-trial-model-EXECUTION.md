@@ -559,3 +559,69 @@ forfeit), and those were strengthened before the fixes were accepted.
 Gates: full backend suite **5911 passed, 4 skipped, zero failures**. `ruff
 check` and `ruff format --check` clean. Frontend `tsc --noEmit` clean, `npm run
 lint` clean with zero warnings, `npx vitest run` 134 files / 1770 tests passed.
+
+### Task 5 review
+
+12 findings. The first is the one that matters, and it is the failure mode this
+whole plan was written to avoid.
+
+1. **HIGH. The email's central promise had no implementation.**
+   `reactivate_client_knowledge` was added in Task 5 and had ZERO production
+   callers: the only reference in the tree was the test that called it directly.
+   Every real reactivation site passes a subscription's `bot_id`, and a
+   `/billing` checkout never stamps a bot into its notes, so an account-level
+   row carries NULL and `reactivate_bot_knowledge` hard-returns 0. Meanwhile
+   three separate emails were shipping "choosing a plan switches all of it back
+   on, in one step, with nothing to re-upload" to every trial customer. A
+   converted customer who paid would have got nothing un-paused. My own log
+   asserted the wiring existed. It is wired now, in both activation branches,
+   with a test that fails if the account-level path is removed. **This entry
+   corrects the Task 5 log above: the restore was NOT wired when that was
+   written.**
+2. MEDIUM-HIGH. The "plumbing regression test" I added to satisfy the plan's
+   Step 4 re-implemented the block inline and copied only its `no_content`
+   branch, so the payload was always empty and the "does not say readable text"
+   assertion compared against `""`. It passed with the production limit branch
+   deleted. It now extracts and executes the real block from source; deleting
+   that branch fails three tests.
+3. MEDIUM. My `capped` upsell branch was inserted AHEAD of the credit-shortfall
+   warning, so every trial customer whose site fills the 100-page cap stopped
+   seeing "your credits cover N of these M pages" even when they could not
+   afford the selection. Credits first now: a shortfall they can act on right
+   now outranks a pitch to upgrade.
+4. MEDIUM. The cron still committed the whole batch once, while now writing
+   ledger rows, a grant and a bulk document update per row, and queueing the
+   email BEFORE the commit. One bad row rolled back markers whose emails had
+   already gone out, so the next tick re-emailed and re-converted everyone.
+   Per-row commits now, matching `task_renew_due_subscriptions` (audit F14),
+   and the conversion commits before the email is queued.
+5. MEDIUM. The plan's `converted_to_free` JSONB marker had been silently
+   dropped; idempotency rested on the status filter alone. Added, and a row
+   carrying it is skipped, so a hand-restored `trialing` row cannot forfeit and
+   re-grant. Mutation-tested.
+6. MEDIUM-LOW. A missing `free` plan failed OPEN: rows were left `trialing`,
+   which is in the active set, so every lapsed trial would keep full
+   entitlements indefinitely while the cron re-logged hourly. It now refuses
+   the whole batch loudly.
+7. MEDIUM-LOW. "more than 100 pages" is false for a site of exactly 100, since
+   `capped` is `total >= cap`. "at least 100 pages" now.
+8. LOW. Four stale comments still described `trial_expired` plus retention as
+   the live path, including the trial-lifecycle section header directly above
+   the rewritten cron and the `/subscriptions/current` payload telling the
+   frontend to render a deletion warning. All corrected, all marked legacy.
+9. LOW. `deactivate_client_knowledge` iterated the client's bots, so documents
+   with a NULL `bot_id` (which the crawl routes create whenever the optional
+   parameter is omitted, and which this very branch's tests exercise) were
+   never paused. "Your knowledge base is paused" has to be true of the whole
+   base. Covered in both directions.
+10. LOW. The `.get` hardening had been applied to one of six identical reads.
+11. LOW. The free-price fix had landed on `/crawl/discover` only, so
+    `/crawl/diff` still clamped and `RecrawlDialog` rendered "0 credits a page",
+    the exact string the sibling fix removed. Both surfaces now.
+12. LOW. A converted account gets no in-app "your trial ended" signal, because
+    `_build_trial_payload` matches only `trialing`/`trial_expired`. Left for
+    Task 6, which adds the `/auth/me` fields, and recorded here.
+
+Gates after the fixes: full backend suite **5913 passed, 4 skipped, zero
+failures**. `ruff check` and `ruff format --check` clean. Frontend `tsc` clean,
+`npm run lint` clean with zero warnings, `npx vitest run` 134 files / 1771 tests.

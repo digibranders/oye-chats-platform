@@ -368,12 +368,11 @@ def get_current_subscription(
                 "current_period_end": sub.current_period_end.isoformat() if sub.current_period_end else None,
                 "trial_start": sub.trial_start.isoformat() if sub.trial_start else None,
                 "trial_end": sub.trial_end.isoformat() if sub.trial_end else None,
-                # Wall-clock deadline for the post-trial data-purge cron.
-                # Set when the trial-expiry worker flips status → trial_expired
-                # (trial_end + TRIAL_DATA_RETENTION_DAYS). NULL for anything
-                # that never went through trial expiry; the frontend uses this
-                # to render the "your data will be deleted on X" warning
-                # banner during the grace window.
+                # LEGACY. Wall-clock deadline for the post-trial data-purge
+                # cron, and nothing sets it any more: a lapsed trial converts
+                # to Free with nothing deleted. Non-NULL only on rows stamped
+                # before 2026-08-28, which are draining. No surface should
+                # render a deletion warning from it.
                 "data_retention_until": (sub.data_retention_until.isoformat() if sub.data_retention_until else None),
                 "canceled_at": sub.canceled_at.isoformat() if sub.canceled_at else None,
                 "cancel_at_period_end": sub.cancel_at_period_end,

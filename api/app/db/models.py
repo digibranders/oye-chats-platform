@@ -1807,10 +1807,11 @@ class Subscription(Base):
     # Trial tracking
     trial_start = Column(DateTime(timezone=True), nullable=True)
     trial_end = Column(DateTime(timezone=True), nullable=True)
-    # Set by the trial-expiry cron when status flips to ``trial_expired``.
-    # The hard-delete cron uses this to know when the 15-day grace window
-    # ends. ``NULL`` for any subscription that never went through trial
-    # expiry (paid customers, free-tier users).
+    # LEGACY as of 2026-08-28. Nothing writes a timestamp here any more: a
+    # lapsed trial converts to Free in place and this column is explicitly
+    # cleared. The hard-delete cron still reads it so rows stamped before that
+    # change drain out of its queue; once they have, it is dead weight kept
+    # only so the drain stays observable. ``NULL`` everywhere else.
     data_retention_until = Column(DateTime(timezone=True), nullable=True)
     # Set when a payment-failed webhook flips ``status`` to ``past_due``.
     # The auto-expire cron uses this anchor (not ``updated_at``, which

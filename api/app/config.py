@@ -502,8 +502,12 @@ logger.info(f"Default billing provider: {BILLING_PROVIDER} ({BILLING_CURRENCY})"
 # ─────────────────────────────────────────────────────────────────────────────
 # Free-trial lifecycle
 # ─────────────────────────────────────────────────────────────────────────────
-# ``TRIAL_DATA_RETENTION_DAYS`` is the grace window between trial expiry and
-# the cron that hard-deletes bot documents/sessions (worker/tasks.py).
+# ``TRIAL_DATA_RETENTION_DAYS`` was the grace window between trial expiry and
+# the cron that hard-deletes bot documents/sessions. LEGACY as of 2026-08-28:
+# a lapsed trial converts to the Free plan with nothing deleted, so nothing
+# stamps a retention date any more and this value is applied to no new row. It
+# stays only until the pre-existing stamped rows have drained out of that
+# cron's queue.
 #
 # ``TRIAL_CREDITS`` used to sit here as a fallback grant for a trial provisioned
 # without a plan reference. It is gone: the only trial is a plan row, so its

@@ -3855,11 +3855,20 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
             local.id,
             client_id,
         )
-        # Back to a paid plan → restore any knowledge deactivated by a prior
-        # lapse on this bot (no-op when the bot has none).
-        from app.services.knowledge_state_service import reactivate_bot_knowledge
+        # Back to a paid plan → restore the knowledge a prior lapse deactivated.
+        #
+        # Account-level rows (``bot_id IS NULL``) go through the CLIENT-level
+        # path. ``reactivate_bot_knowledge`` hard-returns 0 for a NULL id, and
+        # a /billing checkout never stamps a bot into its notes, so every
+        # account-level upgrade silently restored nothing. That is the path a
+        # converted trial customer takes, and the trial-ended email tells them
+        # in as many words that choosing a plan switches all of it back on.
+        from app.services.knowledge_state_service import reactivate_bot_knowledge, reactivate_client_knowledge
 
-        reactivate_bot_knowledge(session, local.bot_id)
+        if local.bot_id is None:
+            reactivate_client_knowledge(session, client_id)
+        else:
+            reactivate_bot_knowledge(session, local.bot_id)
         _emit_plan_purchased_notification(session, client_id, plan_id, notes.get("billing_cycle", "monthly"))
         # New active plan → drop cached entitlements so the new tier's
         # features/limits (and, at a downgrade cutover, the exit from the
@@ -3907,9 +3916,13 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
     # 1 until their next seat charge. Re-derive from included + authorized seats.
     local.operator_quantity = derive_operator_quantity(local.plan, local.seat_addon_quantity)
     # Back to a paid plan → restore any knowledge deactivated by a prior lapse.
-    from app.services.knowledge_state_service import reactivate_bot_knowledge
+    # Same account-level split as the activation branch above.
+    from app.services.knowledge_state_service import reactivate_bot_knowledge, reactivate_client_knowledge
 
-    reactivate_bot_knowledge(session, local.bot_id)
+    if local.bot_id is None:
+        reactivate_client_knowledge(session, local.client_id)
+    else:
+        reactivate_bot_knowledge(session, local.bot_id)
     session.flush()
     return f"Subscription {razorpay_sub_id} re-activated"
 

@@ -404,26 +404,32 @@ export function crawlPreflight(
       message: `Your plan trains up to ${budget.perCrawlLimit} pages in one go. Deselect ${selectedPages - budget.perCrawlLimit} to continue, or move to a plan with no per-crawl limit.`,
     };
   }
+  // Credits first. This one is about the crawl the customer is starting right
+  // now, so it outranks the cap upsell below: a shortfall they can act on
+  // immediately must not be hidden behind an upgrade pitch.
+  if (selectedPages > budget.affordablePages) {
+    return {
+      blocked: false,
+      message: `Your credits cover ${budget.affordablePages} of these ${selectedPages} pages. We train them in order and stop when the credits run out — nothing is charged twice.`,
+    };
+  }
   // The cap wall the trial actually hits. `/crawl/discover` truncates its
   // listing AT the plan ceiling, so on a capped plan `total_found` can never
-  // exceed `perCrawlLimit` and the branch above is unreachable there: the
+  // exceed `perCrawlLimit` and the block above is unreachable there: the
   // customer would just see a 100-page site and no mention of the rest. What
-  // the server does report is `capped`, meaning "there was more than this".
-  // That is the honest upsell, and it does not block: the 100 pages they can
-  // train are worth training now.
+  // the server reports instead is `capped`, meaning "the listing stopped here".
+  //
+  // "at least N", not "more than N": `capped` is `total >= cap`, so a site with
+  // exactly N pages sets it with nothing truncated, and "more than" would be a
+  // small lie told to every such customer. It does not block either way, since
+  // the pages they can train are worth training now.
   if (budget.capped && budget.perCrawlLimit !== null) {
     return {
       blocked: false,
       message:
         planSlug === 'trial'
-          ? `Your site has more than ${budget.perCrawlLimit} pages. Your trial trains ${budget.perCrawlLimit} of them. Upgrade to train the rest.`
-          : `Your site has more than ${budget.perCrawlLimit} pages, which is what your plan trains in one go. Upgrade to train the rest.`,
-    };
-  }
-  if (selectedPages > budget.affordablePages) {
-    return {
-      blocked: false,
-      message: `Your credits cover ${budget.affordablePages} of these ${selectedPages} pages. We train them in order and stop when the credits run out — nothing is charged twice.`,
+          ? `Your site has at least ${budget.perCrawlLimit} pages, which is what your trial trains in one go. Upgrade to train the rest.`
+          : `Your site has at least ${budget.perCrawlLimit} pages, which is what your plan trains in one go. Upgrade to train the rest.`,
     };
   }
   return { blocked: false, message: null };

@@ -1194,16 +1194,24 @@ async def task_send_template_email(
 #
 # Three crons keep the free-trial flow honest:
 #
-# * ``task_expire_trials``          . Hourly. Flips trialing → trial_expired
-#                                      the moment ``trial_end`` lapses, sets
-#                                      the 15-day data retention timestamp,
-#                                      fires the "trial ended" email.
-# * ``task_trial_reminder_emails``  . Daily. Sends day-7 / day-11 / day-13
+# * ``task_expire_trials``          . Hourly. CONVERTS a lapsed trial onto the
+#                                      Free plan in place, forfeits the unused
+#                                      trial allowance, grants Free's, pauses
+#                                      the workspace's knowledge, and emails.
+#                                      It no longer flips to ``trial_expired``
+#                                      and no longer stamps a retention date,
+#                                      so nothing it writes can reach the
+#                                      hard-delete cron below.
+# * ``task_trial_reminder_emails``  . Daily. Sends the halfway / T-3 / final-day
 #                                      reminders to every trialing customer,
-#                                      idempotent via ``trial_emails_sent``.
-# * ``task_delete_expired_trial_data``. Daily. Hard-deletes bots / docs /
-#                                      sessions for trial_expired subs once
-#                                      ``data_retention_until`` is reached.
+#                                      idempotent via ``trial_emails_sent``
+#                                      (whose keys name the slot, not the day).
+# * ``task_delete_expired_trial_data``. Daily. LEGACY. Hard-deletes bots / docs
+#                                      / sessions for ``trial_expired`` subs
+#                                      once ``data_retention_until`` is
+#                                      reached. Only rows stamped before
+#                                      2026-08-28 can still be in its queue,
+#                                      and it drains to zero from there.
 #
 # All three use a sync inner function dispatched to a thread executor (the
 # pattern matches ``task_renew_due_subscriptions``) so they can use the
@@ -1301,7 +1309,24 @@ async def task_expire_trials(ctx: dict) -> int:
                 .all()
             )
             free_plan = get_plan_by_slug(session, "free") if subs else None
+            if subs and free_plan is None:
+                # Fail LOUD and stop, rather than leaving every lapsed trial
+                # ``trialing``. That status is in the active set, so a silent
+                # per-row skip hands every one of them full trial entitlements
+                # indefinitely while the cron re-logs hourly.
+                logger.error(
+                    "task_expire_trials: no 'free' plan row exists; %d lapsed trial(s) cannot be "
+                    "converted and are being left untouched. Seed the plan matrix.",
+                    len(subs),
+                )
+                return 0
             for sub in subs:
+                # One transaction per row, matching task_renew_due_subscriptions
+                # (audit F14). This loop now writes ledger rows, a grant and a
+                # bulk document update per subscription, and it queues the
+                # conversion email BEFORE the commit; a batch rollback would
+                # discard the markers of rows whose mail had already gone out
+                # and re-email every one of them on the next tick.
                 paid = session.execute(
                     select(Subscription.id)
                     .where(
@@ -1311,6 +1336,17 @@ async def task_expire_trials(ctx: dict) -> int:
                     )
                     .limit(1)
                 ).first()
+                if (sub.trial_emails_sent or {}).get("converted_to_free"):
+                    # Already converted once. Only reachable if something put
+                    # the row back to ``trialing``; converting again would
+                    # forfeit and re-grant a second time.
+                    logger.warning(
+                        "task_expire_trials: subscription %s is trialing but already carries a "
+                        "converted_to_free marker; skipping",
+                        sub.id,
+                    )
+                    continue
+
                 if paid is not None:
                     # Bought mid-trial. Retire the trial row; the purchased one
                     # already carries their entitlements.
@@ -1318,14 +1354,8 @@ async def task_expire_trials(ctx: dict) -> int:
                     sub.canceled_at = now
                     sub.cancel_reason = "converted_to_paid"
                     sub.data_retention_until = None
+                    session.commit()
                     converted += 1
-                    continue
-
-                if free_plan is None:
-                    logger.error(
-                        "task_expire_trials: no 'free' plan to convert client %s onto; leaving the trial row alone",
-                        sub.client_id,
-                    )
                     continue
 
                 # Zero the unused trial allowance BEFORE granting Free's, so the
@@ -1351,19 +1381,33 @@ async def task_expire_trials(ctx: dict) -> int:
                 # of it, which is exactly what this does.
                 deactivate_client_knowledge(session, sub.client_id)
 
+                # The idempotency marker the plan asked for, in the JSONB slot
+                # this cron already uses rather than a new column. The status
+                # filter above is the primary guard; this survives a row being
+                # returned to ``trialing`` by hand or by a future code path, so
+                # a second pass cannot forfeit and re-grant a second time.
+                _mark_email_sent(sub, "converted_to_free", now)
+
+                # Commit the conversion BEFORE queueing the email, so a mail
+                # transport that succeeds can never be paired with a rolled-back
+                # conversion. The email is best-effort and retried by the next
+                # tick if it fails, which the marker below gates.
+                session.commit()
+
                 owner = session.get(Client, sub.client_id)
                 if not (sub.trial_emails_sent or {}).get("trial_ended") and owner:
                     try:
                         send_trial_ended_email(owner.email, name=owner.name, plan_name=free_plan.name)
                         _mark_email_sent(sub, "trial_ended", now)
+                        session.commit()
                     except Exception as exc:
+                        session.rollback()
                         logger.warning(
                             "task_expire_trials: conversion email failed for client %s: %s",
                             sub.client_id,
                             exc,
                         )
                 converted += 1
-            session.commit()
         return converted
 
     loop = asyncio.get_running_loop()

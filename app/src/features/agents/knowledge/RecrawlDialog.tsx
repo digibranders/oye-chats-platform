@@ -206,11 +206,20 @@ export function RecrawlDialog({
                   />
                   <FigureRow
                     label={isDelta ? t('agents.worstCase') || 'Worst case' : t('agents.cost') || 'Cost'}
-                    value={`${formatNumber(cost?.credits ?? 0)} credits`}
+                    // A free re-crawl says so. "0 credits a page" reads like a
+                    // rounding error, and this is the number people check
+                    // before they commit.
+                    value={
+                      diff.costPerPage === 0
+                        ? t('agents.thisIsFree') || 'free'
+                        : `${formatNumber(cost?.credits ?? 0)} credits`
+                    }
                     hint={
-                      isDelta
-                        ? `The bill depends on which pages actually changed. ${formatNumber(diff.costPerPage)} credits a page · balance ${formatNumber(diff.balance)}`
-                        : `${formatNumber(cost?.pages ?? 0)} pages × ${formatNumber(diff.costPerPage)} credits · balance ${formatNumber(diff.balance)}`
+                      diff.costPerPage === 0
+                        ? t('agents.thisTrainingIsFree') || 'This training is free · balance unchanged'
+                        : isDelta
+                          ? `The bill depends on which pages actually changed. ${formatNumber(diff.costPerPage)} credits a page · balance ${formatNumber(diff.balance)}`
+                          : `${formatNumber(cost?.pages ?? 0)} pages × ${formatNumber(diff.costPerPage)} credits · balance ${formatNumber(diff.balance)}`
                     }
                     emphasis
                     tone={shortOnCredits ? 'danger' : 'neutral'}

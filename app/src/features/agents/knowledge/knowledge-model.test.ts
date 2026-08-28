@@ -269,26 +269,41 @@ describe('crawl pre-flight', () => {
     expect(result.message).toMatch(/Deselect 30/);
   });
 
+  it('still warns about a credit shortfall on a capped site', () => {
+    // The cap upsell must not shadow this: a shortfall the customer can act on
+    // right now outranks a pitch to upgrade.
+    const budget = crawlBudgetOf({
+      total_found: 100,
+      capped: true,
+      plan_max: 100,
+      balance: 50,
+      cost_per_page: 5,
+    });
+    const result = crawlPreflight(budget, 100, 'trial');
+    expect(result.blocked).toBe(false);
+    expect(result.message).toContain('Your credits cover 10 of these 100 pages');
+  });
+
   it('upsells on the cap the trial actually hits, in the shape the server reports it', () => {
     // `/crawl/discover` truncates its listing AT the plan ceiling, so a capped
     // plan can never report more pages than it allows. The reachable signal is
     // `capped`, and the honest sentence is "more than 100", not a page count
     // the server deliberately does not compute. It does not block: the 100
     // pages they can train are worth training now.
-    const budget = crawlBudgetOf({ total_found: 100, capped: true, plan_max: 100 });
+    const budget = crawlBudgetOf({ total_found: 100, capped: true, plan_max: 100, balance: 5000, cost_per_page: 5 });
     const result = crawlPreflight(budget, 100, 'trial');
     expect(result.blocked).toBe(false);
-    expect(result.message).toContain('more than 100 pages');
-    expect(result.message).toContain('Your trial trains 100');
+    expect(result.message).toContain('at least 100 pages');
+    expect(result.message).toContain('your trial trains in one go');
     expect(result.message).toContain('Upgrade');
   });
 
   it('says the same thing without naming the trial on a paid tier', () => {
-    const budget = crawlBudgetOf({ total_found: 100, capped: true, plan_max: 100 });
+    const budget = crawlBudgetOf({ total_found: 100, capped: true, plan_max: 100, balance: 5000, cost_per_page: 5 });
     const result = crawlPreflight(budget, 100, 'standard');
     expect(result.blocked).toBe(false);
-    expect(result.message).toContain('more than 100 pages');
-    expect(result.message).not.toContain('Your trial');
+    expect(result.message).toContain('at least 100 pages');
+    expect(result.message).not.toContain('your trial');
   });
 
   it('stays silent when the site fits inside the cap', () => {

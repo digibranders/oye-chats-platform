@@ -369,8 +369,27 @@ def test_the_conversion_email_fires_once_and_marks_itself(db):
     db.refresh(sub)
     assert sub.trial_emails_sent.get("trial_ended") is not None
 
+    from sqlalchemy import func, select
+
+    from app.db.models import CreditLedger
+
+    def _positive_grants() -> int:
+        return db.execute(
+            select(func.count())
+            .select_from(CreditLedger)
+            .where(
+                CreditLedger.client_id == client.id,
+                CreditLedger.reason == "plan_grant",
+                CreditLedger.delta > 0,
+            )
+        ).scalar_one()
+
+    grants_after_first = _positive_grants()
+
     # The row is no longer trialing, so a second tick cannot even see it. Force
-    # it back to prove the marker, not the filter, is what stops the resend.
+    # it back to prove the MARKER, not the status filter, is what stops a
+    # second pass. Without it the second pass would forfeit the fresh Free
+    # grant and hand out another one, silently, on every tick.
     sub.status = "trialing"
     db.flush()
     db.commit()
@@ -380,6 +399,9 @@ def test_the_conversion_email_fires_once_and_marks_itself(db):
     ):
         asyncio.run(cron_tasks.task_expire_trials({}))
     mail_again.assert_not_called()
+    assert _positive_grants() == grants_after_first, "a second pass granted again"
+    db.refresh(sub)
+    assert sub.status == "trialing", "the marker must stop the pass before it rewrites the row"
 
 
 def test_an_email_failure_does_not_block_the_conversion(db):
@@ -414,3 +436,41 @@ def test_an_email_failure_does_not_block_the_conversion(db):
     assert sub.plan_id == free.id
     assert sub.status == "active"
     assert "trial_ended" not in (sub.trial_emails_sent or {})
+
+
+def test_paying_after_conversion_actually_restores_the_knowledge(db):
+    """The trial-ended email's promise, asserted against the path a payer takes.
+
+    The account-level activation branch is what a /billing purchase reaches,
+    and its row carries a NULL ``bot_id``. ``reactivate_bot_knowledge`` returns
+    0 for a NULL id, so before this was wired every account-level upgrade
+    restored nothing while the email said "choosing a plan switches all of it
+    back on, in one step, with nothing to re-upload".
+    """
+    import inspect
+
+    from sqlalchemy import select
+
+    from app.services import razorpay_service
+
+    _plan(db, "free", credits=200)
+    trial = _plan(db, "trial", credits=500, trial_days=14, default=True)
+    client = _client(db, "conv-restore@e.com")
+    bot = _bot_with_knowledge(db, client, key="bot-conv-restore")
+    _lapsed_trial(db, client, trial)
+    db.commit()
+
+    assert _run(db) == 1
+    assert db.execute(select(Document.id).where(Document.bot_id == bot.id, Document.is_active.is_(True))).all() == []
+
+    # The activation branch must take the client-level path for a NULL bot_id.
+    source = inspect.getsource(razorpay_service._handle_subscription_activated)
+    assert "reactivate_client_knowledge(session, client_id)" in source, (
+        "an account-level activation must restore the client's knowledge, not a NULL bot's"
+    )
+
+    from app.services import knowledge_state_service
+
+    assert knowledge_state_service.reactivate_client_knowledge(db, client.id) == 1
+    db.commit()
+    assert db.execute(select(Document.id).where(Document.bot_id == bot.id, Document.is_active.is_(False))).all() == []
