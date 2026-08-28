@@ -3,6 +3,12 @@
 // DISPLAY_USD_TO_INR default so every surface shows the same USD price (O5).
 export const FALLBACK_USD_TO_INR = 94.67;
 
+/** An entity carrying both currency columns: plans, credit packs, seats. */
+export interface DualCurrencyAmount {
+  inrMinor?: number | null;
+  usdMinor?: number | null;
+}
+
 /**
  * Money formatting for minor-unit amounts (paise / cents).
  *
@@ -12,11 +18,9 @@ export const FALLBACK_USD_TO_INR = 94.67;
  * (₹499 not ₹499.00); fractional amounts always show 2dp - mirrors the
  * behaviour the Billing page's fmtCurrency has always had.
  *
- * @param {number} amountMinor - Amount in the currency's minor unit (paise for INR, cents for USD).
- * @param {string} [currency='usd'] - ISO currency code, case-insensitive ('inr' | 'usd' | ...).
- * @returns {string} e.g. "₹1,52,458" · "₹58.31" · "$19" · "$4.50"
+ * e.g. "₹1,52,458" · "₹58.31" · "$19" · "$4.50"
  */
-export function formatMoney(amountMinor, currency = 'usd') {
+export function formatMoney(amountMinor: number | null | undefined, currency = 'usd'): string {
   const isInr = String(currency || '').toLowerCase() === 'inr';
   const symbol = isInr ? '₹' : '$';
   // en-IN gives lakh/crore grouping (1,52,458); en-US gives western (152,458).
@@ -35,13 +39,9 @@ export function formatMoney(amountMinor, currency = 'usd') {
  *
  * INR is the charge currency for Indian accounts, so the INR column is read
  * directly (never a converted USD figure) - the number shown then equals the
- * Razorpay debit.
- *
- * @param {{inrMinor?: number|null, usdMinor?: number|null}} amounts
- * @param {string} currency - 'inr' | 'usd' (case-insensitive)
- * @returns {number} amount in the active currency's minor units (0 if absent)
+ * Razorpay debit. Returns 0 when the active currency's column is absent.
  */
-export function pickAmount({ inrMinor, usdMinor }, currency) {
+export function pickAmount({ inrMinor, usdMinor }: DualCurrencyAmount, currency: string): number {
   const isInr = String(currency || '').toLowerCase() === 'inr';
   return Number((isInr ? inrMinor : usdMinor) ?? 0);
 }
