@@ -77,10 +77,16 @@ describe('crawlFraction', () => {
 
 describe('isCrawlFinished', () => {
   it('stops the poll on every terminal state, not only success', () => {
-    expect(isCrawlFinished('completed')).toBe(true);
+    expect(isCrawlFinished('done')).toBe(true);
+    expect(isCrawlFinished('no_content')).toBe(true);
     expect(isCrawlFinished('failed')).toBe(true);
     expect(isCrawlFinished('cancelled')).toBe(true);
+  });
+
+  it('keeps polling while the crawl is still moving', () => {
+    expect(isCrawlFinished('idle')).toBe(false);
     expect(isCrawlFinished('running')).toBe(false);
+    expect(isCrawlFinished('cancelling')).toBe(false);
     expect(isCrawlFinished(undefined)).toBe(false);
   });
 });

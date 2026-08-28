@@ -72,9 +72,11 @@ export function FirstChatPage() {
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   // Once the crawl lands, the chatbot has real seed questions and real
-  // knowledge — pull both rather than leaving the generic starters up.
+  // knowledge — pull both rather than leaving the generic starters up. Only
+  // `done` earns this: `no_content` is also terminal, but it indexed nothing,
+  // so there are no seed questions to ask for.
   useEffect(() => {
-    if (status !== 'completed' || !botId) return;
+    if (status !== 'done' || !botId) return;
     let active = true;
     void refreshBots();
     getSeedQuestions(botId)

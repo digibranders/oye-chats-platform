@@ -19,6 +19,7 @@ import type {
   CannedResponsesResult,
   ChatMessage,
   CrawlDiscovery,
+  CrawlStatus,
   CurrentUser,
   Department,
   Entitlements,
@@ -55,15 +56,16 @@ import type { FeedbackItem } from '../features/feedback/types';
  * The caller's in-flight crawl, from Redis. Never rejects: a network failure
  * resolves to `idle`.
  *
- * `status` should be the `CrawlStatus` union (see `types/domain`), which is the
- * exact vocabulary the worker writes. The `| string` tail collapses it to
- * `string` and is why a consumer can still branch on `'completed'`, a status
- * the backend has never emitted, without the compiler objecting. Narrowing it
- * is a behaviour fix with call-site fallout, not part of this conversion, so it
- * is left alone here.
+ * `status` is the `CrawlStatus` union (see `types/domain`), which is the exact
+ * vocabulary the worker writes: `set_crawl_progress` callers and
+ * `_terminal_status` in `crawl_orchestrator.py`. It used to carry a `| string`
+ * tail, which collapsed the union to `string` and let consumers branch on
+ * `'completed'` — a status the backend has never emitted — without the compiler
+ * objecting. Server strings are still validated at runtime before they reach
+ * the app's own state; see `toCrawlStatus` in `context/CrawlContext`.
  */
 export interface CrawlProgress {
-  status: 'idle' | 'running' | 'completed' | 'failed' | 'cancelled' | string;
+  status: CrawlStatus;
   urls?: string[];
   pages_crawled?: number;
   max_pages?: number;

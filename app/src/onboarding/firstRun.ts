@@ -1,4 +1,5 @@
 import { normalizeUrl, validateUrl } from '../ui';
+import type { CrawlStatus } from '../types/domain';
 
 /**
  * The three legitimate ways to start.
@@ -81,9 +82,22 @@ export function crawlFraction(crawled: number | undefined, total: number | undef
   return Math.min(100, Math.round((done / total) * 100));
 }
 
-/** Terminal crawl states, so the UI stops polling and says what happened. */
-export function isCrawlFinished(status: string | undefined): boolean {
-  return status === 'completed' || status === 'failed' || status === 'cancelled';
+/**
+ * Terminal crawl states, so the UI stops polling and says what happened.
+ *
+ * `done` and `no_content` are both successful ends of a crawl: the second means
+ * pages were fetched but none yielded readable text, which is what a JS-rendered
+ * site looks like to an HTTP-only fetch. There is no `completed` — the worker
+ * has never written one — so the parameter is typed `CrawlStatus` rather than
+ * `string` to keep a status the backend does not emit from compiling.
+ */
+export function isCrawlFinished(status: CrawlStatus | undefined): boolean {
+  return (
+    status === 'done' ||
+    status === 'no_content' ||
+    status === 'failed' ||
+    status === 'cancelled'
+  );
 }
 
 /**
