@@ -1,5 +1,6 @@
 import { formatNumber } from '../../../ui';
 import type { CrawlDiscovery, KnowledgeSource } from '../../../types/domain';
+import { t as translateNow } from '../../../i18n/i18n';
 
 /**
  * Everything on this surface that is a decision rather than a rendering.
@@ -116,12 +117,12 @@ export function sourceState(
     isWebsiteSource(source.name) &&
     rootDomainOf(source.name) === crawlingDomain
   ) {
-    return { kind: 'training', label: 'Training', tone: 'neutral' };
+    return { kind: 'training', label: translateNow('agents.training') || 'Training', tone: 'neutral' };
   }
   if ((source.chunk_count ?? 0) > 0) {
-    return { kind: 'trained', label: 'Trained', tone: 'success' };
+    return { kind: 'trained', label: translateNow('agents.trained') || 'Trained', tone: 'success' };
   }
-  return { kind: 'failed', label: 'Not indexed', tone: 'danger' };
+  return { kind: 'failed', label: translateNow('agents.notIndexed') || 'Not indexed', tone: 'danger' };
 }
 
 export interface KnowledgeSummary {
@@ -243,7 +244,7 @@ export function gapWindowParam(window: GapWindow): string {
 }
 
 export function gapWindowLabel(window: GapWindow): string {
-  return window === null ? 'All time' : `Last ${window} days`;
+  return window === null ? translateNow('agents.allTime') || 'All time' : `Last ${window} days`;
 }
 
 // ── Re-crawl ───────────────────────────────────────────────────────────────
@@ -319,7 +320,7 @@ export function recrawlCost(diff: RecrawlDiff): { pages: number; credits: number
 export function recrawlBlockedReason(diff: RecrawlDiff, previewFailed: boolean): string | null {
   if (previewFailed) return null;
   if (diff.mode === 'full' && diff.sitemapTotal === 0) {
-    return 'We could not see any pages on that site just now — its sitemap may be temporarily unavailable. Nothing has been charged. Try again in a few minutes.';
+    return translateNow('agents.weCouldNotSeeAny') || 'We could not see any pages on that site just now — its sitemap may be temporarily unavailable. Nothing has been charged. Try again in a few minutes.';
   }
   return null;
 }
@@ -386,7 +387,7 @@ export function crawlPreflight(
   selectedPages: number,
 ): { blocked: boolean; message: string | null } {
   if (selectedPages <= 0) {
-    return { blocked: true, message: 'Pick at least one page to train on.' };
+    return { blocked: true, message: translateNow('agents.pickAtLeastOnePage') || 'Pick at least one page to train on.' };
   }
   if (budget.perCrawlLimit !== null && selectedPages > budget.perCrawlLimit) {
     return {
@@ -431,15 +432,15 @@ export interface IngestProgress {
 export function ingestProgress(status: string | null): IngestProgress {
   switch (status) {
     case 'queued':
-      return { phase: 'queued', label: 'Waiting to start', active: true };
+      return { phase: 'queued', label: translateNow('agents.waitingToStart') || 'Waiting to start', active: true };
     case 'in_progress':
-      return { phase: 'working', label: 'Reading your document', active: true };
+      return { phase: 'working', label: translateNow('agents.readingYourDocument') || 'Reading your document', active: true };
     case 'complete':
-      return { phase: 'done', label: 'Ready to answer from', active: false };
+      return { phase: 'done', label: translateNow('agents.readyToAnswerFrom') || 'Ready to answer from', active: false };
     case 'failed':
-      return { phase: 'failed', label: 'We could not read this document', active: false };
+      return { phase: 'failed', label: translateNow('agents.weCouldNotReadThis') || 'We could not read this document', active: false };
     default:
-      return { phase: 'unknown', label: 'Processing in the background', active: false };
+      return { phase: 'unknown', label: translateNow('agents.processingInTheBackground') || 'Processing in the background', active: false };
   }
 }
 
@@ -448,15 +449,15 @@ export function uploadSkipReason(reason: string | undefined): string | null {
   if (!reason) return null;
   switch (reason) {
     case 'unsupported_type':
-      return 'Not a file type we can read — skipped, no charge';
+      return translateNow('agents.notAFileTypeWe') || 'Not a file type we can read — skipped, no charge';
     case 'oversize_file':
-      return 'Over 10 MB — skipped, no charge';
+      return translateNow('agents.over10MbSkippedNo') || 'Over 10 MB — skipped, no charge';
     case 'batch_oversize':
-      return 'This batch is over 60 MB — skipped, no charge';
+      return translateNow('agents.thisBatchIsOver60') || 'This batch is over 60 MB — skipped, no charge';
     case 'extraction_failed':
-      return 'No readable text, most likely a scanned PDF — skipped, no charge';
+      return translateNow('agents.noReadableTextMostLikely') || 'No readable text, most likely a scanned PDF — skipped, no charge';
     case 'extraction_error':
-      return 'We could not extract text — skipped, no charge';
+      return translateNow('agents.weCouldNotExtractText') || 'We could not extract text — skipped, no charge';
     default:
       return reason;
   }

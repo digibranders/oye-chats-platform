@@ -33,6 +33,7 @@ import {
   type ExperienceMeta,
   type LeadFieldName,
 } from './experience-model';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 /**
  * What happens when the chatbot is not enough.
@@ -63,6 +64,7 @@ export function HandoffSection({
   readOnly,
   onChange,
 }: HandoffSectionProps): ReactElement {
+  const { t } = useTranslation();
   const { hasFeature, isFree, loading: entitlementsLoading } = useEntitlements();
   const liveChatIncluded = hasFeature('live_chat');
   /**
@@ -97,21 +99,21 @@ export function HandoffSection({
           </CardBody>
         </Card>
       ) : !liveChatIncluded ? (
-        <SettingGroup title="Talking to a person" titleAs="h2">
+        <SettingGroup title={t('agents.talkingToAPerson') || 'Talking to a person'} titleAs="h2">
           <SettingRow
-            label="Let visitors ask for a person"
+            label={t('agents.letVisitorsAskForA') || 'Let visitors ask for a person'}
             badge={<Badge tone="plan">Starter and above</Badge>}
-            description="Visitors can ask for a person and land in your inbox."
+            description={t('agents.visitorsCanAskForA') || 'Visitors can ask for a person and land in your inbox.'}
             controlWidth="auto"
           >
             <Link to="/billing" className={buttonClass('secondary', 'sm')}>
-              Compare plans
+              {t('agents.comparePlans') || 'Compare plans'}
             </Link>
           </SettingRow>
         </SettingGroup>
       ) : (
         <Card>
-          <CardHeader eyebrow="Live chat" titleAs="h2" title="Talking to a person" />
+          <CardHeader eyebrow="Live chat" titleAs="h2" title={t('agents.talkingToAPerson') || 'Talking to a person'} />
           <CardBody className="flex flex-col gap-5">
             {chatbotOnFree ? (
               <Alert tone="warning" title={`This chatbot is on the ${meta.planName} plan`}>
@@ -120,8 +122,8 @@ export function HandoffSection({
               </Alert>
             ) : null}
             <Switch
-              label="Let visitors ask for a person"
-              description="Conversations arrive in your inbox."
+              label={t('agents.letVisitorsAskForA') || 'Let visitors ask for a person'}
+              description={t('agents.conversationsArriveInYourInbox') || 'Conversations arrive in your inbox.'}
               checked={draft.liveChatEnabled}
               disabled={readOnly}
               onCheckedChange={(liveChatEnabled) => onChange({ liveChatEnabled })}
@@ -130,8 +132,8 @@ export function HandoffSection({
             {draft.liveChatEnabled ? (
               <>
                 <Field
-                  label="While they wait"
-                  hint="Shown from the moment they ask until someone accepts."
+                  label={t('agents.whileTheyWait') || 'While they wait'}
+                  hint={t('agents.shownFromTheMomentThey') || 'Shown from the moment they ask until someone accepts.'}
                 >
                   <Textarea
                     rows={2}
@@ -143,7 +145,7 @@ export function HandoffSection({
                   />
                 </Field>
 
-                <Field label="When nobody is available" hint="When nobody on your team is online.">
+                <Field label={t('agents.whenNobodyIsAvailable') || 'When nobody is available'} hint={t('agents.whenNobodyOnYourTeam') || 'When nobody on your team is online.'}>
                   <Textarea
                     rows={2}
                     value={draft.handoffOfflineMessage}
@@ -155,12 +157,12 @@ export function HandoffSection({
                 </Field>
 
                 <Field
-                  label="Offer the handoff"
-                  hint="Delay before the form appears."
+                  label={t('agents.offerTheHandoff') || 'Offer the handoff'}
+                  hint={t('agents.delayBeforeTheFormAppears') || 'Delay before the form appears.'}
                   className="max-w-xs"
                 >
                   <Select
-                    label="Offer the handoff"
+                    label={t('agents.offerTheHandoff') || 'Offer the handoff'}
                     options={HANDOFF_DELAY_OPTIONS}
                     value={String(draft.handoffDelaySeconds)}
                     disabled={readOnly}
@@ -170,7 +172,7 @@ export function HandoffSection({
 
                 <Grid cols={2}>
                   <Field
-                    label="Give up waiting after"
+                    label={t('agents.giveUpWaitingAfter') || 'Give up waiting after'}
                     error={errors.queueTimeoutSeconds ?? null}
                     className="max-w-xs"
                   >
@@ -190,8 +192,8 @@ export function HandoffSection({
                     />
                   </Field>
                   <Field
-                    label="Most people waiting at once"
-                    hint="Past it, visitors get the offline form."
+                    label={t('agents.mostPeopleWaitingAtOnce') || 'Most people waiting at once'}
+                    hint={t('agents.pastItVisitorsGetThe') || 'Past it, visitors get the offline form.'}
                     error={errors.maxQueueSize ?? null}
                     className="max-w-xs"
                   >
@@ -218,12 +220,12 @@ export function HandoffSection({
         <CardHeader
           eyebrow="Availability"
           titleAs="h2"
-          title="When someone is there"
-          description="This chatbot's own hours."
+          title={t('agents.whenSomeoneIsThere') || 'When someone is there'}
+          description={t('agents.thisChatbotsOwnHours') || 'This chatbot\'s own hours.'}
         />
         <CardBody className="flex flex-col gap-4">
           {errors.businessHours ? (
-            <Alert tone="danger" title="This schedule would never open">
+            <Alert tone="danger" title={t('agents.thisScheduleWouldNeverOpen') || 'This schedule would never open'}>
               {errors.businessHours}
             </Alert>
           ) : null}
@@ -237,15 +239,15 @@ export function HandoffSection({
       </Card>
 
       {!entitlementsLoading && isFree ? (
-        <SettingGroup title="What to ask before the chat starts" titleAs="h2">
+        <SettingGroup title={t('agents.whatToAskBeforeThe') || 'What to ask before the chat starts'} titleAs="h2">
           <SettingRow
-            label="Ask before chatting"
+            label={t('agents.askBeforeChatting') || 'Ask before chatting'}
             badge={<Badge tone="plan">Starter and above</Badge>}
-            description="Every chat arrives with a name and a way to reply."
+            description={t('agents.everyChatArrivesWithA') || 'Every chat arrives with a name and a way to reply.'}
             controlWidth="auto"
           >
             <Link to="/billing" className={buttonClass('secondary', 'sm')}>
-              Compare plans
+              {t('agents.comparePlans') || 'Compare plans'}
             </Link>
           </SettingRow>
         </SettingGroup>
@@ -254,12 +256,12 @@ export function HandoffSection({
           <CardHeader
             eyebrow="Lead form"
             titleAs="h2"
-            title="What to ask before the chat starts"
-            description="Every field you add is one more reason to close the window."
+            title={t('agents.whatToAskBeforeThe') || 'What to ask before the chat starts'}
+            description={t('agents.everyFieldYouAddIs') || 'Every field you add is one more reason to close the window.'}
           />
           <CardBody className="flex flex-col gap-5">
             <Switch
-              label="Ask before chatting"
+              label={t('agents.askBeforeChatting') || 'Ask before chatting'}
               checked={draft.leadFormEnabled}
               disabled={readOnly}
               onCheckedChange={(leadFormEnabled) => onChange({ leadFormEnabled })}
@@ -267,7 +269,7 @@ export function HandoffSection({
 
             {draft.leadFormEnabled ? (
               <fieldset className="min-w-0">
-                <legend className="text-base font-medium text-text-primary">Fields to collect</legend>
+                <legend className="text-base font-medium text-text-primary">{t('agents.fieldsToCollect') || 'Fields to collect'}</legend>
                 <ul className="mt-2.5 flex flex-col">
                   {LEAD_FIELD_ORDER.map((name) => {
                     const row = draft.leadFormFields.find((field) => field.field === name);
@@ -284,7 +286,7 @@ export function HandoffSection({
                         />
                         {row ? (
                           <Checkbox
-                            label="Required"
+                            label={t('agents.required') || 'Required'}
                             checked={row.required}
                             disabled={readOnly}
                             onCheckedChange={(checked) =>

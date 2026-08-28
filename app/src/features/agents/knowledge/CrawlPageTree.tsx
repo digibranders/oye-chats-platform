@@ -204,7 +204,7 @@ function TreeRow({
             variant="ghost"
             aria-expanded={open}
             aria-controls={groupId}
-            aria-label={`${open ? 'Collapse' : 'Expand'} ${label}`}
+            aria-label={`${open ? translateNow('agents.collapse') || 'Collapse' : translateNow('agents.expand') || 'Expand'} ${label}`}
             onClick={() => onToggleExpand(node.id)}
           >
             <ChevronRight
@@ -355,7 +355,7 @@ export function CrawlPageTree({
             checked={allSelected ? true : selectedCount > 0 ? 'indeterminate' : false}
             disabled={disabled}
             onCheckedChange={() => onSelectionChange(allSelected ? [] : [...allUrls])}
-            aria-label={allSelected ? 'Clear every page' : 'Select every page'}
+            aria-label={allSelected ? translateNow('agents.clearEveryPage') || 'Clear every page' : translateNow('agents.selectEveryPage') || 'Select every page'}
           />
           <span className="text-xs text-text-secondary">
             <span className="figure font-medium text-text-primary">
@@ -368,7 +368,7 @@ export function CrawlPageTree({
           {/* One control with two states, not two controls one of which is
               always a no-op. */}
           <Button size="sm" variant="ghost" onClick={() => setAllExpanded(!anyCollapsed)}>
-            {anyCollapsed ? 'Expand all' : 'Collapse all'}
+            {anyCollapsed ? translateNow('agents.expandAll') || 'Expand all' : translateNow('agents.collapseAll') || 'Collapse all'}
           </Button>
           {showMaximize ? (
             <Button
@@ -377,13 +377,13 @@ export function CrawlPageTree({
               onClick={() => setMaximized(true)}
               iconLeft={<Maximize2 aria-hidden className="h-3.5 w-3.5" />}
             >
-              Expand view
+              {translateNow('agents.expandView') || 'Expand view'}
             </Button>
           ) : null}
         </div>
       </div>
       <div className={cn('overflow-y-auto py-1.5 pr-1', maxHeight)}>
-        <ul aria-label="Pages found on this website">
+        <ul aria-label={translateNow('agents.pagesFoundOnThisWebsite') || 'Pages found on this website'}>
           <TreeRow
             node={tree}
             depth={0}
@@ -408,8 +408,8 @@ export function CrawlPageTree({
         open={maximized}
         onOpenChange={setMaximized}
         size="xl"
-        title="Pages found on this website"
-        description="You are charged per page — leave out what visitors never ask about."
+        title={translateNow('agents.pagesFoundOnThisWebsite') || 'Pages found on this website'}
+        description={translateNow('agents.youAreChargedPerPage') || 'You are charged per page — leave out what visitors never ask about.'}
       >
         {body('max-h-[60vh]', false)}
       </Dialog>

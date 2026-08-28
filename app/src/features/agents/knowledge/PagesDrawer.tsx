@@ -12,6 +12,7 @@ import { getDocumentPages } from '../../../services/api';
 import type { SourcePage } from '../../../types/domain';
 import { errorMessage, isForbidden } from './knowledge-api';
 import { rootDomainOf } from './knowledge-model';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 export interface PagesDrawerProps {
   /** The website source whose pages to list, or null when closed. */
@@ -29,6 +30,7 @@ export interface PagesDrawerProps {
  * were.
  */
 export function PagesDrawer({ sourceName, agentId, onClose }: PagesDrawerProps) {
+  const { t } = useTranslation();
   const domain = sourceName === null ? null : rootDomainOf(sourceName);
 
   const pages = useQuery({
@@ -46,7 +48,7 @@ export function PagesDrawer({ sourceName, agentId, onClose }: PagesDrawerProps) 
   const columns: Column<SourcePage>[] = [
     {
       key: 'title',
-      header: 'Page',
+      header: t('agents.page') || 'Page',
       sortable: (a, b) => (a.title ?? a.url).localeCompare(b.title ?? b.url),
       render: (row) => (
         <span className="block min-w-0">
@@ -61,7 +63,7 @@ export function PagesDrawer({ sourceName, agentId, onClose }: PagesDrawerProps) 
     },
     {
       key: 'open',
-      header: 'Open',
+      header: t('agents.open') || 'Open',
       align: 'right',
       width: '5rem',
       render: (row) => (
@@ -94,11 +96,11 @@ export function PagesDrawer({ sourceName, agentId, onClose }: PagesDrawerProps) 
       // which draw `px-cell` themselves, so that they line up with the title —
       // landed 40px in.
       flush
-      title={domain ?? 'Pages'}
+      title={domain ?? (t('agents.pages') || 'Pages')}
       description={
         pages.data?.total_pages
           ? `${formatNumber(pages.data.total_pages)} pages · ${formatNumber(pages.data.total_chunks ?? 0)} passages this chatbot can answer from.`
-          : 'The pages this chatbot read from this website.'
+          : t('agents.thePagesThisChatbotRead') || 'The pages this chatbot read from this website.'
       }
     >
       {/* Seated: the drawer already draws the surface, and the table's own
@@ -113,9 +115,9 @@ export function PagesDrawer({ sourceName, agentId, onClose }: PagesDrawerProps) 
         loading={pages.isPending && domain !== null}
         error={
           forbidden
-            ? 'You do not have permission to see this chatbot’s pages.'
+            ? t('agents.youDoNotHavePermission') || 'You do not have permission to see this chatbot’s pages.'
             : pages.isError
-              ? errorMessage(pages.error, 'We could not load this source’s pages.')
+              ? errorMessage(pages.error, t('agents.weCouldNotLoadThis3') || 'We could not load this source’s pages.')
               : null
         }
         onRetry={forbidden ? undefined : () => void pages.refetch()}
@@ -124,8 +126,8 @@ export function PagesDrawer({ sourceName, agentId, onClose }: PagesDrawerProps) 
         empty={
           <EmptyState
             size="inline"
-            title="No pages recorded"
-            description="No per-page record. Re-training the website rebuilds it."
+            title={t('agents.noPagesRecorded') || 'No pages recorded'}
+            description={t('agents.noPerPageRecordRe') || 'No per-page record. Re-training the website rebuilds it.'}
           />
         }
       />

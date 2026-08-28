@@ -14,6 +14,7 @@ import {
   normalizeSiteUrl,
   rootDomainOf,
 } from '../knowledge-model';
+import { t as translateNow } from '../../../../i18n/i18n';
 
 export interface UseCrawlDiscoveryOptions {
   agentId: number;
@@ -156,7 +157,7 @@ export function useCrawlDiscovery({
       setError(
         errorMessage(
           cause,
-          'We could not count the pages on that site. You can still train on it — we will follow links from the homepage.',
+          translateNow('agents.weCouldNotCountThe') || 'We could not count the pages on that site. You can still train on it — we will follow links from the homepage.',
         ),
       );
     } finally {
@@ -183,7 +184,7 @@ export function useCrawlDiscovery({
       }
       await startCrawl(options);
     } catch (cause) {
-      setError(errorMessage(cause, 'We could not start training. Please try again.'));
+      setError(errorMessage(cause, translateNow('agents.weCouldNotStartTraining') || 'We could not start training. Please try again.'));
     }
   }, [agentId, agentName, discovery, hasPageList, selected, startCrawl, url, useJs]);
 
@@ -191,7 +192,7 @@ export function useCrawlDiscovery({
     try {
       await cancelCrawl();
     } catch (cause) {
-      setError(errorMessage(cause, 'We could not stop training. Please try again.'));
+      setError(errorMessage(cause, translateNow('agents.weCouldNotStopTraining') || 'We could not stop training. Please try again.'));
     }
   }, [cancelCrawl]);
 

@@ -13,6 +13,7 @@ import {
   WIDGET_RADIUS,
 } from './widgetTheme';
 import { PLACEHOLDERS, type ExperienceDraft } from './experience-model';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 /**
  * The visitor's view, drawn from the draft.
@@ -152,6 +153,7 @@ export function WidgetMock({
   brandingText,
   onSend,
 }: WidgetMockProps): ReactElement {
+  const { t } = useTranslation();
   const [composed, setComposed] = useState('');
   const primary = draft.primaryColor || DEFAULT_PRIMARY_COLOR;
   const visitorBubble = draft.userBubbleColor || DEFAULT_USER_BUBBLE_COLOR;
@@ -180,7 +182,7 @@ export function WidgetMock({
       {/* The chat window. `aria-label` rather than a heading: this is a picture
           of another product, and giving it a real heading would put a second
           document outline inside the page's own. */}
-      <div style={panel} className="flex flex-col" role="group" aria-label="Chat widget preview">
+      <div style={panel} className="flex flex-col" role="group" aria-label={t('agents.chatWidgetPreview') || 'Chat widget preview'}>
         <header
           className="flex shrink-0 items-center gap-2.5"
           style={{ padding: '10px 12px', borderBottom: `1px solid ${WIDGET_BORDER}` }}
@@ -212,7 +214,7 @@ export function WidgetMock({
                   fontWeight: 600,
                 }}
               >
-                Leave a message
+                {t('agents.leaveAMessage') || 'Leave a message'}
               </span>
             </div>
           ) : state === 'waiting' ? (
@@ -288,7 +290,7 @@ export function WidgetMock({
                 </Bubble>
               ))}
               {pending ? (
-                <div className="flex items-center gap-1" aria-label="Typing">
+                <div className="flex items-center gap-1" aria-label={t('agents.typing') || 'Typing'}>
                   {[0, 1, 2].map((dot) => (
                     <span
                       key={dot}
@@ -328,7 +330,7 @@ export function WidgetMock({
                 }
               }}
               disabled={!onSend || state !== 'welcome'}
-              aria-label="Ask your chatbot a question in the preview"
+              aria-label={t('agents.askYourChatbotAQuestion') || 'Ask your chatbot a question in the preview'}
               placeholder={text(draft.inputPlaceholder, PLACEHOLDERS.inputPlaceholder)}
               className="min-w-0 flex-1 border-0 bg-transparent outline-none"
               style={{ fontSize: 13, color: WIDGET_TEXT }}
@@ -337,7 +339,7 @@ export function WidgetMock({
               type="button"
               onClick={submit}
               disabled={!onSend || composed.trim().length === 0 || state !== 'welcome'}
-              aria-label="Send preview message"
+              aria-label={t('agents.sendPreviewMessage') || 'Send preview message'}
               className="flex shrink-0 items-center justify-center"
               style={{
                 width: 26,
@@ -356,7 +358,7 @@ export function WidgetMock({
             style={{ fontSize: 10, color: WIDGET_TEXT_MUTED }}
           >
             <span>{liveChatVisible ? text(draft.liveChatLabel, PLACEHOLDERS.liveChatLabel) : ''}</span>
-            <span>Privacy Policy</span>
+            <span>{t('agents.privacyPolicy') || 'Privacy Policy'}</span>
             {draft.showBranding ? (
               <span className="truncate">
                 {branding.lead ? `${branding.lead} ` : ''}

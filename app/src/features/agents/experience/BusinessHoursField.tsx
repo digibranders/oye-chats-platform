@@ -9,6 +9,7 @@ import {
   type DayKey,
   type DraftErrors,
 } from './experience-model';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 /**
  * When the chatbot's people are around.
@@ -59,6 +60,7 @@ export function BusinessHoursField({
   errors,
   disabled = false,
 }: BusinessHoursFieldProps): ReactElement {
+  const { t } = useTranslation();
   const timezone = value?.timezone ?? localTimezone();
   const zones = useMemo(() => timezoneOptions(timezone), [timezone]);
 
@@ -70,8 +72,8 @@ export function BusinessHoursField({
   return (
     <div className="flex flex-col gap-5">
       <Switch
-        label="Only available at set hours"
-        description="Outside them, visitors get your offline banner."
+        label={t('agents.onlyAvailableAtSetHours') || 'Only available at set hours'}
+        description={t('agents.outsideThemVisitorsGetYour') || 'Outside them, visitors get your offline banner.'}
         checked={value !== null}
         disabled={disabled}
         onCheckedChange={(on) => onChange(on ? defaultBusinessHours() : null)}
@@ -79,9 +81,9 @@ export function BusinessHoursField({
 
       {value ? (
         <>
-          <Field label="Time zone" className="max-w-xs">
+          <Field label={t('agents.timeZone') || 'Time zone'} className="max-w-xs">
             <Select
-              label="Time zone"
+              label={t('agents.timeZone') || 'Time zone'}
               options={zones}
               value={timezone}
               disabled={disabled}
@@ -90,7 +92,7 @@ export function BusinessHoursField({
           </Field>
 
           <fieldset className="min-w-0">
-            <legend className="text-base font-medium text-text-primary">Weekly hours</legend>
+            <legend className="text-base font-medium text-text-primary">{t('agents.weeklyHours') || 'Weekly hours'}</legend>
             <ul className="mt-2.5 flex flex-col">
               {DAY_KEYS.map((key) => {
                 const day = value.days[key];
@@ -126,7 +128,7 @@ export function BusinessHoursField({
                           className="figure w-24"
                         />
                         <span aria-hidden className="text-xs text-text-tertiary">
-                          to
+                          {t('agents.to') || 'to'}
                         </span>
                         <Input
                           type="time"
@@ -138,7 +140,7 @@ export function BusinessHoursField({
                           className="figure w-24"
                         />
                         {day === null ? (
-                          <span className="text-xs text-text-tertiary">Closed</span>
+                          <span className="text-xs text-text-tertiary">{t('agents.closed') || 'Closed'}</span>
                         ) : null}
                       </span>
                     </div>

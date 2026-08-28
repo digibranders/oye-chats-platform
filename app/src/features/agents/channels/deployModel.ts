@@ -17,6 +17,7 @@
 import { attributionAnchorHtml } from '../../../data/widgetEmbed';
 import { widgetScriptUrl, type PlatformEnv } from '../../../data/platformIntegrations';
 import type { Tone } from '../../../ui';
+import { t as translateNow } from '../../../i18n/i18n';
 
 /** Mirrors `_MAX_ALLOWED_DOMAINS` in `api/app/api/bot_routes.py`. */
 export const MAX_DOMAINS = 50;
@@ -59,32 +60,32 @@ export function installStatus({ installedAt, claimed, checking }: InstallStatusI
   if (installedAt) {
     return {
       state: 'installed',
-      label: 'Live on your website',
+      label: translateNow('agents.liveOnYourWebsite') || 'Live on your website',
       tone: 'success',
-      detail: 'We have seen this chatbot load on a real page of your site.',
+      detail: translateNow('agents.weHaveSeenThisChatbot') || 'We have seen this chatbot load on a real page of your site.',
     };
   }
   if (checking) {
     return {
       state: 'checking',
-      label: 'Looking for your widget',
+      label: translateNow('agents.lookingForYourWidget') || 'Looking for your widget',
       tone: 'neutral',
-      detail: 'Open a page of your site in another tab — we check every few seconds.',
+      detail: translateNow('agents.openAPageOfYour') || 'Open a page of your site in another tab — we check every few seconds.',
     };
   }
   if (claimed) {
     return {
       state: 'not-detected',
-      label: 'Not detected yet',
+      label: translateNow('agents.notDetectedYet') || 'Not detected yet',
       tone: 'warning',
-      detail: 'The snippet is on your site, but nothing has reached us from it yet.',
+      detail: translateNow('agents.theSnippetIsOnYour') || 'The snippet is on your site, but nothing has reached us from it yet.',
     };
   }
   return {
     state: 'waiting',
-    label: 'Waiting to be installed',
+    label: translateNow('agents.waitingToBeInstalled') || 'Waiting to be installed',
     tone: 'neutral',
-    detail: 'Paste the snippet on your website and visitors can start chatting.',
+    detail: translateNow('agents.pasteTheSnippetOnYour') || 'Paste the snippet on your website and visitors can start chatting.',
   };
 }
 
@@ -146,8 +147,8 @@ export function widgetHeartbeat({
       seenAt: null,
       origin,
       detail: installedAt
-        ? 'We have not recorded a load since this check was added. It appears the next time somebody opens a page with your chatbot on it — an empty reading here does not mean the chatbot is down.'
-        : 'Nothing has loaded your chatbot yet.',
+        ? translateNow('agents.weHaveNotRecordedA') || 'We have not recorded a load since this check was added. It appears the next time somebody opens a page with your chatbot on it — an empty reading here does not mean the chatbot is down.'
+        : translateNow('agents.nothingHasLoadedYourChatbot') || 'Nothing has loaded your chatbot yet.',
     };
   }
 
@@ -155,7 +156,7 @@ export function widgetHeartbeat({
     seenAt,
     origin,
     detail:
-      'Recorded at most twice an hour, so it shows that your chatbot is still on your site, not how busy it has been.',
+      translateNow('agents.recordedAtMostTwiceAn') || 'Recorded at most twice an hour, so it shows that your chatbot is still on your site, not how busy it has been.',
   };
 }
 
@@ -296,16 +297,16 @@ export function domainNotice({
     return {
       id: 'off',
       tone: 'warning',
-      title: 'Any website can embed this chatbot',
-      body: 'Your embed key is visible in your page source, so anyone who copies it can run your chatbot — and spend your credits — on their own site.',
+      title: translateNow('agents.anyWebsiteCanEmbedThis') || 'Any website can embed this chatbot',
+      body: translateNow('agents.yourEmbedKeyIsVisible') || 'Your embed key is visible in your page source, so anyone who copies it can run your chatbot — and spend your credits — on their own site.',
     };
   }
   if (domains.length === 0) {
     return {
       id: 'empty',
       tone: 'warning',
-      title: 'Nothing is being enforced yet',
-      body: 'The check is on but the list is empty, and an empty list lets every origin through. Add your website to actually lock it down.',
+      title: translateNow('agents.nothingIsBeingEnforcedYet') || 'Nothing is being enforced yet',
+      body: translateNow('agents.theCheckIsOnBut') || 'The check is on but the list is empty, and an empty list lets every origin through. Add your website to actually lock it down.',
     };
   }
   const risk = ownSiteRisk({ website, domains, enabled });
@@ -321,7 +322,7 @@ export function domainNotice({
     id: 'ok',
     tone: 'neutral',
     title: `Locked to ${domains.length} ${domains.length === 1 ? 'domain' : 'domains'}`,
-    body: 'Requests from any other website are rejected.',
+    body: translateNow('agents.requestsFromAnyOtherWebsite') || 'Requests from any other website are rejected.',
   };
 }
 
@@ -417,43 +418,43 @@ export function troubleshootItems(input: TroubleshootInput): TroubleshootItem[] 
   } else if (domainCheckEnabled && domainsConfigured > 0) {
     items.push({
       id: 'allow-list-subdomain',
-      title: 'Check the exact address the page is served from',
-      body: 'Allowed domains is on. An entry for acme.com does not cover www.acme.com or shop.acme.com — only *.acme.com does. Compare the address bar on the page you installed to your allowed domains, character for character.',
+      title: translateNow('agents.checkTheExactAddressThe') || 'Check the exact address the page is served from',
+      body: translateNow('agents.allowedDomainsIsOnAn') || 'Allowed domains is on. An entry for acme.com does not cover www.acme.com or shop.acme.com — only *.acme.com does. Compare the address bar on the page you installed to your allowed domains, character for character.',
     });
   }
 
   items.push(
     {
       id: 'external',
-      title: 'We only count a real page on your own domain',
-      body: 'A load from localhost, from a file:// page, or from the preview on this dashboard never counts as installed — that is deliberate, so a preview cannot mark you live. Open the page on the domain your visitors use.',
+      title: translateNow('agents.weOnlyCountAReal') || 'We only count a real page on your own domain',
+      body: translateNow('agents.aLoadFromLocalhostFrom') || 'A load from localhost, from a file:// page, or from the preview on this dashboard never counts as installed — that is deliberate, so a preview cannot mark you live. Open the page on the domain your visitors use.',
     },
     {
       id: 'body',
-      title: 'The tag has to be in <body>, not <head>',
-      body: 'In <head> the script runs before there is a document to mount into, so the launcher never appears. Paste it immediately before the closing </body> tag.',
+      title: translateNow('agents.theTagHasToBe') || 'The tag has to be in <body>, not <head>',
+      body: translateNow('agents.inHeadTheScriptRuns') || 'In <head> the script runs before there is a document to mount into, so the launcher never appears. Paste it immediately before the closing </body> tag.',
     },
     {
       id: 'bot-key',
-      title: 'Check the key on the tag character for character',
-      body: 'A snippet copied from a different chatbot loads a widget that works perfectly and reports to the wrong place. This chatbot is:',
+      title: translateNow('agents.checkTheKeyOnThe') || 'Check the key on the tag character for character',
+      body: translateNow('agents.aSnippetCopiedFromA') || 'A snippet copied from a different chatbot loads a widget that works perfectly and reports to the wrong place. This chatbot is:',
       code: botKey,
     },
     {
       id: 'csp',
-      title: 'A Content-Security-Policy will block the bundle silently',
-      body: 'If your site sends a CSP header, the browser refuses the script with a console error and nothing else. Allow both of these:',
+      title: translateNow('agents.aContentSecurityPolicyWill') || 'A Content-Security-Policy will block the bundle silently',
+      body: translateNow('agents.ifYourSiteSendsA') || 'If your site sends a CSP header, the browser refuses the script with a console error and nothing else. Allow both of these:',
       code: `script-src ${scriptOrigin(env)};\nconnect-src ${apiOrigin(apiBaseUrl)};`,
     },
     {
       id: 'cache',
-      title: 'A cache may still be serving the old page',
-      body: 'Cloudflare, Varnish, a WordPress cache plugin or your host’s own CDN can keep serving the HTML from before you added the tag. Purge the cache, then reload the page with a hard refresh.',
+      title: translateNow('agents.aCacheMayStillBe') || 'A cache may still be serving the old page',
+      body: translateNow('agents.cloudflareVarnishAWordpressCache') || 'Cloudflare, Varnish, a WordPress cache plugin or your host’s own CDN can keep serving the HTML from before you added the tag. Purge the cache, then reload the page with a hard refresh.',
     },
     {
       id: 'blockers',
-      title: 'Check it in a clean browser window',
-      body: 'An ad blocker or a privacy extension on your own machine can remove the widget for you and nobody else. Open the page in a private window with extensions off before concluding it is not installed.',
+      title: translateNow('agents.checkItInAClean') || 'Check it in a clean browser window',
+      body: translateNow('agents.anAdBlockerOrA') || 'An ad blocker or a privacy extension on your own machine can remove the widget for you and nobody else. Open the page in a private window with extensions off before concluding it is not installed.',
     },
   );
 

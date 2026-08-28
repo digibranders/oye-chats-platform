@@ -23,6 +23,7 @@ import {
   type ServiceEntry,
   type SmartLink,
 } from './experience-model';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 /**
  * How the chatbot sounds, and what it is allowed to sound off about.
@@ -64,6 +65,7 @@ export function VoiceSection({
   onChange,
   onServerCommit,
 }: VoiceSectionProps): ReactElement {
+  const { t } = useTranslation();
   const [presets, setPresets] = useState<TonePreset[]>([]);
   const [detecting, setDetecting] = useState(false);
   const [detectError, setDetectError] = useState<string | null>(null);
@@ -112,11 +114,11 @@ export function VoiceSection({
       onServerCommit({ brandTone: result.brandTone, brandTonePreset: result.brandTonePreset });
       setDetected(true);
     } catch (cause) {
-      setDetectError(errorMessage(cause, 'We could not read a tone from your website.'));
+      setDetectError(errorMessage(cause, t('agents.weCouldNotReadA') || 'We could not read a tone from your website.'));
     } finally {
       setDetecting(false);
     }
-  }, [agentId, detecting, onServerCommit]);
+  }, [agentId, detecting, onServerCommit, t]);
 
   const hear = useCallback(async (): Promise<void> => {
     if (agentId === null || sampling) return;
@@ -125,13 +127,13 @@ export function VoiceSection({
     setSample(null);
     try {
       const text = await sampleTone(agentId, draft.brandTone);
-      setSample(text || 'The chatbot did not have anything to say in that tone.');
+      setSample(text || t('agents.theChatbotDidNotHave') || 'The chatbot did not have anything to say in that tone.');
     } catch (cause) {
-      setSampleError(errorMessage(cause, 'We could not write a sample just now.'));
+      setSampleError(errorMessage(cause, t('agents.weCouldNotWriteA') || 'We could not write a sample just now.'));
     } finally {
       setSampling(false);
     }
-  }, [agentId, sampling, draft.brandTone]);
+  }, [agentId, sampling, draft.brandTone, t]);
 
   const updateService = (index: number, patch: Partial<ServiceEntry>): void => {
     onChange({
@@ -150,12 +152,12 @@ export function VoiceSection({
         <CardHeader
           eyebrow="Instructions"
           titleAs="h2"
-          title="How it should behave"
-          description="Layered on top of what it has read."
+          title={t('agents.howItShouldBehave') || 'How it should behave'}
+          description={t('agents.layeredOnTopOfWhat') || 'Layered on top of what it has read.'}
         />
         <CardBody>
           <Field
-            label="Custom instructions"
+            label={t('agents.customInstructions') || 'Custom instructions'}
             hint={`Up to ${LIMITS.systemPrompt} characters — ${draft.systemPrompt.length} used.`}
           >
             <Textarea
@@ -163,7 +165,7 @@ export function VoiceSection({
               value={draft.systemPrompt}
               maxLength={LIMITS.systemPrompt}
               disabled={readOnly}
-              placeholder="You are a support assistant for Acme. Be concise, and offer to connect the visitor to a person when you are unsure."
+              placeholder={t('agents.youAreASupportAssistant') || 'You are a support assistant for Acme. Be concise, and offer to connect the visitor to a person when you are unsure.'}
               onChange={(event) => onChange({ systemPrompt: event.target.value })}
             />
           </Field>
@@ -174,13 +176,13 @@ export function VoiceSection({
         <CardHeader
           eyebrow="Voice"
           titleAs="h2"
-          title="How it should sound"
+          title={t('agents.howItShouldSound') || 'How it should sound'}
           actions={
             <Tooltip
               content={
                 meta.trained
-                  ? 'Read your website and infer a tone from it'
-                  : 'Train this chatbot on your website first — detection reads what it has crawled'
+                  ? t('agents.readYourWebsiteAndInfer') || 'Read your website and infer a tone from it'
+                  : t('agents.trainThisChatbotOnYour') || 'Train this chatbot on your website first — detection reads what it has crawled'
               }
             >
               <Button
@@ -191,7 +193,7 @@ export function VoiceSection({
                 iconLeft={<Sparkles aria-hidden />}
                 onClick={() => void detect()}
               >
-                Detect from my site
+                {t('agents.detectFromMySite') || 'Detect from my site'}
               </Button>
             </Tooltip>
           }
@@ -206,7 +208,7 @@ export function VoiceSection({
                its own sentence, which is DESIGN.md's stated test for cards over
                a segmented control. */
             <RadioCards
-              label="Tone preset"
+              label={t('agents.tonePreset') || 'Tone preset'}
               columns={2}
               value={draft.brandTonePreset ?? ''}
               onChange={(key) => {
@@ -224,27 +226,27 @@ export function VoiceSection({
           ) : null}
 
           <Field
-            label="Voice and tone"
-            hint="Say what to avoid as well as what to aim for."
+            label={t('agents.voiceAndTone') || 'Voice and tone'}
+            hint={t('agents.sayWhatToAvoidAs') || 'Say what to avoid as well as what to aim for.'}
           >
             <Textarea
               rows={3}
               value={draft.brandTone}
               maxLength={LIMITS.brandTone}
               disabled={readOnly}
-              placeholder="Warm and direct, with no jargon. Never oversell — say when you do not know."
+              placeholder={t('agents.warmAndDirectWithNo') || 'Warm and direct, with no jargon. Never oversell — say when you do not know.'}
               onChange={(event) => onToneText(event.target.value)}
             />
           </Field>
 
           {detectError ? (
-            <Alert tone="danger" title="Detection did not work" live>
+            <Alert tone="danger" title={t('agents.detectionDidNotWork') || 'Detection did not work'} live>
               {detectError}
             </Alert>
           ) : null}
           {detected && !detectError ? (
             <Alert tone="success" live>
-              Read from your website and saved. It is already in effect.
+              {t('agents.readFromYourWebsiteAnd') || 'Read from your website and saved. It is already in effect.'}
             </Alert>
           ) : null}
 
@@ -263,7 +265,7 @@ export function VoiceSection({
                   iconLeft={<Volume2 aria-hidden />}
                   onClick={() => void hear()}
                 >
-                  Hear this voice
+                  {t('agents.hearThisVoice') || 'Hear this voice'}
                 </Button>
               </Tooltip>
             </div>
@@ -274,7 +276,7 @@ export function VoiceSection({
               </Well>
             ) : null}
             {sampleError ? (
-              <Alert tone="danger" title="No sample this time" live>
+              <Alert tone="danger" title={t('agents.noSampleThisTime') || 'No sample this time'} live>
                 {sampleError}
               </Alert>
             ) : null}
@@ -285,26 +287,26 @@ export function VoiceSection({
         <CardHeader
           eyebrow="Business"
           titleAs="h2"
-          title="Who the chatbot says you are"
-          description="Filled in from your website. Yours to correct."
+          title={t('agents.whoTheChatbotSaysYou') || 'Who the chatbot says you are'}
+          description={t('agents.filledInFromYourWebsite') || 'Filled in from your website. Yours to correct.'}
         />
         <CardBody className="flex flex-col gap-5">
-          <Field label="Company name">
+          <Field label={t('agents.companyName') || 'Company name'}>
             <Input
               value={draft.companyName}
               maxLength={LIMITS.companyName}
               disabled={readOnly}
-              placeholder="Acme Inc."
+              placeholder={t('agents.acmeInc') || 'Acme Inc.'}
               onChange={(event) => onChange({ companyName: event.target.value })}
             />
           </Field>
-          <Field label="What you do">
+          <Field label={t('agents.whatYouDo') || 'What you do'}>
             <Textarea
               rows={3}
               value={draft.companyDescription}
               maxLength={LIMITS.companyDescription}
               disabled={readOnly}
-              placeholder="Acme builds project management software for remote teams."
+              placeholder={t('agents.acmeBuildsProjectManagementSoftware') || 'Acme builds project management software for remote teams.'}
               onChange={(event) => onChange({ companyDescription: event.target.value })}
             />
           </Field>
@@ -315,8 +317,8 @@ export function VoiceSection({
         <CardHeader
           eyebrow="Scope"
           titleAs="h2"
-          title="What it is allowed to talk about"
-          description="An empty list lets it answer from everything it has read."
+          title={t('agents.whatItIsAllowedTo') || 'What it is allowed to talk about'}
+          description={t('agents.anEmptyListLetsIt') || 'An empty list lets it answer from everything it has read.'}
         />
         <CardBody className="flex flex-col gap-4">
           {draft.services.length === 0 ? null : (
@@ -329,7 +331,7 @@ export function VoiceSection({
                       maxLength={LIMITS.serviceName}
                       disabled={readOnly}
                       aria-label={`Service ${index + 1} name`}
-                      placeholder="SEO audit"
+                      placeholder={t('agents.seoAudit') || 'SEO audit'}
                       onChange={(event) => updateService(index, { name: event.target.value })}
                       className="flex-1"
                     />
@@ -375,7 +377,7 @@ export function VoiceSection({
               onClick={() => onChange({ services: [...draft.services, { name: '', url: '' }] })}
             >
               <Plus aria-hidden />
-              Add a service
+              {t('agents.addAService') || 'Add a service'}
             </Button>
           </div>
         </CardBody>
@@ -385,8 +387,8 @@ export function VoiceSection({
         <CardHeader
           eyebrow="Links"
           titleAs="h2"
-          title="Words the chatbot turns into links"
-          description="A keyword in an answer becomes a link."
+          title={t('agents.wordsTheChatbotTurnsInto') || 'Words the chatbot turns into links'}
+          description={t('agents.aKeywordInAnAnswer') || 'A keyword in an answer becomes a link.'}
         />
         <CardBody className="flex flex-col gap-4">
           {draft.smartLinks.length === 0 ? null : (
@@ -399,7 +401,7 @@ export function VoiceSection({
                       maxLength={LIMITS.keyword}
                       disabled={readOnly}
                       aria-label={`Link ${index + 1} keyword`}
-                      placeholder="pricing"
+                      placeholder={t('agents.pricing') || 'pricing'}
                       onChange={(event) => updateLink(index, { keyword: event.target.value })}
                       className="w-40 shrink-0"
                     />
@@ -447,7 +449,7 @@ export function VoiceSection({
               }
             >
               <Plus aria-hidden />
-              Add a link
+              {t('agents.addALink') || 'Add a link'}
             </Button>
           </div>
         </CardBody>

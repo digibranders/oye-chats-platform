@@ -1,4 +1,5 @@
 
+import { t as translateNow } from '../../i18n/i18n';
 /**
  * The client-side mirror of the server's add-an-agent decision, so the create
  * flow can tell the user what it will cost BEFORE they fill in a form.
@@ -89,7 +90,7 @@ const PER_AGENT_BILLING = 'The next one needs its own plan.';
 export function describeAgentLimit(gate: AgentCreationGate, planName: string): string | null {
   if (gate.kind !== 'requires_plan') return null;
   if (gate.agentLimit < 1) return PER_AGENT_BILLING;
-  const plan = planName.trim() || 'Your plan';
+  const plan = planName.trim() || translateNow('agents.yourPlan') || 'Your plan';
   const quota = gate.agentLimit === 1 ? '1 chatbot' : `${gate.agentLimit} chatbots`;
   return `${plan} includes ${quota}; you have ${gate.agentCount}. ${PER_AGENT_BILLING}`;
 }

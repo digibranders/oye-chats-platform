@@ -26,6 +26,7 @@ import {
   uploadSkipReason,
   type Allowance,
 } from '../knowledge-model';
+import { useTranslation } from '../../../../i18n/useTranslation';
 
 export interface DocumentsFlowProps {
   agentId: number;
@@ -63,6 +64,7 @@ export function DocumentsFlow({
   planLoading,
   onChanged,
 }: DocumentsFlowProps) {
+  const { t } = useTranslation();
   const [pending, setPending] = useState<File[] | null>(null);
   const [quote, setQuote] = useState<UploadCostPreview | null>(null);
   const [quoting, setQuoting] = useState(false);
@@ -84,19 +86,19 @@ export function DocumentsFlow({
         const preview = await previewUploadCost(files, agentId);
         if (!preview) {
           setError(
-            'We could not price these documents just now, so we have not uploaded them. Try again in a moment.',
+            t('agents.weCouldNotPriceThese') || 'We could not price these documents just now, so we have not uploaded them. Try again in a moment.',
           );
           return;
         }
         setPending(files);
         setQuote(preview);
       } catch (cause) {
-        setError(errorMessage(cause, 'We could not read those files. Please try again.'));
+        setError(errorMessage(cause, t('agents.weCouldNotReadThose') || 'We could not read those files. Please try again.'));
       } finally {
         setQuoting(false);
       }
     },
-    [agentId],
+    [agentId, t],
   );
 
   async function upload() {
@@ -122,7 +124,7 @@ export function DocumentsFlow({
       );
       onChanged();
     } catch (cause) {
-      setError(errorMessage(cause, 'That upload did not go through. Please try again.'));
+      setError(errorMessage(cause, t('agents.thatUploadDidNotGo') || 'That upload did not go through. Please try again.'));
     } finally {
       // The confirmation closes either way. A failure explained behind a modal
       // the customer cannot see is the same as no explanation at all.
@@ -141,7 +143,7 @@ export function DocumentsFlow({
           description={`This plan covers ${formatNumber(documentAllowance.limit)} documents across this workspace. Remove one below, or move up.`}
           action={
             <Link to="/billing" className={buttonClass('primary', 'sm')}>
-              See plans
+              {t('agents.seePlans') || 'See plans'}
             </Link>
           }
         />
@@ -158,7 +160,7 @@ export function DocumentsFlow({
           description={`This plan holds ${formatNumber(characterAllowance.limit)} characters. Remove something below, or move up.`}
           action={
             <Link to="/billing" className={buttonClass('primary', 'sm')}>
-              See plans
+              {t('agents.seePlans') || 'See plans'}
             </Link>
           }
         />
@@ -192,8 +194,8 @@ export function DocumentsFlow({
           // nowhere else to put it, which made the name of the quota four words
           // long and pushed the figure it is read against off to the right.
           <Meter
-            label="Documents"
-            hint="Across this workspace, not just this chatbot."
+            label={t('agents.documents') || 'Documents'}
+            hint={t('agents.acrossThisWorkspaceNotJust') || 'Across this workspace, not just this chatbot.'}
             used={documentAllowance.used}
             limit={documentAllowance.limit}
             tone="plan"
@@ -202,7 +204,7 @@ export function DocumentsFlow({
 
         {characterAllowance && !planLoading ? (
           <Meter
-            label="Knowledge base"
+            label={t('agents.knowledgeBase') || 'Knowledge base'}
             hint={`About ${formatNumber(charactersAsWords(characterAllowance.used))} words of text stored.`}
             used={characterAllowance.used}
             limit={characterAllowance.limit}
@@ -212,8 +214,8 @@ export function DocumentsFlow({
         ) : null}
 
         <FileDrop
-          label="Drop documents here, or choose files"
-          hint="Anything a visitor might ask about."
+          label={t('agents.dropDocumentsHereOrChoose') || 'Drop documents here, or choose files'}
+          hint={t('agents.anythingAVisitorMightAsk') || 'Anything a visitor might ask about.'}
           accept={UPLOAD_EXTENSIONS}
           maxSizeBytes={MAX_UPLOAD_BYTES}
           maxFiles={MAX_UPLOAD_FILES}
@@ -222,7 +224,7 @@ export function DocumentsFlow({
         />
 
         {quoting ? (
-          <Progress value={null} label="Working out what these documents will cost" />
+          <Progress value={null} label={t('agents.workingOutWhatTheseDocuments') || 'Working out what these documents will cost'} />
         ) : null}
 
         {quote !== null && !affordable ? (
@@ -230,17 +232,17 @@ export function DocumentsFlow({
             tone="plan"
             title={
               quote.total_credits === 0
-                ? 'There is nothing to upload here'
-                : 'Not enough credits for these documents'
+                ? t('agents.thereIsNothingToUpload') || 'There is nothing to upload here'
+                : t('agents.notEnoughCreditsForThese') || 'Not enough credits for these documents'
             }
             action={
               quote.total_credits === 0 ? (
                 <Button size="sm" onClick={clearPending}>
-                  Choose other files
+                  {t('agents.chooseOtherFiles') || 'Choose other files'}
                 </Button>
               ) : (
                 <Link to="/billing" className={buttonClass('secondary', 'sm')}>
-                  Top up
+                  {t('agents.topUp') || 'Top up'}
                 </Link>
               )
             }
@@ -264,8 +266,8 @@ export function DocumentsFlow({
         {jobId !== null || landed !== null ? (
           <IngestionProgress
             jobId={jobId}
-            title="Reading your documents"
-            detail={landed ?? 'Uploaded'}
+            title={t('agents.readingYourDocuments') || 'Reading your documents'}
+            detail={landed ?? (t('agents.uploaded') || 'Uploaded')}
             onFinished={onChanged}
           />
         ) : null}

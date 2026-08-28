@@ -19,6 +19,7 @@ import {
   type ExperienceMeta,
   type SectionKey,
 } from './experience-model';
+import { t as translateNow } from '../../../i18n/i18n';
 
 /**
  * Everything this surface reads and writes, keyed by the chatbot in the URL.
@@ -244,11 +245,11 @@ export function useExperience(): ExperienceState {
         setSaveError(
           errorMessage(
             cause,
-            'Your seat can read this chatbot but not change it. Ask a workspace admin to make this edit.',
+            translateNow('agents.yourSeatCanReadThis') || 'Your seat can read this chatbot but not change it. Ask a workspace admin to make this edit.',
           ),
         );
       } else {
-        setSaveError(errorMessage(cause, 'We could not save your changes. Please try again.'));
+        setSaveError(errorMessage(cause, translateNow('agents.weCouldNotSaveYour') || 'We could not save your changes. Please try again.'));
       }
     } finally {
       if (agentIdRef.current === saveAgentId) setSaving(false);
@@ -269,10 +270,10 @@ export function useExperience(): ExperienceState {
 
   return {
     agentId,
-    agentName: current?.draft.displayName.trim() || agent?.name || 'This chatbot',
+    agentName: current?.draft.displayName.trim() || agent?.name || translateNow('agents.thisChatbot') || 'This chatbot',
     status,
     loadError:
-      status === 'error' ? errorMessage(record.error, 'We could not load this chatbot.') : null,
+      status === 'error' ? errorMessage(record.error, translateNow('agents.weCouldNotLoadThis2') || 'We could not load this chatbot.') : null,
     retry: () => void record.refetch(),
 
     draft: current?.draft ?? null,

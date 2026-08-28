@@ -9,6 +9,7 @@ import { keys } from '../../../query/keys';
 import type { KnowledgeSource, KnowledgeState, UnansweredQuestion } from '../../../types/domain';
 import { errorMessage, fetchRecrawlStatus, isForbidden, type RecrawlStatus } from './knowledge-api';
 import type { GapWindow } from './knowledge-model';
+import { t as translateNow } from '../../../i18n/i18n';
 
 /**
  * Knowledge's reads, one query per section.
@@ -113,25 +114,25 @@ export function useKnowledgeData(agentId: number | null, gapWindow: GapWindow): 
       sourcesQuery,
       (rows) => rows ?? NO_SOURCES,
       NO_SOURCES,
-      'We could not load what this chatbot knows.',
+      translateNow('agents.weCouldNotLoadWhat') || 'We could not load what this chatbot knows.',
     ),
     state: toSection(
       stateQuery,
       (raw) => raw ?? EMPTY_STATE,
       EMPTY_STATE,
-      'We could not check whether this knowledge is active.',
+      translateNow('agents.weCouldNotCheckWhether') || 'We could not check whether this knowledge is active.',
     ),
     gaps: toSection(
       gapsQuery,
       (rows) => rows ?? NO_GAPS,
       NO_GAPS,
-      'We could not load the questions your chatbot could not answer.',
+      translateNow('agents.weCouldNotLoadThe3') || 'We could not load the questions your chatbot could not answer.',
     ),
     autoRetrain: toSection(
       autoRetrainQuery,
       (status) => status,
       null,
-      'We could not load the weekly retrain setting.',
+      translateNow('agents.weCouldNotLoadThe2') || 'We could not load the weekly retrain setting.',
     ),
     refreshAll,
     refreshing:

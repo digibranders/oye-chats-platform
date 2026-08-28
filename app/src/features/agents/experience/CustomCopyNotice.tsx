@@ -1,4 +1,5 @@
 import { Alert } from '../../../ui';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 /**
  * Custom copy is not translated — said on the surfaces where it is written.
@@ -16,9 +17,10 @@ import { Alert } from '../../../ui';
  * actually on, because on a single-language chatbot it is noise.
  */
 export function CustomCopyNotice({ multilingual }: { multilingual: boolean }) {
+  const { t } = useTranslation();
   if (!multilingual) return null;
   return (
-    <Alert tone="neutral" title="Custom text is shown unchanged in every language">
+    <Alert tone="neutral" title={t('agents.customTextIsShownUnchanged') || 'Custom text is shown unchanged in every language'}>
       Anything you write here replaces the built-in wording, which your chatbot would otherwise
       translate for each visitor. Leave a field empty to keep the translated default.
     </Alert>

@@ -1,6 +1,7 @@
 import { Bot as BotIcon } from 'lucide-react';
 import { Avatar, cn, type AvatarSize } from '../../ui';
 import { isHexColor } from './experience/contrast';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * A chatbot's identity mark, rendered the way its own visitors see it.
@@ -76,6 +77,7 @@ function usableLogo(value: string | null | undefined): string | null {
 }
 
 export function AgentAvatar({ agent, size = 'sm', className }: AgentAvatarProps) {
+  const { t } = useTranslation();
   const brand = safeColor(agent.primary_color, DEFAULT_BRAND);
   const type = agent.avatar_type || 'upload';
 
@@ -98,7 +100,7 @@ export function AgentAvatar({ agent, size = 'sm', className }: AgentAvatarProps)
     // fallback without a flash of initials behind a good image.
     return (
       <Avatar
-        name={agent.name ?? 'Chatbot'}
+        name={agent.name ?? (t('agents.chatbot') || 'Chatbot')}
         src={logo}
         size={size}
         shape="rounded"

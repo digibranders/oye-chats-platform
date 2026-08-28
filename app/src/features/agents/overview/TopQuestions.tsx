@@ -7,6 +7,7 @@ import {
 } from '../../../ui';
 import type { TopQuestion } from '../../../types/domain';
 import type { Section } from './overview-data';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 /** How many questions the panel shows beside the activity chart. */
 const TOP_N = 6;
@@ -28,15 +29,16 @@ const TOP_N = 6;
  * returns questions already aggregated, with no dates to trim by.
  */
 export function TopQuestions({ section }: { section: Section<TopQuestion[]> }) {
+  const { t } = useTranslation();
   if (section.error) {
     return (
       <CardBody>
         <Alert
           tone="danger"
-          title="We could not load the top questions"
+          title={t('agents.weCouldNotLoadThe6') || 'We could not load the top questions'}
           action={
             <Button size="sm" onClick={section.retry}>
-              Try again
+              {t('agents.tryAgain') || 'Try again'}
             </Button>
           }
         >
@@ -48,7 +50,7 @@ export function TopQuestions({ section }: { section: Section<TopQuestion[]> }) {
 
   return (
     <RankedBars
-      label="Most asked questions, all time"
+      label={t('agents.mostAskedQuestionsAllTime') || 'Most asked questions, all time'}
       loading={section.loading}
       loadingRows={TOP_N}
       emptyTitle="Nothing asked yet"

@@ -8,6 +8,7 @@ import {
   nearestAccessible,
   type ContrastConstraint,
 } from './contrast';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 /**
  * A colour, with the contrast it produces.
@@ -69,6 +70,7 @@ export function ColorField({
   error,
   disabled = false,
 }: ColorFieldProps): ReactElement {
+  const { t } = useTranslation();
   const valid = isHexColor(value);
   const checks = pairs.map((pair) =>
     checkContrast(pair.foreground, pair.background, pair.label, pair.min ?? TEXT_CONTRAST_MIN),
@@ -106,11 +108,11 @@ export function ColorField({
                 <span className="flex shrink-0 items-center gap-2">
                   <span className="figure text-xs text-text-primary">{formatRatio(check.ratio)}</span>
                   {check.verdict === 'pass' ? (
-                    <Badge tone="success">Readable</Badge>
+                    <Badge tone="success">{t('agents.readable') || 'Readable'}</Badge>
                   ) : check.verdict === 'fail' ? (
                     <Badge tone="danger">Below {check.min}:1</Badge>
                   ) : (
-                    <Badge tone="neutral">Not a colour</Badge>
+                    <Badge tone="neutral">{t('agents.notAColour') || 'Not a colour'}</Badge>
                   )}
                 </span>
               </li>
@@ -124,7 +126,7 @@ export function ColorField({
               {failing.length === 1
                 ? `${failing[0].label} is hard to read at this contrast.`
                 : `${failing.length} pairs are hard to read at this contrast.`}{' '}
-              Roughly one visitor in twelve will struggle with it.
+              {t('agents.roughlyOneVisitorInTwelve') || 'Roughly one visitor in twelve will struggle with it.'}
             </span>
             {suggestion ? (
               <Button variant="secondary" size="sm" onClick={() => onChange(suggestion)} disabled={disabled}>

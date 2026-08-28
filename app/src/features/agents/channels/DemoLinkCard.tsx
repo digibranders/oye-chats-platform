@@ -1,8 +1,10 @@
 import { type ReactElement, useState } from 'react';
+import { t as translateNow } from '../../../i18n/i18n';
 import { ExternalLink, RefreshCw } from 'lucide-react';
 import { Alert, Button, Card, CardBody, CardHeader, CopyField, buttonClass } from '../../../ui';
 import { recaptureDemoScreenshot, trackDemoShareClick } from '../../../services/api';
 import { type DemoPreviewState, demoPreviewState } from './deployModel';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 /**
  * The shareable demo link, and an honest account of what it shows.
@@ -35,7 +37,7 @@ function describe(state: DemoPreviewState, website: string | null): string {
     case 'pending':
       return `We are taking a picture of ${website} now. Until it is ready the link opens a stand-in page.`;
     case 'no-website':
-      return 'Add this chatbot’s website address and the link will open your own site with the chat on it.';
+      return translateNow('agents.addThisChatbotsWebsiteAddress') || 'Add this chatbot’s website address and the link will open your own site with the chat on it.';
     case 'unavailable':
       return `We could not capture ${website ?? 'your website'}, so the link opens a stand-in page for now.`;
   }
@@ -49,6 +51,7 @@ export function DemoLinkCard({
   screenshotCapturedAt,
   onRefresh,
 }: DemoLinkCardProps): ReactElement {
+  const { t } = useTranslation();
   const [requesting, setRequesting] = useState(false);
   const [requested, setRequested] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -76,7 +79,7 @@ export function DemoLinkCard({
       setRequested(true);
       onRefresh?.();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'We could not start the preview.');
+      setError(cause instanceof Error ? cause.message : t('agents.weCouldNotStartThe2') || 'We could not start the preview.');
     } finally {
       setRequesting(false);
     }
@@ -84,11 +87,11 @@ export function DemoLinkCard({
 
   return (
     <Card>
-      <CardHeader size="sm" titleAs="h2" title="Share a link instead" />
+      <CardHeader size="sm" titleAs="h2" title={t('agents.shareALinkInstead') || 'Share a link instead'} />
       <CardBody className="space-y-2">
         <p className="text-xs text-text-secondary">{describe(state, website)}</p>
 
-        <CopyField value={demoUrl} label="demo link" compact />
+        <CopyField value={demoUrl} label={t('agents.demoLink') || 'demo link'} compact />
 
         <div className="flex flex-wrap items-center gap-1">
           <a
@@ -104,18 +107,18 @@ export function DemoLinkCard({
             }}
           >
             <ExternalLink aria-hidden />
-            Open it
-            <span className="sr-only"> (opens in a new tab)</span>
+            {t('agents.openIt') || 'Open it'}
+            <span className="sr-only"> {t('agents.opensInANewTab') || '(opens in a new tab)'}</span>
           </a>
 
           {canRecapture ? (
             <Button variant="ghost" size="sm" onClick={() => void recapture()} disabled={requesting}>
               <RefreshCw aria-hidden />
               {state.kind === 'ready' || state.kind === 'stale'
-                ? 'Refresh preview'
+                ? t('agents.refreshPreview') || 'Refresh preview'
                 : state.kind === 'pending'
-                  ? 'Start over'
-                  : 'Try again'}
+                  ? t('agents.startOver') || 'Start over'
+                  : t('agents.tryAgain') || 'Try again'}
             </Button>
           ) : null}
         </div>
@@ -123,11 +126,11 @@ export function DemoLinkCard({
         {/* Live region: the outcome of a click the reader cannot otherwise see,
             since the capture itself happens on the server minutes later. */}
         <p aria-live="polite" className="sr-only">
-          {requested ? 'Website preview requested.' : ''}
+          {requested ? t('agents.websitePreviewRequested') || 'Website preview requested.' : ''}
         </p>
 
         {error ? (
-          <Alert tone="danger" title="We could not start the preview">
+          <Alert tone="danger" title={t('agents.weCouldNotStartThe') || 'We could not start the preview'}>
             {error}
           </Alert>
         ) : null}

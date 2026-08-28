@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Alert, Progress, Well, formatNumber } from '../../../ui';
 import { fetchIngestStatus } from './knowledge-api';
 import { ingestProgress } from './knowledge-model';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 export interface IngestionProgressProps {
   /** Names the work: "Reading your website", "Reading your documents". */
@@ -56,6 +57,7 @@ export function IngestionProgress({
   onFinished,
   action,
 }: IngestionProgressProps) {
+  const { t } = useTranslation();
   const job = useQuery({
     // A literal key, not one from `query/keys.ts`: a job id is ephemeral and
     // owned entirely by this component, and the shared registry is for keys two
@@ -84,7 +86,7 @@ export function IngestionProgress({
 
   if (phase.phase === 'failed') {
     return (
-      <Alert tone="danger" live title="We could not read that document">
+      <Alert tone="danger" live title={t('agents.weCouldNotReadThat') || 'We could not read that document'}>
         Nothing was added to this chatbot&apos;s knowledge. A scanned PDF with no text layer is the
         usual cause — try a text-based copy, or paste the content into a plain text file.
       </Alert>
@@ -94,7 +96,7 @@ export function IngestionProgress({
   if (phase.phase === 'done') {
     return (
       <Alert tone="success" live>
-        Done — this chatbot can answer from it now.
+        {t('agents.doneThisChatbotCanAnswer') || 'Done — this chatbot can answer from it now.'}
       </Alert>
     );
   }
@@ -126,7 +128,7 @@ export function IngestionProgress({
       </div>
       {phase.phase === 'unknown' && done === undefined ? (
         <p className="mt-2 text-xs text-text-secondary">
-          This usually takes a minute. You can leave this page — it carries on in the background.
+          {t('agents.thisUsuallyTakesAMinute') || 'This usually takes a minute. You can leave this page — it carries on in the background.'}
         </p>
       ) : null}
     </Well>

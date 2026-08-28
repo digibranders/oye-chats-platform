@@ -23,6 +23,7 @@ import { ATTRIBUTION_TEXT } from '../../../data/widgetEmbed';
 import type { Platform, PlatformEnv } from '../../../data/platformIntegrations';
 import { developerEmail, embedSnippet } from './deployModel';
 import { buildInstallPrompt } from './installPrompt';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 export interface SnippetSectionProps {
   botKey: string;
@@ -81,6 +82,7 @@ export function SnippetSection({
   devInviteEmail,
   devInviteSentAt,
 }: SnippetSectionProps) {
+  const { t } = useTranslation();
   const prompt = useClipboard();
 
   // Seeded from the bot, so a reload — or a different machine — still knows.
@@ -131,7 +133,7 @@ export function SnippetSection({
       setError(
         cause instanceof Error && cause.message
           ? cause.message
-          : 'We could not send that email. Please try again.',
+          : t('agents.weCouldNotSendThat') || 'We could not send that email. Please try again.',
       );
     } finally {
       setSending(false);
@@ -141,7 +143,7 @@ export function SnippetSection({
   function submit() {
     const address = draft.trim();
     if (!EMAIL_PATTERN.test(address)) {
-      setError('Please enter a valid email address.');
+      setError(t('agents.pleaseEnterAValidEmail') || 'Please enter a valid email address.');
       return;
     }
     // Confirm only for the address we already mailed. A second developer is a
@@ -170,23 +172,23 @@ export function SnippetSection({
       <CardHeader
         eyebrow="Snippet"
         titleAs="h2"
-        title="Add this to your website"
-        description="One tag, in your site’s shared layout."
+        title={t('agents.addThisToYourWebsite') || 'Add this to your website'}
+        description={t('agents.oneTagInYourSites') || 'One tag, in your site’s shared layout.'}
       />
       <CardBody className="space-y-5">
         {resolving ? (
-          <div aria-busy aria-label="Working out which snippet your plan needs" className="space-y-2">
+          <div aria-busy aria-label={t('agents.workingOutWhichSnippetYour') || 'Working out which snippet your plan needs'} className="space-y-2">
             <Skeleton className="h-4 w-48" />
             <Skeleton className="h-32 w-full rounded-md" />
           </div>
         ) : (
           <CodeBlock
             code={snippet}
-            label="embed snippet"
+            label={t('agents.embedSnippet') || 'embed snippet'}
             caption={
               attribution
-                ? 'Paste before </body> — both lines, the script and the credit link'
-                : 'Paste before </body> — your plan removes the credit link'
+                ? t('agents.pasteBeforeBodyBothLines') || 'Paste before </body> — both lines, the script and the credit link'
+                : t('agents.pasteBeforeBodyYourPlan') || 'Paste before </body> — your plan removes the credit link'
             }
           />
         )}
@@ -197,11 +199,11 @@ export function SnippetSection({
             title={`The second line is your “${ATTRIBUTION_TEXT}” link`}
             action={
               <Link to="/billing" className={buttonClass('secondary', 'sm')}>
-                See plans
+                {t('agents.seePlans') || 'See plans'}
               </Link>
             }
           >
-            It is a visible <code className="figure">nofollow</code> link and has to stay in the
+            {t('agents.itIsAVisible') || 'It is a visible'} <code className="figure">nofollow</code> link and has to stay in the
             HTML your server sends. White-label plans get a snippet without it.
           </Alert>
         ) : null}
@@ -211,8 +213,8 @@ export function SnippetSection({
               page source of every site that runs the widget, and it is safe to
               commit — so hiding it behind a reveal control would teach the
               customer to treat it as a secret and be afraid to paste it. */}
-          <CopyField value={botKey} label="embed key" />
-          <p className="mt-1.5 text-xs text-text-secondary">Public and safe to commit.</p>
+          <CopyField value={botKey} label={t('agents.embedKey') || 'embed key'} />
+          <p className="mt-1.5 text-xs text-text-secondary">{t('agents.publicAndSafeToCommit') || 'Public and safe to commit.'}</p>
         </div>
       </CardBody>
 
@@ -229,13 +231,13 @@ export function SnippetSection({
                 {formatRelative(sent.at)}
               </span>
               <Button variant="secondary" size="sm" onClick={reveal}>
-                Send again
+                {t('agents.sendAgain') || 'Send again'}
               </Button>
             </span>
           ) : !open ? (
             <Tooltip content="Carries the snippet above, the platform steps, and the two Content-Security-Policy origins the widget needs">
               <Button variant="secondary" size="sm" onClick={reveal} iconLeft={<Mail aria-hidden />}>
-                Email this to my developer
+                {t('agents.emailThisToMyDeveloper') || 'Email this to my developer'}
               </Button>
             </Tooltip>
           ) : null}
@@ -253,13 +255,13 @@ export function SnippetSection({
                 )
               }
             >
-              {prompt.state === 'copied' ? 'Prompt copied' : 'Copy a prompt for a coding agent'}
+              {prompt.state === 'copied' ? t('agents.promptCopied') || 'Prompt copied' : t('agents.copyAPromptForA') || 'Copy a prompt for a coding agent'}
             </Button>
           </Tooltip>
           <span role="status" aria-live="polite" className="sr-only">
-            {prompt.state === 'copied' ? 'Install prompt copied' : ''}
+            {prompt.state === 'copied' ? t('agents.installPromptCopied') || 'Install prompt copied' : ''}
             {prompt.state === 'failed'
-              ? 'Could not copy the prompt. Use the email option instead.'
+              ? t('agents.couldNotCopyThePrompt') || 'Could not copy the prompt. Use the email option instead.'
               : ''}
             {/* The send collapses the form and swaps in a line of text. That is
                 obvious to anyone looking at it and silent to anyone not. */}
@@ -288,9 +290,9 @@ export function SnippetSection({
                 the label sits above the whole row and the hint below it, and
                 the input and its two actions share one baseline. */}
             <Field
-              label="Your developer's email"
+              label={t('agents.yourDevelopersEmail') || 'Your developer\'s email'}
               error={error}
-              hint="They get the snippet, where it goes, and the two origins a CSP has to allow."
+              hint={t('agents.theyGetTheSnippetWhere') || 'They get the snippet, where it goes, and the two origins a CSP has to allow.'}
             >
               <div className="flex flex-wrap items-center gap-2">
                 <Input
@@ -319,7 +321,7 @@ export function SnippetSection({
                   loading={sending}
                   iconLeft={<Send aria-hidden />}
                 >
-                  Send
+                  {t('agents.send') || 'Send'}
                 </Button>
                 <Button
                   type="button"
@@ -330,7 +332,7 @@ export function SnippetSection({
                     setError(null);
                   }}
                 >
-                  Cancel
+                  {t('agents.cancel') || 'Cancel'}
                 </Button>
               </div>
             </Field>
@@ -344,20 +346,20 @@ export function SnippetSection({
                 title={`Already sent to ${sent.email} ${formatRelative(sent.at)}`}
                 action={
                   <Button variant="secondary" size="sm" onClick={() => void send(draft.trim())}>
-                    Send it again
+                    {t('agents.sendItAgain') || 'Send it again'}
                   </Button>
                 }
               >
-                Sending again is fine. This is only here so a second copy is on purpose.
+                {t('agents.sendingAgainIsFineThis') || 'Sending again is fine. This is only here so a second copy is on purpose.'}
               </Alert>
             ) : null}
 
             <p className="text-xs text-text-secondary">
               Would rather use your own contacts?{' '}
               <a href={email.href} className="underline underline-offset-2 hover:text-text-primary">
-                Open it in my mail app
+                {t('agents.openItInMyMail') || 'Open it in my mail app'}
               </a>
-              . We cannot record what you send that way.
+              {t('agents.weCannotRecordWhatYou') || '. We cannot record what you send that way.'}
             </p>
           </form>
         ) : null}

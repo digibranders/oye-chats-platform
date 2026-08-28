@@ -11,6 +11,7 @@ import { keys } from '../../../query/keys';
 import { parseRatingsSummary, parseResolutionSummary } from '../../analytics/analytics-types';
 import type { TrendDirection } from '../../../ui';
 import type { ActivityPoint, TopQuestion } from '../../../types/domain';
+import { t as translateNow } from '../../../i18n/i18n';
 
 /**
  * Overview's data, one query per section.
@@ -165,7 +166,7 @@ export interface Section<T> {
 function messageFrom(cause: unknown): string {
   return cause instanceof Error && cause.message
     ? cause.message
-    : 'We could not load this. Please try again.';
+    : translateNow('agents.weCouldNotLoadThis4') || 'We could not load this. Please try again.';
 }
 
 function toSection<TRaw, TData>(

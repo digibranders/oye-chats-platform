@@ -44,6 +44,7 @@ import {
   thresholdCeiling,
   toPayload,
 } from './quotation.model';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 const TITLE = 'Quotation';
 
@@ -66,6 +67,7 @@ function QuotationSkeleton() {
 }
 
 function QuotationContent({ agentId }: { agentId: number }) {
+  const { t } = useTranslation();
   const load = useCallback(
     async (id: number): Promise<QuotationCatalog> => parseCatalog(await getQuotationCatalog(id)),
     [],
@@ -95,7 +97,7 @@ function QuotationContent({ agentId }: { agentId: number }) {
         <PageHeader title={TITLE} />
         <ErrorState
           framed
-          title="We could not load this chatbot's quotation catalog"
+          title={t('agents.weCouldNotLoadThis5') || 'We could not load this chatbot\'s quotation catalog'}
           description={state.loadError}
           onRetry={state.retry}
         />
@@ -118,17 +120,17 @@ function QuotationContent({ agentId }: { agentId: number }) {
         description={
           catalog.enabled
             ? undefined
-            : 'Quoting is off. The chatbot will not offer to price anything, even when asked.'
+            : t('agents.quotingIsOffTheChatbot') || 'Quoting is off. The chatbot will not offer to price anything, even when asked.'
         }
         actions={
           <>
             {catalog.enabled ? null : <Badge tone="neutral">Quoting off</Badge>}
             <span className="flex items-center gap-2">
-              <span className="text-xs text-text-secondary">{catalog.enabled ? 'On' : 'Off'}</span>
+              <span className="text-xs text-text-secondary">{catalog.enabled ? 'On' : t('agents.off') || 'Off'}</span>
               <Switch
                 checked={catalog.enabled}
                 onCheckedChange={(next) => update((previous) => ({ ...previous, enabled: next }))}
-                label="Let this chatbot build quotes"
+                label={t('agents.letThisChatbotBuildQuotes') || 'Let this chatbot build quotes'}
               />
             </span>
           </>
@@ -144,9 +146,9 @@ function QuotationContent({ agentId }: { agentId: number }) {
             <Stack>
               <Card>
                 <CardHeader
-                  title="Services"
+                  title={t('agents.services') || 'Services'}
                   titleAs="h2"
-                  description="The line items this chatbot can price. Visitors pick from these."
+                  description={t('agents.theLineItemsThisChatbot') || 'The line items this chatbot can price. Visitors pick from these.'}
                   actions={
                     <span className="figure text-xs text-text-tertiary">
                       {catalog.services.length} of {MAX_SERVICES}
@@ -157,8 +159,8 @@ function QuotationContent({ agentId }: { agentId: number }) {
                   {catalog.services.length === 0 ? (
                     <EmptyState
                       size="panel"
-                      title="No services yet"
-                      description="A quote is a list of priced things. Add the first one, and the chatbot can start building estimates from it."
+                      title={t('agents.noServicesYet') || 'No services yet'}
+                      description={t('agents.aQuoteIsAList') || 'A quote is a list of priced things. Add the first one, and the chatbot can start building estimates from it.'}
                     />
                   ) : (
                     catalog.services.map((service, index) => (
@@ -200,7 +202,7 @@ function QuotationContent({ agentId }: { agentId: number }) {
                       }))
                     }
                   >
-                    Add service
+                    {t('agents.addService') || 'Add service'}
                   </Button>
                 </CardBody>
               </Card>
@@ -209,15 +211,15 @@ function QuotationContent({ agentId }: { agentId: number }) {
           aside={
             <Stack>
               <Card>
-                <CardHeader title="Currency" titleAs="h2" />
+                <CardHeader title={t('agents.currency') || 'Currency'} titleAs="h2" />
                 <CardBody>
                   <Field
-                    label="Quote in"
+                    label={t('agents.quoteIn') || 'Quote in'}
                     disabled={configDisabled}
-                    hint="Every service price is stored and quoted in this currency."
+                    hint={t('agents.everyServicePriceIsStored') || 'Every service price is stored and quoted in this currency.'}
                   >
                     <Select
-                      label="Currency"
+                      label={t('agents.currency') || 'Currency'}
                       value={catalog.currency}
                       options={CURRENCIES}
                       disabled={configDisabled}
@@ -229,15 +231,15 @@ function QuotationContent({ agentId }: { agentId: number }) {
 
               <Card>
                 <CardHeader
-                  title="When to offer a quote"
+                  title={t('agents.whenToOfferAQuote') || 'When to offer a quote'}
                   titleAs="h2"
-                  description="Quoting an unqualified visitor wastes the number. These are the signals that have to land first."
+                  description={t('agents.quotingAnUnqualifiedVisitorWastes') || 'Quoting an unqualified visitor wastes the number. These are the signals that have to land first.'}
                 />
                 <CardBody className="space-y-4">
                   <fieldset>
-                    <legend className="text-sm font-medium text-text-primary">Signals that count</legend>
+                    <legend className="text-sm font-medium text-text-primary">{t('agents.signalsThatCount') || 'Signals that count'}</legend>
                     <p className="mt-1 text-xs text-text-secondary">
-                      Leave all four unticked to count any of them.
+                      {t('agents.leaveAllFourUntickedTo') || 'Leave all four unticked to count any of them.'}
                     </p>
                     <div className="mt-2 space-y-2">
                       {BANT_DIMENSIONS.map((dimension) => (
@@ -267,18 +269,18 @@ function QuotationContent({ agentId }: { agentId: number }) {
                   </fieldset>
 
                   <Field
-                    label="How many must land"
+                    label={t('agents.howManyMustLand') || 'How many must land'}
                     disabled={configDisabled}
                     hint={
                       catalog.required_categories.length === 0
-                        ? 'Counted across all four signals.'
+                        ? t('agents.countedAcrossAllFourSignals') || 'Counted across all four signals.'
                         : `Counted across ${catalog.required_categories
                             .map((key) => BANT_DIMENSIONS.find((d) => d.key === key)?.label ?? key)
                             .join(', ')}.`
                     }
                   >
                     <Select
-                      label="How many signals must land"
+                      label={t('agents.howManySignalsMustLand') || 'How many signals must land'}
                       value={String(catalog.threshold)}
                       disabled={configDisabled}
                       options={Array.from({ length: ceiling }, (_, index) => ({
@@ -330,6 +332,7 @@ function QuotationContent({ agentId }: { agentId: number }) {
  * write — the exact mismatch `planGates` was written to close.
  */
 export function QuotationPage() {
+  const { t } = useTranslation();
   const { agent, loading, error, refresh } = useAgent();
   const { planSlug, planName, loading: entitlementsLoading } = useEntitlements();
 
@@ -343,11 +346,11 @@ export function QuotationPage() {
         <PageHeader title={TITLE} />
         <ErrorState
           framed
-          title={error ? 'We could not load this chatbot' : 'Chatbot not found'}
+          title={error ? t('agents.weCouldNotLoadThis') || 'We could not load this chatbot' : t('agents.chatbotNotFound') || 'Chatbot not found'}
           description={
             error
-              ? error.message || 'Something went wrong while loading this workspace.'
-              : 'This chatbot does not exist, or it belongs to a workspace you cannot see.'
+              ? error.message || t('agents.somethingWentWrongWhileLoading') || 'Something went wrong while loading this workspace.'
+              : t('agents.thisChatbotDoesNotExist3') || 'This chatbot does not exist, or it belongs to a workspace you cannot see.'
           }
           onRetry={() => void refresh()}
         />
@@ -361,22 +364,22 @@ export function QuotationPage() {
         <PageHeader title={TITLE} />
         <Measure width="reading">
           <LockedState
-            title="Quotations are not included on your plan"
+            title={t('agents.quotationsAreNotIncludedOn') || 'Quotations are not included on your plan'}
             description={`Your workspace is on ${planName || 'a plan'} without the quotation flow. On Professional and above, the chatbot prices a visitor's request in the conversation and hands you the itemised quote with the lead.`}
             action={
               <Link to="/billing" className={buttonClass('primary', 'sm')}>
-                See plans
+                {t('agents.seePlans') || 'See plans'}
               </Link>
             }
             preview={
               <div className="px-cell pb-1 pt-5">
-                <Eyebrow>What you would configure</Eyebrow>
+                <Eyebrow>{t('agents.whatYouWouldConfigure') || 'What you would configure'}</Eyebrow>
                 <PropertyGrid
                   className="mt-2"
                   items={[
-                    { label: 'Services', value: 'What you sell, priced per unit' },
-                    { label: 'Questions', value: 'What the chatbot asks to scope each one' },
-                    { label: 'Trigger', value: 'How qualified a visitor must be before it quotes' },
+                    { label: t('agents.services') || 'Services', value: t('agents.whatYouSellPricedPer') || 'What you sell, priced per unit' },
+                    { label: t('agents.questions') || 'Questions', value: t('agents.whatTheChatbotAsksTo') || 'What the chatbot asks to scope each one' },
+                    { label: t('agents.trigger') || 'Trigger', value: t('agents.howQualifiedAVisitorMust') || 'How qualified a visitor must be before it quotes' },
                   ]}
                 />
               </div>

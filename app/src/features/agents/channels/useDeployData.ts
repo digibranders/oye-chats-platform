@@ -13,6 +13,7 @@ import { getEmbedEnvironment } from './embedEnvironment';
 import { VERIFY_POLL_MS, VERIFY_TIMEOUT_MS, installStatus, type InstallStatus } from './deployModel';
 import type { PlatformEnv } from '../../../data/platformIntegrations';
 import type { Bot } from '../../../types/domain';
+import { t as translateNow } from '../../../i18n/i18n';
 
 /**
  * The chatbot record as this surface reads it.
@@ -39,7 +40,7 @@ function toFailure(error: unknown): LoadFailure {
   if (status === 403 || status === 404) return { kind: 'forbidden' };
   return {
     kind: 'error',
-    message: error instanceof Error ? error.message : 'We could not load this chatbot.',
+    message: error instanceof Error ? error.message : translateNow('agents.weCouldNotLoadThis2') || 'We could not load this chatbot.',
   };
 }
 

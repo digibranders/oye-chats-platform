@@ -1,4 +1,5 @@
 import { type ReactElement, useCallback, useRef, useState } from 'react';
+import { t as translateNow } from '../../../i18n/i18n';
 import { Link } from 'react-router-dom';
 import { ChevronDown, ChevronUp, Plus, Sparkles, Trash2 } from 'lucide-react';
 import {
@@ -27,6 +28,7 @@ import {
   type ExperienceDraft,
   type SuggestionsLayout,
 } from './experience-model';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 /**
  * Everything the widget says, before the chatbot has said anything.
@@ -70,7 +72,7 @@ function defaultMark(value: string) {
   if (value.trim().length > 0) return undefined;
   return (
     <Badge tone="neutral" size="sm">
-      Default
+      {translateNow('agents.default') || 'Default'}
     </Badge>
   );
 }
@@ -90,6 +92,7 @@ export function MessagesSection({
   readOnly,
   onChange,
 }: MessagesSectionProps): ReactElement {
+  const { t } = useTranslation();
   const { hasFeature } = useEntitlements();
   const liveChatIncluded = hasFeature('live_chat');
 
@@ -137,12 +140,12 @@ export function MessagesSection({
       setSuggestions(await fetchSuggestedQuestions(agentId, regenerate));
     } catch (cause) {
       setSuggestError(
-        errorMessage(cause, 'We could not come up with questions just now. Please try again.'),
+        errorMessage(cause, t('agents.weCouldNotComeUp') || 'We could not come up with questions just now. Please try again.'),
       );
     } finally {
       setSuggesting(false);
     }
-  }, [agentId, suggesting, suggestions]);
+  }, [agentId, suggesting, suggestions, t]);
 
   const unusedSuggestions = (suggestions ?? []).filter(
     (question) => !quickActions.some((action) => action.trim() === question.trim()),
@@ -159,21 +162,21 @@ export function MessagesSection({
         <CardHeader
           eyebrow="Identity"
           titleAs="h2"
-          title="What your chatbot is called"
+          title={t('agents.whatYourChatbotIsCalled') || 'What your chatbot is called'}
         />
         <CardBody className="flex flex-col gap-5">
-          <Field label="Display name" error={errors.displayName ?? null} required>
+          <Field label={t('agents.displayName') || 'Display name'} error={errors.displayName ?? null} required>
             <Input
               value={draft.displayName}
               maxLength={LIMITS.displayName}
               disabled={readOnly}
-              placeholder="Acme Assistant"
+              placeholder={t('agents.acmeAssistant') || 'Acme Assistant'}
               onChange={(event) => onChange({ displayName: event.target.value })}
             />
           </Field>
           <Field
-            label="Launcher text"
-            hint="Beside the closed launcher."
+            label={t('agents.launcherText') || 'Launcher text'}
+            hint={t('agents.besideTheClosedLauncher') || 'Beside the closed launcher.'}
             trailing={defaultMark(draft.launcherName)}
           >
             <Input
@@ -191,10 +194,10 @@ export function MessagesSection({
         <CardHeader
           eyebrow="Welcome"
           titleAs="h2"
-          title="The first thing a visitor reads"
+          title={t('agents.theFirstThingAVisitor') || 'The first thing a visitor reads'}
         />
         <CardBody className="flex flex-col gap-5">
-          <Field label="Greeting" trailing={defaultMark(draft.welcomeGreeting)}>
+          <Field label={t('agents.greeting') || 'Greeting'} trailing={defaultMark(draft.welcomeGreeting)}>
             <Input
               value={draft.welcomeGreeting}
               maxLength={LIMITS.welcomeGreeting}
@@ -203,7 +206,7 @@ export function MessagesSection({
               onChange={(event) => onChange({ welcomeGreeting: event.target.value })}
             />
           </Field>
-          <Field label="Subtitle" trailing={defaultMark(draft.welcomeSubtitle)}>
+          <Field label={t('agents.subtitle') || 'Subtitle'} trailing={defaultMark(draft.welcomeSubtitle)}>
             <Input
               value={draft.welcomeSubtitle}
               maxLength={LIMITS.welcomeSubtitle}
@@ -212,7 +215,7 @@ export function MessagesSection({
               onChange={(event) => onChange({ welcomeSubtitle: event.target.value })}
             />
           </Field>
-          <Field label="Message box placeholder" trailing={defaultMark(draft.inputPlaceholder)}>
+          <Field label={t('agents.messageBoxPlaceholder') || 'Message box placeholder'} trailing={defaultMark(draft.inputPlaceholder)}>
             <Input
               value={draft.inputPlaceholder}
               maxLength={LIMITS.inputPlaceholder}
@@ -228,14 +231,14 @@ export function MessagesSection({
         <CardHeader
           eyebrow="Starter questions"
           titleAs="h2"
-          title="Questions a visitor can tap"
-          description="Shown under the greeting."
+          title={t('agents.questionsAVisitorCanTap') || 'Questions a visitor can tap'}
+          description={t('agents.shownUnderTheGreeting') || 'Shown under the greeting.'}
           actions={
             <SegmentedControl
               items={LAYOUTS}
               value={draft.suggestionsLayout}
               onChange={(suggestionsLayout) => onChange({ suggestionsLayout })}
-              label="Starter question layout"
+              label={t('agents.starterQuestionLayout') || 'Starter question layout'}
               size="sm"
             />
           }
@@ -245,7 +248,7 @@ export function MessagesSection({
             <EmptyState
               size="inline"
               flush
-              title="No starter questions yet"
+              title={t('agents.noStarterQuestionsYet') || 'No starter questions yet'}
             />
           ) : (
             <ul className="flex flex-col gap-2">
@@ -261,7 +264,7 @@ export function MessagesSection({
                     maxLength={LIMITS.quickAction}
                     disabled={readOnly}
                     aria-label={`Starter question ${index + 1}`}
-                    placeholder="e.g. How much does it cost?"
+                    placeholder={t('agents.eGHowMuchDoes') || 'e.g. How much does it cost?'}
                     onChange={(event) =>
                       setActions(
                         quickActions.map((row, i) => (i === index ? event.target.value : row)),
@@ -316,7 +319,7 @@ export function MessagesSection({
               onClick={() => setActions([...quickActions, ''], quickActions.length)}
             >
               <Plus aria-hidden />
-              Add a question
+              {t('agents.addAQuestion') || 'Add a question'}
             </Button>
             <Button
               variant="ghost"
@@ -326,7 +329,7 @@ export function MessagesSection({
               iconLeft={<Sparkles aria-hidden />}
               onClick={() => void suggest()}
             >
-              {suggestions === null ? 'Suggest questions' : 'Suggest different questions'}
+              {suggestions === null ? t('agents.suggestQuestions') || 'Suggest questions' : t('agents.suggestDifferentQuestions') || 'Suggest different questions'}
             </Button>
             {atLimit ? (
               <span className="text-xs text-text-secondary">
@@ -336,7 +339,7 @@ export function MessagesSection({
           </div>
 
           {suggestError ? (
-            <Alert tone="danger" title="No suggestions this time" live>
+            <Alert tone="danger" title={t('agents.noSuggestionsThisTime') || 'No suggestions this time'} live>
               {suggestError}
             </Alert>
           ) : null}
@@ -367,8 +370,8 @@ export function MessagesSection({
             ) : (
               <p className="text-xs text-text-secondary" role="status">
                 {suggestions.length === 0
-                  ? 'The chatbot could not find a question it was confident answering. Add more to its knowledge and try again.'
-                  : 'Every suggestion is already in your list.'}
+                  ? t('agents.theChatbotCouldNotFind') || 'The chatbot could not find a question it was confident answering. Add more to its knowledge and try again.'
+                  : t('agents.everySuggestionIsAlreadyIn') || 'Every suggestion is already in your list.'}
               </p>
             )
           ) : null}
@@ -379,11 +382,11 @@ export function MessagesSection({
         <CardHeader
           eyebrow="Other wording"
           titleAs="h2"
-          title="The rest of the widget's copy"
-          description="Leave a field empty for our wording."
+          title={t('agents.theRestOfTheWidgets') || 'The rest of the widget\'s copy'}
+          description={t('agents.leaveAFieldEmptyFor') || 'Leave a field empty for our wording.'}
         />
         <CardBody className="flex flex-col gap-5">
-          <Field label="Greeting bubble" trailing={defaultMark(draft.greetingMessage)}>
+          <Field label={t('agents.greetingBubble') || 'Greeting bubble'} trailing={defaultMark(draft.greetingMessage)}>
             <Input
               value={draft.greetingMessage}
               maxLength={LIMITS.greetingMessage}
@@ -393,7 +396,7 @@ export function MessagesSection({
             />
           </Field>
 
-          <Field label="Offline banner" hint="When nobody is available.">
+          <Field label={t('agents.offlineBanner') || 'Offline banner'} hint={t('agents.whenNobodyIsAvailable2') || 'When nobody is available.'}>
             <Textarea
               rows={2}
               value={draft.offlineBanner}
@@ -406,7 +409,7 @@ export function MessagesSection({
 
           {liveChatIncluded ? (
             <>
-              <Field label="Live chat button" trailing={defaultMark(draft.liveChatLabel)}>
+              <Field label={t('agents.liveChatButton') || 'Live chat button'} trailing={defaultMark(draft.liveChatLabel)}>
                 <Input
                   value={draft.liveChatLabel}
                   maxLength={LIMITS.liveChatLabel}
@@ -416,8 +419,8 @@ export function MessagesSection({
                 />
               </Field>
               <Field
-                label="Rating prompt"
-                hint="Asked once a live conversation ends."
+                label={t('agents.ratingPrompt') || 'Rating prompt'}
+                hint={t('agents.askedOnceALiveConversation') || 'Asked once a live conversation ends.'}
                 trailing={defaultMark(draft.ratingPrompt)}
               >
                 <Input
@@ -429,8 +432,8 @@ export function MessagesSection({
                 />
               </Field>
               <Field
-                label="End-chat button"
-                hint="Hands the conversation back to the chatbot."
+                label={t('agents.endChatButton') || 'End-chat button'}
+                hint={t('agents.handsTheConversationBackTo') || 'Hands the conversation back to the chatbot.'}
                 trailing={defaultMark(draft.endChatLabel)}
               >
                 <Input
@@ -445,10 +448,10 @@ export function MessagesSection({
           ) : (
             <Well className="flex flex-wrap items-center justify-between gap-3">
               <p className="min-w-0 text-prose text-text-secondary">
-                Three more lines appear with live chat.
+                {t('agents.threeMoreLinesAppearWith') || 'Three more lines appear with live chat.'}
               </p>
               <Link to="/billing" className={buttonClass('secondary', 'sm')}>
-                Compare plans
+                {t('agents.comparePlans') || 'Compare plans'}
               </Link>
             </Well>
           )}

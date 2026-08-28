@@ -16,6 +16,7 @@ import {
   formatRelative,
 } from '../../../ui';
 import { INSTALL_STAMP_CAPTION, type InstallStatus, type WidgetHeartbeat } from './deployModel';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 export interface InstallStatusCardProps {
   status: InstallStatus;
@@ -74,6 +75,7 @@ export function InstallStatusCard({
   onStopVerifying,
   onTroubleshoot,
 }: InstallStatusCardProps) {
+  const { t } = useTranslation();
   const websiteHref = website
     ? /^https?:\/\//i.test(website)
       ? website
@@ -104,13 +106,13 @@ export function InstallStatusCard({
               className={buttonClass('secondary', 'sm')}
             >
               <ExternalLink aria-hidden />
-              Open my website
-              <span className="sr-only"> (opens in a new tab)</span>
+              {t('agents.openMyWebsite') || 'Open my website'}
+              <span className="sr-only"> {t('agents.opensInANewTab') || '(opens in a new tab)'}</span>
             </a>
           ) : null}
           {status.state === 'waiting' ? (
             <Button size="sm" variant="accent" onClick={onStartVerifying}>
-              I have added it — check now
+              {t('agents.iHaveAddedItCheck') || 'I have added it — check now'}
             </Button>
           ) : null}
           {status.state === 'not-detected' ? (
@@ -120,7 +122,7 @@ export function InstallStatusCard({
               onClick={onStartVerifying}
               iconLeft={<RefreshCw aria-hidden />}
             >
-              Check again
+              {t('agents.checkAgain') || 'Check again'}
             </Button>
           ) : null}
         </div>
@@ -141,7 +143,7 @@ export function InstallStatusCard({
                 value: <span className="figure">{formatDateTime(installedAt)}</span>,
               },
               {
-                label: 'Last seen',
+                label: t('agents.lastSeen') || 'Last seen',
                 value: heartbeat.seenAt ? (
                   <span className="figure">{formatRelative(heartbeat.seenAt)}</span>
                 ) : (
@@ -149,16 +151,16 @@ export function InstallStatusCard({
                 ),
               },
               {
-                label: 'Loaded from',
+                label: t('agents.loadedFrom') || 'Loaded from',
                 value: heartbeat.origin ? (
                   <span className="figure break-all">{heartbeat.origin}</span>
                 ) : (
                   ABSENT
                 ),
-                note: 'Reported by the browser, so useful for support and never proof of anything.',
+                note: t('agents.reportedByTheBrowserSo') || 'Reported by the browser, so useful for support and never proof of anything.',
               },
               {
-                label: 'Allowed domains',
+                label: t('agents.allowedDomains') || 'Allowed domains',
                 value: (
                   <Link
                     to={accessHref}
@@ -167,7 +169,7 @@ export function InstallStatusCard({
                     {domains.length > 0 ? (
                       <span className="figure">{domains.length}</span>
                     ) : (
-                      'Any'
+                      t('agents.any') || 'Any'
                     )}
                   </Link>
                 ),
@@ -190,13 +192,13 @@ export function InstallStatusCard({
                 this state is this exact string. The bar is chrome under a
                 heading that has already named it; the `aria-label` still
                 carries the sentence. */}
-            <Progress value={null} label="Looking for your widget" hideLabel />
+            <Progress value={null} label={t('agents.lookingForYourWidget') || 'Looking for your widget'} hideLabel />
             <p className="mt-2 text-xs text-text-secondary">
-              Open your site in another tab — this updates on its own.
+              {t('agents.openYourSiteInAnother') || 'Open your site in another tab — this updates on its own.'}
             </p>
           </div>
           <Button size="sm" variant="ghost" onClick={onStopVerifying}>
-            Not yet
+            {t('agents.notYet') || 'Not yet'}
           </Button>
         </CardFooter>
       ) : null}
@@ -208,11 +210,11 @@ export function InstallStatusCard({
           <Alert
             tone="success"
             live
-            title="Your chatbot is live"
+            title={t('agents.yourChatbotIsLive') || 'Your chatbot is live'}
             icon={<CheckCircle2 aria-hidden className="h-icon-md w-icon-md" />}
             className="w-full"
           >
-            We just saw it load on your website. Visitors can talk to it now.
+            {t('agents.weJustSawItLoad') || 'We just saw it load on your website. Visitors can talk to it now.'}
           </Alert>
         </CardFooter>
       ) : null}
@@ -222,15 +224,15 @@ export function InstallStatusCard({
           <Alert
             tone="warning"
             live
-            title="We still cannot see it"
+            title={t('agents.weStillCannotSeeIt') || 'We still cannot see it'}
             className="w-full"
             action={
               <Button size="sm" variant="secondary" onClick={onTroubleshoot}>
-                What to check
+                {t('agents.whatToCheck') || 'What to check'}
               </Button>
             }
           >
-            Nothing has reached us yet. The checklist rules out every known cause.
+            {t('agents.nothingHasReachedUsYet') || 'Nothing has reached us yet. The checklist rules out every known cause.'}
           </Alert>
         </CardFooter>
       ) : null}

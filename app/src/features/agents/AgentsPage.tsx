@@ -37,6 +37,7 @@ import type { Bot } from '../../types/domain';
 import { AgentActionsMenu } from './AgentActionsMenu';
 import { CreateAgentDialog } from './CreateAgentDialog';
 import { resolveAgentCreationGate } from './agentLimit';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * The chatbot list.
@@ -286,6 +287,7 @@ function isStatusFilter(value: string | null): value is StatusFilter {
 }
 
 export function AgentsPage() {
+  const { t } = useTranslation();
   const { bots, loading, error, refreshBots } = useBotContext();
   const { limitFor, planName } = useEntitlements();
   const [params, setParams] = useSearchParams();
@@ -393,7 +395,7 @@ export function AgentsPage() {
     () => [
       {
         key: 'name',
-        header: 'Chatbot',
+        header: t('agents.chatbot') || 'Chatbot',
         pinned: true,
         rowHeader: true,
         sortable: true,
@@ -410,7 +412,7 @@ export function AgentsPage() {
                   {name}
                 </Link>
                 <span className="block truncate text-xs text-text-tertiary">
-                  {bot.website || 'No website set'}
+                  {bot.website || t('agents.noWebsiteSet') || 'No website set'}
                 </span>
               </span>
             </span>
@@ -419,7 +421,7 @@ export function AgentsPage() {
       },
       {
         key: 'status',
-        header: 'Status',
+        header: t('agents.statusColumn') || 'Status',
         width: '12rem',
         sortable: true,
         render: ({ health }) => (
@@ -430,7 +432,7 @@ export function AgentsPage() {
       },
       {
         key: 'conversations',
-        header: 'Conversations',
+        header: t('agents.conversations') || 'Conversations',
         type: 'number',
         width: '9rem',
         sortable: true,
@@ -439,7 +441,7 @@ export function AgentsPage() {
       },
       {
         key: 'passages',
-        header: 'Passages',
+        header: t('agents.passages') || 'Passages',
         type: 'number',
         width: '8rem',
         secondary: true,
@@ -451,7 +453,7 @@ export function AgentsPage() {
       },
       {
         key: 'trained',
-        header: 'Last trained',
+        header: t('agents.lastTrained') || 'Last trained',
         type: 'number',
         width: '8rem',
         secondary: true,
@@ -461,11 +463,11 @@ export function AgentsPage() {
       },
       {
         key: 'installed',
-        header: 'Installed',
+        header: t('agents.installed') || 'Installed',
         width: '8rem',
         render: ({ bot }) => (
           <Badge tone={bot.widget_installed_at ? 'success' : 'neutral'} dot>
-            {bot.widget_installed_at ? 'Installed' : 'Not installed'}
+            {bot.widget_installed_at ? t('agents.installed') || 'Installed' : t('agents.notInstalled') || 'Not installed'}
           </Badge>
         ),
       },
@@ -481,13 +483,13 @@ export function AgentsPage() {
         // were the difference between this table fitting a 1280 laptop and
         // clipping the install badge beside it. A column of row menus names
         // itself; the label stays for assistive tech.
-        header: <span className="sr-only">Actions</span>,
+        header: <span className="sr-only">{t('agents.actions') || 'Actions'}</span>,
         align: 'right',
         width: '4rem',
         render: ({ bot }) => <AgentActionsMenu bot={bot} onChanged={handleChanged} />,
       },
     ],
-    [handleChanged],
+    [handleChanged, t],
   );
 
   const hasAgents = bots.length > 0;
@@ -496,11 +498,11 @@ export function AgentsPage() {
   return (
     <Page width="wide">
       <PageHeader
-        title="Chatbots"
+        title={t('agents.chatbots') || 'Chatbots'}
         titleVisuallyHidden
         actions={
           <Button variant="primary" iconLeft={<Plus aria-hidden />} onClick={() => setParam('new', '1')}>
-            New chatbot
+            {t('agents.newChatbot') || 'New chatbot'}
           </Button>
         }
         toolbar={
@@ -511,23 +513,23 @@ export function AgentsPage() {
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                 <div className="w-full sm:w-72">
                   <SearchField
-                    label="Search chatbots"
+                    label={t('agents.searchChatbots') || 'Search chatbots'}
                     size="sm"
-                    placeholder="Search by name, website or key"
+                    placeholder={t('agents.searchByNameWebsiteOr') || 'Search by name, website or key'}
                     value={query}
                     onValueChange={(value) => setParam('q', value)}
                   />
                 </div>
                 <SegmentedControl
-                  label="Chatbot status"
+                  label={t('agents.chatbotStatus') || 'Chatbot status'}
                   size="sm"
                   value={status}
                   onChange={(value) => setParam('status', value === 'all' ? null : value)}
                   items={[
-                    { value: 'all', label: 'All', count: summary.total },
-                    { value: 'live', label: 'Live', count: summary.live },
-                    { value: 'attention', label: 'Needs attention', count: summary.attention },
-                    { value: 'training', label: 'Training', count: summary.training },
+                    { value: 'all', label: t('agents.all') || 'All', count: summary.total },
+                    { value: 'live', label: t('agents.live') || 'Live', count: summary.live },
+                    { value: 'attention', label: t('agents.needsAttention') || 'Needs attention', count: summary.attention },
+                    { value: 'training', label: t('agents.training') || 'Training', count: summary.training },
                   ]}
                 />
               </div>
@@ -556,14 +558,14 @@ export function AgentsPage() {
         // `/chatbots`, and CLAUDE.md's own wording is that hiding a rail row can
         // never be the only line of defence. Four states, on every surface.
         <LockedState
-          title="These chatbots are not yours to see"
-          description="Ask an owner or admin of this workspace for access."
+          title={t('agents.theseChatbotsAreNotYours') || 'These chatbots are not yours to see'}
+          description={t('agents.askAnOwnerOrAdmin') || 'Ask an owner or admin of this workspace for access.'}
         />
       ) : error ? (
         <Card>
           <ErrorState
-            title="We could not load your chatbots"
-            description={error.message || 'Something went wrong while loading this workspace.'}
+            title={t('agents.weCouldNotLoadYour') || 'We could not load your chatbots'}
+            description={error.message || t('agents.somethingWentWrongWhileLoading') || 'Something went wrong while loading this workspace.'}
             onRetry={() => void refreshBots()}
           />
         </Card>
@@ -571,11 +573,11 @@ export function AgentsPage() {
         <Card>
           <EmptyState
             icon={BotIcon}
-            title="No chatbots yet"
-            description="Name it, point it at your website, and it starts reading."
+            title={t('agents.noChatbotsYet') || 'No chatbots yet'}
+            description={t('agents.nameItPointItAt') || 'Name it, point it at your website, and it starts reading.'}
             action={
               <Button variant="primary" onClick={() => setParam('new', '1')}>
-                Create your first chatbot
+                {t('agents.createYourFirstChatbot') || 'Create your first chatbot'}
               </Button>
             }
           />
@@ -585,7 +587,7 @@ export function AgentsPage() {
           columns={columns}
           rows={visible}
           rowKey={(item) => String(item.bot.id)}
-          caption="Every chatbot in this workspace"
+          caption={t('agents.everyChatbotInThisWorkspace') || 'Every chatbot in this workspace'}
           loading={loading}
           rowNoun="chatbot"
           sort={sort}
@@ -593,11 +595,11 @@ export function AgentsPage() {
           empty={
             <EmptyState
               icon={SearchX}
-              title="No chatbots match"
-              description="No chatbot matches that search and filter."
+              title={t('agents.noChatbotsMatch') || 'No chatbots match'}
+              description={t('agents.noChatbotMatchesThatSearch') || 'No chatbot matches that search and filter.'}
               action={
                 <Link to="/chatbots" replace className={buttonClass('secondary', 'sm')}>
-                  Clear search and filters
+                  {t('agents.clearSearchAndFilters') || 'Clear search and filters'}
                 </Link>
               }
             />

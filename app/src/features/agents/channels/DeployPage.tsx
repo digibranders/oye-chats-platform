@@ -28,6 +28,7 @@ import { InstallStatusCard } from './InstallStatusCard';
 import { SnippetSection } from './SnippetSection';
 import { PlatformGuide } from './PlatformGuide';
 import { TroubleshootSection } from './TroubleshootSection';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 type HelpTab = 'platform' | 'troubleshoot';
 
@@ -109,6 +110,7 @@ function DeploySkeleton() {
  * week to a page that still tells them the truth.
  */
 export function DeployPage() {
+  const { t } = useTranslation();
   const { agent, loading: agentLoading } = useAgent();
   const deploy = useDeployData();
   const { hasFeature, loading: entitlementsLoading } = useEntitlements();
@@ -126,7 +128,7 @@ export function DeployPage() {
 
   const header = (
     <PageHeader
-      title="Deploy"
+      title={t('agents.deploy') || 'Deploy'}
       eyebrow={agent?.name}
       actions={
         bot?.bot_key ? (
@@ -137,8 +139,8 @@ export function DeployPage() {
             className={buttonClass('secondary', 'sm')}
           >
             <ExternalLink aria-hidden />
-            Try it now
-            <span className="sr-only"> (opens a hosted preview in a new tab)</span>
+            {t('agents.tryItNow') || 'Try it now'}
+            <span className="sr-only"> {t('agents.opensAHostedPreviewIn') || '(opens a hosted preview in a new tab)'}</span>
           </a>
         ) : undefined
       }
@@ -154,11 +156,11 @@ export function DeployPage() {
       <Page>
         {header}
         <LockedState
-          title="This chatbot is not in your workspace"
-          description="It may belong to another workspace."
+          title={t('agents.thisChatbotIsNotIn') || 'This chatbot is not in your workspace'}
+          description={t('agents.itMayBelongToAnother') || 'It may belong to another workspace.'}
           action={
             <Link to="/chatbots" className={buttonClass('primary', 'sm')}>
-              See your chatbots
+              {t('agents.seeYourChatbots') || 'See your chatbots'}
             </Link>
           }
         />
@@ -173,7 +175,7 @@ export function DeployPage() {
         {header}
         <ErrorState
           framed
-          title="We could not load this chatbot"
+          title={t('agents.weCouldNotLoadThis') || 'We could not load this chatbot'}
           description={deploy.failure.message}
           onRetry={deploy.retry}
         />
@@ -200,10 +202,10 @@ export function DeployPage() {
         {header}
         <EmptyState
           framed
-          title="No chatbot open"
+          title={t('agents.noChatbotOpen') || 'No chatbot open'}
           action={
             <Link to="/chatbots" className={buttonClass('primary', 'sm')}>
-              See your chatbots
+              {t('agents.seeYourChatbots') || 'See your chatbots'}
             </Link>
           }
         />
@@ -217,11 +219,11 @@ export function DeployPage() {
         {header}
         <EmptyState
           framed
-          title="This chatbot has no embed key yet"
-          description="Open it from the list and finish setting it up."
+          title={t('agents.thisChatbotHasNoEmbed') || 'This chatbot has no embed key yet'}
+          description={t('agents.openItFromTheList') || 'Open it from the list and finish setting it up.'}
           action={
             <Link to="/chatbots" className={buttonClass('secondary', 'sm')}>
-              See your chatbots
+              {t('agents.seeYourChatbots') || 'See your chatbots'}
             </Link>
           }
         />
@@ -277,12 +279,12 @@ export function DeployPage() {
                   full width, changing the reader's measure mid-scroll. Both are
                   the same fix: put the longer block in `main`. */}
               <Tabs
-                label="Install help"
+                label={t('agents.installHelp') || 'Install help'}
                 value={activeHelpTab}
                 onValueChange={(next) => setHelpTab(next as HelpTab)}
                 items={[
-                  { value: 'platform', label: 'Instructions for your platform' },
-                  { value: 'troubleshoot', label: 'Not showing up' },
+                  { value: 'platform', label: t('agents.instructionsForYourPlatform') || 'Instructions for your platform' },
+                  { value: 'troubleshoot', label: t('agents.notShowingUp') || 'Not showing up' },
                 ]}
               >
                 <TabPanel value="platform">

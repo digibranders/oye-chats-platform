@@ -1,4 +1,5 @@
 import { useId, useRef, useState, type FormEvent } from 'react';
+import { t as translateNow } from '../../i18n/i18n';
 import { Link } from 'react-router-dom';
 import {
   Alert,
@@ -29,6 +30,7 @@ import {
   planGrantsUnlimitedAgents,
   type PlanView,
 } from '../workspace/billingModel';
+import { useTranslation } from '../../i18n/useTranslation';
 
 const MAX_NAME_LENGTH = 50;
 
@@ -57,7 +59,7 @@ type BillingCycle = 'monthly' | 'annual';
 function messageFrom(cause: unknown): string {
   return cause instanceof Error && cause.message
     ? cause.message
-    : 'Something went wrong. Please try again.';
+    : translateNow('agents.somethingWentWrongPleaseTry') || 'Something went wrong. Please try again.';
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -99,6 +101,7 @@ export function CreateAgentDialog({
   gate,
   planName,
 }: CreateAgentDialogProps) {
+  const { t } = useTranslation();
   const formId = useId();
   const [step, setStep] = useState<Step>('name');
   const [name, setName] = useState('');
@@ -186,7 +189,7 @@ export function CreateAgentDialog({
     if (submitting || inFlight.current) return;
 
     const nameProblem = !trimmedName
-      ? 'Give your chatbot a name.'
+      ? t('agents.giveYourChatbotAName') || 'Give your chatbot a name.'
       : trimmedName.length > MAX_NAME_LENGTH
         ? `Keep it to ${MAX_NAME_LENGTH} characters or fewer.`
         : null;
@@ -280,10 +283,10 @@ export function CreateAgentDialog({
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
-      title={step === 'name' ? 'New chatbot' : `Choose a plan for ${trimmedName || 'your chatbot'}`}
+      title={step === 'name' ? t('agents.newChatbot') || 'New chatbot' : `Choose a plan for ${trimmedName || 'your chatbot'}`}
       // Step one's two `Field` labels already say what step one is for, and the
       // step-two title already names the chatbot being funded.
-      description={step === 'plan' ? 'Its own credits, its own knowledge base.' : undefined}
+      description={step === 'plan' ? t('agents.itsOwnCreditsItsOwn') || 'Its own credits, its own knowledge base.' : undefined}
       size="sm"
       // Never dismissable mid-request: a customer who closes this during a
       // charge cannot tell whether the charge went through.
@@ -292,10 +295,10 @@ export function CreateAgentDialog({
         step === 'name' ? (
           <>
             <Button variant="ghost" disabled={submitting} onClick={() => onOpenChange(false)}>
-              Cancel
+              {t('agents.cancel') || 'Cancel'}
             </Button>
             <Button variant="primary" type="submit" form={formId} loading={submitting}>
-              {limitNotice ? 'Continue to plans' : 'Create chatbot'}
+              {limitNotice ? t('agents.continueToPlans') || 'Continue to plans' : t('agents.createChatbot') || 'Create chatbot'}
             </Button>
           </>
         ) : (
@@ -308,7 +311,7 @@ export function CreateAgentDialog({
                 setError(null);
               }}
             >
-              Back
+              {t('agents.back') || 'Back'}
             </Button>
             <Button
               variant="primary"
@@ -316,7 +319,7 @@ export function CreateAgentDialog({
               loading={submitting}
               onClick={() => void subscribe()}
             >
-              Subscribe &amp; create chatbot
+              {t('agents.subscribeCreateChatbot') || 'Subscribe & create chatbot'}
             </Button>
           </>
         )
@@ -335,20 +338,20 @@ export function CreateAgentDialog({
               that this one is paid. The path to pay stays open either way —
               this is copy, not a blocker. */}
           {limitNotice ? (
-            <Alert tone="plan" title="This chatbot needs its own plan">
+            <Alert tone="plan" title={t('agents.thisChatbotNeedsItsOwn') || 'This chatbot needs its own plan'}>
               {limitNotice}{' '}
               <Link to="/billing" className="font-medium underline underline-offset-2">
-                Compare plans
+                {t('agents.comparePlans') || 'Compare plans'}
               </Link>
             </Alert>
           ) : null}
 
-          <Field label="Chatbot name" error={nameError} required>
+          <Field label={t('agents.chatbotName') || 'Chatbot name'} error={nameError} required>
             <Input
               value={name}
               maxLength={MAX_NAME_LENGTH}
               autoComplete="off"
-              placeholder="Support assistant"
+              placeholder={t('agents.supportAssistant') || 'Support assistant'}
               disabled={submitting}
               onChange={(event) => {
                 setName(event.target.value);
@@ -358,10 +361,10 @@ export function CreateAgentDialog({
           </Field>
 
           <Field
-            label="Website"
+            label={t('agents.website') || 'Website'}
             optional
             error={websiteError}
-            hint="Where the chatbot reads from first, and where you will install it."
+            hint={t('agents.whereTheChatbotReadsFrom') || 'Where the chatbot reads from first, and where you will install it.'}
           >
             <Input
               value={website}
@@ -379,12 +382,12 @@ export function CreateAgentDialog({
       ) : (
         <div className="space-y-4">
           <SegmentedControl
-            label="Billing cycle"
+            label={t('agents.billingCycle') || 'Billing cycle'}
             value={cycle}
             onChange={setCycle}
             items={[
-              { value: 'monthly', label: 'Monthly' },
-              { value: 'annual', label: 'Annual' },
+              { value: 'monthly', label: t('agents.monthly') || 'Monthly' },
+              { value: 'annual', label: t('agents.annual') || 'Annual' },
             ]}
           />
 
@@ -397,7 +400,7 @@ export function CreateAgentDialog({
             </p>
           ) : (
             <RadioCards
-              label="Plan"
+              label={t('agents.plan') || 'Plan'}
               value={selectedSlug}
               onChange={setSelectedSlug}
               items={plans.map((plan) => ({

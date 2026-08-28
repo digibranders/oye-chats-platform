@@ -24,6 +24,7 @@ import { CrawlPageTree } from '../CrawlPageTree';
 import { IngestionProgress } from '../IngestionProgress';
 import type { Allowance } from '../knowledge-model';
 import { useCrawlDiscovery } from './useCrawlDiscovery';
+import { useTranslation } from '../../../../i18n/useTranslation';
 
 export interface WebsiteFlowProps {
   agentId: number;
@@ -70,6 +71,7 @@ export function WebsiteFlow({
   planLoading,
   onChanged,
 }: WebsiteFlowProps) {
+  const { t } = useTranslation();
   const flow = useCrawlDiscovery({ agentId, agentName, agentWebsite, sources, onChanged });
   const { limitFor } = useEntitlements();
   const maxPages = limitFor('max_crawl_pages');
@@ -106,7 +108,7 @@ export function WebsiteFlow({
           description={`This plan covers ${formatNumber(pageAllowance.limit)} pages. Remove a website below, or move up.`}
           action={
             <Link to="/billing" className={buttonClass('primary', 'sm')}>
-              See plans
+              {t('agents.seePlans') || 'See plans'}
             </Link>
           }
         />
@@ -131,22 +133,22 @@ export function WebsiteFlow({
       : crawl.status === 'no_content'
         ? {
             tone: 'danger' as const,
-            title: 'That website could not be read',
-            body: 'We reached the site but found no readable text. If it is built with React or Next.js, turn on the JavaScript option above and try again — or upload a document instead.',
+            title: t('agents.thatWebsiteCouldNotBe') || 'That website could not be read',
+            body: t('agents.weReachedTheSiteBut') || 'We reached the site but found no readable text. If it is built with React or Next.js, turn on the JavaScript option above and try again — or upload a document instead.',
           }
         : crawl.status === 'failed'
           ? {
               tone: 'danger' as const,
-              title: 'That website could not be read',
+              title: t('agents.thatWebsiteCouldNotBe') || 'That website could not be read',
               body:
                 crawl.error ??
-                'We could not finish reading that site. Try again, or upload a document instead.',
+                (t('agents.weCouldNotFinishReading') || 'We could not finish reading that site. Try again, or upload a document instead.')
             }
           : crawl.status === 'cancelled'
             ? {
                 tone: 'neutral' as const,
                 title: undefined,
-                body: 'Training stopped. Pages already read are kept, and you were not charged for the rest.',
+                body: t('agents.trainingStoppedPagesAlreadyRead') || 'Training stopped. Pages already read are kept, and you were not charged for the rest.',
               }
             : null;
 
@@ -163,7 +165,7 @@ export function WebsiteFlow({
           </p>
         ) : (
           <Meter
-            label="Website pages"
+            label={t('agents.websitePages') || 'Website pages'}
             used={pageAllowance.used}
             limit={pageAllowance.limit}
             tone="plan"
@@ -175,7 +177,7 @@ export function WebsiteFlow({
             tone="plan"
             action={
               <Link to="/billing" className={buttonClass('secondary', 'sm')}>
-                See plans
+                {t('agents.seePlans') || 'See plans'}
               </Link>
             }
           >
@@ -184,7 +186,7 @@ export function WebsiteFlow({
           </Alert>
         ) : null}
 
-        <Field label="Website address" hint="A public page is enough — no login.">
+        <Field label={t('agents.websiteAddress') || 'Website address'} hint={t('agents.aPublicPageIsEnough') || 'A public page is enough — no login.'}>
           <Input
             value={url}
             inputMode="url"
@@ -206,7 +208,7 @@ export function WebsiteFlow({
         {alreadyTrained ? (
           <Alert tone="warning">
             {alreadyTrained} is already trained. Training it again re-reads and re-charges every
-            page — use <strong className="font-medium">Re-train</strong> on the source below to see
+            page — use <strong className="font-medium">{t('agents.reTrain') || 'Re-train'}</strong> on the source below to see
             what actually changed first.
           </Alert>
         ) : null}
@@ -215,10 +217,10 @@ export function WebsiteFlow({
           checked={useJs}
           disabled={crawlRunning}
           onCheckedChange={flow.setJavaScript}
-          label="This site needs JavaScript to show its text"
+          label={t('agents.thisSiteNeedsJavascriptTo') || 'This site needs JavaScript to show its text'}
           // The troubleshooting advice lives on the `no_content` outcome below,
           // at the moment it is actually needed.
-          description="Slower, fewer pages per run."
+          description={t('agents.slowerFewerPagesPerRun') || 'Slower, fewer pages per run.'}
         />
 
         {/* Side by side once the column is wide enough for it. Stacked, the
@@ -233,25 +235,25 @@ export function WebsiteFlow({
           <Well>
             <FigureList>
               <FigureRow
-                label="Pages found"
+                label={t('agents.pagesFound') || 'Pages found'}
                 value={`${formatNumber(budget.found)}${budget.capped ? '+' : ''}`}
-                hint={budget.capped ? 'There may be more than we could list' : undefined}
+                hint={budget.capped ? t('agents.thereMayBeMoreThan') || 'There may be more than we could list' : undefined}
               />
               <FigureRow
-                label="Your plan allows per crawl"
-                value={budget.perCrawlLimit === null ? 'No limit' : formatNumber(budget.perCrawlLimit)}
+                label={t('agents.yourPlanAllowsPerCrawl') || 'Your plan allows per crawl'}
+                value={budget.perCrawlLimit === null ? t('agents.noLimit') || 'No limit' : formatNumber(budget.perCrawlLimit)}
               />
               <FigureRow
-                label="Your credits cover"
+                label={t('agents.yourCreditsCover') || 'Your credits cover'}
                 value={`${formatNumber(budget.affordablePages)} pages`}
                 hint={`${formatNumber(budget.costPerPage)} credits a page · balance ${formatNumber(budget.balance)}`}
               />
               <FigureRow
-                label="Selected"
+                label={t('agents.selected') || 'Selected'}
                 value={`${formatNumber(pageCount)} pages · ${formatNumber(cost)} credits`}
                 hint={
                   budget.found === 0
-                    ? 'We could not list this site’s pages; training will follow links from the homepage'
+                    ? t('agents.weCouldNotListThis') || 'We could not list this site’s pages; training will follow links from the homepage'
                     : (preflight?.message ?? undefined)
                 }
                 emphasis
@@ -273,8 +275,8 @@ export function WebsiteFlow({
 
         {crawlRunning ? (
           <IngestionProgress
-            title={crawl.status === 'cancelling' ? 'Stopping' : 'Reading your website'}
-            detail={crawl.currentUrl ?? 'Finding pages'}
+            title={crawl.status === 'cancelling' ? t('agents.stopping2') || 'Stopping' : t('agents.readingYourWebsite') || 'Reading your website'}
+            detail={crawl.currentUrl ?? (t('agents.findingPages') || 'Finding pages')}
             done={crawl.pagesCrawled}
             total={crawl.discoveredTotal ?? crawl.maxPages}
             unit="pages"
@@ -289,7 +291,7 @@ export function WebsiteFlow({
                 onClick={() => setConfirmingCancel(true)}
                 iconLeft={<Square aria-hidden />}
               >
-                {crawl.status === 'cancelling' || crawl.cancelInFlight ? 'Stopping…' : 'Stop'}
+                {crawl.status === 'cancelling' || crawl.cancelInFlight ? t('agents.stopping') || 'Stopping…' : t('agents.stop') || 'Stop'}
               </Button>
             }
           />
@@ -321,7 +323,7 @@ export function WebsiteFlow({
                 Train on {formatNumber(pageCount)} page{pageCount === 1 ? '' : 's'}
               </Button>
               <Button variant="ghost" disabled={discovering} onClick={() => void flow.discover()}>
-                Check again
+                {t('agents.checkAgain') || 'Check again'}
               </Button>
             </>
           ) : (
@@ -332,7 +334,7 @@ export function WebsiteFlow({
               onClick={() => void flow.discover()}
               iconLeft={<Search aria-hidden />}
             >
-              {discovering ? 'Checking pages…' : 'Check pages'}
+              {discovering ? t('agents.checkingPages') || 'Checking pages…' : t('agents.checkPages') || 'Check pages'}
             </Button>
           )}
         </CardSection>
@@ -341,7 +343,7 @@ export function WebsiteFlow({
       <ConfirmDialog
         open={confirmingStart}
         onOpenChange={setConfirmingStart}
-        title="Start training?"
+        title={t('agents.startTraining') || 'Start training?'}
         // The budget well above already lists pages, allowance, credit cover and
         // the selection. This states the consequence and nothing else.
         description={
@@ -360,8 +362,8 @@ export function WebsiteFlow({
         open={confirmingCancel}
         onOpenChange={setConfirmingCancel}
         destructive
-        title="Stop training?"
-        description="Pages already read are kept and charged. The rest are dropped, free."
+        title={t('agents.stopTraining') || 'Stop training?'}
+        description={t('agents.pagesAlreadyReadAreKept') || 'Pages already read are kept and charged. The rest are dropped, free.'}
         confirmLabel="Stop training"
         cancelLabel="Keep training"
         onConfirm={async () => {

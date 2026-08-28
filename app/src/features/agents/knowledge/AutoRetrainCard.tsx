@@ -25,6 +25,7 @@ import {
 import { keys } from '../../../query/keys';
 import { errorMessage, setAutoRecrawl, type RecrawlRun, type RecrawlStatus } from './knowledge-api';
 import type { Section } from './useKnowledgeData';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 export interface AutoRetrainCardProps {
   agentId: number;
@@ -41,6 +42,7 @@ export interface AutoRetrainCardProps {
  * nothing has ever shown.
  */
 export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardProps) {
+  const { t } = useTranslation();
   const client = useQueryClient();
   const [saving, setSaving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -56,7 +58,7 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
       client.setQueryData(keys.agents.recrawl(agentId), updated);
       setConfirmingOff(false);
     } catch (cause) {
-      setActionError(errorMessage(cause, 'We could not change the weekly retrain.'));
+      setActionError(errorMessage(cause, t('agents.weCouldNotChangeThe') || 'We could not change the weekly retrain.'));
     } finally {
       setSaving(false);
     }
@@ -65,7 +67,7 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
   const columns: Column<RecrawlRun>[] = [
     {
       key: 'ranAt',
-      header: 'Run',
+      header: t('agents.run') || 'Run',
       // The one column that must not give: a truncated date is unreadable,
       // while a truncated count is at least still a number. The three counts
       // share whatever is left of the 24rem aside.
@@ -77,7 +79,7 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
     },
     {
       key: 'unchanged',
-      header: 'Unchanged',
+      header: t('agents.unchanged') || 'Unchanged',
       align: 'right',
       render: (row) => formatNumber(row.unchanged),
     },
@@ -89,7 +91,7 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
     },
     {
       key: 'failed',
-      header: 'Failed',
+      header: t('agents.failed') || 'Failed',
       align: 'right',
       // A `Badge` in one branch and a bare number in the other broke the
       // column's baseline and its right edge — the cell is `figure text-right`,
@@ -108,16 +110,16 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
     <Card>
       <CardHeader
         eyebrow="Weekly"
-        title="Keep this knowledge up to date"
+        title={t('agents.keepThisKnowledgeUpTo') || 'Keep this knowledge up to date'}
         titleAs="h2"
-        description="Only pages that changed are re-read, and only those are charged."
+        description={t('agents.onlyPagesThatChangedAre') || 'Only pages that changed are re-read, and only those are charged.'}
         actions={
           status && status.featureAvailable ? (
             <Switch
               checked={status.enabled}
               disabled={saving || section.loading}
               hideLabel
-              label="Weekly auto-retrain"
+              label={t('agents.weeklyAutoRetrain') || 'Weekly auto-retrain'}
               onCheckedChange={(next) => {
                 if (next) {
                   void commit(true);
@@ -138,14 +140,14 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
         <CardBody>
           <EmptyState
             size="panel"
-            title="Not yours to change"
-            description="Only an owner or admin can change the schedule."
+            title={t('agents.notYoursToChange') || 'Not yours to change'}
+            description={t('agents.onlyAnOwnerOrAdmin') || 'Only an owner or admin can change the schedule.'}
           />
         </CardBody>
       ) : section.error ? (
         <ErrorState
           size="panel"
-          title="We could not load the weekly retrain"
+          title={t('agents.weCouldNotLoadThe') || 'We could not load the weekly retrain'}
           description={section.error}
           onRetry={section.retry}
         />
@@ -153,8 +155,8 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
         <CardBody>
           <EmptyState
             size="panel"
-            title="Nothing to show"
-            description="This chatbot has no retrain schedule yet."
+            title={t('agents.nothingToShow') || 'Nothing to show'}
+            description={t('agents.thisChatbotHasNoRetrain') || 'This chatbot has no retrain schedule yet.'}
           />
         </CardBody>
       ) : !status.featureAvailable ? (
@@ -168,7 +170,7 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
             description={`On Standard and above this runs weekly, charging only for pages that changed. Your ${planName} plan re-trains when you ask it to.`}
             action={
               <Link to="/billing" className={buttonClass('primary', 'sm')}>
-                See plans
+                {t('agents.seePlans') || 'See plans'}
               </Link>
             }
           />
@@ -198,14 +200,14 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
             <DefinitionList
               items={[
                 {
-                  label: 'Schedule',
+                  label: t('agents.schedule') || 'Schedule',
                   value: status.enabled ? (
                     <Badge tone="success" dot>
                       Every {status.cadenceDays} days
                     </Badge>
                   ) : (
                     <Badge tone="neutral" dot>
-                      Off
+                      {t('agents.off') || 'Off'}
                     </Badge>
                   ),
                 },
@@ -215,18 +217,18 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
                   // subtitle already promises ("Only pages that changed are
                   // re-read"). Saying "websites" made one site of 20 pages
                   // read as 20 sites.
-                  label: 'Pages in the set',
+                  label: t('agents.pagesInTheSet') || 'Pages in the set',
                   value:
                     status.pageCount > 0
                       ? `${formatNumber(status.pageCount)} page${status.pageCount === 1 ? '' : 's'}`
                       : undefined,
                 },
                 {
-                  label: 'Last check',
+                  label: t('agents.lastCheck') || 'Last check',
                   value: status.lastRecrawlAt ? formatRelative(status.lastRecrawlAt) : undefined,
                 },
                 {
-                  label: 'Next check',
+                  label: t('agents.nextCheck') || 'Next check',
                   value:
                     status.enabled && status.nextRecrawlAt
                       ? formatRelative(status.nextRecrawlAt)
@@ -271,12 +273,12 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
               rows={status.history}
               rowKey={(row) => row.ranAt ?? 'unknown'}
               rowNoun="run"
-              caption="Recent weekly retrains"
+              caption={t('agents.recentWeeklyRetrains') || 'Recent weekly retrains'}
               empty={
                 <EmptyState
                   size="inline"
-                  title="No runs yet"
-                  description="The first weekly check runs in seven days."
+                  title={t('agents.noRunsYet') || 'No runs yet'}
+                  description={t('agents.theFirstWeeklyCheckRuns') || 'The first weekly check runs in seven days.'}
                 />
               }
             />
@@ -288,8 +290,8 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
       <ConfirmDialog
         open={confirmingOff}
         onOpenChange={setConfirmingOff}
-        title="Turn off the weekly retrain?"
-        description="It keeps what it knows but stops picking up website changes. Turning it back on restarts the seven-day countdown."
+        title={t('agents.turnOffTheWeeklyRetrain') || 'Turn off the weekly retrain?'}
+        description={t('agents.itKeepsWhatItKnows') || 'It keeps what it knows but stops picking up website changes. Turning it back on restarts the seven-day countdown.'}
         confirmLabel="Turn it off"
         cancelLabel="Leave it on"
         onConfirm={() => commit(false)}

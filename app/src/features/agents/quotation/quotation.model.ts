@@ -1,4 +1,5 @@
-/**
+
+import { t as translateNow } from '../../../i18n/i18n';/**
  * The quotation catalog: the priced services a chatbot can quote a visitor for,
  * and the qualification bar a visitor has to clear before it offers to.
  *
@@ -270,7 +271,7 @@ export function blockedReason(catalog: QuotationCatalog): string | null {
     }
   }
   if (payload.enabled && payload.services.length === 0) {
-    return 'Quotations are on, but there are no services to quote. Add one, or switch them off.';
+    return translateNow('agents.quotationsAreOnButThere') || 'Quotations are on, but there are no services to quote. Add one, or switch them off.';
   }
   return null;
 }

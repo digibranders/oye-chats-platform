@@ -20,6 +20,7 @@ import {
   recrawlCost,
   type RecrawlDiff,
 } from './knowledge-model';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 type Bucket = 'unchanged' | 'new' | 'removed';
 
@@ -65,6 +66,7 @@ export function RecrawlDialog({
   startError,
   onConfirm,
 }: RecrawlDialogProps) {
+  const { t } = useTranslation();
   const [bucket, setBucket] = useState<Bucket>('new');
 
   const mode = diff?.mode ?? 'full';
@@ -100,11 +102,11 @@ export function RecrawlDialog({
       onOpenChange={starting ? () => {} : onOpenChange}
       size="lg"
       dismissible={!starting}
-      title={isDelta ? 'Re-train the pages that changed?' : 'Re-train this whole website?'}
+      title={isDelta ? t('agents.reTrainThePagesThat') || 'Re-train the pages that changed?' : t('agents.reTrainThisWholeWebsite') || 'Re-train this whole website?'}
       description={
         isDelta
-          ? 'Unchanged pages are skipped and not charged. You pay only for pages whose content moved since the last run.'
-          : 'Every page is read again and every page is charged, whether or not it changed.'
+          ? t('agents.unchangedPagesAreSkippedAnd') || 'Unchanged pages are skipped and not charged. You pay only for pages whose content moved since the last run.'
+          : t('agents.everyPageIsReadAgain') || 'Every page is read again and every page is charged, whether or not it changed.'
       }
       footer={
         planLocked ? (
@@ -112,11 +114,11 @@ export function RecrawlDialog({
         ) : (
           <>
             <Button variant="ghost" disabled={starting} onClick={() => onOpenChange(false)}>
-              Cancel
+              {t('agents.cancel') || 'Cancel'}
             </Button>
             {shortOnCredits ? (
               <Link to="/billing" className={buttonClass('primary', 'md')}>
-                Top up credits
+                {t('agents.topUpCredits') || 'Top up credits'}
               </Link>
             ) : (
               <Button
@@ -126,7 +128,7 @@ export function RecrawlDialog({
                 onClick={onConfirm}
               >
                 {isDelta
-                  ? 'Re-train changed pages'
+                  ? t('agents.reTrainChangedPages') || 'Re-train changed pages'
                   : cost
                     ? `Re-train ${formatNumber(cost.pages)} pages for ${formatNumber(cost.credits)} credits`
                     : 'Re-train'}
@@ -139,11 +141,11 @@ export function RecrawlDialog({
       {planLocked ? (
         <LockedState
           size="panel"
-          title="Updated-pages-only re-training is on Standard and above"
-          description="Standard compares your site and charges only for changed pages. Your plan re-reads and charges for all of them."
+          title={t('agents.updatedPagesOnlyReTraining') || 'Updated-pages-only re-training is on Standard and above'}
+          description={t('agents.standardComparesYourSiteAnd') || 'Standard compares your site and charges only for changed pages. Your plan re-reads and charges for all of them.'}
           action={
             <Link to="/billing" className={buttonClass('primary', 'sm')}>
-              See plans
+              {t('agents.seePlans') || 'See plans'}
             </Link>
           }
         />
@@ -161,12 +163,12 @@ export function RecrawlDialog({
 
           {loading ? (
             <p className="text-prose text-text-secondary" role="status">
-              Comparing this site against what your chatbot already read…
+              {t('agents.comparingThisSiteAgainstWhat') || 'Comparing this site against what your chatbot already read…'}
             </p>
           ) : null}
 
           {previewError ? (
-            <Alert tone="warning" title="We could not compare the pages">
+            <Alert tone="warning" title={t('agents.weCouldNotCompareThe2') || 'We could not compare the pages'}>
               {previewError} You can still re-train — we will rediscover the site as we go, and{' '}
               {isDelta
                 ? 'unchanged pages will still be skipped during reading.'
@@ -184,26 +186,26 @@ export function RecrawlDialog({
               <Well>
                 <FigureList>
                   <FigureRow
-                    label="Unchanged"
+                    label={t('agents.unchanged') || 'Unchanged'}
                     value={formatNumber(diff.unchanged)}
-                    hint={isDelta ? 'Skipped, free' : 'Read again, charged'}
+                    hint={isDelta ? 'Skipped, free' : t('agents.readAgainCharged') || 'Read again, charged'}
                   />
                   <FigureRow
-                    label="New"
+                    label={t('agents.new') || 'New'}
                     value={formatNumber(diff.newPages)}
-                    hint="Not read before"
+                    hint={t('agents.notReadBefore') || 'Not read before'}
                   />
                   <FigureRow
-                    label="Gone"
+                    label={t('agents.gone') || 'Gone'}
                     value={formatNumber(diff.removedPages)}
                     hint={
                       diff.headPartial
-                        ? 'At least this many — we could not check every stored page in time, and nothing is deleted by this preview'
-                        : 'No longer on the site'
+                        ? t('agents.atLeastThisManyWe') || 'At least this many — we could not check every stored page in time, and nothing is deleted by this preview'
+                        : t('agents.noLongerOnTheSite') || 'No longer on the site'
                     }
                   />
                   <FigureRow
-                    label={isDelta ? 'Worst case' : 'Cost'}
+                    label={isDelta ? t('agents.worstCase') || 'Worst case' : t('agents.cost') || 'Cost'}
                     value={`${formatNumber(cost?.credits ?? 0)} credits`}
                     hint={
                       isDelta
@@ -239,7 +241,7 @@ export function RecrawlDialog({
                   the detail behind it. */}
               <Disclosure summary="See which pages">
                 <SegmentedControl<Bucket>
-                  label="Which pages to list"
+                  label={t('agents.whichPagesToList') || 'Which pages to list'}
                   size="sm"
                   value={bucket}
                   onChange={setBucket}
@@ -252,7 +254,7 @@ export function RecrawlDialog({
                 <ul className="mt-2 max-h-48 divide-y divide-border overflow-y-auto rounded-md border border-border">
                   {urls.length === 0 ? (
                     <li className="px-3 py-2.5 text-xs text-text-secondary">
-                      No pages in this group.
+                      {t('agents.noPagesInThisGroup') || 'No pages in this group.'}
                     </li>
                   ) : (
                     urls.map((url) => (

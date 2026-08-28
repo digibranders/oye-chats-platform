@@ -10,6 +10,7 @@ import { HandoffSection } from './HandoffSection';
 import { LanguageSection } from './LanguageSection';
 import { PreviewPanel } from './PreviewPanel';
 import { isSectionKey, SECTION_KEYS, SECTION_LABELS, summarizeSections, type SectionKey } from './experience-model';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 /**
  * A chatbot's Experience: what a visitor sees and hears.
@@ -54,6 +55,7 @@ function tabItems(dirtySections: readonly SectionKey[]): TabItem[] {
 }
 
 export function ExperiencePage(): ReactElement {
+  const { t } = useTranslation();
   const experience = useExperience();
   const [params, setParams] = useSearchParams();
 
@@ -92,7 +94,7 @@ export function ExperiencePage(): ReactElement {
   };
 
   // No description: it listed the four tab labels rendered 40px below it.
-  const header = <PageHeader title="Experience" eyebrow={experience.agentName} />;
+  const header = <PageHeader title={t('agents.experience') || 'Experience'} eyebrow={experience.agentName} />;
 
   if (experience.status === 'loading') {
     return (
@@ -110,11 +112,11 @@ export function ExperiencePage(): ReactElement {
         <EmptyState
           framed
           icon={Bot}
-          title="This chatbot does not exist"
-          description="It may have been deleted."
+          title={t('agents.thisChatbotDoesNotExist') || 'This chatbot does not exist'}
+          description={t('agents.itMayHaveBeenDeleted') || 'It may have been deleted.'}
           action={
             <Link to="/chatbots" className={buttonClass('primary', 'sm')}>
-              All chatbots
+              {t('agents.allChatbots') || 'All chatbots'}
             </Link>
           }
         />
@@ -127,11 +129,11 @@ export function ExperiencePage(): ReactElement {
       <Page width="wide">
         {header}
         <LockedState
-          title="Your seat cannot configure this chatbot"
-          description="Changing what visitors see needs an owner or admin seat."
+          title={t('agents.yourSeatCannotConfigureThis') || 'Your seat cannot configure this chatbot'}
+          description={t('agents.changingWhatVisitorsSeeNeeds') || 'Changing what visitors see needs an owner or admin seat.'}
           action={
             <Link to="/inbox" className={buttonClass('primary', 'sm')}>
-              Go to the inbox
+              {t('agents.goToTheInbox') || 'Go to the inbox'}
             </Link>
           }
         />
@@ -148,8 +150,8 @@ export function ExperiencePage(): ReactElement {
         {header}
         <ErrorState
           framed
-          title="We could not load this chatbot"
-          description={experience.loadError ?? 'Something went wrong on the way to the server.'}
+          title={t('agents.weCouldNotLoadThis') || 'We could not load this chatbot'}
+          description={experience.loadError ?? (t('agents.somethingWentWrongOnThe') || 'Something went wrong on the way to the server.')}
           onRetry={experience.retry}
         />
       </Page>
@@ -170,8 +172,8 @@ export function ExperiencePage(): ReactElement {
         <div className="mb-8">
           <LockedState
             size="panel"
-            title="These settings are now read-only"
-            description="Your last save was refused. Copy anything you need before leaving."
+            title={t('agents.theseSettingsAreNowRead') || 'These settings are now read-only'}
+            description={t('agents.yourLastSaveWasRefused') || 'Your last save was refused. Copy anything you need before leaving.'}
           />
         </div>
       ) : null}
@@ -188,7 +190,7 @@ export function ExperiencePage(): ReactElement {
                element into view honouring its scroll margin, so the bar's height
                is reserved below it. */
             <div className="flex min-w-0 flex-col [&_:is(input,textarea,select,button,a)]:scroll-mb-24">
-              <Tabs items={tabs} value={tab} onValueChange={selectTab} label="Experience settings">
+              <Tabs items={tabs} value={tab} onValueChange={selectTab} label={t('agents.experienceSettings') || 'Experience settings'}>
                 {tabs.map((item) => (
                   <TabPanel key={item.value} value={item.value}>
                     {item.value === 'branding' ? (
@@ -274,7 +276,7 @@ export function ExperiencePage(): ReactElement {
           saving={experience.saving}
           saved={experience.savedAt !== null}
           saveError={experience.saveError}
-          blockedReason={blocked ? 'Fix the highlighted fields to save.' : null}
+          blockedReason={blocked ? t('agents.fixTheHighlightedFieldsTo') || 'Fix the highlighted fields to save.' : null}
           summary={summarizeSections(experience.dirtySections)}
           onSave={() => void experience.save()}
           onDiscard={discard}
@@ -287,7 +289,7 @@ export function ExperiencePage(): ReactElement {
         onOpenChange={(open) => {
           if (!open && blocker.state === 'blocked') blocker.reset();
         }}
-        title="Leave without saving?"
+        title={t('agents.leaveWithoutSaving') || 'Leave without saving?'}
         description={
           <>
             You have unsaved changes in{' '}
@@ -297,7 +299,7 @@ export function ExperiencePage(): ReactElement {
                 <Badge tone="neutral">{SECTION_LABELS[section]}</Badge>
               </span>
             ))}
-            . Leaving now discards them — the widget on your site keeps the settings it already has.
+            {t('agents.leavingNowDiscardsThemThe') || '. Leaving now discards them — the widget on your site keeps the settings it already has.'}
           </>
         }
         confirmLabel="Discard and leave"

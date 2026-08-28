@@ -16,6 +16,7 @@ import {
 } from '../../../ui';
 import { useLocaleCatalog } from '../../../hooks/useLocaleCatalog';
 import { type ExperienceDraft } from './experience-model';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 /**
  * What languages this chatbot speaks to VISITORS.
@@ -51,6 +52,7 @@ export function LanguageSection({
   readOnly,
   onChange,
 }: LanguageSectionProps): ReactElement {
+  const { t } = useTranslation();
   const { locales, ready, labelFor, localeNameFor, uiTranslatedFor } = useLocaleCatalog();
 
   const off = !draft.multilingualEnabled;
@@ -92,9 +94,9 @@ export function LanguageSection({
   return (
     <Card>
       <CardHeader
-        title="Language"
+        title={t('agents.language') || 'Language'}
         titleAs="h2"
-        description="The languages this chatbot answers in, and how it decides which to use."
+        description={t('agents.theLanguagesThisChatbotAnswers') || 'The languages this chatbot answers in, and how it decides which to use.'}
         actions={
           <>
             {off ? <Badge tone="neutral">Multilingual off</Badge> : null}
@@ -109,14 +111,14 @@ export function LanguageSection({
                   operatorTranslation: next ? draft.operatorTranslation : false,
                 })
               }
-              label="Answer visitors in more than one language"
+              label={t('agents.answerVisitorsInMoreThan') || 'Answer visitors in more than one language'}
             />
           </>
         }
       />
       <CardBody className="space-y-4">
         {turningOff ? (
-          <Alert tone="warning" title="This changes a live widget">
+          <Alert tone="warning" title={t('agents.thisChangesALiveWidget') || 'This changes a live widget'}>
             Visitors already talking to this chatbot in another language will be answered in{' '}
             {name(draft.defaultLocale)} from the next message.
           </Alert>
@@ -127,7 +129,7 @@ export function LanguageSection({
             screen-reader user has no other way to learn the widget cannot
             render it. */}
         {untranslated.length > 0 ? (
-          <Alert live tone="warning" title="A language without a translated widget">
+          <Alert live tone="warning" title={t('agents.aLanguageWithoutATranslated') || 'A language without a translated widget'}>
             {`Visitors get answers in ${untranslated.map(name).join(', ')}, but the widget's own buttons and forms are not translated into ${untranslated
               .map((code) => labelFor(code) ?? name(code))
               .join(', ')} — they stay in ${name(draft.defaultLocale)}. Remove it below, or leave it and accept the mix.`}
@@ -135,9 +137,9 @@ export function LanguageSection({
         ) : null}
 
         <Field
-          label="Supported languages"
+          label={t('agents.supportedLanguages') || 'Supported languages'}
           disabled={disabled}
-          hint="Only languages the chat widget itself is translated into can be added — the interface and the answers have to match."
+          hint={t('agents.onlyLanguagesTheChatWidget') || 'Only languages the chat widget itself is translated into can be added — the interface and the answers have to match.'}
         >
           <ul className="flex flex-wrap gap-2">
             {draft.supportedLocales.map((code) => (
@@ -163,21 +165,21 @@ export function LanguageSection({
         </Field>
 
         <Field
-          label="Add a language"
+          label={t('agents.addALanguage') || 'Add a language'}
           disabled={disabled || !ready || addable.length === 0}
           hint={
             ready && addable.length === 0
-              ? 'Every language the widget is translated into is already on.'
+              ? t('agents.everyLanguageTheWidgetIs') || 'Every language the widget is translated into is already on.'
               : undefined
           }
           className="max-w-sm"
         >
           <Combobox
-            label="Add a language"
+            label={t('agents.addALanguage') || 'Add a language'}
             value={null}
             options={addable}
             disabled={disabled || !ready || addable.length === 0}
-            placeholder="Search languages…"
+            placeholder={t('agents.searchLanguages') || 'Search languages…'}
             onValueChange={(code) => {
               if (!code) return;
               onChange({ supportedLocales: [...draft.supportedLocales, code] });
@@ -186,13 +188,13 @@ export function LanguageSection({
         </Field>
 
         <Field
-          label="Fall back to"
+          label={t('agents.fallBackTo') || 'Fall back to'}
           disabled={disabled}
-          hint="Used when a visitor's language cannot be worked out."
+          hint={t('agents.usedWhenAVisitorsLanguage') || 'Used when a visitor\'s language cannot be worked out.'}
           className="max-w-sm"
         >
           <Select
-            label="Fall back to"
+            label={t('agents.fallBackTo') || 'Fall back to'}
             value={draft.defaultLocale}
             disabled={disabled}
             options={draft.supportedLocales.map((code) => ({ value: code, label: name(code) }))}
@@ -202,42 +204,42 @@ export function LanguageSection({
 
         <SettingGroup>
           <SettingRow
-            label="Detect the visitor's language"
-            description="From their browser, the page they are on, and their first message."
+            label={t('agents.detectTheVisitorsLanguage') || 'Detect the visitor\'s language'}
+            description={t('agents.fromTheirBrowserThePage') || 'From their browser, the page they are on, and their first message.'}
           >
             <Switch
               checked={draft.autoDetectLanguage}
               disabled={disabled}
               onCheckedChange={(autoDetectLanguage) => onChange({ autoDetectLanguage })}
-              label="Detect the visitor's language"
+              label={t('agents.detectTheVisitorsLanguage') || 'Detect the visitor\'s language'}
             />
           </SettingRow>
           <SettingRow
-            label="Let visitors switch language"
+            label={t('agents.letVisitorsSwitchLanguage') || 'Let visitors switch language'}
             // Below two languages there is nothing to switch between, so the
             // picker would be a control with one option.
             description={
               draft.supportedLocales.length < 2
-                ? 'Add a second language to offer the picker.'
-                : 'Shows the language picker in the widget.'
+                ? t('agents.addASecondLanguageTo') || 'Add a second language to offer the picker.'
+                : t('agents.showsTheLanguagePickerIn') || 'Shows the language picker in the widget.'
             }
           >
             <Switch
               checked={draft.allowVisitorLanguageSwitch}
               disabled={disabled || draft.supportedLocales.length < 2}
               onCheckedChange={(allowVisitorLanguageSwitch) => onChange({ allowVisitorLanguageSwitch })}
-              label="Let visitors switch language"
+              label={t('agents.letVisitorsSwitchLanguage') || 'Let visitors switch language'}
             />
           </SettingRow>
           <SettingRow
-            label="Translate live chat"
-            description="Visitor messages reach your operators in their own language, and replies go back translated. Translation is metered in credits."
+            label={t('agents.translateLiveChat') || 'Translate live chat'}
+            description={t('agents.visitorMessagesReachYourOperators') || 'Visitor messages reach your operators in their own language, and replies go back translated. Translation is metered in credits.'}
           >
             <Switch
               checked={draft.operatorTranslation}
               disabled={disabled}
               onCheckedChange={(operatorTranslation) => onChange({ operatorTranslation })}
-              label="Translate live chat"
+              label={t('agents.translateLiveChat') || 'Translate live chat'}
             />
           </SettingRow>
         </SettingGroup>

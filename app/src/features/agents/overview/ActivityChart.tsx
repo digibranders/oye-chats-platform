@@ -11,6 +11,7 @@ import {
 import type { ActivityPoint } from '../../../types/domain';
 import type { RangeDays, Section } from './overview-data';
 import { rangeLabel, windowActivity } from './overview-data';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 /**
  * A backend day string as a short axis tick.
@@ -47,6 +48,7 @@ export interface ActivityChartProps {
  * where the reader can be told so.
  */
 export function ActivityChart({ section, days }: ActivityChartProps) {
+  const { t } = useTranslation();
   const points = windowActivity(section.data, days);
   const total = points.reduce((sum, point) => sum + (point.messages ?? 0), 0);
 
@@ -62,14 +64,14 @@ export function ActivityChart({ section, days }: ActivityChartProps) {
       summary={`${formatNumber(total)} messages over ${points.length} days, ${rangeLabel(days).toLowerCase()}.`}
       dataTable={
         <table className="w-full text-left text-xs">
-          <caption className="sr-only">Messages per day</caption>
+          <caption className="sr-only">{t('agents.messagesPerDay') || 'Messages per day'}</caption>
           <thead>
             <tr className="text-text-tertiary">
               <th scope="col" className="py-1 pr-4 font-medium">
-                Day
+                {t('agents.day') || 'Day'}
               </th>
               <th scope="col" className="py-1 font-medium">
-                Messages
+                {t('agents.messages') || 'Messages'}
               </th>
             </tr>
           </thead>

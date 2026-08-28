@@ -40,6 +40,7 @@ import {
 } from './overview-data';
 import { ActivityChart } from './ActivityChart';
 import { TopQuestions } from './TopQuestions';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 /**
  * A chatbot's Overview.
@@ -82,6 +83,7 @@ import { TopQuestions } from './TopQuestions';
 
 /** A section that failed, with the way back. */
 function SectionError({ section, title }: { section: DataSection<unknown>; title: string }) {
+  const { t } = useTranslation();
   if (!section.error) return null;
   return (
     <CardSection>
@@ -90,7 +92,7 @@ function SectionError({ section, title }: { section: DataSection<unknown>; title
         title={title}
         action={
           <Button size="sm" onClick={section.retry}>
-            Try again
+            {t('agents.tryAgain') || 'Try again'}
           </Button>
         }
       >
@@ -101,6 +103,7 @@ function SectionError({ section, title }: { section: DataSection<unknown>; title
 }
 
 function OverviewContent({ agent }: { agent: Bot }) {
+  const { t } = useTranslation();
   const [params, setParams] = useSearchParams();
   const days = parseRange(params.get('days'));
   const { refresh: refreshAgent } = useAgent();
@@ -142,11 +145,11 @@ function OverviewContent({ agent }: { agent: Bot }) {
   return (
     <Page width="wide">
       <PageHeader
-        title="Overview"
+        title={t('agents.overview') || 'Overview'}
         actions={
           <>
             <SegmentedControl
-              label="Reporting period"
+              label={t('agents.reportingPeriod') || 'Reporting period'}
               value={String(days)}
               onChange={(value) => setDays(parseRange(value))}
               items={RANGE_OPTIONS.map((option) => ({
@@ -158,7 +161,7 @@ function OverviewContent({ agent }: { agent: Bot }) {
                 hand-rolled `animate-spin` it replaces froze at 0° under
                 `prefers-reduced-motion` and announced nothing at all. */}
             <Button loading={refreshing} onClick={refreshEverything}>
-              Refresh
+              {t('agents.refresh') || 'Refresh'}
             </Button>
           </>
         }
@@ -175,7 +178,7 @@ function OverviewContent({ agent }: { agent: Bot }) {
               <span className="figure font-medium text-text-primary">
                 {formatNumber(figures.data.activeVisitors)}
               </span>{' '}
-              chatting right now
+              {t('agents.chattingRightNow') || 'chatting right now'}
             </span>
           }
         />
@@ -186,63 +189,63 @@ function OverviewContent({ agent }: { agent: Bot }) {
               one card said "Last 30 days" twice, 100px apart, about the same
               four numbers. */}
           <CardHeader
-            title="Performance"
+            title={t('agents.performance') || 'Performance'}
             titleAs="h2"
             actions={
               <Link to="/analytics" className={buttonClass('ghost', 'sm')}>
-                Full analytics
+                {t('agents.fullAnalytics') || 'Full analytics'}
               </Link>
             }
           />
           <CardBody flush>
             <StatRow
               period={rangeLabel(days)}
-              label="Conversation volume"
+              label={t('agents.conversationVolume') || 'Conversation volume'}
               columns={4}
               items={[
                 {
-                  label: 'Conversations',
+                  label: t('agents.conversations') || 'Conversations',
                   value: formatNumber(figures.data.conversations),
                   size: 'lg',
                   delta: deltas.conversations ?? undefined,
                   loading: figures.loading,
                 },
                 {
-                  label: 'Messages',
+                  label: t('agents.messages') || 'Messages',
                   value: formatNumber(figures.data.messages),
                   size: 'lg',
                   delta: deltas.messages ?? undefined,
                   loading: figures.loading,
                 },
                 {
-                  label: 'Resolution rate',
+                  label: t('agents.resolutionRate') || 'Resolution rate',
                   value:
                     resolution.data.rate === null
                       ? undefined
                       : formatPercent(resolution.data.rate / 100),
                   // The endpoint takes no window, so this tile states its own.
-                  period: 'All time',
+                  period: t('agents.allTime') || 'All time',
                   size: 'lg',
-                  empty: resolution.loading ? undefined : 'Not rated yet',
+                  empty: resolution.loading ? undefined : t('agents.notRatedYet') || 'Not rated yet',
                   loading: resolution.loading,
                 },
                 {
-                  label: 'Average rating',
+                  label: t('agents.averageRating') || 'Average rating',
                   value:
                     ratings.data.average === null
                       ? undefined
                       : `${formatNumber(ratings.data.average)} / 5`,
-                  period: 'All time',
+                  period: t('agents.allTime') || 'All time',
                   size: 'lg',
-                  empty: ratings.loading ? undefined : 'Not rated yet',
+                  empty: ratings.loading ? undefined : t('agents.notRatedYet') || 'Not rated yet',
                   loading: ratings.loading,
                 },
               ]}
             />
           </CardBody>
-          <SectionError section={figures} title="We could not load these figures" />
-          <SectionError section={resolution} title="We could not load the resolution rate" />
-          <SectionError section={ratings} title="We could not load the ratings" />
+          <SectionError section={figures} title={t('agents.weCouldNotLoadThese') || 'We could not load these figures'} />
+          <SectionError section={resolution} title={t('agents.weCouldNotLoadThe5') || 'We could not load the resolution rate'} />
+          <SectionError section={ratings} title={t('agents.weCouldNotLoadThe4') || 'We could not load the ratings'} />
         </Card>
 
         {/* The chart and the ranked list are one answer — what visitors did, and
@@ -257,7 +260,7 @@ function OverviewContent({ agent }: { agent: Bot }) {
                   states that range. Its neighbour states "All time", because
                   `/analytics/top-questions` takes no window at all — two cards
                   in one row, each honest about a different one. */}
-              <CardHeader eyebrow={rangeLabel(days)} title="Activity" titleAs="h2" />
+              <CardHeader eyebrow={rangeLabel(days)} title={t('agents.activity') || 'Activity'} titleAs="h2" />
               <CardBody>
                 <ActivityChart section={activity} days={days} />
               </CardBody>
@@ -265,7 +268,7 @@ function OverviewContent({ agent }: { agent: Bot }) {
           }
           aside={
             <Card className="h-full">
-              <CardHeader eyebrow="All time" title="Top questions" titleAs="h2" />
+              <CardHeader eyebrow="All time" title={t('agents.topQuestions') || 'Top questions'} titleAs="h2" />
               <TopQuestions section={questions} />
             </Card>
           }
@@ -275,11 +278,11 @@ function OverviewContent({ agent }: { agent: Bot }) {
           <Card className="flex flex-col">
             <CardHeader
               size="sm"
-              title="Knowledge"
+              title={t('agents.knowledge') || 'Knowledge'}
               titleAs="h2"
               actions={
                 <Link to={agentPath(agent.id, 'knowledge')} className={buttonClass('ghost', 'sm')}>
-                  Manage
+                  {t('agents.manage') || 'Manage'}
                 </Link>
               }
             />
@@ -287,13 +290,13 @@ function OverviewContent({ agent }: { agent: Bot }) {
               <PropertyGrid
                 items={[
                   {
-                    label: 'Passages',
+                    label: t('agents.passages') || 'Passages',
                     value:
                       indexed > 0 ? <span className="figure">{formatNumber(indexed)}</span> : undefined,
-                    note: 'The pieces this chatbot searches when it answers.',
+                    note: t('agents.thePiecesThisChatbotSearches') || 'The pieces this chatbot searches when it answers.',
                   },
                   {
-                    label: 'Last trained',
+                    label: t('agents.lastTrained') || 'Last trained',
                     value: agent.crawl_completed_at ? (
                       <span className="figure">{formatDate(agent.crawl_completed_at)}</span>
                     ) : undefined,
@@ -306,11 +309,11 @@ function OverviewContent({ agent }: { agent: Bot }) {
           <Card className="flex flex-col">
             <CardHeader
               size="sm"
-              title="Deployment"
+              title={t('agents.deployment') || 'Deployment'}
               titleAs="h2"
               actions={
                 <Link to={agentPath(agent.id, 'deploy')} className={buttonClass('ghost', 'sm')}>
-                  Manage
+                  {t('agents.manage') || 'Manage'}
                 </Link>
               }
             />
@@ -320,24 +323,24 @@ function OverviewContent({ agent }: { agent: Bot }) {
               <PropertyGrid
                 items={[
                   {
-                    label: 'Website widget',
+                    label: t('agents.websiteWidget') || 'Website widget',
                     value: (
                       <Badge tone={installed ? 'success' : 'neutral'} dot>
-                        {installed ? 'Installed' : 'Not installed'}
+                        {installed ? t('agents.installed') || 'Installed' : t('agents.notInstalled') || 'Not installed'}
                       </Badge>
                     ),
                   },
-                  { label: 'Website', value: agent.website || undefined },
+                  { label: t('agents.website') || 'Website', value: agent.website || undefined },
                   {
-                    label: 'First seen live',
+                    label: t('agents.firstSeenLive') || 'First seen live',
                     value: agent.widget_installed_at ? (
                       <span className="figure">{formatDate(agent.widget_installed_at)}</span>
                     ) : undefined,
                   },
                   {
-                    label: 'Chatbot key',
+                    label: t('agents.chatbotKey2') || 'Chatbot key',
                     value: agent.bot_key ? (
-                      <CopyField value={agent.bot_key} label="chatbot key" compact />
+                      <CopyField value={agent.bot_key} label={t('agents.chatbotKey') || 'chatbot key'} compact />
                     ) : undefined,
                   },
                 ]}
@@ -346,22 +349,22 @@ function OverviewContent({ agent }: { agent: Bot }) {
           </Card>
 
           <Card className="flex flex-col">
-            <CardHeader size="sm" title="Demo shares" titleAs="h2" />
+            <CardHeader size="sm" title={t('agents.demoShares') || 'Demo shares'} titleAs="h2" />
             <CardBody>
               <PropertyGrid
                 items={[
                   {
-                    label: 'Links shared',
+                    label: t('agents.linksShared') || 'Links shared',
                     value: (
                       <span className="figure">{formatNumber(figures.data.demoShares)}</span>
                     ),
                   },
                   {
-                    label: 'Demos opened',
+                    label: t('agents.demosOpened') || 'Demos opened',
                     value: <span className="figure">{formatNumber(figures.data.demoOpens)}</span>,
                   },
                   {
-                    label: 'Open rate',
+                    label: t('agents.openRate') || 'Open rate',
                     value:
                       figures.data.demoOpenRate === null ? undefined : (
                         <span className="figure">
@@ -381,9 +384,10 @@ function OverviewContent({ agent }: { agent: Bot }) {
 
 /** Shown while the chatbot itself is still resolving from the URL. */
 function OverviewSkeleton() {
+  const { t } = useTranslation();
   return (
     <Page width="wide">
-      <PageHeader title="Overview" />
+      <PageHeader title={t('agents.overview') || 'Overview'} />
       <Stack>
         <Card>
           <CardBody className="flex items-center gap-3">
@@ -424,6 +428,7 @@ function OverviewSkeleton() {
 }
 
 export function OverviewPage() {
+  const { t } = useTranslation();
   const { agent, loading, error, refresh } = useAgent();
 
   if (agent) {
@@ -439,13 +444,13 @@ export function OverviewPage() {
   if (error?.status === 403) {
     return (
       <Page width="wide">
-        <PageHeader title="Overview" />
+        <PageHeader title={t('agents.overview') || 'Overview'} />
         <LockedState
-          title="This chatbot is not yours to see"
-          description="Ask an owner or admin of this workspace for access."
+          title={t('agents.thisChatbotIsNotYours') || 'This chatbot is not yours to see'}
+          description={t('agents.askAnOwnerOrAdmin') || 'Ask an owner or admin of this workspace for access.'}
           action={
             <Link to="/chatbots" className={buttonClass('secondary', 'md')}>
-              Back to your chatbots
+              {t('agents.backToYourChatbots') || 'Back to your chatbots'}
             </Link>
           }
         />
@@ -455,14 +460,14 @@ export function OverviewPage() {
 
   return (
     <Page width="wide">
-      <PageHeader title="Overview" />
+      <PageHeader title={t('agents.overview') || 'Overview'} />
       <Card>
         <ErrorState
-          title={error ? 'We could not load this chatbot' : 'Chatbot not found'}
+          title={error ? t('agents.weCouldNotLoadThis') || 'We could not load this chatbot' : t('agents.chatbotNotFound') || 'Chatbot not found'}
           description={
             error
-              ? error.message || 'Something went wrong while loading this workspace.'
-              : 'This chatbot does not exist in this workspace.'
+              ? error.message || t('agents.somethingWentWrongWhileLoading') || 'Something went wrong while loading this workspace.'
+              : t('agents.thisChatbotDoesNotExist2') || 'This chatbot does not exist in this workspace.'
           }
           onRetry={() => void refresh()}
         />

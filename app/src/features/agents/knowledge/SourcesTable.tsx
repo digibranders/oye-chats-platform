@@ -29,6 +29,7 @@ import {
   type RecrawlMode,
   type SourceKind,
 } from './knowledge-model';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 /**
  * Pages this source is made of, or `null` when nothing recorded any.
@@ -102,6 +103,7 @@ export function SourcesTable({
   kind,
   onKindChange,
 }: SourcesTableProps) {
+  const { t } = useTranslation();
   const [confirming, setConfirming] = useState<KnowledgeSource | null>(null);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [confirmingBulk, setConfirmingBulk] = useState(false);
@@ -118,7 +120,7 @@ export function SourcesTable({
     () => [
       {
         key: 'name',
-        header: 'Source',
+        header: t('agents.source') || 'Source',
         rowHeader: true,
         sortable: (a, b) => a.name.localeCompare(b.name),
         render: (row) => {
@@ -128,10 +130,10 @@ export function SourcesTable({
             <span className="flex min-w-0 items-center gap-2.5">
               {/* The icon carries the kind. It always did — the Kind column beside
                   it spent 8rem of table restating it in a word. */}
-              <Tooltip content={website ? 'Website' : 'Document'}>
+              <Tooltip content={website ? t('agents.website') || 'Website' : t('agents.document') || 'Document'}>
                 <span className="flex shrink-0 items-center">
                   <Icon aria-hidden className="h-4 w-4 text-text-tertiary" />
-                  <span className="sr-only">{website ? 'Website' : 'Document'}</span>
+                  <span className="sr-only">{website ? t('agents.website') || 'Website' : t('agents.document') || 'Document'}</span>
                 </span>
               </Tooltip>
               <span className="min-w-0 truncate font-medium text-text-primary">{row.name}</span>
@@ -141,7 +143,7 @@ export function SourcesTable({
       },
       {
         key: 'state',
-        header: 'State',
+        header: t('agents.state') || 'State',
         width: '8rem',
         sortable: (a, b) =>
           sourceState(a, crawlingDomain).label.localeCompare(sourceState(b, crawlingDomain).label),
@@ -154,7 +156,7 @@ export function SourcesTable({
               </Badge>
               {/* In-progress is motion, not hue — this system has no fifth tone
                   for "working". */}
-              {state.kind === 'training' ? <WorkingDots label="Being read now" /> : null}
+              {state.kind === 'training' ? <WorkingDots label={t('agents.beingReadNow') || 'Being read now'} /> : null}
             </span>
           );
         },
@@ -167,7 +169,7 @@ export function SourcesTable({
         // already overflowing its card. It states pages where pages are known
         // and `—` where they are not.
         key: 'pages',
-        header: 'Pages',
+        header: t('agents.pages') || 'Pages',
         type: 'number',
         width: '6rem',
         sortable: (a, b) => (pageCount(a) ?? -1) - (pageCount(b) ?? -1),
@@ -178,13 +180,13 @@ export function SourcesTable({
       },
       {
         key: 'passages',
-        header: 'Passages',
+        header: t('agents.passages') || 'Passages',
         // One hint, on the column head, rather than 25 identical ones on a
         // non-focusable span — hover-only, unreachable by keyboard, invisible
         // on touch. It is a `headerHint` rather than a `<Tooltip>` in `header`
         // because this column sorts, so the heading is already a button and the
         // trigger was nesting a second button inside it.
-        headerHint: 'Passages are the pieces this chatbot searches when it answers.',
+        headerHint: t('agents.passagesAreThePiecesThis') || 'Passages are the pieces this chatbot searches when it answers.',
         type: 'number',
         width: '6.5rem',
         secondary: true,
@@ -196,7 +198,7 @@ export function SourcesTable({
         // "Last trained", not "Trained": the State column beside it says
         // *Trained*, and one word meaning both a date and a state in adjacent
         // columns is the kind of collision a reader has to stop and resolve.
-        header: 'Last trained',
+        header: t('agents.lastTrained') || 'Last trained',
         type: 'number',
         width: '8rem',
         sortable: (a, b) => Date.parse(a.ingested_at ?? '') - Date.parse(b.ingested_at ?? ''),
@@ -204,7 +206,7 @@ export function SourcesTable({
       },
       {
         key: 'actions',
-        header: 'Actions',
+        header: t('agents.actions') || 'Actions',
         align: 'right',
         width: '4.5rem',
         render: (row) => {
@@ -232,14 +234,14 @@ export function SourcesTable({
                       icon={<RefreshCw aria-hidden className="h-3.5 w-3.5" />}
                       onSelect={() => onRecrawl(row, 'full')}
                     >
-                      Re-train every page…
+                      {t('agents.reTrainEveryPage') || 'Re-train every page…'}
                     </MenuItem>
                     <MenuItem
                       disabled={crawlRunning}
                       icon={<Sparkles aria-hidden className="h-3.5 w-3.5" />}
                       onSelect={() => onRecrawl(row, 'delta')}
                     >
-                      {canUseDelta ? 'Re-train changed pages…' : 'Re-train changed pages (Standard)'}
+                      {canUseDelta ? t('agents.reTrainChangedPages2') || 'Re-train changed pages…' : t('agents.reTrainChangedPagesStandard') || 'Re-train changed pages (Standard)'}
                     </MenuItem>
                     <MenuSeparator />
                   </>
@@ -249,7 +251,7 @@ export function SourcesTable({
                   icon={<Trash2 aria-hidden className="h-3.5 w-3.5" />}
                   onSelect={() => setConfirming(row)}
                 >
-                  Remove…
+                  {t('agents.remove2') || 'Remove…'}
                 </MenuItem>
               </MenuContent>
             </MenuRoot>
@@ -257,7 +259,7 @@ export function SourcesTable({
         },
       },
     ],
-    [busySource, canUseDelta, crawlRunning, crawlingDomain, onRecrawl, onViewPages],
+    [busySource, canUseDelta, crawlRunning, crawlingDomain, onRecrawl, onViewPages, t],
   );
 
   const confirmingUnits = confirming ? sourceUnits(confirming) : null;
@@ -271,28 +273,28 @@ export function SourcesTable({
       <Toolbar className="border-b border-border px-cell py-2.5">
         <div className="w-full sm:w-64">
           <SearchField
-            label="Search sources"
+            label={t('agents.searchSources') || 'Search sources'}
             size="sm"
-            placeholder="Search by name"
+            placeholder={t('agents.searchByName') || 'Search by name'}
             value={query}
             onValueChange={onQueryChange}
           />
         </div>
         <SegmentedControl<SourceKind>
-          label="Source type"
+          label={t('agents.sourceType') || 'Source type'}
           size="sm"
           value={kind}
           onChange={onKindChange}
           items={[
-            { value: 'all', label: 'All', count: sources.length },
+            { value: 'all', label: t('agents.all') || 'All', count: sources.length },
             {
               value: 'websites',
-              label: 'Websites',
+              label: t('agents.websites') || 'Websites',
               count: sources.filter((source) => isWebsiteSource(source.name)).length,
             },
             {
               value: 'documents',
-              label: 'Documents',
+              label: t('agents.documents') || 'Documents',
               count: sources.filter((source) => !isWebsiteSource(source.name)).length,
             },
           ]}
@@ -319,7 +321,7 @@ export function SourcesTable({
         }
         rowKey={(row) => row.name}
         rowNoun="source"
-        caption="Websites and documents this chatbot has learned from"
+        caption={t('agents.websitesAndDocumentsThisChatbot') || 'Websites and documents this chatbot has learned from'}
         loading={loading}
         error={error}
         onRetry={onRetry}
@@ -329,14 +331,14 @@ export function SourcesTable({
           filtered ? (
             <EmptyState
               size="inline"
-              title="No source matches"
-              description="Nothing here matches that search and filter."
+              title={t('agents.noSourceMatches') || 'No source matches'}
+              description={t('agents.nothingHereMatchesThatSearch') || 'Nothing here matches that search and filter.'}
             />
           ) : (
             <EmptyState
               size="inline"
-              title="This chatbot has nothing to answer from yet"
-              description="Train it on your website, or upload a document."
+              title={t('agents.thisChatbotHasNothingTo') || 'This chatbot has nothing to answer from yet'}
+              description={t('agents.trainItOnYourWebsite') || 'Train it on your website, or upload a document.'}
             />
           )
         }
@@ -348,7 +350,7 @@ export function SourcesTable({
           if (!open) setConfirming(null);
         }}
         destructive
-        title="Remove this source?"
+        title={t('agents.removeThisSource') || 'Remove this source?'}
         description={
           confirming ? (
             <>
@@ -375,7 +377,7 @@ export function SourcesTable({
           <p className="text-prose text-text-secondary">
             {isWebsiteSource(confirming.name)
               ? `Training it again later re-reads all ${confirmingUnits?.label ?? 'its pages'} and charges for them.`
-              : 'You would need the original file to add it again.'}
+              : t('agents.youWouldNeedTheOriginal') || 'You would need the original file to add it again.'}
           </p>
         ) : null}
       </ConfirmDialog>

@@ -19,6 +19,7 @@ import {
   type GapWindow,
 } from './knowledge-model';
 import { GAPS_LIMIT, type Section } from './useKnowledgeData';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 export interface KnowledgeGapsCardProps {
   section: Section<UnansweredQuestion[]>;
@@ -36,16 +37,17 @@ export interface KnowledgeGapsCardProps {
  * you what to add next was mostly things you already had.
  */
 export function KnowledgeGapsCard({ section, window, onWindowChange }: KnowledgeGapsCardProps) {
+  const { t } = useTranslation();
   const columns: Column<UnansweredQuestion>[] = [
     {
       key: 'question',
-      header: 'Question',
+      header: t('agents.question') || 'Question',
       sortable: (a, b) => a.question.localeCompare(b.question),
       render: (row) => <span className="block min-w-0 truncate">{row.question}</span>,
     },
     {
       key: 'count',
-      header: 'Times asked',
+      header: t('agents.timesAsked') || 'Times asked',
       align: 'right',
       width: '9rem',
       sortable: (a, b) => a.count - b.count,
@@ -53,7 +55,7 @@ export function KnowledgeGapsCard({ section, window, onWindowChange }: Knowledge
     },
     {
       key: 'last_asked',
-      header: 'Last asked',
+      header: t('agents.lastAsked') || 'Last asked',
       align: 'right',
       width: '10rem',
       sortable: (a, b) => Date.parse(a.last_asked ?? '') - Date.parse(b.last_asked ?? ''),
@@ -65,18 +67,18 @@ export function KnowledgeGapsCard({ section, window, onWindowChange }: Knowledge
     <Card>
       <CardHeader
         eyebrow={gapWindowLabel(window)}
-        title="Questions it could not answer"
+        title={t('agents.questionsItCouldNotAnswer') || 'Questions it could not answer'}
         titleAs="h2"
-        description="Add a page or document that covers one and the gap closes."
+        description={t('agents.addAPageOrDocument') || 'Add a page or document that covers one and the gap closes.'}
         actions={
           <SegmentedControl<string>
-            label="Period for knowledge gaps"
+            label={t('agents.periodForKnowledgeGaps') || 'Period for knowledge gaps'}
             size="sm"
             value={gapWindowParam(window)}
             onChange={(value) => onWindowChange(parseGapWindow(value))}
             items={GAP_WINDOWS.map((option) => ({
               value: gapWindowParam(option),
-              label: option === null ? 'All' : `${option}d`,
+              label: option === null ? t('agents.all') || 'All' : `${option}d`,
             }))}
           />
         }
@@ -90,8 +92,8 @@ export function KnowledgeGapsCard({ section, window, onWindowChange }: Knowledge
         <CardBody>
           <EmptyState
             size="panel"
-            title="Not yours to see"
-            description="Your seat cannot read this chatbot's conversations."
+            title={t('agents.notYoursToSee') || 'Not yours to see'}
+            description={t('agents.yourSeatCannotReadThis') || 'Your seat cannot read this chatbot\'s conversations.'}
           />
         </CardBody>
       ) : (
@@ -126,13 +128,13 @@ export function KnowledgeGapsCard({ section, window, onWindowChange }: Knowledge
                 size="inline"
                 title={
                   window === null
-                    ? 'No unanswered questions on record'
+                    ? t('agents.noUnansweredQuestionsOnRecord') || 'No unanswered questions on record'
                     : `Nothing went unanswered in the ${gapWindowLabel(window).toLowerCase()}`
                 }
                 description={
                   window === null
-                    ? 'Questions it cannot answer turn up here.'
-                    : 'Try a longer period.'
+                    ? t('agents.questionsItCannotAnswerTurn') || 'Questions it cannot answer turn up here.'
+                    : t('agents.tryALongerPeriod') || 'Try a longer period.'
                 }
               />
             }

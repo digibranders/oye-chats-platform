@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { t as translateNow } from '../../i18n/i18n';
 import { useMutation } from '@tanstack/react-query';
 import { ExternalLink, KeyRound, Link2, MoreHorizontal, Pause, Pencil, Play, Trash2 } from 'lucide-react';
 import {
@@ -19,6 +20,7 @@ import {
 } from '../../ui';
 import { deleteBot, getBotDemoUrl, trackDemoShareClick, updateBot } from '../../services/api';
 import type { Bot } from '../../types/domain';
+import { useTranslation } from '../../i18n/useTranslation';
 
 const MAX_NAME_LENGTH = 50;
 
@@ -31,16 +33,16 @@ export interface AgentActionsMenuProps {
 /** Returns the reason the name is unusable, or `null` when it will do. */
 function validateAgentName(value: string, current: string): string | null {
   const trimmed = value.trim();
-  if (!trimmed) return 'Give the chatbot a name.';
+  if (!trimmed) return translateNow('agents.giveTheChatbotAName') || 'Give the chatbot a name.';
   if (trimmed.length > MAX_NAME_LENGTH) return `Keep it to ${MAX_NAME_LENGTH} characters or fewer.`;
-  if (trimmed === current) return 'That is already its name.';
+  if (trimmed === current) return translateNow('agents.thatIsAlreadyItsName') || 'That is already its name.';
   return null;
 }
 
 function messageFrom(cause: unknown): string {
   return cause instanceof Error && cause.message
     ? cause.message
-    : 'Something went wrong. Please try again.';
+    : translateNow('agents.somethingWentWrongPleaseTry') || 'Something went wrong. Please try again.';
 }
 
 /**
@@ -68,6 +70,7 @@ function messageFrom(cause: unknown): string {
  * one makes the whole popup unnavigable with a screen reader.
  */
 export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
+  const { t } = useTranslation();
   const name = bot.name || `Chatbot ${bot.id}`;
   const { state: clipboard, copy } = useClipboard();
   /** What the last copy was of, so the toast can name it. */
@@ -199,11 +202,11 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
     if (clipboard === 'idle') return;
     const what = copied.current;
     if (clipboard === 'copied') {
-      toast.success(what === 'chatbot key' ? 'Chatbot key copied' : 'Demo link copied');
+      toast.success(what === 'chatbot key' ? t('agents.chatbotKeyCopied') || 'Chatbot key copied' : t('agents.demoLinkCopied') || 'Demo link copied');
     } else if (clipboard === 'failed') {
       toast.error(`Could not copy the ${what}. Open it and copy it by hand.`);
     }
-  }, [clipboard]);
+  }, [clipboard, t]);
 
   return (
     <>
@@ -220,7 +223,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
               icon={<ExternalLink aria-hidden className="h-3.5 w-3.5" />}
               onSelect={() => window.open(demoUrl, '_blank', 'noopener,noreferrer')}
             >
-              Open demo page
+              {t('agents.openDemoPage') || 'Open demo page'}
             </MenuItem>
           ) : null}
           {demoUrl ? (
@@ -228,7 +231,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
               icon={<Link2 aria-hidden className="h-3.5 w-3.5" />}
               onSelect={copyDemoLink}
             >
-              Copy demo link
+              {t('agents.copyDemoLink') || 'Copy demo link'}
             </MenuItem>
           ) : null}
           {bot.bot_key ? (
@@ -236,26 +239,26 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
               icon={<KeyRound aria-hidden className="h-3.5 w-3.5" />}
               onSelect={copyBotKey}
             >
-              Copy chatbot key
+              {t('agents.copyChatbotKey') || 'Copy chatbot key'}
             </MenuItem>
           ) : null}
           {demoUrl || bot.bot_key ? <MenuSeparator /> : null}
           <MenuItem icon={<Pencil aria-hidden className="h-3.5 w-3.5" />} onSelect={openRename}>
-            Rename…
+            {t('agents.rename') || 'Rename…'}
           </MenuItem>
           {paused ? (
             <MenuItem
               icon={<Play aria-hidden className="h-3.5 w-3.5" />}
               onSelect={() => setResumeOpen(true)}
             >
-              Resume chatbot…
+              {t('agents.resumeChatbot') || 'Resume chatbot…'}
             </MenuItem>
           ) : (
             <MenuItem
               icon={<Pause aria-hidden className="h-3.5 w-3.5" />}
               onSelect={() => setPauseOpen(true)}
             >
-              Pause chatbot…
+              {t('agents.pauseChatbot') || 'Pause chatbot…'}
             </MenuItem>
           )}
           <MenuItem
@@ -263,7 +266,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
             icon={<Trash2 aria-hidden className="h-3.5 w-3.5" />}
             onSelect={() => setDeleteOpen(true)}
           >
-            Delete…
+            {t('agents.delete') || 'Delete…'}
           </MenuItem>
         </MenuContent>
       </MenuRoot>
@@ -280,7 +283,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
         footer={
           <>
             <Button variant="ghost" disabled={rename.isPending} onClick={() => setRenameOpen(false)}>
-              Cancel
+              {t('agents.cancel') || 'Cancel'}
             </Button>
             <Button
               variant="primary"
@@ -288,7 +291,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
               type="submit"
               loading={rename.isPending}
             >
-              Save name
+              {t('agents.saveName') || 'Save name'}
             </Button>
           </>
         }
@@ -298,9 +301,9 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
               sets one of them — not as a dialog description a reader meets
               before they know there is a second name at all. */}
           <Field
-            label="Chatbot name"
+            label={t('agents.chatbotName') || 'Chatbot name'}
             error={nameError}
-            hint="Internal only — visitors see the display name in Experience."
+            hint={t('agents.internalOnlyVisitorsSeeThe') || 'Internal only — visitors see the display name in Experience.'}
             required
           >
             <Input
@@ -330,7 +333,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
         // a confirm dialog is read at the moment of highest impatience — nobody
         // reached the second paragraph, which is where the consequence that
         // actually costs money lived.
-        description="It stops answering visitors immediately, and nothing is deleted. Pausing also frees its plan slot, so resuming has to pass the same check as a new chatbot."
+        description={t('agents.itStopsAnsweringVisitorsImmediately') || 'It stops answering visitors immediately, and nothing is deleted. Pausing also frees its plan slot, so resuming has to pass the same check as a new chatbot.'}
         confirmLabel="Pause chatbot"
         onConfirm={confirmPause}
       />
@@ -339,7 +342,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
         open={resumeOpen}
         onOpenChange={setResumeOpen}
         title={`Resume ${name}?`}
-        description="It answers visitors again on every site running its script, and counts against your plan from that moment. If the plan is full, nothing changes and we say so here."
+        description={t('agents.itAnswersVisitorsAgainOn') || 'It answers visitors again on every site running its script, and counts against your plan from that moment. If the plan is full, nothing changes and we say so here.'}
         confirmLabel="Resume chatbot"
         onConfirm={confirmResume}
       />
@@ -348,7 +351,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
         title={`Delete ${name}?`}
-        description="Deletes the chatbot, everything it learned, every conversation and every lead. Sites running its script stop showing a chatbot."
+        description={t('agents.deletesTheChatbotEverythingIt') || 'Deletes the chatbot, everything it learned, every conversation and every lead. Sites running its script stop showing a chatbot.'}
         confirmLabel="Delete chatbot"
         confirmPhrase={name}
         destructive

@@ -31,6 +31,7 @@ import {
   WIDGET_TEXT,
 } from './widgetTheme';
 import type { AvatarType, DraftErrors, ExperienceDraft, ExperienceMeta } from './experience-model';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 /**
  * What the widget looks like: its two colours, its face, and its credit line.
@@ -72,6 +73,7 @@ export function BrandingSection({
   agentId,
   onChange,
 }: BrandingSectionProps): ReactElement {
+  const { t } = useTranslation();
   const { hasFeature, loading: entitlementsLoading } = useEntitlements();
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -101,22 +103,22 @@ export function BrandingSection({
         const url = await uploadAvatar(file);
         onChange({ botLogo: url, avatarType: 'upload' });
       } catch (cause) {
-        setUploadError(errorMessage(cause, 'That image could not be uploaded. Please try again.'));
+        setUploadError(errorMessage(cause, t('agents.thatImageCouldNotBe2') || 'That image could not be uploaded. Please try again.'));
       } finally {
         setUploading(false);
       }
     },
-    [onChange],
+    [onChange, t],
   );
 
   return (
     <div className="flex flex-col gap-6">
       <Card>
-        <CardHeader eyebrow="Colour" titleAs="h2" title="Your two widget colours" />
+        <CardHeader eyebrow="Colour" titleAs="h2" title={t('agents.yourTwoWidgetColours') || 'Your two widget colours'} />
         <CardBody className="flex flex-col gap-6">
           <ColorField
-            label="Brand colour"
-            hint="The launcher, the send button and the icon avatar are painted with it."
+            label={t('agents.brandColour') || 'Brand colour'}
+            hint={t('agents.theLauncherTheSendButton') || 'The launcher, the send button and the icon avatar are painted with it.'}
             value={draft.primaryColor}
             onChange={(primaryColor) => onChange({ primaryColor })}
             swatches={swatches}
@@ -126,21 +128,21 @@ export function BrandingSection({
               {
                 foreground: WIDGET_ON_PRIMARY,
                 background: draft.primaryColor,
-                label: 'White icons on it — launcher, send button',
+                label: t('agents.whiteIconsOnItLauncher') || 'White icons on it — launcher, send button',
                 min: NON_TEXT_CONTRAST_MIN,
               },
               {
                 foreground: draft.primaryColor,
                 background: WIDGET_SURFACE,
-                label: 'It as text on the chat window',
+                label: t('agents.itAsTextOnThe') || 'It as text on the chat window',
                 min: TEXT_CONTRAST_MIN,
               },
             ]}
           />
 
           <ColorField
-            label="Visitor message colour"
-            hint="The background of every message the visitor sends."
+            label={t('agents.visitorMessageColour') || 'Visitor message colour'}
+            hint={t('agents.theBackgroundOfEveryMessage') || 'The background of every message the visitor sends.'}
             value={draft.userBubbleColor}
             onChange={(userBubbleColor) => onChange({ userBubbleColor })}
             swatches={swatches}
@@ -150,7 +152,7 @@ export function BrandingSection({
               {
                 foreground: WIDGET_TEXT,
                 background: draft.userBubbleColor,
-                label: 'Their own words on it',
+                label: t('agents.theirOwnWordsOnIt') || 'Their own words on it',
                 min: TEXT_CONTRAST_MIN,
               },
             ]}
@@ -159,7 +161,7 @@ export function BrandingSection({
       </Card>
 
       <Card>
-        <CardHeader eyebrow="Avatar" titleAs="h2" title="The face of your chatbot" />
+        <CardHeader eyebrow="Avatar" titleAs="h2" title={t('agents.theFaceOfYourChatbot') || 'The face of your chatbot'} />
         <CardBody className="flex flex-col gap-5">
           <div className="flex flex-wrap items-start gap-6">
             {/* No console hairline round it: the widget's own launcher draws the
@@ -187,11 +189,11 @@ export function BrandingSection({
                 items={AVATAR_TYPES}
                 value={draft.avatarType}
                 onChange={(avatarType) => onChange({ avatarType })}
-                label="Avatar style"
+                label={t('agents.avatarStyle') || 'Avatar style'}
               />
               {meta.botLogoSource === 'derived' && draft.botLogo ? (
                 <p className="mt-2.5 text-xs text-text-secondary">
-                  Taken from your site’s favicon.
+                  {t('agents.takenFromYourSitesFavicon') || 'Taken from your site’s favicon.'}
                 </p>
               ) : null}
             </div>
@@ -200,7 +202,7 @@ export function BrandingSection({
           {draft.avatarType === 'upload' ? (
             <div className="flex flex-col gap-3">
               <FileDrop
-                label="Upload an image"
+                label={t('agents.uploadAnImage') || 'Upload an image'}
                 hint={AVATAR_HINT}
                 accept={AVATAR_ACCEPT}
                 maxSizeBytes={MAX_AVATAR_BYTES}
@@ -210,7 +212,7 @@ export function BrandingSection({
                 onFiles={(files) => void handleFiles(files)}
               />
               {uploadError ? (
-                <Alert tone="danger" title="That image could not be used" live>
+                <Alert tone="danger" title={t('agents.thatImageCouldNotBe') || 'That image could not be used'} live>
                   {uploadError}
                 </Alert>
               ) : null}
@@ -225,7 +227,7 @@ export function BrandingSection({
                   {uploading ? (
                     <span className="flex items-center gap-2" role="status">
                       <Spinner />
-                      Uploading…
+                      {t('agents.uploading') || 'Uploading…'}
                     </span>
                   ) : (
                     <Button
@@ -235,7 +237,7 @@ export function BrandingSection({
                       onClick={() => onChange({ botLogo: null })}
                       iconLeft={<Trash2 aria-hidden />}
                     >
-                      Remove
+                      {t('agents.remove') || 'Remove'}
                     </Button>
                   )}
                 </div>
@@ -245,8 +247,8 @@ export function BrandingSection({
 
           {draft.avatarType === 'orb' ? (
             <ColorField
-              label="Orb colour"
-              hint="Leave it empty to follow your brand colour."
+              label={t('agents.orbColour') || 'Orb colour'}
+              hint={t('agents.leaveItEmptyToFollow') || 'Leave it empty to follow your brand colour.'}
               value={draft.orbColor || draft.primaryColor}
               onChange={(orbColor) => onChange({ orbColor })}
               swatches={swatches}
@@ -256,7 +258,7 @@ export function BrandingSection({
                 {
                   foreground: draft.orbColor || draft.primaryColor,
                   background: WIDGET_SURFACE,
-                  label: 'The orb against the chat window',
+                  label: t('agents.theOrbAgainstTheChat') || 'The orb against the chat window',
                   min: NON_TEXT_CONTRAST_MIN,
                 },
               ]}
@@ -269,16 +271,16 @@ export function BrandingSection({
         <CardHeader
           eyebrow="Attribution"
           titleAs="h2"
-          title="The credit line in the chat window"
-          description="One small line at the bottom of the open chat."
+          title={t('agents.theCreditLineInThe') || 'The credit line in the chat window'}
+          description={t('agents.oneSmallLineAtThe') || 'One small line at the bottom of the open chat.'}
           actions={
             draft.showBranding ? (
-              <Badge tone="neutral">Shown</Badge>
+              <Badge tone="neutral">{t('agents.shown') || 'Shown'}</Badge>
             ) : (
               // Not `success`: hiding a credit line is a preference, not a
               // healthy state, and success is reserved for installed / live /
               // trained.
-              <Badge tone="neutral">Hidden</Badge>
+              <Badge tone="neutral">{t('agents.hidden') || 'Hidden'}</Badge>
             )
           }
         />
@@ -293,7 +295,7 @@ export function BrandingSection({
                     something no plan on that page would give them. */}
                 Rewording or removing it is a paid add-on on any plan. It currently reads{' '}
                 <span className="font-medium text-text-primary">
-                  {meta.brandingText || 'Powered by OyeChats'}
+                  {meta.brandingText || t('agents.poweredByOyechats') || 'Powered by OyeChats'}
                 </span>
                 .
               </p>
@@ -306,13 +308,13 @@ export function BrandingSection({
                 to={agentId === null ? '/billing' : `/billing?scope=${agentId}`}
                 className={buttonClass('primary', 'sm')}
               >
-                Add it in Billing
+                {t('agents.addItInBilling') || 'Add it in Billing'}
               </Link>
             </div>
           ) : (
             <>
               <Switch
-                label="Show the credit line"
+                label={t('agents.showTheCreditLine') || 'Show the credit line'}
                 checked={draft.showBranding}
                 disabled={readOnly}
                 onCheckedChange={(showBranding) => onChange({ showBranding })}
@@ -324,15 +326,15 @@ export function BrandingSection({
                 // never went two-up in this column anyway — it is 638px wide, and
                 // the ramp's two-column step is 768.
                 <div className="grid max-w-pair gap-4">
-                  <Field label="Wording" error={errors.brandingText ?? null}>
+                  <Field label={t('agents.wording') || 'Wording'} error={errors.brandingText ?? null}>
                     <Input
                       value={draft.brandingText}
                       disabled={readOnly}
-                      placeholder="Powered by OyeChats"
+                      placeholder={t('agents.poweredByOyechats') || 'Powered by OyeChats'}
                       onChange={(event) => onChange({ brandingText: event.target.value })}
                     />
                   </Field>
-                  <Field label="Where it links to" error={brandingUrlError}>
+                  <Field label={t('agents.whereItLinksTo') || 'Where it links to'} error={brandingUrlError}>
                     <Input
                       value={draft.brandingUrl}
                       inputMode="url"

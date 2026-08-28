@@ -35,6 +35,7 @@
 
 import { isHexColor } from './contrast';
 import { DEFAULT_PRIMARY_COLOR, DEFAULT_USER_BUBBLE_COLOR } from './widgetTheme';
+import { t as translateNow } from '../../../i18n/i18n';
 
 // ── The four groups the page is divided into ─────────────────────────────────
 
@@ -566,7 +567,7 @@ export function metaFromBot(raw: Record<string, unknown>): ExperienceMeta {
     botLogoSource: typeof raw.bot_logo_source === 'string' ? raw.bot_logo_source : null,
     recommendedColors: asStringArray(raw.recommended_colors).filter(isHexColor),
     planSlug: asString(raw.plan_slug, 'free'),
-    planName: asString(raw.plan_name, 'Free'),
+    planName: asString(raw.plan_name, translateNow('agents.free') || 'Free'),
     botKey: typeof raw.bot_key === 'string' && raw.bot_key.length > 0 ? raw.bot_key : null,
     website: typeof raw.website === 'string' && raw.website.length > 0 ? raw.website : null,
     trained: typeof raw.crawl_completed_at === 'string' && raw.crawl_completed_at.length > 0,
@@ -841,20 +842,20 @@ export function validateDraft(draft: ExperienceDraft): DraftErrors {
     errors.displayName = 'Give your chatbot a name — visitors see it in the widget header.';
   }
   if (!isHexColor(draft.primaryColor)) {
-    errors.primaryColor = 'Enter a hex colour, for example #2B66BC.';
+    errors.primaryColor = translateNow('agents.enterAHexColourFor') || 'Enter a hex colour, for example #2B66BC.';
   }
   if (!isHexColor(draft.userBubbleColor)) {
-    errors.userBubbleColor = 'Enter a hex colour, for example #DBE9FF.';
+    errors.userBubbleColor = translateNow('agents.enterAHexColourFor2') || 'Enter a hex colour, for example #DBE9FF.';
   }
   if (draft.orbColor.length > 0 && !isHexColor(draft.orbColor)) {
-    errors.orbColor = 'Enter a hex colour, for example #2B66BC.';
+    errors.orbColor = translateNow('agents.enterAHexColourFor') || 'Enter a hex colour, for example #2B66BC.';
   }
 
   draft.services.forEach((service, index) => {
     if (service.name.trim().length === 0 && service.url.trim().length > 0) {
-      errors[`services:${index}`] = 'Name this service, or remove the link.';
+      errors[`services:${index}`] = translateNow('agents.nameThisServiceOrRemove') || 'Name this service, or remove the link.';
     } else if (service.url.trim().length > 0 && !isHttpUrl(service.url)) {
-      errors[`services:${index}`] = 'Enter a full link starting with http:// or https://';
+      errors[`services:${index}`] = translateNow('agents.enterAFullLinkStarting') || 'Enter a full link starting with http:// or https://';
     }
   });
 
@@ -864,11 +865,11 @@ export function validateDraft(draft: ExperienceDraft): DraftErrors {
     const url = link.url.trim();
     if (keyword.length === 0 && url.length === 0) return;
     if (keyword.length === 0) {
-      errors[`smartLinks:${index}`] = 'Give this link a keyword for the chatbot to match.';
+      errors[`smartLinks:${index}`] = translateNow('agents.giveThisLinkAKeyword') || 'Give this link a keyword for the chatbot to match.';
     } else if (keywords.has(keyword)) {
       errors[`smartLinks:${index}`] = `“${link.keyword.trim()}” is already mapped above.`;
     } else if (!isHttpUrl(url)) {
-      errors[`smartLinks:${index}`] = 'Enter a full link starting with http:// or https://';
+      errors[`smartLinks:${index}`] = translateNow('agents.enterAFullLinkStarting') || 'Enter a full link starting with http:// or https://';
     }
     if (keyword.length > 0) keywords.add(keyword);
   });
@@ -889,15 +890,15 @@ export function validateDraft(draft: ExperienceDraft): DraftErrors {
       const day = hours.days[key];
       if (!day) continue;
       if (!isTimeOfDay(day.start) || !isTimeOfDay(day.end)) {
-        errors[`businessHours:${key}`] = 'Enter both times as HH:MM.';
+        errors[`businessHours:${key}`] = translateNow('agents.enterBothTimesAsHh') || 'Enter both times as HH:MM.';
       } else if (day.start === day.end) {
         errors[`businessHours:${key}`] =
-          'Opening and closing times are the same — that day would never be open.';
+          translateNow('agents.openingAndClosingTimesAre') || 'Opening and closing times are the same — that day would never be open.';
       }
     }
     if (DAY_KEYS.every((key) => hours.days[key] === null)) {
       errors.businessHours =
-        'Every day is closed, so the chatbot would never be available. Open a day, or turn business hours off.';
+        translateNow('agents.everyDayIsClosedSo') || 'Every day is closed, so the chatbot would never be available. Open a day, or turn business hours off.';
     }
   }
 

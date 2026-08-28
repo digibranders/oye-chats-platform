@@ -4,6 +4,7 @@ import type { KnowledgeSource } from '../../../../types/domain';
 import type { Allowance } from '../knowledge-model';
 import { DocumentsFlow } from './DocumentsFlow';
 import { WebsiteFlow } from './WebsiteFlow';
+import { useTranslation } from '../../../../i18n/useTranslation';
 
 type AddMode = 'website' | 'documents';
 
@@ -55,25 +56,26 @@ export function AddKnowledgePanel({
   onChanged,
   empty,
 }: AddKnowledgePanelProps) {
+  const { t } = useTranslation();
   const [mode, setMode] = useState<AddMode>('website');
 
   return (
     <Card>
       <CardHeader
         eyebrow="Add knowledge"
-        title={empty ? 'Teach this chatbot something' : 'Add more knowledge'}
+        title={empty ? t('agents.teachThisChatbotSomething') || 'Teach this chatbot something' : t('agents.addMoreKnowledge') || 'Add more knowledge'}
         titleAs="h2"
         // No description: the segmented control beside it says "Website /
         // Documents", which is the whole of what a description would have said.
         actions={
           <SegmentedControl<AddMode>
-            label="What to add"
+            label={t('agents.whatToAdd') || 'What to add'}
             size="sm"
             value={mode}
             onChange={setMode}
             items={[
-              { value: 'website', label: 'Website' },
-              { value: 'documents', label: 'Documents' },
+              { value: 'website', label: t('agents.website') || 'Website' },
+              { value: 'documents', label: t('agents.documents') || 'Documents' },
             ]}
           />
         }

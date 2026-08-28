@@ -7,6 +7,7 @@ import {
   type Platform,
   type PlatformEnv,
 } from '../../../data/platformIntegrations';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 export interface PlatformGuideProps {
   botKey: string;
@@ -58,19 +59,20 @@ export function PlatformGuide({
   attribution,
   resolving,
 }: PlatformGuideProps) {
+  const { t } = useTranslation();
   const options = useMemo(() => platformOptions(), []);
   const platform: Platform | null = platforms.find((p) => p.id === platformId) ?? null;
   const steps = platform && !resolving ? platform.getSteps(botKey, env, { attribution }) : [];
 
   return (
     <div className="space-y-5">
-      <Field label="What is your website built on?" hint="Not sure? Pick HTML.">
+      <Field label={t('agents.whatIsYourWebsiteBuilt') || 'What is your website built on?'} hint={t('agents.notSurePickHtml') || 'Not sure? Pick HTML.'}>
         <Combobox
           options={options}
           value={platformId}
           onValueChange={onPlatformChange}
-          label="Website platform"
-          placeholder="Choose your platform…"
+          label={t('agents.websitePlatform') || 'Website platform'}
+          placeholder={t('agents.chooseYourPlatform') || 'Choose your platform…'}
           searchPlaceholder="WordPress, Next.js, Shopify…"
           emptyMessage="No platform by that name. HTML works everywhere."
           className="max-w-sm"
@@ -81,10 +83,10 @@ export function PlatformGuide({
         <EmptyState
           size="inline"
           flush
-          title="Choose a platform to see the steps"
+          title={t('agents.chooseAPlatformToSee') || 'Choose a platform to see the steps'}
         />
       ) : resolving ? (
-        <div aria-busy aria-label="Working out which snippet your plan needs" className="space-y-3">
+        <div aria-busy aria-label={t('agents.workingOutWhichSnippetYour') || 'Working out which snippet your plan needs'} className="space-y-3">
           <Skeleton className="h-16 w-full rounded-md" />
           <Skeleton className="h-16 w-full rounded-md" />
           <Skeleton className="h-16 w-full rounded-md" />

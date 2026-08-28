@@ -2,6 +2,7 @@ import { type ReactElement, useCallback, useEffect, useState } from 'react';
 import { ExternalLink, Globe, RefreshCw } from 'lucide-react';
 import { Alert, Button, Dialog, Field, Input, Spinner, normalizeUrl, validateUrl } from '../../../ui';
 import { getBotPreviewUrl } from '../../../services/api';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 /**
  * The widget on the customer's own website.
@@ -46,6 +47,7 @@ export function WebsitePreviewDialog({
   botKey,
   website,
 }: WebsitePreviewDialogProps): ReactElement | null {
+  const { t } = useTranslation();
   const [url, setUrl] = useState(() => website ?? '');
   const [error, setError] = useState<string | null>(null);
   const [loadedUrl, setLoadedUrl] = useState('');
@@ -102,13 +104,13 @@ export function WebsitePreviewDialog({
       onOpenChange={(next) => {
         if (!next) onClose();
       }}
-      title="Preview on my website"
-      description="Shows your saved settings, not your draft."
+      title={t('agents.previewOnMyWebsite') || 'Preview on my website'}
+      description={t('agents.showsYourSavedSettingsNot') || 'Shows your saved settings, not your draft.'}
       size="lg"
     >
       <div className="flex flex-col gap-4">
         <div className="flex flex-wrap items-end gap-2">
-          <Field label="Website address" error={error} className="min-w-0 flex-1">
+          <Field label={t('agents.websiteAddress') || 'Website address'} error={error} className="min-w-0 flex-1">
             <Input
               value={url}
               placeholder="https://your-website.com"
@@ -130,7 +132,7 @@ export function WebsitePreviewDialog({
             ) : (
               <Globe aria-hidden />
             )}
-            {loadedUrl ? 'Reload' : 'Load preview'}
+            {loadedUrl ? t('agents.reload') || 'Reload' : t('agents.loadPreview') || 'Load preview'}
           </Button>
         </div>
 
@@ -140,13 +142,13 @@ export function WebsitePreviewDialog({
               {!frameLoaded ? (
                 <p className="absolute inset-0 flex items-center justify-center gap-2 text-xs text-text-secondary">
                   <Spinner />
-                  Loading your site…
+                  {t('agents.loadingYourSite') || 'Loading your site…'}
                 </p>
               ) : null}
               <iframe
                 key={src}
                 src={src}
-                title="Your website with the chat widget"
+                title={t('agents.yourWebsiteWithTheChat') || 'Your website with the chat widget'}
                 onLoad={() => setFrameLoaded(true)}
                 className="h-120 w-full"
                 sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
@@ -156,7 +158,7 @@ export function WebsitePreviewDialog({
             {blocked ? (
               <Alert
                 tone="warning"
-                title="Your site may block being embedded"
+                title={t('agents.yourSiteMayBlockBeing') || 'Your site may block being embedded'}
                 action={
                   <a
                     href={src}
@@ -164,12 +166,12 @@ export function WebsitePreviewDialog({
                     rel="noreferrer"
                     className="inline-flex items-center gap-1 text-xs font-medium text-accent-600 hover:underline"
                   >
-                    Open in a new tab
+                    {t('agents.openInANewTab') || 'Open in a new tab'}
                     <ExternalLink aria-hidden className="h-3 w-3" />
                   </a>
                 }
               >
-                This only affects the preview, not your live site.
+                {t('agents.thisOnlyAffectsThePreview') || 'This only affects the preview, not your live site.'}
               </Alert>
             ) : null}
           </div>

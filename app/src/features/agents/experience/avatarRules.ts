@@ -1,4 +1,5 @@
-/**
+
+import { t as translateNow } from '../../../i18n/i18n';/**
  * What the avatar picker accepts, and why.
  *
  * Kept apart from the component because these are the rules the copy quotes
@@ -50,7 +51,7 @@ export function avatarTypeOf(file: File): AcceptedAvatarType | null {
 /** The reason a file cannot be used, or `null` when it can. */
 export function validateAvatarFile(file: File): string | null {
   if (avatarTypeOf(file) === null) {
-    return 'Use a PNG, JPG or WebP image.';
+    return translateNow('agents.useAPngJpgOr') || 'Use a PNG, JPG or WebP image.';
   }
   if (file.size > MAX_AVATAR_BYTES) {
     return `That image is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is 2 MB.`;

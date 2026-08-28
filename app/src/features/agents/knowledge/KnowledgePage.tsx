@@ -47,6 +47,7 @@ import {
   type RecrawlMode,
 } from './knowledge-model';
 import { useKnowledgeData } from './useKnowledgeData';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 /**
  * A chatbot's knowledge.
@@ -80,6 +81,7 @@ import { useKnowledgeData } from './useKnowledgeData';
  * crawl is started rather than as a 403 after one fails.
  */
 export function KnowledgePage() {
+  const { t } = useTranslation();
   const { agent, loading, error, refresh } = useAgent();
 
   if (agent) {
@@ -91,7 +93,7 @@ export function KnowledgePage() {
   if (loading) {
     return (
       <Page width="wide">
-        <PageHeader title="Knowledge" />
+        <PageHeader title={t('agents.knowledge') || 'Knowledge'} />
         <Stack>
           <Card>
             <CardBody className="flex items-center gap-3">
@@ -117,13 +119,13 @@ export function KnowledgePage() {
   if (error?.status === 403) {
     return (
       <Page width="wide">
-        <PageHeader title="Knowledge" />
+        <PageHeader title={t('agents.knowledge') || 'Knowledge'} />
         <LockedState
-          title="This chatbot is not yours to see"
-          description="Ask an owner or admin of this workspace for access."
+          title={t('agents.thisChatbotIsNotYours') || 'This chatbot is not yours to see'}
+          description={t('agents.askAnOwnerOrAdmin') || 'Ask an owner or admin of this workspace for access.'}
           action={
             <Link to="/chatbots" className={buttonClass('secondary', 'md')}>
-              Back to your chatbots
+              {t('agents.backToYourChatbots') || 'Back to your chatbots'}
             </Link>
           }
         />
@@ -133,14 +135,14 @@ export function KnowledgePage() {
 
   return (
     <Page width="wide">
-      <PageHeader title="Knowledge" />
+      <PageHeader title={t('agents.knowledge') || 'Knowledge'} />
       <Card>
         <ErrorState
-          title={error ? 'We could not load this chatbot' : 'Chatbot not found'}
+          title={error ? t('agents.weCouldNotLoadThis') || 'We could not load this chatbot' : t('agents.chatbotNotFound') || 'Chatbot not found'}
           description={
             error
-              ? error.message || 'Something went wrong while loading this workspace.'
-              : 'This chatbot does not exist in this workspace.'
+              ? error.message || t('agents.somethingWentWrongWhileLoading') || 'Something went wrong while loading this workspace.'
+              : t('agents.thisChatbotDoesNotExist2') || 'This chatbot does not exist in this workspace.'
           }
           onRetry={() => void refresh()}
         />
@@ -150,6 +152,7 @@ export function KnowledgePage() {
 }
 
 function KnowledgeContent({ agent }: { agent: Bot }) {
+  const { t } = useTranslation();
   const [params, setParams] = useSearchParams();
   const gapWindow = parseGapWindow(params.get('gaps'));
   // The source search and type filter live in the URL for the same reason the
@@ -315,7 +318,7 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
             : {
                 ...current,
                 loading: false,
-                previewError: errorMessage(cause, 'We could not compare the pages.'),
+                previewError: errorMessage(cause, t('agents.weCouldNotCompareThe') || 'We could not compare the pages.'),
                 diff: {
                   mode,
                   sourceName: source.name,
@@ -339,7 +342,7 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
         );
       }
     },
-    [agent.id, planSlug],
+    [agent.id, planSlug, t],
   );
 
   const confirmRecrawl = useCallback(async () => {
@@ -372,11 +375,11 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
           : {
               ...state,
               starting: false,
-              startError: errorMessage(cause, 'We could not start the re-train. Please try again.'),
+              startError: errorMessage(cause, t('agents.weCouldNotStartThe3') || 'We could not start the re-train. Please try again.'),
             },
       );
     }
-  }, [recrawl, agent.id, agent.name, startCrawl]);
+  }, [recrawl, agent.id, agent.name, startCrawl, t]);
 
   const removeSource = useCallback(
     async (source: KnowledgeSource) => {
@@ -386,23 +389,23 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
         refreshEverything();
       } catch (cause) {
         setActionError(
-          errorMessage(cause, 'We could not remove that source. Nothing has been deleted.'),
+          errorMessage(cause, t('agents.weCouldNotRemoveThat') || 'We could not remove that source. Nothing has been deleted.'),
         );
       }
     },
-    [agent.id, refreshEverything],
+    [agent.id, refreshEverything, t],
   );
 
   if (knowledge.sources.forbidden) {
     return (
       <Page width="wide">
-        <PageHeader title="Knowledge" />
+        <PageHeader title={t('agents.knowledge') || 'Knowledge'} />
         <LockedState
-          title="This chatbot's knowledge is not yours to see"
-          description="Ask an owner or admin of this workspace for access."
+          title={t('agents.thisChatbotsKnowledgeIsNot') || 'This chatbot\'s knowledge is not yours to see'}
+          description={t('agents.askAnOwnerOrAdmin') || 'Ask an owner or admin of this workspace for access.'}
           action={
             <Link to="/chatbots" className={buttonClass('secondary', 'md')}>
-              Back to your chatbots
+              {t('agents.backToYourChatbots') || 'Back to your chatbots'}
             </Link>
           }
         />
@@ -413,12 +416,12 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
   return (
     <Page width="wide">
       <PageHeader
-        title="Knowledge"
+        title={t('agents.knowledge') || 'Knowledge'}
         actions={
           // `loading` carries both the spinner and `aria-busy`. The hand-rolled
           // `animate-spin` it replaces froze at 0° under reduced motion.
           <Button loading={knowledge.refreshing} onClick={refreshEverything}>
-            Refresh
+            {t('agents.refresh') || 'Refresh'}
           </Button>
         }
       />
@@ -429,10 +432,10 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
         {knowledge.state.data.deactivated ? (
           <Alert
             tone="plan"
-            title="This knowledge is paused"
+            title={t('agents.thisKnowledgeIsPaused') || 'This knowledge is paused'}
             action={
               <Link to="/billing" className={buttonClass('secondary', 'sm')}>
-                See plans
+                {t('agents.seePlans') || 'See plans'}
               </Link>
             }
           >
@@ -450,37 +453,37 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
         <AgentHealthStrip agent={agent} health={health} />
 
         <Card>
-          <CardHeader size="sm" title="What it knows" titleAs="h2" />
+          <CardHeader size="sm" title={t('agents.whatItKnows') || 'What it knows'} titleAs="h2" />
           <CardBody flush>
             <StatRow
               period="Right now"
-              label="Knowledge held"
+              label={t('agents.knowledgeHeld') || 'Knowledge held'}
               columns={4}
               items={[
                 {
-                  label: 'Passages',
+                  label: t('agents.passages') || 'Passages',
                   value: indexed > 0 ? formatNumber(indexed) : undefined,
                   size: 'lg',
-                  empty: 'Nothing indexed',
+                  empty: t('agents.nothingIndexed') || 'Nothing indexed',
                 },
                 {
-                  label: 'Sources',
+                  label: t('agents.sources') || 'Sources',
                   value: summary.total > 0 ? formatNumber(summary.total) : undefined,
                   period: `${formatNumber(summary.websites)} websites · ${formatNumber(summary.documents)} documents`,
                   size: 'lg',
                   loading: knowledge.sources.loading,
                 },
                 {
-                  label: 'Website pages',
+                  label: t('agents.websitePages') || 'Website pages',
                   value: summary.websitePages > 0 ? formatNumber(summary.websitePages) : undefined,
-                  period: 'Read from your sites',
+                  period: t('agents.readFromYourSites') || 'Read from your sites',
                   size: 'lg',
                   loading: knowledge.sources.loading,
                 },
                 {
-                  label: 'Last trained',
+                  label: t('agents.lastTrained') || 'Last trained',
                   value: summary.lastIngestedAt ? formatDate(summary.lastIngestedAt) : undefined,
-                  period: 'Most recent source added',
+                  period: t('agents.mostRecentSourceAdded') || 'Most recent source added',
                   size: 'lg',
                   loading: knowledge.sources.loading,
                 },
@@ -507,7 +510,7 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
           main={
             <Stack>
               <Card>
-                <CardHeader size="sm" title="Sources" titleAs="h2" />
+                <CardHeader size="sm" title={t('agents.sources') || 'Sources'} titleAs="h2" />
                 <CardBody flush>
                   <SourcesTable
                     sources={sources}

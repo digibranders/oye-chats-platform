@@ -25,6 +25,7 @@ import {
   newOptionId,
   newRequirementId,
 } from './quotation.model';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 export interface ServiceEditorProps {
   service: Service;
@@ -88,6 +89,7 @@ function ServiceEditorInner({
   onChange,
   onRemove,
 }: ServiceEditorProps) {
+  const { t } = useTranslation();
   const requirements = service.requirements;
 
   const patchRequirement = (requirementIndex: number, patch: Partial<Requirement>) =>
@@ -101,7 +103,7 @@ function ServiceEditorInner({
     <Card>
       <CardHeader
         eyebrow={`Service ${index + 1}`}
-        title={service.name.trim() || 'Untitled service'}
+        title={service.name.trim() || t('agents.untitledService') || 'Untitled service'}
         titleAs="h3"
         description={`${
           requirements.length === 1 ? '1 line' : `${formatNumber(requirements.length)} lines`
@@ -114,32 +116,32 @@ function ServiceEditorInner({
             onClick={onRemove}
             iconLeft={<Trash2 aria-hidden />}
           >
-            Remove
+            {t('agents.remove') || 'Remove'}
           </Button>
         }
       />
       <CardBody className="space-y-4">
-        <Field label="Name" required hint="What the visitor picks from.">
+        <Field label={t('agents.name') || 'Name'} required hint={t('agents.whatTheVisitorPicksFrom') || 'What the visitor picks from.'}>
           <Input
             value={service.name}
             onChange={(event) => onChange({ name: event.target.value })}
-            placeholder="Landing page design"
+            placeholder={t('agents.landingPageDesign') || 'Landing page design'}
             disabled={disabled}
           />
         </Field>
 
-        <Field label="Description" optional hint="One line, shown under the name while quoting.">
+        <Field label={t('agents.description') || 'Description'} optional hint={t('agents.oneLineShownUnderThe') || 'One line, shown under the name while quoting.'}>
           <Input
             value={service.description}
             onChange={(event) => onChange({ description: event.target.value })}
-            placeholder="Includes three concepts and two revision rounds."
+            placeholder={t('agents.includesThreeConceptsAndTwo') || 'Includes three concepts and two revision rounds.'}
             disabled={disabled}
           />
         </Field>
 
         <section className="border-t border-border pt-4">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <h4 className="text-base font-semibold text-text-primary">Lines</h4>
+            <h4 className="text-base font-semibold text-text-primary">{t('agents.lines') || 'Lines'}</h4>
             <span className="figure text-xs text-text-tertiary">
               {formatNumber(requirements.length)} of {formatNumber(MAX_REQUIREMENTS_PER_SERVICE)}
             </span>
@@ -160,7 +162,7 @@ function ServiceEditorInner({
                         onChange={(event) =>
                           patchRequirement(requirementIndex, { label: event.target.value })
                         }
-                        placeholder="Second shooter"
+                        placeholder={t('agents.secondShooter') || 'Second shooter'}
                         disabled={disabled}
                       />
                     </Field>
@@ -180,9 +182,9 @@ function ServiceEditorInner({
                   </div>
 
                   <Field
-                    label="Question"
+                    label={t('agents.question') || 'Question'}
                     optional
-                    hint="What the chatbot asks. Falls back to the label when blank."
+                    hint={t('agents.whatTheChatbotAsksFalls') || 'What the chatbot asks. Falls back to the label when blank.'}
                     className="mt-3"
                   >
                     <Input
@@ -190,15 +192,15 @@ function ServiceEditorInner({
                       onChange={(event) =>
                         patchRequirement(requirementIndex, { question: event.target.value })
                       }
-                      placeholder="Do you want a second shooter?"
+                      placeholder={t('agents.doYouWantASecond') || 'Do you want a second shooter?'}
                       disabled={disabled}
                     />
                   </Field>
 
                   <Grid cols={2} className="mt-3">
-                    <Field label="Type">
+                    <Field label={t('agents.type') || 'Type'}>
                       <Select
-                        label="Type"
+                        label={t('agents.type') || 'Type'}
                         value={requirement.type}
                         options={REQUIREMENT_TYPES}
                         disabled={disabled}
@@ -217,9 +219,9 @@ function ServiceEditorInner({
                         }}
                       />
                     </Field>
-                    <Field label="Quantity" hint={QUANTITY_MODES.find((mode) => mode.value === requirement.quantity_mode)?.help}>
+                    <Field label={t('agents.quantity') || 'Quantity'} hint={QUANTITY_MODES.find((mode) => mode.value === requirement.quantity_mode)?.help}>
                       <Select
-                        label="Quantity"
+                        label={t('agents.quantity') || 'Quantity'}
                         value={requirement.quantity_mode}
                         options={QUANTITY_MODES}
                         disabled={disabled}
@@ -233,7 +235,7 @@ function ServiceEditorInner({
                   {requirement.quantity_mode === 'none' ? null : (
                     <Grid cols={2} className="mt-3">
                       <NumberField
-                        label={requirement.quantity_mode === 'ask' ? 'Default quantity' : 'Quantity'}
+                        label={requirement.quantity_mode === 'ask' ? t('agents.defaultQuantity') || 'Default quantity' : t('agents.quantity') || 'Quantity'}
                         value={requirement.quantity}
                         step={1}
                         min={1}
@@ -244,13 +246,13 @@ function ServiceEditorInner({
                           })
                         }
                       />
-                      <Field label="Unit" hint="What one of it is counted in.">
+                      <Field label={t('agents.unit') || 'Unit'} hint={t('agents.whatOneOfItIs') || 'What one of it is counted in.'}>
                         <Input
                           value={requirement.unit_label}
                           onChange={(event) =>
                             patchRequirement(requirementIndex, { unit_label: event.target.value })
                           }
-                          placeholder="hour, page, seat"
+                          placeholder={t('agents.hourPageSeat') || 'hour, page, seat'}
                           disabled={disabled}
                         />
                       </Field>
@@ -260,7 +262,7 @@ function ServiceEditorInner({
                   {requirement.type === 'item' ? (
                     <Grid cols={2} className="mt-3">
                       <NumberField
-                        label="Price"
+                        label={t('agents.price') || 'Price'}
                         value={requirement.price}
                         step={0.01}
                         min={0}
@@ -269,7 +271,7 @@ function ServiceEditorInner({
                           patchRequirement(requirementIndex, { price: Math.max(0, Number(raw) || 0) })
                         }
                       />
-                      <Field label="Adds to the quote" hint="What the visitor would see.">
+                      <Field label={t('agents.addsToTheQuote') || 'Adds to the quote'} hint={t('agents.whatTheVisitorWouldSee') || 'What the visitor would see.'}>
                         {/* Not an `Input`: it is derived, and a disabled field
                             that looks editable invites the reader to try. */}
                         <p className="figure pt-1.5 text-base text-text-primary">
@@ -284,7 +286,7 @@ function ServiceEditorInner({
                   ) : (
                     <div className="mt-3 border-t border-border pt-3">
                       <div className="flex flex-wrap items-baseline justify-between gap-2">
-                        <p className="text-sm font-medium text-text-primary">Options</p>
+                        <p className="text-sm font-medium text-text-primary">{t('agents.options') || 'Options'}</p>
                         <span className="figure text-xs text-text-tertiary">
                           {formatNumber(requirement.options.length)} of{' '}
                           {formatNumber(MAX_OPTIONS_PER_REQUIREMENT)}
@@ -300,7 +302,7 @@ function ServiceEditorInner({
                             >
                               <Input
                                 value={option.label}
-                                placeholder="Next.js"
+                                placeholder={t('agents.nextJs') || 'Next.js'}
                                 disabled={disabled}
                                 onChange={(event) =>
                                   patchRequirement(requirementIndex, {
@@ -314,7 +316,7 @@ function ServiceEditorInner({
                               />
                             </Field>
                             <NumberField
-                              label="Price"
+                              label={t('agents.price') || 'Price'}
                               value={option.price}
                               step={0.01}
                               min={0}
@@ -365,7 +367,7 @@ function ServiceEditorInner({
                         }
                         iconLeft={<Plus aria-hidden />}
                       >
-                        Add option
+                        {t('agents.addOption') || 'Add option'}
                       </Button>
                     </div>
                   )}
@@ -399,7 +401,7 @@ function ServiceEditorInner({
             }
             iconLeft={<Plus aria-hidden />}
           >
-            Add line
+            {t('agents.addLine') || 'Add line'}
           </Button>
         </section>
       </CardBody>
