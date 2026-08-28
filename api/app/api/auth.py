@@ -16,7 +16,7 @@ from app.core.origin_check import extract_hostname, is_origin_allowed, origin_ch
 from app.db.models import Affiliate, Bot, Client, ImpersonationToken, Operator, Subscription
 from app.db.session import get_session
 from app.schemas.validators import RowId
-from app.services import plan_service
+from app.services import credit_service, plan_service
 from app.services.audit_service import record_audit
 from app.services.runtime_config import is_impersonation_enabled
 
@@ -1207,12 +1207,7 @@ def get_current_bot(
                 # Pre-resolve which ledger scope this bot drains. bot.subscription
                 # is a lazy relationship that can't be accessed after expunge(), so
                 # we pull subscription.bot_id here and stash it for credit routing.
-                if bot.subscription_id:
-                    bot._subscription_bot_id = session.scalar(
-                        select(Subscription.bot_id).where(Subscription.id == bot.subscription_id)
-                    )
-                else:
-                    bot._subscription_bot_id = None
+                bot._subscription_bot_id = credit_service.live_subscription_bot_id(session, bot.subscription_id)
                 # Cache for future requests
                 cache_set(bot_config_key(bot_key), _bot_to_cache_dict(bot), BOT_CONFIG_TTL)
                 session.expunge(bot)
@@ -1240,12 +1235,7 @@ def get_current_bot(
                     _ = bot.id, bot.name, bot.system_prompt, bot.client_id, bot.bot_key
                     _ = bot.primary_color, bot.header_color, bot.background_color
                     _ = bot.bot_logo, bot.launcher_name, bot.launcher_logo
-                    if bot.subscription_id:
-                        bot._subscription_bot_id = session.scalar(
-                            select(Subscription.bot_id).where(Subscription.id == bot.subscription_id)
-                        )
-                    else:
-                        bot._subscription_bot_id = None
+                    bot._subscription_bot_id = credit_service.live_subscription_bot_id(session, bot.subscription_id)
                     session.expunge(bot)
                     return bot
                 # No bot exists. Client hasn't created one yet (expected for new accounts)
@@ -1394,12 +1384,7 @@ def get_bot_for_chat(
             # routing never lazy-loads bot.subscription on a detached object,
             # even though preview replies skip deduction, downstream code that
             # inspects _subscription_bot_id stays consistent.
-            if bot.subscription_id:
-                bot._subscription_bot_id = session.scalar(
-                    select(Subscription.bot_id).where(Subscription.id == bot.subscription_id)
-                )
-            else:
-                bot._subscription_bot_id = None
+            bot._subscription_bot_id = credit_service.live_subscription_bot_id(session, bot.subscription_id)
             session.expunge(bot)
             # Owner-preview: origin check is bypassed (no _enforce_bot_origin) and
             # the reply is free.

@@ -58,16 +58,28 @@ from app.db.models import Bot, CreditLedger, PricingConfig, Subscription
 _UNSET: object = object()
 
 
+# The statuses under which a subscription still FUNDS anything. Mirrors
+# ``auth._ACTIVE_SUBSCRIPTION_STATUSES`` / ``bot_routes._bot_has_live_subscription``:
+# ``past_due`` counts because dunning is a grace window, not a shut-off.
+_LIVE_SUBSCRIPTION_STATUSES: frozenset[str] = frozenset({"trialing", "active", "past_due"})
+
+
 def resolve_bot_ledger_bot_id(bot: Bot | None) -> int | None:
     """Decide which ledger bucket a bot's usage should drain.
 
     Returns ``bot.id`` (per-bot ledger) only when the subscription linked to
-    this bot is itself scoped to the bot (``subscription.bot_id == bot.id``).
-    Returns ``None`` (client pool) for:
+    this bot is itself scoped to the bot (``subscription.bot_id == bot.id``)
+    AND still live. Returns ``None`` (client pool) for:
     - legacy-pooled / Free bots
     - bots whose ``subscription_id`` is a convenience pointer set by the
       per-bot-billing migration but whose subscription still has
       ``bot_id = NULL``. Credits live in the client pool for those bots.
+    - bots whose own subscription is DEAD (canceled/expired/paused). Nothing
+      clears ``Bot.subscription_id`` on cancellation, so without the status
+      check a bot whose per-bot subscription was cancelled - the advertised
+      support flow for moving an account onto a pooled tier - kept draining a
+      dead, never-again-granted isolated ledger forever and hit
+      InsufficientCredits while the account pool sat full (seam-audit P1).
 
     Credit routing path:
     - ``get_current_bot()`` pre-resolves ``subscription.bot_id`` into
@@ -89,12 +101,36 @@ def resolve_bot_ledger_bot_id(bot: Bot | None) -> int | None:
     sub_bot_id = getattr(bot, "_subscription_bot_id", _UNSET)
     if sub_bot_id is _UNSET:
         # Slow path: bot was loaded with an active session (subscription_routes,
-        # billing endpoints). Lazy-load the relationship normally.
+        # billing endpoints). Lazy-load the relationship normally. The liveness
+        # judgement happens here; the fast path already had it applied by
+        # ``live_subscription_bot_id`` at pre-resolution time.
         sub = getattr(bot, "subscription", None)
-        sub_bot_id = getattr(sub, "bot_id", None) if sub is not None else None
+        if sub is None or sub.status not in _LIVE_SUBSCRIPTION_STATUSES:
+            return None
+        sub_bot_id = sub.bot_id
     if sub_bot_id != bot_pk:
         return None
     return bot_pk
+
+
+def live_subscription_bot_id(session: Session, subscription_id: int | None) -> int | None:
+    """``subscription.bot_id`` for ledger routing - ``None`` unless it is LIVE.
+
+    The auth layer (``get_current_bot`` and friends) stashes this on the bot as
+    ``_subscription_bot_id`` before expunging it, so the hot chat path routes
+    credits without a lazy-load. It must carry the same liveness judgement as
+    :func:`resolve_bot_ledger_bot_id`'s slow path: pre-resolving the scope of a
+    DEAD subscription would re-create the orphaned-ledger P1 on exactly the
+    path that spends the most credits.
+    """
+    if subscription_id is None:
+        return None
+    return session.scalar(
+        select(Subscription.bot_id).where(
+            Subscription.id == subscription_id,
+            Subscription.status.in_(_LIVE_SUBSCRIPTION_STATUSES),
+        )
+    )
 
 
 logger = logging.getLogger(__name__)
