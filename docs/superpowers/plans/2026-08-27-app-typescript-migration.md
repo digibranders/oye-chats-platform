@@ -22,6 +22,18 @@ git branch --show-current
 
 This plan was written on `claude/admin-redesign`. Stay on a feature branch; never commit to `main`.
 
+**Two things differ from the first draft of this plan, both settled during Phase 0.**
+Legacy modules are imported *extensionless* in the guard test, so TypeScript
+resolves to the `.d.ts` and Vite resolves to the `.js`/`.jsx`. And shim text is
+read through Vite's `?raw` glob, not `node:fs`: `tsconfig` pins `types` to
+`vite/client`, so Node globals are deliberately out of scope for app source and
+`readFileSync` fails `tsc`.
+
+**`npm run size` does not work in this checkout.** `size-limit` is in
+`devDependencies` but its binary is absent from `node_modules/.bin`. Baseline
+against the build's own asset table instead; `dist/assets/index-*.js` was
+431,852 bytes at the start of Phase 0.
+
 **The verification triple.** Every task ends with all three green. There is no "it's just a rename" exemption:
 
 ```bash
@@ -382,8 +394,6 @@ Right now nothing verifies that a `.d.ts` describes its `.js`. This test does, b
 Create `app/src/test/shimDrift.test.ts`:
 
 ```ts
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -400,8 +410,16 @@ import { describe, expect, it } from 'vitest';
  *   • exported but not declared → the export is invisible to TS, so callers
  *     silently keep using the untyped `.jsx` path instead of migrating.
  *
- * DELETE THIS FILE once the last shim is gone (Task 5.1). Its whole job is to
- * hold the line during the migration; afterwards `tsc` does it natively.
+ * Imports are extensionless on purpose. TypeScript resolves them to the
+ * `.d.ts`, Vite resolves them to the `.js`/`.jsx`, and that split is exactly
+ * the thing under test.
+ *
+ * Shim text is read through Vite's `?raw` glob rather than `node:fs`, because
+ * tsconfig pins `types` to `vite/client` and Node globals are deliberately not
+ * in scope for app source.
+ *
+ * DELETE THIS FILE once the last shim is gone. Its whole job is to hold the
+ * line during the migration; afterwards `tsc` does it natively.
  */
 
 /** Each legacy module still fronted by a hand-written `.d.ts` shim. */
@@ -410,20 +428,20 @@ const SHIMMED_MODULES: ReadonlyArray<{
   readonly dts: string;
   readonly load: () => Promise<Record<string, unknown>>;
 }> = [
-  { label: 'lib/currency', dts: 'src/lib/currency.d.ts', load: () => import('../lib/currency.js') },
-  { label: 'utils/trial', dts: 'src/utils/trial.d.ts', load: () => import('../utils/trial.js') },
-  { label: 'utils/trialBanner', dts: 'src/utils/trialBanner.d.ts', load: () => import('../utils/trialBanner.js') },
-  { label: 'utils/authStorage', dts: 'src/utils/authStorage.d.ts', load: () => import('../utils/authStorage.js') },
-  { label: 'lib/razorpay', dts: 'src/lib/razorpay.d.ts', load: () => import('../lib/razorpay.js') },
-  { label: 'utils/impersonation', dts: 'src/utils/impersonation.d.ts', load: () => import('../utils/impersonation.js') },
-  { label: 'data/platformIntegrations', dts: 'src/data/platformIntegrations.d.ts', load: () => import('../data/platformIntegrations.js') },
-  { label: 'context/BotContext', dts: 'src/context/BotContext.d.ts', load: () => import('../context/BotContext.jsx') },
-  { label: 'context/CurrencyContext', dts: 'src/context/CurrencyContext.d.ts', load: () => import('../context/CurrencyContext.jsx') },
-  { label: 'context/WorkspaceContext', dts: 'src/context/WorkspaceContext.d.ts', load: () => import('../context/WorkspaceContext.jsx') },
-  { label: 'context/CrawlContext', dts: 'src/context/CrawlContext.d.ts', load: () => import('../context/CrawlContext.jsx') },
-  { label: 'context/NotificationContext', dts: 'src/context/NotificationContext.d.ts', load: () => import('../context/NotificationContext.jsx') },
-  { label: 'features/agents/experience/PremiumOrb', dts: 'src/features/agents/experience/PremiumOrb.d.ts', load: () => import('../features/agents/experience/PremiumOrb.jsx') },
-  { label: 'services/api', dts: 'src/services/api.d.ts', load: () => import('../services/api.js') },
+  { label: 'lib/currency', dts: 'src/lib/currency.d.ts', load: () => import('../lib/currency') },
+  { label: 'utils/trial', dts: 'src/utils/trial.d.ts', load: () => import('../utils/trial') },
+  { label: 'utils/trialBanner', dts: 'src/utils/trialBanner.d.ts', load: () => import('../utils/trialBanner') },
+  { label: 'utils/authStorage', dts: 'src/utils/authStorage.d.ts', load: () => import('../utils/authStorage') },
+  { label: 'lib/razorpay', dts: 'src/lib/razorpay.d.ts', load: () => import('../lib/razorpay') },
+  { label: 'utils/impersonation', dts: 'src/utils/impersonation.d.ts', load: () => import('../utils/impersonation') },
+  { label: 'data/platformIntegrations', dts: 'src/data/platformIntegrations.d.ts', load: () => import('../data/platformIntegrations') },
+  { label: 'context/BotContext', dts: 'src/context/BotContext.d.ts', load: () => import('../context/BotContext') },
+  { label: 'context/CurrencyContext', dts: 'src/context/CurrencyContext.d.ts', load: () => import('../context/CurrencyContext') },
+  { label: 'context/WorkspaceContext', dts: 'src/context/WorkspaceContext.d.ts', load: () => import('../context/WorkspaceContext') },
+  { label: 'context/CrawlContext', dts: 'src/context/CrawlContext.d.ts', load: () => import('../context/CrawlContext') },
+  { label: 'context/NotificationContext', dts: 'src/context/NotificationContext.d.ts', load: () => import('../context/NotificationContext') },
+  { label: 'features/agents/experience/PremiumOrb', dts: 'src/features/agents/experience/PremiumOrb.d.ts', load: () => import('../features/agents/experience/PremiumOrb') },
+  { label: 'services/api', dts: 'src/services/api.d.ts', load: () => import('../services/api') },
 ];
 
 /**
@@ -434,8 +452,23 @@ const SHIMMED_MODULES: ReadonlyArray<{
  * excluded here on purpose: comparing them to runtime exports would fail on
  * every correctly-written shim.
  */
+const SHIM_SOURCES: Record<string, string> = import.meta.glob('../**/*.d.ts', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+});
+
+/** Glob keys are relative to this file ('../lib/currency.d.ts'); the table
+ *  above names shims from the app root ('src/lib/currency.d.ts'). */
+function shimSource(dtsPath: string): string {
+  const suffix = dtsPath.replace(/^src\//, '');
+  const key = Object.keys(SHIM_SOURCES).find((k) => k.replace(/^\.\.\//, '') === suffix);
+  if (!key) throw new Error(`no shim source found for ${dtsPath}`);
+  return SHIM_SOURCES[key];
+}
+
 function declaredValueExports(dtsPath: string): Set<string> {
-  const source = readFileSync(resolve(process.cwd(), dtsPath), 'utf8');
+  const source = shimSource(dtsPath);
   const pattern =
     /^export\s+(?:declare\s+)?(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/gm;
   const names = new Set<string>();
