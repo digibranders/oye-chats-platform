@@ -1,10 +1,24 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
+import type { Bot } from '../types/domain';
 import { getBots } from '../services/api';
 import { getAuthItem } from '../utils/authStorage';
 import { isImpersonating } from '../utils/impersonation';
 import { t as translateNow } from '../i18n/i18n';
 
-const BotContext = createContext(null);
+export interface BotContextValue {
+  bots: Bot[];
+  /** The active bot scope. `null` means "All agents" (workspace-aggregated). */
+  selectedBot: Bot | null;
+  /** Set the active bot scope. Pass `null` to select the All-agents view. */
+  selectBot: (bot: Bot | null) => void;
+  refreshBots: () => Promise<Bot[]>;
+  loading: boolean;
+  error: { message: string; status: number | null } | null;
+  /** True when the user is viewing the workspace-aggregated scope. */
+  isAllAgents: boolean;
+}
+
+const BotContext = createContext<BotContextValue | null>(null);
 
 /**
  * localStorage sentinel meaning "All agents" - the workspace-aggregated scope
@@ -22,23 +36,23 @@ const STORAGE_KEY = 'selected_bot_id';
  * super-admin's own dashboard in every other tab. Reads are skipped for the
  * same reason: the persisted id belongs to a different Account.
  */
-function readPersistedBotId() {
+function readPersistedBotId(): string | null {
     return isImpersonating() ? null : localStorage.getItem(STORAGE_KEY);
 }
 
-function persistBotId(value) {
+function persistBotId(value: string | null): void {
     if (isImpersonating()) return;
     if (value === null) localStorage.removeItem(STORAGE_KEY);
     else localStorage.setItem(STORAGE_KEY, value);
 }
 
-export function BotProvider({ children }) {
-    const [bots, setBots] = useState([]);
-    const [selectedBot, setSelectedBot] = useState(null);
+export function BotProvider({ children }: { children: ReactNode }) {
+    const [bots, setBots] = useState<Bot[]>([]);
+    const [selectedBot, setSelectedBot] = useState<Bot | null>(null);
     const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
+    const [error, setError] = useState<BotContextValue['error']>(null);
 
-    const refreshBots = useCallback(async () => {
+    const refreshBots = useCallback(async (): Promise<Bot[]> => {
         try {
             setLoading(true);
             setError(null);
@@ -82,9 +96,13 @@ export function BotProvider({ children }) {
             console.error('Failed to fetch bots:', err);
             setBots([]);
             setSelectedBot(null);
+            // `catch` binds `unknown` under strict. The API client's rejections
+            // do carry `message` and `status`, but nothing proves it to the
+            // compiler while services/api is still JS, so read them defensively.
+            const apiErr = err as { message?: string; status?: number | null } | null;
             setError({
-                message: err?.message || translateNow('app.failedToLoadBots') || 'Failed to load bots',
-                status: err?.status || null,
+                message: apiErr?.message || translateNow('app.failedToLoadBots') || 'Failed to load bots',
+                status: apiErr?.status || null,
             });
             return [];
         } finally {
@@ -131,7 +149,7 @@ export function BotProvider({ children }) {
      * (the shell BotSwitcher's default when the workspace has 2+ bots). The
      * choice is persisted so it survives reloads.
      */
-    const selectBot = useCallback((bot) => {
+    const selectBot = useCallback((bot: Bot | null) => {
         setSelectedBot(bot);
         persistBotId(bot?.id ? bot.id.toString() : ALL_BOTS_SENTINEL);
     }, []);
@@ -155,7 +173,7 @@ export function BotProvider({ children }) {
 }
 
 // eslint-disable-next-line react-refresh/only-export-components
-export function useBotContext() {
+export function useBotContext(): BotContextValue {
     const ctx = useContext(BotContext);
     if (!ctx) {
         throw new Error('useBotContext must be used within a BotProvider');
