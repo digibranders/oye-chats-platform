@@ -239,11 +239,15 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     }, [refreshUnread]);
 
     const dismiss = useCallback(async (id: number): Promise<void> => {
-        let removed: NotificationItem | undefined;
-        setItems((prev) => {
-            removed = prev.find((item) => item.id === id);
-            return prev.filter((item) => item.id !== id);
-        });
+        // The dismissed row is read from the `items` snapshot this callback
+        // closed over, NOT out of the `setItems` updater. React only promises
+        // the updater runs during the subsequent render - it evaluates it
+        // inline when the update queue happens to be empty - so a value
+        // assigned inside it is not reliably visible to the lines below, and
+        // an unread dismissal would leave the badge counting a row the user
+        // has already removed until the next hydrate. Updaters stay pure.
+        const removed = items.find((item) => item.id === id);
+        setItems((prev) => prev.filter((item) => item.id !== id));
         if (removed && !removed.is_read) {
             setUnreadCount((n) => Math.max(0, n - 1));
         }
@@ -254,7 +258,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
             // On failure, re-hydrate to recover the truth.
             hydrate();
         }
-    }, [hydrate]);
+    }, [hydrate, items]);
 
     const clearAll = useCallback(async (): Promise<void> => {
         setItems([]);
