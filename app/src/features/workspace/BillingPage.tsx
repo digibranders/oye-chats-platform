@@ -457,6 +457,9 @@ export function BillingPage() {
             geo={billing.geo.data ?? null}
             botId={botId}
             onChanged={announce}
+            // A live plan is celebrated inside the dialog, so this only re-reads
+            // the page; announce() would toast the same news a second time.
+            onActivated={() => billing.refreshAll()}
             onBillingDetailsRequired={(missing) => setDemandedFields(missing)}
           />
           <CancelSubscriptionDialog

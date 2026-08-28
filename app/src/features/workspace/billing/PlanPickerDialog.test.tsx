@@ -131,10 +131,15 @@ describe('pricing', () => {
     expect(screen.getByText(/Charged as ₹949/)).toBeInTheDocument();
   });
 
-  it('quotes the yearly price against the yearly cycle, never the monthly one', async () => {
+  it('leads with the per-month equivalent on the yearly cycle and names the yearly total', async () => {
     renderDialog();
     await userEvent.click(screen.getByRole('radio', { name: /yearly/i }));
-    expect(screen.getByText('₹9,490')).toBeInTheDocument();
+    // Headline is the effective monthly price (₹9,490 / 12), comparable at a
+    // glance to the monthly toggle rather than a yearly figure that is not.
+    expect(screen.getByText('₹791')).toBeInTheDocument();
+    // The full amount actually billed is named in the line beneath it.
+    expect(screen.getByText(/₹9,490 billed yearly/)).toBeInTheDocument();
+    // And the monthly headline is gone.
     expect(screen.queryByText('₹949')).toBeNull();
   });
 
@@ -237,6 +242,79 @@ describe('after the money has moved', () => {
     expect(screen.getByRole('button', { name: /subscribe/i })).toBeDisabled();
     // And it must never read as a failure.
     expect(screen.queryByText(/could not complete/i)).toBeNull();
+  });
+
+  it('stays open while the activation is still settling', async () => {
+    // `onDone` fires synchronously right after the activation poll is started,
+    // so reading `activation.blocking` there saw the PRE-update value (always
+    // false) and closed the dialog over a live activation — taking the only
+    // explanation the customer has with it, and skipping the congratulations
+    // entirely. This is the silence `usePlanActivation` says produced a second
+    // Razorpay subscription and a second charge in production.
+    api.createCheckoutSession.mockResolvedValue({
+      provider: 'razorpay',
+      subscription_id: 'sub_1',
+      key_id: 'rzp_test',
+    });
+    razorpay.openRazorpayCheckout.mockResolvedValue({
+      razorpay_payment_id: 'pay_1',
+      razorpay_subscription_id: 'sub_1',
+      razorpay_signature: 'sig',
+    });
+    api.verifyRazorpaySubscription.mockResolvedValue({ activation_pending: true });
+    // The plan never goes live during the test, so the poll stays pending.
+    api.getCurrentSubscription.mockResolvedValue({ plan: null, subscription: null });
+
+    const { onOpenChange } = renderDialog();
+    await userEvent.click(screen.getByRole('button', { name: /subscribe/i }));
+
+    expect(await screen.findByText(/do not pay again/i)).toBeInTheDocument();
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+  });
+
+  it('celebrates once the plan is genuinely live, rather than closing in silence', async () => {
+    api.createCheckoutSession.mockResolvedValue({
+      provider: 'razorpay',
+      subscription_id: 'sub_1',
+      key_id: 'rzp_test',
+    });
+    razorpay.openRazorpayCheckout.mockResolvedValue({
+      razorpay_payment_id: 'pay_1',
+      razorpay_subscription_id: 'sub_1',
+      razorpay_signature: 'sig',
+    });
+    // Signature checks out but no local row exists yet, so the flow enters the
+    // activation-pending poll rather than asserting success on the payment.
+    api.verifyRazorpaySubscription.mockResolvedValue({ activation_pending: true });
+    // The activation poll sees the purchased plan live on its first read.
+    api.getCurrentSubscription.mockResolvedValue({
+      plan: { id: 3, slug: 'standard', name: 'Standard', monthly_price_cents: 94900 },
+      subscription: { status: 'active' },
+    });
+
+    const onChanged = vi.fn();
+    const onActivated = vi.fn();
+    const { onOpenChange } = renderDialog({ onChanged, onActivated });
+    await userEvent.click(screen.getByRole('button', { name: /subscribe/i }));
+
+    // The grid gives way to a single congratulation naming the plan…
+    expect(await screen.findByText(/You’re on/)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: "You're all set" })).toBeInTheDocument();
+    // …and there is nothing left to buy.
+    expect(screen.queryByRole('button', { name: /subscribe/i })).toBeNull();
+    // …and the customer can actually leave. `checkout.activationPending` stays
+    // latched after the poll settles, so a `locked` that still counted it left
+    // the celebration screen with a disabled Done and no close control: a modal
+    // trap whose only exit was a page reload.
+    const done = screen.getByRole('button', { name: 'Done' });
+    expect(done).toBeEnabled();
+    await userEvent.click(done);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+
+    // The dialog IS the celebration, so the page is asked to re-read itself but
+    // never to raise a toast that repeats what the congratulations just said.
+    await waitFor(() => expect(onActivated).toHaveBeenCalledTimes(1));
+    expect(onChanged).not.toHaveBeenCalled();
   });
 });
 
