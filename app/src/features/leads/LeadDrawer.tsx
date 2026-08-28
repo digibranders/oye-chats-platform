@@ -345,17 +345,21 @@ function Annotations({ controller }: { controller: LeadAnnotationController }) {
   );
 }
 
-const ACTION_LABELS: Record<string, string> = {
-  handoff_requested: 'Requested a person',
-  accepted: 'Operator joined',
-  closed: 'Closed',
-  transferred: 'Transferred',
-  timeout: 'Timed out',
-  visitor_cancelled: 'Visitor left the queue',
+/** Key beside the English: a module constant cannot be translated in place. */
+const ACTION_LABELS: Record<string, { key: string; text: string }> = {
+  handoff_requested: { key: 'leads.requestedAPerson', text: 'Requested a person' },
+  accepted: { key: 'leads.operatorJoined', text: 'Operator joined' },
+  closed: { key: 'leads.closed', text: 'Closed' },
+  transferred: { key: 'leads.transferred', text: 'Transferred' },
+  timeout: { key: 'leads.timedOut', text: 'Timed out' },
+  visitor_cancelled: { key: 'leads.visitorLeftTheQueue', text: 'Visitor left the queue' },
 };
 
 function humanizeAction(action: string): string {
-  return ACTION_LABELS[action] ?? action.replace(/_/g, ' ');
+  const known = ACTION_LABELS[action];
+  // An unrecognised action falls back to its own de-underscored name rather
+  // than to a key: it is a server string we have no copy for at all.
+  return known ? translateNow(known.key) || known.text : action.replace(/_/g, ' ');
 }
 
 function LeadAuditTrail({ sessionId }: { sessionId: string }) {

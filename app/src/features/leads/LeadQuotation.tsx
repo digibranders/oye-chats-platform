@@ -34,14 +34,20 @@ const STATUS_TONE: Record<Quotation['status'], Tone> = {
   idle: 'neutral',
 };
 
-const STATUS_LABEL: Record<Quotation['status'], string> = {
-  complete: 'Quote accepted',
-  quoting: 'Quote pending',
-  selecting: 'Selecting services',
-  choosing: 'Answering questions',
-  answering: 'Answering questions',
-  skipped: 'Declined',
-  idle: 'Not started',
+/**
+ * The English is the fallback, the key is beside it.
+ *
+ * A module constant is evaluated at import, before any locale exists, so the
+ * word cannot be translated where it is declared. Same shape `nav.ts` uses.
+ */
+const STATUS_LABEL: Record<Quotation['status'], { key: string; text: string }> = {
+  complete: { key: 'leads.quoteAccepted', text: 'Quote accepted' },
+  quoting: { key: 'leads.quotePending', text: 'Quote pending' },
+  selecting: { key: 'leads.selectingServices', text: 'Selecting services' },
+  choosing: { key: 'leads.answeringQuestions', text: 'Answering questions' },
+  answering: { key: 'leads.answeringQuestions', text: 'Answering questions' },
+  skipped: { key: 'leads.declined', text: 'Declined' },
+  idle: { key: 'leads.notStarted', text: 'Not started' },
 };
 
 /** Catalog prices are authored in whole currency; `formatMoney` takes minor units. */
@@ -63,7 +69,10 @@ export function LeadQuotation({ lead }: { lead: Lead }) {
   return (
     <LeadSection
       title={t('leads.quotation') || 'Quotation'}
-      actions={<Badge tone={STATUS_TONE[quotation.status] ?? 'neutral'}>{STATUS_LABEL[quotation.status] ?? quotation.status}</Badge>}
+      actions={<Badge tone={STATUS_TONE[quotation.status] ?? 'neutral'}>{(() => {
+        const status = STATUS_LABEL[quotation.status];
+        return status ? t(status.key) || status.text : quotation.status;
+      })()}</Badge>}
     >
       {lines.length === 0 ? (
         <p className="text-sm text-text-secondary">
