@@ -23,10 +23,27 @@ OyeChats is a **SaaS chatbot platform** where customers sign up, create chatbot 
 Run only the checks relevant to the files you changed:
 
 ### JavaScript / TypeScript Projects
-| Project | Directory | Lint | Typecheck | Build |
-|---------|-----------|------|-----------|-------|
-| Admin Dashboard | `app/` | `npm run lint` | — (JS) | `npm run build` |
-| Chat Widget | `widget/` | `npm run lint` | — (JS) | `npm run build` |
+| Project | Directory | Lint | Typecheck | Tests | Build |
+|---------|-----------|------|-----------|-------|-------|
+| Admin Dashboard | `app/` | `npm run lint` | `npx tsc --noEmit` | `npx vitest run` | `npm run build` |
+| Chat Widget | `widget/` | `npm run lint` | — (JS) | `npm test` | `npm run build` |
+
+`app/` is TypeScript end to end, so `tsc --noEmit` is not optional there: Vite
+transpiles and strips types without checking them, and `npm run build` passes
+on code that does not typecheck.
+
+**The admin dashboard also has a browser suite, and CI runs it.** It is the
+only gate that exercises real layout and a real event loop, so it catches what
+jsdom cannot: elements covered by other elements, overflow, and text rendered
+twice on one screen.
+
+```bash
+cd app && npm run build && npx playwright install chromium && npm run e2e
+```
+
+Run it whenever you change the inbox, the shell, or anything under
+`features/agents/experience`. It needs the build first: it drives `vite
+preview`, not the dev server, so what is under test is what ships.
 
 ### Python Backend
 | Check | Command (run inside conda `oye` env) |
