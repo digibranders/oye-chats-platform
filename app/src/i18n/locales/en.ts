@@ -1781,6 +1781,7 @@ const en = {
     quotation: 'Quotation',
     quotationStatus: {
       answering: 'Answering questions',
+      choosing: 'Answering questions',
       complete: 'Quote accepted',
       idle: 'Not started',
       quoting: 'Quote pending',

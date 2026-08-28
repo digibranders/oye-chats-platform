@@ -770,6 +770,7 @@ const hi = {
     quotation: 'कोटेशन',
     quotationStatus: {
       answering: 'प्रश्नों के उत्तर',
+      choosing: 'प्रश्नों के उत्तर',
       complete: 'कोटेशन स्वीकृत',
       idle: 'शुरू नहीं हुआ',
       quoting: 'कोटेशन लंबित',

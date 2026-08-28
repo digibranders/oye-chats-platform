@@ -25,6 +25,7 @@ export default {
         input: {
             placeholder: 'Write a message...',
             slash_hint: 'Write a message... or press / for commands',
+            finish_quote: 'Finish the quote above to continue…',
             send_aria: 'Send message',
             attach_file: 'Attach file',
             book_meeting: 'Book a meeting',

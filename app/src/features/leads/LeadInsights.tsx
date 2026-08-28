@@ -53,7 +53,7 @@ interface QuotationLineItem {
 }
 
 interface QuotationSummary {
-  status: 'idle' | 'selecting' | 'choosing' | 'quoting' | 'complete' | 'skipped';
+  status: 'idle' | 'selecting' | 'choosing' | 'answering' | 'quoting' | 'complete' | 'skipped';
   currency: string;
   line_items: QuotationLineItem[];
   total: number;
@@ -65,6 +65,7 @@ const QUOTATION_STATUS_TONE: Record<QuotationSummary['status'], 'success' | 'war
   complete: 'success',
   quoting: 'info',
   selecting: 'info',
+  choosing: 'info',
   answering: 'info',
   skipped: 'warning',
   idle: 'neutral',
@@ -76,6 +77,7 @@ const QUOTATION_STATUS_LABEL: Record<QuotationSummary['status'], string> = {
   complete: 'Quote accepted',
   quoting: 'Quote pending',
   selecting: 'Selecting services',
+  choosing: 'Answering questions',
   answering: 'Answering questions',
   skipped: 'Skipped by visitor',
   idle: 'Not started',
