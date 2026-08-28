@@ -18,6 +18,7 @@ import type {
   Lead,
   LeadsQuery,
   LeadsResult,
+  NotificationItem,
   OfflineMessagesResult,
   Operator,
   OperatorInvite,
@@ -1104,3 +1105,74 @@ export function getQuotationCatalog(botId: number): Promise<unknown>;
 /** PUT /bots/{id}/quotation-catalog - replace the bot's quotation catalog.
  *  Returns the stored catalog, `unknown` for the same reason as above. */
 export function putQuotationCatalog(botId: number, catalog: unknown): Promise<unknown>;
+
+/* ── Notifications ──────────────────────────────────────────────────────────
+ * Consumed by context/NotificationContext, which is still JSX and therefore
+ * never typechecked these calls. Declared here so the drift guard passes and
+ * so the context's own conversion has signatures to lean on.
+ *
+ * Every mutation returns the recomputed `unread_count` alongside its result,
+ * so the bell badge never needs a second round-trip to resync.
+ */
+
+/** GET /notifications - one page of the feed, newest first, plus the unread total. */
+export function listNotifications(params?: {
+  /** Page size. Defaults to 30. */
+  limit?: number;
+  /** Cursor: return notifications older than this id. */
+  beforeId?: number;
+  /** Restrict to unread only. Defaults to false. */
+  unreadOnly?: boolean;
+}): Promise<{ items: NotificationItem[]; unread_count: number }>;
+
+/** GET /notifications/unread-count - the badge count alone. Unwraps to the number. */
+export function getUnreadNotificationCount(): Promise<number>;
+
+/** PATCH /notifications/{id}/read - `updated` is false when the row was already read. */
+export function markNotificationRead(
+  notificationId: number,
+): Promise<{ updated: boolean; unread_count: number }>;
+
+/** POST /notifications/mark-all-read - `updated` counts the rows changed. */
+export function markAllNotificationsRead(): Promise<{ updated: number; unread_count: number }>;
+
+/** DELETE /notifications/{id} */
+export function deleteNotification(
+  notificationId: number,
+): Promise<{ deleted: boolean; unread_count: number }>;
+
+/** DELETE /notifications - `deleted` counts the rows removed. */
+export function clearAllNotifications(): Promise<{ deleted: number; unread_count: number }>;
+
+/* ── Impersonation ─────────────────────────────────────────────────────────*/
+
+/**
+ * POST /auth/impersonation/redeem - exchange a super-admin impersonation token
+ * for the session's display profile.
+ *
+ * Deliberately calls bare `axios`, not the shared client: the redeem happens
+ * BEFORE any impersonation state exists, so it must not pick up the
+ * interceptor's impersonation headers.
+ *
+ * Carries no credential. The raw token the caller already holds stays the only
+ * one for the session, so the response is display data and nothing more.
+ */
+export function redeemImpersonation(token: string): Promise<{
+  client_id: number;
+  name: string;
+  email: string;
+  /** ISO-8601 instant at which the token stops being accepted. */
+  expires_at: string;
+  actor_email: string;
+  is_impersonation: boolean;
+}>;
+
+/* ── Request lifecycle ─────────────────────────────────────────────────────*/
+
+/**
+ * Aborts every in-flight workspace-scoped request and returns a fresh signal.
+ *
+ * Called on workspace switch so a response for the previous workspace cannot
+ * land after the switch and repaint the new workspace with stale data.
+ */
+export function rotateWorkspaceAbort(): AbortSignal;
