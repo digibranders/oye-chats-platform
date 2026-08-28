@@ -1,7 +1,6 @@
 import { CreditCard, Sparkles } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '../ui';
-import { useTranslation } from '../i18n/useTranslation';
 import { creditsAreBinding, useTrialCreditBalance, useTrialState } from './useTrialState';
 
 /**
@@ -25,7 +24,6 @@ import { creditsAreBinding, useTrialCreditBalance, useTrialState } from './useTr
  *    bought is coming and when.
  */
 export function TrialCard({ collapsed }: { collapsed: boolean }) {
-  const { t } = useTranslation();
   const trial = useTrialState();
   const trialing = trial != null && trial.status === 'trialing' && trial.paid_plan_starts_at == null;
   const balance = useTrialCreditBalance(trialing);
@@ -35,6 +33,8 @@ export function TrialCard({ collapsed }: { collapsed: boolean }) {
   if (!bought && trial.status !== 'trialing') return null;
 
   const days = trial.days_remaining ?? 0;
+  const dayWord = days === 1 ? 'day' : 'days';
+  const planName = trial.paid_plan_name ?? 'Your plan';
   const showCredits =
     !bought && creditsAreBinding(balance, trial.credits_granted, trial.days_remaining);
 
@@ -42,8 +42,11 @@ export function TrialCard({ collapsed }: { collapsed: boolean }) {
     // Collapsed rail: the number alone, with the full sentence on hover.
     return (
       <Link
+        data-testid="trial-card"
         to="/billing"
-        title={bought ? `${trial.paid_plan_name} starts in ${days} days` : `${days} days left in your trial`}
+        // Same guard and same plural as the expanded branch. This one said
+        // "null starts in 6 days" and "1 days left".
+        title={bought ? `${planName} starts in ${days} ${dayWord}` : `${days} ${dayWord} left in your trial`}
         className={cn(
           'mx-auto flex h-8 w-8 items-center justify-center rounded-md text-xs font-medium',
           bought ? 'text-rail-success' : 'text-rail-accent',
@@ -70,15 +73,15 @@ export function TrialCard({ collapsed }: { collapsed: boolean }) {
         )}
         <span>
           {bought
-            ? `${trial.paid_plan_name ?? t('trial.yourPlan') ?? 'Your plan'} starts in ${days} ${days === 1 ? 'day' : 'days'}`
+            ? `${planName} starts in ${days} ${dayWord}`
             : showCredits
               ? `${balance} credits left in your trial`
-              : `${days} ${days === 1 ? 'day' : 'days'} left in your trial`}
+              : `${days} ${dayWord} left in your trial`}
         </span>
       </div>
       {bought ? null : (
         <Link to="/billing" className="mt-1 inline-block font-medium underline-offset-2 hover:underline">
-          {t('trial.upgrade') || 'Upgrade'} →
+          Upgrade →
         </Link>
       )}
     </div>

@@ -23,8 +23,6 @@ vi.mock('./useTrialState', async () => {
   return { ...actual, useTrialState: () => trial, useSessionClientId: () => clientId };
 });
 
-vi.mock('../i18n/useTranslation', () => ({ useTranslation: () => ({ t: () => '' }) }));
-
 function renderBanner() {
   return render(
     <MemoryRouter>
@@ -107,5 +105,42 @@ describe('TrialBanner', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe('TrialBanner, when the session id arrives late', () => {
+  it('still honours a dismissal made under the resolved id', async () => {
+    // The real ordering: the first render happens while the session query is
+    // cold, so `clientId` is null. Reading the dismissal once at mount looked
+    // under `:unknown` while the write went to `:7`, and the banner came back
+    // on every reload.
+    trial = { status: 'trialing', days_remaining: 9 };
+    clientId = null;
+    const first = renderBanner();
+    expect(screen.getByTestId('trial-banner')).toBeInTheDocument();
+    first.unmount();
+
+    clientId = 7;
+    const second = renderBanner();
+    await userEvent.click(screen.getByRole('button'));
+    second.unmount();
+
+    // A fresh load: cold cache again, then the id resolves.
+    clientId = null;
+    const third = renderBanner();
+    expect(screen.getByTestId('trial-banner')).toBeInTheDocument();
+    third.unmount();
+
+    clientId = 7;
+    renderBanner();
+    expect(screen.queryByTestId('trial-banner')).toBeNull();
+  });
+
+  it('shows nothing at all when the trial carries no day count', () => {
+    // Read as zero this rendered "0 days left" AND tripped the urgency
+    // override, so it could never be dismissed.
+    trial = { status: 'trialing', days_remaining: null };
+    const { container } = renderBanner();
+    expect(container).toBeEmptyDOMElement();
   });
 });

@@ -792,3 +792,164 @@ fail a distinct test.
 Gates: full backend suite **5921 passed, 4 skipped, zero failures**. `ruff
 check` and `ruff format --check` clean. Frontend `tsc --noEmit` clean, `npm run
 lint` clean with zero warnings, `npx vitest run` 136 files / 1784 tests passed.
+
+### Task 7 review
+
+14 findings, two of them critical, and one is a case of my own two fixes
+contradicting each other.
+
+1. **CRITICAL, and self-inflicted.** The Task 6 fix moved the grant marker from
+   `start_at` to `start_at + interval`. `/auth/me` still read the start date off
+   that marker, so a day-3 buyer whose first debit is eleven days away was told
+   "Standard starts in 41 days", with the Upgrade action suppressed for the
+   whole window. The marker's VALUE now IS the deferred start, which is
+   self-describing and cannot drift from its key again, and the test asserts the
+   DATE rather than its presence.
+2. **CRITICAL. The credits state could never render.** `GET /credits/balance`
+   answers `plan`, `topup`, `total`; there is no `balance` key, so the hook
+   returned null forever and `creditsAreBinding` short-circuited to false every
+   time. The plan's card state 2 was silently dropped, and the test mocked the
+   hook wholesale so the suite was green against a hook that cannot work.
+3. **HIGH. A query-key collision that would have broken Billing.** The trial
+   hook registered `keys.billing.credits(null)` with a raw-record `queryFn`
+   while `useBillingData` and `useUsageData` register the same key with a parsed
+   one. One cache entry, two shapes, and the rail card mounts on every page, so
+   a trialing customer navigating to `/billing` inside the stale window would
+   have got the raw record in `UsagePage` and a TypeError. Same key, same parse
+   now.
+4. **HIGH. Dismissal never persisted across a reload.** The read ran once at
+   mount, when the session query is still cold and the client id is null, so it
+   looked under `:unknown` while the write went to `:7`. The two keys never
+   matched. Derived at render now, which re-evaluates for free when the id
+   arrives. (An effect would have been the obvious fix and the repo's lint rule
+   correctly forbids `setState` in one.) Pinned by a test that renders through
+   the real cold-then-resolved sequence, and verified failing against the
+   original.
+5. **HIGH. Three of the banner's utilities do not exist.** `bg-accent-tint`,
+   `px-page` and `text-text` are absent from `tokens.css`, whose `@theme` opens
+   with `--color-*: initial`, so they compiled to nothing: no background, no
+   gutter, inherited colour, sitting flush against the viewport edge while its
+   sibling banner uses the shared `px-gutter lg:px-gutter-lg` pair.
+6. MEDIUM. The `/change-plan` deferral, which is the headline Task 6 fix, still
+   has no route-level test. Recorded as a known gap rather than claimed.
+7. MEDIUM. Branch 3's deferral is not identical to `/checkout`'s: it reads the
+   resolved target subscription rather than a dedicated account-level trialing
+   lookup, and hardcodes `promo_start_at=None`, so the later-of-the-two
+   protection the helper's docstring promises is unavailable on that path.
+   Recorded; not a regression, since Branch 3 previously charged immediately.
+8. MEDIUM. A trialing customer buying a PER-AGENT plan is still charged today.
+   Deliberate scoping, now stated rather than left implicit.
+9. LOW. The collapsed card said "null starts in 6 days" and "1 days left"; it
+   had no test at all. Guarded, pluralised, and covered.
+10. LOW. `TrialCard` is a third pure-ink file and was not in the ink-ground
+    guardrail's whole-file list, widening the hole the guardrail had just
+    caught. Added.
+11. LOW. `isCountingDown` was exported and called from nowhere while both
+    surfaces inlined the same predicate. Both use it now.
+12. LOW. A trialing row with no `days_remaining` rendered "0 days left" and
+    tripped the urgency override, so it could never be dismissed. Null is
+    "render nothing" now.
+13. LOW. Two docstrings describe a `trial_expired` reactivation prompt that no
+    surface renders. Recorded.
+14. LOW. `t('trial.*')` resolved against a namespace that does not exist, so it
+    always fell through to the literal: it looked translated and was not, and
+    `keys-exist.test` cannot report a wholly absent namespace. The indirection
+    is dropped rather than faked.
+
+## Final gate
+
+| Gate | Result |
+|---|---|
+| `pytest tests/ -q --no-cov -p no:randomly` | **5921 passed, 4 skipped, 0 failed, 0 errors** |
+| Skips | all four are `test_live_chat_cross_process.py`, which needs two API processes on a shared data tier (`LC_NODE_A`/`LC_NODE_B`). **No DB-backed test skipped.** |
+| `ruff check .` | All checks passed |
+| `ruff format --check .` | 647 files already formatted |
+| `npx tsc --noEmit` | clean |
+| `npm run lint` | clean, **zero warnings** |
+| `npx vitest run` | **136 files, 1788 tests passed** |
+| `npm run build` | succeeds |
+| `npm run e2e` (Playwright, Chromium) | **34 passed** |
+
+The browser suite needed one environment accommodation: the project pins a
+Playwright whose browser build is not present here, and this environment ships
+Chromium at `/opt/pw-browsers/chromium-1194`. `playwright.config.ts` was
+temporarily given an `executablePath` from an env var for the run and reverted
+immediately; the committed config is unchanged (`git diff` on it is empty).
+
+## Per-task status
+
+| Task | Status | Commit | Review findings fixed |
+|---|---|---|---|
+| 1 · `plans.is_public` | done | `3d43586` | 6 |
+| 2 · seed the trial row | done | `89c4bd8` | 6 |
+| 2b · retire the Standard-only trial | done | `d71c2b0` | 11 |
+| 3 · signup lands on the trial | done | `7274f12` | 12 |
+| 4 · first training free, honest wall | done | `4af8685` | 10 |
+| 5 · day-15 conversion to Free | done | `a30f184` + `6cbfae0` | 12 |
+| 6 · mid-trial purchase | done (sandbox step skipped) | `c818dc0` | 10 |
+| 7 · trial banner and rail card | done | `2d494f7` + this commit | 14 |
+| 8 · website copy | **SKIPPED** | — | separate repository, not available here |
+| 9 · full-suite gate | done | this commit | — |
+| 10 · production rollout | **NOT ATTEMPTED** | — | out of scope by instruction |
+
+Eighty-one review findings were found and fixed across eight reviews.
+
+## Deviations from the plan, with reasons
+
+1. **Free-training scope is per ACCOUNT, not per bot.** Per bot is exploitable:
+   `bot_id` is optional on every crawl route, so one crawl with it omitted and
+   one with it set are two scopes and both come out free. The trial grants one
+   bot, so the rules coincide except where the difference is abuse.
+2. **The credit forfeit reuses `reset_monthly_plan_credits`** rather than a
+   `trial_expired_forfeit` / `trial_conversion_cancel_forfeit` ledger reason.
+   `CreditLedger.reason` is a native Postgres enum, so a new value needs a
+   migration, and more importantly a bespoke negative row with no `grant_id`
+   reproduces a documented past balance bug. Cost: in the audit trail a punitive
+   forfeit is indistinguishable from a routine monthly reset.
+3. **`resolve_crawl_cost_per_page` takes `bot_id`, not `bot`.** No charging site
+   holds a `Bot`, and every crawl route's `bot_id` is optional.
+4. **The trial cap wall keys on `capped`, not on a page count.**
+   `/crawl/discover` truncates its listing AT the plan ceiling, so the plan's
+   "Your site has {found} pages" is unreachable and would print the ceiling
+   anyway. It says "at least 100 pages", which is what the server knows.
+5. **The `/auth/me` paid-plan state derives from the PURCHASED row**, not from a
+   decorated trial row. Only one account-level row may sit in the active set, so
+   the activation sweep has already cancelled the trial row by the time the
+   mandate is authorised.
+6. **`_forfeit_and_convert_to_free` inserts a replacement row** rather than
+   converting in place like Task 5's routine, because the cancelled row is
+   terminal.
+7. **The banner is mounted in `ShellBanners`, not literally in
+   `ProtectedLayout`.** `ShellBanners` renders inside `AppShell`, which is inside
+   the verification gate, and `/verify-email` is declared outside the layout, so
+   the plan's requirement holds. Verified in review.
+8. **`conftest.py`'s `pg_engine` is session-scoped.** Not in the plan at all.
+   Module scope made every DB-backed module drop and create the same database,
+   and enough modules in one run collided, producing dozens of errors that read
+   exactly like real regressions. It corrupted three of my own gate runs before
+   I traced it.
+9. **Task 8 skipped** (separate repository) and **Task 10 not attempted**
+   (production), both by instruction.
+
+## Things I am not confident about
+
+* **The Razorpay sandbox proof was never run** (Task 6 Step 5). Every claim
+  about `start_at`, the `authenticated` state and the 48-hour floor is reasoned
+  from the code and the gateway's documented behaviour, not observed. The
+  48-hour floor in particular is a guess at Razorpay's eMandate pre-debit notice
+  window; if the real minimum differs, `_TRIAL_DEFER_FLOOR` is the one constant
+  to change.
+* **`/change-plan` Branch 3's deferral has no route-level test.** It is the
+  headline fix of the whole mid-trial feature and the reason it was broken in
+  the first place was exactly this gap.
+* **The `verify` fast path is asserted by source inspection**, not by driving
+  the endpoint.
+* **`_forfeit_and_convert_to_free` sends no email.** A customer whose unbilled
+  conversion is cancelled is silently moved to Free. Day-15 conversion emails;
+  this path does not.
+* **Nothing was browser-verified against a live API.** Task 7 Step 5 asks for
+  the three card states driven off a real dev subscription. The components are
+  unit-tested and the shell's e2e suite passes, but no human has looked at them.
+* **The trial row has never been seeded into a database with real traffic.** The
+  seeder's dry-run and an `--apply` against this environment's local database
+  are the only exercise it has had.

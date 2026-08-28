@@ -329,7 +329,19 @@ def test_auth_me_describes_a_deferred_purchase_instead_of_a_countdown(db):
     after = _build_trial_payload(db, client.id)
     assert after is not None
     assert after.paid_plan_name == "Standard"
+    # The DATE, not merely its presence. It must be the deferred start, the day
+    # the customer is first charged, and NOT the grant marker, which is that
+    # day plus one billing interval: reading the marker told a buyer eleven
+    # days from their first debit that their plan started in forty-one.
+    trial_end = old.trial_end
+    if trial_end.tzinfo is None:
+        trial_end = trial_end.replace(tzinfo=UTC)
     assert after.paid_plan_starts_at is not None
+    starts = datetime.fromisoformat(after.paid_plan_starts_at)
+    assert abs((starts - trial_end).total_seconds()) < 2, (
+        f"paid_plan_starts_at {starts.isoformat()} is not the trial end {trial_end.isoformat()}"
+    )
+    assert after.days_remaining is not None and after.days_remaining <= 11
 
 
 def test_verify_and_the_webhook_are_the_same_function_and_idempotent(db):

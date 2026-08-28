@@ -3748,10 +3748,18 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
                     grant_period_end = add_months(deferred_start, 12 if cycle == "annual" else 1)
             if is_trial_conversion and local is not None:
                 # One-shot marker in the JSONB slot this domain already uses,
-                # not a new column. It is what tells the cancellation handler
-                # that this row holds credits no payment has covered yet.
+                # not a new column. It tells the cancellation handler that this
+                # row holds credits no payment has covered yet.
+                #
+                # Its VALUE is the deferred start, i.e. when the customer will
+                # first be charged, because that is what /auth/me has to show
+                # them. Deriving it from ``last_granted_period_end`` was wrong
+                # by a whole billing interval the moment that marker moved to
+                # ``start_at + interval``: a day-3 buyer whose first debit is
+                # eleven days out was told their plan started in forty-one.
                 markers = dict(local.trial_emails_sent or {})
-                markers[TRIAL_CONVERSION_GRANT_MARKER] = datetime.now(UTC).isoformat()
+                started = _entity_future_start(sub_entity) or datetime.now(UTC)
+                markers[TRIAL_CONVERSION_GRANT_MARKER] = started.isoformat()
                 local.trial_emails_sent = markers
             _grant_subscription_period(session, local, grant_period_end)
 

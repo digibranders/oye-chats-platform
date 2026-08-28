@@ -588,7 +588,14 @@ def _build_trial_payload(session, client_id: int) -> "TrialStatePayload | None":
         # exactly the window this state describes.
         and bought.current_period_start is None
     ):
-        starts = bought.last_granted_period_end
+        # The marker's value IS the deferred start, the moment the customer is
+        # first charged. Not ``last_granted_period_end``, which is that moment
+        # plus one billing interval.
+        raw_start = (bought.trial_emails_sent or {}).get("trial_conversion_granted")
+        try:
+            starts = datetime.fromisoformat(raw_start) if isinstance(raw_start, str) else None
+        except ValueError:
+            starts = None
         if starts is not None and starts.tzinfo is None:
             starts = starts.replace(tzinfo=UTC)
         if starts is not None and starts > datetime.now(UTC):

@@ -163,7 +163,7 @@ const PAPER_STATUS = /\b(?:bg|text|border|ring|from|to|via)-(?:success|warning|d
  * line instead: a paper status token is an offence only where it shares a
  * class string with a rail token.
  */
-const INK_GROUND = ['shell/Rail.tsx', 'shell/SetupProgress.tsx'];
+const INK_GROUND = ['shell/Rail.tsx', 'shell/SetupProgress.tsx', 'shell/TrialCard.tsx'];
 
 describe('design system guardrails', () => {
   it('reads the whole app, not just src/ui', () => {

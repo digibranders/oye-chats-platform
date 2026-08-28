@@ -25,8 +25,6 @@ vi.mock('./useTrialState', async () => {
   };
 });
 
-vi.mock('../i18n/useTranslation', () => ({ useTranslation: () => ({ t: () => '' }) }));
-
 function renderCard(collapsed = false) {
   return render(
     <MemoryRouter>
@@ -88,5 +86,23 @@ describe('TrialCard', () => {
     balance = 480;
     renderCard();
     expect(screen.getByText(/1 day left in your trial/i)).toBeInTheDocument();
+  });
+});
+
+describe('TrialCard, collapsed', () => {
+  it('names the plan and pluralises, like the expanded card', () => {
+    // This branch said "null starts in 6 days" and "1 days left".
+    trial = { status: 'active', days_remaining: 1, paid_plan_starts_at: '2026-09-11T00:00:00+00:00' };
+    renderCard(true);
+    const link = screen.getByTestId('trial-card');
+    expect(link).toHaveAttribute('title', 'Your plan starts in 1 day');
+    expect(link.getAttribute('title')).not.toContain('null');
+  });
+
+  it('counts days on the trial, in one glyph', () => {
+    trial = { status: 'trialing', days_remaining: 9, credits_granted: 500 };
+    balance = 480;
+    renderCard(true);
+    expect(screen.getByTestId('trial-card')).toHaveTextContent('9');
   });
 });

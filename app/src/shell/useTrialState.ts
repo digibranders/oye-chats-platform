@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { getCreditBalance, getCurrentUser } from '../services/api';
 import { keys } from '../query/keys';
+import { parseCreditBalance } from '../features/workspace/usage-model';
 import type { TrialState } from '../types/domain';
 
 /**
@@ -38,7 +39,12 @@ export function useSessionClientId(): number | null {
   return useSessionMe().data?.id ?? null;
 }
 
-/** True while the account is inside its trial and has not bought yet. */
+/**
+ * True while the account is inside its trial and has not bought yet.
+ *
+ * One definition, used by both surfaces, so the rule cannot drift between the
+ * banner and the card.
+ */
 export function isCountingDown(trial: TrialState | null): boolean {
   return trial != null && trial.status === 'trialing' && !trial.paid_plan_starts_at;
 }
@@ -63,20 +69,28 @@ export function creditsAreBinding(
 
 
 /**
- * The account's credit balance, for the card's credits-are-binding state.
+ * The account's spendable credits, for the card's credits-are-binding state.
  *
- * Its own query rather than a prop, so the card can be dropped into the rail
- * without the rail knowing anything about credits. `null` while it loads, which
- * `creditsAreBinding` reads as "not binding" so the card never flickers into
- * the credits state on a cold cache.
+ * Registered with the SAME key and the SAME parse as `useBillingData` and
+ * `useUsageData`, deliberately. Two queries sharing a key with different
+ * `queryFn`s share one cache entry and whichever observer fetched last decides
+ * its shape: the rail card mounts on every page, so a raw record served here
+ * would reach `UsagePage` and throw on `balance.botCredits`. One key, one
+ * shape.
+ *
+ * It also reads the right number. `GET /credits/balance` answers `plan`,
+ * `topup`, `total`, `monthly_grant`; there is no `balance` key, so reading one
+ * returned `null` forever and the credits state could never render at all.
+ *
+ * `null` while it loads, which `creditsAreBinding` treats as "not binding", so
+ * the card never flickers into the credits state on a cold cache.
  */
 export function useTrialCreditBalance(enabled: boolean): number | null {
   const { data } = useQuery({
     queryKey: keys.billing.credits(null),
-    queryFn: getCreditBalance,
+    queryFn: async () => parseCreditBalance(await getCreditBalance()),
     enabled,
-    staleTime: 60_000,
+    staleTime: 15_000,
   });
-  const raw = data?.balance;
-  return typeof raw === 'number' ? raw : null;
+  return data ? data.totalRemaining : null;
 }
