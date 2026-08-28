@@ -859,6 +859,7 @@ const en = {
       uploadFailed: 'Upload failed',
       weAttach: 'We attach your current page, app version, plan, and browser to help us triage.',
     },
+    findAWorkspace: 'Find a workspace…',
     finishSetup: 'Finish setup',
     goTo: 'Go to',
     handoffsNewLeadsAndBilling: 'Handoffs, new leads and billing alerts will appear here.',
@@ -907,6 +908,8 @@ const en = {
     openTheInbox: 'Open the inbox',
     openingTheSupportSession: 'Opening the support session',
     orPasteFromClipboard: 'or paste from clipboard',
+    noWorkspacesMatch: 'No workspaces match',
+    operator: 'Operator',
     owner: 'Owner',
     oyechats: 'OyeChats',
     palette: {
@@ -966,6 +969,7 @@ const en = {
     whatTypeOfFeedbackIs: 'What type of feedback is this?',
     whichNotificationsToShow: 'Which notifications to show',
     workspace: 'Workspace',
+    workspaceSwitchFailed: 'Could not switch workspace',
     workspaceSwitcher: {
       current: 'Current workspace: {name}. Switch workspace',
       title: 'Switch workspace',

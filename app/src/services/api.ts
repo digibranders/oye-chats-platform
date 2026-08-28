@@ -2920,6 +2920,31 @@ export const toggleOperatorStatus = async (
     }
 };
 
+/**
+ * How many visitors are waiting for a person, for the signed-in caller.
+ *
+ * The rail's Inbox badge. It used to be derived in the shell from the
+ * notifications feed - every unread `handoff_request` - which counted visitors
+ * who had asked weeks ago and long since left, so the rail claimed six people
+ * were waiting on the same screen where the inbox said none were.
+ *
+ * Returns 0 rather than throwing on failure: a badge is not worth an error
+ * boundary, and an absent count reads as "nothing waiting", which is the safe
+ * direction to be wrong in for a number whose only job is to make someone look.
+ */
+export const getMyWaitingCount = async (
+    { botId }: { botId?: number } = {},
+): Promise<number> => {
+    try {
+        const params = botId ? { bot_id: botId } : {};
+        const response = await api.get('/operators/me/waiting-count', { params });
+        const count = (response.data as { count?: unknown })?.count;
+        return typeof count === 'number' && Number.isFinite(count) ? count : 0;
+    } catch {
+        return 0;
+    }
+};
+
 export const getMyOperatorStatus = async (
     { botId }: { botId?: number } = {},
 ): Promise<OperatorStatus | null> => {

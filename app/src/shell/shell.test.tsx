@@ -257,13 +257,18 @@ describe('the rail, rendered', () => {
   });
 
   it('renders the brand mark as a static block, not a workspace-switcher menu', () => {
-    // `RailBrand` replaced `WorkspaceSwitcher`: the current workspace's name
-    // was stated twice — once here as an interactive menu, once 48px below
-    // in the account menu — so this became the plain wordmark and switching
-    // workspaces moved to living only in the account menu's own paths.
+    // `RailBrand` replaced the old `WorkspaceSwitcher` menu: the current
+    // workspace's name was stated twice — once here as an interactive menu,
+    // once 48px below in the account menu — so this became the plain wordmark.
+    //
+    // Switching is its own row below this one now, but only for an identity
+    // that can act in more than one workspace. This fixture is a solo account,
+    // so neither the menu nor that row may appear here — the duplication the
+    // wordmark was argued for must stay absent.
     renderRail('/');
     expect(screen.getByRole('img', { name: 'OyeChats' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /workspace/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: /workspace/i })).not.toBeInTheDocument();
   });
 
   it('does not announce the create control as the page you are on', () => {

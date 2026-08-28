@@ -26,6 +26,7 @@ import {
 import { OyeChatsMark } from './OyeChatsMark';
 import { RailBrand } from './RailBrand';
 import { AgentSwitcher } from './AgentSwitcher';
+import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 import { SetupProgress } from './SetupProgress';
 import { AccountMenu } from './AccountMenu';
 
@@ -132,7 +133,7 @@ export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 
   // whatever language it mounted in while the rest of the chrome moved.
   const { t } = useTranslation();
   const { pathname } = useLocation();
-  const { isOperator } = useWorkspace();
+  const { isOperator, hasMultipleWorkspaces } = useWorkspace();
   const { bots } = useBotContext();
 
   const scopedAgentId = agentIdFromPath(pathname);
@@ -223,6 +224,16 @@ export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 
           : t('nav.primaryLandmark') || 'Primary navigation'
       }
     >
+      {/* Above both scopes, because it scopes both: the chatbot list, the
+          inbox and every figure below it belong to one workspace. Gated here
+          rather than inside the component so a solo account - which has
+          nothing to switch between - does not carry an empty row's padding. */}
+      {hasMultipleWorkspaces && !collapsed ? (
+        <li className="pb-1">
+          <WorkspaceSwitcher onNavigate={onNavigate} />
+        </li>
+      ) : null}
+
       {inAgentScope ? (
         <>
           <RailBackLink to="/chatbots" onNavigate={onNavigate}>

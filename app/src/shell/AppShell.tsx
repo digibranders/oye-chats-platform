@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Outlet } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { Dialog as BaseDialog } from '@base-ui/react/dialog';
 import { Toaster, TooltipProvider, cn, useMediaQuery } from '../ui';
 import { Rail } from './Rail';
@@ -7,8 +8,9 @@ import { TopBar } from './TopBar';
 import { CommandPalette } from './CommandPalette';
 import { FeedbackLauncher } from './FeedbackLauncher';
 import { ShellBanners } from './ShellBanners';
-import { useNotifications } from '../context/NotificationContext';
 import { useWorkspace } from '../context/WorkspaceContext';
+import { getMyWaitingCount } from '../services/api';
+import { keys } from '../query/keys';
 import { useTranslation } from '../i18n/useTranslation';
 
 /**
@@ -65,14 +67,29 @@ export function AppShell() {
   });
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const { items } = useNotifications();
   const { isOperator } = useWorkspace();
 
   const collapsed = preferCollapsed || (forceCollapsed && !isMobile);
 
-  const waiting = items.filter(
-    (item) => !item.is_read && item.type === 'handoff_request',
-  ).length;
+  // Asked of the server, not counted out of the notifications feed.
+  //
+  // It used to be `items.filter(i => !i.is_read && i.type === 'handoff_request')`,
+  // which is history rather than a queue: notifications stay unread until
+  // somebody clears them, so the rail read "6" beside Inbox for visitors who
+  // had asked for a person weeks earlier and long since left — on the same
+  // screen where the inbox itself said `Waiting (0)`.
+  //
+  // Polled rather than pushed. The live queue arrives on the operator socket
+  // as `queue_update`, but that socket is deliberately owned by the inbox page
+  // (`InboxSocketProvider`), because being on that page is what "the operator
+  // is at their desk" means. Subscribing from the shell would hold a WebSocket
+  // open on every screen in the console to keep one badge fresh.
+  const { data: waiting = 0 } = useQuery({
+    queryKey: keys.inbox.waitingCount(),
+    queryFn: () => getMyWaitingCount(),
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+  });
 
   const toggleRail = useCallback(() => {
     if (isMobile) {

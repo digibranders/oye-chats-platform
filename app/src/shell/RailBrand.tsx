@@ -13,8 +13,9 @@ import { useTranslation } from '../i18n/useTranslation';/**
  * "Workspace settings" and "Invite people" are still one click away, from the
  * account menu's own path into `/settings/workspace` and `/settings/team` —
  * this was a shortcut to them, not their only address. Switching between
- * workspaces, for the accounts that have more than one, has no replacement
- * surface yet; it lived only here.
+ * workspaces is `WorkspaceSwitcher`, the row directly below this one, which
+ * appears only for the accounts that have more than one to switch between —
+ * so the duplication above is still absent everywhere it was the argument.
  *
  * `/new_white.png`, not `/new_dark.png` — the same knock-out `AuthShell` uses
  * against this exact `--color-rail` background, for the same reason: the dark

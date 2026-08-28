@@ -854,6 +854,7 @@ const hi = {
       uploadFailed: 'अपलोड विफल',
       weAttach: 'त्वरित समाधान के लिए हम आपका वर्तमान पेज, ऐप संस्करण, प्लान और ब्राउज़र संलग्न करते हैं।',
     },
+    findAWorkspace: 'वर्कस्पेस खोजें…',
     finishSetup: 'सेटअप पूरा करें',
     goTo: 'यहाँ जाएँ',
     handoffsNewLeadsAndBilling: 'हैंडऑफ़, नई लीड और बिलिंग अलर्ट यहाँ दिखेंगे।',
@@ -902,6 +903,8 @@ const hi = {
     openTheInbox: 'इनबॉक्स खोलें',
     openingTheSupportSession: 'सहायता सत्र खोला जा रहा है',
     orPasteFromClipboard: 'या क्लिपबोर्ड से चिपकाएँ',
+    noWorkspacesMatch: 'कोई वर्कस्पेस नहीं मिला',
+    operator: 'ऑपरेटर',
     owner: 'मालिक',
     oyechats: 'OyeChats',
     palette: {
@@ -961,6 +964,7 @@ const hi = {
     whatTypeOfFeedbackIs: 'यह किस प्रकार की प्रतिक्रिया है?',
     whichNotificationsToShow: 'कौन सी सूचनाएँ दिखानी हैं',
     workspace: 'वर्कस्पेस',
+    workspaceSwitchFailed: 'वर्कस्पेस नहीं बदला जा सका',
     workspaceSwitcher: {
       current: 'वर्तमान वर्कस्पेस: {name}। वर्कस्पेस बदलें',
       title: 'वर्कस्पेस बदलें',
