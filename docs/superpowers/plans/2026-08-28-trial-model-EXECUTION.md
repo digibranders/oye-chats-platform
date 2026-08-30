@@ -856,6 +856,42 @@ contradicting each other.
     `keys-exist.test` cannot report a wholly absent namespace. The indirection
     is dropped rather than faked.
 
+### Task 7 browser verification, and its review
+
+`app/tests/e2e/trial-surfaces.spec.ts` closes Task 7 Step 5. Ten specs against
+the built bundle, plus captured screenshots of all four renderings that I
+looked at.
+
+The ninth adversarial review found eleven items, six real, and three of those
+meant a spec asserted materially less than its name. The important one: the
+bought-state spec sent `status: 'trialing'`, a payload `_build_trial_payload`
+cannot produce, and the reviewer proved the cost by moving the card's status
+guard above its bought check. That mutation blanks the mid-trial-purchase card
+for every real customer who has paid. **All eight browser specs passed and the
+jsdom suite caught it.** The browser suite was strictly weaker than the one it
+was written to supplement, on exactly the state I had singled out as covered.
+
+Two product bugs came out of fixing the tests, neither of them in the plan:
+
+* `creditsAreBinding` divided a real day count by a hardcoded `14` while
+  reading the numerator from the payload. A super-admin retuning
+  `plans.trial_days` would have mis-classified the binding constraint for every
+  account. `trial_days` is now in `TrialStatePayload`, from the plan row.
+* `TrialCard` had no null guard on `days_remaining`, which is `int | None`
+  whenever `trial_end` is null. It rendered "0 days left in your trial" and
+  "Standard starts in 0 days". The banner has always guarded this.
+
+And one stale document: `auth_routes.py` claimed in two places that the payload
+keeps serving `trial_expired` "so the banner can prompt for reactivation". No
+surface renders it. The comment was wrong, not the feature missing.
+
+Writing the trial-length spec exposed a race the review did not have to find.
+The days text is also the pre-resolution frame, before the credit balance
+query lands, so a retrying assertion for it settles there and passes whatever
+the comparison would have concluded. Two specs flipped between runs. Both now
+wait for the balance response and a render flush; the mutation fails them on
+every run rather than one in two.
+
 ## Final gate
 
 | Gate | Result |
@@ -868,7 +904,7 @@ contradicting each other.
 | `npm run lint` | clean, **zero warnings** |
 | `npx vitest run` | **136 files, 1788 tests passed** |
 | `npm run build` | succeeds |
-| `npm run e2e` (Playwright, Chromium) | **42 passed** (34 at the gate, plus the 8 trial-surface specs added afterwards) |
+| `npm run e2e` (Playwright, Chromium) | **44 passed** (34 at the gate, plus the 10 trial-surface specs added afterwards) |
 
 The browser suite needed one environment accommodation: the project pins a
 Playwright whose browser build is not present here, and this environment ships
@@ -887,12 +923,12 @@ immediately; the committed config is unchanged (`git diff` on it is empty).
 | 4 · first training free, honest wall | done | `4af8685` | 10 |
 | 5 · day-15 conversion to Free | done | `a30f184` + `6cbfae0` | 12 |
 | 6 · mid-trial purchase | done (sandbox step skipped) | `c818dc0` | 10 |
-| 7 · trial banner and rail card | done | `2d494f7` + `4c83f7e` + `b95afd5` | 14 |
+| 7 · trial banner and rail card | done | `2d494f7` + `4c83f7e` + `b95afd5` + `8e377bb` | 14 + 6 |
 | 8 · website copy | done | `oyechats-website@23b555f` | see the Task 8 note below |
 | 9 · full-suite gate | done | this commit | — |
 | 10 · production rollout | **NOT ATTEMPTED** | runbook written, not executed | no production access, by instruction |
 
-Eighty-one review findings were found and fixed across eight reviews.
+Eighty-seven review findings were found and fixed across nine reviews.
 
 ## Deviations from the plan, with reasons
 
@@ -964,8 +1000,12 @@ Eighty-one review findings were found and fixed across eight reviews.
 * **Browser verification is done, but against a mocked API, not a live one.**
   Task 7 Step 5 asked for the three card states driven off a real dev
   subscription. What exists instead is `app/tests/e2e/trial-surfaces.spec.ts`:
-  eight Playwright specs against the built bundle, each proven to have teeth by
+  ten Playwright specs against the built bundle, each proven to have teeth by
   mutation, plus captured screenshots of all four renderings that I looked at.
+  Note what "proven by mutation" was worth on the first pass: the eight specs
+  in `b95afd5` survived a mutation that blanks the bought card for every paying
+  customer, because the payload they sent was one the server cannot produce.
+  A mutation only tests what the fixture makes reachable.
   Every state renders correctly, the plurals are right in both surfaces, the
   banner takes up layout rather than covering the chrome, and the card's two
   colours are the rail tokens measured at 7.87:1. What this still does not
