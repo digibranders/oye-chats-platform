@@ -60,8 +60,14 @@ export function creditsAreBinding(
   creditsRemaining: number | null | undefined,
   creditsGranted: number | null | undefined,
   daysRemaining: number | null | undefined,
-  trialDays = 14,
+  // The server's number, not a constant. A hardcoded 14 here divided a real
+  // day count by a length nothing guaranteed: a super-admin retuning
+  // `plans.trial_days` would have mis-classified the binding constraint for
+  // every account, silently and forever. The default survives only for a
+  // payload written before the field existed.
+  trialDays: number | null | undefined = 14,
 ): boolean {
+  trialDays = trialDays ?? 14;
   if (creditsRemaining == null || !creditsGranted || daysRemaining == null) return false;
   if (trialDays <= 0) return false;
   return creditsRemaining / creditsGranted < daysRemaining / trialDays;

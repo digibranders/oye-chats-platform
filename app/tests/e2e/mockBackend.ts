@@ -1,5 +1,7 @@
 import type { Page, WebSocketRoute } from '@playwright/test';
 
+import type { TrialState } from '../../src/types/domain';
+
 /**
  * A scripted backend for admin browser tests.
  *
@@ -79,21 +81,19 @@ export interface MockOptions {
    *
    * Absent by default, because most of the console is exercised as a paying
    * account and the rail card and banner must render nothing without it.
+   *
+   * Typed as the app's own `TrialState`, not a copy of it: a field added to
+   * the contract must show up missing here rather than quietly diverging.
    */
-  trial?: {
-    status: string;
-    trial_end_at?: string | null;
-    days_remaining?: number | null;
-    credits_granted?: number | null;
-    paid_plan_starts_at?: string | null;
-    paid_plan_name?: string | null;
-  } | null;
+  trial?: TrialState | null;
   /**
-   * `GET /credits/balance` — the account pool's spendable total.
+   * `GET /credits/balance` - the account pool's spendable total.
    *
    * The trial card compares it against the granted total to decide whether
    * credits or days are the binding constraint, so a spec that wants the
-   * credits state has to be able to set it.
+   * credits state has to be able to set it. Defaults BELOW the trial grant,
+   * because a balance larger than the grant is a state no account can reach
+   * and a default like that makes the days branch true for the wrong reason.
    */
   creditsRemaining?: number;
 }
@@ -156,7 +156,7 @@ export async function mockBackend(page: Page, opts: MockOptions = {}): Promise<O
     waitingCount = 0,
     notifications = [],
     trial = null,
-    creditsRemaining = 10_000,
+    creditsRemaining = trial?.credits_granted ?? 10_000,
   } = opts;
   const bot = { ...BOT, ...botOverrides };
 
@@ -227,15 +227,20 @@ export async function mockBackend(page: Page, opts: MockOptions = {}): Promise<O
     }),
   );
   // Shaped like the real payload: `total` is the key `parseCreditBalance` reads
-  // for the spendable balance, and `monthly_grant` keeps the low-balance maths
-  // in the rest of the console honest.
+  // for the spendable balance.
+  //
+  // `monthly_grant` is DERIVED from the trial's grant rather than fixed. The
+  // backend serves both from `plan.credits_per_month` (subscription_routes
+  // for this endpoint, auth_routes for `credits_granted`), so they are the
+  // same field of the same row and cannot disagree in production. A mock that
+  // lets them disagree can put the console in a state no customer reaches.
   await page.route(`${API}/credits/balance*`, (route) =>
     route.fulfill({
       json: {
         plan: creditsRemaining,
         topup: 0,
         total: creditsRemaining,
-        monthly_grant: 10_000,
+        monthly_grant: trial?.credits_granted ?? 10_000,
         currency: 'INR',
       },
     }),

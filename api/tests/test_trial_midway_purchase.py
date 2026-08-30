@@ -314,6 +314,13 @@ def test_auth_me_describes_a_deferred_purchase_instead_of_a_countdown(db):
     before = _build_trial_payload(db, client.id)
     assert before is not None
     assert before.paid_plan_starts_at is None, "nothing bought yet"
+    # The trial's LENGTH, from the plan row. The console divides the days left
+    # by it to decide whether days or credits are the binding constraint, and
+    # it used to hardcode 14 for that denominator while reading the numerator
+    # from this payload. A super-admin retuning ``plans.trial_days`` would then
+    # have mis-classified every account, silently and forever.
+    assert before.trial_days == 14
+    assert before.status == "trialing"
 
     rzp._handle_subscription_activated(
         db,
@@ -342,6 +349,14 @@ def test_auth_me_describes_a_deferred_purchase_instead_of_a_countdown(db):
         f"paid_plan_starts_at {starts.isoformat()} is not the trial end {trial_end.isoformat()}"
     )
     assert after.days_remaining is not None and after.days_remaining <= 11
+    # The status the console's bought state actually receives. This branch is
+    # reachable only through an ``active`` row and returns that row's status,
+    # so a browser test that mocked ``trialing`` here was asserting against a
+    # payload no account can produce.
+    assert after.status == "active"
+    assert after.trial_end_at is not None
+    # The purchased row is a paid tier, not a trial, so its length is zero.
+    assert after.trial_days == 0
 
 
 def test_verify_and_the_webhook_are_the_same_function_and_idempotent(db):

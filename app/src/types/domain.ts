@@ -146,6 +146,12 @@ export interface TrialState {
   trial_end_at?: string | null;
   days_remaining?: number | null;
   credits_granted?: number | null;
+  /**
+   * The trial's length in days, from the plan row. The denominator in the
+   * binding-constraint comparison, which used to be a hardcoded 14 while the
+   * numerator was read from the payload.
+   */
+  trial_days?: number | null;
   paid_plan_starts_at?: string | null;
   paid_plan_name?: string | null;
 }

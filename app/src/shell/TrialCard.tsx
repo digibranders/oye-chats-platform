@@ -32,11 +32,20 @@ export function TrialCard({ collapsed }: { collapsed: boolean }) {
   const bought = trial.paid_plan_starts_at != null;
   if (!bought && trial.status !== 'trialing') return null;
 
+  const showCredits =
+    !bought &&
+    creditsAreBinding(balance, trial.credits_granted, trial.days_remaining, trial.trial_days);
+  // A null count is "nothing to say", not "zero days", exactly as the banner
+  // has always treated it. Read as zero this rendered "0 days left in your
+  // trial" and "Standard starts in 0 days" for any row whose `trial_end` is
+  // null, which the payload allows (`auth_routes.py`: days_remaining is
+  // int | None). The credits state does not depend on the count, so it is
+  // still worth rendering when the number it shows is a balance.
+  if (trial.days_remaining == null && !showCredits) return null;
+
   const days = trial.days_remaining ?? 0;
   const dayWord = days === 1 ? 'day' : 'days';
   const planName = trial.paid_plan_name ?? 'Your plan';
-  const showCredits =
-    !bought && creditsAreBinding(balance, trial.credits_granted, trial.days_remaining);
 
   if (collapsed) {
     // Collapsed rail: the number alone, with the full sentence on hover.

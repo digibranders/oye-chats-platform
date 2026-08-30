@@ -331,6 +331,13 @@ class TrialStatePayload(BaseModel):
     trial_end_at: str | None = None  # ISO-8601, UTC
     days_remaining: int | None = None  # ceil((trial_end - now) / 1 day), 0 once lapsed
     credits_granted: int | None = None
+    # The trial's length in days, from the plan row. The console divides the
+    # days left by this to decide whether days or credits are the binding
+    # constraint, and it used to hardcode 14 for the denominator while reading
+    # ``credits_granted`` from here for the numerator. A super-admin retuning
+    # ``plans.trial_days`` would have silently mis-classified every account.
+    # Zero on the bought branch, whose plan is a purchased tier and not a trial.
+    trial_days: int | None = None
     # Set when the customer has already BOUGHT during the trial. The mandate is
     # authorised and their entitlements are live, but the first debit waits for
     # the trial to run out, so the UI shows "Standard starts in N days" instead
@@ -512,8 +519,7 @@ def get_current_user_endpoint(auth: dict = Depends(get_current_client_or_operato
 
         # Resolve the trial snapshot in the same transaction. ``None`` for
         # paid customers and seeded superadmins; the dashboard treats that
-        # as "no trial UI". For ``trial_expired`` we still return the
-        # payload so the banner can prompt for reactivation.
+        # as "no trial UI".
         trial_payload = _build_trial_payload(session, client.id)
 
         return CurrentUserResponse(
@@ -549,9 +555,14 @@ def _build_trial_payload(session, client_id: int) -> "TrialStatePayload | None":
 
     Returns ``None`` when the client has no current subscription or the
     subscription has never been in a trial state. The dashboard uses
-    ``None`` as "hide the trial banner entirely". For ``trialing`` and
-    ``trial_expired`` we always return a payload so the UI can render the
-    countdown or the reactivation prompt respectively.
+    ``None`` as "hide the trial banner entirely".
+
+    ``trial_expired`` is still selected below, and no shell surface renders it:
+    both the rail card and the banner return null for that status. It stays in
+    the filter because legacy rows written by the OLD expiry path still exist
+    until they are settled (see the rollout runbook's step 0), and an inert
+    payload is cheaper than a query that has to know about them. Nothing here
+    prompts for reactivation; an earlier comment claimed it did and was wrong.
     """
     from datetime import UTC
 
@@ -605,6 +616,7 @@ def _build_trial_payload(session, client_id: int) -> "TrialStatePayload | None":
                 trial_end_at=starts.isoformat(),
                 days_remaining=trial_days_remaining(starts),
                 credits_granted=int(plan_row.credits_per_month or 0) if plan_row else None,
+                trial_days=int(plan_row.trial_days or 0) if plan_row else None,
                 paid_plan_starts_at=starts.isoformat(),
                 paid_plan_name=plan_row.name if plan_row else None,
             )
@@ -642,6 +654,7 @@ def _build_trial_payload(session, client_id: int) -> "TrialStatePayload | None":
         trial_end_at=end_iso,
         days_remaining=days_remaining,
         credits_granted=credits_granted,
+        trial_days=int(plan.trial_days or 0) if plan else None,
     )
 
 
