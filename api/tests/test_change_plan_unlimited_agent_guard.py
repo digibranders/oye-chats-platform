@@ -80,6 +80,9 @@ def _plan(slug: str, bots_limit: int | None, *, plan_id: int = 7, monthly: int =
         limits=limits,
         features={},
         is_active=True,
+        # Un-persisted rows never fire the column default, and ``/change-plan``
+        # reads this flag the same way it reads ``is_active``.
+        is_public=True,
     )
 
 

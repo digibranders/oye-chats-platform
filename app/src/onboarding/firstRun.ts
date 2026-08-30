@@ -86,16 +86,19 @@ export function crawlFraction(crawled: number | undefined, total: number | undef
 /**
  * Terminal crawl states, so the UI stops polling and says what happened.
  *
- * `done` and `no_content` are both successful ends of a crawl: the second means
+ * `done` and `no_content` are both ends of a crawl that ran: the second means
  * pages were fetched but none yielded readable text, which is what a JS-rendered
- * site looks like to an HTTP-only fetch. There is no `completed` — the worker
- * has never written one — so the parameter is typed `CrawlStatus` rather than
- * `string` to keep a status the backend does not emit from compiling.
+ * site looks like to an HTTP-only fetch. `limit` is the other zero-content end,
+ * where the site was fine and the workspace ran out of credits or knowledge-base
+ * room. There is no `completed` — the worker has never written one — so the
+ * parameter is typed `CrawlStatus` rather than `string` to keep a status the
+ * backend does not emit from compiling.
  */
 export function isCrawlFinished(status: CrawlStatus | undefined): boolean {
   return (
     status === 'done' ||
     status === 'no_content' ||
+    status === 'limit' ||
     status === 'failed' ||
     status === 'cancelled'
   );

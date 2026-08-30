@@ -130,7 +130,20 @@ export function WebsiteFlow({
           title: undefined,
           body: `Finished — this chatbot read ${formatNumber(crawl.pagesCrawled)} page${crawl.pagesCrawled === 1 ? '' : 's'}.`,
         }
-      : crawl.status === 'no_content'
+      : crawl.status === 'limit'
+        ? {
+            // Not a reading problem. The site was fine and this workspace ran
+            // out of credits or knowledge-base room, so the advice is to add
+            // capacity rather than to debug JavaScript. The server sends the
+            // sentence, because only it knows which limit was reached.
+            tone: 'warning' as const,
+            title: t('agents.thisCrawlHitALimit') || 'This crawl stopped at a limit',
+            body:
+              crawl.error ??
+              (t('agents.weStoppedBeforeTraining') ||
+                'We stopped before training on your pages because this workspace reached a limit. Upgrade or add credits, then run the crawl again.'),
+          }
+        : crawl.status === 'no_content'
         ? {
             tone: 'danger' as const,
             title: t('agents.thatWebsiteCouldNotBe') || 'That website could not be read',
@@ -245,12 +258,23 @@ export function WebsiteFlow({
               />
               <FigureRow
                 label={t('agents.yourCreditsCover') || 'Your credits cover'}
-                value={`${formatNumber(budget.affordablePages)} pages`}
-                hint={`${formatNumber(budget.costPerPage)} credits a page · balance ${formatNumber(budget.balance)}`}
+                // A free crawl is stated as free. "0 credits a page" reads like
+                // a bug or a rounding error, and the number people check before
+                // they commit is exactly this one.
+                value={budget.costPerPage === 0 ? t('agents.everyPageFound') || 'Every page found' : `${formatNumber(budget.affordablePages)} pages`}
+                hint={
+                  budget.costPerPage === 0
+                    ? t('agents.thisTrainingIsFree') || 'This training is free · balance unchanged'
+                    : `${formatNumber(budget.costPerPage)} credits a page · balance ${formatNumber(budget.balance)}`
+                }
               />
               <FigureRow
                 label={t('agents.selected') || 'Selected'}
-                value={`${formatNumber(pageCount)} pages · ${formatNumber(cost)} credits`}
+                value={
+                  budget.costPerPage === 0
+                    ? `${formatNumber(pageCount)} pages · ${t('agents.thisIsFree') || 'free'}`
+                    : `${formatNumber(pageCount)} pages · ${formatNumber(cost)} credits`
+                }
                 hint={
                   budget.found === 0
                     ? t('agents.weCouldNotListThis') || 'We could not list this site’s pages; training will follow links from the homepage'
@@ -348,7 +372,9 @@ export function WebsiteFlow({
         // the selection. This states the consequence and nothing else.
         description={
           budget
-            ? `${formatNumber(pageCount)} page${pageCount === 1 ? '' : 's'} × ${formatNumber(budget.costPerPage)} credits = ${formatNumber(cost)} credits, from a balance of ${formatNumber(budget.balance)}. Charged as they are read, so stopping early only pays for what was read.`
+            ? budget.costPerPage === 0
+              ? `${formatNumber(pageCount)} page${pageCount === 1 ? '' : 's'}, free. Your balance of ${formatNumber(budget.balance)} credits is not touched.`
+              : `${formatNumber(pageCount)} page${pageCount === 1 ? '' : 's'} × ${formatNumber(budget.costPerPage)} credits = ${formatNumber(cost)} credits, from a balance of ${formatNumber(budget.balance)}. Charged as they are read, so stopping early only pays for what was read.`
             : `This reads ${url.trim() || 'this website'} and charges credits for each page it reads.`
         }
         confirmLabel="Start training"

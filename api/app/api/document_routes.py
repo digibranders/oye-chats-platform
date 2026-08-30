@@ -181,6 +181,49 @@ def _verify_bot_ownership(bot_id: int | None, client_id: int) -> None:
             raise HTTPException(status_code=403, detail="Bot not found or access denied.")
 
 
+def resolve_crawl_cost_per_page(session, client_id: int, bot_id: int | None) -> int:
+    """Per-page crawl price for THIS crawl.
+
+    The trial's first training is free: site size is a fact about the
+    customer's website, not about the value they will get, and metering it made
+    a 100-page site spend its whole budget before evaluating anything.
+
+    The switch is the ``first_training_free`` feature flag on the plan row, not
+    a slug check, so plan behaviour stays in plan data like every other flag.
+
+    "First" is judged per ACCOUNT, by whether any crawl-sourced Document exists
+    anywhere on the client. The plan for this work said per bot, matching the
+    predicate ``recrawl_service`` uses to decide what a re-crawl covers, and per
+    bot is exploitable: ``bot_id`` is an OPTIONAL query parameter on all three
+    crawl routes, so one crawl with it omitted (documents land with a NULL
+    ``bot_id``) followed by one with it set are two different scopes and both
+    come out free. Per account closes that, costs nothing real, and is what the
+    trial means anyway: it grants exactly one bot, so the two rules coincide
+    there.
+
+    Re-crawls are already free on every tier and never reach here with a cost
+    to pay (``recrawl_service`` passes 0).
+
+    Known and accepted: deleting every crawl-sourced document makes the account
+    eligible again. Closing that needs a durable "has consumed the free
+    training" marker rather than an inference over live rows, which is a
+    billing-state change this task does not carry. The exposure is one free
+    crawl per deletion on a plan capped at 100 pages.
+    """
+    from sqlalchemy import select as _sa_select
+
+    from app.services import credit_service, plan_entitlements_service
+
+    entitlements = plan_entitlements_service.get_entitlements(client_id, session)
+    if entitlements.has_feature("first_training_free"):
+        already_crawled = session.execute(
+            _sa_select(Document.id).where(Document.client_id == client_id, Document.source == "crawl").limit(1)
+        ).first()
+        if already_crawled is None:
+            return 0
+    return credit_service.get_credit_cost(session, "url_scan")
+
+
 def _tenant_documents_dir(client_id: int, bot_id: int | None) -> Path:
     """Per-tenant upload directory: ``documents/{client_id}/{bot_id}/``.
 
@@ -1068,7 +1111,7 @@ async def crawl_discover_endpoint(
         # bot ledger, but a client-level/Free bot drains the client pool. Using
         # the raw bot_id here reported 0 for client-level subs (credits live in
         # the pool). Mirror batch_web_ingestion's resolve_bot_ledger_bot_id.
-        cost_per_page = credit_service.get_credit_cost(db, "url_scan")
+        cost_per_page = resolve_crawl_cost_per_page(db, client_id, bot_id)
         ledger_bot_id = None
         if bot_id is not None:
             ledger_bot_id = credit_service.resolve_bot_ledger_bot_id(db.get(Bot, bot_id))
@@ -1101,8 +1144,10 @@ async def crawl_discover_endpoint(
 
     total = len(urls)
 
+    # A free crawl affords every page found, not ``balance`` of them. The
+    # clamp is only there to keep the division finite.
     per_page = max(int(cost_per_page), 1)
-    max_affordable_pages = int(balance) // per_page
+    max_affordable_pages = total if cost_per_page == 0 else int(balance) // per_page
     credits_required_full = total * cost_per_page
 
     return {
@@ -1174,7 +1219,7 @@ async def crawl_diff_endpoint(
         # subscription drains its own bucket, everything else drains the
         # client pool) so the balance the user sees here matches what
         # gets charged. Mirrors the resolution in /crawl/discover:569-573.
-        cost_per_page = credit_service.get_credit_cost(db, "url_scan")
+        cost_per_page = resolve_crawl_cost_per_page(db, client_id, bot_id)
         ledger_bot_id = None
         if bot_id is not None:
             ledger_bot_id = credit_service.resolve_bot_ledger_bot_id(db.get(Bot, bot_id))
@@ -1317,11 +1362,14 @@ async def crawl_diff_endpoint(
     # (sitemap_total × cost_per_page). For delta mode the true billed amount
     # depends on how many pages actually changed at ingest time, so we don't
     # try to invent a number: the frontend only shows the exact "will charge"
-    # copy for ``mode == 'full'``. ``per_page`` is clamped to ``>= 1`` so a
-    # zero-cost misconfiguration in ``pricing_configs`` still produces a
-    # non-zero credits_required (matching the /crawl route's own guard).
-    per_page = max(int(cost_per_page), 1)
-    credits_required_full = len(discovery_norm_to_raw) * per_page
+    # copy for ``mode == 'full'``.
+    #
+    # A zero price is REAL here, not a misconfiguration: the trial's first
+    # website training is free. Clamping it up quoted a customer credits that
+    # were never going to be charged, which is exactly the deterrent the free
+    # training removes. The multiplication needs no clamp; the division that
+    # once did is elsewhere.
+    credits_required_full = len(discovery_norm_to_raw) * int(cost_per_page)
 
     return {
         "url": diff_request.url,
@@ -1456,7 +1504,7 @@ async def crawl_endpoint(
                 },
             )
 
-        cost_per_page = credit_service.get_credit_cost(db, "url_scan")
+        cost_per_page = resolve_crawl_cost_per_page(db, client_id, bot_id)
         # Resolve the SAME ledger bucket the actual crawl will drain, a
         # per-bot subscription drains its own bucket, everything else drains
         # the client pool. Both the unlimited-plan sizing fallback below and

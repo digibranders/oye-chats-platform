@@ -3511,26 +3511,6 @@ export const createCheckoutSession = async (
         throw buildApiError(error, 'Failed to create checkout session');
     }
 };
-
-/**
- * Start the paid plan's configured free trial (currently Standard, 7 days).
- *
- * The customer must be on the free tier (or have no subscription) and must
- * not have used a trial before - one free trial per client, lifetime, across
- * every trial-eligible plan. The backend cancels their
- * existing free subscription, creates a trialing one on the new plan, and
- * grants the plan's full monthly credit allowance. No card is collected
- * - the conversion path runs through createCheckoutSession on day 14.
- */
-export const startTrial = async (planSlug: string): Promise<Record<string, unknown>> => {
-    try {
-        const response = await api.post('/subscriptions/start-trial', { plan_slug: planSlug });
-        return response.data;
-    } catch (error) {
-        throw buildApiError(error, 'Failed to start free trial');
-    }
-};
-
 export const changePlan = async (
     planId: number,
     billingCycle: string | null = null,

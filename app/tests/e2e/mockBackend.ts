@@ -1,5 +1,7 @@
 import type { Page, WebSocketRoute } from '@playwright/test';
 
+import type { TrialState } from '../../src/types/domain';
+
 /**
  * A scripted backend for admin browser tests.
  *
@@ -74,6 +76,26 @@ export interface MockOptions {
   waitingCount?: number;
   /** Rows returned by `GET /notifications`. */
   notifications?: { id: number; type: string; title: string; is_read: boolean }[];
+  /**
+   * The `trial` block on `GET /auth/me`, which both trial surfaces read.
+   *
+   * Absent by default, because most of the console is exercised as a paying
+   * account and the rail card and banner must render nothing without it.
+   *
+   * Typed as the app's own `TrialState`, not a copy of it: a field added to
+   * the contract must show up missing here rather than quietly diverging.
+   */
+  trial?: TrialState | null;
+  /**
+   * `GET /credits/balance` - the account pool's spendable total.
+   *
+   * The trial card compares it against the granted total to decide whether
+   * credits or days are the binding constraint, so a spec that wants the
+   * credits state has to be able to set it. Defaults BELOW the trial grant,
+   * because a balance larger than the grant is a state no account can reach
+   * and a default like that makes the days branch true for the wrong reason.
+   */
+  creditsRemaining?: number;
 }
 
 const ENTITLEMENTS = {
@@ -133,6 +155,8 @@ export async function mockBackend(page: Page, opts: MockOptions = {}): Promise<O
     workspaces = [{ id: 1, name: 'Acme Corporation', role: 'owner' }],
     waitingCount = 0,
     notifications = [],
+    trial = null,
+    creditsRemaining = trial?.credits_granted ?? 10_000,
   } = opts;
   const bot = { ...BOT, ...botOverrides };
 
@@ -198,7 +222,28 @@ export async function mockBackend(page: Page, opts: MockOptions = {}): Promise<O
     }),
   );
   await page.route(`${API}/auth/me*`, (route) =>
-    route.fulfill({ json: { id: 1, name: 'Owner', email: 'owner@example.com', is_verified: true } }),
+    route.fulfill({
+      json: { id: 1, name: 'Owner', email: 'owner@example.com', is_verified: true, trial },
+    }),
+  );
+  // Shaped like the real payload: `total` is the key `parseCreditBalance` reads
+  // for the spendable balance.
+  //
+  // `monthly_grant` is DERIVED from the trial's grant rather than fixed. The
+  // backend serves both from `plan.credits_per_month` (subscription_routes
+  // for this endpoint, auth_routes for `credits_granted`), so they are the
+  // same field of the same row and cannot disagree in production. A mock that
+  // lets them disagree can put the console in a state no customer reaches.
+  await page.route(`${API}/credits/balance*`, (route) =>
+    route.fulfill({
+      json: {
+        plan: creditsRemaining,
+        topup: 0,
+        total: creditsRemaining,
+        monthly_grant: trial?.credits_granted ?? 10_000,
+        currency: 'INR',
+      },
+    }),
   );
   await page.route(`${API}/bots`, (route) => route.fulfill({ json: [bot] }));
   await page.route(`${API}/bots?*`, (route) => route.fulfill({ json: [bot] }));

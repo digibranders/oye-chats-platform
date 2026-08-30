@@ -63,6 +63,10 @@ export function FirstChatPage() {
   const status = progress?.status ?? 'idle';
   const running = status === 'running' || pending;
   const failed = status === 'failed';
+  // A crawl stopped by a limit indexed nothing, but the site was fine. Telling
+  // this reader to "add a site" would send them to redo the thing that just
+  // worked; what they need is to add capacity.
+  const hitLimit = status === 'limit';
 
   const [turns, setTurns] = useState<Turn[]>([]);
   const [draft, setDraft] = useState('');
@@ -209,7 +213,15 @@ export function FirstChatPage() {
           </Alert>
         ) : null}
 
-        {!running && !failed && indexed === 0 ? (
+        {!running && hitLimit ? (
+          <Alert tone="warning" title={t('onboarding.thisCrawlStoppedAtALimit') || 'This crawl stopped at a limit'}>
+            {progress?.error ??
+              (t('onboarding.yourSiteIsFineThisWorkspace') ||
+                'Your site is fine. This workspace reached a limit before it could finish training. Upgrade or add credits, then run it again.')}
+          </Alert>
+        ) : null}
+
+        {!running && !failed && !hitLimit && indexed === 0 ? (
           <Alert tone="neutral" title={t('onboarding.yourChatbotHasNothingTo') || 'Your chatbot has nothing to read yet'}>
             {t('onboarding.addASiteDocumentsOr') || 'Add a site, documents, or pasted text.'}
           </Alert>

@@ -78,6 +78,14 @@ def _patch_common(monkeypatch, *, balances_by_bucket: dict[str, int], plan_max_p
         },
     )
     monkeypatch.setattr("app.services.credit_service.get_credit_cost", lambda db, action: 1)
+    # The per-page price is resolved through the plan's entitlements now, so the
+    # trial's first website training can be free. These tests drive a Standard
+    # bot through a MagicMock session, so the entitlement lookup is stubbed to a
+    # tier without the flag: every page is charged, exactly as before.
+    monkeypatch.setattr(
+        "app.services.plan_entitlements_service.get_entitlements",
+        lambda client_id, session, **kwargs: SimpleNamespace(has_feature=lambda name: False),
+    )
 
     # This bot IS resolved to its own ledger bucket, the credit routing
     # decision itself (resolve_bot_ledger_bot_id) is exercised for real by

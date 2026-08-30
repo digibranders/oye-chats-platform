@@ -1343,11 +1343,17 @@ def send_trial_welcome_email(to_email: str, *, name: str | None, trial_end, cred
         + button("Open my dashboard", APP_URL)
         + ed.divider()
         + ed.section_label("A 3-step path to your first chat")
+        # Every step links to the chatbot list, because that is where all three
+        # actually begin and it is a route that exists. The pages themselves are
+        # per chatbot (/chatbots/:id/knowledge, /experience, /deploy) and this
+        # email has no chatbot id to build them from. The previous deep links,
+        # /knowledge and /chatbot, are not routes and never were in the rebuilt
+        # console: all three steps of the day-0 email landed on Not Found.
         + ed.steps(
             [
-                f"{link('Upload your knowledge base', APP_URL + '/knowledge')}. PDFs, docs, or paste your website URL and we train on it.",
-                f"{link('Style the widget', APP_URL + '/chatbot')}. Colors, logo, welcome message.",
-                f"{link('Drop the script tag', APP_URL + '/chatbot')} on your site, one line of HTML and you&rsquo;re live.",
+                f"{link('Upload your knowledge base', APP_URL + '/chatbots')}. PDFs, docs, or paste your website URL and we train on it.",
+                f"{link('Style the widget', APP_URL + '/chatbots')}. Colors, logo, welcome message.",
+                f"{link('Drop the script tag', APP_URL + '/chatbots')} on your site, one line of HTML and you&rsquo;re live.",
             ]
         )
         + p(f"Stuck on something? Just reply to this email or write to {_SUPPORT_LINK}.")
@@ -1355,9 +1361,9 @@ def send_trial_welcome_email(to_email: str, *, name: str | None, trial_end, cred
     try:
         send_email_async(
             to_email,
-            f"Welcome to {BRAND_NAME} (your {duration_days}-day trial is live",
+            f"Welcome to {BRAND_NAME}, your {duration_days}-day trial is live",
             shell(
-                subject=f"Welcome to {BRAND_NAME}) your {duration_days}-day trial is live",
+                subject=f"Welcome to {BRAND_NAME}, your {duration_days}-day trial is live",
                 preheader=f"You've got {credits:,} credits and {duration_days} days to build your bot.",
                 inner=inner,
             ),
@@ -1399,17 +1405,23 @@ def send_trial_halfway_email(to_email: str, *, name: str | None, days_remaining:
 
 
 def send_trial_days_left_email(to_email: str, *, name: str | None, days_remaining: int, plan_name: str) -> None:
-    """Urgency reminder fired at T-2 and T-1 on the 7-day trial cadence."""
-    safe_plan = esc(plan_name)
+    """Urgency reminder fired near the end of the trial.
+
+    ``plan_name`` is accepted and deliberately not rendered. There is exactly
+    one trial now, the plan-less 14-day row every signup lands on, and its row
+    is named "Free Trial", so naming it produced "your Free Trial trial". The
+    parameter stays because every caller and the email catalogue pass it, and
+    because a bespoke tier could carry a trial length again.
+    """
     if days_remaining <= 1:
-        headline = f"your {safe_plan} trial ends tomorrow"
+        headline = "your trial ends tomorrow"
         lead = (
             f"Heads up. Your trial wraps up in about {strong(f'{days_remaining} day')}. After that your "
             f"widget will switch to its offline message until you pick a plan."
         )
         subject = f"Your {BRAND_NAME} trial ends tomorrow"
     else:
-        headline = f"{days_remaining} days left in your {safe_plan} trial"
+        headline = f"{days_remaining} days left in your trial"
         lead = (
             f"You&rsquo;ve got {strong(f'{days_remaining} days')} to keep evaluating. If you&rsquo;d like your "
             f"bot to stay live without a gap, pick a plan before the trial ends."
@@ -1420,8 +1432,9 @@ def send_trial_days_left_email(to_email: str, *, name: str | None, days_remainin
         h1(f"Hi {_first_name(name)} - {headline}")
         + p(lead)
         + p(
-            "Your knowledge base, settings, and chat history are kept safe for 15 days after the trial "
-            "ends, nothing is lost if you decide later."
+            "Nothing is deleted when the trial ends. Your account moves to the Free plan with your "
+            "chatbot, documents and conversations intact, and your knowledge base is paused until "
+            "you pick a plan."
         )
         + button("Pick a plan", f"{APP_URL}/billing")
         + p(f"Questions about pricing? Reply to this email or write to {_SUPPORT_LINK}.", top=8)
@@ -1475,31 +1488,41 @@ def send_promo_precharge_reminder_email(
         _capture_email_failure(exc, event="promo_precharge", email=to_email)
 
 
-def send_trial_ended_email(to_email: str, *, name: str | None, plan_name: str, data_retention_until) -> None:
-    """Fired the moment the expiry cron flips status to trial_expired."""
-    safe_plan = esc(plan_name)
-    retention_human = data_retention_until.strftime("%B %-d, %Y")
+def send_trial_ended_email(to_email: str, *, name: str | None, plan_name: str = "Free") -> None:
+    """Fired when the expiry cron converts a lapsed trial onto the Free plan.
+
+    Nothing is deleted and nothing is retained on a clock, so this email no
+    longer takes ``data_retention_until`` and no longer warns about permanent
+    deletion. It previously promised exactly that, which is what made the
+    deletion cron's behaviour feel sanctioned.
+
+    The pause it describes is ALL of the workspace's knowledge, not the part
+    above the Free plan's ceiling. ``knowledge_state_service`` is all-or-nothing
+    by design, so saying "the knowledge above your Free limit is paused" would
+    publish a claim the code cannot honour.
+    """
     inner = (
         h1("Your trial has ended")
         + p(
-            f"Hi {_first_name(name)}. Your trial of {strong(safe_plan)} wrapped up today. Your bot is now "
-            f"showing its offline message to visitors. Pick a plan and it&rsquo;s back online within a minute."
+            f"Hi {_first_name(name)}. Your free trial wrapped up today and your account is now on "
+            f"the {strong(esc(plan_name))} plan. Nothing has been deleted: your chatbot, your "
+            f"documents, your settings and every conversation are exactly where you left them."
         )
-        + ed.alert(
-            f"Your knowledge base, settings, and chat history are kept safe until "
-            f"{strong(esc(retention_human))}. After that date, the workspace is permanently deleted.",
-            "warning",
+        + p(
+            "Your knowledge base is paused, so your chatbot is not answering from it right now. "
+            "Choosing a plan switches all of it back on, in one step, with nothing to re-upload."
         )
-        + button("Choose a plan to reactivate", f"{APP_URL}/billing")
+        + button("Choose a plan", f"{APP_URL}/billing")
         + p(f"Trial didn&rsquo;t fit? We&rsquo;d love quick feedback - {_SUPPORT_LINK}.", top=8)
     )
+    subject = f"Your {BRAND_NAME} trial has ended, your account is now on Free"
     try:
         send_email_async(
             to_email,
-            f"Your {BRAND_NAME} trial has ended. Pick a plan to keep your bot live",
+            subject,
             shell(
-                subject=f"Your {BRAND_NAME} trial has ended. Pick a plan to keep your bot live",
-                preheader=f"Reactivate by {retention_human} to keep your bot and data.",
+                subject=subject,
+                preheader="Nothing was deleted. Your knowledge is paused until you pick a plan.",
                 inner=inner,
             ),
         )
@@ -1509,7 +1532,13 @@ def send_trial_ended_email(to_email: str, *, name: str | None, plan_name: str, d
 
 
 def send_trial_data_deleted_email(to_email: str, *, name: str | None) -> None:
-    """Sent after the hard-delete cron purges the workspace."""
+    """Sent after the hard-delete cron purges the workspace.
+
+    Legacy: new trials never enter the retention path as of 2026-08-28. A lapsed
+    trial converts to the Free plan with nothing deleted, so the only rows that
+    can still reach this are ones stamped ``data_retention_until`` before that
+    change, draining the old queue.
+    """
     inner = (
         h1("Your workspace has been deleted")
         + p(

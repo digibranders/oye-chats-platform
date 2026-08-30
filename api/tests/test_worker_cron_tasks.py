@@ -1,4 +1,4 @@
-"""Unit tests for the four trial-lifecycle + dunning cron tasks.
+"""Unit tests for the trial-lifecycle + dunning cron tasks.
 
 The tasks themselves are async wrappers around a synchronous ``_run()``
 inner function that does the SQLAlchemy work. We test the public async
@@ -8,9 +8,11 @@ markers, day-bucket reminder cadence) is locked in regardless of any
 future internal refactor.
 
 What we cover:
-    * status transitions (trialing → trial_expired, past_due → expired)
+    * status transitions (past_due → expired). The trial transition moved to
+      tests/test_trial_expiry_converts_to_free.py when it stopped being a flip
+      and became a conversion across several real tables.
     * marker idempotency (no duplicate emails on re-runs)
-    * the 4/2/1 day-bucket cadence in ``task_trial_reminder_emails``
+    * the 7/3/1 day-bucket cadence in ``task_trial_reminder_emails``
     * ``trial_expired`` data hard-delete past ``data_retention_until``
     * dunning grace window enforcement in
       ``task_expire_past_due_subscriptions``
@@ -139,95 +141,33 @@ class _FakeSession:
 
 
 # ── task_expire_trials ──────────────────────────────────────────────────────
-
-
-class TestTaskExpireTrials:
-    """Trialing subs past ``trial_end`` flip to ``trial_expired`` and the
-    workspace owner gets one (and only one) trial-ended email."""
-
-    @pytest.mark.asyncio
-    async def test_flips_status_and_sends_email(self):
-        now = datetime.now(UTC)
-        sub = _trial_sub(trial_end=now - timedelta(hours=1))
-        fake_session = _FakeSession([sub], {sub.client_id: _owner()})
-
-        with (
-            patch.object(cron_tasks, "logger"),
-            patch("app.db.session.get_session", return_value=fake_session),
-            patch("app.services.email_service.send_trial_ended_email") as mock_email,
-        ):
-            count = await cron_tasks.task_expire_trials({})
-
-        assert count == 1
-        assert sub.status == "trial_expired"
-        assert sub.data_retention_until is not None
-        assert sub.data_retention_until > sub.trial_end
-        mock_email.assert_called_once()
-        assert sub.trial_emails_sent.get("trial_ended") is not None
-        assert fake_session.commit_calls == 1
-
-    @pytest.mark.asyncio
-    async def test_idempotent_skips_already_emailed(self):
-        """Re-run after a partial failure: status still flips but the
-        email-marker stops a second send."""
-        now = datetime.now(UTC)
-        sub = _trial_sub(
-            trial_end=now - timedelta(hours=1),
-            trial_emails_sent={"trial_ended": now.isoformat()},
-        )
-        fake_session = _FakeSession([sub], {sub.client_id: _owner()})
-
-        with (
-            patch("app.db.session.get_session", return_value=fake_session),
-            patch("app.services.email_service.send_trial_ended_email") as mock_email,
-        ):
-            await cron_tasks.task_expire_trials({})
-
-        # The cron still flips status (idempotent rebuild) but does NOT
-        # re-send the email. That's the whole point of the marker.
-        assert sub.status == "trial_expired"
-        mock_email.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_email_failure_does_not_block_status_flip(self):
-        """If Brevo errors, the status flip still commits, the email is
-        retryable; the customer's trial is over either way."""
-        now = datetime.now(UTC)
-        sub = _trial_sub(trial_end=now - timedelta(hours=1))
-        fake_session = _FakeSession([sub], {sub.client_id: _owner()})
-
-        with (
-            patch("app.db.session.get_session", return_value=fake_session),
-            patch(
-                "app.services.email_service.send_trial_ended_email",
-                side_effect=RuntimeError("brevo down"),
-            ),
-        ):
-            count = await cron_tasks.task_expire_trials({})
-
-        assert count == 1
-        assert sub.status == "trial_expired"
-        # Marker NOT set on failure so the next run can retry.
-        assert "trial_ended" not in sub.trial_emails_sent
-        assert fake_session.commit_calls == 1
-
+#
+# Covered in tests/test_trial_expiry_converts_to_free.py against real Postgres,
+# not here. The task stopped being a status flip: it now moves the row onto the
+# Free plan, forfeits the unused trial allowance, grants Free's, and pauses the
+# knowledge across every bot on the account. Those collaborate through real
+# tables (plans, credit_ledger, documents), and a hand-rolled fake session that
+# had to satisfy all of them would be asserting on the fake rather than on the
+# conversion. The three behaviours this class used to own, marker idempotency,
+# an email failure not blocking the transition, and the transition itself, are
+# all pinned there.
 
 # ── task_trial_reminder_emails ──────────────────────────────────────────────
 
 
 class TestTaskTrialReminderEmails:
-    """Trial reminder cadence on a 7-day trial. Halfway (T-4) / T-2 / T-1
+    """Trial reminder cadence on the 14-day trial. Halfway (T-7) / T-3 / T-1
     buckets, gated by JSONB ``trial_emails_sent`` markers so each fires
-    exactly once. Marker keys keep their historical ``day_7`` / ``day_11``
-    / ``day_13`` names from the previous 14-day cadence so existing
-    subscriptions with those slots pre-filled aren't re-spammed after the
-    rescale ships."""
+    exactly once. Marker keys keep their historical ``day_7`` / ``day_11`` /
+    ``day_13`` names across every rescale, so a subscription already carrying
+    one of those slots is never sent it twice. The keys name the SLOT, not the
+    day."""
 
     @pytest.mark.parametrize(
         "days_left,expected_marker,expected_fn",
         [
-            (4, "day_7", "send_trial_halfway_email"),
-            (2, "day_11", "send_trial_days_left_email"),
+            (7, "day_7", "send_trial_halfway_email"),
+            (3, "day_11", "send_trial_days_left_email"),
             (1, "day_13", "send_trial_days_left_email"),
         ],
     )
@@ -248,10 +188,10 @@ class TestTaskTrialReminderEmails:
         mock_email.assert_called_once()
         assert sub.trial_emails_sent.get(expected_marker) is not None
 
-    @pytest.mark.parametrize("days_left", [7, 5, 3])
+    @pytest.mark.parametrize("days_left", [13, 5, 2])
     @pytest.mark.asyncio
     async def test_skips_off_cadence_days(self, days_left):
-        """T-7 / T-5 / T-3 are not in the 7-day cadence, nothing fires."""
+        """T-13 / T-5 / T-2 are not in the 14-day cadence, nothing fires."""
         now = datetime.now(UTC)
         sub = _trial_sub(trial_end=now + timedelta(days=days_left - 1, hours=12))
         fake_session = _FakeSession([sub], {sub.client_id: _owner()})

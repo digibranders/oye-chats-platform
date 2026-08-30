@@ -251,16 +251,64 @@ describe('crawl pre-flight', () => {
     expect(crawlBudgetOf({ total_found: 1, capped: false }).perCrawlLimit).toBeNull();
   });
 
-  it('never divides by a zero page cost', () => {
+  it('keeps a zero page cost as zero, and still never divides by it', () => {
+    // The trial's first website training is free and so is every re-crawl.
+    // Clamping the price up to 1 quoted the customer a number the server was
+    // never going to charge, which is the whole deterrent this removes. The
+    // division the clamp used to protect is guarded at the division instead:
+    // at zero, every page found is affordable.
     const free = crawlBudgetOf({ total_found: 4, capped: false, cost_per_page: 0, balance: 50 });
-    expect(free.costPerPage).toBe(1);
-    expect(free.affordablePages).toBe(50);
+    expect(free.costPerPage).toBe(0);
+    expect(free.affordablePages).toBe(4);
+    expect(Number.isFinite(free.affordablePages)).toBe(true);
   });
 
   it('blocks a selection the plan will refuse, and says how many to drop', () => {
     const result = crawlPreflight(budget, 130);
     expect(result.blocked).toBe(true);
     expect(result.message).toMatch(/Deselect 30/);
+  });
+
+  it('still warns about a credit shortfall on a capped site', () => {
+    // The cap upsell must not shadow this: a shortfall the customer can act on
+    // right now outranks a pitch to upgrade.
+    const budget = crawlBudgetOf({
+      total_found: 100,
+      capped: true,
+      plan_max: 100,
+      balance: 50,
+      cost_per_page: 5,
+    });
+    const result = crawlPreflight(budget, 100, 'trial');
+    expect(result.blocked).toBe(false);
+    expect(result.message).toContain('Your credits cover 10 of these 100 pages');
+  });
+
+  it('upsells on the cap the trial actually hits, in the shape the server reports it', () => {
+    // `/crawl/discover` truncates its listing AT the plan ceiling, so a capped
+    // plan can never report more pages than it allows. The reachable signal is
+    // `capped`, and the honest sentence is "more than 100", not a page count
+    // the server deliberately does not compute. It does not block: the 100
+    // pages they can train are worth training now.
+    const budget = crawlBudgetOf({ total_found: 100, capped: true, plan_max: 100, balance: 5000, cost_per_page: 5 });
+    const result = crawlPreflight(budget, 100, 'trial');
+    expect(result.blocked).toBe(false);
+    expect(result.message).toContain('at least 100 pages');
+    expect(result.message).toContain('your trial trains in one go');
+    expect(result.message).toContain('Upgrade');
+  });
+
+  it('says the same thing without naming the trial on a paid tier', () => {
+    const budget = crawlBudgetOf({ total_found: 100, capped: true, plan_max: 100, balance: 5000, cost_per_page: 5 });
+    const result = crawlPreflight(budget, 100, 'standard');
+    expect(result.blocked).toBe(false);
+    expect(result.message).toContain('at least 100 pages');
+    expect(result.message).not.toContain('your trial');
+  });
+
+  it('stays silent when the site fits inside the cap', () => {
+    const budget = crawlBudgetOf({ total_found: 40, capped: false, plan_max: 100, balance: 500, cost_per_page: 5 });
+    expect(crawlPreflight(budget, 40, 'trial').message).toBeNull();
   });
 
   it('warns without blocking when credits cover only part of the selection', () => {

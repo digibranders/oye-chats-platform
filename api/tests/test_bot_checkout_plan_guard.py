@@ -217,8 +217,9 @@ class TestPlanGrantsUnlimitedBots:
 # ── withdrawn plans (real SQL, the mock session ignores the WHERE clause) ────
 
 
-def _persist_plan(db, *, slug: str, is_active: bool) -> Plan:
+def _persist_plan(db, *, slug: str, is_active: bool, is_public: bool = True) -> Plan:
     plan = Plan(
+        is_public=is_public,
         name=slug.title(),
         slug=slug,
         monthly_price_cents=179900,
@@ -270,6 +271,29 @@ def test_deactivated_plan_is_not_purchasable_by_slug(db, monkeypatch):
 
     assert response.status_code == 404, response.text
     # Same wording as a slug that never existed, no probing for retired tiers.
+    assert "not found" in response.json()["detail"].lower()
+    create_sub.assert_not_called()
+
+
+@needs_db
+def test_non_public_plan_is_not_purchasable_by_slug(db, monkeypatch):
+    """An assignable-but-unlisted tier must 404 before any gateway side effect.
+
+    The signup trial is active (it has to be, ``get_default_plan`` filters on
+    that) but was never for sale. This route hands the request on to
+    ``pending_checkout_service.reuse_or_supersede``, which cancels the
+    account's in-flight mandate at the gateway when the plan does not match,
+    and that cancel cannot be undone. So a plan nobody can buy has to be
+    refused by the lookup, not by a later ``PlanNotCheckoutable``.
+    """
+    owner = _owner(db, email="botco-nonpublic@e.com")
+    _persist_plan(db, slug="trial", is_active=True, is_public=False)
+    db.commit()
+
+    with patch("app.services.razorpay_service.create_per_bot_subscription") as create_sub:
+        response = _post_db(db, monkeypatch, owner, plan_slug="trial")
+
+    assert response.status_code == 404, response.text
     assert "not found" in response.json()["detail"].lower()
     create_sub.assert_not_called()
 

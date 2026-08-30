@@ -28,6 +28,7 @@ import { RailBrand } from './RailBrand';
 import { AgentSwitcher } from './AgentSwitcher';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 import { SetupProgress } from './SetupProgress';
+import { TrialCard } from './TrialCard';
 import { AccountMenu } from './AccountMenu';
 
 /**
@@ -195,6 +196,10 @@ export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 
 
   const footer = (
     <div className="flex flex-col gap-0.5">
+      {/* Directly above Billing: the fact and the place to act on it, adjacent.
+          Operators never see it; a trial is a fact about the workspace owner's
+          account, not about the person answering chats in it. */}
+      {!isOperator ? <TrialCard collapsed={collapsed} /> : null}
       <ul className="flex flex-col gap-0.5">
         {footerItems.map((item) => (
           <RailItem

@@ -2997,6 +2997,15 @@ def _emit_plan_purchased_notification(session: Session, client_id: int, plan_id:
         )
 
 
+# Checkout stamps this note on a mandate minted for a customer who bought
+# mid-trial, so the webhook handlers can tell that deferred start from a resume
+# (where the customer has already paid through it and must be granted nothing).
+TRIAL_CONVERSION_NOTE = "oyechats_trial_conversion"
+# One-shot marker recording that such a mandate was granted its credits at
+# authentication, before any money moved. Lives in ``trial_emails_sent``.
+TRIAL_CONVERSION_GRANT_MARKER = "trial_conversion_granted"
+
+
 def _grant_subscription_period(
     session: Session,
     subscription: Subscription,
@@ -3374,6 +3383,15 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
         # promo therefore skips the period/marker carry below and takes the
         # grant branch instead of the deferred one.
         is_promo = _promotion_id_from_notes(notes) is not None
+        # A mid-trial purchase. Like a promo it starts in the future, and
+        # UNLIKE a resume the customer has NOT already paid for the period they
+        # are living in: they were in a free trial. So it must grant now, which
+        # is the whole reason someone pays early, and it must not inherit the
+        # trial row's period or grant marker (inheriting the marker would no-op
+        # the grant and leave them on trial entitlements they just paid to
+        # leave). This is a deliberate exception to the no-entitlement-before-
+        # payment rule, closed at the other end by the cancellation handler.
+        is_trial_conversion = str(notes.get(TRIAL_CONVERSION_NOTE) or "") == "1"
 
         # Period + grant marker inherited from the subscription this one
         # supersedes. Only populated for a future-``start_at`` cutover, where
@@ -3446,7 +3464,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
                     # re-mints with re-authorization, so nothing is granted free.
                     carried_extra_seats = max(carried_extra_seats, int(old.seat_addon_pending_quantity))
                     old.seat_addon_pending_quantity = None
-                if starts_in_future and not is_promo:
+                if starts_in_future and not is_promo and not is_trial_conversion:
                     # The customer paid through ``old.current_period_end`` and the
                     # new mandate does not bill until then. Carry the period and
                     # the grant marker onto the replacement so entitlement is
@@ -3660,7 +3678,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
         # customer who upgrades to Standard mid-cycle sees their leftover
         # free credits stacked on top of the new grant (e.g. 500 + 10,000
         # → 10,500 / 10,000). Mirrors the same reset → grant ordering used
-        # by the change-plan path and ``start_trial_subscription``.
+        # by the change-plan path.
         # Sets the period marker so the first subscription.charged for this
         # period is a no-op (H4).
         from app.services import transition_service
@@ -3681,7 +3699,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
         # consumption. Derive the first period end from current_start + the plan
         # interval (which equals the current_end Razorpay will send on that first
         # charge) so the marker advances now and the charged correctly no-ops.
-        if starts_in_future and not is_promo:
+        if starts_in_future and not is_promo and not is_trial_conversion:
             # Nothing to grant yet. This mandate has not billed anything. The
             # customer is still inside the period they already paid for, whose
             # credits are already in the ledger and must be left exactly where
@@ -3715,6 +3733,34 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
                 from app.services.promotion_service import current_free_period_end
 
                 grant_period_end = current_free_period_end(local.promo_free_until)
+            # Mid-trial purchase: Razorpay sends no current period for a
+            # deferred start, so derive the one the FIRST CHARGE will carry.
+            # That charge arrives with ``current_start = start_at`` and
+            # ``current_end = start_at + interval``, so the marker has to be the
+            # END of that period, not ``start_at`` itself. Keyed on ``start_at``
+            # the marker sat a whole interval behind what the charge presents,
+            # far outside ``_PERIOD_KEY_TOLERANCE``, and the day-14 debit reset
+            # and re-granted a second full allowance.
+            if grant_period_end is None and is_trial_conversion:
+                deferred_start = _entity_future_start(sub_entity)
+                if deferred_start is not None:
+                    cycle = (local.billing_cycle if local else None) or notes.get("billing_cycle") or "monthly"
+                    grant_period_end = add_months(deferred_start, 12 if cycle == "annual" else 1)
+            if is_trial_conversion and local is not None:
+                # One-shot marker in the JSONB slot this domain already uses,
+                # not a new column. It tells the cancellation handler that this
+                # row holds credits no payment has covered yet.
+                #
+                # Its VALUE is the deferred start, i.e. when the customer will
+                # first be charged, because that is what /auth/me has to show
+                # them. Deriving it from ``last_granted_period_end`` was wrong
+                # by a whole billing interval the moment that marker moved to
+                # ``start_at + interval``: a day-3 buyer whose first debit is
+                # eleven days out was told their plan started in forty-one.
+                markers = dict(local.trial_emails_sent or {})
+                started = _entity_future_start(sub_entity) or datetime.now(UTC)
+                markers[TRIAL_CONVERSION_GRANT_MARKER] = started.isoformat()
+                local.trial_emails_sent = markers
             _grant_subscription_period(session, local, grant_period_end)
 
         # Apply any pending upgrade proration as a top-up credit. Idempotent,
@@ -3855,11 +3901,20 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
             local.id,
             client_id,
         )
-        # Back to a paid plan → restore any knowledge deactivated by a prior
-        # lapse on this bot (no-op when the bot has none).
-        from app.services.knowledge_state_service import reactivate_bot_knowledge
+        # Back to a paid plan → restore the knowledge a prior lapse deactivated.
+        #
+        # Account-level rows (``bot_id IS NULL``) go through the CLIENT-level
+        # path. ``reactivate_bot_knowledge`` hard-returns 0 for a NULL id, and
+        # a /billing checkout never stamps a bot into its notes, so every
+        # account-level upgrade silently restored nothing. That is the path a
+        # converted trial customer takes, and the trial-ended email tells them
+        # in as many words that choosing a plan switches all of it back on.
+        from app.services.knowledge_state_service import reactivate_bot_knowledge, reactivate_client_knowledge
 
-        reactivate_bot_knowledge(session, local.bot_id)
+        if local.bot_id is None:
+            reactivate_client_knowledge(session, client_id)
+        else:
+            reactivate_bot_knowledge(session, local.bot_id)
         _emit_plan_purchased_notification(session, client_id, plan_id, notes.get("billing_cycle", "monthly"))
         # New active plan → drop cached entitlements so the new tier's
         # features/limits (and, at a downgrade cutover, the exit from the
@@ -3907,9 +3962,13 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
     # 1 until their next seat charge. Re-derive from included + authorized seats.
     local.operator_quantity = derive_operator_quantity(local.plan, local.seat_addon_quantity)
     # Back to a paid plan → restore any knowledge deactivated by a prior lapse.
-    from app.services.knowledge_state_service import reactivate_bot_knowledge
+    # Same account-level split as the activation branch above.
+    from app.services.knowledge_state_service import reactivate_bot_knowledge, reactivate_client_knowledge
 
-    reactivate_bot_knowledge(session, local.bot_id)
+    if local.bot_id is None:
+        reactivate_client_knowledge(session, local.client_id)
+    else:
+        reactivate_bot_knowledge(session, local.bot_id)
     session.flush()
     return f"Subscription {razorpay_sub_id} re-activated"
 
@@ -4236,6 +4295,77 @@ def _promote_scheduled_if_pending(session: Session, local: Subscription) -> str 
     return "promoted scheduled change"
 
 
+def _was_unbilled_trial_conversion(local: Subscription) -> bool:
+    """True for a mid-trial purchase cancelled before it ever took a payment.
+
+    Two facts, both local: the row was granted credits at authentication on the
+    strength of a deferred mandate, and its first debit has not happened. The
+    marker lives in the ``trial_emails_sent`` JSONB, the slot this domain
+    already uses for one-shot markers, rather than in a new column.
+
+    "Not billed" is ``current_period_start is None``, NOT the absence of a paid
+    invoice, and the difference matters in both directions. A refund flips an
+    invoice's status to ``refunded``, so a customer billed for months who takes
+    a partial refund and then cancels would have no ``paid`` invoice left and
+    would be wrongly stripped of their credits and downgraded. And the verify
+    endpoint writes a ``paid`` Invoice from the authorisation transaction the
+    checkout modal returns, so a deferred mandate can look billed from the
+    moment of purchase, which would disable this guard entirely. Razorpay writes
+    ``current_period_start`` at the first real debit and nowhere else.
+    """
+    if not (local.trial_emails_sent or {}).get(TRIAL_CONVERSION_GRANT_MARKER):
+        return False
+    return local.current_period_start is None
+
+
+def _forfeit_and_convert_to_free(session: Session, local: Subscription) -> None:
+    """Zero the unpaid-for remainder and land the account on Free.
+
+    Reuses the same two mechanisms the day-14 conversion uses:
+    ``reset_monthly_plan_credits`` for the forfeit (the only ledger shape
+    ``get_balance_breakdown`` attributes correctly) and a fresh anniversary
+    period on the Free plan so the renewal cron can grant month two.
+    """
+    from app.services import plan_entitlements_service
+    from app.services.plan_service import get_plan_by_slug
+
+    free_plan = get_plan_by_slug(session, "free")
+    if free_plan is None:
+        logger.error(
+            "Cannot convert client %s to Free after an unbilled trial-conversion cancel: no 'free' "
+            "plan row exists. The account is left with no active subscription.",
+            local.client_id,
+        )
+        return
+
+    credit_service.reset_monthly_plan_credits(session, local.client_id)
+    now = datetime.now(UTC)
+    replacement = Subscription(
+        client_id=local.client_id,
+        plan_id=free_plan.id,
+        bot_id=None,
+        status="active",
+        billing_cycle="monthly",
+        operator_quantity=1,
+        current_period_start=now,
+        current_period_end=add_months(now, 1),
+        payment_provider="manual",
+    )
+    replacement.plan = free_plan
+    session.add(replacement)
+    session.flush()
+    credit_service.grant_for_subscription(session, replacement)
+    # The account just lost a paid tier. Every other status-changing path here
+    # drops the cache; without it the downgraded account keeps the purchased
+    # plan's limits and features for the 60s TTL.
+    plan_entitlements_service.invalidate(local.client_id)
+    logger.info(
+        "Client %s cancelled a trial conversion before its first charge: unspent credits forfeited "
+        "and the account converted to Free",
+        local.client_id,
+    )
+
+
 def _handle_subscription_cancelled(session: Session, payload: dict[str, Any]) -> str:
     sub_entity = _extract_subscription_entity(payload)
     if not sub_entity:
@@ -4276,13 +4406,30 @@ def _handle_subscription_cancelled(session: Session, payload: dict[str, Any]) ->
                 exc_info=True,
             )
     retire_branding_addon_quietly(session, local, context="a Razorpay-originated cancellation")
+
+    # A mid-trial purchase cancelled BEFORE its first debit was given the
+    # plan's credits at authentication, on the strength of a mandate that then
+    # never billed. Left alone that is a harvest: buy on day 3, spend 2,500
+    # credits, cancel on day 13, pay nothing. Forfeit the unspent remainder and
+    # put the account on Free, which is also where it would have landed at day
+    # 14 anyway. Without the conversion the row matched neither the expiry sweep
+    # (which filters ``trialing``) nor /auth/me's trial payload, so the customer
+    # sat in limbo with no plan and no trial.
+    if _was_unbilled_trial_conversion(local):
+        _forfeit_and_convert_to_free(session, local)
+
     # Paid → Free: keep the bot's data but deactivate its knowledge so it stops
     # answering from a paid-tier KB until the customer re-adds on Free or
-    # re-upgrades (reversible; see knowledge_state_service).
-    from app.services.knowledge_state_service import deactivate_bot_knowledge
+    # re-upgrades (reversible; see knowledge_state_service). Account-level rows
+    # carry a NULL bot_id, where the per-bot helper is a no-op, so they take the
+    # client-level path exactly like the reactivation above.
+    from app.services.knowledge_state_service import deactivate_bot_knowledge, deactivate_client_knowledge
     from app.services.transition_service import enforce_operator_ceiling
 
-    deactivate_bot_knowledge(session, local.bot_id)
+    if local.bot_id is None:
+        deactivate_client_knowledge(session, local.client_id)
+    else:
+        deactivate_bot_knowledge(session, local.bot_id)
     # Same paid→Free path applies to operator seats: without this the customer
     # keeps every operator they invited under the paid tier even though Free
     # grants 0 seats, so the Usage meter reads "N / 0" and every seat-based

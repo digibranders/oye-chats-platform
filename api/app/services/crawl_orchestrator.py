@@ -37,7 +37,12 @@ from app.core.cache import bot_config_key, cache_delete
 from app.db.models import Bot, Client, Document
 from app.db.repository import AVATAR_SOURCE_DERIVED
 from app.db.session import get_session
-from app.ingestion.pipeline import batch_web_ingestion
+from app.ingestion.pipeline import (
+    ABORT_REASON_CREDITS,
+    ABORT_REASON_KILL_SWITCH,
+    ABORT_REASON_KNOWLEDGE_QUOTA,
+    batch_web_ingestion,
+)
 from app.services.brand_color_extractor import fetch_recommended_colors
 from app.services.brand_tone import preset_text
 from app.services.crawl_provider import crawl_website, fetch_urls
@@ -89,8 +94,21 @@ def _record_bot_crawl_state(bot_id: int | None, status: str) -> None:
         logger.warning("failed to record durable crawl state for bot %s (non-fatal)", bot_id, exc_info=True)
 
 
-def _terminal_status(total_chunks: int, existing_count: int) -> str:
-    """Decide a crawl's terminal status from new-chunk and existing-content counts.
+# Ingestion aborts that mean "you have run out of something", as opposed to
+# "we could not read your site". Kept in one place because the difference is
+# the difference between telling a customer to upgrade and telling them to
+# debug their JavaScript rendering.
+LIMIT_ABORT_REASONS: frozenset[str] = frozenset(
+    {
+        ABORT_REASON_CREDITS,
+        ABORT_REASON_KNOWLEDGE_QUOTA,
+        ABORT_REASON_KILL_SWITCH,
+    }
+)
+
+
+def _terminal_status(total_chunks: int, existing_count: int, abort_reason: str | None = None) -> str:
+    """Decide a crawl's terminal status from its counts and why it stopped.
 
     ``no_content`` means the bot has NO usable knowledge after this crawl,
     not merely that this particular crawl added nothing. A delta recrawl of an
@@ -99,8 +117,18 @@ def _terminal_status(total_chunks: int, existing_count: int) -> str:
     is a success, not a JS-render failure. Only report ``no_content`` when
     both this crawl's new chunks and the bot's pre-existing indexed content
     are zero.
+
+    ``limit`` splits the one case ``no_content`` was lying about. A crawl that
+    stopped because the customer ran out of credits, hit their plan's
+    knowledge-character ceiling, or met the kill switch also indexes nothing,
+    and used to be reported with the JS-rendering message, sending the customer
+    to troubleshoot a problem they do not have while the real answer was to
+    upgrade. Partial success is still ``done``: pages that landed before the
+    abort are real knowledge, whatever stopped the rest.
     """
-    return "done" if (total_chunks > 0 or existing_count > 0) else "no_content"
+    if total_chunks > 0 or existing_count > 0:
+        return "done"
+    return "limit" if abort_reason in LIMIT_ABORT_REASONS else "no_content"
 
 
 def _precompute_seed_questions(bot_id: int | None) -> None:
@@ -452,6 +480,9 @@ async def _consume_ingest_stream(
             totals["credits_deducted"] += result["credits_deducted"]
             if result.get("aborted"):
                 state["billing_aborted"] = True
+                # ``.get``: ``state`` is supplied by the caller and older
+                # fakes build it without this key.
+                state["abort_reason"] = state.get("abort_reason") or result.get("abort_reason")
         if done:
             return
 
@@ -550,7 +581,10 @@ async def run_full_crawl(
     #   billing_aborted: insufficient credits / kill switch / cancel → stop embedding.
     #   consumer_error:  first ingest exception → drain + fail the crawl fast
     #                    (instead of deadlocking the producer on a full queue).
-    ingest_state: dict = {"billing_aborted": False, "consumer_error": None}
+    # ``abort_reason`` names WHY billing stopped, so a crawl halted by an empty
+    # balance or a knowledge ceiling can be reported as a limit rather than as
+    # a site we could not read. None for a cancel, which is not a limit.
+    ingest_state: dict = {"billing_aborted": False, "consumer_error": None, "abort_reason": None}
     streaming = CRAWL_STREAM_INGEST_ENABLED
 
     async def _on_result(page: dict) -> None:
@@ -824,6 +858,9 @@ async def run_full_crawl(
             ingest_totals["chunks"] += ingest_result["chunks"]
             ingest_totals["pages_charged"] += ingest_result["pages_charged"]
             ingest_totals["credits_deducted"] += ingest_result["credits_deducted"]
+            if ingest_result.get("aborted"):
+                ingest_state["billing_aborted"] = True
+                ingest_state["abort_reason"] = ingest_state.get("abort_reason") or ingest_result.get("abort_reason")
         total_chunks = ingest_totals["chunks"]
         pages_charged = ingest_totals["pages_charged"]
         credits_deducted = ingest_totals["credits_deducted"]
@@ -1005,18 +1042,40 @@ async def run_full_crawl(
                     exc_info=True,
                 )
                 bot_content_count = 1  # fail safe toward "done", never show a false no-content error
-        crawl_status = _terminal_status(total_chunks, bot_content_count)
+        crawl_status = _terminal_status(total_chunks, bot_content_count, ingest_state.get("abort_reason"))
         if crawl_status == "no_content":
             result_payload["message"] = (
                 "We reached your pages but couldn't extract readable text to train on. "
                 "This often happens on sites that render content with JavaScript."
             )
             result_payload["no_content"] = True
+        elif crawl_status == "limit":
+            # The customer's site is fine. They ran out of something. Saying
+            # "we couldn't extract readable text" here sent people to debug
+            # their JavaScript when the answer was to upgrade or top up.
+            result_payload["limit_reason"] = ingest_state.get("abort_reason")
+            result_payload["message"] = (
+                "We stopped before training on your pages because this workspace reached a "
+                "limit. Nothing was charged for the pages we could not train on."
+                if ingest_state.get("abort_reason") == ABORT_REASON_KILL_SWITCH
+                else (
+                    "We stopped before training on your pages because this workspace ran out of credits."
+                    if ingest_state.get("abort_reason") == ABORT_REASON_CREDITS
+                    else "We stopped before training on your pages because this workspace reached "
+                    "its knowledge base size limit."
+                )
+            )
         set_crawl_progress(
             client_id,
             status=crawl_status,
             urls=[p["url"] for p in valid_pages],
             result=result_payload,
+            # The limit sentence has to travel in ``error``: that is the only
+            # field ``CrawlContext`` surfaces to the outcome banner. Written
+            # into ``result`` alone it never reached a customer, and the UI fell
+            # back to a generic line while the specific one (which limit, and
+            # therefore what to do about it) sat unread in the payload.
+            error=result_payload.get("message") if crawl_status == "limit" else None,
         )
         _record_bot_crawl_state(bot_id, crawl_status)
         if crawl_status == "done":

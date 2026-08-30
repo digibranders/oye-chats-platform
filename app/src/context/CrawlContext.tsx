@@ -56,18 +56,20 @@ const IDLE_PROBE_INTERVAL_MS = 30000;
 // toast - that's the "toast every 30s" bug.
 const TERMINAL_HOLD_MS = 4000;
 
-// 'no_content' is a terminal-but-not-successful outcome: the crawl fetched
-// pages but extracted zero readable text (e.g. a JS-rendered site the
-// HTTP-only fetch never sees hydrated). It must be treated as terminal here
+// 'no_content' and 'limit' are terminal-but-not-successful outcomes: the first
+// is a crawl that fetched pages but extracted zero readable text (e.g. a
+// JS-rendered site the HTTP-only fetch never sees hydrated), the second a crawl
+// stopped by an empty credit balance or a knowledge-base ceiling. Both must be
+// treated as terminal here
 // - otherwise nothing ever calls resetToIdle for it and CrawlContext stays
 // pinned on 'no_content' forever while the server's 1h progress key keeps
 // echoing it back on every poll.
-const TERMINAL_STATUSES = new Set<string>(['done', 'cancelled', 'failed', 'no_content']);
+const TERMINAL_STATUSES = new Set<string>(['done', 'cancelled', 'failed', 'no_content', 'limit']);
 const ACTIVE_STATUSES = new Set<string>(['running', 'cancelling']);
 
 /** Every value `CrawlStatus` admits, for validating the server's string. */
 const KNOWN_STATUSES = new Set<string>([
-    'idle', 'running', 'cancelling', 'cancelled', 'done', 'failed', 'no_content',
+    'idle', 'running', 'cancelling', 'cancelled', 'done', 'failed', 'no_content', 'limit',
 ]);
 
 /**

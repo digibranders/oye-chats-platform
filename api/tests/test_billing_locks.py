@@ -1,6 +1,6 @@
 """Per-client billing advisory lock. Remediation H1 (real Postgres).
 
-Subscription/trial mutations (start-trial, change-plan, seats, cancel) read the
+Subscription/trial mutations (signup default, change-plan, seats, cancel) read the
 client's subscription then write, with no row lock. Concurrent requests can both
 pass the read-side checks and double-grant credits or clobber each other's
 writes. ``lock_client_for_billing`` serializes a client's billing mutations with
@@ -61,33 +61,6 @@ def test_billing_lock_keys_are_per_client(pg_engine):
         s1.close()
         s2.rollback()
         s2.close()
-
-
-def test_start_trial_acquires_billing_lock(db, monkeypatch):
-    client = Client(name="c", email="lock@e.com", api_key="lk", hashed_password="h")
-    db.add(client)
-    db.flush()
-    plan = Plan(
-        name="Starter",
-        slug="starter-lock",
-        monthly_price_cents=3999,
-        credits_per_month=1000,
-        trial_days=14,
-        is_active=True,
-    )
-    db.add(plan)
-    db.commit()
-
-    seen = []
-    original = plan_service.lock_client_for_billing
-    monkeypatch.setattr(
-        plan_service,
-        "lock_client_for_billing",
-        lambda session, cid: (seen.append(cid), original(session, cid))[1],
-    )
-
-    plan_service.start_trial(db, client.id, "starter-lock")
-    assert seen == [client.id]
 
 
 def test_assign_default_plan_acquires_billing_lock(db, monkeypatch):
