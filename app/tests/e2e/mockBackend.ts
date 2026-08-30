@@ -74,6 +74,28 @@ export interface MockOptions {
   waitingCount?: number;
   /** Rows returned by `GET /notifications`. */
   notifications?: { id: number; type: string; title: string; is_read: boolean }[];
+  /**
+   * The `trial` block on `GET /auth/me`, which both trial surfaces read.
+   *
+   * Absent by default, because most of the console is exercised as a paying
+   * account and the rail card and banner must render nothing without it.
+   */
+  trial?: {
+    status: string;
+    trial_end_at?: string | null;
+    days_remaining?: number | null;
+    credits_granted?: number | null;
+    paid_plan_starts_at?: string | null;
+    paid_plan_name?: string | null;
+  } | null;
+  /**
+   * `GET /credits/balance` — the account pool's spendable total.
+   *
+   * The trial card compares it against the granted total to decide whether
+   * credits or days are the binding constraint, so a spec that wants the
+   * credits state has to be able to set it.
+   */
+  creditsRemaining?: number;
 }
 
 const ENTITLEMENTS = {
@@ -133,6 +155,8 @@ export async function mockBackend(page: Page, opts: MockOptions = {}): Promise<O
     workspaces = [{ id: 1, name: 'Acme Corporation', role: 'owner' }],
     waitingCount = 0,
     notifications = [],
+    trial = null,
+    creditsRemaining = 10_000,
   } = opts;
   const bot = { ...BOT, ...botOverrides };
 
@@ -198,7 +222,23 @@ export async function mockBackend(page: Page, opts: MockOptions = {}): Promise<O
     }),
   );
   await page.route(`${API}/auth/me*`, (route) =>
-    route.fulfill({ json: { id: 1, name: 'Owner', email: 'owner@example.com', is_verified: true } }),
+    route.fulfill({
+      json: { id: 1, name: 'Owner', email: 'owner@example.com', is_verified: true, trial },
+    }),
+  );
+  // Shaped like the real payload: `total` is the key `parseCreditBalance` reads
+  // for the spendable balance, and `monthly_grant` keeps the low-balance maths
+  // in the rest of the console honest.
+  await page.route(`${API}/credits/balance*`, (route) =>
+    route.fulfill({
+      json: {
+        plan: creditsRemaining,
+        topup: 0,
+        total: creditsRemaining,
+        monthly_grant: 10_000,
+        currency: 'INR',
+      },
+    }),
   );
   await page.route(`${API}/bots`, (route) => route.fulfill({ json: [bot] }));
   await page.route(`${API}/bots?*`, (route) => route.fulfill({ json: [bot] }));
