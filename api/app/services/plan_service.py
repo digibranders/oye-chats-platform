@@ -39,8 +39,15 @@ def lock_client_for_billing(session: Session, client_id: int) -> None:
 
 
 def get_active_plans(session: Session) -> list[Plan]:
-    """Return all active plans ordered by sort_order (for pricing page display)."""
-    stmt = select(Plan).where(Plan.is_active.is_(True)).order_by(Plan.sort_order)
+    """Return all active PUBLIC plans ordered by sort_order (pricing page display).
+
+    ``is_public`` is filtered here and not in ``get_default_plan``: the signup
+    trial has to be assignable (so it must stay ``is_active``) while never
+    appearing on a surface a customer can buy from, and this function feeds both
+    ``/plans`` and ``GET /public/pricing-catalog``, which renders
+    oyechats.com/pricing.
+    """
+    stmt = select(Plan).where(Plan.is_active.is_(True), Plan.is_public.is_(True)).order_by(Plan.sort_order)
     return list(session.execute(stmt).scalars().all())
 
 
@@ -338,7 +345,7 @@ def enforce_feature(session: Session, client_id: int, feature: str) -> None:
 # the agency tier with pooled credits across many client sites, so falling back
 # to a full recrawl would re-embed every page of every site and charge for all
 # of them on the plan sold with the largest ingestion volume.
-_DELTA_RECRAWL_PLAN_SLUGS: frozenset[str] = frozenset({"standard", "professional", "enterprise"})
+_DELTA_RECRAWL_PLAN_SLUGS: frozenset[str] = frozenset({"trial", "standard", "professional", "enterprise"})
 
 
 def can_use_delta_recrawl(plan: Plan) -> bool:
@@ -491,9 +498,12 @@ def assign_default_plan_to_client(session: Session, client_id: int) -> Subscript
     * **Trial plan** (``trial_days > 0``), the modern default. The
       subscription starts in ``trialing``; ``trial_start`` / ``trial_end``
       are populated and ``current_period_end`` is pinned to ``trial_end``
-      so the billing UI's "renews on" label matches the trial deadline.
-      The expiry cron (PR4) flips status to ``trial_expired`` when
-      ``trial_end < now()``.
+      because the trial IS the period: every consumer that reads
+      ``current_period_end`` (the renewal cron's due filter, the "resets on"
+      arithmetic) must see the trial deadline rather than an invented month
+      the customer has not been given. The billing UI does not read it while
+      the row is trialing, it short-circuits on ``trial_end`` and renders
+      "Trial ends". The expiry cron flips the row when ``trial_end < now()``.
     * **Free plan** (``trial_days == 0``). Historical fallback for any
       install whose default is still pointed at a zero-trial plan. Starts
       in ``active`` with an anniversary-monthly billing cycle.
@@ -520,8 +530,9 @@ def assign_default_plan_to_client(session: Session, client_id: int) -> Subscript
     trial_days = int(default_plan.trial_days or 0)
 
     if trial_days > 0:
-        # Trial-plan path. Period and trial dates intentionally coincide so
-        # the dashboard's "renews on" badge points at the trial deadline.
+        # Trial-plan path. Period and trial dates intentionally coincide: the
+        # trial is the whole period, so anything reading current_period_end
+        # sees the real deadline instead of a month nobody granted.
         trial_start = now
         trial_end = now + timedelta(days=trial_days)
         sub_status = "trialing"
@@ -573,27 +584,6 @@ def assign_default_plan_to_client(session: Session, client_id: int) -> Subscript
     return sub
 
 
-class TrialUnavailable(Exception):
-    """Raised when a client cannot start a trial on the requested plan.
-
-    Carries the reason code so the API layer can map it to a stable HTTP
-    response without parsing English. Reasons:
-
-    * ``plan_not_found``       . Slug doesn't match an active plan.
-    * ``plan_not_trialable``   . ``trial_days <= 0`` (e.g. the free plan).
-    * ``already_trialed``      . Client previously held a sub (active or
-      expired) on this exact plan. One trial per plan, lifetime.
-    * ``active_paid_subscription``. Client is on a paid plan already
-      (or trialing a different paid plan). They should change plans
-      through the normal upgrade flow, not start a fresh trial.
-    """
-
-    def __init__(self, reason: str, *, message: str | None = None) -> None:
-        super().__init__(message or reason)
-        self.reason = reason
-        self.message = message or reason
-
-
 def has_used_trial(session: Session, client_id: int) -> bool:
     """Whether the client has ever started or consumed a free trial.
 
@@ -603,9 +593,10 @@ def has_used_trial(session: Session, client_id: int) -> bool:
     the offer by canceling and re-clicking, nor sidestep it via a different
     plan slug.
 
-    This is the single source of truth for the lifetime-trial gate: both
-    ``start_trial`` (enforcement) and the ``/subscriptions/current`` payload
-    read it, so the UI never advertises a trial the backend will reject.
+    Since the 14-day signup trial replaced the Standard-only offer there is no
+    route that starts a second trial, so this no longer gates anything. It is
+    read by the ``/subscriptions/current`` payload as a read-only fact about the
+    account.
     """
     return (
         session.execute(
@@ -621,145 +612,3 @@ def has_used_trial(session: Session, client_id: int) -> bool:
         ).first()
         is not None
     )
-
-
-def start_trial(session: Session, client_id: int, plan_slug: str) -> Subscription:
-    """Move a client onto the paid plan's configured trial window.
-
-    Trial credits = the plan's own ``credits_per_month``. The customer
-    experiences the full paid tier; converting before the trial ends
-    doesn't change the credit shape, just the billing flow.
-
-    Idempotency / safety:
-
-    * The free-tier subscription a client may already hold (status =
-      ``active`` on the ``free`` plan) is gracefully canceled so the new
-      trialing row can satisfy the ``status IN (active, trialing,
-      past_due)`` partial-unique index on ``subscriptions.client_id``.
-    * Any prior trial on *any* plan (historical row with a non-null
-      ``trial_start`` or a status of ``trialing`` / ``trial_expired``)
-      raises :class:`TrialUnavailable` with reason ``already_trialed``.
-      One free trial per lifetime, across every trial-eligible plan.
-    * Pre-existing rows on a different *paid* plan raise
-      ``active_paid_subscription``, the upgrade/downgrade UI handles
-      that case, not the start-trial path.
-    """
-    from datetime import timedelta
-
-    from app.db.models import Plan
-
-    # Serialize concurrent start-trial requests for this client BEFORE the
-    # read-side eligibility checks, so a double-click can't pass the
-    # already-trialed / current-subscription guards twice and double-grant.
-    lock_client_for_billing(session, client_id)
-
-    plan = get_plan_by_slug(session, plan_slug)
-    if plan is None or not plan.is_active:
-        raise TrialUnavailable("plan_not_found", message=f"No active plan with slug '{plan_slug}'.")
-
-    trial_days = int(plan.trial_days or 0)
-    if trial_days <= 0:
-        raise TrialUnavailable(
-            "plan_not_trialable",
-            message=f"The '{plan.name}' plan does not offer a free trial.",
-        )
-
-    # Lifetime ban on re-trialing, one free trial per client, across every
-    # trial-eligible plan. ``has_used_trial`` matches any historical row that
-    # either started a trial or currently sits in a trial state, so a customer
-    # who already burned their Standard trial can't reset by canceling and
-    # re-clicking, and can't sidestep the rule by pointing at a different plan
-    # slug. The ``/subscriptions/current`` payload reads the same helper so the
-    # UI never offers a trial this branch would refuse.
-    if has_used_trial(session, client_id):
-        raise TrialUnavailable(
-            "already_trialed",
-            message=(
-                "You have already used your free trial. Choose a plan from the billing page to subscribe directly."
-            ),
-        )
-
-    # Current subscription. Anything in the active-set is the row that
-    # gates the unique index. We allow upgrading from a free-tier
-    # subscription (paid==0) but refuse to trample anything else.
-    current = (
-        session.execute(
-            select(Subscription)
-            .where(
-                Subscription.client_id == client_id,
-                Subscription.status.in_(("active", "trialing", "past_due")),
-            )
-            .order_by(Subscription.created_at.desc())
-            .limit(1)
-        )
-        .scalars()
-        .first()
-    )
-
-    now = datetime.now(UTC)
-    if current is not None:
-        current_plan = session.execute(select(Plan).where(Plan.id == current.plan_id)).scalars().first()
-        is_paid_plan = current_plan is not None and int(current_plan.monthly_price_cents or 0) > 0
-        # Active paid subscriptions go through the change-plan flow. We
-        # don't silently kill a paying customer's sub to drop them onto a
-        # different trial. Trialing customers, on the other hand, may want
-        # to evaluate a second tier; we let them swap (the lifetime
-        # one-trial-per-plan rule above keeps the swap from being abused
-        # as an unlimited credit faucet).
-        if is_paid_plan and current.status != "trialing":
-            raise TrialUnavailable(
-                "active_paid_subscription",
-                message=(
-                    "You're already on a paid subscription. Use the change-plan "
-                    "flow on the billing page to switch tiers."
-                ),
-            )
-        # Free-tier upgrade OR trialing→trialing swap. Either way, vacate
-        # the partial-unique index by canceling the existing row before we
-        # insert the new trialing one. Capture the cancel reason BEFORE
-        # we overwrite ``status``, it's how the audit trail distinguishes
-        # the two flows.
-        cancel_reason = "auto_swap_trial" if current.status == "trialing" else "auto_upgrade_to_trial"
-        current.status = "canceled"
-        current.canceled_at = now
-        current.cancel_reason = cancel_reason
-        session.flush()
-
-    # Expire any unused monthly grant from the prior subscription BEFORE
-    # we hand out the new plan's credits. Otherwise the new balance ends
-    # up as ``old_remaining + new_grant``. E.g. a free-tier user with 500
-    # untouched credits who starts a Standard trial would see 10,500 / 10,000.
-    # ``reset_monthly_plan_credits`` only zeroes ``plan_grant`` rows; paid
-    # top-up credits (``topup_grant``) survive because the customer
-    # bought those outright and they ride the standard 12-month expiry.
-    from app.services import credit_service
-
-    credit_service.reset_monthly_plan_credits(session, client_id)
-
-    trial_end = now + timedelta(days=trial_days)
-    sub = Subscription(
-        client_id=client_id,
-        plan_id=plan.id,
-        status="trialing",
-        billing_cycle="monthly",
-        operator_quantity=1,
-        current_period_start=now,
-        current_period_end=trial_end,
-        trial_start=now,
-        trial_end=trial_end,
-        payment_provider="manual",
-    )
-    sub.plan = plan
-    session.add(sub)
-    session.flush()
-
-    credit_service.grant_for_subscription(session, sub)
-
-    logger.info(
-        "Started trial for client %s on plan '%s' (credits=%d, ends=%s)",
-        client_id,
-        plan.slug,
-        int(plan.credits_per_month or 0),
-        trial_end.isoformat(),
-    )
-    return sub

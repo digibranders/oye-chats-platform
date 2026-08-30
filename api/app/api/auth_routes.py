@@ -331,6 +331,19 @@ class TrialStatePayload(BaseModel):
     trial_end_at: str | None = None  # ISO-8601, UTC
     days_remaining: int | None = None  # ceil((trial_end - now) / 1 day), 0 once lapsed
     credits_granted: int | None = None
+    # The trial's length in days, from the plan row. The console divides the
+    # days left by this to decide whether days or credits are the binding
+    # constraint, and it used to hardcode 14 for the denominator while reading
+    # ``credits_granted`` from here for the numerator. A super-admin retuning
+    # ``plans.trial_days`` would have silently mis-classified every account.
+    # Zero on the bought branch, whose plan is a purchased tier and not a trial.
+    trial_days: int | None = None
+    # Set when the customer has already BOUGHT during the trial. The mandate is
+    # authorised and their entitlements are live, but the first debit waits for
+    # the trial to run out, so the UI shows "Standard starts in N days" instead
+    # of a countdown and an Upgrade button they have already pressed.
+    paid_plan_starts_at: str | None = None  # ISO-8601, UTC
+    paid_plan_name: str | None = None
 
 
 class RegisterResponse(BaseModel):
@@ -506,8 +519,7 @@ def get_current_user_endpoint(auth: dict = Depends(get_current_client_or_operato
 
         # Resolve the trial snapshot in the same transaction. ``None`` for
         # paid customers and seeded superadmins; the dashboard treats that
-        # as "no trial UI". For ``trial_expired`` we still return the
-        # payload so the banner can prompt for reactivation.
+        # as "no trial UI".
         trial_payload = _build_trial_payload(session, client.id)
 
         return CurrentUserResponse(
@@ -543,13 +555,71 @@ def _build_trial_payload(session, client_id: int) -> "TrialStatePayload | None":
 
     Returns ``None`` when the client has no current subscription or the
     subscription has never been in a trial state. The dashboard uses
-    ``None`` as "hide the trial banner entirely". For ``trialing`` and
-    ``trial_expired`` we always return a payload so the UI can render the
-    countdown or the reactivation prompt respectively.
+    ``None`` as "hide the trial banner entirely".
+
+    ``trial_expired`` is still selected below, and no shell surface renders it:
+    both the rail card and the banner return null for that status. It stays in
+    the filter because legacy rows written by the OLD expiry path still exist
+    until they are settled (see the rollout runbook's step 0), and an inert
+    payload is cheaper than a query that has to know about them. Nothing here
+    prompts for reactivation; an earlier comment claimed it did and was wrong.
     """
     from datetime import UTC
 
     from app.db.models import Subscription
+
+    # A mid-trial purchase first. Its activation RETIRES the trial row (one
+    # account-level row per client may sit in the active set), so by the time
+    # the mandate is authorised there is no trialing row left to find and the
+    # lookup below would answer None: no trial UI at all for the one customer
+    # who has just paid. The card needs "Standard starts in N days" here.
+    bought = (
+        session.execute(
+            select(Subscription)
+            .where(
+                Subscription.client_id == client_id,
+                Subscription.bot_id.is_(None),
+                Subscription.status == "active",
+            )
+            .order_by(Subscription.created_at.desc())
+            .limit(1)
+        )
+        .scalars()
+        .first()
+    )
+    if (
+        bought is not None
+        and (bought.trial_emails_sent or {}).get("trial_conversion_granted")
+        # Only BEFORE the first charge. The marker is written once and never
+        # cleared, and ``last_granted_period_end`` rolls forward on every
+        # renewal, so those two alone stay true forever: a customer who bought
+        # mid-trial in September would still be told in March that their plan
+        # "starts in 29 days", with the Upgrade action suppressed. Razorpay
+        # writes ``current_period_start`` at the first debit, so its absence is
+        # exactly the window this state describes.
+        and bought.current_period_start is None
+    ):
+        # The marker's value IS the deferred start, the moment the customer is
+        # first charged. Not ``last_granted_period_end``, which is that moment
+        # plus one billing interval.
+        raw_start = (bought.trial_emails_sent or {}).get("trial_conversion_granted")
+        try:
+            starts = datetime.fromisoformat(raw_start) if isinstance(raw_start, str) else None
+        except ValueError:
+            starts = None
+        if starts is not None and starts.tzinfo is None:
+            starts = starts.replace(tzinfo=UTC)
+        if starts is not None and starts > datetime.now(UTC):
+            plan_row = bought.plan
+            return TrialStatePayload(
+                status=bought.status,
+                trial_end_at=starts.isoformat(),
+                days_remaining=trial_days_remaining(starts),
+                credits_granted=int(plan_row.credits_per_month or 0) if plan_row else None,
+                trial_days=int(plan_row.trial_days or 0) if plan_row else None,
+                paid_plan_starts_at=starts.isoformat(),
+                paid_plan_name=plan_row.name if plan_row else None,
+            )
 
     sub = (
         session.execute(
@@ -584,6 +654,7 @@ def _build_trial_payload(session, client_id: int) -> "TrialStatePayload | None":
         trial_end_at=end_iso,
         days_remaining=days_remaining,
         credits_granted=credits_granted,
+        trial_days=int(plan.trial_days or 0) if plan else None,
     )
 
 
@@ -911,11 +982,12 @@ def register(request: Request, body: RegisterRequest):
 
             # Auto-assign the default plan. Whether that yields a trialing
             # or an active subscription depends on the plan seed
-            # (``Plan.trial_days``). Today the default plan is "free" with
-            # zero trial days, so a plain signup lands active on Free and
-            # the trial is opt-in via the billing modal. The subscription
-            # row is bound locally so we can build the trial payload +
-            # welcome email without re-querying after commit.
+            # (``Plan.trial_days``). Today the default plan is "trial", the
+            # non-public 14-day row, so a plain signup lands TRIALING with the
+            # row's credits granted inline, and there is no opt-in step: the
+            # trial is not something a customer starts, it is where they
+            # begin. The subscription row is bound locally so we can build the
+            # trial payload + welcome email without re-querying after commit.
             subscription = None
             try:
                 from app.services.plan_service import assign_default_plan_to_client
@@ -935,14 +1007,20 @@ def register(request: Request, body: RegisterRequest):
             # follow up.
             trial_payload: TrialStatePayload | None = None
             if subscription is not None and subscription.status == "trialing" and subscription.trial_end is not None:
-                from app.config import TRIAL_CREDITS
                 from app.services.email_service import send_trial_welcome_email
 
                 trial_end = subscription.trial_end
                 if trial_end.tzinfo is None:
                     trial_end = trial_end.replace(tzinfo=UTC)
                 days_remaining = trial_days_remaining(trial_end)
-                credits_granted = int(subscription.plan.credits_per_month or 0) if subscription.plan else TRIAL_CREDITS
+                plan_row = subscription.plan
+                # ``None``, not 0, when the row cannot answer. The field is
+                # ``int | None`` precisely so "unknown" is expressible, and the
+                # login-path builder already returns None for this case. A zero
+                # here would tell the dashboard nothing was granted while the
+                # credits sit in the ledger.
+                credits_granted = int(plan_row.credits_per_month or 0) if plan_row else None
+                trial_length_days = int(plan_row.trial_days or 0) if plan_row else 0
 
                 trial_payload = TrialStatePayload(
                     status=subscription.status,
@@ -951,21 +1029,40 @@ def register(request: Request, body: RegisterRequest):
                     credits_granted=credits_granted,
                 )
 
-                try:
-                    send_trial_welcome_email(
-                        new_client.email,
-                        name=new_client.name,
-                        trial_end=trial_end,
-                        credits=credits_granted,
-                        duration_days=int(subscription.plan.trial_days or 7) if subscription.plan else 7,
-                    )
-                except Exception as mail_err:
-                    # send_trial_welcome_email is already defensive. This is
-                    # the belt-and-braces guard for any import-time error.
+                # Guarded on the NUMBERS, not on the row. The template writes
+                # "your {N}-day free trial is live, you've got {C} credits", so
+                # either figure arriving as zero puts a claim in front of a
+                # customer that contradicts the subscription they just got: the
+                # status is trialing, so the length is positive, and the credits
+                # are already in the ledger. A row present but carrying zeros
+                # fails this the same way a missing row does. No numbers means
+                # no email; the trial payload above still tells the app.
+                if credits_granted and trial_length_days:
+                    try:
+                        send_trial_welcome_email(
+                            new_client.email,
+                            name=new_client.name,
+                            trial_end=trial_end,
+                            credits=credits_granted,
+                            duration_days=trial_length_days,
+                        )
+                    except Exception as mail_err:
+                        # send_trial_welcome_email is already defensive. This is
+                        # the belt-and-braces guard for any import-time error.
+                        logger.warning(
+                            "trial_welcome_dispatch_failed for client %s: %s",
+                            new_client.id,
+                            mail_err,
+                        )
+                else:
                     logger.warning(
-                        "trial_welcome_dispatch_failed for client %s: %s",
+                        "trial_welcome_skipped for client %s: subscription %s is trialing "
+                        "but resolves to credits=%s duration_days=%s, so the welcome copy "
+                        "would contradict it",
                         new_client.id,
-                        mail_err,
+                        subscription.id,
+                        credits_granted,
+                        trial_length_days,
                     )
 
             # Affiliate first-touch attribution. Best-effort. Invalid /

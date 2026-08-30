@@ -316,7 +316,13 @@ class TestRunWebIngestion:
 class TestBatchWebIngestion:
     def test_empty_pages_returns_zero(self):
         result = batch_web_ingestion(1, [])
-        assert result == {"chunks": 0, "pages_charged": 0, "credits_deducted": 0, "aborted": False}
+        assert result == {
+            "chunks": 0,
+            "pages_charged": 0,
+            "credits_deducted": 0,
+            "aborted": False,
+            "abort_reason": None,
+        }
 
     def test_oversized_page_content_is_capped_before_cleaning(self):
         session = MagicMock()
@@ -461,6 +467,9 @@ class TestBatchWebIngestion:
             "pages_charged": 2,
             "credits_deducted": 6,
             "aborted": False,
+            # Named, so the orchestrator can tell "you ran out" from "we could
+            # not read your site". None on a clean run.
+            "abort_reason": None,
         }
         # One deduction per page, in the same session as the chunk insert.
         assert mock_deduct.call_count == 2

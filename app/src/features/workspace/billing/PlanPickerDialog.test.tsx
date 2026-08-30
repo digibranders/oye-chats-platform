@@ -23,7 +23,6 @@ import { PlanPickerDialog } from './PlanPickerDialog';
 const api = vi.hoisted(() => ({
   changePlan: vi.fn(),
   createCheckoutSession: vi.fn(),
-  startTrial: vi.fn(),
   verifyRazorpaySubscription: vi.fn(),
   recordBillingEvent: vi.fn(),
   getCurrentSubscription: vi.fn(),
@@ -87,9 +86,7 @@ function renderDialog(overrides: Partial<React.ComponentProps<typeof PlanPickerD
           onOpenChange={onOpenChange}
           plans={[FREE, STANDARD]}
           currentPlan={FREE}
-          currentStatus="active"
           hasActiveSubscription={false}
-          trialUsed
           promotion={null}
           geo={INDIA}
           onChanged={vi.fn()}
@@ -328,19 +325,19 @@ describe('paths that move no money', () => {
     expect(api.createCheckoutSession).not.toHaveBeenCalled();
   });
 
-  it('offers a card-free trial when one is available, and calls start-trial', async () => {
-    api.startTrial.mockResolvedValue({});
-    renderDialog({ trialUsed: false });
-
-    const card = screen.getByRole('button', { name: /start 7-day trial/i });
-    await userEvent.click(card);
-    await waitFor(() => expect(api.startTrial).toHaveBeenCalledWith('standard'));
-    expect(api.createCheckoutSession).not.toHaveBeenCalled();
-  });
-
-  it('never offers a trial the backend would refuse', () => {
-    renderDialog({ trialUsed: true });
-    expect(screen.queryByRole('button', { name: /trial/i })).toBeNull();
+  it('never offers a trial, because the picker is not where trials start', () => {
+    // The 14-day trial is opened at signup and nowhere else. A second offer
+    // here would be a trial concept the backend has no route for.
+    //
+    // Asserted on TEXT, not on a button role. The CTA lost its trial label
+    // before the sentence beside it did, which left a card reading "7-day free
+    // trial, no card needed." above a button that went straight to Razorpay.
+    // The STANDARD fixture deliberately still carries `trial_days: 7`, so a
+    // plan row with a trial length can never resurrect the promise.
+    renderDialog();
+    expect(STANDARD.trialDays).toBeGreaterThan(0);
+    expect(screen.queryByText(/trial/i)).toBeNull();
+    expect(screen.queryByText(/no card needed/i)).toBeNull();
     expect(screen.getByRole('button', { name: /subscribe/i })).toBeInTheDocument();
   });
 
@@ -353,8 +350,7 @@ describe('paths that move no money', () => {
 
 describe('the keyboard path', () => {
   it('reaches the cycle toggle and a plan without a mouse', async () => {
-    api.startTrial.mockResolvedValue({});
-    renderDialog({ trialUsed: false });
+    renderDialog();
 
     const group = screen.getByRole('radiogroup', { name: 'Billing cycle' });
     // Tab into the group: the roving tabindex means only the selected segment
@@ -370,8 +366,8 @@ describe('the keyboard path', () => {
     await userEvent.keyboard('{ArrowLeft}');
     expect(within(group).getByRole('radio', { name: 'Monthly' })).toBeChecked();
 
-    screen.getByRole('button', { name: /start 7-day trial/i }).focus();
+    screen.getByRole('button', { name: /subscribe/i }).focus();
     await userEvent.keyboard('{Enter}');
-    await waitFor(() => expect(api.startTrial).toHaveBeenCalled());
+    await waitFor(() => expect(api.createCheckoutSession).toHaveBeenCalled());
   });
 });

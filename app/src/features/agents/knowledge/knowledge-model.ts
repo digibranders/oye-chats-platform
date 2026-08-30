@@ -361,7 +361,13 @@ export interface CrawlBudget {
 }
 
 export function crawlBudgetOf(discovery: CrawlDiscovery): CrawlBudget {
-  const costPerPage = Math.max(1, discovery.cost_per_page ?? 1);
+  // NOT clamped up to 1. Zero is a real price: the trial's first website
+  // training is free, and every re-crawl is free on every tier. Clamping it
+  // quoted a customer 100 credits for a crawl that charges nothing, which is
+  // precisely the deterrent the free first training exists to remove. The
+  // clamp was there to keep the division below finite, so that is guarded
+  // where the division happens instead.
+  const costPerPage = Math.max(0, discovery.cost_per_page ?? 1);
   const balance = discovery.balance ?? 0;
   const planMax = discovery.plan_max;
   return {
@@ -369,7 +375,9 @@ export function crawlBudgetOf(discovery: CrawlDiscovery): CrawlBudget {
     capped: discovery.capped,
     costPerPage,
     balance,
-    affordablePages: discovery.max_affordable_pages ?? Math.floor(balance / costPerPage),
+    affordablePages:
+      discovery.max_affordable_pages ??
+      (costPerPage === 0 ? discovery.total_found : Math.floor(balance / costPerPage)),
     perCrawlLimit: planMax === undefined || planMax === UNLIMITED || planMax < 0 ? null : planMax,
   };
 }
@@ -385,6 +393,7 @@ export function crawlBudgetOf(discovery: CrawlDiscovery): CrawlBudget {
 export function crawlPreflight(
   budget: CrawlBudget,
   selectedPages: number,
+  planSlug?: string,
 ): { blocked: boolean; message: string | null } {
   if (selectedPages <= 0) {
     return { blocked: true, message: translateNow('agents.pickAtLeastOnePage') || 'Pick at least one page to train on.' };
@@ -395,10 +404,32 @@ export function crawlPreflight(
       message: `Your plan trains up to ${budget.perCrawlLimit} pages in one go. Deselect ${selectedPages - budget.perCrawlLimit} to continue, or move to a plan with no per-crawl limit.`,
     };
   }
+  // Credits first. This one is about the crawl the customer is starting right
+  // now, so it outranks the cap upsell below: a shortfall they can act on
+  // immediately must not be hidden behind an upgrade pitch.
   if (selectedPages > budget.affordablePages) {
     return {
       blocked: false,
       message: `Your credits cover ${budget.affordablePages} of these ${selectedPages} pages. We train them in order and stop when the credits run out — nothing is charged twice.`,
+    };
+  }
+  // The cap wall the trial actually hits. `/crawl/discover` truncates its
+  // listing AT the plan ceiling, so on a capped plan `total_found` can never
+  // exceed `perCrawlLimit` and the block above is unreachable there: the
+  // customer would just see a 100-page site and no mention of the rest. What
+  // the server reports instead is `capped`, meaning "the listing stopped here".
+  //
+  // "at least N", not "more than N": `capped` is `total >= cap`, so a site with
+  // exactly N pages sets it with nothing truncated, and "more than" would be a
+  // small lie told to every such customer. It does not block either way, since
+  // the pages they can train are worth training now.
+  if (budget.capped && budget.perCrawlLimit !== null) {
+    return {
+      blocked: false,
+      message:
+        planSlug === 'trial'
+          ? `Your site has at least ${budget.perCrawlLimit} pages, which is what your trial trains in one go. Upgrade to train the rest.`
+          : `Your site has at least ${budget.perCrawlLimit} pages, which is what your plan trains in one go. Upgrade to train the rest.`,
     };
   }
   return { blocked: false, message: null };

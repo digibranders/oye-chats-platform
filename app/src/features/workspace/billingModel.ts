@@ -653,8 +653,9 @@ export function annualSavingPercent(plan: PlanView): number {
  * promises the best plan's deal on whichever plan the customer is reading.
  *
  * Contact-sales tiers are EXCLUDED. `GET /subscriptions/plans` returns every
- * active plan, including bespoke tiers a super-admin provisioned for one
- * account, and those carry real `monthly_price_cents` / `annual_price_cents`
+ * active plan that is also public, which still includes bespoke tiers a
+ * super-admin provisioned for one account (only the internal signup-trial row
+ * is delisted), and those carry real `monthly_price_cents` / `annual_price_cents`
  * even though every plan surface prices them as "Custom". Reducing over them
  * let a bespoke tier's 35% internal annual saving set the public toggle to
  * "Annual · save up to 35%" beside a card quoting no price at all. "Up to"

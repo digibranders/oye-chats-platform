@@ -33,7 +33,6 @@ const api = vi.hoisted(() => ({
   changeOperatorSeats: vi.fn(),
   changePlan: vi.fn(),
   createCheckoutSession: vi.fn(),
-  startTrial: vi.fn(),
   verifyRazorpaySubscription: vi.fn(),
   recordBillingEvent: vi.fn(),
 }));

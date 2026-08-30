@@ -1629,8 +1629,14 @@ class Plan(Base):
     # (retained to avoid a schema migration here) can no longer reach a customer.
     annual_discount_percent = Column(Integer, default=30, server_default="30", nullable=False)
 
-    # Trial. Default 7 = the Standard-only free-trial length; seed_plans sets
-    # trial_days per tier (Standard 7, all others 0. Trials are Standard-only).
+    # Trial length in days. Exactly ONE seeded row carries a non-zero value:
+    # ``trial``, the non-public 14-day row every signup lands on
+    # (``plan_service.assign_default_plan_to_client`` branches on this being
+    # > 0). Every purchasable tier is 0 since the Standard-only 7-day offer was
+    # retired. The stale ``7`` defaults below are historical and are NOT the
+    # policy: the seed writes this column explicitly on every row, and the
+    # super-admin plan editor defaults new tiers to 0. They are retained to
+    # avoid a migration whose only effect would be on rows nothing creates.
     trial_days = Column(Integer, default=7, server_default="7", nullable=False)
 
     # Usage limits. JSONB allows flexible addition of new limit types without migrations
@@ -1682,6 +1688,11 @@ class Plan(Base):
     # Display & ordering
     is_active = Column(Boolean, default=True, server_default="true", nullable=False)
     is_default = Column(Boolean, default=False, server_default="false", nullable=False)  # auto-assigned to new clients
+    # Rendered on /plans and the public pricing catalogue. False for internal
+    # rows that must exist and be assignable (the signup trial) but must never
+    # be shown or bought. Orthogonal to is_active on purpose, see
+    # plan_service.plan_checkout_is_wired's warning about conflating flags.
+    is_public = Column(Boolean, default=True, server_default="true", nullable=False)
     sort_order = Column(Integer, default=0, server_default="0", nullable=False)
 
     # Marketing / display copy for the public pricing site (tagline, badge,
@@ -1796,10 +1807,11 @@ class Subscription(Base):
     # Trial tracking
     trial_start = Column(DateTime(timezone=True), nullable=True)
     trial_end = Column(DateTime(timezone=True), nullable=True)
-    # Set by the trial-expiry cron when status flips to ``trial_expired``.
-    # The hard-delete cron uses this to know when the 15-day grace window
-    # ends. ``NULL`` for any subscription that never went through trial
-    # expiry (paid customers, free-tier users).
+    # LEGACY as of 2026-08-28. Nothing writes a timestamp here any more: a
+    # lapsed trial converts to Free in place and this column is explicitly
+    # cleared. The hard-delete cron still reads it so rows stamped before that
+    # change drain out of its queue; once they have, it is dead weight kept
+    # only so the drain stays observable. ``NULL`` everywhere else.
     data_retention_until = Column(DateTime(timezone=True), nullable=True)
     # Set when a payment-failed webhook flips ``status`` to ``past_due``.
     # The auto-expire cron uses this anchor (not ``updated_at``, which

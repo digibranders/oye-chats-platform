@@ -2614,17 +2614,32 @@ def create_bot_checkout(
         # winner's COMMITTED marker and reuses it.
         lock_client_for_billing(session, auth["client_id"])
 
-        # ``is_active`` is part of the lookup, not a second check: ``delete_plan``
-        # soft-deletes by clearing the flag, and a super admin deactivates a tier
-        # to withdraw it from sale. Without the predicate a withdrawn plan stays
-        # purchasable by slug through a direct API call, the plan list hides it
-        # but this route would still mint a subscription on it. Matches
-        # ``/subscriptions/checkout`` and ``/subscriptions/change-plan``, which
-        # both gate on the flag. Deliberately 404 (not 400): a withdrawn plan is
+        # ``is_active`` and ``is_public`` are part of the lookup, not second
+        # checks. ``delete_plan`` soft-deletes by clearing ``is_active``, and a
+        # super admin deactivates a tier to withdraw it from sale; ``is_public``
+        # is false on rows that are assignable but were never for sale (the
+        # signup trial). Without both predicates either kind stays purchasable
+        # by slug through a direct API call, the plan list hides it but this
+        # route would still mint a subscription on it. ``/subscriptions/checkout``
+        # and ``/subscriptions/change-plan`` gate on the same two flags.
+        #
+        # Reaching them through the LOOKUP rather than a later refusal is what
+        # keeps the failure cheap: this route hands the request to
+        # ``pending_checkout_service.reuse_or_supersede``, which cancels the
+        # account's in-flight mandate at the gateway when the plan does not
+        # match, and that cancel is irreversible. A plan that can never be
+        # bought must be rejected before it can cost the customer a real
+        # mandate. Deliberately 404 (not 400): an unbuyable plan is
         # indistinguishable from one that never existed, so callers can't probe
-        # for retired tiers.
+        # for retired or internal tiers.
         plan = (
-            session.execute(select(Plan).where(Plan.slug == request.plan_slug, Plan.is_active.is_(True)))
+            session.execute(
+                select(Plan).where(
+                    Plan.slug == request.plan_slug,
+                    Plan.is_active.is_(True),
+                    Plan.is_public.is_(True),
+                )
+            )
             .scalars()
             .first()
         )

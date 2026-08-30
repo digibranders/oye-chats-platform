@@ -128,7 +128,9 @@ class CreatePlanRequest(BaseModel):
     # explicit value is accepted only when it already agrees with them
     # (:func:`_resolve_annual_discount`).
     annual_discount_percent: int | None = Field(None, ge=0, le=100)
-    trial_days: int = Field(7, ge=0)
+    # 0, not 7. A bespoke tier minted without an explicit trial length must not
+    # quietly become a second trial: the 14-day signup row is the only one.
+    trial_days: int = Field(0, ge=0)
     # Plan config, stored as JSONB. The key sets are product-defined rather
     # than API contract, so they stay open-ended, but bounded, so the plan
     # table cannot be grown without limit.
@@ -766,8 +768,8 @@ def _extend_trial(sub: Subscription, days: int) -> None:
 
     BOTH dates move, because a trial row is created with them EQUAL and the rest
     of the platform reads them as one fact split over two columns
-    (``plan_service.assign_default_plan_to_client`` / ``start_trial_for_client``
-    pin ``current_period_end = trial_end``). Moving only ``trial_end`` is what
+    (``plan_service.assign_default_plan_to_client``, the only writer that opens a
+    trial, pins ``current_period_end = trial_end``). Moving only ``trial_end`` is what
     makes them disagree, and the disagreement is not cosmetic:
 
     * ``subscription_routes.effective_resets_at`` reads ``current_period_end``
@@ -906,8 +908,11 @@ def update_subscription(
                 detail=(
                     f"Subscription {sub.id} has no trial to extend (trial_end is null; status "
                     f"{sub.status!r}). extend_trial_days only moves an EXISTING trial deadline. "
-                    "To put this customer on a trial, have them start one via POST "
-                    "/subscriptions/start-trial, or set the dates on the row directly."
+                    "There is no route that starts a trial: the 14-day trial is opened at "
+                    "signup and nowhere else, and this console has no lever to grant one "
+                    "(the columns it would need, trial_start and trial_end, are not writable "
+                    "here). Putting an existing customer on a trial is not a supported "
+                    "operation today."
                 ),
             )
 

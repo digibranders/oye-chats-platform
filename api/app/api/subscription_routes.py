@@ -27,7 +27,7 @@ from app.config import (
     INTL_PAYMENTS_ENABLED,
     RAZORPAY_ENABLED,
 )
-from app.core.dates import add_months, trial_days_remaining
+from app.core.dates import add_months
 from app.core.geo import resolve_country
 from app.core.gstin import VALID_STATE_CODES, is_valid_gstin, normalize_gstin
 from app.core.pricing import annual_saving_percent, format_amount, resolve_billing_context, seat_price
@@ -54,6 +54,7 @@ from app.services.plan_service import (
     has_used_trial,
     lock_client_for_billing,
 )
+from app.services.razorpay_service import TRIAL_CONVERSION_NOTE
 from app.services.seller_profile_service import charge_tax_rate_bps
 
 logger = logging.getLogger(__name__)
@@ -248,9 +249,54 @@ def _resolve_provider() -> str:
 # ── Public: Pricing page ──
 
 
+# Mandate lead time for eMandate / UPI pre-debit notification. A first debit
+# scheduled sooner than this is one the gateway will not honour quietly.
+_TRIAL_DEFER_FLOOR = timedelta(hours=48)
+
+
+def resolve_trial_defer_at(
+    *,
+    trial_end: datetime | None,
+    promo_start_at: datetime | None,
+    now: datetime | None = None,
+) -> datetime | None:
+    """When a mid-trial purchase should take its FIRST debit, or None.
+
+    The billing clock never moves: a customer who pays on day 3 keeps the
+    eleven free days they were promised, so the mandate is minted with
+    Razorpay's ``start_at`` at their trial end rather than charging today.
+
+    Two adjustments, both customer-favourable. A consumed promo slot must be
+    honoured, so the LATER of the two protections wins rather than the trial
+    silently cancelling a longer free period. And the result is floored at 48
+    hours out, because a date inside the eMandate pre-debit notice window is one
+    the gateway will not accept; a day-13 buyer therefore gets billing at
+    now+48h, up to a day of extra grace rather than a refusal.
+
+    None when there is nothing to defer: no trial, or one that has already
+    lapsed. Those buyers are charged normally.
+    """
+    reference = now or datetime.now(UTC)
+    if trial_end is None:
+        return None
+    if trial_end.tzinfo is None:
+        trial_end = trial_end.replace(tzinfo=UTC)
+    if trial_end <= reference:
+        return None
+    candidates = [trial_end, reference + _TRIAL_DEFER_FLOOR]
+    if promo_start_at is not None:
+        candidates.append(promo_start_at)
+    return max(candidates)
+
+
 @router.get("/plans")
 def list_plans():
-    """Return all active plans for the pricing page. No auth required."""
+    """Return every active PUBLIC plan for the pricing page. No auth required.
+
+    ``is_public`` is the second filter. A row can be active (assignable, so
+    ``get_default_plan`` can hand it to a signup) without ever being for sale,
+    which is exactly what the 14-day trial row is.
+    """
     with get_session() as session:
         plans = get_active_plans(session)
         return [
@@ -309,101 +355,6 @@ def get_active_promotion(client: Client = Depends(get_current_client)):
 # ── Authenticated: Current subscription ──
 
 
-class StartTrialRequest(BaseModel):
-    """Body for ``POST /subscriptions/start-trial``.
-
-    The slug is the public plan identifier the pricing page renders against
-    (``starter`` / ``standard``). The slug must point at an active plan with
-    ``trial_days > 0``, the free plan is intentionally excluded.
-    """
-
-    plan_slug: str = Field(..., min_length=1, max_length=64, pattern=r"^[a-z0-9_\-]+$")
-
-
-@router.post("/start-trial")
-def start_trial_endpoint(body: StartTrialRequest, client: Client = Depends(get_current_client)):
-    """Begin the paid plan's configured free trial (currently Standard, 7 days).
-
-    Triggered when the customer clicks "Start free trial". No card is
-    required; when the trial window elapses the expiry cron flips the
-    subscription to ``trial_expired`` and the customer must pick a plan
-    + enter a card to keep their bot live.
-
-    Trial credits = the plan's full ``credits_per_month`` so the prospect
-    experiences the real product. The welcome email fires here, not on
-    registration, since registration now lands the customer on the free
-    tier without a trial.
-
-    Error mapping (matches :class:`TrialUnavailable.reason`):
-
-    * ``plan_not_found``           → 404
-    * ``plan_not_trialable``       → 400
-    * ``already_trialed``          → 409
-    * ``active_paid_subscription`` → 409
-    """
-    from datetime import UTC, datetime
-
-    from app.services.email_service import send_trial_welcome_email
-    from app.services.plan_service import TrialUnavailable, start_trial
-
-    with get_session() as session:
-        try:
-            sub = start_trial(session, client.id, body.plan_slug)
-        except TrialUnavailable as exc:
-            session.rollback()
-            code_to_status = {
-                "plan_not_found": 404,
-                "plan_not_trialable": 400,
-                "already_trialed": 409,
-                "active_paid_subscription": 409,
-            }
-            raise HTTPException(
-                status_code=code_to_status.get(exc.reason, 400),
-                detail={"error": exc.reason, "message": exc.message},
-            ) from exc
-
-        # Snapshot every value we'll need post-commit. SQLAlchemy expires
-        # ORM attributes on ``session.commit()``, so reading anything off
-        # ``sub`` after the with-block closes would raise
-        # ``DetachedInstanceError``. Pulling everything into locals here
-        # keeps the response builder and the email send path safe.
-        trial_end = sub.trial_end
-        if trial_end is not None and trial_end.tzinfo is None:
-            trial_end = trial_end.replace(tzinfo=UTC)
-        plan = sub.plan
-        credits_granted = int(plan.credits_per_month or 0) if plan else 0
-        duration_days = int(plan.trial_days or 7) if plan else 7
-        sub_status = sub.status
-        session.commit()
-
-    # Fire-and-forget welcome email AFTER the commit so a transport blip
-    # cannot block (or roll back) the trial activation. The helper itself
-    # is defensive; this outer catch is the belt-and-braces guard.
-    try:
-        send_trial_welcome_email(
-            client.email,
-            name=client.name,
-            trial_end=trial_end or datetime.now(UTC),
-            credits=credits_granted,
-            duration_days=duration_days,
-        )
-    except Exception as mail_err:
-        logger.warning(
-            "trial_welcome_dispatch_failed for client %s: %s",
-            client.id,
-            mail_err,
-        )
-
-    days_remaining = trial_days_remaining(trial_end)
-    return {
-        "status": sub_status,
-        "plan_slug": body.plan_slug,
-        "trial_end_at": trial_end.isoformat() if trial_end else None,
-        "days_remaining": days_remaining,
-        "credits_granted": credits_granted,
-    }
-
-
 @router.get("/current")
 def get_current_subscription(
     auth: dict = Depends(get_current_client_or_operator),
@@ -458,12 +409,11 @@ def get_current_subscription(
                 "current_period_end": sub.current_period_end.isoformat() if sub.current_period_end else None,
                 "trial_start": sub.trial_start.isoformat() if sub.trial_start else None,
                 "trial_end": sub.trial_end.isoformat() if sub.trial_end else None,
-                # Wall-clock deadline for the post-trial data-purge cron.
-                # Set when the trial-expiry worker flips status → trial_expired
-                # (trial_end + TRIAL_DATA_RETENTION_DAYS). NULL for anything
-                # that never went through trial expiry; the frontend uses this
-                # to render the "your data will be deleted on X" warning
-                # banner during the grace window.
+                # LEGACY. Wall-clock deadline for the post-trial data-purge
+                # cron, and nothing sets it any more: a lapsed trial converts
+                # to Free with nothing deleted. Non-NULL only on rows stamped
+                # before 2026-08-28, which are draining. No surface should
+                # render a deletion warning from it.
                 "data_retention_until": (sub.data_retention_until.isoformat() if sub.data_retention_until else None),
                 "canceled_at": sub.canceled_at.isoformat() if sub.canceled_at else None,
                 "cancel_at_period_end": sub.cancel_at_period_end,
@@ -592,10 +542,11 @@ def get_current_subscription(
                 "default_provider": BILLING_PROVIDER,
                 "razorpay_enabled": RAZORPAY_ENABLED,
             },
-            # Whether this client has already consumed their lifetime free
-            # trial. Lets the Billing UI gate the trial CTA (show "Subscribe"
-            # instead of "Start free trial") so it never offers a trial the
-            # start-trial endpoint would reject with ``already_trialed``.
+            # Whether this client has ever held a trial. Since the 14-day
+            # signup trial replaced the Standard-only offer there is no trial
+            # to start from the Billing page, so this no longer gates a CTA;
+            # it is retained as a read-only fact about the account, and the
+            # rest of the payload's consumers still receive the same shape.
             "trial_used": has_used_trial(session, client_id),
         }
 
@@ -1431,6 +1382,10 @@ def checkout_quote(
             raise HTTPException(status_code=404, detail="Plan not found.")
         if not plan.is_active:
             raise HTTPException(status_code=400, detail="This plan is not available.")
+        if not plan.is_public:
+            # The signup trial is assignable but not purchasable. Without this
+            # it would price at zero and mint a mandate for nothing.
+            raise HTTPException(status_code=400, detail="This plan cannot be purchased.")
 
         # ONE resolution order shared with the charge path (Wave 1.2):
         # explicit param (this checkout's country-confirmation) → the account's
@@ -1951,6 +1906,10 @@ def create_checkout(
             raise HTTPException(status_code=404, detail="Plan not found.")
         if not plan.is_active:
             raise HTTPException(status_code=400, detail="This plan is not available.")
+        if not plan.is_public:
+            # The signup trial is assignable but not purchasable. Without this
+            # it would price at zero and mint a mandate for nothing.
+            raise HTTPException(status_code=400, detail="This plan cannot be purchased.")
         if plan.monthly_price_cents == 0:
             raise HTTPException(status_code=400, detail="Cannot checkout for a free plan.")
 
@@ -2090,8 +2049,34 @@ def create_checkout(
         # and later cycles no-op). Snapshot terms still freeze at subscribe
         # time. They travel in the immutable notes. Covers ANY attributed
         # code, not just discount-bearing ones (finding MED-2 preserved).
+        # Mid-trial purchase: defer the first debit to the end of the free days
+        # the customer was promised, and tell the webhook handlers that is what
+        # this mandate is. Without the note they cannot tell this deferred start
+        # from a resume (where the customer has ALREADY paid through start_at
+        # and must be granted nothing) and the buyer would sit unentitled until
+        # day 14, having just paid to stop being limited.
+        trial_defer_at: int | None = None
+        trialing_sub = session.execute(
+            select(Subscription)
+            .where(
+                Subscription.client_id == client.id,
+                Subscription.bot_id.is_(None),
+                Subscription.status == "trialing",
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+        if trialing_sub is not None:
+            defer_at = resolve_trial_defer_at(
+                trial_end=trialing_sub.trial_end,
+                promo_start_at=datetime.fromtimestamp(promo_start_at, UTC) if promo_start_at else None,
+            )
+            if defer_at is not None:
+                trial_defer_at = int(defer_at.timestamp())
+
         conv_meta = discount_service.resolve_referral_conversion_snapshot(session, client)
         extra_notes: dict[str, str] = dict(promo_extra_notes or {})
+        if trial_defer_at is not None:
+            extra_notes[TRIAL_CONVERSION_NOTE] = "1"
         if conv_meta:
             extra_notes.update(
                 {
@@ -2109,7 +2094,9 @@ def create_checkout(
                 plan,
                 request.billing_cycle,
                 discount_bps=discount_bps,
-                start_at=promo_start_at,
+                # ``resolve_trial_defer_at`` already took the LATER of the two,
+                # so this cannot shorten a consumed promo.
+                start_at=trial_defer_at if trial_defer_at is not None else promo_start_at,
                 extra_notes=extra_notes or None,
             )
         except ValueError as exc:
@@ -2163,6 +2150,11 @@ def change_plan(
         new_plan = get_plan_by_id(session, request.plan_id)
         if not new_plan or not new_plan.is_active:
             raise HTTPException(status_code=404, detail="Target plan not found or inactive.")
+        if not new_plan.is_public:
+            # ``/change-plan`` resolves any active plan by id, so without this
+            # the signup trial is reachable as a change target and would price
+            # at zero.
+            raise HTTPException(status_code=400, detail="This plan cannot be purchased.")
 
         # Target the subscription the customer is actually looking at (N3).
         # ``_resolve_target_subscription`` targets the selected bot's own row,
@@ -2596,13 +2588,36 @@ def change_plan(
             )
             return reused
 
+        # Branch 3 is the branch a MID-TRIAL BUYER actually reaches. The console
+        # treats a trialing subscription as an active one and routes plan picks
+        # to /change-plan rather than /checkout, and the trial row carries no
+        # gateway mandate, so branches 2a and 2b (which both require one) fall
+        # through to here. Without the deferral the customer is charged today
+        # and loses the free days they were promised, and the mandate carries no
+        # conversion note, so it gets neither the grant at authentication nor
+        # the forfeit protection that balances it.
+        trial_defer_at: int | None = None
+        trial_notes: dict[str, str] | None = None
+        if sub is not None and sub.status == "trialing" and route_bot_id is None:
+            defer_at = resolve_trial_defer_at(trial_end=sub.trial_end, promo_start_at=None)
+            if defer_at is not None:
+                trial_defer_at = int(defer_at.timestamp())
+                trial_notes = {TRIAL_CONVERSION_NOTE: "1"}
+
         try:
             if route_bot_id is not None:
                 result = razorpay_service.create_bot_resubscription(
                     session, client, new_plan, bot_id=route_bot_id, billing_cycle=billing_cycle
                 )
             else:
-                result = razorpay_service.create_subscription(session, client, new_plan, billing_cycle)
+                result = razorpay_service.create_subscription(
+                    session,
+                    client,
+                    new_plan,
+                    billing_cycle,
+                    start_at=trial_defer_at,
+                    extra_notes=trial_notes,
+                )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except razorpay_service.RazorpayBillingError as exc:

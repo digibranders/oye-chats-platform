@@ -373,7 +373,7 @@ def invalidate_bot(bot_id: int) -> None:
 # without the source badge and journey timeline. The Leads UI renders an
 # upsell tile in the same slot so the feature is discoverable without
 # leaking data.
-LEAD_SOURCE_ATTRIBUTION_SLUGS: frozenset[str] = frozenset({"standard", "professional", "enterprise"})
+LEAD_SOURCE_ATTRIBUTION_SLUGS: frozenset[str] = frozenset({"trial", "standard", "professional", "enterprise"})
 
 
 def is_lead_source_attribution_enabled(client_id: int, db_session: Session) -> bool:
@@ -424,7 +424,7 @@ def is_lead_source_attribution_enabled_for_bot(bot_id: int, db_session: Session)
 # history); this gate controls only whether the READ endpoints under
 # /analytics/journeys/* return data. Same paid-tier set as lead source
 # attribution.
-JOURNEY_ANALYTICS_SLUGS: frozenset[str] = frozenset({"standard", "professional", "enterprise"})
+JOURNEY_ANALYTICS_SLUGS: frozenset[str] = frozenset({"trial", "standard", "professional", "enterprise"})
 
 
 def is_journey_analytics_enabled(client_id: int, db_session: Session) -> bool:
@@ -528,7 +528,7 @@ def is_lead_intelligence_enabled(client_id: int, db_session: Session) -> bool:
 # Kept as its own frozenset (rather than reusing ``plan_slug != "free"``)
 # so a future plan tier change to lead intelligence can't silently loosen
 # this boundary too.
-VISITOR_INTELLIGENCE_SLUGS: frozenset[str] = frozenset({"professional", "enterprise"})
+VISITOR_INTELLIGENCE_SLUGS: frozenset[str] = frozenset({"trial", "professional", "enterprise"})
 
 # The slugs `seed_plans.py` creates. Anything else is a BESPOKE plan a
 # super-admin provisioned for an individual deal, the seed script's own
@@ -537,7 +537,13 @@ VISITOR_INTELLIGENCE_SLUGS: frozenset[str] = frozenset({"professional", "enterpr
 # NOTE: "enterprise" is a SEEDED ladder tier, not a bespoke deal. Bespoke
 # slugs for individual contracts are distinct strings (e.g. "enterprise-acme")
 # and still take rule 2 in :func:`_paid_tier_includes`.
-_SEEDED_PLAN_SLUGS: frozenset[str] = frozenset({"free", "starter", "standard", "professional", "enterprise"})
+# Every slug ``seed_plans._PLANS`` writes, the non-public ``trial`` row
+# included. Membership is what tells :func:`_paid_tier_includes` a slug is a
+# SEEDED tier whose entitlements are decided by the ladders above, rather than
+# a bespoke per-contract row that gets every paid feature by default. Leaving
+# the trial out would hand it the bespoke rule and grant it capabilities no
+# ladder names, silently and without anyone choosing it.
+_SEEDED_PLAN_SLUGS: frozenset[str] = frozenset({"free", "trial", "starter", "standard", "professional", "enterprise"})
 
 
 def _paid_tier_includes(slug: str, ladder_slugs: frozenset[str]) -> bool:
@@ -633,7 +639,7 @@ def is_visitor_intelligence_enabled_for_bot(bot_id: int, db_session: Session) ->
 # excluded and skip the Reoon call entirely (rather than paying for a check
 # they can't act on). A slug allow-list (not "not free") keeps this boundary
 # explicit so a future Starter change can't silently switch the paid feature on.
-EMAIL_VERIFICATION_SLUGS: frozenset[str] = frozenset({"standard", "professional", "enterprise"})
+EMAIL_VERIFICATION_SLUGS: frozenset[str] = frozenset({"trial", "standard", "professional", "enterprise"})
 
 
 def is_email_validation_enabled_for_bot(bot_id: int, db_session: Session) -> bool:
