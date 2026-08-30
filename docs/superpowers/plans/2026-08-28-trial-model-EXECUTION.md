@@ -868,7 +868,7 @@ contradicting each other.
 | `npm run lint` | clean, **zero warnings** |
 | `npx vitest run` | **136 files, 1788 tests passed** |
 | `npm run build` | succeeds |
-| `npm run e2e` (Playwright, Chromium) | **34 passed** |
+| `npm run e2e` (Playwright, Chromium) | **42 passed** (34 at the gate, plus the 8 trial-surface specs added afterwards) |
 
 The browser suite needed one environment accommodation: the project pins a
 Playwright whose browser build is not present here, and this environment ships
@@ -887,10 +887,10 @@ immediately; the committed config is unchanged (`git diff` on it is empty).
 | 4 · first training free, honest wall | done | `4af8685` | 10 |
 | 5 · day-15 conversion to Free | done | `a30f184` + `6cbfae0` | 12 |
 | 6 · mid-trial purchase | done (sandbox step skipped) | `c818dc0` | 10 |
-| 7 · trial banner and rail card | done | `2d494f7` + this commit | 14 |
-| 8 · website copy | **SKIPPED** | — | separate repository, not available here |
+| 7 · trial banner and rail card | done | `2d494f7` + `4c83f7e` + `b95afd5` | 14 |
+| 8 · website copy | done | `oyechats-website@23b555f` | see the Task 8 note below |
 | 9 · full-suite gate | done | this commit | — |
-| 10 · production rollout | **NOT ATTEMPTED** | — | out of scope by instruction |
+| 10 · production rollout | **NOT ATTEMPTED** | runbook written, not executed | no production access, by instruction |
 
 Eighty-one review findings were found and fixed across eight reviews.
 
@@ -928,8 +928,22 @@ Eighty-one review findings were found and fixed across eight reviews.
    and enough modules in one run collided, producing dozens of errors that read
    exactly like real regressions. It corrupted three of my own gate runs before
    I traced it.
-9. **Task 8 skipped** (separate repository) and **Task 10 not attempted**
-   (production), both by instruction.
+9. **Task 10 not attempted** (production), by instruction. The rollout runbook
+   is written out in full at `docs/superpowers/plans/2026-08-28-trial-model-ROLLOUT.md`,
+   with every step that touches production data gated on a human running it.
+10. **Task 8 was done after all, and the plan's ground truth about that repo was
+   stale.** `oyechats-website` turned out to be attachable, so the copy was
+   changed there. But the plan's premise for the task was wrong in a way worth
+   recording: there is no `src/lib/legal.ts` in that repository, **no legal page
+   promises 15-day deletion of trial data** (the privacy policy says "Retained
+   until you delete it or close your account", which the new model satisfies),
+   and `npm run build` runs no `verify-html.mjs` em-dash gate. The real problem
+   was smaller and different: the site sold the trial as a thing Starter and
+   Standard *include*, which is exactly what this work stops being true. Three
+   edits, on `pricing.ts:55`, `pricing.ts:261` and `PricingCards.tsx:179`. The
+   `FeatureTable.tsx:35` CTA row still reads "Start free trial" under Starter
+   and was left alone deliberately: it is a button label, still accurate, and
+   changing it is a voice decision rather than a correctness one.
 
 ## Things I am not confident about
 
@@ -947,9 +961,18 @@ Eighty-one review findings were found and fixed across eight reviews.
 * **`_forfeit_and_convert_to_free` sends no email.** A customer whose unbilled
   conversion is cancelled is silently moved to Free. Day-15 conversion emails;
   this path does not.
-* **Nothing was browser-verified against a live API.** Task 7 Step 5 asks for
-  the three card states driven off a real dev subscription. The components are
-  unit-tested and the shell's e2e suite passes, but no human has looked at them.
+* **Browser verification is done, but against a mocked API, not a live one.**
+  Task 7 Step 5 asked for the three card states driven off a real dev
+  subscription. What exists instead is `app/tests/e2e/trial-surfaces.spec.ts`:
+  eight Playwright specs against the built bundle, each proven to have teeth by
+  mutation, plus captured screenshots of all four renderings that I looked at.
+  Every state renders correctly, the plurals are right in both surfaces, the
+  banner takes up layout rather than covering the chrome, and the card's two
+  colours are the rail tokens measured at 7.87:1. What this still does not
+  prove is that the SERVER sends the payload the mock imitates: the mock's
+  shape was matched to `auth_routes.py` by reading it, not by calling it. The
+  first real signup after the seed is what closes that, and it is step 3 of the
+  runbook.
 * **The trial row has never been seeded into a database with real traffic.** The
   seeder's dry-run and an `--apply` against this environment's local database
   are the only exercise it has had.
