@@ -24,7 +24,7 @@ from collections import Counter
 from collections.abc import Iterable
 from datetime import datetime
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from app.db.models import ChatSession, LeadInfo
@@ -348,15 +348,21 @@ def summary_counts(db: Session, bot_id: int, since: datetime, until: datetime) -
             else:
                 sessions_no_activity += 1
 
-    leads_captured = db.execute(
-        select(LeadInfo).where(
-            and_(
-                LeadInfo.bot_id == bot_id,
-                LeadInfo.created_at >= since,
-                LeadInfo.created_at <= until,
+    # ``count()`` in SQL, not ``len()`` over hydrated ORM rows: the header only
+    # ever needed the number, and materialising every lead of the month to
+    # measure it costs a full row fetch plus an identity-map insert apiece.
+    leads_captured = (
+        db.execute(
+            select(func.count(LeadInfo.id)).where(
+                and_(
+                    LeadInfo.bot_id == bot_id,
+                    LeadInfo.created_at >= since,
+                    LeadInfo.created_at <= until,
+                )
             )
-        )
-    ).all()
+        ).scalar()
+        or 0
+    )
 
     return {
         "sessions_with_journey": len(journeys),
@@ -365,7 +371,7 @@ def summary_counts(db: Session, bot_id: int, since: datetime, until: datetime) -
         "offline_message_sent": conversion_counts.get("offline_message_sent", 0),
         "sessions_no_activity": sessions_no_activity,
         "sessions_browsed_no_conversion": sessions_browsed_no_conversion,
-        "leads_captured": len(leads_captured),
+        "leads_captured": leads_captured,
     }
 
 
