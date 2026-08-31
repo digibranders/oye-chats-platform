@@ -36,7 +36,16 @@ export function useKnowledgeGaps(agentId: number | null): KnowledgeGaps {
 
   const section = toSection(
     query,
-    (rows) => rows ?? NO_GAPS,
+    // `Array.isArray`, not `?? NO_GAPS`. The nullish check only covers null and
+    // undefined, so any other shape — an error envelope served with a 200, an
+    // HTML page from a proxy, an endpoint that starts returning `{items: []}` —
+    // reached `DataTable`, which spreads its rows and threw `is not iterable`.
+    // That is an uncaught render error, so it took out the WHOLE Experience
+    // page through the error boundary: branding, messages, voice, language and
+    // handoff all replaced by "Something went wrong" because one list endpoint
+    // answered oddly. A section that cannot load must degrade to an empty
+    // section, never to a dead page.
+    (rows) => (Array.isArray(rows) ? rows : NO_GAPS),
     NO_GAPS,
     translateNow('agents.weCouldNotLoadThe3') || 'We could not load the questions your chatbot could not answer.',
   );

@@ -3232,7 +3232,7 @@ class BotDomainInstall(Base):
 
     __tablename__ = "bot_domain_installs"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     bot_id = Column(Integer, ForeignKey("bots.id", ondelete="CASCADE"), nullable=False, index=True)
 
     # Bare hostname, lowercased, no scheme and no port — the shape
