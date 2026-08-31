@@ -88,7 +88,7 @@ describe('draftFromBot', () => {
   });
 
   it('falls back to a colour the picker can edit when the stored one is junk', () => {
-    expect(draftFromBot({ primary_color: 'rebeccapurple' }).primaryColor).toBe('#ba68c8');
+    expect(draftFromBot({ primary_color: 'rebeccapurple' }).primaryColor).toBe('#a21caf');
   });
 
   it('reads business hours as the flat shape the server stores', () => {

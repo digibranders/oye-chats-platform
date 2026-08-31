@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from app.services.brand_color_extractor import (
+    contrast_on_white,
     extract_colors_from_html,
     fetch_recommended_colors,
 )
@@ -300,3 +301,62 @@ async def test_fetch_resolves_relative_hrefs_against_final_redirect(monkeypatch)
     assert "www.example.test" in hit_hosts
     # And at least one non-neutral color came through.
     assert result != []
+
+
+# ── contrast gate and SVG weighting ──────────────────────────────────────────
+
+
+def test_a_colour_that_cannot_carry_text_is_not_recommended():
+    """The macOS window-mockup case, which is what prompted this.
+
+    A marketing homepage drew a browser frame in SVG, and its close and
+    minimise buttons — #ff5f57 and #febc2e — outranked the brand by sheer
+    repetition. Both are offered as the widget's accent AND painted as text on
+    the white chat window, where they measure 2.99:1 and 1.69:1. The console
+    would have flagged either the moment it was picked.
+    """
+    html = """
+      <style>:root{--brand:#a21caf}</style>
+      <span style="color:#ff5f57">x</span><span style="color:#ff5f57">x</span>
+      <span style="color:#febc2e">y</span><span style="color:#febc2e">y</span>
+    """
+    result = extract_colors_from_html(html)
+    assert result[0] == "#a21caf", "the brand must outrank the window chrome"
+    assert result.index("#ff5f57") > 0 and result.index("#febc2e") > 0
+
+
+def test_a_light_brand_still_sees_its_own_colours():
+    """Demotion, not deletion.
+
+    Returning [] here would read as "we could not read your site", which is a
+    different and wronger statement than "these are light". The console's own
+    contrast warning does the rest.
+    """
+    html = "<style>a{color:#febc2e}b{color:#ffd166}</style>"
+    assert extract_colors_from_html(html) == ["#febc2e", "#ffd166"]
+
+
+def test_css_outweighs_decorative_svg():
+    """Artwork is evidence, but weaker than a declared token.
+
+    The SVG colour appears three times to the stylesheet's one and still loses,
+    because a mockup drawn repeatedly is not a stronger brand signal than a
+    custom property.
+    """
+    html = """
+      <style>:root{--brand:#701a75}</style>
+      <svg><path fill="#7c3aed"/><path fill="#7c3aed"/><path fill="#7c3aed"/></svg>
+    """
+    assert extract_colors_from_html(html)[0] == "#701a75"
+
+
+def test_an_svg_brand_mark_is_still_counted():
+    """Weighted down, not discarded: plenty of logos are inline SVG."""
+    html = '<svg><path fill="#701a75"/></svg>'
+    assert extract_colors_from_html(html) == ["#701a75"]
+
+
+def test_contrast_helper_matches_the_wcag_figures():
+    assert round(contrast_on_white("#a21caf"), 2) == 6.32
+    assert round(contrast_on_white("#ba68c8"), 2) == 3.56  # the old default
+    assert round(contrast_on_white("#febc2e"), 2) == 1.69

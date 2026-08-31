@@ -166,7 +166,7 @@ class Client(Base):
     bot_logo = Column(Text, nullable=True)
     launcher_name = Column(String, default="Have Questions?")
     launcher_logo = Column(Text, nullable=True)
-    primary_color = Column(String, default="#ba68c8")
+    primary_color = Column(String, default="#a21caf")
     background_color = Column(String, default="#ffffff")
     header_color = Column(String, default="#3A0CA3")
     recommended_colors = Column(JSONB, nullable=True)
@@ -351,7 +351,12 @@ class Bot(Base):
     bot_logo_source = Column(String, nullable=True)
     launcher_name = Column(String, default="Have Questions?", server_default="Have Questions?")
     launcher_logo = Column(Text, nullable=True)
-    primary_color = Column(String, default="#ba68c8", server_default="#ba68c8")
+    # #a21caf, not the #ba68c8 this carried for years. That shade renders at
+    # 3.56:1 as text on the white chat window — below the 4.5:1 the console's
+    # own contrast checker demands — so every chatbot was created carrying a
+    # colour the product immediately warned its owner about. This one is the
+    # same brand family at 6.32:1.
+    primary_color = Column(String, default="#a21caf", server_default="#a21caf")
     background_color = Column(String, default="#ffffff", server_default="#ffffff")
     header_color = Column(String, default="#3A0CA3", server_default="#3A0CA3")
     recommended_colors = Column(JSONB, nullable=True)

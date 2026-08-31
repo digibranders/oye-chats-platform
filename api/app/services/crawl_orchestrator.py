@@ -44,7 +44,11 @@ from app.ingestion.pipeline import (
     ABORT_REASON_KNOWLEDGE_QUOTA,
     batch_web_ingestion,
 )
-from app.services.brand_color_extractor import fetch_recommended_colors
+from app.services.brand_color_extractor import (
+    MIN_BRAND_CONTRAST,
+    contrast_on_white,
+    fetch_recommended_colors,
+)
 from app.services.brand_tone import preset_text
 from app.services.crawl_provider import crawl_website, fetch_urls
 from app.services.crawler_service import (
@@ -253,6 +257,9 @@ def _pick_services_url(valid_pages: list[dict]) -> str | None:
     return best[2] if best else None
 
 
+DEFAULT_PRIMARY_COLOR = "#a21caf"
+
+
 def _apply_crawl_metadata_to_bot(
     bot_db: Bot,
     *,
@@ -289,6 +296,35 @@ def _apply_crawl_metadata_to_bot(
     if bot_db.recommended_colors != normalized_colors:
         bot_db.recommended_colors = normalized_colors
         written.append("recommended_colors")
+
+    # Adopt the best extracted colour as the chatbot's actual brand colour, not
+    # merely as a suggestion.
+    #
+    # The extractor has been reading the customer's palette for as long as this
+    # function has existed, and the result went nowhere except a row of swatches
+    # the customer had to notice and click. Meanwhile the widget kept painting
+    # itself the seeded default. A chatbot that already knows what the site
+    # looks like should look like the site.
+    #
+    # Three guards, in order:
+    #
+    # * ``primary_color`` in ``manual_field_overrides`` means the customer has
+    #   chosen. Never overwrite a choice.
+    # * Only while the colour is still the seed. A colour the crawl set last
+    #   time is left alone too — re-crawling a site mid-redesign should not
+    #   repaint a widget the owner has since seen and accepted.
+    # * Only a candidate that carries text on the white chat window. The
+    #   extractor already filters for this, so this is belt and braces against
+    #   a caller that passes an unfiltered list.
+    if (
+        normalized_colors
+        and "primary_color" not in overrides
+        and (bot_db.primary_color or DEFAULT_PRIMARY_COLOR).lower() == DEFAULT_PRIMARY_COLOR
+    ):
+        candidate = normalized_colors[0]
+        if contrast_on_white(candidate) >= MIN_BRAND_CONTRAST:
+            bot_db.primary_color = candidate
+            written.append("primary_color")
     if brand_tone and "brand_tone" not in overrides:
         bot_db.brand_tone = brand_tone
         bot_db.brand_tone_preset = brand_tone_preset

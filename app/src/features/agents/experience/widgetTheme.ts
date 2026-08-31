@@ -73,8 +73,8 @@ export const WIDGET_BORDER = '#E5E7EB';
 export const WIDGET_BOT_BUBBLE = '#FFFFFF';
 
 /** What the widget falls back to when a bot has never been given a colour.
- *  Mirrors `_bot_to_response`'s `bot.primary_color or "#ba68c8"`. */
-export const DEFAULT_PRIMARY_COLOR = '#ba68c8';
+ *  Mirrors `_bot_to_response`'s `bot.primary_color or "#a21caf"`. */
+export const DEFAULT_PRIMARY_COLOR = '#a21caf';
 
 /** `bot.user_bubble_color or "#DBE9FF"`, and `classic.userBubbleDefaultBg`. */
 export const DEFAULT_USER_BUBBLE_COLOR = '#DBE9FF';

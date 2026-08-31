@@ -254,7 +254,7 @@ try:
         with engine.connect() as conn:
             conn.execute(text("ALTER TABLE bots ALTER COLUMN name SET DEFAULT 'AI Assistant'"))
             conn.execute(text("ALTER TABLE bots ALTER COLUMN launcher_name SET DEFAULT 'Have Questions?'"))
-            conn.execute(text("ALTER TABLE bots ALTER COLUMN primary_color SET DEFAULT '#ba68c8'"))
+            conn.execute(text("ALTER TABLE bots ALTER COLUMN primary_color SET DEFAULT '#a21caf'"))
             conn.execute(text("ALTER TABLE bots ALTER COLUMN background_color SET DEFAULT '#ffffff'"))
             conn.execute(text("ALTER TABLE bots ALTER COLUMN header_color SET DEFAULT '#3A0CA3'"))
             conn.execute(text("ALTER TABLE bots ALTER COLUMN is_active SET DEFAULT true"))

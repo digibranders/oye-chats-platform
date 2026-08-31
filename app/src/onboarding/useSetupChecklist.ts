@@ -3,6 +3,9 @@ import { getLeadStats } from '../services/api';
 import { useBotContext } from '../context/BotContext';
 import { keys } from '../query/keys';
 import { agentPath } from '../shell/nav';
+// One owner for the seeded colour: duplicating the literal here is how the two
+// drift apart and the checklist starts calling a default chatbot branded.
+import { DEFAULT_PRIMARY_COLOR } from '../features/agents/experience/widgetTheme';
 import type { Bot } from '../types/domain';
 import { t as translateNow } from '../i18n/i18n';
 
@@ -39,8 +42,7 @@ export interface SetupStep {
  * The checklist never becomes a gate. Every step deep-links to the real surface
  * where that work is done, and the user can do them in any order or not at all.
  */
-/** Seeded on every new chatbot (`Bot.primary_color` / `Bot.avatar_type`). */
-const DEFAULT_PRIMARY_COLOR = '#ba68c8';
+/** Seeded on every new chatbot (`Bot.avatar_type`). */
 const DEFAULT_AVATAR_TYPE = 'upload';
 
 export function useSetupChecklist() {

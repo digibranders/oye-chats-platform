@@ -29,7 +29,7 @@ function withBot(over: Partial<Bot> = {}) {
     id: 7,
     name: 'Support',
     // Exactly what a freshly created chatbot carries.
-    primary_color: '#ba68c8',
+    primary_color: '#a21caf',
     avatar_type: 'upload',
     bot_logo: null,
     bot_logo_source: null,
@@ -70,7 +70,7 @@ describe('the "make it yours" step', () => {
   });
 
   it('treats the seeded colour case-insensitively', () => {
-    expect(brandStep(withBot({ primary_color: '#BA68C8' })).done).toBe(false);
+    expect(brandStep(withBot({ primary_color: '#A21CAF' })).done).toBe(false);
   });
 });
 
