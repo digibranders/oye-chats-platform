@@ -23,7 +23,7 @@ features:
     link: /02-architecture/containers
   - icon: 🗄️
     title: Full ER diagram
-    details: 23 tables across core, billing, qualification, live chat, and webhooks — with per-domain sub-diagrams for clarity.
+    details: The 25 core tables (of 51) across core, billing, qualification, live chat, and webhooks — with per-domain sub-diagrams for clarity.
     link: /03-data/er-diagram
   - icon: 🔁
     title: Sequence diagrams for every critical flow
@@ -35,11 +35,11 @@ features:
     link: /05-state-machines/chat-session
   - icon: 🌐
     title: Deployment topology
-    details: DigitalOcean droplet, Vercel admin, Cloudflare R2 widget CDN, and every external SaaS dependency mapped.
+    details: DigitalOcean droplet (API, WebSocket and ARQ services), Vercel admin, Cloudflare R2 widget CDN, and every external SaaS dependency mapped.
     link: /07-deployment/topology
   - icon: 📈
     title: Capacity & scaling
-    details: Current limits, bottleneck ranking, and a phased scaling plan from 1-worker to horizontal.
+    details: Current limits, bottleneck ranking, and a phased scaling plan — Phase 2 (the WebSocket process split) shipped 2026-08-20.
     link: /09-capacity/current-limits
 ---
 
@@ -67,6 +67,7 @@ features:
 
 ## What's not in here
 
-- Landing page (`landing/`) and the standalone marketing site — out of scope.
+- The marketing site — a separate repository (`../oyechats-website`), out of scope.
 - Auto-generated diagrams from the code-review-graph or graphify — these docs are hand-authored from those sources but are not regenerated. See the parent `platform/docs/graph-*.md` for graph snapshots.
 - API endpoint reference. See [`platform/docs/api-reference.md`](../../api-reference.md).
+- Billing deep-dives beyond the flows here. See `platform/docs/billing/`.

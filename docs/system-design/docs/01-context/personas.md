@@ -1,6 +1,6 @@
 # Personas
 
-> **Audience:** New engineers · Product · **Read time:** 3 min · **Last updated:** 2026-04-28
+> **Audience:** New engineers · Product · **Read time:** 3 min · **Last updated:** 2026-08-31
 
 ## TL;DR
 
@@ -40,12 +40,12 @@ flowchart LR
 
 | Attribute | Value |
 |---|---|
-| Identity | Anonymous, identified by a session ID stored in localStorage on the host page domain |
+| Identity | Anonymous, identified by a session ID the widget stores in the host page's `localStorage` (no cookie) |
 | Auth header | `X-Bot-Key` (the public bot key from the embed script) |
 | Primary surface | Embedded widget on the customer's website |
 | Goals | Get an answer to a question; book a meeting; talk to a human |
-| Constraints | Rate limited at 30 chat messages / minute (bot key); same on WebSocket once in live chat |
-| Tables touched (write) | `chat_sessions`, `chat_messages`, `lead_info`, `bant_signals`, `visitor_events`, `meeting_bookings`, `offline_messages` |
+| Constraints | Per-route limits keyed on the bot key — 30/min on `/chat/stream`, and much tighter on routes that send mail (quotation `accept` and `POST /chat/transcript` are 3/min). SlowAPI's `default_limits` is **empty**, so a widget route with no explicit decorator is not limited at all |
+| Tables touched (write) | `chat_sessions`, `chat_messages`, `lead_info`, `bant_signals`, `visitor_events`, `meeting_bookings`, `offline_messages`, `live_chat_queue` |
 
 ## Customer / Admin
 
@@ -54,9 +54,9 @@ flowchart LR
 | Identity | Email + password; logged in via JWT-based session, exchanged for `api_key` |
 | Auth header | `X-API-Key` |
 | Primary surface | Admin dashboard SPA (`platform/app`) |
-| Roles | `is_superadmin=false` regular customer; sometimes flagged `isBotManager` for elevated bot-only access |
+| Roles | `is_superadmin=false` regular customer. Workspace membership (owner / admin / operator) is carried by the `operators` row, and a *linked admin* is a distinct case the route guard must resolve before it acts |
 | Goals | Configure bots, upload knowledge base, see leads & analytics, manage billing, manage team |
-| Pages | `/`, `/knowledge`, `/insights`, `/leads`, `/integrations/*`, `/chatbot`, `/settings`, `/team`, `/support`, `/billing`, `/qualification`, `/webhooks` |
+| Pages | Workspace scope: `/`, `/inbox`, `/leads`, `/journey`, `/analytics/*`, `/billing/*`, `/settings/*`, `/account`. Chatbot scope: `/chatbots/:agentId/{overview,knowledge,experience,deploy,qualification,quotation,behaviour}`. See [Components — Admin](/02-architecture/components-admin) |
 | Tables touched (write) | `clients` (self), `bots`, `documents`, `subscriptions`, `payment_methods`, `webhooks`, `pricing_config` (read), `operators`, `departments`, `canned_responses` |
 
 ## Operator
@@ -66,9 +66,9 @@ flowchart LR
 | Identity | Belongs to a `client_id`; has own email + `hashed_password` + `operator_api_key`, separate from the client account |
 | Auth header | `X-Operator-Key` (and legacy `X-Agent-Key` alias still accepted) |
 | Roles | `owner` · `admin` · `operator` |
-| Primary surface | Admin dashboard's `/support` and `/team` pages (live-chat queue, canned responses, audit log) |
-| Real-time channel | WebSocket `/ws/{bot_key}/{session_id}/{client_key}` |
-| Goals | Accept waiting chats, message visitors in real time, transfer chats, end chats, edit canned responses |
+| Primary surface | The console's `/inbox` and `/leads`. `OPERATOR_PREFIXES` (`/inbox`, `/leads`, `/account`) is enforced both in the rail and at the router; anything else renders a Forbidden page rather than a silent redirect |
+| Real-time channel | WebSocket `GET /ws/operator?api_key=…` (legacy alias `/ws/agent`), served by `oyechats-ws.service` on :8001, **not** by the API service |
+| Goals | Accept waiting chats, message visitors in real time, transfer chats, close (back to bot) or resolve (done) a conversation, edit canned responses |
 | Constraints | `max_concurrent_chats` per operator; visibility filtered by `department_id` |
 | Tables touched (write) | `chat_messages` (role=`operator`), `chat_sessions` (status, assigned_operator_id), `chat_audit_logs`, `canned_responses`, `offline_messages` (read/reply) |
 
@@ -76,15 +76,15 @@ flowchart LR
 
 | Attribute | Value |
 |---|---|
-| Identity | A `Client` row with `is_superadmin=true`; the seed migration `b2c3d4e5f6a7_seed_superadmin_user.py` creates the first one |
+| Identity | A `Client` row with `is_superadmin=true` (with a finer `superadmin_role` column alongside it); `api/scripts/seed_superadmin.py` provisions one |
 | Auth header | `X-API-Key` (same as customer, gated by `is_superadmin` check in dependencies) |
-| Primary surface | `/superadmin/overview`, `/superadmin/clients`, `/superadmin/feedback` |
-| Goals | Provision clients, view system stats, edit `pricing_config` (credit costs, kill switch), feature flags per plan |
+| Primary surface | The super-admin routers (`superadmin_routes.py`, `_v2`, plan / promotion / ops) — including `GET /superadmin/safety-net-metrics` and the Models & RAG runtime config |
+| Goals | Provision clients, view system stats, edit `pricing_config` (credit costs, kill switch, gate model, `crawl.provider_primary`), plan feature flags, promotions, impersonation |
 | Tables touched (write) | `plans`, `pricing_config`, all client tables for support purposes |
 
 ## Why this matters
 
-These personas appear all over the codebase as auth dependencies in [`api/app/api/auth.py`](../../../api/app/api/auth.py):
+These personas appear all over the codebase as auth dependencies in [`api/app/api/auth.py`](../../../../api/app/api/auth.py):
 
 ```python
 get_current_bot                  # → Visitor (X-Bot-Key)

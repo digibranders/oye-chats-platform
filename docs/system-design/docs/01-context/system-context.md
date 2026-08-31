@@ -1,10 +1,10 @@
 # System context — C4 Level 1
 
-> **Audience:** New engineers · CTO · **Read time:** 4 min · **Last updated:** 2026-04-28
+> **Audience:** New engineers · CTO · **Read time:** 4 min · **Last updated:** 2026-08-31
 
 ## TL;DR
 
-At the highest zoom, OyeChats is a single SaaS that four kinds of human actors interact with (visitor, customer admin, operator, super-admin) and that talks to ten external systems for LLM, embeddings, payments, email, file storage, observability, and CDN.
+At the highest zoom, OyeChats is a single SaaS that four kinds of human actors interact with (visitor, customer admin, operator, super-admin) and that talks to a dozen external systems for LLM, embeddings, web scraping, payments, email, file storage, observability and CDN.
 
 ## Diagram
 
@@ -37,14 +37,19 @@ flowchart LR
 
     subgraph AI["AI providers"]
       direction TB
-      OpenAI[("OpenAI<br/>LLM + embeddings")]:::llm
-      Gemini[("Google Gemini<br/>fallback + gate")]:::llm
+      OpenAI[("OpenAI<br/>primary LLM + moderation")]:::llm
+      Gemini[("Google Gemini<br/>fallback LLM · gates · embeddings")]:::llm
+    end
+
+    subgraph Scrape["Web scraping"]
+      direction TB
+      Jina[("Jina Reader<br/>crawl primary + capture")]:::llm
+      Spider[("Spider.cloud<br/>crawl fallback")]:::llm
     end
 
     subgraph Pay["Payments"]
       direction TB
-      Razorpay[("Razorpay<br/>INR primary")]:::pay
-      Stripe[("Stripe<br/>international")]:::pay
+      Razorpay[("Razorpay<br/>INR + USD, sole rail")]:::pay
     end
 
     subgraph Infra["Hosting & files"]
@@ -73,10 +78,11 @@ flowchart LR
     Visitor -. "loads JS" .-> CFCDN
     OyeChats -. "publishes via CI" .-> CFCDN
 
-    OyeChats -- "chat + embed" --> OpenAI
-    OyeChats -- "fallback + gate" --> Gemini
+    OyeChats -- "chat + moderation" --> OpenAI
+    OyeChats -- "fallback · gates · embeddings" --> Gemini
+    OyeChats -- "fetch pages · pageshot" --> Jina
+    OyeChats -- "fetch pages (fallback)" --> Spider
     OyeChats <-- "subs · webhooks" --> Razorpay
-    OyeChats <-- "subs · webhooks" --> Stripe
     OyeChats -- "send" --> Brevo
     OyeChats -- "POST · HMAC" --> CRM
     OyeChats <-- "S3 PUT/GET" --> R2Files
@@ -88,25 +94,28 @@ flowchart LR
 
 | Actor | Authenticates with | Touches |
 |---|---|---|
-| **Visitor** | None (anonymous; identified by `session_id` cookie) | Widget on customer's site |
+| **Visitor** | None (anonymous; identified by a `session_id` the widget keeps in the host page's `localStorage`) | Widget on customer's site |
 | **Customer / Admin** | `X-API-Key` header | Admin dashboard at app domain |
 | **Operator** | `X-Operator-Key` (legacy alias `X-Agent-Key`) | Admin dashboard live-chat & team pages |
-| **Super-admin** | `X-API-Key` with `is_superadmin=true` | `/superadmin/*` admin pages |
+| **Super-admin** | `X-API-Key` with `is_superadmin=true` | Super-admin routes (`superadmin_routes.py`, `_v2`, plan / promotion / ops routers) |
 
 ## External systems
 
 | System | Why | Failure mode | Documented in |
 |---|---|---|---|
-| **OpenAI** | Primary LLM (`gpt-5.4-mini`) + embedding model (`text-embedding-3-small`, 1536-dim) | LiteLLM auto-fails over to Gemini | [External services](/07-deployment/external-services) |
-| **Google Gemini** | Fallback LLM (`gemini-2.5-flash`); also gate/enrichment model | If both providers down, chat returns a 502 with retry | [External services](/07-deployment/external-services) |
-| **Razorpay** | Primary payment gateway (UPI Autopay, INR) | Stripe handles international cards as fallback | [Billing & checkout](/04-flows/billing-checkout) |
-| **Stripe** | International card processing | Razorpay covers INR independently | [Billing & checkout](/04-flows/billing-checkout) |
+| **OpenAI** | Primary chat LLM (`gpt-5.4-mini`) and `omni-moderation-latest` | LiteLLM auto-fails over to Gemini for chat; moderation fails **open** | [External services](/07-deployment/external-services) |
+| **Google Gemini** | Fallback LLM (`gemini-2.5-flash`), the relevance/groundedness gate model, chunk enrichment, **and all embeddings** (`gemini-embedding-001`, 768-dim) | If both chat providers are down, chat returns a 502 with retry. An embedding outage has no fallback by design: ingestion retries, and query-time retrieval degrades to keyword-only | [External services](/07-deployment/external-services) |
+| **Jina Reader** | Primary page fetch for URL ingestion (`CRAWL_PROVIDER_PRIMARY=jina`) and the demo-page screenshot | Falls back to Spider.cloud | [Document ingestion](/04-flows/document-ingestion) |
+| **Spider.cloud** | Fallback page fetch | Its `POST /screenshot` returns an error **and bills for the attempt** on our account, so the capture fallback is currently inert | [External services](/07-deployment/external-services) |
+| **Razorpay** | The **only** payment gateway — UPI Autopay, cards, netbanking for INR; separate USD plans for exports | New paid signups blocked; existing subscriptions unaffected | [Billing & checkout](/04-flows/billing-checkout) |
 | **Brevo** | Transactional email (lead alerts, password reset, operator pings) | Failures captured to Sentry; non-blocking | [External services](/07-deployment/external-services) |
 | **Cloudflare R2** | S3-compatible object storage for uploaded documents | If down, ingestion blocked but chat unaffected | [Document ingestion](/04-flows/document-ingestion) |
-| **Langfuse** | LLM trace export | `LANGFUSE_FORCE_DISABLE` toggle if causing memory pressure (currently disabled on prod) | [Observability](/08-cross-cutting/observability) |
+| **Langfuse** | LLM trace export | `LANGFUSE_FORCE_DISABLE` is a kill switch for OTEL memory pressure — **not currently set** in prod | [Observability](/08-cross-cutting/observability) |
 | **Sentry** | Error + perf tracking | Optional — SDK no-ops if `SENTRY_DSN` unset | [Observability](/08-cross-cutting/observability) |
 | **Cloudflare R2 + CDN** | Hosts `cdn.oyechats.com/oyechats-widget.js` | Cache-revalidate headers; loader + manifest are short-cache, hashed chunks immutable | [CI/CD](/07-deployment/ci-cd) |
-| **Customer CRMs** | Outbound HMAC-signed webhooks (`tier_transition`, `lead_captured`, `handoff_requested`, `chat_closed`, `meeting_booked`) | 5-attempt retry with 30s/2m/10m/1h backoff | [Webhook delivery](/04-flows/webhook-delivery) |
+| **Customer CRMs** | Outbound HMAC-signed webhooks (`tier_transition`, `lead_captured`, `handoff_requested`, `chat_closed`, `meeting_booked`) | Up to 5 attempts with 30s/2m/10m/1h delays, then abandoned with an ERROR log | [Webhook delivery](/04-flows/webhook-delivery) |
+| **Reoon** | Email verification on captured leads | Missing key makes every call return `None`, which every caller treats as fail-open — a platform-wide no-op, now reported once per process with a counter | [External services](/07-deployment/external-services) |
+| **ipapi.is** | Visitor IP → company / ISP resolution | Feature is skipped; no user-visible impact | [External services](/07-deployment/external-services) |
 
 ## Trust boundaries
 
@@ -127,7 +136,7 @@ flowchart LR
     end
     subgraph third["3rd-party SaaS"]
       direction TB
-      ext[("OpenAI · Gemini<br/>Brevo · Stripe · …")]:::ext
+      ext[("OpenAI · Gemini<br/>Brevo · Razorpay · …")]:::ext
     end
 
     widget == "public X-Bot-Key" ==> api
@@ -140,9 +149,9 @@ The widget runs on **untrusted host pages**; only the public `bot_key` ever ship
 ## Why this matters
 
 A new engineer should be able to point at this diagram and answer:
-1. "Where does customer money go?" → Razorpay/Stripe.
+1. "Where does customer money go?" → Razorpay, and only Razorpay.
 2. "Where do customer documents physically live?" → Postgres (chunks + embeddings) and R2 (originals).
-3. "What happens if OpenAI has an outage?" → LiteLLM falls back to Gemini, chat continues.
+3. "What happens if OpenAI has an outage?" → LiteLLM falls back to Gemini and chat continues. A **Gemini** outage is the sharper one: it takes embeddings and both gates with it.
 4. "Where does the widget code physically live?" → Cloudflare R2 at `cdn.oyechats.com`.
 
 If any of those answers stop being true, this page is what to update first.

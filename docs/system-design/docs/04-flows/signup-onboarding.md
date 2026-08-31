@@ -1,10 +1,10 @@
 # Signup & onboarding
 
-> **Audience:** New engineers · **Read time:** 4 min · **Last updated:** 2026-04-28
+> **Audience:** New engineers · **Read time:** 4 min · **Last updated:** 2026-08-31
 
 ## TL;DR
 
-Customer registers → seeded as `clients` row + free trial `subscriptions` row → creates first `bots` row → uploads docs (or crawls URL) → grabs embed snippet from the Chatbot page. End-to-end zero engineer required.
+Customer registers → seeded as a `clients` row plus a `subscriptions` row on the non-public **`trial`** plan (the one seeded row with `trial_days > 0`; every purchasable tier is 0) → verifies email → creates the first `bots` row → uploads docs or crawls a URL → grabs the embed snippet from the agent's Deploy page. End-to-end zero engineer required. When the trial lapses the row **converts to Free in place** rather than expiring — see the [Subscription FSM](/05-state-machines/subscription).
 
 ## Sequence
 
@@ -27,26 +27,26 @@ sequenceDiagram
     User->>Admin: visit /register, submit email + password + company
     Admin->>API: POST /auth/register
     API->>DB: INSERT clients (api_key=randomgen, hashed_password)
-    API->>DB: INSERT subscriptions (plan=free, status=trialing)
+    API->>DB: INSERT subscriptions (plan=trial, status=trialing)
     API->>DB: INSERT credit_ledger (delta=plan grant)
     API->>Worker: enqueue task_send_email("welcome")
     API-->>Admin: 200 + api_key
     Admin->>Admin: store api_key in localStorage
     Worker-->>Brevo: send "welcome" email (sys, free)
 
-    User->>Admin: navigate /chatbot, fill name + system_prompt
+    User->>Admin: create an agent (name + system_prompt)
     Admin->>API: POST /bots (X-API-Key)
     API->>DB: INSERT bots (bot_key=bot-randomgen)
     API-->>Admin: bot id + bot_key
     Admin-->>User: render embed snippet
 
-    User->>Admin: navigate /knowledge, upload PDF
+    User->>Admin: agent → Knowledge, upload PDF
     Admin->>API: POST /documents/upload (X-API-Key, file)
     API->>API: store file in Cloudflare R2 (S3-compatible PUT)
     API->>Worker: enqueue task_ingest_documents(bot_id, r2_key)
     API-->>Admin: 202 Accepted
     Worker->>Worker: extract → clean → chunk → embed
-    Worker->>DB: INSERT documents (vectors, tsvector)
+    Worker->>DB: INSERT documents (768-dim vectors) + UPDATE search_vector
     Worker-->>Admin: status polled via /documents/{id}
 
     User->>User: copy <script> tag<br/>paste into website
@@ -56,14 +56,16 @@ sequenceDiagram
 
 | File | Role |
 |---|---|
-| [`api/app/api/auth_routes.py`](../../../api/app/api/auth_routes.py) | `POST /auth/register`; password hashing, api_key gen, default subscription |
-| [`api/app/api/bot_routes.py`](../../../api/app/api/bot_routes.py) | `POST /bots`, embed-script template |
-| [`api/app/api/document_routes.py`](../../../api/app/api/document_routes.py) | Upload route → R2 → ARQ enqueue |
-| [`api/app/services/credit_service.py`](../../../api/app/services/credit_service.py) | First plan-grant ledger row |
-| [`api/app/worker/tasks.py`](../../../api/app/worker/tasks.py) | `task_ingest_documents` |
-| [`platform/app/src/pages/Register.jsx`](../../../app/src/pages/Register.jsx) | Form |
-| [`platform/app/src/pages/Chatbot.jsx`](../../../app/src/pages/Chatbot.jsx) | Embed snippet UI |
-| [`platform/app/src/pages/KnowledgeBase.jsx`](../../../app/src/pages/KnowledgeBase.jsx) | Upload UI |
+| [`api/app/api/auth_routes.py`](../../../../api/app/api/auth_routes.py) | `POST /auth/register`; password hashing, api_key gen, default subscription |
+| [`api/app/api/bot_routes.py`](../../../../api/app/api/bot_routes.py) | `POST /bots`, embed-script template |
+| [`api/app/api/document_routes.py`](../../../../api/app/api/document_routes.py) | Upload route → R2 → ARQ enqueue |
+| [`api/app/services/credit_service.py`](../../../../api/app/services/credit_service.py) | First plan-grant ledger row |
+| [`api/app/worker/tasks.py`](../../../../api/app/worker/tasks.py) | `task_ingest_documents` |
+| [`api/app/services/plan_service.py`](../../../../api/app/services/plan_service.py) | `assign_default_plan_to_client` — picks the `trial` row |
+| [`app/src/pages/Register.tsx`](../../../../app/src/pages/Register.tsx) | Sign-up form |
+| [`app/src/onboarding/`](../../../../app/src/onboarding) | First-run / setup flow |
+| [`app/src/features/agents/channels/DeployPage.tsx`](../../../../app/src/features/agents/channels/DeployPage.tsx) | Embed snippet UI (variants in [`app/src/data/widgetEmbed.ts`](../../../../app/src/data/widgetEmbed.ts)) |
+| [`app/src/features/agents/knowledge/`](../../../../app/src/features/agents/knowledge) | Upload + crawl UI |
 
 ## Failure modes
 
@@ -74,4 +76,4 @@ sequenceDiagram
 
 ## Why this matters
 
-This is the path every customer walks. If anything in this chain regresses, the conversion funnel collapses — see [Analytics](../../../app/src/pages/Analytics.jsx) for the metrics to watch.
+This is the path every customer walks. If anything in this chain regresses, the conversion funnel collapses — the metrics live in `app/src/features/analytics/` and the `activation_events` / `billing_funnel_events` tables.

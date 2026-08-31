@@ -1,10 +1,10 @@
 # Scaling plan
 
-> **Audience:** CTO · Eng leads · **Read time:** 5 min · **Last updated:** 2026-04-28
+> **Audience:** CTO · Eng leads · **Read time:** 5 min · **Last updated:** 2026-08-31
 
 ## TL;DR
 
-Three phases. **Phase 1 (today)** — single droplet, single worker, deliberate simplicity. **Phase 2** — Redis pub/sub for WebSocket fan-out so we can run multiple Gunicorn workers and (later) multiple API hosts. **Phase 3** — managed Postgres + Redis, hot-standby API host behind a load balancer, ARQ worker fleet.
+Three phases. **Phase 1** — single droplet, single worker, deliberate simplicity. **Phase 2 shipped on 2026-08-20**, in a different shape than planned: rather than putting the whole `ConnectionManager` behind Redis pub/sub inside one multi-worker app, `/ws/*` was moved to its own single-worker service (`oyechats-ws.service`) with a Redis backplane carrying frames between processes — which let the API service go to `WEB_CONCURRENCY=2`. **Phase 3** — managed Postgres + Redis, hot-standby API host behind a load balancer, ARQ worker fleet. That is where we are now.
 
 ## Phase map
 
@@ -20,15 +20,15 @@ flowchart LR
     classDef next fill:#fef3c7,stroke:#b45309,color:#78350f,stroke-width:2px
     classDef later fill:#fee2e2,stroke:#b91c1c,color:#7f1d1d,stroke-dasharray:5 3
 
-    P1["📍 Phase 1 · today<br/>━━━━━━━━━━━<br/>Single droplet<br/>1 gunicorn worker<br/>In-memory WS presence"]:::now
-    P2["⏭ Phase 2 · next<br/>━━━━━━━━━━━<br/>Multi-worker on 1 host<br/>Redis pub/sub for WS<br/>Bigger droplet<br/>Re-enable Langfuse"]:::next
+    P1["✅ Phase 1 · done<br/>━━━━━━━━━━━<br/>Single droplet<br/>1 gunicorn worker<br/>In-memory WS presence"]:::now
+    P2["📍 Phase 2 · DONE 2026-08-20<br/>━━━━━━━━━━━<br/>/ws/ split to its own service<br/>Redis backplane between processes<br/>API at WEB_CONCURRENCY=2"]:::now
     P3["🌐 Phase 3 · later<br/>━━━━━━━━━━━<br/>Multi-host horizontal<br/>Managed Postgres + Redis<br/>Hot-standby + load balancer"]:::later
 
     P1 == "scale vertically" ==> P2
     P2 == "scale horizontally" ==> P3
 ```
 
-## Phase 1 — Today
+## Phase 1 — the original shape
 
 | Component | State |
 |---|---|
@@ -40,51 +40,42 @@ flowchart LR
 | Admin | Vercel |
 | Backups | Nightly `pg_dump` to Cloudflare R2 |
 
-**Why deliberately simple:** small customer base, one team, one place to debug. Buying complexity now means paying interest for years.
+**Why deliberately simple:** small customer base, one team, one place to debug. Buying complexity now means paying interest for years. This rationale still holds for everything Phase 3 covers — it is why the droplet has not been split.
 
-## Phase 2 — Multi-worker on one host
+## Phase 2 — shipped 2026-08-20 (as a process split, not a multi-worker refactor)
 
-**Trigger to start:** any of the following:
-- p95 chat latency degrades under load
-- WebSocket disconnect rate climbs over a few percent
-- OOM kills observed in journalctl
+The plan was to put `ConnectionManager` behind Redis pub/sub *inside* one multi-worker app. What shipped inverts that, and the inversion is the interesting part:
 
-### Work items (rough order)
+1. **`/ws/*` moved to its own service.** `oyechats-ws.service` runs one uvicorn worker on `127.0.0.1:8001`, and nginx routes `/ws/` there. A single-worker process keeps the in-memory socket maps coherent for the sockets it owns, so the hard part of the refactor — making per-process presence correct under concurrency — was sidestepped rather than solved.
+2. **A Redis backplane carries frames between processes.** Channels are per-target (`ws:operator:{id}`, `ws:session:{id}`) rather than one firehose, so each process only receives traffic for sockets it holds. Delivery is **at-most-once by design**: `ChatMessage` rows are the source of truth and the widget re-hydrates over REST on reconnect, so Redis Streams would buy durability we already have from Postgres.
+3. **The API went to `WEB_CONCURRENCY=2`**, with the DB pool budget divided (3+5 per worker) rather than multiplied, and `CHAT_MAX_CONCURRENCY` lowered to 6 to stay under the new per-worker ceiling of 8.
+4. **The flag stayed.** `WS_BACKPLANE_ENABLED` gates both publisher and subscriber, so the backplane ships dark and is enabled per environment.
 
-1. **Upsize droplet to 4 GB RAM**, bumping monthly spend by ~$10. Immediate breathing room; re-enables Langfuse.
-2. **Refactor `ConnectionManager`** in `live_chat_service.py` to use **Redis pub/sub** rather than an in-process dict.
-   - Each Gunicorn worker subscribes to `oyechats:ws:operator:{client_id}` and `oyechats:ws:visitor:{session_id}`.
-   - Outgoing WS messages publish to Redis; the worker holding the destination connection forwards.
-   - Local in-memory dict still tracks the connections this worker owns; cross-worker delivery routes through Redis.
-   - Keep this change behind a feature flag (`WS_PUBSUB_ENABLED`) so we can roll back fast.
-3. **Bump `WEB_CONCURRENCY`** to ≥ 2. Validate WebSocket cross-worker delivery in dev with two locally-bound workers before rolling.
-4. **ARQ worker count** — run 2 worker processes on the same droplet so we can keep CPU-bound tasks (Playwright crawls) off the I/O worker's plate.
-5. **Sentry budget review** — bump trace sample rate now that we have headroom.
+### What the shape costs
 
-### Estimated effort
+- **Fan-out that iterates a per-process dict now reaches nobody** on the API process, permanently and silently. Every notification path had to be converted to "local sockets ∪ Redis presence, then deliver". Several were missed on the first pass and shipped inert.
+- **Redis moved onto the live-chat delivery path.** It was cache and queue; it is now correctness-adjacent, while publishes remain deliberately fail-open so a Redis blip cannot 500 a visitor's message. That combination makes the failure quiet.
+- **The API and WS processes can disagree about the flag.** The unit pins it true; the deploy writes `${WS_BACKPLANE_ENABLED:-false}` into the API's `.env`.
 
-~1–2 sprints (1 engineer). The risk is in the WS refactor; everything else is config.
+### Not done from the original list
 
-### Phase 2 success metrics
-
-- p95 chat latency stable as load doubles
-- 0 cross-worker WS message losses in synthetic test
-- Langfuse traces flowing for ≥ 99% of chat turns
+- **ARQ worker count** is still 1. The motivation was keeping Playwright crawls off the I/O worker, and there is no longer a Playwright crawl — ingestion is network-bound end to end.
+- **Langfuse re-enable** turned out not to need a droplet upsize; `LANGFUSE_FORCE_DISABLE` is simply not set.
 
 ## Phase 3 — Multi-host horizontal
 
-**Trigger to start:** when Phase-2 single-droplet utilisation hits 70% on any of CPU / memory / DB connections regularly.
+**Trigger to start:** when single-droplet utilisation regularly hits 70% on any of CPU / memory / DB connections. This is the current phase boundary.
 
 ### Work items (rough order)
 
 1. **Move Postgres to a managed instance** (DO Managed Postgres or AWS RDS-equivalent).
    - Run Postgres backups via the managed-service feature, retire `scripts/backup.sh`.
    - Update `DB_URL` and connection pooling (consider PgBouncer if connection count climbs).
-2. **Move Redis to a managed instance** (Upstash or DO Managed Redis).
+2. **Move Redis to a managed instance** (Upstash or DO Managed Redis). Note this is no longer only a cache decision: the WS backplane runs on it, so its availability now shows up as live-chat delivery, and its failure mode is silent.
 3. **Add a second API droplet (hot standby)** behind a Cloudflare Load Balancer.
    - Both droplets connect to the same managed PG + Redis.
-   - Sticky sessions on `ip_hash` (Cloudflare LB equivalent) for WebSocket affinity.
-4. **ARQ worker fleet** — separate VM(s) so worker CPU doesn't compete with API.
+   - WebSocket affinity is no longer a hard requirement for correctness — the backplane already crosses processes — but presence-key ownership needs to be settled before running multiple WS processes.
+4. **ARQ worker fleet** — separate VM(s) so worker CPU doesn't compete with API. Note that BANT extraction and the groundedness judge would *not* move with it: they run on the API process's thread pool, and making them durable is a separate decision.
 5. **Staging environment** — second droplet pointed at separate DB + sandbox provider keys.
 6. **Origin certificate auth** Cloudflare → API hosts (replaces "trust the Cloudflare network" model).
 
@@ -122,4 +113,6 @@ Indicative monthly spend per phase (excluding LLM tokens):
 
 ## Why this matters
 
-Phase planning protects us from two failure modes: **over-engineering** (paying complexity interest before customers need it) and **panic-engineering** (rebuilding under fire when something melts). The triggers above are the bridges between phases. When a metric crosses a threshold, this page is what we re-read; until then, ship features.
+Phase planning protects us from two failure modes: **over-engineering** (paying complexity interest before customers need it) and **panic-engineering** (rebuilding under fire when something melts). The triggers above are the bridges between phases.
+
+Phase 2 is also a case study worth keeping: the cheapest way past the one-worker ceiling was not the refactor that was planned, but a process split that made the hard part unnecessary. The price was a new class of silent failure — a fan-out that used to be obviously wrong (an empty dict on the only process) is now invisibly wrong (an empty dict on one of three). When you buy simplicity somewhere, check where the complexity went.
