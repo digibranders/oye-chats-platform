@@ -22,8 +22,18 @@ recorded in the latest pricing migration header.
 ## Step 1 — Decide whether to re-price
 
 Check spot ₹/$ (e.g. `exchangerate.host` or Google Finance). Compare to the
-reference rate in the most recent pricing migration file header
-(`api/alembic/versions/*_usd_columns_and_topup_reanchor.py` — currently **₹94.67/$1**).
+reference rate the product actually uses: `DISPLAY_USD_TO_INR` in
+`api/app/config.py:448` — currently **₹94.67/$1**, mirrored as the default of
+`core/pricing.py::display_price` and as `FALLBACK_USD_TO_INR` in
+`app/src/lib/currency.ts`.
+
+> The migration this step used to point at
+> (`*_usd_columns_and_topup_reanchor.py`) no longer exists: the 2026-07-16
+> relaunch squashed 106 revisions into `b6c86b4c8434_baseline_schema`, and the
+> reference rate survived only as the config default above. It is a **display**
+> rate — it converts a legacy INR-only row into a USD headline for a non-Indian
+> viewer — and it never touches an actual charge, which always comes from a
+> minted Razorpay plan.
 
 - Drift < 5% → stop. Prices are deliberately sticky; micro-adjustments erode trust.
 - Drift ≥ 5% → continue.

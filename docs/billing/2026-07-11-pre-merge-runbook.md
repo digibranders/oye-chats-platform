@@ -1,5 +1,12 @@
 # Billing Remediation — Pre-Merge Runbook (PR #260)
 
+> **✅ Shipped.** Every fix in §1 is present in the tree (re-checked 2026-08-31), so this is a
+> record of one release, not a gate anyone is still standing at. Other documents link to its
+> **§4B staging checklist** as a reusable procedure — that part still applies. Two figures in the
+> header below are frozen at 2026-07-11: the alembic head `e3c9a17f2b64` no longer exists (the
+> 2026-07-16 relaunch squashed 106 revisions into `b6c86b4c8434_baseline_schema`), and the suite
+> count has long since moved. Take the head from `alembic heads`, never from here.
+
 > **Branch:** `development` → `main` (production) · **PR:** https://github.com/digibranders/oye-chats-platform/pull/260
 > **Status of automated gates:** full backend suite **2295 passed** · `ruff check` + `ruff format` clean · single alembic head `e3c9a17f2b64` · admin app lint 0 errors + build ✓ · widget lint 0 errors + build ✓ + 50 tests.
 > **This is not "merge and forget."** Work top-to-bottom: changes → staging smoke tests → deploy procedure → sign-offs. Do not merge to `main` until §B, §E, §F are satisfied.

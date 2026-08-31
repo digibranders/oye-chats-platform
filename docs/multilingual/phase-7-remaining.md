@@ -12,17 +12,21 @@ cd app && node scripts/i18n-inventory.mjs
 
 ## Where it stands
 
-| | at the start | now |
-|---|---:|---:|
-| `t()` call sites | 30 | **1,602** |
-| Strings still unlocalized | 5,348 | **1,433** |
-| Files consuming i18n | 28 | 185 |
-| `hi.ts` | 2,003 lines | 3,321 lines |
+Every "now" figure below is a re-measurement taken **2026-08-31** with the
+command above. They drift as unrelated work lands, so re-run it before quoting
+them; the shape of what is left is the durable part, not the arithmetic.
 
-Of the 1,433 remaining, **823 are `dev/UiGallery.tsx`** — an internal component
+| | at the start | now (2026-08-31) |
+|---|---:|---:|
+| `t()` call sites | 30 | **1,616** |
+| Strings still unlocalized | 5,348 | **1,461** |
+| Files consuming i18n | 28 | 189 |
+| `hi.ts` | 2,003 lines | 3,333 lines |
+
+Of the 1,461 remaining, **823 are `dev/UiGallery.tsx`** — an internal component
 gallery that is never shipped to a customer — and the rest divide as below.
 
-## 1. The long tail: 610 strings
+## 1. The long tail: 638 strings
 
 These are the three shapes `i18n-codemod.mjs` deliberately refuses, because a
 wrong edit is a silent rendering bug rather than a compile error. Every one
@@ -32,18 +36,18 @@ needs the same judgement a human applied to the others.
 |---|---:|
 | `features/leads` | 92 |
 | `features/agents/experience` | 74 |
+| `shell` (excluding `shell/feedback`) | 65 |
 | `features/inbox` | 63 |
-| `shell` | 54 |
+| `features/agents/knowledge` (excluding `add`) | 53 |
 | `features/agents/quotation` | 37 |
-| `features/agents/knowledge` | 37 |
-| `features/agents/knowledge/add` | 36 |
+| `features/agents/knowledge/add` | 37 |
+| `pages` | 34 |
 | `features/analytics` | 33 |
-| `pages` | 31 |
 | `features/agents/channels` | 27 |
 | `shell/feedback` | 20 |
 | `features/settings` | 20 |
 | `app/errors` | 19 |
-| everything else | ~67 |
+| everything else | ~64 |
 
 ### The three shapes, and how each is handled
 
