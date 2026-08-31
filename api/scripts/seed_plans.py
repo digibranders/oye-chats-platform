@@ -137,7 +137,7 @@ _PLANS: list[dict] = [
         "slug": "free",
         "name": "Free",
         "description": "A grounded AI bot, free forever.",
-        "credits_per_month": 200,
+        "credits_per_month": 100,
         "monthly_price_cents": 0,
         "annual_price_cents": 0,
         "monthly_price_usd_cents": 0,
@@ -150,7 +150,7 @@ _PLANS: list[dict] = [
         "is_public": True,
         "sort_order": 1,
         "limits": {
-            "credits": 200,
+            "credits": 100,
             "bots": 1,
             "operators": 0,
             "leads": 15,
@@ -269,7 +269,7 @@ _PLANS: list[dict] = [
         "slug": "professional",
         "name": "Professional",
         "description": "For teams scaling qualified pipeline with deeper frameworks.",
-        "credits_per_month": 10000,
+        "credits_per_month": 8000,
         "monthly_price_cents": 299900,  # ₹2,999
         "annual_price_cents": 2818800,  # ₹28,188 (₹2,349/mo × 12)
         "monthly_price_usd_cents": 4599,  # $45.99
@@ -282,7 +282,7 @@ _PLANS: list[dict] = [
         "is_public": True,
         "sort_order": 4,
         "limits": {
-            "credits": 10000,
+            "credits": 8000,
             "bots": 1,
             "operators": 3,
             "leads": -1,
@@ -329,8 +329,8 @@ _PLANS: list[dict] = [
             # this copy is what ``/subscriptions/plans`` and the public pricing
             # catalog serialize as ``limits.credits``. Enterprise sells pooling
             # (unlimited agents/seats/domains on ONE pool), not a bigger
-            # allowance, so the pooled figure stays at Professional's 10,000 and
-            # heavy accounts top up.
+            # allowance, so the pooled figure is a flat 10,000 and heavy
+            # accounts top up.
             "credits": 10000,
             # Unlimited bots is the whole point of this tier. Credits still
             # meter real cost (5 per page, 1 per 250 words), so uncapped
