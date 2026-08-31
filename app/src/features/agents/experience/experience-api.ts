@@ -10,6 +10,7 @@
 
 import {
   detectBrandTone,
+  fetchSiteIcon as fetchSiteIconRequest,
   getBrandTonePresets,
   getSeedQuestions,
   previewBrandTone,
@@ -123,4 +124,12 @@ export async function fetchSuggestedQuestions(
 export async function uploadAvatar(file: File): Promise<string> {
   const { url } = await uploadLogo(file);
   return url;
+}
+
+/**
+ * Re-derives the bot's website favicon and returns it as an image Blob to crop.
+ * The upload itself still goes through {@link uploadAvatar} after cropping.
+ */
+export async function fetchSiteIcon(botId: number): Promise<Blob> {
+  return fetchSiteIconRequest(botId);
 }

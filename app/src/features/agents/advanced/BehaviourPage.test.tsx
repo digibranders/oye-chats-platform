@@ -196,18 +196,18 @@ describe('answering scope', () => {
 });
 
 describe('widget behaviour', () => {
-  it('says the Free plan overrides every flag, without misreporting the stored values', async () => {
+  it('shows every widget flag off and locked on the Free plan', async () => {
     /* `get_bot_settings_public` rewrites the whole map to false for a Free
-       workspace before the widget sees it. Flipping the switches here would
-       misreport what is actually on the record. */
+       workspace before the widget sees it, so the switches render off and
+       read-only here — matching what the widget actually does — with the
+       upgrade nudge on the group above. */
     mountEntitlements({ isFree: true, hasFeature: () => false });
     await renderSettled();
 
     expect(screen.getByText(/switched off for visitors on the Free plan/i)).toBeInTheDocument();
-    expect(screen.getByRole('switch', { name: 'Typing indicator' })).toHaveAttribute(
-      'aria-checked',
-      'true',
-    );
+    const typing = screen.getByRole('switch', { name: 'Typing indicator' });
+    expect(typing).toHaveAttribute('aria-checked', 'false');
+    expect(typing).toHaveAttribute('aria-disabled', 'true');
   });
 
   it('marks queue position as having no effect without live chat', async () => {

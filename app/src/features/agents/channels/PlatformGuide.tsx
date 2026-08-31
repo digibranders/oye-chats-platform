@@ -7,6 +7,7 @@ import {
   type Platform,
   type PlatformEnv,
 } from '../../../data/platformIntegrations';
+import { PLATFORM_ICONS } from './platformIcons';
 import { useTranslation } from '../../../i18n/useTranslation';
 
 export interface PlatformGuideProps {
@@ -28,6 +29,7 @@ function platformOptions(): ComboboxOption<string>[] {
     value: platform.id,
     label: platform.name,
     description: platform.description,
+    icon: PLATFORM_ICONS[platform.id],
     // The category is searchable without taking a third line on every row:
     // typing "cms" or "builder" finds the right group.
     keywords: `${categoryLabels[platform.category] ?? platform.category} ${platform.category}`,

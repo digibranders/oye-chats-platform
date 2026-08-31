@@ -1,3 +1,4 @@
+import asyncio
 import html
 import ipaddress
 import logging
@@ -10,7 +11,7 @@ from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from pydantic import (
     AfterValidator,
     BaseModel,
@@ -86,6 +87,27 @@ _HHMM_PATTERN = r"^(?:[01]\d|2[0-3]):[0-5]\d$"
 _MAX_SERVICES = 50
 _MAX_ANSWER_LINKS = 50
 _MAX_LEAD_FORM_FIELDS = 10
+
+# ``update_bot`` fields behind the paid Email and Meetings integrations. The
+# Free plan sees an upsell in place of both dashboard panels, and this route is
+# the only writer of these columns, so a plan gate here is what makes the block
+# real rather than cosmetic.
+_INTEGRATION_PAID_FIELDS = frozenset(
+    {
+        "notification_email",
+        "notification_emails",
+        "reply_to_email",
+        "email_on_qualified",
+        "email_on_handoff",
+        "email_on_offline",
+        "email_visitor_confirmation",
+        "meeting_booking_enabled",
+        "meeting_provider",
+        "calendly_url",
+        "zcal_url",
+        "calcom_url",
+    }
+)
 
 # ``bant_config`` holds a full qualification rubric (four-plus dimensions,
 # each with prompts and scored options), so it gets a larger budget than the
@@ -964,7 +986,7 @@ def _bot_to_response(bot: Bot, request: Request, *, plan_slug: str = "free", pla
         manual_field_overrides=bot.manual_field_overrides or [],
         bot_logo=bl,
         bot_logo_source=bot.bot_logo_source,
-        launcher_name=bot.launcher_name or "Have Questions?",
+        launcher_name=(bot.launcher_name if bot.launcher_name is not None else "Have Questions?"),
         launcher_logo=ll,
         primary_color=bot.primary_color or "#a21caf",
         background_color=bot.background_color or "#ffffff",
@@ -1301,7 +1323,7 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
     return {
         "bot_name": bot.name,
         "bot_logo": logo_url,
-        "launcher_name": bot.launcher_name or "Have Questions?",
+        "launcher_name": (bot.launcher_name if bot.launcher_name is not None else "Have Questions?"),
         "launcher_logo": launcher_logo_url,
         "primary_color": bot.primary_color or "#a21caf",
         "background_color": bot.background_color or "#ffffff",
@@ -2315,7 +2337,7 @@ def list_bots(
                     # could only ask "is there a logo", which a derived
                     # favicon answers yes to.
                     bot_logo_source=b.bot_logo_source,
-                    launcher_name=b.launcher_name or "Have Questions?",
+                    launcher_name=(b.launcher_name if b.launcher_name is not None else "Have Questions?"),
                     launcher_logo=ll,
                     primary_color=b.primary_color or "#a21caf",
                     background_color=b.background_color or "#ffffff",
@@ -3053,6 +3075,53 @@ def detect_brand_tone(bot_id: int, request: Request, auth=Depends(get_current_cl
         return {"brand_tone": bot.brand_tone, "brand_tone_preset": key}
 
 
+@router.post("/{bot_id}/site-icon")
+@limiter.limit("10/minute")
+def fetch_site_icon(bot_id: int, request: Request, auth=Depends(get_current_client_or_operator)):
+    """Re-fetch the bot's website favicon on demand and return it as a PNG.
+
+    The crawl only derives a favicon once, into an empty avatar slot, and keeps
+    no separate copy (see ``crawl_orchestrator._maybe_apply_favicon_avatar``), so
+    a customer who changed their avatar cannot get the site icon back from stored
+    state. The bot does keep its ``website``, so this re-derives it live instead:
+    it fetches through the same SSRF-guarded, size-capped extractor the crawl
+    uses and normalises the bytes with the same 512x512 logo pipeline, then hands
+    the PNG straight back. Nothing is persisted — the admin crops it in the
+    browser and saves it through the normal ``/client/upload-logo`` path, exactly
+    like any other image, so this route never touches the avatar itself.
+    """
+    _require_bot_management_access(auth)
+    with get_session() as session:
+        bot = _get_workspace_bot(session, bot_id, auth["client_id"])
+        website = (bot.website or "").strip()
+
+    if not website:
+        raise HTTPException(status_code=400, detail="Add your website URL first to use its icon.")
+
+    from app.services.favicon_extractor import fetch_favicon_image
+    from app.services.r2_service import process_image_for_logo
+
+    try:
+        # `fetch_favicon_image` is async (SSRF-guarded fetches); this route is a
+        # sync path operation running in a worker thread with no running loop, so
+        # a private `asyncio.run` is the safe bridge and keeps the DB work sync.
+        raw = asyncio.run(fetch_favicon_image(website))
+    except Exception:
+        logger.warning("site-icon fetch failed for bot %s (non-fatal)", bot_id, exc_info=True)
+        raw = None
+
+    if not raw:
+        raise HTTPException(status_code=404, detail="Couldn't find an icon on your website.")
+
+    png = process_image_for_logo(raw)
+    if not png:
+        raise HTTPException(status_code=422, detail="That icon couldn't be turned into an avatar.")
+
+    # `no-store`: the icon is re-derived live and the customer may change their
+    # site's favicon at any time, so a cached copy would go stale silently.
+    return Response(content=png, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
 @router.post("/{bot_id}/seed-questions")
 @limiter.limit("10/minute")
 def get_seed_questions(
@@ -3561,6 +3630,34 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
                         "fields": _branding_writes,
                     },
                 )
+
+            # Email notifications and meeting booking are paid features: the
+            # dashboard shows the Free plan an upsell in place of both panels
+            # (see IntegrationsPage). This route is the only writer of these
+            # columns, so without a gate here a direct PATCH would still persist
+            # settings a Free plan cannot use. Reject at the door, the same as
+            # the branding add-on above, so the stored state and the plan agree.
+            _integration_writes = sorted(_INTEGRATION_PAID_FIELDS & update_data.keys())
+            if _integration_writes:
+                from app.services.plan_entitlements_service import get_entitlements
+
+                if get_entitlements(auth["client_id"], session).plan_slug == "free":
+                    logger.warning(
+                        "Bot %s integration write rejected on free plan: %s",
+                        bot_id,
+                        _integration_writes,
+                    )
+                    raise HTTPException(
+                        status_code=403,
+                        detail={
+                            "error": "feature_not_available",
+                            "message": (
+                                "Email notifications and meeting booking are not included "
+                                "on the free plan. Upgrade to configure them."
+                            ),
+                            "fields": _integration_writes,
+                        },
+                    )
 
             # Sync logos
             if "bot_logo" in update_data:

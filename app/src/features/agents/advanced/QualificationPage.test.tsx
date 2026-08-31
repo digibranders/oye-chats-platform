@@ -187,21 +187,11 @@ describe('the dirty / save contract', () => {
     await waitFor(() => expect(updateBot).toHaveBeenCalledTimes(1));
     const [, payload] = vi.mocked(updateBot).mock.calls[0];
     expect((payload.bant_config as Record<string, Record<string, number>>).thresholds.sql).toBe(85);
-    // The enrichment switches did not change, so their PATCH is not sent.
+    // Enrichment moved to Experience ▸ Leads, so the rubric save never carries
+    // an enrichment key.
     expect(payload).not.toHaveProperty('company_lookup_enabled');
 
     expect(await screen.findByText('All changes saved.')).toBeInTheDocument();
-  });
-
-  it('sends the enrichment toggles in their own PATCH, without the rubric', async () => {
-    await renderSettled();
-
-    await user.click(screen.getByRole('switch', { name: /Company lookup/i }));
-    await user.click(screen.getByRole('button', { name: 'Save changes' }));
-
-    await waitFor(() => expect(updateBot).toHaveBeenCalledTimes(1));
-    const [, payload] = vi.mocked(updateBot).mock.calls[0];
-    expect(payload).toEqual({ email_verification_enabled: false, company_lookup_enabled: true });
   });
 
   it('discards back to the loaded values', async () => {

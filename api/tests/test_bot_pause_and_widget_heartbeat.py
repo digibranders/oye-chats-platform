@@ -810,12 +810,28 @@ def _widget_request(origin="https://acme.com"):
 
 
 class _WidgetHarness:
-    """Counts the row writes one bootstrap performs."""
+    """Counts the row writes one bootstrap performs.
+
+    ``writes`` counts statements that MUTATE a row, not every ``execute``.
+    Since the bootstrap began recording per-domain install rows it also issues a
+    ``SELECT count(*)`` to check the per-bot row ceiling, and counting that as a
+    write would make these tests report a number that has nothing to do with the
+    thing they exist to bound: how often the hottest endpoint in the product
+    touches a row.
+
+    ``scalar_one`` is given a real integer for the same reason. A bare
+    ``MagicMock`` compares with ``NotImplemented`` against an int, so the
+    ceiling check raised ``TypeError``, the bootstrap's best-effort ``except``
+    swallowed it, and the per-domain write these tests are supposed to bound
+    never ran at all.
+    """
 
     def __init__(self, monkeypatch, redis):
         from app.api import bot_routes as br
 
         self.session = MagicMock()
+        # Rows this bot already has, for `record_observed_domain`'s cap check.
+        self.session.execute.return_value.scalar_one.return_value = 0
         self.br = br
         monkeypatch.setattr(br, "get_session", lambda: _session_ctx(self.session))
         monkeypatch.setattr(br, "get_redis", lambda: redis)
@@ -823,7 +839,24 @@ class _WidgetHarness:
 
     @property
     def writes(self) -> int:
-        return self.session.execute.call_count
+        from sqlalchemy.sql.expression import Insert, Update
+
+        return sum(
+            1
+            for call in self.session.execute.call_args_list
+            if call.args and isinstance(call.args[0], (Update, Insert))
+        )
+
+    @property
+    def domain_rows_written(self) -> int:
+        """Per-(bot, domain) upserts specifically."""
+        from sqlalchemy.sql.expression import Insert
+
+        return sum(
+            1
+            for call in self.session.execute.call_args_list
+            if call.args and isinstance(call.args[0], Insert) and call.args[0].table.name == "bot_domain_installs"
+        )
 
     def bootstrap(self, bot, request):
         with (
@@ -844,10 +877,16 @@ class TestWidgetHeartbeat:
         harness = _WidgetHarness(monkeypatch, redis)
         bot = _widget_bot()
 
+        # Two statements per accepted bootstrap, not one: the bot row's
+        # heartbeat, and the per-(bot, domain) install upsert beside it. Both
+        # sit behind the SAME throttle decision, so the pair is still bounded at
+        # 2 accepted bootstraps per bot per hour however much traffic arrives.
         harness.bootstrap(bot, _widget_request())
-        assert harness.writes == 1
+        assert harness.writes == 2
+        assert harness.domain_rows_written == 1
         harness.bootstrap(bot, _widget_request())
-        assert harness.writes == 1, "second page view within the hour must not touch the row"
+        assert harness.writes == 2, "second page view within the hour must not touch the row"
+        assert harness.domain_rows_written == 1
 
         # Per-BOT key. The hostname is the VALUE, never part of the key name.
         assert list(redis.store) == ["oyechats:widget:seen:5"]
@@ -865,7 +904,10 @@ class TestWidgetHeartbeat:
 
         harness.bootstrap(bot, _widget_request("https://acme.com"))
         harness.bootstrap(bot, _widget_request("https://shop.acme.com"))
-        assert harness.writes == 2
+        assert harness.writes == 4
+        # The point of the per-domain table: BOTH origins get a row, where the
+        # single `widget_last_origin` column could only keep the newer one.
+        assert harness.domain_rows_written == 2
         assert redis.store["oyechats:widget:seen:5"] == "shop.acme.com"
         assert set(redis.store) == {
             "oyechats:widget:seen:5",
@@ -874,7 +916,7 @@ class TestWidgetHeartbeat:
 
         # ...and the new origin is now the quiet one.
         harness.bootstrap(bot, _widget_request("https://shop.acme.com"))
-        assert harness.writes == 2
+        assert harness.writes == 4
 
     def test_forged_origins_cannot_buy_unbounded_writes(self, monkeypatch):
         """The abuse case, and the reason the key is not ``(bot_id, hostname)``.
@@ -895,7 +937,12 @@ class TestWidgetHeartbeat:
         for i in range(200):
             harness.bootstrap(bot, _widget_request(f"https://attacker-{i}.example"))
 
-        assert harness.writes == 2, "200 forged origins must not buy 200 row writes"
+        assert harness.writes == 4, "200 forged origins must not buy 200 row writes"
+        # And, critically, not 200 junk domain rows either. The per-domain
+        # upsert rides the same per-bot throttle rather than taking a
+        # hostname-keyed one, which is what stops a forged-Origin loop from
+        # buying a row per request.
+        assert harness.domain_rows_written == 2
         assert set(redis.store) == {
             "oyechats:widget:seen:5",
             "oyechats:widget:seen:origin:5",
@@ -934,7 +981,7 @@ class TestWidgetHeartbeat:
         monkeypatch.setattr(br, "cache_delete", lambda key: deletes.append(key) or True)
 
         harness.bootstrap(_widget_bot(), _widget_request())
-        assert harness.writes == 1
+        assert harness.writes == 2
         assert deletes == []
 
     def test_first_seen_still_stamps_and_invalidates_without_redis(self, monkeypatch):
@@ -947,7 +994,10 @@ class TestWidgetHeartbeat:
         monkeypatch.setattr(br, "cache_delete", lambda key: deletes.append(key) or True)
 
         harness.bootstrap(_widget_bot(widget_installed_at=None), _widget_request())
-        assert harness.writes == 1
+        assert harness.writes == 2
+        # The domain row is written in the SAME transaction as the stamp, so a
+        # first install is never recorded as "installed, nowhere".
+        assert harness.domain_rows_written == 1
         assert deletes == ["oyechats:bot:bot-heartbeat"]
 
     def test_first_seen_claims_the_throttle_slot(self, monkeypatch):
@@ -957,10 +1007,10 @@ class TestWidgetHeartbeat:
         harness = _WidgetHarness(monkeypatch, redis)
 
         harness.bootstrap(_widget_bot(widget_installed_at=None), _widget_request())
-        assert harness.writes == 1
+        assert harness.writes == 2
         assert redis.store["oyechats:widget:seen:5"] == "acme.com"
         harness.bootstrap(_widget_bot(), _widget_request())
-        assert harness.writes == 1
+        assert harness.writes == 2
 
     def test_a_broken_heartbeat_never_fails_the_bootstrap(self, monkeypatch):
         """Telemetry is not allowed to take a customer's widget down."""

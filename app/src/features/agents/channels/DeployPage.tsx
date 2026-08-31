@@ -4,10 +4,10 @@ import { ExternalLink } from 'lucide-react';
 import {
   Card,
   CardBody,
-  Columns,
   ConfirmDialog,
   EmptyState,
   ErrorState,
+  Grid,
   LockedState,
   Page,
   PageHeader,
@@ -46,50 +46,51 @@ type HelpTab = 'platform' | 'troubleshoot';
 /** The page while the chatbot is still being fetched. Shaped like what arrives. */
 function DeploySkeleton() {
   return (
-    <Columns
-      asideWidth="md"
-      aside={
-        <Stack>
-          <Card>
-            <CardBody className="space-y-3">
-              <Skeleton className="h-5 w-40" />
-              <Skeleton className="h-3.5 w-full" />
-              <Skeleton className="h-control-sm w-32" />
-            </CardBody>
-          </Card>
-          <Card>
-            <CardBody className="space-y-3">
-              <Skeleton className="h-4 w-28" />
-              <Skeleton className="h-control-md w-full" />
-            </CardBody>
-          </Card>
-        </Stack>
-      }
-      main={
-        <Stack>
-          <Card>
-            <CardBody className="space-y-3">
-              <Skeleton className="h-3 w-24" />
-              <Skeleton className="h-control-md w-full" />
-              <Skeleton className="h-32 w-full rounded-md" />
-              <Skeleton className="h-control-md w-72" />
-            </CardBody>
-          </Card>
-          {/* The help tabs are part of the shape that arrives, and they are in
-              this column: without them the page grew by ~300px under the reader
-              the moment the chatbot landed. */}
-          <div className="space-y-6">
-            <Skeleton className="h-10 w-72" />
-            <Card>
-              <CardBody className="space-y-3">
-                <Skeleton className="h-4 w-48" />
-                <Skeleton className="h-control-md w-80" />
-              </CardBody>
-            </Card>
-          </div>
-        </Stack>
-      }
-    />
+    <Grid cols={2} align="start">
+      {/* Row 1, left — snippet */}
+      <Card>
+        <CardBody className="space-y-3">
+          <Skeleton className="h-3 w-24" />
+          <Skeleton className="h-control-md w-full" />
+          <Skeleton className="h-32 w-full rounded-md" />
+          <Skeleton className="h-control-md w-72" />
+        </CardBody>
+      </Card>
+      {/* Row 1, right — help tabs */}
+      <div className="space-y-6">
+        <Skeleton className="h-10 w-full" />
+        <Card>
+          <CardBody className="space-y-3">
+            <Skeleton className="h-4 w-40" />
+            <Skeleton className="h-control-md w-full" />
+          </CardBody>
+        </Card>
+      </div>
+      {/* Row 2, left — access */}
+      <Card>
+        <CardBody className="space-y-3">
+          <Skeleton className="h-5 w-40" />
+          <Skeleton className="h-3.5 w-full" />
+          <Skeleton className="h-control-md w-full" />
+        </CardBody>
+      </Card>
+      {/* Row 2, right — install status + demo link */}
+      <Stack>
+        <Card>
+          <CardBody className="space-y-3">
+            <Skeleton className="h-5 w-40" />
+            <Skeleton className="h-3.5 w-full" />
+            <Skeleton className="h-control-sm w-32" />
+          </CardBody>
+        </Card>
+        <Card>
+          <CardBody className="space-y-3">
+            <Skeleton className="h-4 w-28" />
+            <Skeleton className="h-control-md w-full" />
+          </CardBody>
+        </Card>
+      </Stack>
+    </Grid>
   );
 }
 
@@ -106,9 +107,11 @@ function DeploySkeleton() {
  * stacked cards — 4,081px of scroll, with roughly 850px spent on card chrome
  * before a single control, and a first fold of prose around one snippet that
  * ended by telling the reader to scroll further down the page. What Intercom,
- * Crisp and Chatbase all do instead is put the artefact and the verification
- * state on screen together: the snippet on the left, the install status pinned
- * on the right, and everything else behind one tabbed help card.
+ * Crisp and Chatbase all do instead is put the artefact and its help on screen
+ * together: the snippet and its access allow-list run down the left, and the
+ * right column leads with the platform instructions beside the snippet, then
+ * drops the live install reading beside Access — the control most likely to be
+ * keeping that reading empty — with the shareable hosted demo beneath it.
  *
  * **Access is here, under one draft and one save bar.** The origin allow-list
  * and the session-continuity parent spent a release on Behaviour. What was
@@ -331,169 +334,150 @@ export function DeployPage() {
       {header}
 
       <Stack>
-        <Columns
-          asideWidth="md"
-          stickyAside
-          asideLabel="Install status"
-          main={
-            <Stack>
-              <SnippetSection
-                botKey={botKey}
-                botName={bot.name || 'OyeChats'}
-                botId={agentId}
-                env={deploy.env}
-                apiBaseUrl={deploy.apiBaseUrl}
-                platform={platform}
-                attribution={attribution}
-                resolving={entitlementsLoading}
-                devInviteEmail={bot.dev_invite_email ?? null}
-                devInviteSentAt={bot.dev_invite_sent_at ?? null}
-              />
+        {/* A row-paired 2-up. Each left card has its right neighbour locked to
+            the same row, which two independent columns could not guarantee: the
+            platform instructions sit beside the snippet, and the live install
+            reading sits beside Access — the allow-list most likely to be keeping
+            that reading empty. `align="start"` lets each card keep its own
+            height rather than stretching to the tallest in its row. */}
+        <Grid cols={2} align="start">
+          {/* Row 1, left — the artefact. */}
+          <SnippetSection
+            botKey={botKey}
+            botName={bot.name || 'OyeChats'}
+            botId={agentId}
+            env={deploy.env}
+            apiBaseUrl={deploy.apiBaseUrl}
+            platform={platform}
+            attribution={attribution}
+            resolving={entitlementsLoading}
+            devInviteEmail={bot.dev_invite_email ?? null}
+            devInviteSentAt={bot.dev_invite_sent_at ?? null}
+          />
 
-              {/* Directly under the snippet, and above the help tabs, because it
-                  is the most common reason a correctly-pasted snippet renders
-                  nothing. `scroll-mt` keeps the heading clear of the sticky
-                  topbar when the status rail's "Allowed domains" link jumps
-                  here. It renders only once loaded rather than as a skeleton:
-                  the snippet above it is the page's job and must not wait on a
-                  second request to appear. */}
-              {accessDraft ? (
-                <SettingGroup
-                  id="access"
-                  /* `full`, not the default `form`, and deliberately against
-                     the prop's "genuinely a wide table" wording.
-
-                     This column is 968px and every other block in it — the
-                     snippet, the help tabs — fills it. At the form measure the
-                     section rendered 672px, 296px narrower than the cards above
-                     and below, so the page stepped in and back out mid-scroll.
-                     That is the same defect `BehaviourPage` records against its
-                     own former `Measure width="form"`: a block visibly narrower
-                     than its neighbours reads as a broken shell rather than as
-                     a choice. The form measure is right where the whole column
-                     IS the form; here this is one block among wider ones.
-
-                     It does not cost the pair rule. `SettingRow` caps each
-                     label→control pair at `--container-pair` (640) regardless,
-                     so no control drifts away from the label naming it — the
-                     controls simply sit at 640 inside a wider card, which is
-                     what that token exists to guarantee.
-
-                     `id` rides the section itself, which also brings the shared
-                     `scroll-mt-gutter` for the status rail's jump link. */
-                  width="full"
-                  title="Access"
-                  description="Where this chatbot is allowed to run, and how far a conversation follows a visitor."
-                >
-                  <AccessSection
-                    website={website}
-                    domains={accessDraft.allowedDomains}
-                    domainCheckEnabled={accessDraft.domainCheckEnabled}
-                    sessionShareDomain={accessDraft.sessionShareDomain}
-                    onChange={setAccess}
+          {/* Row 1, right — help beside the snippet: a reader who has just
+              copied the tag wants their platform's steps next, and a broken
+              install opens on the checklist. Two tabs over one card. */}
+          <Tabs
+            label={t('agents.installHelp') || 'Install help'}
+            value={activeHelpTab}
+            onValueChange={(next) => setHelpTab(next as HelpTab)}
+            items={[
+              { value: 'platform', label: t('agents.instructionsForYourPlatform') || 'Instructions for your platform' },
+              { value: 'troubleshoot', label: t('agents.notShowingUp') || 'Not showing up' },
+            ]}
+          >
+            <TabPanel value="platform">
+              <Card>
+                <CardBody>
+                  <PlatformGuide
+                    botKey={botKey}
+                    env={deploy.env}
+                    platformId={platformId}
+                    onPlatformChange={setPlatformId}
+                    attribution={attribution}
+                    resolving={entitlementsLoading}
                   />
-                </SettingGroup>
-              ) : null}
+                </CardBody>
+              </Card>
+            </TabPanel>
+            <TabPanel value="troubleshoot">
+              <Card>
+                <CardBody flush>
+                  <TroubleshootSection
+                    botKey={botKey}
+                    env={deploy.env}
+                    apiBaseUrl={deploy.apiBaseUrl}
+                    website={website}
+                    domains={domains}
+                    domainsConfigured={domains.length}
+                    domainCheckEnabled={Boolean(bot.domain_check_enabled)}
+                  />
+                </CardBody>
+              </Card>
+            </TabPanel>
+          </Tabs>
 
-              {/* Help, only when wanted: two tabs over one card, instead of two
-                  more cards the reader has to scroll past to reach anything. A
-                  broken install opens on the checklist.
-
-                  It sits in `main`, not under the grid. `Columns` is exactly as
-                  tall as its taller column, and the snippet alone was shorter
-                  than the status rail beside it — so the left column ended in
-                  about 290px of empty page, and the help card below then ran the
-                  full width, changing the reader's measure mid-scroll. Both are
-                  the same fix: put the longer block in `main`. */}
-              <Tabs
-                label={t('agents.installHelp') || 'Install help'}
-                value={activeHelpTab}
-                onValueChange={(next) => setHelpTab(next as HelpTab)}
-                items={[
-                  { value: 'platform', label: t('agents.instructionsForYourPlatform') || 'Instructions for your platform' },
-                  { value: 'troubleshoot', label: t('agents.notShowingUp') || 'Not showing up' },
-                ]}
+          {/* Row 2, left — Access. `scroll-mt` keeps the heading clear of the
+              sticky topbar when the status card's "Allowed domains" link jumps
+              here. The cell always renders — a skeleton while the access slice
+              loads — so the row pairing does not collapse mid-load. */}
+          <div id="access" className="scroll-mt-24">
+            {accessDraft ? (
+              <SettingGroup
+                title="Access"
+                description="Where this chatbot is allowed to run, and how far a conversation follows a visitor."
               >
-                <TabPanel value="platform">
-                  <Card>
-                    <CardBody>
-                      <PlatformGuide
-                        botKey={botKey}
-                        env={deploy.env}
-                        platformId={platformId}
-                        onPlatformChange={setPlatformId}
-                        attribution={attribution}
-                        resolving={entitlementsLoading}
-                      />
-                    </CardBody>
-                  </Card>
-                </TabPanel>
-                <TabPanel value="troubleshoot">
-                  <Card>
-                    <CardBody flush>
-                      <TroubleshootSection
-                        botKey={botKey}
-                        env={deploy.env}
-                        apiBaseUrl={deploy.apiBaseUrl}
-                        website={website}
-                        domains={domains}
-                        domainsConfigured={domains.length}
-                        domainCheckEnabled={Boolean(bot.domain_check_enabled)}
-                      />
-                    </CardBody>
-                  </Card>
-                </TabPanel>
-              </Tabs>
-            </Stack>
-          }
-          aside={
-            <Stack>
-              <InstallStatusCard
-                status={deploy.status}
-                installedAt={bot.widget_installed_at ?? null}
-                heartbeat={widgetHeartbeat({
-                  installedAt: bot.widget_installed_at,
-                  lastSeenAt: bot.widget_last_seen_at,
-                  lastOrigin: bot.widget_last_origin,
-                })}
-                website={website}
-                domains={domains}
-                installs={deploy.domains}
-                domainsLoading={deploy.domainsLoading}
-                domainsChecking={deploy.domainsChecking}
-                domainsCheckedAt={deploy.domainsCheckedAt}
-                onCheckDomains={deploy.checkDomains}
-                domainsCheckError={deploy.domainsCheckError}
-                accessHref="#access"
-                verifiedNow={deploy.verifiedNow}
-                checking={deploy.checking}
-                onStartVerifying={deploy.startVerifying}
-                onStopVerifying={deploy.stopVerifying}
-                onTroubleshoot={() => setHelpTab('troubleshoot')}
-              />
+                <AccessSection
+                  website={website}
+                  domains={accessDraft.allowedDomains}
+                  domainCheckEnabled={accessDraft.domainCheckEnabled}
+                  sessionShareDomain={accessDraft.sessionShareDomain}
+                  onChange={setAccess}
+                />
+              </SettingGroup>
+            ) : (
+              <Card>
+                <CardBody className="space-y-3">
+                  <Skeleton className="h-5 w-40" />
+                  <Skeleton className="h-3.5 w-full" />
+                  <Skeleton className="h-control-md w-full" />
+                </CardBody>
+              </Card>
+            )}
+          </div>
 
-              {/* A hosted page that runs this chatbot, for a customer whose site
-                  is not ready, or who wants a colleague to try it before it
-                  goes live. It opens the customer's OWN website with the chat
-                  on it, from a screenshot captured during training, so the card
-                  also has to say when that capture is missing, running, failed
-                  or old: in every one of those cases the link quietly falls
-                  back to a stand-in page, and a customer sending it to a
-                  prospect needs to know that before they send it.
+          {/* Row 2, right — the live install reading beside Access, and the
+              shareable hosted demo beneath it. Nudged down by the Access
+              section's title+description header (~56px), so the card lines up
+              with the Access card rather than its heading. Only in two-column
+              mode; single-column stacks flush with no gap. */}
+          <Stack className="@3xl/page:mt-14">
+            <InstallStatusCard
+              status={deploy.status}
+              installedAt={bot.widget_installed_at ?? null}
+              heartbeat={widgetHeartbeat({
+                installedAt: bot.widget_installed_at,
+                lastSeenAt: bot.widget_last_seen_at,
+                lastOrigin: bot.widget_last_origin,
+              })}
+              website={website}
+              domains={domains}
+              installs={deploy.domains}
+              domainsLoading={deploy.domainsLoading}
+              domainsChecking={deploy.domainsChecking}
+              domainsCheckedAt={deploy.domainsCheckedAt}
+              onCheckDomains={deploy.checkDomains}
+              domainsCheckError={deploy.domainsCheckError}
+              accessHref="#access"
+              verifiedNow={deploy.verifiedNow}
+              checking={deploy.checking}
+              onStartVerifying={deploy.startVerifying}
+              onStopVerifying={deploy.stopVerifying}
+              onTroubleshoot={() => setHelpTab('troubleshoot')}
+            />
 
-                  How often it is opened is counted on this chatbot's Overview,
-                  under "Demo shares", where every other figure about it lives. */}
-              <DemoLinkCard
-                agentId={agentId}
-                demoUrl={demoUrl}
-                website={website}
-                screenshotStatus={bot.demo_screenshot_status}
-                screenshotCapturedAt={bot.demo_screenshot_captured_at}
-                onRefresh={deploy.retry}
-              />
-            </Stack>
-          }
-        />
+            {/* A hosted page that runs this chatbot, for a customer whose site
+                is not ready, or who wants a colleague to try it before it goes
+                live. It opens the customer's OWN website with the chat on it,
+                from a screenshot captured during training, so the card also has
+                to say when that capture is missing, running, failed or old: in
+                every one of those cases the link quietly falls back to a
+                stand-in page, and a customer sending it to a prospect needs to
+                know that before they send it.
+
+                How often it is opened is counted on this chatbot's Overview,
+                under "Demo shares", where every other figure about it lives. */}
+            <DemoLinkCard
+              agentId={agentId}
+              demoUrl={demoUrl}
+              website={website}
+              screenshotStatus={bot.demo_screenshot_status}
+              screenshotCapturedAt={bot.demo_screenshot_captured_at}
+              onRefresh={deploy.retry}
+            />
+          </Stack>
+        </Grid>
       </Stack>
 
       {/* Outside the grid, because it spans the form it saves. It appears only

@@ -49,6 +49,7 @@ from app.services import translation_service as translation_svc
 from app.services.invite_service import InviteError
 from app.services.language_service import language_from_locale, normalize_locale
 from app.services.live_chat_service import manager
+from app.services.push_service import muted_push_preferences
 from app.services.qualification_service import (
     calculate_composite_score,
     framework_dimension_keys,
@@ -557,6 +558,10 @@ def create_operator(request: CreateOperatorRequest, auth=Depends(get_current_cli
             operator_api_key=uuid.uuid4().hex,
             role=request.role,
             department_id=request.department_id or default_dept_id,
+            # New operators start reachable but with every push event off, so an
+            # invited teammate is not paged until they opt in per event. Existing
+            # operators (null prefs) keep meaning "fully opted in".
+            notification_preferences=muted_push_preferences(),
         )
         session.add(operator)
         session.commit()
@@ -819,11 +824,11 @@ async def upload_my_avatar(file: UploadFile = File(...), auth: dict = Depends(ge
     operator without one just shows initials (see ``AvatarCircle`` on the
     frontend), so there is no server-side requirement to ever call this.
     """
-    from app.core.upload_guard import IMAGE_UPLOAD_TYPES, MAX_LOGO_BYTES, ensure_allowed_type, read_bounded
+    from app.core.upload_guard import IMAGE_UPLOAD_TYPES, MAX_AVATAR_BYTES, ensure_allowed_type, read_bounded
     from app.services.r2_service import UnsupportedImage, _build_public_url, upload_to_r2
 
     ensure_allowed_type(file, IMAGE_UPLOAD_TYPES)
-    file_data = await read_bounded(file, MAX_LOGO_BYTES)
+    file_data = await read_bounded(file, MAX_AVATAR_BYTES)
 
     try:
         file_key = upload_to_r2(file_data, file.filename, file.content_type)

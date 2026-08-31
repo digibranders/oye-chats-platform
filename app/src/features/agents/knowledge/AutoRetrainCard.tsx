@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { ChevronDown } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   ABSENT,
@@ -46,6 +47,7 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
   const client = useQueryClient();
   const [saving, setSaving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [runsCollapsed, setRunsCollapsed] = useState(false);
   const [confirmingOff, setConfirmingOff] = useState(false);
 
   const status = section.data;
@@ -260,6 +262,24 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
               the card's and its first cell 37px from the card edge, against a
               header title at 20. */}
           {status.enabled || status.history.length > 0 ? (
+          <>
+          <CardBody className="border-t border-border py-2">
+            <button
+              type="button"
+              onClick={() => setRunsCollapsed((value) => !value)}
+              aria-expanded={!runsCollapsed}
+              className="flex w-full items-center justify-between gap-2 text-left"
+            >
+              <span className="text-base font-medium text-text-primary">
+                {t('agents.runHistory') || 'Run history'}
+              </span>
+              <ChevronDown
+                aria-hidden
+                className={`h-4 w-4 shrink-0 text-text-tertiary transition-transform ${runsCollapsed ? '' : 'rotate-180'}`}
+              />
+            </button>
+          </CardBody>
+          {!runsCollapsed ? (
           <CardBody flush>
             <DataTable
               seated
@@ -283,6 +303,8 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
               }
             />
           </CardBody>
+          ) : null}
+          </>
           ) : null}
         </>
       )}

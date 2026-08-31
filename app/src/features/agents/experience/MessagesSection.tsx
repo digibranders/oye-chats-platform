@@ -13,6 +13,7 @@ import {
   Field,
   Input,
   SegmentedControl,
+  Switch,
   Textarea,
   Tooltip,
   Well,
@@ -93,8 +94,27 @@ export function MessagesSection({
   onChange,
 }: MessagesSectionProps): ReactElement {
   const { t } = useTranslation();
-  const { hasFeature } = useEntitlements();
+  const { hasFeature, isFree } = useEntitlements();
   const liveChatIncluded = hasFeature('live_chat');
+
+  // Launcher text is on/off with no separate stored flag: an empty
+  // `launcherName` IS "off", and the widget hides the tooltip on an explicit
+  // empty string (see `widget/src/components/Launcher.jsx`). The ref remembers
+  // the last real text so toggling off and back on restores it instead of
+  // making the customer retype it.
+  const launcherTextOn = draft.launcherName.trim() !== '';
+  const launcherTextStash = useRef(draft.launcherName.trim() || 'Have Questions?');
+  const setLauncherName = useCallback(
+    (value: string) => {
+      if (value.trim()) launcherTextStash.current = value;
+      onChange({ launcherName: value });
+    },
+    [onChange],
+  );
+  const toggleLauncherText = useCallback(
+    (on: boolean) => onChange({ launcherName: on ? launcherTextStash.current || 'Have Questions?' : '' }),
+    [onChange],
+  );
 
   const [suggestions, setSuggestions] = useState<string[] | null>(null);
   const [suggesting, setSuggesting] = useState(false);
@@ -176,15 +196,32 @@ export function MessagesSection({
           </Field>
           <Field
             label={t('agents.launcherText') || 'Launcher text'}
-            hint={t('agents.besideTheClosedLauncher') || 'Beside the closed launcher.'}
-            trailing={defaultMark(draft.launcherName)}
+            trailingAlign="edge"
+            hint={
+              launcherTextOn
+                ? t('agents.besideTheClosedLauncher') || 'Beside the closed launcher.'
+                : t('agents.theLauncherShowsJustThe') || 'The launcher shows just the icon — no text beside it.'
+            }
+            trailing={
+              <Switch
+                checked={launcherTextOn}
+                disabled={readOnly}
+                onCheckedChange={toggleLauncherText}
+                label={t('agents.showLauncherText') || 'Show launcher text'}
+                hideLabel
+              />
+            }
           >
             <Input
               value={draft.launcherName}
               maxLength={LIMITS.launcherName}
-              disabled={readOnly}
-              placeholder={PLACEHOLDERS.launcherName}
-              onChange={(event) => onChange({ launcherName: event.target.value })}
+              disabled={readOnly || !launcherTextOn}
+              placeholder={
+                launcherTextOn
+                  ? PLACEHOLDERS.launcherName
+                  : t('agents.launcherTextHidden') || 'Hidden'
+              }
+              onChange={(event) => setLauncherName(event.target.value)}
             />
           </Field>
         </CardBody>
@@ -386,6 +423,17 @@ export function MessagesSection({
           description={t('agents.leaveAFieldEmptyFor') || 'Leave a field empty for our wording.'}
         />
         <CardBody className="flex flex-col gap-5">
+          {isFree ? (
+            <Well className="flex flex-wrap items-center justify-between gap-3">
+              <p className="min-w-0 text-prose text-text-secondary">
+                {t('agents.widgetCopyLocked') || 'Customise the widget’s wording on a paid plan.'}
+              </p>
+              <Link to="/billing" className={buttonClass('secondary', 'sm')}>
+                {t('agents.comparePlans') || 'Compare plans'}
+              </Link>
+            </Well>
+          ) : (
+          <>
           <Field label={t('agents.greetingBubble') || 'Greeting bubble'} trailing={defaultMark(draft.greetingMessage)}>
             <Input
               value={draft.greetingMessage}
@@ -454,6 +502,8 @@ export function MessagesSection({
                 {t('agents.comparePlans') || 'Compare plans'}
               </Link>
             </Well>
+          )}
+          </>
           )}
         </CardBody>
       </Card>

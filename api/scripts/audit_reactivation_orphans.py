@@ -47,9 +47,9 @@ from app.services import credit_service, razorpay_service
 def _fetch_gateway_state(razorpay_subscription_id: str) -> dict[str, Any]:
     """Best-effort read of a Razorpay subscription. Never raises."""
     try:
-        rzp = razorpay_service._get_razorpay()  # noqa: SLF001. Ops script, read-only
+        rzp = razorpay_service._get_razorpay()  # Ops script, read-only  # noqa: SLF001
         entity = rzp.subscription.fetch(razorpay_subscription_id)
-    except Exception as exc:  # noqa: BLE001, a fetch failure is data, not a crash
+    except Exception as exc:  # a fetch failure is data, not a crash  # noqa: BLE001
         return {"error": str(exc)}
     return {
         "status": entity.get("status"),

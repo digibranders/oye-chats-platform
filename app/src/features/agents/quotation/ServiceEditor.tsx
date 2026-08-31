@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { Plus, Trash2, X } from 'lucide-react';
+import { ChevronDown, Plus, Trash2, X } from 'lucide-react';
 import {
   Button,
   Card,
@@ -32,6 +32,9 @@ export interface ServiceEditorProps {
   index: number;
   currency: string;
   disabled?: boolean;
+  /** Controlled collapse, so a catalog-level "Collapse all" can drive every row. */
+  collapsed: boolean;
+  onToggleCollapse: () => void;
   onChange: (patch: Partial<Service>) => void;
   onRemove: () => void;
 }
@@ -86,11 +89,16 @@ function ServiceEditorInner({
   index,
   currency,
   disabled = false,
+  collapsed,
+  onToggleCollapse,
   onChange,
   onRemove,
 }: ServiceEditorProps) {
   const { t } = useTranslation();
   const requirements = service.requirements;
+  // Collapsed hides only this service's body; the header keeps its name and the
+  // "N lines · up to X" summary, so a long catalog stays scannable. State lives
+  // in the parent so a catalog-level "Collapse all" can drive every row at once.
 
   const patchRequirement = (requirementIndex: number, patch: Partial<Requirement>) =>
     onChange({
@@ -102,24 +110,39 @@ function ServiceEditorInner({
   return (
     <Card>
       <CardHeader
-        eyebrow={`Service ${index + 1}`}
-        title={service.name.trim() || t('agents.untitledService') || 'Untitled service'}
+        eyebrow={`Requirement ${index + 1}`}
+        title={service.name.trim() || t('agents.untitledService') || 'Untitled requirement'}
         titleAs="h3"
         description={`${
           requirements.length === 1 ? '1 line' : `${formatNumber(requirements.length)} lines`
         } · up to ${money(currency, ceilingFor(service))}`}
         actions={
-          <Button
-            variant="danger"
-            size="sm"
-            disabled={disabled}
-            onClick={onRemove}
-            iconLeft={<Trash2 aria-hidden />}
-          >
-            {t('agents.remove') || 'Remove'}
-          </Button>
+          <>
+            <Button
+              variant="danger"
+              size="sm"
+              disabled={disabled}
+              onClick={onRemove}
+              iconLeft={<Trash2 aria-hidden />}
+            >
+              {t('agents.remove') || 'Remove'}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-expanded={!collapsed}
+              aria-label={collapsed ? t('agents.expand') || 'Expand' : t('agents.collapse') || 'Collapse'}
+              onClick={onToggleCollapse}
+            >
+              <ChevronDown
+                aria-hidden
+                className={`transition-transform ${collapsed ? '' : 'rotate-180'}`}
+              />
+            </Button>
+          </>
         }
       />
+      {!collapsed && (
       <CardBody className="space-y-4">
         <Field label={t('agents.name') || 'Name'} required hint={t('agents.whatTheVisitorPicksFrom') || 'What the visitor picks from.'}>
           <Input
@@ -294,7 +317,7 @@ function ServiceEditorInner({
                       </div>
                       <ul className="mt-2 space-y-2">
                         {requirement.options.map((option, optionIndex) => (
-                          <li key={option.id} className="flex items-end gap-2">
+                          <li key={option.id} className="flex items-start gap-2">
                             <Field
                               label={`Option ${optionIndex + 1}`}
                               required
@@ -334,7 +357,7 @@ function ServiceEditorInner({
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="mb-1"
+                              className="mt-6"
                               disabled={disabled}
                               aria-label={`Remove option ${optionIndex + 1}`}
                               onClick={() =>
@@ -405,6 +428,7 @@ function ServiceEditorInner({
           </Button>
         </section>
       </CardBody>
+      )}
     </Card>
   );
 }

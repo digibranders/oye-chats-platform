@@ -41,6 +41,12 @@ IMAGE_UPLOAD_TYPES = frozenset({"image/png", "image/jpeg", "image/jpg", "image/w
 
 MAX_LOGO_BYTES = 5 * 1024 * 1024
 
+# A profile avatar is a small square, not a hero logo, so it is held to a
+# tighter ceiling. This mirrors the frontend's `MAX_AVATAR_BYTES` in
+# `avatarRules.ts` (2MB), so the client-side check and the server agree on the
+# number a user is shown.
+MAX_AVATAR_BYTES = 2 * 1024 * 1024
+
 
 async def read_bounded(upload: UploadFile, max_bytes: int) -> bytes:
     """Read at most ``max_bytes`` from ``upload``; reject anything larger.

@@ -23,27 +23,20 @@ import {
 } from '../../../ui';
 import { useAgent } from '../../../context/AgentContext';
 import { useEntitlements } from '../../../hooks/useEntitlements';
-import {
-  planIncludesEmailVerification,
-  planIncludesVisitorIntelligence,
-} from '../../../lib/planGates';
 import { getClientSettings, getFrameworkPresets, updateBot } from '../../../services/api';
 import { useSettingsDraft } from './useSettingsDraft';
 import { DimensionsSection } from './DimensionsSection';
 import { ThresholdsSection } from './ThresholdsSection';
 import { TierOutcomesSection } from './TierOutcomesSection';
 import { SignalsSection } from './SignalsSection';
-import { LeadEnrichmentSection } from './LeadEnrichmentSection';
 import { FunnelSection } from './FunnelSection';
 import { FRAMEWORK_OPTIONS } from './qualification.config';
 import {
   type QualificationDraft,
-  enrichmentChanged,
   isRecord,
   parseQualification,
   presetKeysFor,
   scoringChanged,
-  toEnrichmentPayload,
   toScoringPayload,
 } from './qualification.draft';
 import { useTierOutcomes } from './useTierOutcomes';
@@ -94,7 +87,7 @@ function QualificationSkeleton() {
   );
 }
 
-function QualificationContent({ agentId, planSlug }: { agentId: number; planSlug: string }) {
+function QualificationContent({ agentId }: { agentId: number }) {
   const { hasFeature } = useEntitlements();
 
   const load = useCallback(async (id: number): Promise<QualificationLoad> => {
@@ -110,9 +103,6 @@ function QualificationContent({ agentId, planSlug }: { agentId: number; planSlug
   const save = useCallback(
     async (id: number, next: QualificationLoad, previous: QualificationLoad) => {
       const tasks: Array<Promise<unknown>> = [];
-      if (enrichmentChanged(next.draft, previous.draft)) {
-        tasks.push(updateBot(id, toEnrichmentPayload(next.draft)));
-      }
       if (scoringChanged(next.draft, previous.draft)) {
         tasks.push(updateBot(id, toScoringPayload(next.draft)));
       }
@@ -157,14 +147,6 @@ function QualificationContent({ agentId, planSlug }: { agentId: number; planSlug
   const setBehavioral = useCallback(
     (behavioral: QualificationDraft['model']['behavioral']) =>
       setDraft((previous) => ({ ...previous, model: { ...previous.model, behavioral } })),
-    [setDraft],
-  );
-  const setEmailVerification = useCallback(
-    (next: boolean) => setDraft((previous) => ({ ...previous, emailVerificationEnabled: next })),
-    [setDraft],
-  );
-  const setCompanyLookup = useCallback(
-    (next: boolean) => setDraft((previous) => ({ ...previous, companyLookupEnabled: next })),
     [setDraft],
   );
 
@@ -322,15 +304,6 @@ function QualificationContent({ agentId, planSlug }: { agentId: number; planSlug
                 agentId={agentId}
                 webhooksAllowed={hasFeature('webhooks')}
               />
-
-              <LeadEnrichmentSection
-                emailVerificationEnabled={draft.emailVerificationEnabled}
-                onToggleEmailVerification={setEmailVerification}
-                emailVerificationPlanAllows={planIncludesEmailVerification(planSlug)}
-                companyLookupEnabled={draft.companyLookupEnabled}
-                onToggleCompanyLookup={setCompanyLookup}
-                companyLookupPlanAllows={planIncludesVisitorIntelligence(planSlug)}
-              />
             </Stack>
           }
         />
@@ -442,7 +415,6 @@ export function QualificationPage() {
       // chatbot's rubric under another's name for a frame.
       key={agent.id}
       agentId={agent.id}
-      planSlug={agent.plan_slug ?? ''}
     />
   );
 }

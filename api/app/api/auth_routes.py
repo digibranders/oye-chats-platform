@@ -37,6 +37,7 @@ from app.schemas.validators import (
 )
 from app.services.audit_service import record_audit
 from app.services.email_service import send_password_reset_email
+from app.services.push_service import muted_push_preferences
 from app.services.runtime_config import is_impersonation_enabled
 
 logger = logging.getLogger(__name__)
@@ -1075,6 +1076,10 @@ def register(request: Request, body: RegisterRequest):
                 # first load (editable later in Billing details).
                 billing_country=body.billing_country or resolve_country(request),
                 is_superadmin=False,
+                # New accounts start reachable but with every push event off, so
+                # a fresh owner is not paged until they opt in per event. Existing
+                # accounts (null prefs) keep meaning "fully opted in".
+                notification_preferences=muted_push_preferences(),
             )
 
             session.add(new_client)
