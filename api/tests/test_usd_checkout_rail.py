@@ -198,7 +198,7 @@ def test_seat_addon_uses_usd_seat_plan_for_foreign_client(_intl_on):
     with (
         patch.object(razorpay_service, "_get_razorpay", return_value=fake),
         patch.object(razorpay_service, "charge_tax_rate_bps", return_value=1800),
-        patch.object(razorpay_service, "resolve_seat_plan_id", return_value="plan_seat_usd") as mint,
+        patch.object(razorpay_service, "resolve_addon_plan_id", return_value="plan_seat_usd") as mint,
     ):
         payload = razorpay_service.create_seat_addon_subscription(
             MagicMock(), _make_client(billing_country="US"), extra_seats=2
@@ -224,7 +224,7 @@ def test_seat_addon_keeps_inr_seat_plan_for_domestic_client():
     with (
         patch.object(razorpay_service, "_get_razorpay", return_value=fake),
         patch.object(razorpay_service, "charge_tax_rate_bps", return_value=1800),
-        patch.object(razorpay_service, "resolve_seat_plan_id", return_value="plan_seat_inr") as mint,
+        patch.object(razorpay_service, "resolve_addon_plan_id", return_value="plan_seat_inr") as mint,
     ):
         payload = razorpay_service.create_seat_addon_subscription(
             MagicMock(), _make_client(billing_country="IN"), extra_seats=1

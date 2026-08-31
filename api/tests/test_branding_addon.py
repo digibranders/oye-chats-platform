@@ -109,6 +109,7 @@ def test_opening_checkout_does_not_grant_the_entitlement(db):
     A customer who opens checkout and dismisses it gets nothing."""
     _client, _plan, _bot, sub = _fixture(db, "brand-pending@test.local")
     rzp = MagicMock()
+    rzp.plan.create.return_value = {"id": "plan_branding_minted"}
     rzp.subscription.create.return_value = {"id": "sub_brand"}
 
     with patch.object(razorpay_service, "_get_razorpay", return_value=rzp):
@@ -125,6 +126,7 @@ def test_repeat_purchase_reopens_the_same_mandate(db):
     existing one rather than minting a second the sweep would have to cancel."""
     _client, _plan, _bot, sub = _fixture(db, "brand-repeat@test.local")
     rzp = MagicMock()
+    rzp.plan.create.return_value = {"id": "plan_branding_minted"}
     rzp.subscription.create.return_value = {"id": "sub_brand_once"}
 
     with patch.object(razorpay_service, "_get_razorpay", return_value=rzp):

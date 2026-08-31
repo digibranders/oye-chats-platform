@@ -298,7 +298,7 @@ def test_create_seat_addon_subscription():
     # pinned in the environment, so what is stubbed here is the resolver, not
     # ``RAZORPAY_SEAT_PLAN_ID`` (which this path no longer reads).
     with (
-        patch.object(razorpay_service, "resolve_seat_plan_id", return_value="plan_test_seat"),
+        patch.object(razorpay_service, "resolve_addon_plan_id", return_value="plan_test_seat"),
         patch.object(razorpay_service, "charge_tax_rate_bps", return_value=1800),
         patch.object(razorpay_service, "_get_razorpay", return_value=fake),
     ):
