@@ -1,6 +1,6 @@
 # Auth flows
 
-> **Audience:** New engineers · **Read time:** 5 min · **Last updated:** 2026-04-28
+> **Audience:** New engineers · **Read time:** 5 min · **Last updated:** 2026-08-31
 
 ## TL;DR
 
@@ -49,20 +49,20 @@ sequenceDiagram
     end
 
     Op->>Admin: /login, email + password
-    Admin->>API: POST /auth/login (route detects operator vs client)
+    Admin->>API: POST /auth/operator-login
     API->>DB: SELECT operators WHERE email=...
     DB-->>API: row
     API->>API: bcrypt.verify
     API-->>Admin: { operator_api_key, role, department_id, client_id }
     Admin->>Admin: localStorage.setItem('operatorKey', ...)
 
-    Op->>Admin: open /support
-    Admin->>API: GET /chat/sessions?status=waiting (X-Operator-Key)
+    Op->>Admin: open the Inbox
+    Admin->>API: GET /operators/queue (X-Operator-Key)
     API->>API: get_current_operator() — resolves operator + client_id
     API-->>Admin: filtered sessions (only this client_id, optionally department)
 ```
 
-The same login route triages: it checks the email in `clients` first, then `operators`. The response shape signals which surface the SPA should boot into.
+Operators have their own route, `POST /auth/operator-login`, alongside `POST /auth/login` for clients; the response shape signals which surface the SPA should boot into. Google OAuth is a third entry point (`api/app/api/oauth_routes.py`, `/auth/callback` in the SPA), linking a provider subject id to a `clients` row via `oauth_accounts`.
 
 ## Sequence — password reset (OTP)
 
@@ -83,7 +83,7 @@ sequenceDiagram
     end
 
     User->>Admin: /forgot-password, enter email
-    Admin->>API: POST /auth/forgot-password
+    Admin->>API: POST /auth/request-password-reset
     API->>DB: SELECT clients WHERE email=...
     API->>API: generate 6-digit OTP, hash + store with 15-min expiry
     API->>Worker: enqueue task_send_email("password_reset_otp")
@@ -99,7 +99,7 @@ sequenceDiagram
     API-->>Admin: 200
 ```
 
-The same flow exists for operators (`POST /operators/forgot-password` / `/reset-password`). Both paths use OTP rather than reset links because email link rendering is unreliable across corporate webmail clients in our launch market.
+The route names are `POST /auth/request-password-reset` and `POST /auth/reset-password`; a matching flow exists for operators. Both paths use OTP rather than reset links because email link rendering is unreliable across corporate webmail clients in our launch market.
 
 ## Sequence — widget auth (visitor)
 
@@ -121,7 +121,7 @@ sequenceDiagram
     Note over W: every subsequent request adds X-Bot-Key
 ```
 
-Bot keys are **public** by design — they ship in the customer's website source. The bot key alone cannot read or write data outside that bot's own session/lead data, and it's rate-limited at 30 req/min/bot key.
+Bot keys are **public** by design — they ship in the customer's website source. The bot key alone cannot read or write data outside that bot's own session/lead data, and every widget route carries its own per-bot-key limit (30/min on `/chat/stream`, tighter on the routes that send mail — the quotation `accept` route is 3/min, matching `POST /chat/transcript`). Because the key is public, anything a widget route *does* with a request body has to be validated server-side rather than trusted: see `cta_dimension` on the [lead qualification](/04-flows/lead-qualification) page for the canonical example.
 
 ## Header taxonomy
 
@@ -150,10 +150,10 @@ Every route picks one. Choosing wrong is a security bug — see [Multi-tenancy](
 ## Failure modes
 
 - **API key compromise** → rotate via super-admin client edit; old key invalidated immediately.
-- **OTP brute-force** → slowapi limits `/auth/reset-password` attempts; OTP self-expires in 15 min.
+- **OTP brute-force** → slowapi limits `/auth/request-password-reset` (3/min) and `/auth/reset-password` (5/min) per IP; OTP self-expires. `core/otp_guard.py` adds a per-account attempt ceiling on top of the per-IP one.
 - **Session fixation in admin SPA** → mitigated by storing the API key in `localStorage` (no cookies for admin → no CSRF); logout clears storage.
 - **Replay of widget requests** → bot-key rate limit and per-session message rate limit.
 
 ## Why this matters
 
-Auth is the gate to every other flow. The header per persona model is intentionally simple — **two tokens, two cookies' worth of state, no JWT anywhere except the OTP envelope**. Don't add a fourth header without a strong justification.
+Auth is the gate to every other flow. The header-per-persona model is intentionally simple — long-lived API keys in `localStorage`, no session cookies, and therefore no CSRF surface. Don't add a fourth header without a strong justification.

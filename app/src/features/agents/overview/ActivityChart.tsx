@@ -42,10 +42,8 @@ export interface ActivityChartProps {
 /**
  * Daily message volume over the selected window.
  *
- * `/analytics/activity` accepts no `days`, so the window is applied here — see
- * `windowActivity`. That is the honest half of the range control: the figures
- * that *can* be windowed server-side are, and the one that cannot is trimmed
- * where the reader can be told so.
+ * The series is fetched at twice the window so the previous period can be cut
+ * from it, so the selected window is applied here — see `windowActivity`.
  */
 export function ActivityChart({ section, days }: ActivityChartProps) {
   const { t } = useTranslation();

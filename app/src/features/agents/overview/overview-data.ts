@@ -30,9 +30,9 @@ import { t as translateNow } from '../../../i18n/i18n';
  * broken section is one card with one retry, and everything else still renders.
  *
  * What is *not* windowed is labelled as not windowed. `active_users` is a live
- * fifteen-minute count whatever `days` says, ratings and resolution have no
- * window parameter at all, and `/analytics/activity` returns every day it has.
- * Saying "last 30 days" over any of those would be the same lie in a new place.
+ * fifteen-minute count whatever `days` says, and ratings and resolution have no
+ * window parameter at all. Saying "last 30 days" over either would be the same
+ * lie in a new place.
  */
 
 export const RANGE_OPTIONS = [7, 30, 90] as const;
@@ -53,7 +53,8 @@ export function rangeLabel(days: RangeDays): string {
 /**
  * Trim an all-time daily series to the selected window.
  *
- * `/analytics/activity` takes no `days`, so the window is applied here rather
+ * The endpoint is asked for twice the selected window so the previous one can be
+ * cut from the same series, so the current window is still trimmed here rather
  * than pretended away. Dates arrive as `YYYY-MM-DD` and are compared as strings
  * against a locally-computed cutoff: parsing them as `Date` treats them as UTC
  * midnight, which shifts a day for every viewer west of UTC.
@@ -109,9 +110,9 @@ export function sumMessages(points: readonly ActivityPoint[]): number {
 /**
  * The window before the selected one, trimmed from the same all-time series.
  *
- * `/analytics/activity` returns every day it has, so the comparison costs no
- * extra request: take twice the window and drop the days the current one
- * already covers.
+ * The series is fetched at twice the window, so the comparison costs no extra
+ * request: take twice the window and drop the days the current one already
+ * covers.
  */
 export function previousWindow(
   points: readonly ActivityPoint[],
@@ -217,11 +218,18 @@ export function useOverviewData(botId: number, days: RangeDays): OverviewData {
     staleTime: 60_000,
   });
 
-  // Keyed with `null` days because the endpoint genuinely has none — the key
-  // has to describe the request, or two windows would share one cache entry.
+  // Twice the window, because `previousWindow` cuts the comparison out of this
+  // same series. Keyed on what was actually requested — the key has to describe
+  // the request, or two windows would share one cache entry.
+  //
+  // It used to ask for the whole history: the endpoint accepted no `days` and
+  // no zone, so every load was an unbounded aggregate over the workspace's
+  // entire chat history, bucketed in the database's zone and then read here as
+  // local dates. `getActivityStats` sends the reader's zone for that second
+  // half.
   const activity = useQuery({
-    queryKey: keys.analytics.activity(botId, null),
-    queryFn: () => getActivityStats(botId),
+    queryKey: keys.analytics.activity(botId, days * 2),
+    queryFn: () => getActivityStats(botId, { days: days * 2 }),
     staleTime: 60_000,
   });
 

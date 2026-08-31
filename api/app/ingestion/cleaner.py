@@ -4,7 +4,7 @@ from app.security.injection_patterns import compile_line_anchored_strip_pattern
 
 # A "cell" that is nothing but a single markdown link. I.e. a nav-bar entry.
 # Used to distinguish pipe-separated nav rows from real markdown data tables.
-_NAV_LINK_CELL_RE = re.compile(r"^\s*\[[^\]]+\]\([^)]+\)\s*$")
+_NAV_LINK_CELL_RE = re.compile(r"^\s*\[([^\]]+)\]\([^)]+\)\s*$")
 
 # ---------------------------------------------------------------------------
 # Media URL extraction
@@ -152,6 +152,11 @@ def extract_media_urls(text: str) -> dict:
     return result
 
 
+# Whole-line markdown links. Group 1 is the anchor text, which is real content
+# and is preserved; the URL around it is navigation noise.
+_BULLET_LINK_LINE_RE = re.compile(r"^[*\-]\s*\[(.*?)\]\(.*?\)\s*$")
+_STANDALONE_LINK_LINE_RE = re.compile(r"^\[(.*?)\]\(.*?\)$")
+
 # A markdown table separator row (``| --- | :---: |``). Carries no information
 # and is safe to drop even when the surrounding table is kept.
 _TABLE_SEPARATOR_RE = re.compile(r"^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$")
@@ -210,6 +215,18 @@ def _is_nav_bar_row(line: str) -> bool:
     return all(_NAV_LINK_CELL_RE.match(c) for c in cells)
 
 
+def _nav_row_labels(line: str) -> list[str]:
+    """The anchor texts of a link-only pipe row, in order, blanks dropped."""
+    labels = []
+    for cell in line.split("|"):
+        match = _NAV_LINK_CELL_RE.match(cell.strip())
+        if match:
+            label = match.group(1).strip()
+            if label:
+                labels.append(label)
+    return labels
+
+
 def clean_text(text: str) -> str:
     """
     Cleans text by removing markdown noise (images, navigation links) and normalizing whitespace.
@@ -233,23 +250,41 @@ def clean_text(text: str) -> str:
             continue
 
         # 3. Filter Navigation & Menu Items
-        # Only remove lines that are PURELY a navigation link (no descriptive text).
-        # e.g., "* [Home](/)" is stripped, but "* [Learn more](/pricing). Our flexible plans" is kept.
-        if re.match(r"^[*\-]\s*\[.*?\]\(.*?\)\s*$", line):
+        # Lines that are PURELY a link (no descriptive text) lose the URL but
+        # KEEP the anchor text. e.g. "* [Home](/)" becomes "Home", while
+        # "* [Learn more](/pricing). Our flexible plans" is kept whole.
+        # Dropping the whole line destroyed real content: a product or blog
+        # index is a list of nothing but links, so it cleaned to '' and the
+        # ingest pipeline skipped it with no log, no counter and no
+        # user-visible signal, leaving the bot unable to say what the
+        # customer even sells. A label with no text left is still dropped.
+        bullet_link = _BULLET_LINK_LINE_RE.match(line)
+        if bullet_link:
+            label = bullet_link.group(1).strip()
+            if label:
+                cleaned_lines.append(label)
             continue
 
-        # Pipe-prefixed lines need careful handling: drop nav bars, drop
-        # table separator rows, but PRESERVE real markdown data tables
-        # (pricing, specs, comparisons) whose cells contain substantive text.
+        # Pipe-prefixed lines need careful handling: reduce nav bars to their
+        # labels, drop table separator rows, but PRESERVE real markdown data
+        # tables (pricing, specs, comparisons) whose cells contain
+        # substantive text.
         if line.startswith("|"):
             if _TABLE_SEPARATOR_RE.match(line):
                 continue
             if _is_nav_bar_row(line):
+                labels = _nav_row_labels(line)
+                if labels:
+                    cleaned_lines.append(" | ".join(labels))
                 continue
             # Real data-table row. Keep it.
 
-        # Remove lines that are JUST a standalone link "[Link](Url)"
-        if re.match(r"^\[.*?\]\(.*?\)$", line):
+        # Lines that are JUST a standalone link "[Link](Url)" keep the label.
+        standalone_link = _STANDALONE_LINK_LINE_RE.match(line)
+        if standalone_link:
+            label = standalone_link.group(1).strip()
+            if label:
+                cleaned_lines.append(label)
             continue
 
         cleaned_lines.append(line)

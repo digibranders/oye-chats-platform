@@ -29,6 +29,7 @@ that point and releases it at the end.
 import asyncio
 import contextlib
 import logging
+import re
 import time
 from collections.abc import Callable
 
@@ -129,6 +130,20 @@ def _terminal_status(total_chunks: int, existing_count: int, abort_reason: str |
     if total_chunks > 0 or existing_count > 0:
         return "done"
     return "limit" if abort_reason in LIMIT_ABORT_REASONS else "no_content"
+
+
+def _canonical_source_host(source: str) -> str:
+    """Normalise a ``replace_source`` to the bare, lowercased, www-less host.
+
+    The dashboard sends ``acme.com``; a caller could equally send
+    ``https://www.acme.com/docs``. Both have to land on the same string as the
+    SQL expression that extracts the host from ``Document.document_name``, or
+    the orphan sweep silently matches nothing.
+    """
+    host = source.strip().lower()
+    host = re.sub(r"^https?://", "", host)
+    host = host.split("/", 1)[0]
+    return host.removeprefix("www.")
 
 
 def _precompute_seed_questions(bot_id: int | None) -> None:
@@ -478,6 +493,15 @@ async def _consume_ingest_stream(
             totals["chunks"] += result["chunks"]
             totals["pages_charged"] += result["pages_charged"]
             totals["credits_deducted"] += result["credits_deducted"]
+            # ``.get``: older fakes build a result without these keys. A page
+            # the hash proved unchanged counts as covered too: the bot holds it,
+            # this crawl just did not have to pay to re-learn it.
+            totals["pages_ingested"] = (
+                totals.get("pages_ingested", 0)
+                + int(result.get("pages_changed") or 0)
+                + int(result.get("pages_unchanged") or 0)
+            )
+            totals["pages_failed"] = totals.get("pages_failed", 0) + int(result.get("pages_failed") or 0)
             if result.get("aborted"):
                 state["billing_aborted"] = True
                 # ``.get``: ``state`` is supplied by the caller and older
@@ -575,7 +599,17 @@ async def run_full_crawl(
     # by the provider's own semaphore) keep running, and the event loop is
     # never blocked.
     stream_queue: asyncio.Queue[dict | None] = asyncio.Queue(maxsize=CRAWL_INGEST_WAVE_PAGES * 2)
-    ingest_totals = {"chunks": 0, "pages_charged": 0, "credits_deducted": 0}
+    # ``pages_ingested`` / ``pages_failed`` are what the customer is actually
+    # told. The terminal payload used to report every page FETCHED as a page
+    # the chatbot had read, so a crawl that aborted on a plan limit at page 25
+    # of 400 still said "read 400 pages" with 94% of the site missing.
+    ingest_totals = {
+        "chunks": 0,
+        "pages_charged": 0,
+        "credits_deducted": 0,
+        "pages_ingested": 0,
+        "pages_failed": 0,
+    }
     # Shared mutable state between the producer (``_on_result``), the consumer
     # (``_consume_ingest_stream``), the finish helper, and the main flow.
     #   billing_aborted: insufficient credits / kill switch / cancel → stop embedding.
@@ -584,7 +618,14 @@ async def run_full_crawl(
     # ``abort_reason`` names WHY billing stopped, so a crawl halted by an empty
     # balance or a knowledge ceiling can be reported as a limit rather than as
     # a site we could not read. None for a cancel, which is not a limit.
-    ingest_state: dict = {"billing_aborted": False, "consumer_error": None, "abort_reason": None}
+    #   streamed_pages:  how many pages the provider handed to the consumer, so
+    #                    the final sweep knows the waves already covered them.
+    ingest_state: dict = {
+        "billing_aborted": False,
+        "consumer_error": None,
+        "abort_reason": None,
+        "streamed_pages": 0,
+    }
     streaming = CRAWL_STREAM_INGEST_ENABLED
 
     async def _on_result(page: dict) -> None:
@@ -600,6 +641,7 @@ async def run_full_crawl(
         # hang and the main flow still fails the crawl.)
         if ingest_state["consumer_error"] is not None:
             raise CrawlerError("Embedding failed during crawl")
+        ingest_state["streamed_pages"] += 1
         await stream_queue.put(page)
 
     def _report_embed_stream(done_cum: int) -> None:
@@ -834,6 +876,16 @@ async def run_full_crawl(
         # only picks up stragglers (and is the sole ingest path for the
         # non-streaming / recursive-crawl cases). Skipped entirely after a
         # billing abort. Those pages can't be paid for.
+        #
+        # ``force_reingest`` is the exception the comment above did NOT hold
+        # for: it bypasses that dedup, so the sweep re-chunked and re-embedded
+        # every streamed page a second time (the credit ledger was protected by
+        # its per-(job, url) key, the embedding quota was not). The waves
+        # already did the forced re-ingest for the pages they saw, so once any
+        # page has been streamed the sweep only needs to catch stragglers and
+        # can let dedup do its job. A crawl that streamed nothing (the
+        # recursive Spider path can't stream) still gets the full forced pass.
+        sweep_force_reingest = force_reingest and not ingest_state["streamed_pages"]
         loop = asyncio.get_event_loop()
         if not ingest_state["billing_aborted"]:
             logger.info("Batch ingesting %d pages (%d chunks already streamed)", pages_processed, sweep_offset)
@@ -851,36 +903,59 @@ async def run_full_crawl(
                         deduct_reference_id=bot_id,
                         embed_progress_cb=_report_embed,
                         crawl_started_at=started_at,
-                        force_reingest=force_reingest,
+                        force_reingest=sweep_force_reingest,
                         crawl_job_id=crawl_job_id,
                     ),
                 )
             ingest_totals["chunks"] += ingest_result["chunks"]
             ingest_totals["pages_charged"] += ingest_result["pages_charged"]
             ingest_totals["credits_deducted"] += ingest_result["credits_deducted"]
+            ingest_totals["pages_ingested"] += int(ingest_result.get("pages_changed") or 0) + int(
+                ingest_result.get("pages_unchanged") or 0
+            )
+            ingest_totals["pages_failed"] += int(ingest_result.get("pages_failed") or 0)
             if ingest_result.get("aborted"):
                 ingest_state["billing_aborted"] = True
                 ingest_state["abort_reason"] = ingest_state.get("abort_reason") or ingest_result.get("abort_reason")
         total_chunks = ingest_totals["chunks"]
         pages_charged = ingest_totals["pages_charged"]
         credits_deducted = ingest_totals["credits_deducted"]
+        # Clamped: with streaming on, the final sweep re-offers every page a
+        # wave already ingested and the hash skips them, so the raw sum
+        # double-counts. A page cannot be covered more than once.
+        pages_ingested = min(ingest_totals["pages_ingested"], pages_processed)
+        pages_failed = ingest_totals["pages_failed"]
 
         # Orphan sweep: remove chunks for pages that disappeared from the site.
-        # Only valid for a FULL re-crawl. A partial (ordered_urls) crawl fetches
-        # an intentional subset, so sweeping would delete pages the user still
-        # wants. Skip it in that case.
-        if replace_source and total_chunks > 0 and not ordered_urls:
+        # Only valid for a re-crawl (``replace_source`` is set only then), and
+        # the dashboard's re-crawl always sends the COMPLETE page list it
+        # diffed, never a user-picked subset: the subset path
+        # (``useCrawlDiscovery``) is a first crawl and carries no
+        # ``replace_source`` at all. The old ``not ordered_urls`` guard
+        # therefore did not protect a partial crawl, it just made the sweep
+        # unreachable from the only UI that starts one. Deleting is still
+        # gated on ``check_urls_alive`` confirming a 404/410 below, so a
+        # discovery shortfall can never mass-delete live pages.
+        if replace_source and total_chunks > 0:
             newly_crawled_urls = [p["url"] for p in valid_pages]
             from sqlalchemy import func as sa_func
 
+            # Canonical host, both sides. The stored expression used to keep
+            # the scheme (``https://acme.com``) while ``replace_source`` comes
+            # off the wire as a bare host (``acme.com``), so the two could
+            # never be equal and the whole sweep was dead code: a page deleted
+            # from the customer's site kept its chunks forever and the bot went
+            # on quoting retired prices. Strip the scheme in SQL and normalise
+            # whatever the caller sent in Python so both are ``acme.com``.
             domain_expr = sa_func.coalesce(
                 sa_func.replace(
-                    sa_func.substring(Document.document_name, r"^(https?://[^/]+)"),
+                    sa_func.lower(sa_func.substring(Document.document_name, r"^https?://([^/]+)")),
                     "www.",
                     "",
                 ),
                 Document.document_name,
             )
+            sweep_source = _canonical_source_host(replace_source)
             owner_filter = Document.bot_id == bot_id if bot_id else Document.client_id == client_id
 
             # Candidate stale pages: stored under this source but absent from the
@@ -896,7 +971,7 @@ async def run_full_crawl(
                     row[0]
                     for row in del_session.query(Document.document_name)
                     .filter(
-                        domain_expr == replace_source,
+                        domain_expr == sweep_source,
                         owner_filter,
                         Document.document_name.notin_(newly_crawled_urls),
                     )
@@ -918,7 +993,7 @@ async def run_full_crawl(
                     deleted = (
                         del_session.query(Document)
                         .filter(
-                            domain_expr == replace_source,
+                            domain_expr == sweep_source,
                             owner_filter,
                             Document.document_name.in_(dead_urls),
                         )
@@ -928,7 +1003,7 @@ async def run_full_crawl(
             logger.info(
                 "Orphan sweep for '%s': %d pages missing from this crawl, %d confirmed gone "
                 "(%d chunks removed), %d retained as still-live",
-                replace_source,
+                sweep_source,
                 len(candidate_urls),
                 len(dead_urls),
                 deleted,
@@ -1016,6 +1091,19 @@ async def run_full_crawl(
             #  your plan's cap. Upgrade or split the crawl by section."
             "pages_discovered": discovered_total,
             "pages_dropped": pages_dropped,
+            # What the chatbot can actually answer from, as opposed to what we
+            # fetched. ``pages_processed`` counts every page the crawler READ;
+            # a crawl that stops on a plan limit at page 25 of 400 still has
+            # 400 there, and the dashboard rendered "read 400 pages" while 94%
+            # of the site was missing. ``pages_ingested`` counts pages this
+            # crawl stored PLUS pages the content hash proved the bot already
+            # held, so a delta re-crawl of an unchanged site still reports full
+            # coverage. These four make the shortfall visible without changing
+            # the (correct) partial-success ``done`` status.
+            "pages_ingested": pages_ingested,
+            "pages_failed": pages_failed,
+            "aborted": bool(ingest_state["billing_aborted"]),
+            "abort_reason": ingest_state.get("abort_reason"),
         }
         # A crawl that fetched pages but extracted zero readable text (common on
         # JS-rendered sites where the HTTP-only fetch never sees the hydrated

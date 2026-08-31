@@ -106,10 +106,10 @@ CORS_ORIGINS=https://oyechats.com,https://www.oyechats.com,https://app.oyechats.
 **Optional .env values:**
 ```
 LLM_MODEL=openai/gpt-5.4-mini
-R2_KEY_ID=<backblaze-key-id>
-R2_APPLICATION_KEY=<backblaze-app-key>
+R2_KEY_ID=<cloudflare-r2-access-key-id>
+R2_APPLICATION_KEY=<cloudflare-r2-secret-access-key>
 R2_BUCKET_NAME=<bucket-name>
-R2_ENDPOINT=<s3-endpoint>
+R2_ENDPOINT=<r2-s3-endpoint>
 SENTRY_DSN_BACKEND=<sentry-dsn>
 LANGFUSE_SECRET_KEY=<langfuse-secret>
 LANGFUSE_PUBLIC_KEY=<langfuse-public>
@@ -121,40 +121,63 @@ BREVO_API_KEY=<brevo-key>
 # Install dependencies and run migrations
 uv sync
 uv run alembic upgrade head
-
-# Install Playwright for web crawling
-uv run playwright install --with-deps chromium
 ```
 
-### 1.5 Create Systemd Service
-```bash
-cat > /etc/systemd/system/oyechats-api.service <<'EOF'
-[Unit]
-Description=OyeChats API
-After=network.target postgresql.service
+> There is **no** browser install step. Playwright and crawl4ai were removed;
+> crawling is HTTP-only against Jina Reader (primary) and Spider.cloud
+> (fallback), both off-box. See `CRAWL_PROVIDER_PRIMARY` in the secrets table
+> below.
 
-[Service]
-User=root
-WorkingDirectory=/opt/oyechats/platform/api
-Environment=PATH=/root/.local/bin:/usr/bin:/usr/local/bin
-ExecStart=/root/.local/bin/uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2
-Restart=always
-RestartSec=5
+### 1.5 Install the Systemd Units
 
-[Install]
-WantedBy=multi-user.target
-EOF
-```
+> **Use the checked-in units in `api/systemd/` — do NOT hand-write them.** They
+> are the source of truth and `deploy-api.yml` re-copies them on every deploy,
+> so anything hand-typed here is overwritten at the next release. They also
+> carry things a minimal unit drops: `User=oyechats` with `ProtectSystem=strict`
+> (see "Migrating services to non-root" below), the venv binary invoked
+> directly rather than through `uv run`, `WEB_CONCURRENCY`, DB pool sizing and
+> `LimitNOFILE`. The API runs under **Gunicorn** with `gunicorn.conf.py`, not a
+> bare `uvicorn --workers`.
 
 ```bash
+cd /opt/oyechats/platform/api
+
+# Create the service user + file grants the units need (idempotent).
+bash scripts/migrate-to-nonroot.sh
+
+# Install the units (the deploy does this too; this is the first-time path).
+cp systemd/oyechats-api.service     /etc/systemd/system/
+cp systemd/oyechats-worker.service  /etc/systemd/system/
+cp systemd/oyechats-backup.service  /etc/systemd/system/
+cp systemd/oyechats-backup.timer    /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable oyechats-api
-systemctl start oyechats-api
+systemctl enable --now oyechats-api oyechats-worker
+systemctl enable --now oyechats-backup.timer
 
-# Verify it's running
-systemctl status oyechats-api
-curl http://localhost:8000/docs  # Should return Swagger HTML
+# Verify
+systemctl status oyechats-api oyechats-worker
+curl -sf http://127.0.0.1:8000/health/full
 ```
+
+**Optional: the WebSocket process split.** `api/systemd/oyechats-ws.service`
+serves `/ws/*` from a dedicated **single-worker** Gunicorn on 127.0.0.1:8001,
+which is what allows `oyechats-api.service` to run `WEB_CONCURRENCY=2` without
+splitting live-chat sockets across workers. It is **not installed by the
+deploy** — `deploy-api.yml` only restarts it *if it already exists* — so it is
+an explicit, staged rollout. Order matters and is non-negotiable:
+
+```bash
+# 1. install + start the WS unit
+cp systemd/oyechats-ws.service /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now oyechats-ws
+# 2. point nginx's `location /ws/` at the oyechats_ws upstream (already in the
+#    checked-in nginx/oyechats-locations.conf) and reload
+# 3. set the WS_BACKPLANE_ENABLED repo variable to true and redeploy
+# 4. only then raise WEB_CONCURRENCY on oyechats-api.service
+```
+
+Workers first would break live chat. The unit file's own header carries the
+measurements and the reasoning; read it before touching this.
 
 ### 1.6 Nginx Reverse Proxy
 
@@ -227,16 +250,31 @@ journalctl -u oyechats-backup -n 30 --no-pager
    ```
 
 ### Manual Upload (first time)
+The build emits a loader plus a directory of hashed chunks — there is no
+`oyechats-widget.css` at the bucket root:
+
+```
+dist/oyechats-widget.js              ← loader IIFE (mutable: must revalidate, purge on deploy)
+dist/app/manifest.json               ← chunk manifest (mutable: must revalidate, purge on deploy)
+dist/app/oyechats-*.{js,css}         ← hashed chunks (immutable: 1y cache, no purge)
+```
+
 ```bash
 cd widget
 VITE_API_URL=https://api.oyechats.com npm run build
-# Upload dist/oyechats-widget.js and dist/oyechats-widget.css via Cloudflare dashboard
-# Or use wrangler CLI:
-npx wrangler r2 object put oyechats-cdn/oyechats-widget.js --file dist/oyechats-widget.js
-npx wrangler r2 object put oyechats-cdn/oyechats-widget.css --file dist/oyechats-widget.css
+npx wrangler r2 object put oyechats-cdn/oyechats-widget.js --file dist/oyechats-widget.js --remote
+npx wrangler r2 object put oyechats-cdn/app/manifest.json  --file dist/app/manifest.json  --remote
+for f in dist/app/oyechats-*.js dist/app/oyechats-*.css; do
+  npx wrangler r2 object put "oyechats-cdn/app/$(basename "$f")" --file "$f" --remote
+done
 ```
 
-After this, GitHub Actions handles subsequent deploys automatically.
+> `--remote` is not optional. On wrangler 4 `r2 object put` **defaults to local
+> storage**, so without it the upload silently succeeds against nothing.
+> `deploy-widget.yml` uses `widget/scripts/r2-put.sh`, which forces it.
+
+After this, `deploy-widget.yml` handles subsequent deploys automatically —
+including the cache-control split and the purge of the two mutable files.
 
 ---
 
@@ -251,6 +289,16 @@ After this, GitHub Actions handles subsequent deploys automatically.
    - **Output Directory**: `dist`
 3. Add environment variable: `VITE_API_URL` = `https://api.oyechats.com`
 4. Add custom domain: `app.oyechats.com`
+5. **Leave the Git integration off.** `app/vercel.json` sets
+   `git.deploymentEnabled.main: false`, and the deploy is triggered from
+   `deploy-app.yml` by a Deploy Hook instead — *after* the backend for that
+   same commit reports `/health/full` green. Vercel builds a Vite SPA in about
+   two minutes while `deploy-api.yml` runs CI, migrates over SSH and waits on
+   health, so the Git integration reliably put a dashboard live against a
+   backend that did not yet have its endpoints. Create the hook under
+   **Settings → Git** on the `main` branch and store the URL as the repository
+   secret `VERCEL_DEPLOY_HOOK_URL`; that URL is a credential. Do **not** add
+   the deprecated `github.enabled: false` — it breaks the hook too.
 
 ### Super Admin Console
 1. Import `digibranders/oyechats-admin` repo in Vercel (separate repo, lives in sibling `superadmin/` directory locally)
@@ -263,7 +311,9 @@ After this, GitHub Actions handles subsequent deploys automatically.
 2. Framework auto-detected as Next.js
 3. Add custom domains: `oyechats.com` and `www.oyechats.com`
 
-All three auto-deploy on every push to `main`.
+The landing page and the super-admin console auto-deploy on every push to `main`.
+The customer admin dashboard does not — see the note above; it deploys from
+`deploy-app.yml` once the API for that commit is healthy.
 
 ---
 
@@ -290,10 +340,10 @@ Set these in **GitHub → Settings → Secrets and variables → Actions**:
 | `DEMO_SCREENSHOT_WAIT_SECONDS` | Render settle time before capture, default `30`. Raise if captures come back with blank bands where lazily loaded media belongs |
 | `DEMO_SCREENSHOT_TTL_DAYS` | Days a stored capture stays fresh, default `30`. Past this the next training run recaptures |
 | `CORS_ORIGINS` | `https://oyechats.com,https://www.oyechats.com,https://app.oyechats.com,https://admin.oyechats.com` |
-| `R2_KEY_ID` | Backblaze B2 key ID |
-| `R2_APPLICATION_KEY` | Backblaze B2 application key |
-| `R2_BUCKET_NAME` | Backblaze B2 bucket name |
-| `R2_ENDPOINT` | Backblaze B2 S3 endpoint |
+| `R2_KEY_ID` | Cloudflare R2 access key ID (the `R2_` prefix is literal; legacy `B2_*` names are still accepted as fallbacks in `config.py`) |
+| `R2_APPLICATION_KEY` | Cloudflare R2 secret access key |
+| `R2_BUCKET_NAME` | Cloudflare R2 bucket name |
+| `R2_ENDPOINT` | Cloudflare R2 S3-compatible endpoint |
 | `SENTRY_DSN_BACKEND` | Sentry DSN for backend |
 | `LANGFUSE_SECRET_KEY` | Langfuse secret key |
 | `LANGFUSE_PUBLIC_KEY` | Langfuse public key |
@@ -302,6 +352,15 @@ Set these in **GitHub → Settings → Secrets and variables → Actions**:
 | `GOOGLE_CLIENT_ID` | Google OAuth web client ID (Sign in with Google) |
 | `GOOGLE_CLIENT_SECRET` | Google OAuth web client secret |
 | `OAUTH_STATE_SECRET` | Stable random string signing the OAuth state cookie; shared across Gunicorn workers |
+| `VERCEL_DEPLOY_HOOK_URL` | Vercel Deploy Hook for the admin dashboard, fired by `deploy-app.yml` after the backend is healthy. A credential — anyone holding it can deploy the project |
+
+Repository **variables** (not secrets) that change behaviour:
+
+| Variable | Value |
+|----------|-------|
+| `RELEVANCE_GATE_ENABLED` | Scope enforcement. `deploy-api.yml` writes `${RELEVANCE_GATE_ENABLED:-true}`, so an unset variable lands as `true`. It must never be re-emitted as a bare `${VAR}`: that writes an empty-but-present key, systemd's `EnvironmentFile=` returns `""`, and `""` is not truthy — which silently disabled the gate in production once already |
+| `WS_BACKPLANE_ENABLED` | Redis fan-out for live chat. Set `true` **only** once `oyechats-ws.service` is installed and nginx routes `/ws/` to it |
+| `INTL_PAYMENTS_ENABLED` | Opens the USD rail; defaults false so an unset variable keeps domestic-only behaviour |
 
 > **Google OAuth note:** `GOOGLE_REDIRECT_URI` (`https://api.oyechats.com/auth/google/callback`)
 > and `OAUTH_SUCCESS_REDIRECT_URL` (`https://app.oyechats.com/auth/callback`) are
@@ -316,10 +375,16 @@ Set these in **GitHub → Settings → Secrets and variables → Actions**:
 
 ```
 Push to main
-  ├── api/** changed → SSH deploy to DO → restart service
-  ├── widget/** changed → Build → Upload to R2 CDN
-  └── app/** changed → Vercel auto-deploys
+  ├── api/**    → deploy-api.yml    → CI → SSH to DO → uv sync → alembic → install units
+  │                                  → restart worker, api (and ws, if installed)
+  │                                  → gate on /health/full, else roll back to the previous SHA
+  ├── widget/** → deploy-widget.yml → build → verify outputs → upload to R2 → purge mutable files
+  └── app/**    → deploy-app.yml    → WAIT for this commit's deploy-api.yml to go green
+                                     → fire the Vercel Deploy Hook
 ```
+
+The `app/` job waits on the API deliberately: the dashboard must never go live
+against a backend that does not yet have the endpoints it calls.
 
 ---
 
@@ -333,8 +398,17 @@ journalctl -u oyechats-api -f
 # Restart API
 systemctl restart oyechats-api
 
-# Manual deploy
-cd /opt/oyechats/platform && git pull origin main && cd api && uv sync && uv run alembic upgrade head && systemctl restart oyechats-api
+# Manual deploy — restart the worker FIRST so its heartbeat is fresh before
+# the API's /health/full is checked, and restart the WS process if installed.
+cd /opt/oyechats/platform && git pull origin main && cd api \
+  && uv sync && uv run alembic upgrade head \
+  && systemctl restart oyechats-worker \
+  && systemctl restart oyechats-api \
+  && { systemctl cat oyechats-ws.service >/dev/null 2>&1 && systemctl restart oyechats-ws || echo "oyechats-ws not installed; skipped"; }
+
+# View worker / WebSocket logs
+journalctl -u oyechats-worker -f
+journalctl -u oyechats-ws -f
 
 # Check Postgres
 sudo -u postgres psql -d oyechats -c "SELECT count(*) FROM bots;"

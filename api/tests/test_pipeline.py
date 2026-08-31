@@ -318,7 +318,10 @@ class TestBatchWebIngestion:
         result = batch_web_ingestion(1, [])
         assert result == {
             "chunks": 0,
+            "pages_changed": 0,
+            "pages_unchanged": 0,
             "pages_charged": 0,
+            "pages_failed": 0,
             "credits_deducted": 0,
             "aborted": False,
             "abort_reason": None,
@@ -336,7 +339,7 @@ class TestBatchWebIngestion:
         with (
             patch("app.ingestion.pipeline.get_session", return_value=_session_ctx(session)),
             patch("app.ingestion.pipeline.clean_text", side_effect=capture_clean_text),
-            patch("app.ingestion.pipeline.is_document_processed", return_value=True),
+            patch("app.ingestion.pipeline._crawl_page_unchanged", return_value=True),
         ):
             batch_web_ingestion(1, [{"url": "https://a.com", "content": oversized}])
 
@@ -348,7 +351,7 @@ class TestBatchWebIngestion:
         with (
             patch("app.ingestion.pipeline.get_session", return_value=_session_ctx(session)),
             patch("app.ingestion.pipeline.clean_text", side_effect=lambda x: x),
-            patch("app.ingestion.pipeline.is_document_processed", return_value=True),
+            patch("app.ingestion.pipeline._crawl_page_unchanged", return_value=True),
         ):
             result = batch_web_ingestion(1, [{"url": "https://a.com", "content": "text"}])
 
@@ -363,7 +366,7 @@ class TestBatchWebIngestion:
         with (
             patch("app.ingestion.pipeline.get_session", return_value=_session_ctx(session)),
             patch("app.ingestion.pipeline.clean_text", side_effect=lambda x: x),
-            patch("app.ingestion.pipeline.is_document_processed", return_value=False),
+            patch("app.ingestion.pipeline._crawl_page_unchanged", return_value=False),
             patch("app.ingestion.pipeline.chunk_text", return_value=[mock_chunk]),
             patch("app.ingestion.pipeline.CHUNK_ENRICHMENT_ENABLED", False),
             patch("app.ingestion.pipeline.embed_chunks", return_value=[[0.1]]),
@@ -395,7 +398,7 @@ class TestBatchWebIngestion:
         with (
             patch("app.ingestion.pipeline.get_session", return_value=_session_ctx(session)),
             patch("app.ingestion.pipeline.clean_text", side_effect=lambda x: x),
-            patch("app.ingestion.pipeline.is_document_processed", return_value=False),
+            patch("app.ingestion.pipeline._crawl_page_unchanged", return_value=False),
             patch("app.ingestion.pipeline.chunk_text", side_effect=echo_chunk_text),
             patch("app.ingestion.pipeline.CHUNK_ENRICHMENT_ENABLED", False),
             patch("app.ingestion.pipeline.embed_chunks", side_effect=_fake_embed_with_progress),
@@ -415,7 +418,7 @@ class TestBatchWebIngestion:
         with (
             patch("app.ingestion.pipeline.get_session", return_value=_session_ctx(session)),
             patch("app.ingestion.pipeline.clean_text", side_effect=lambda x: x),
-            patch("app.ingestion.pipeline.is_document_processed", return_value=False),
+            patch("app.ingestion.pipeline._crawl_page_unchanged", return_value=False),
             patch("app.ingestion.pipeline.chunk_text", return_value=[mock_chunk]),
             patch("app.ingestion.pipeline.CHUNK_ENRICHMENT_ENABLED", False),
             patch("app.ingestion.pipeline.embed_chunks", side_effect=_fake_embed_with_progress),
@@ -441,7 +444,7 @@ class TestBatchWebIngestion:
         with (
             patch("app.ingestion.pipeline.get_session", return_value=_session_ctx(session)),
             patch("app.ingestion.pipeline.clean_text", side_effect=lambda x: x),
-            patch("app.ingestion.pipeline.is_document_processed", return_value=False),
+            patch("app.ingestion.pipeline._crawl_page_unchanged", return_value=False),
             patch("app.ingestion.pipeline.chunk_text", return_value=[mock_chunk]),
             patch("app.ingestion.pipeline.CHUNK_ENRICHMENT_ENABLED", False),
             patch("app.ingestion.pipeline.embed_chunks", return_value=[[0.1], [0.2]]),
@@ -464,7 +467,9 @@ class TestBatchWebIngestion:
         assert result == {
             "chunks": 2,
             "pages_changed": 2,
+            "pages_unchanged": 0,
             "pages_charged": 2,
+            "pages_failed": 0,
             "credits_deducted": 6,
             "aborted": False,
             # Named, so the orchestrator can tell "you ran out" from "we could
@@ -497,7 +502,7 @@ class TestBatchWebIngestion:
         with (
             patch("app.ingestion.pipeline.get_session", return_value=_session_ctx(session)),
             patch("app.ingestion.pipeline.clean_text", side_effect=lambda x: x),
-            patch("app.ingestion.pipeline.is_document_processed", return_value=False),
+            patch("app.ingestion.pipeline._crawl_page_unchanged", return_value=False),
             patch("app.ingestion.pipeline.chunk_text", return_value=[mock_chunk]),
             patch("app.ingestion.pipeline.CHUNK_ENRICHMENT_ENABLED", False),
             patch("app.ingestion.pipeline.embed_chunks", return_value=[[0.1], [0.2], [0.3]]),
@@ -532,7 +537,7 @@ class TestBatchWebIngestion:
         with (
             patch("app.ingestion.pipeline.get_session", return_value=_session_ctx(session)),
             patch("app.ingestion.pipeline.clean_text", side_effect=lambda x: x),
-            patch("app.ingestion.pipeline.is_document_processed", return_value=False),
+            patch("app.ingestion.pipeline._crawl_page_unchanged", return_value=False),
             patch("app.ingestion.pipeline.chunk_text", return_value=[mock_chunk]),
             patch("app.ingestion.pipeline.CHUNK_ENRICHMENT_ENABLED", False),
             patch("app.ingestion.pipeline.embed_chunks", return_value=[[0.1]]),
@@ -559,7 +564,7 @@ class TestBatchWebIngestion:
         with (
             patch("app.ingestion.pipeline.get_session", return_value=_session_ctx(session)),
             patch("app.ingestion.pipeline.clean_text", side_effect=lambda x: x),
-            patch("app.ingestion.pipeline.is_document_processed", return_value=False),
+            patch("app.ingestion.pipeline._crawl_page_unchanged", return_value=False),
             patch("app.ingestion.pipeline.chunk_text", return_value=[mock_chunk]),
             patch("app.ingestion.pipeline.CHUNK_ENRICHMENT_ENABLED", False),
             patch("app.ingestion.pipeline.embed_chunks", return_value=[[0.1], [0.2]]),

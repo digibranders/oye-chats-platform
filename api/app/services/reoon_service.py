@@ -13,24 +13,81 @@ import os
 import urllib.parse
 import urllib.request
 
+from app.core.metrics import forward_to_sentry_if_alertable, increment_metric_counter
+
 logger = logging.getLogger(__name__)
 
 REOON_VERIFY_URL = "https://emailverifier.reoon.com/api/v1/verify"
 
+#: Budget for a call NOTHING is waiting on: the background lead enrichment.
+#: Reoon's own docs put power mode at seconds to over a minute, and that path
+#: runs after lead capture has already succeeded, so a long wait costs only a
+#: worker thread.
+REOON_BACKGROUND_TIMEOUT_S = 90.0
 
-def verify_email(email: str) -> dict | None:
+#: Budget for a call a VISITOR is waiting on (``POST /chat/validate-email``,
+#: fired on email-field blur). The route is a plain ``def``, so it occupies an
+#: anyio worker thread for the whole socket read, and it is not in
+#: ``main._TIMEOUT_EXEMPT_PREFIXES``: at the background budget a slow vendor
+#: blew through the 60s global middleware, returned a 504, and the widget
+#: (which retries a 504) kept the visitor's form spinning for roughly two
+#: minutes. ``asyncio.wait_for`` does not help, it cancels the await and
+#: leaves the socket read running. The only real fix is to stop waiting.
+#: Every caller of this function already fails OPEN, so an occasional
+#: timeout costs an unverified verdict, never a blocked visitor.
+REOON_INTERACTIVE_TIMEOUT_S = 5.0
+
+#: Counter name for the "configured to run, cannot possibly run" state.
+_MISSING_KEY_METRIC = "reoon_api_key_missing"
+
+_missing_key_reported = False
+
+
+def check_configuration() -> bool:
+    """True when ``REOON_API_KEY`` is present. Reports a missing key ONCE.
+
+    Without this the feature degrades invisibly: an empty or rotated key makes
+    :func:`verify_email` return ``None``, every caller treats ``None`` as
+    fail-open, and email verification becomes a platform-wide no-op that only
+    shows up as a per-call warning buried in request logs. One warning plus one
+    safety-net counter (the same shape ``rag_service._safety_net_metric``
+    emits) makes the state visible without failing startup, which would take
+    the whole API down over an optional vendor.
+    """
+    if os.getenv("REOON_API_KEY", "").strip():
+        return True
+
+    global _missing_key_reported
+    if not _missing_key_reported:
+        _missing_key_reported = True
+        logger.warning(
+            "reoon.metric name=%s. REOON_API_KEY is not set; email verification is a no-op "
+            "for every bot on every plan until it is configured",
+            _MISSING_KEY_METRIC,
+        )
+        increment_metric_counter(_MISSING_KEY_METRIC)
+        forward_to_sentry_if_alertable(_MISSING_KEY_METRIC)
+    return False
+
+
+def verify_email(email: str, *, timeout: float = REOON_BACKGROUND_TIMEOUT_S) -> dict | None:
     """Run a Reoon power-mode check. Returns None on any failure. Callers
-    must treat None as 'unknown, do not send', never as 'safe'."""
-    api_key = os.getenv("REOON_API_KEY", "")
-    if not api_key:
+    must treat None as 'unknown, do not send', never as 'safe'.
+
+    ``timeout`` is per-call because the two callers have opposite contracts:
+    pass :data:`REOON_INTERACTIVE_TIMEOUT_S` from anything a visitor is
+    waiting on, and leave the default for background enrichment.
+    """
+    if not check_configuration():
         return None
+    api_key = os.getenv("REOON_API_KEY", "")
 
     query = urllib.parse.urlencode({"email": email, "key": api_key, "mode": "power"})
     url = f"{REOON_VERIFY_URL}?{query}"
 
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "OyeChats/1.0"})
-        with urllib.request.urlopen(req, timeout=90.0) as response:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
             data = json.loads(response.read().decode())
     except Exception as exc:
         logger.warning(f"Reoon verification failed for {email}: {exc}")

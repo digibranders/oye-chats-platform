@@ -1,8 +1,42 @@
 # OyeChats Platform — AI/LLM Engineering Review
 
-**Scope:** `/Users/a12345/Desktop/AI/OyeChats/oye-chats-platform` — chat/RAG pipeline, embeddings, crawl/ingestion, prompt assembly, cost, latency, eval, observability.
+**Scope:** this repository (`oye-chats-platform`) — chat/RAG pipeline, embeddings, crawl/ingestion, prompt assembly, cost, latency, eval, observability.
 **Method:** A0 surface mapping (19+ files read in full) → per-dimension adversarial analysis (A1–A9) → 3-vote verification pass on Critical/High findings → synthesis.
 **Posture:** This is an internal adversarial review, not a status report. Verdicts are not softened for morale.
+
+> ## STATUS 2026-08-31 — mostly landed, but the top-ranked finding is still open.
+>
+> This file is still load-bearing: 39 of its AR-* findings are cited by ID in
+> `api/app/**` at 97 sites, and `services/groundedness_gate.py` points back here.
+> Read the AR IDs in the code before assuming a finding below is live.
+>
+> **Verified closed:**
+> - **AR-02** (blocking sync Redis on the async streaming path) — `rag_service._embed_query_cached_async`
+>   (`:2188`) now wraps `cache_get`/`cache_set` in `asyncio.to_thread`, and says why.
+> - **AR-04** — see §9; the review's own live-verification pass already corrected this. Langfuse is
+>   **not** force-disabled in prod; `LANGFUSE_FORCE_DISABLE` is an unset kill switch. §1's
+>   "Observability was disabled, not fixed" and the `LANGFUSE_FORCE_DISABLE=true` claim in it
+>   are the pre-verification framing — §9 supersedes them.
+> - **AR-12** (no post-generation groundedness check for prose) — `services/groundedness_gate.py`,
+>   observability-only and sampled, with the reasoning for not blocking in its docstring.
+> - **AR-05 / AR-06 / AR-07 / AR-09 / AR-10 / AR-13** and the AR-15..AR-46 range — all cited in code.
+>
+> **Still open (re-verified 2026-08-31):**
+> - **AR-03 (rank 1, Critical) — there is still no answer-quality eval gate.** `.github/workflows/ci.yml`
+>   has exactly three jobs: `backend`, `widget`, `app`. No golden set, no judge, nothing that
+>   exercises real answer content. Every word of AR-03 below still applies.
+> - **AR-01** — partially addressed. `/health/full`'s LLM signal is still `_llm_ready()`, an
+>   importability probe that never calls the LLM (`main.py`), so a revoked key or provider
+>   outage still reports healthy. What did change is that a hollow-litellm install now flips
+>   `fully_ok` false and 503s. The recommended cached real `completion(max_tokens=1)` probe
+>   was not built.
+> - **AR-08** — explicitly descoped; see §9.
+> - **AR-11 / AR-31** — the integration-tier and fallback-chain test gaps are not cited anywhere in code.
+>
+> One correction to §1's third bullet: the `WEB_CONCURRENCY=1` premise that AR-02 and AR-09 reason
+> from no longer holds. `api/systemd/oyechats-api.service:66` sets `WEB_CONCURRENCY=2`, with
+> WebSockets moved to their own single-worker unit (`oyechats-ws.service`) behind a Redis backplane.
+> The findings stand on their own merits; the "sole event loop" amplification is now per-worker.
 
 ---
 

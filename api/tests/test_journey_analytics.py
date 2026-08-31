@@ -267,7 +267,10 @@ class TestSummaryCounts:
             ],
         ]
         db = MagicMock()
-        db.execute.return_value.all.return_value = [("lead1",), ("lead2",), ("lead3",)]
+        # The lead figure is a SQL ``count()`` now, not ``len()`` over hydrated
+        # ORM rows, so the stub answers ``scalar()``. The assertion below is
+        # unchanged: three leads in the window.
+        db.execute.return_value.scalar.return_value = 3
         with patch.object(jas, "_fetch_journeys", return_value=journeys):
             out = jas.summary_counts(db, 1, _ago(30), _now())
         assert out["sessions_with_journey"] == 3
@@ -300,7 +303,7 @@ class TestSummaryCounts:
             ],
         ]
         db = MagicMock()
-        db.execute.return_value.all.return_value = []
+        db.execute.return_value.scalar.return_value = 0
         with patch.object(jas, "_fetch_journeys", return_value=journeys):
             out = jas.summary_counts(db, 1, _ago(30), _now())
         assert out["sessions_with_journey"] == 3

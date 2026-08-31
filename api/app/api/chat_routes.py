@@ -63,7 +63,7 @@ from app.schemas.validators import (
 )
 from app.services.ip_intel_service import fetch_ip_intel
 from app.services.language_service import (
-    detect_message_language,
+    detect_message_language_detail,
     get_locale_direction,
     is_multilingual_enabled,
     language_from_locale,
@@ -247,6 +247,54 @@ def _resolve_session_id(provided: str | None, bot_id: int) -> str:
 # trusted enough to persist; the session falls to the bot default instead.
 _LANGUAGE_DETECTION_THRESHOLD = 0.85
 
+# Code-switching escape hatch for the floor above.
+#
+# Confidence is the share of letters in the dominant non-Latin script, so a
+# mixed message can never reach 0.85: "मुझे pricing चाहिए" scores 0.42. Hindi
+# is the only non-English language actually shipped and Hinglish is how it is
+# typed, so the floor as written rejected the detector's main use case. Script
+# PRESENCE is strong evidence in a way a share is not, a visitor who types
+# Devanagari at all is not writing English, so a detection also clears the bar
+# once enough non-Latin letters are present in their own right.
+#
+# The absolute count is what keeps this from firing on noise: a signature, an
+# emoji-adjacent glyph or one borrowed word cannot reach four letters of the
+# same script. The share floor bounds the other direction, so a long English
+# message carrying one short quoted phrase stays English. Pure Latin text
+# never reaches here at all (the detector returns 0.0 for it), so English
+# detection is unchanged.
+_CODE_SWITCH_MIN_SCRIPT_LETTERS = 4
+_CODE_SWITCH_MIN_SHARE = 0.25
+
+# Tiers whose resolved locale a trusted message detection is allowed to
+# replace. ``browser`` is a header every browser sends and ``persisted`` is a
+# value carried over from a previous visit; neither is a statement about the
+# language this visitor is typing right now. ``explicit`` (the visitor picked
+# it) and ``site`` / ``html_lang`` (the customer declared it) are, and are
+# never overridden. Leaving detection on ``default`` alone made it effectively
+# dead code: any browser advertising ``en-*`` matches a bot offering ``en-IN``,
+# so the source is ``browser`` for nearly every real visitor and a message in
+# pure Devanagari was answered in English.
+_DETECTION_OVERRIDABLE_SOURCES = ("default", "browser", "persisted")
+
+
+def _detection_is_trusted(confidence: float, script_letters: int) -> bool:
+    """Is a first-turn script detection strong enough to act on?"""
+    if confidence >= _LANGUAGE_DETECTION_THRESHOLD:
+        return True
+    return script_letters >= _CODE_SWITCH_MIN_SCRIPT_LETTERS and confidence >= _CODE_SWITCH_MIN_SHARE
+
+
+def _visitor_language_switch_allowed(lang_cfg: dict) -> bool:
+    """The customer's "Let visitors switch language" control.
+
+    Absent means allowed, which is how the widget reads it
+    (``allow_visitor_language_switch !== false``), so bots configured before
+    the key existed keep the behaviour they have. Only an explicit ``false``
+    refuses.
+    """
+    return lang_cfg.get("allow_visitor_language_switch", True) is not False
+
 
 def _reconstruct_context(language_code, locale, locked) -> "LanguageContext":
     """Build a LanguageContext from persisted ChatSession columns, for the
@@ -299,6 +347,14 @@ def _resolve_visitor_language_and_update_session(
 
     client_source = (body.language_source or "").strip().lower() or None
     client_locale = body.locale
+    if client_source == "explicit" and not _visitor_language_switch_allowed(lang_cfg):
+        # Pre-session half of the same control ``POST /chat/language`` enforces.
+        # The widget's picker rides the first turn as ``language_source
+        # =explicit`` when no session exists yet, so refusing only at that
+        # endpoint would leave the toggle bypassable with the public bot key.
+        # Demoted rather than rejected: the visitor still gets their turn
+        # answered, just in the language the normal precedence chain resolves.
+        client_source = None
     # Only these two outrank a language already resolved for the session.
     asserts_override = client_source in ("explicit", "site")
 
@@ -323,6 +379,15 @@ def _resolve_visitor_language_and_update_session(
         supported = lang_cfg.get("supported_locales") or ["en-IN"]
         default_loc = lang_cfg.get("default_locale") or "en-IN"
         header_lang = fastapi_request.headers.get("accept-language")
+        # "Detect the visitor's language" in the dashboard, described there as
+        # "From their browser, the page they are on, and their first message."
+        # Those are exactly the three tiers gated on it. It was written by the
+        # admin UI and read by nothing, so switching it off changed nothing at
+        # all. Defaults to True so every bot configured before this reads the
+        # flag keeps the behaviour it has. An explicit visitor selection and a
+        # locale the customer declared through the JS API are choices, not
+        # detection, and stay in effect either way.
+        auto_detect = lang_cfg.get("auto_detect", True) is not False
 
         context = resolve_initial_locale(
             explicit=client_locale if client_source == "explicit" else None,
@@ -330,22 +395,23 @@ def _resolve_visitor_language_and_update_session(
             # OyeChats.init/update/setLocale. Dropping it (as this did) let the
             # browser language outrank a website that had declared its language.
             site=client_locale if client_source == "site" else None,
-            html_lang=client_locale if client_source == "html_lang" else None,
-            browser=client_locale if client_source == "browser" else header_lang,
+            html_lang=client_locale if (auto_detect and client_source == "html_lang") else None,
+            browser=(client_locale if client_source == "browser" else header_lang) if auto_detect else None,
             persisted=client_locale if client_source == "persisted" else existing_locale,
             supported=supported,
             default=default_loc,
         )
 
-        # First-turn message detection: only when nothing above the default
-        # tier resolved (context.source == "default"), the session has no
-        # language yet, and no explicit selection is in play. This is the ONLY
-        # place detection runs; a locked or settled session already returned
-        # above. Detected locales are narrowed through match_supported_locale,
-        # and low-confidence / unsupported detections are never persisted.
-        if context.source == "default" and client_source != "explicit":
-            detected_lang, confidence = detect_message_language(body.question or "")
-            if detected_lang and confidence >= _LANGUAGE_DETECTION_THRESHOLD:
+        # First-turn message detection: runs when the resolved tier is one the
+        # visitor's own typing outranks (see _DETECTION_OVERRIDABLE_SOURCES),
+        # the session has no language yet, and no explicit selection is in
+        # play. This is the ONLY place detection runs; a locked or settled
+        # session already returned above. Detected locales are narrowed through
+        # match_supported_locale, and untrusted / unsupported detections are
+        # never persisted.
+        if auto_detect and context.source in _DETECTION_OVERRIDABLE_SOURCES and client_source != "explicit":
+            detected_lang, confidence, script_letters = detect_message_language_detail(body.question or "")
+            if detected_lang and _detection_is_trusted(confidence, script_letters):
                 matched = match_supported_locale(detected_lang, supported)
                 if matched:
                     context = LanguageContext(
@@ -1600,6 +1666,14 @@ def change_chat_language(
     if not is_multilingual_enabled(bot):
         raise HTTPException(status_code=403, detail="Multilingual is not enabled for this bot")
 
+    # "Let visitors switch language", enforced server-side. It was checked only
+    # in the widget (which hides its picker), and this endpoint authenticates
+    # with the public bot key, so anyone reading a customer's page source could
+    # switch and LOCK a session language for a bot whose owner turned the
+    # picker off.
+    if not _visitor_language_switch_allowed(lang_cfg):
+        raise HTTPException(status_code=403, detail="Visitor language switching is disabled for this bot")
+
     normalized = normalize_locale(body.locale)
     if not normalized:
         raise HTTPException(status_code=400, detail="Invalid locale format")
@@ -1669,6 +1743,98 @@ _REOON_REQUEST_LIMIT = "60/minute"
 _REOON_BUDGET = "20/minute"
 
 
+def _email_verdict(bot: Bot, request: Request, email: str) -> bool | None:
+    """Reoon's verdict for one address, shared by every visitor-facing capture path.
+
+    Returns ``True`` (obviously undeliverable), ``False`` (usable as far as
+    Reoon can tell), or ``None`` meaning "not checked": the plan, the agent
+    opt-in or the platform switch says no, the vendor budget is spent, or Reoon
+    itself could not be reached. Callers must treat ``None`` as PASS. An infra
+    hiccup or a lower tier must never block a real visitor.
+
+    Extracted so ``/chat/validate-email`` and the meeting-booking path ask the
+    question exactly once, in one place. They previously disagreed: the widget
+    forms were gated on this verdict and ``attendee_email`` was not checked at
+    all, so the one address a booking is actually followed up on was the one
+    nobody verified.
+    """
+    with get_session() as session:
+        # Plan gate (Standard + Professional), the per-agent customer opt-in, AND
+        # the super-admin feature switch. This real-time blur check is NOT metered
+        # (it's a pre-submit UX helper, not the billable per-lead verification)
+        # but it must respect the same on/off controls so it never calls Reoon
+        # for an agent that has verification turned off.
+        from app.services import credit_service
+
+        if (
+            not is_email_validation_enabled_for_bot(bot.id, session)
+            or not credit_service.is_feature_enabled(session, "email_verification")
+            or not _agent_enrichment_opt_in(bot.id, "email_verification")
+        ):
+            return None
+
+    from app.core.cache import cache_get, cache_set
+    from app.services.reoon_service import (
+        REOON_INTERACTIVE_TIMEOUT_S,
+        is_obviously_undeliverable,
+        verify_email,
+    )
+
+    # CACHED, because this call is UNMETERED and the endpoint is public.
+    #
+    # It is authenticated only by the widget's bot key (embedded in customer
+    # pages), so every Reoon call it makes lands on OyeChats' account with no
+    # ledger row anywhere. Metering it would be the wrong fix: this is a
+    # pre-submit UX helper that fires on field blur, and charging a customer
+    # because a visitor tabbed through a form twice is indefensible. The cache
+    # plus ``_REOON_BUDGET`` bound the spend instead.
+    #
+    # The two verdicts get DIFFERENT lifetimes, because they fail in opposite
+    # directions. A "deliverable" answer is safe to hold for a day: the worst
+    # case is that we let through an address that went bad since. An
+    # "undeliverable" answer BLOCKS the visitor (`HandoffForm` refuses to
+    # submit on it) and `is_obviously_undeliverable` reads a live DNS/SMTP
+    # probe that this codebase already documents as having known false
+    # positives. Holding one of those for 24 hours pins a real person out of
+    # every OyeChats widget on the internet (the key is the address, not the
+    # tenant, because deliverability is a property of the address). A short
+    # window still collapses the abuse case (a loop on the public bot key
+    # hammers the same few addresses within seconds) while letting a
+    # transient false verdict clear on the visitor's next try.
+    #
+    # Keyed on a hash so no raw address is stored in Redis, and prefixed like
+    # every other key this platform writes (`core/cache.PREFIX`) so a shared
+    # Redis can't collide and a prefix flush can reach it.
+    fingerprint = hashlib.sha256(email.strip().lower().encode()).hexdigest()[:32]
+    cache_key = f"oyechats:reoon:verdict:{fingerprint}"
+
+    cached = cache_get(cache_key)
+    if isinstance(cached, dict) and "undeliverable" in cached:
+        return bool(cached["undeliverable"])
+
+    # About to spend money. This is the point the budget is for, and the
+    # only path that reaches it, so a visitor re-checking addresses we
+    # already have verdicts for can never exhaust it.
+    if not consume_vendor_budget("reoon_verify", key_from_bot_key(request), _REOON_BUDGET):
+        logger.warning(
+            "reoon_budget_exhausted | bot=%s. Returning unverified",
+            bot.id,
+        )
+        return None
+
+    # The SHORT budget: a visitor is waiting on this one.
+    validation = verify_email(email, timeout=REOON_INTERACTIVE_TIMEOUT_S)
+    if validation is None:
+        # Reoon unreachable. Fail OPEN. A visitor must never be blocked
+        # from submitting because our vendor is down. Not cached: the next
+        # attempt should retry rather than inherit an outage.
+        return None
+    undeliverable = is_obviously_undeliverable(validation)
+    ttl = _REOON_BLOCKED_TTL_S if undeliverable else _REOON_VERDICT_TTL_S
+    cache_set(cache_key, {"undeliverable": undeliverable}, ttl)
+    return undeliverable
+
+
 @router.post("/chat/validate-email")
 @limiter.limit(_REOON_REQUEST_LIMIT, key_func=key_from_bot_key)
 def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: Bot = Depends(get_current_bot)):
@@ -1702,76 +1868,9 @@ def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: B
     if not _EMAIL_RE.match(email):
         return {"valid": False, "reason": "Please enter a valid email address."}
 
-    with get_session() as session:
-        # Plan gate (Standard + Professional), the per-agent customer opt-in, AND
-        # the super-admin feature switch. This real-time blur check is NOT metered
-        # (it's a pre-submit UX helper, not the billable per-lead verification)
-        # but it must respect the same on/off controls so it never calls Reoon
-        # for an agent that has verification turned off.
-        from app.services import credit_service
-
-        if (
-            not is_email_validation_enabled_for_bot(bot.id, session)
-            or not credit_service.is_feature_enabled(session, "email_verification")
-            or not _agent_enrichment_opt_in(bot.id, "email_verification")
-        ):
-            return {"valid": True, "unverified": True}
-
-    from app.core.cache import cache_get, cache_set
-    from app.services.reoon_service import is_obviously_undeliverable, verify_email
-
-    # CACHED, because this call is UNMETERED and the endpoint is public.
-    #
-    # It is authenticated only by the widget's bot key (embedded in customer
-    # pages), so every Reoon call it makes lands on OyeChats' account with no
-    # ledger row anywhere. Metering it would be the wrong fix: this is a
-    # pre-submit UX helper that fires on field blur, and charging a customer
-    # because a visitor tabbed through a form twice is indefensible. The cache
-    # plus ``_REOON_BUDGET`` bound the spend instead.
-    #
-    # The two verdicts get DIFFERENT lifetimes, because they fail in opposite
-    # directions. A "deliverable" answer is safe to hold for a day: the worst
-    # case is that we let through an address that went bad since. An
-    # "undeliverable" answer BLOCKS the visitor (`HandoffForm` refuses to
-    # submit on it) and `is_obviously_undeliverable` reads a live DNS/SMTP
-    # probe that this codebase already documents as having known false
-    # positives. Holding one of those for 24 hours pins a real person out of
-    # every OyeChats widget on the internet (the key is the address, not the
-    # tenant, because deliverability is a property of the address). A short
-    # window still collapses the abuse case (a loop on the public bot key
-    # hammers the same few addresses within seconds) while letting a
-    # transient false verdict clear on the visitor's next try.
-    #
-    # Keyed on a hash so no raw address is stored in Redis, and prefixed like
-    # every other key this platform writes (`core/cache.PREFIX`) so a shared
-    # Redis can't collide and a prefix flush can reach it.
-    fingerprint = hashlib.sha256(email.strip().lower().encode()).hexdigest()[:32]
-    cache_key = f"oyechats:reoon:verdict:{fingerprint}"
-
-    cached = cache_get(cache_key)
-    if isinstance(cached, dict) and "undeliverable" in cached:
-        undeliverable = bool(cached["undeliverable"])
-    else:
-        # About to spend money. This is the point the budget is for, and the
-        # only path that reaches it, so a visitor re-checking addresses we
-        # already have verdicts for can never exhaust it.
-        if not consume_vendor_budget("reoon_verify", key_from_bot_key(request), _REOON_BUDGET):
-            logger.warning(
-                "reoon_budget_exhausted | bot=%s. Returning unverified",
-                bot.id,
-            )
-            return {"valid": True, "unverified": True}
-
-        validation = verify_email(email)
-        if validation is None:
-            # Reoon unreachable. Fail OPEN. A visitor must never be blocked
-            # from submitting because our vendor is down. Not cached: the next
-            # attempt should retry rather than inherit an outage.
-            return {"valid": True, "unverified": True}
-        undeliverable = is_obviously_undeliverable(validation)
-        ttl = _REOON_BLOCKED_TTL_S if undeliverable else _REOON_VERDICT_TTL_S
-        cache_set(cache_key, {"undeliverable": undeliverable}, ttl)
-
+    undeliverable = _email_verdict(bot, request, email)
+    if undeliverable is None:
+        return {"valid": True, "unverified": True}
     if undeliverable:
         return {"valid": False, "reason": "This email address doesn't look right. Mind double-checking it?"}
     return {"valid": True}
@@ -1974,9 +2073,26 @@ def behavioral_signals_endpoint(body: BehavioralSignalsRequest, request: Request
 @router.post("/chat/meeting-booked")
 @limiter.limit("10/minute", key_func=key_from_bot_key)
 def meeting_booked_endpoint(body: MeetingBookedRequest, request: Request, bot: Bot = Depends(get_current_bot)):
+    """Record a confirmed meeting booking. Auth: X-Bot-Key.
+
+    ``attendee_email`` goes through the SAME verification as every other
+    visitor-supplied address (``_email_verdict``). It was the one capture path
+    that skipped it, which made the gate meaningless in the place it matters
+    most: the pre-chat, handoff and offline forms all refuse an obviously
+    undeliverable address, while the address a sales rep actually sends the
+    invite to was never checked. Fail-open is preserved exactly, an unchecked
+    verdict (plan, opt-in, budget, vendor down) books the meeting.
+    """
     try:
         from app.db.models import MeetingBooking
         from app.services.webhook_service import fire_webhook
+
+        if body.attendee_email and _email_verdict(bot, request, body.attendee_email) is True:
+            logger.info(f"Meeting booking rejected, undeliverable attendee email | bot={bot.id}")
+            raise HTTPException(
+                status_code=400,
+                detail="This email address doesn't look right. Mind double-checking it?",
+            )
 
         with get_session() as session:
             ensure_chat_session(session, body.session_id, bot_id=bot.id)
@@ -2013,6 +2129,10 @@ def meeting_booked_endpoint(body: MeetingBookedRequest, request: Request, bot: B
 
             return {"success": True}
     except SessionOwnershipError:
+        raise
+    except HTTPException:
+        # The verification refusal above is a deliberate answer, not a failure
+        # to save; the blanket handler below would turn it into a 500.
         raise
     except Exception as e:
         logger.error(f"Meeting booking save failed: {e}")

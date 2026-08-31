@@ -1,10 +1,10 @@
 # Subscription FSM
 
-> **Audience:** New engineers · CTO · **Read time:** 5 min · **Last updated:** 2026-08-05
+> **Audience:** New engineers · CTO · **Read time:** 5 min · **Last updated:** 2026-08-31
 
 ## TL;DR
 
-Five states: `trialing`, `active`, `past_due`, `canceled`, `expired`. Razorpay is the **only** payment rail — there is no Stripe, no `paused` state, and no pause/resume. State changes are driven almost entirely by **Razorpay webhooks**, with a handful of customer-initiated routes and two timer-based transitions (trial expiry, dunning grace elapsed).
+Five live states: `trialing`, `active`, `past_due`, `canceled`, `expired` — plus `trial_expired`, which is now **legacy** (see below). Razorpay is the **only** payment rail — there is no Stripe, no `paused` state, and no pause/resume. State changes are driven almost entirely by **Razorpay webhooks**, with a handful of customer-initiated routes and two timer-based transitions (trial expiry, dunning grace elapsed).
 
 The one thing to internalise: **`cancel_at_period_end` is a reversible customer INTENT, not a gateway fact.** The irreversible Razorpay cancel is recorded separately in `gateway_cancel_executed_at`. Everything about cancel/reactivate follows from keeping those two apart.
 
@@ -15,7 +15,7 @@ stateDiagram-v2
     [*] --> trialing: signs up on a paid plan<br/>(Free goes straight to active)
 
     trialing --> active: subscription.activated / charged
-    trialing --> trial_expired: trial_days passed<br/>+ no payment
+    trialing --> active: trial_days passed with no payment<br/>(task_expire_trials CONVERTS the row onto Free in place)
 
     active --> past_due: subscription.pending / halted<br/>(mandate failed)
     active --> canceled: subscription.cancelled at cycle end<br/>OR superseded by a replacement
@@ -70,7 +70,8 @@ Two rules fall out of this, and both are load-bearing:
 | (new) | `trialing` | `POST /subscriptions/checkout` on a plan with `trial_days` | INSERT subscriptions; plan-grant ledger row |
 | (new) | `active` | Free plan signup, or paid checkout with no trial | Same; `current_period_end = now + 1 cycle` |
 | `trialing` | `active` | `subscription.activated` | Set period; reset + grant the plan allowance; set `last_granted_period_end` |
-| `trialing` | `trial_expired` | `task_expire_trials` finds `trial_end < now` | Bots go offline; `data_retention_until` set |
+| `trialing` | `active` **on Free** | `task_expire_trials` finds `trial_end < now` | **Changed 2026-08-28: a lapsed trial CONVERTS, it does not expire.** The same row moves onto the Free plan, keeps every bot, document and conversation, forfeits the unused trial allowance, is granted Free's, opens a fresh anniversary period, and has its knowledge **paused rather than deleted** — one upgrade switches it all back on. It no longer writes `trial_expired` and no longer stamps `data_retention_until`, so nothing it writes can reach the hard-delete cron. A client who bought mid-trial is the exception: that trial row is retired as `converted_to_paid` |
+| `trialing` | `trial_expired` | — | **Legacy.** Only rows stamped before 2026-08-28 carry this status. `task_delete_expired_trial_data` still drains them once `data_retention_until` is reached, and several active-set queries still include the status so those rows stay reachable; no new row enters it |
 | `active` | `past_due` | `subscription.pending` / `.halted` / `.paused` | Dunning emails; revoke the unpaid activation grant |
 | `past_due` | `active` | `subscription.charged` | Reset dunning markers; grant the new period |
 | `past_due` | `expired` | `task_expire_past_due_subscriptions` after `PAYMENT_FAILED_GRACE_DAYS` | Bots go offline |
@@ -108,12 +109,12 @@ Every webhook is recorded in `processed_webhooks (event_id, provider)` before di
 
 | File | Role |
 |---|---|
-| [`api/app/services/razorpay_service.py`](../../../api/app/services/razorpay_service.py) | Every Razorpay call + all webhook handlers |
-| [`api/app/services/transition_service.py`](../../../api/app/services/transition_service.py) | Plan transitions, rollover credits, `execute_gateway_cancellation` |
-| [`api/app/api/webhook_billing_routes.py`](../../../api/app/api/webhook_billing_routes.py) | Inbound webhook transport (HMAC, dead-letter) |
-| [`api/app/api/subscription_routes.py`](../../../api/app/api/subscription_routes.py) | Customer-initiated transitions (checkout, change-plan, cancel, resume, seats) |
-| [`api/app/services/credit_service.py`](../../../api/app/services/credit_service.py) | `grant_subscription_period_once` — the per-period grant guard |
-| [`api/app/worker/tasks.py`](../../../api/app/worker/tasks.py) | `task_execute_pending_cancellations` (00:03), `task_renew_due_subscriptions` (00:05), trial + dunning sweeps |
+| [`api/app/services/razorpay_service.py`](../../../../api/app/services/razorpay_service.py) | Every Razorpay call + all webhook handlers |
+| [`api/app/services/transition_service.py`](../../../../api/app/services/transition_service.py) | Plan transitions, rollover credits, `execute_gateway_cancellation` |
+| [`api/app/api/webhook_billing_routes.py`](../../../../api/app/api/webhook_billing_routes.py) | Inbound webhook transport (HMAC, dead-letter) |
+| [`api/app/api/subscription_routes.py`](../../../../api/app/api/subscription_routes.py) | Customer-initiated transitions (checkout, change-plan, cancel, resume, seats) |
+| [`api/app/services/credit_service.py`](../../../../api/app/services/credit_service.py) | `grant_subscription_period_once` — the per-period grant guard |
+| [`api/app/worker/tasks.py`](../../../../api/app/worker/tasks.py) | `task_execute_pending_cancellations` (00:03), `task_renew_due_subscriptions` (00:05), trial + dunning sweeps |
 
 ## Invariants
 

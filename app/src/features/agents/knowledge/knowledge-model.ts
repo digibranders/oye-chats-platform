@@ -1,4 +1,4 @@
-import { formatNumber } from '../../../ui';
+import { formatNumber, type Tone } from '../../../ui';
 import type { CrawlDiscovery, KnowledgeSource } from '../../../types/domain';
 import { t as translateNow } from '../../../i18n/i18n';
 
@@ -492,4 +492,170 @@ export function uploadSkipReason(reason: string | undefined): string | null {
     default:
       return reason;
   }
+}
+
+// ── Crawl outcome ──────────────────────────────────────────────────────────
+
+/** Why ingestion stopped early. Mirrors `ABORT_REASON_*` in `pipeline.py`. */
+export type CrawlAbortReason = 'credits' | 'knowledge_quota' | 'kill_switch';
+
+/**
+ * What a finished crawl actually left the chatbot with.
+ *
+ * The distinction this exists to keep is between pages **fetched** and pages
+ * **indexed**. `pages_processed` counts every page the crawler read, and a
+ * crawl stopped by a plan cap at page 25 of 400 still reports 400 — the UI
+ * rendered "read 400 pages" while 94% of the site was missing. The binding cap
+ * is characters, not pages (Free 2,500; Starter 50,000), so a large site hits
+ * it long before the page count looks unusual.
+ */
+export interface CrawlCoverage {
+  /**
+   * Pages the chatbot can answer from: stored by this crawl, plus pages the
+   * content hash proved it already held. This is the figure to render.
+   */
+  ingested: number;
+  /** Pages the crawler fetched. */
+  processed: number;
+  /** Pages whose insert transaction failed. */
+  failed: number;
+  /** Ingestion stopped before the end of the queue. */
+  aborted: boolean;
+  /** What stopped it, when the server named something the customer can act on. */
+  reason: CrawlAbortReason | null;
+  /** Pages discovery found that the crawl never fetched. */
+  dropped: number;
+}
+
+const ABORT_REASONS: ReadonlySet<string> = new Set([
+  'credits',
+  'knowledge_quota',
+  'kill_switch',
+]);
+
+function countOf(record: Record<string, unknown>, key: string): number {
+  const value = record[key];
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+}
+
+/**
+ * Read the coverage figures out of a crawl's `result` payload.
+ *
+ * `null` when the payload carries no `pages_ingested` — a result that has not
+ * landed yet (the terminal poll fetches it a beat after the status), or one
+ * from a worker predating the field. The caller falls back to the count it has
+ * rather than announcing zero pages for a crawl that worked.
+ */
+export function crawlCoverageOf(result: unknown): CrawlCoverage | null {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return null;
+  const record = result as Record<string, unknown>;
+  if (typeof record.pages_ingested !== 'number' || !Number.isFinite(record.pages_ingested)) {
+    return null;
+  }
+  const ingested = countOf(record, 'pages_ingested');
+  const rawReason = record.abort_reason;
+  return {
+    ingested,
+    // Never fewer than what was ingested: a payload that disagreed with itself
+    // would otherwise render a shortfall out of a complete crawl.
+    processed: Math.max(countOf(record, 'pages_processed'), ingested),
+    failed: countOf(record, 'pages_failed'),
+    aborted: record.aborted === true,
+    reason:
+      typeof rawReason === 'string' && ABORT_REASONS.has(rawReason)
+        ? (rawReason as CrawlAbortReason)
+        : null,
+    dropped: countOf(record, 'pages_dropped'),
+  };
+}
+
+/**
+ * True when the chatbot ended up with less of the site than it fetched.
+ *
+ * Deliberately NOT triggered by `dropped` alone. Those are URLs discovery
+ * enqueued and the crawl never fetched — a plan's page cap, but also a
+ * robots-blocked path or a page that returned nothing — and the per-crawl cap
+ * is already stated on this screen before a customer spends anything. Warning
+ * about it after the fact would put a brass banner on healthy crawls, which is
+ * how a reader learns to stop reading them. It still counts toward the
+ * denominator once there IS a shortfall, so the figure names the whole site.
+ */
+export function crawlFellShort(coverage: CrawlCoverage): boolean {
+  return coverage.aborted || coverage.ingested < coverage.processed;
+}
+
+/** An `Alert`'s worth of copy: the tone, an optional title, and the sentence. */
+export interface CrawlOutcomeMessage {
+  tone: Extract<Tone, 'success' | 'warning'>;
+  title: string | undefined;
+  body: string;
+}
+
+/**
+ * What to tell the customer about a crawl that finished.
+ *
+ * A shortfall is stated as a shortfall and paired with the one thing that
+ * fixes it, because the reasons need different answers: an exhausted credit
+ * balance is topped up, a knowledge-base ceiling is a plan, and a page the
+ * crawler could not store is neither. It stays `warning` rather than `danger` —
+ * the crawl worked, it just did not cover everything — and it never blames the
+ * customer's site, which is what the old JavaScript advice did for a limit that
+ * had nothing to do with rendering.
+ */
+export function crawlDoneMessage(coverage: CrawlCoverage): CrawlOutcomeMessage {
+  const { ingested, processed, dropped, failed, aborted, reason } = coverage;
+  const read = `${formatNumber(ingested)} page${ingested === 1 ? '' : 's'}`;
+  if (!crawlFellShort(coverage)) {
+    return { tone: 'success', title: undefined, body: `Finished — this chatbot read ${read}.` };
+  }
+
+  // Everything found but not covered, however it was lost: pages fetched and
+  // not stored, plus pages discovery found that the crawl never reached.
+  const missed = processed - ingested + dropped;
+  const found = ingested + missed;
+  const opening = `This chatbot read ${read} of the ${formatNumber(found)} found on that site.`;
+
+  if (aborted && reason === 'credits') {
+    return {
+      tone: 'warning',
+      title: 'Finished, but your credits ran out first',
+      body: `${opening} Add credits and train it again — pages it already has are not charged twice.`,
+    };
+  }
+  if (aborted && reason === 'knowledge_quota') {
+    return {
+      tone: 'warning',
+      title: 'Finished, but this plan’s knowledge base is full',
+      body: `${opening} Move up a plan, or remove a source below, then train it again.`,
+    };
+  }
+  if (aborted && reason === 'kill_switch') {
+    return {
+      tone: 'warning',
+      title: 'Finished, but training stopped early',
+      body: `${opening} Training is paused for this workspace — try again shortly, or contact support if it keeps stopping.`,
+    };
+  }
+  if (aborted) {
+    // Stopped for a reason the server did not name. Say what happened and
+    // nothing more: guessing at the cause is how a customer is sent to fix
+    // something that was never wrong.
+    return {
+      tone: 'warning',
+      title: 'Finished, but training stopped early',
+      body: `${opening} Training it again picks up where it stopped — pages it already has are not charged twice.`,
+    };
+  }
+  if (failed > 0 && failed >= missed) {
+    return {
+      tone: 'warning',
+      title: 'Finished, but some pages could not be stored',
+      body: `${opening} Training it again usually picks up the rest.`,
+    };
+  }
+  return {
+    tone: 'warning',
+    title: 'Finished, but not every page was added',
+    body: `${opening} Training it again usually picks up the rest, or upload the missing pages as documents.`,
+  };
 }

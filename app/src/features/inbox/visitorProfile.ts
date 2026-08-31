@@ -1,3 +1,4 @@
+import { asRecord, hasNetworkSignal } from '../leads/visitorNetwork';
 import type { SessionDetails } from './liveChatProtocol';
 
 /** Everything the visitor pane can show, whatever record it came from. */
@@ -45,6 +46,24 @@ export interface VisitorProfile {
   languageCode: string | null;
   /** The itemised quote the visitor built before asking for a person, if any. */
   quotation: SessionDetails['quotation'];
+  /**
+   * The IP-derived company and network signal, or `null` when there is none.
+   *
+   * Distinct from `company`, which is what the visitor typed into a lead form.
+   * This is what the system worked out, and `null` is a legitimate answer: the
+   * backend deliberately returns no company for a home-broadband visitor rather
+   * than naming their ISP, and the pane must then show nothing at all rather
+   * than an empty slot.
+   */
+  network: Record<string, unknown> | null;
+}
+
+/** The IP signal on a session, or `null` when it carries nothing to render. */
+function networkOf(details: SessionDetails): Record<string, unknown> | null {
+  // Namespaced: `visitor_metadata` is a shared blob the operator console also
+  // writes user-agent fields into.
+  const intel = asRecord(asRecord(details.visitor_metadata).ip_intel);
+  return hasNetworkSignal(intel) ? intel : null;
 }
 
 /**
@@ -77,5 +96,6 @@ export function profileFromSession(details: SessionDetails, fallbackName: string
     bant: details.bant,
     languageCode: details.language_code,
     quotation: details.quotation,
+    network: networkOf(details),
   };
 }

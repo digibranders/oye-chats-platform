@@ -25,13 +25,16 @@ from unittest.mock import patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.api import auth, quotation_routes
 from app.api.quotation_routes import (
     QuotationCatalog,
     build_quotation_summary,
 )
-from app.db.models import Bot, ChatSession, Client, LeadInfo
+from app.core.rate_limit import limiter
+from app.db.models import Bot, ChatMessage, ChatSession, Client, EmailSuppression, LeadInfo
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("DB_URL"),
@@ -91,6 +94,19 @@ def _make_lead(db, *, session_id: str, bot_id: int, email: str | None, name: str
     db.flush()
     db.commit()
     return lead
+
+
+def _make_message(db, *, session_id: str, text: str = "hi", role: str = "user") -> ChatMessage:
+    """One chat message on the session.
+
+    The visitor-facing quotation emails are gated on the session having had a
+    real conversation, so every test that expects mail has to look like one.
+    """
+    row = ChatMessage(session_id=session_id, role=role, content=text)
+    db.add(row)
+    db.flush()
+    db.commit()
+    return row
 
 
 def _make_session(
@@ -175,6 +191,11 @@ def _two_service_catalog() -> dict:
 
 def _app():
     app = FastAPI()
+    # The widget-runtime POSTs are rate-limited (audit 8.1). Wire slowapi the
+    # way main.py does so the decorated routes can resolve app.state.limiter
+    # under TestClient.
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
     app.include_router(quotation_routes.router)
     return app
 
@@ -892,7 +913,16 @@ class TestQuotationEmails:
             notification_email="owner@acme.com",
             company_name="Acme Co",
         )
-        _make_session(db, session_id="e1s", bot_id=bot.id, client_id=client.id, quotation_state=dict(_QUOTING_STATE))
+        _make_session(
+            db,
+            session_id="e1s",
+            bot_id=bot.id,
+            client_id=client.id,
+            need=1,
+            budget=1,
+            quotation_state=dict(_QUOTING_STATE),
+        )
+        _make_message(db, session_id="e1s")
         _make_lead(db, session_id="e1s", bot_id=bot.id, email="jason@buyer.com", name="Jason")
 
         api = _bot_api(_app(), bot)
@@ -923,7 +953,16 @@ class TestQuotationEmails:
     def test_no_lead_email_skips_visitor_facing(self, db, _capture_emails):
         client = _make_client(db, email="e2@example.com", api_key="e2")
         bot = _make_bot(db, client.id, bot_key="bot-e2", catalog=_catalog(), notification_email="owner@acme.com")
-        _make_session(db, session_id="e2s", bot_id=bot.id, client_id=client.id, quotation_state=dict(_QUOTING_STATE))
+        _make_session(
+            db,
+            session_id="e2s",
+            bot_id=bot.id,
+            client_id=client.id,
+            need=1,
+            budget=1,
+            quotation_state=dict(_QUOTING_STATE),
+        )
+        _make_message(db, session_id="e2s")
         _make_lead(db, session_id="e2s", bot_id=bot.id, email=None, name="Anon")
         api = _bot_api(_app(), bot)
         with _patch_session(db):
@@ -935,7 +974,16 @@ class TestQuotationEmails:
     def test_email_failure_never_breaks_accept(self, db, monkeypatch):
         client = _make_client(db, email="e3@example.com", api_key="e3")
         bot = _make_bot(db, client.id, bot_key="bot-e3", catalog=_catalog(), notification_email="owner@acme.com")
-        _make_session(db, session_id="e3s", bot_id=bot.id, client_id=client.id, quotation_state=dict(_QUOTING_STATE))
+        _make_session(
+            db,
+            session_id="e3s",
+            bot_id=bot.id,
+            client_id=client.id,
+            need=1,
+            budget=1,
+            quotation_state=dict(_QUOTING_STATE),
+        )
+        _make_message(db, session_id="e3s")
         _make_lead(db, session_id="e3s", bot_id=bot.id, email="jason@buyer.com")
 
         def _boom(*_a, **_k):
@@ -959,7 +1007,16 @@ class TestQuotationEmailScheduling:
 
         client = _make_client(db, email="sch1@example.com", api_key="sch1")
         bot = _make_bot(db, client.id, bot_key="bot-sch1", catalog=_catalog(), notification_email="owner@acme.com")
-        _make_session(db, session_id="sch1s", bot_id=bot.id, client_id=client.id, quotation_state=dict(_QUOTING_STATE))
+        _make_session(
+            db,
+            session_id="sch1s",
+            bot_id=bot.id,
+            client_id=client.id,
+            need=1,
+            budget=1,
+            quotation_state=dict(_QUOTING_STATE),
+        )
+        _make_message(db, session_id="sch1s")
         _make_lead(db, session_id="sch1s", bot_id=bot.id, email="jason@buyer.com", name="Jason")
 
         calls, visitor_sent, document_sent, client_sent = [], [], [], []
@@ -997,7 +1054,16 @@ class TestQuotationEmailScheduling:
             notification_email="owner@acme.com",
             company_name="Acme Co",
         )
-        _make_session(db, session_id="sch2s", bot_id=bot.id, client_id=client.id, quotation_state=dict(_QUOTING_STATE))
+        _make_session(
+            db,
+            session_id="sch2s",
+            bot_id=bot.id,
+            client_id=client.id,
+            need=1,
+            budget=1,
+            quotation_state=dict(_QUOTING_STATE),
+        )
+        _make_message(db, session_id="sch2s")
         _make_lead(db, session_id="sch2s", bot_id=bot.id, email="jason@buyer.com", name="Jason")
 
         monkeypatch.setattr(
@@ -1113,3 +1179,331 @@ class TestQuotationEmailBuilders:
         assert "Hero section" in body and "Extra page" in body
         assert "₹14,000" in body
         assert kwargs.get("reply_to") == "jason@buyer.com"
+
+
+# ── Widget-runtime abuse gates (audit 8.1 – 8.5) ──────────────────────────────
+
+
+class TestQuotationRuntimeRateLimits:
+    """The four widget POSTs authenticate with the PUBLIC ``X-Bot-Key``, so an
+    unmetered route here is an open, arbitrary-recipient mailer. Every one of
+    them must carry a per-bot-key ceiling; ``core/rate_limit`` sets
+    ``default_limits=[]``, so nothing applies implicitly."""
+
+    def test_accept_is_rate_limited(self, db, monkeypatch):
+        monkeypatch.setattr(quotation_routes, "_schedule_quotation_emails", lambda *a, **k: None)
+        client = _make_client(db, email="rl1@example.com", api_key="rl1")
+        bot = _make_bot(db, client.id, bot_key="bot-rl1", catalog=_catalog())
+        api = _bot_api(_app(), bot)
+
+        statuses = []
+        with _patch_session(db):
+            for i in range(6):
+                sid = f"rl1s{i}"
+                _make_session(db, session_id=sid, bot_id=bot.id, client_id=client.id, need=1, budget=1)
+                statuses.append(api.post("/chat/quotation/accept", json={"session_id": sid}).status_code)
+
+        # Each fresh session id used to be a fresh, unmetered send.
+        assert 429 in statuses, statuses
+        assert statuses.count(200) <= 3, statuses
+
+    def test_every_widget_write_carries_a_limit(self):
+        """A limit on three of four routes is no limit at all — the unmetered
+        one is the one an attacker uses. Asserted against slowapi's registry so
+        all four are covered without burning four windows of shared counter."""
+        registered = {
+            name: [(str(item.limit), item.key_func.__name__) for item in limiter._route_limits[name]]
+            for name in (
+                "app.api.quotation_routes.select_services",
+                "app.api.quotation_routes.submit_requirements",
+                "app.api.quotation_routes.accept_quote",
+                "app.api.quotation_routes.skip_quotation",
+            )
+        }
+        # Every one is keyed on bot-key + source IP, never the bare IP default.
+        assert all(key == "key_from_bot_key" for limits in registered.values() for _, key in limits), registered
+        assert registered["app.api.quotation_routes.accept_quote"] == [("3 per 1 minute", "key_from_bot_key")]
+
+
+class TestQuotationWriteGates:
+    """8.2 — the plan gate and the BANT trigger lived only on the GET, which a
+    direct poster never has to make."""
+
+    def test_select_services_rejects_downgraded_plan(self, db, monkeypatch):
+        client = _make_client(db, email="g1@example.com", api_key="g1")
+        bot = _make_bot(db, client.id, bot_key="bot-g1", catalog=_catalog())
+        _make_session(db, session_id="g1s", bot_id=bot.id, client_id=client.id, need=1, budget=1)
+        monkeypatch.setattr(quotation_routes, "_bot_plan_allows", lambda *_a, **_k: False)
+        api = _bot_api(_app(), bot)
+        with _patch_session(db):
+            r = api.post("/chat/quotation/select-services", json={"session_id": "g1s", "service_ids": ["s1"]})
+        assert r.status_code == 403 and r.json()["detail"] == "plan_upgrade_required"
+
+    def test_requirements_rejects_downgraded_plan(self, db, monkeypatch):
+        client = _make_client(db, email="g2@example.com", api_key="g2")
+        bot = _make_bot(db, client.id, bot_key="bot-g2", catalog=_catalog())
+        _make_session(
+            db,
+            session_id="g2s",
+            bot_id=bot.id,
+            client_id=client.id,
+            need=1,
+            budget=1,
+            quotation_state={"status": "choosing", "selected_service_ids": ["s1"], "selected_requirements": {}},
+        )
+        monkeypatch.setattr(quotation_routes, "_bot_plan_allows", lambda *_a, **_k: False)
+        api = _bot_api(_app(), bot)
+        with _patch_session(db):
+            r = api.post(
+                "/chat/quotation/requirements",
+                json={"session_id": "g2s", "service_id": "s1", "selections": [{"requirement_id": "r1"}]},
+            )
+        assert r.status_code == 403 and r.json()["detail"] == "plan_upgrade_required"
+
+    def test_accept_rejects_downgraded_plan_and_sends_nothing(self, db, monkeypatch):
+        sent = []
+        client = _make_client(db, email="g3@example.com", api_key="g3")
+        bot = _make_bot(db, client.id, bot_key="bot-g3", catalog=_catalog(), notification_email="owner@acme.com")
+        _make_session(
+            db,
+            session_id="g3s",
+            bot_id=bot.id,
+            client_id=client.id,
+            need=1,
+            budget=1,
+            quotation_state=dict(_QUOTING_STATE),
+        )
+        _make_message(db, session_id="g3s")
+        _make_lead(db, session_id="g3s", bot_id=bot.id, email="jason@buyer.com")
+        monkeypatch.setattr(quotation_routes, "_bot_plan_allows", lambda *_a, **_k: False)
+        monkeypatch.setattr(quotation_routes, "_schedule_quotation_emails", lambda *a, **k: sent.append(1))
+        api = _bot_api(_app(), bot)
+        with _patch_session(db):
+            r = api.post("/chat/quotation/accept", json={"session_id": "g3s"})
+        assert r.status_code == 403 and r.json()["detail"] == "plan_upgrade_required"
+        assert sent == []
+
+    def test_writes_reject_a_session_below_the_bant_threshold(self, db):
+        client = _make_client(db, email="g4@example.com", api_key="g4")
+        bot = _make_bot(db, client.id, bot_key="bot-g4", catalog=_catalog())  # threshold 2
+        _make_session(db, session_id="g4s", bot_id=bot.id, client_id=client.id, need=1)  # only 1 marked
+        api = _bot_api(_app(), bot)
+        with _patch_session(db):
+            r = api.post("/chat/quotation/select-services", json={"session_id": "g4s", "service_ids": ["s1"]})
+        assert r.status_code == 403 and r.json()["detail"] == "quotation_not_triggered"
+
+    def test_skip_stays_open_for_a_visitor_whose_plan_just_lapsed(self, db, monkeypatch):
+        """Skip sends nothing and costs nothing; gating it could only strand a
+        visitor mid-flow. Deliberately NOT behind the write guard."""
+        client = _make_client(db, email="g5@example.com", api_key="g5")
+        bot = _make_bot(db, client.id, bot_key="bot-g5", catalog=_catalog())
+        _make_session(
+            db,
+            session_id="g5s",
+            bot_id=bot.id,
+            client_id=client.id,
+            need=1,
+            budget=1,
+            quotation_state={"status": "choosing", "selected_service_ids": ["s1"], "selected_requirements": {}},
+        )
+        monkeypatch.setattr(quotation_routes, "_bot_plan_allows", lambda *_a, **_k: False)
+        api = _bot_api(_app(), bot)
+        with _patch_session(db):
+            r = api.post("/chat/quotation/skip", json={"session_id": "g5s"})
+        assert r.status_code == 200 and r.json()["status"] == "skipped"
+
+
+class TestQuotationEmailAbuseGates:
+    """8.1 (conversation gate) and 8.3 (unsubscribe suppression)."""
+
+    @pytest.fixture()
+    def _capture(self, monkeypatch):
+        calls = {"visitor": [], "document": [], "client": []}
+        monkeypatch.setattr("app.worker.enqueue.WORKER_ENABLED", False)
+        for kind in calls:
+            monkeypatch.setattr(
+                quotation_routes.email_service,
+                f"send_quotation_{kind}_email",
+                lambda *a, _k=kind, **kw: calls[_k].append((a, kw)),
+            )
+        return calls
+
+    def test_session_with_no_messages_sends_nothing(self, db, _capture):
+        """The open-mailer chain: fabricate a session, post an arbitrary email
+        to lead-capture, walk the quotation POSTs, and OyeChats mails a stranger
+        from its own verified sending domain. A session that never exchanged a
+        message is not a quote request."""
+        client = _make_client(db, email="ab1@example.com", api_key="ab1")
+        bot = _make_bot(db, client.id, bot_key="bot-ab1", catalog=_catalog(), notification_email="owner@acme.com")
+        _make_session(
+            db,
+            session_id="ab1s",
+            bot_id=bot.id,
+            client_id=client.id,
+            need=1,
+            budget=1,
+            quotation_state=dict(_QUOTING_STATE),
+        )
+        _make_lead(db, session_id="ab1s", bot_id=bot.id, email="victim@example.org", name="<b>spam</b>")
+
+        api = _bot_api(_app(), bot)
+        with _patch_session(db):
+            res = api.post("/chat/quotation/accept", json={"session_id": "ab1s"})
+        # The quote still closes; only the mail is withheld.
+        assert res.status_code == 200 and res.json()["status"] == "complete"
+        assert _capture["visitor"] == []
+        assert _capture["document"] == []
+        assert _capture["client"] == []
+
+    def test_unsubscribed_visitor_is_not_emailed(self, db, _capture):
+        """``EmailSuppression`` was consulted only by the manual follow-up.
+        The quotation emails walked straight past a visitor's unsubscribe."""
+        client = _make_client(db, email="ab2@example.com", api_key="ab2")
+        bot = _make_bot(db, client.id, bot_key="bot-ab2", catalog=_catalog(), notification_email="owner@acme.com")
+        _make_session(
+            db,
+            session_id="ab2s",
+            bot_id=bot.id,
+            client_id=client.id,
+            need=1,
+            budget=1,
+            quotation_state=dict(_QUOTING_STATE),
+        )
+        _make_message(db, session_id="ab2s")
+        _make_lead(db, session_id="ab2s", bot_id=bot.id, email="Jason@Buyer.com", name="Jason")
+        db.add(EmailSuppression(bot_id=bot.id, email="jason@buyer.com", reason="unsubscribe"))
+        db.commit()
+
+        api = _bot_api(_app(), bot)
+        with _patch_session(db):
+            api.post("/chat/quotation/accept", json={"session_id": "ab2s"})
+
+        assert _capture["visitor"] == []
+        assert _capture["document"] == []
+        # The owner is the bot's own operator, not a visitor — still notified.
+        assert len(_capture["client"]) == 1
+
+    def test_suppression_is_scoped_to_the_bot(self, db, _capture):
+        """Unsubscribing from one company's bot must not silence another's."""
+        client = _make_client(db, email="ab3@example.com", api_key="ab3")
+        other = _make_bot(db, client.id, bot_key="bot-ab3-other", catalog=_catalog())
+        bot = _make_bot(db, client.id, bot_key="bot-ab3", catalog=_catalog(), notification_email="owner@acme.com")
+        _make_session(
+            db,
+            session_id="ab3s",
+            bot_id=bot.id,
+            client_id=client.id,
+            need=1,
+            budget=1,
+            quotation_state=dict(_QUOTING_STATE),
+        )
+        _make_message(db, session_id="ab3s")
+        _make_lead(db, session_id="ab3s", bot_id=bot.id, email="jason@buyer.com", name="Jason")
+        db.add(EmailSuppression(bot_id=other.id, email="jason@buyer.com", reason="unsubscribe"))
+        db.commit()
+
+        api = _bot_api(_app(), bot)
+        with _patch_session(db):
+            api.post("/chat/quotation/accept", json={"session_id": "ab3s"})
+        assert len(_capture["visitor"]) == 1
+        assert len(_capture["document"]) == 1
+
+    def test_deferred_document_email_also_honours_suppression(self, db, _capture):
+        """The ~10-min document email runs on the worker, after the visitor may
+        have clicked unsubscribe in the acknowledgement they just received."""
+        client = _make_client(db, email="ab4@example.com", api_key="ab4")
+        bot = _make_bot(db, client.id, bot_key="bot-ab4", catalog=_catalog(), company_name="Acme Co")
+        _make_session(
+            db,
+            session_id="ab4s",
+            bot_id=bot.id,
+            client_id=client.id,
+            need=1,
+            budget=1,
+            quotation_state=dict(_QUOTING_STATE),
+        )
+        _make_message(db, session_id="ab4s")
+        _make_lead(db, session_id="ab4s", bot_id=bot.id, email="jason@buyer.com", name="Jason")
+        db.add(EmailSuppression(bot_id=bot.id, email="jason@buyer.com", reason="unsubscribe"))
+        db.commit()
+        with _patch_session(db):
+            quotation_routes.dispatch_quotation_document_email_for_session("ab4s", bot.id)
+        assert _capture["document"] == []
+
+
+class TestQuotationEmailFailureIsObservable:
+    """8.4 — a dead send used to be invisible: swallowed at ``warning`` with no
+    session id and no counter, while the visitor was told "we've got it"."""
+
+    def test_failed_send_logs_at_error_with_the_session_and_counts_a_metric(self, db, monkeypatch, caplog):
+        counted = []
+        client = _make_client(db, email="ob1@example.com", api_key="ob1")
+        bot = _make_bot(db, client.id, bot_key="bot-ob1", catalog=_catalog(), company_name="Acme Co")
+        _make_session(
+            db,
+            session_id="ob1s",
+            bot_id=bot.id,
+            client_id=client.id,
+            need=1,
+            budget=1,
+            quotation_state=dict(_QUOTING_STATE),
+        )
+        _make_lead(db, session_id="ob1s", bot_id=bot.id, email="jason@buyer.com", name="Jason")
+
+        def _boom(*_a, **_k):
+            raise RuntimeError("brevo down")
+
+        monkeypatch.setattr(quotation_routes.email_service, "send_quotation_document_email", _boom)
+        monkeypatch.setattr(
+            quotation_routes, "increment_metric_counter", lambda name, bot_id=None: counted.append((name, bot_id))
+        )
+        with _patch_session(db), caplog.at_level("ERROR", logger=quotation_routes.logger.name):
+            session = quotation_routes._load_session(db, bot, "ob1s")
+            quotation_routes._send_quotation_document_email(db, bot, session)
+
+        assert ("quotation_email_failed", bot.id) in counted
+        errors = [r for r in caplog.records if r.levelname == "ERROR"]
+        assert errors, "a dropped quotation email must not be swallowed at warning"
+        assert "ob1s" in errors[0].getMessage()
+        # PRIVACY: the visitor's address must never ride an ERROR record —
+        # Sentry's LoggingIntegration promotes those to events verbatim.
+        assert "jason@buyer.com" not in errors[0].getMessage()
+
+
+class TestQuotationEmailsLeaveTheRequestPath:
+    """8.5 — ``_schedule_quotation_emails`` makes three ``enqueue_sync`` calls,
+    and a sync route has no running loop, so each one builds and closes its own
+    Redis pool inline. They now run as a background task instead."""
+
+    def test_accept_defers_the_fan_out_to_a_background_task(self, db, monkeypatch):
+        scheduled = []
+        client = _make_client(db, email="bg1@example.com", api_key="bg1")
+        bot = _make_bot(db, client.id, bot_key="bot-bg1", catalog=_catalog())
+        _make_session(
+            db,
+            session_id="bg1s",
+            bot_id=bot.id,
+            client_id=client.id,
+            need=1,
+            budget=1,
+            quotation_state=dict(_QUOTING_STATE),
+        )
+        _make_message(db, session_id="bg1s")
+
+        real = quotation_routes.dispatch_quotation_emails_for_session
+
+        def _spy(session_id, bot_id):
+            scheduled.append((session_id, bot_id))
+            return real(session_id, bot_id)
+
+        monkeypatch.setattr(quotation_routes, "dispatch_quotation_emails_for_session", _spy)
+        monkeypatch.setattr(quotation_routes, "_schedule_quotation_emails", lambda *a, **k: None)
+
+        api = _bot_api(_app(), bot)
+        with _patch_session(db):
+            res = api.post("/chat/quotation/accept", json={"session_id": "bg1s"})
+
+        assert res.status_code == 200
+        # Starlette drains background tasks as part of the response cycle, so by
+        # the time TestClient returns the fan-out has run — off the handler.
+        assert scheduled == [("bg1s", bot.id)]

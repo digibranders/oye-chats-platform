@@ -23,6 +23,7 @@ import {
   type PropertyItem,
 } from '../../ui';
 import { ConversationLanguageBadge } from './ConversationLanguageBadge';
+import { NetworkSignal } from '../leads/NetworkSignal';
 import { useLeadAnnotations } from '../leads/useLeadAnnotations';
 import type { VisitorProfile } from './visitorProfile';
 import { useTranslation } from '../../i18n/useTranslation';
@@ -136,6 +137,18 @@ export interface VisitorPanelProps {
    * border with two scrollbars, the inner of which never reached the footer.
    */
   variant?: 'pane' | 'drawer';
+  /**
+   * This chatbot's plan includes the company lookup.
+   *
+   * The same gate the Leads drawer applies to the same field. It is a prop
+   * rather than a hook here so this panel stays a rendering of what it is
+   * handed, and so the two surfaces cannot drift into two different answers.
+   *
+   * Required, with no default: a defaulted `false` would let a caller forget it
+   * and lose the field again silently, which is the exact way it went missing
+   * the first time.
+   */
+  visitorIntelligence: boolean;
   className?: string;
 }
 
@@ -159,6 +172,7 @@ export function VisitorPanel({
   error = null,
   onRetry,
   variant = 'pane',
+  visitorIntelligence,
   className,
 }: VisitorPanelProps) {
   const { t } = useTranslation();
@@ -365,6 +379,27 @@ export function VisitorPanel({
         ) : null}
 
         <PropertyGrid label={t('inbox.contactDetails') || 'Contact details'} layout="stacked" density="compact" items={identity} />
+
+        {/* Who the network says they are.
+            Between the details they gave and the page they came in on, because
+            it is the same class of fact as the first and answers the same
+            question. It is drawn by the component the Leads drawer uses, so an
+            operator and a salesperson read one presentation of one field.
+
+            Rendered only when there is a signal: a visitor on home broadband
+            legitimately resolves to no company at all — the backend returns
+            null rather than inventing an employer out of an ISP name — and an
+            empty "Company" slot under a heading would read as a lookup that
+            failed. On a plan without the lookup it is absent for the same
+            reason it is locked on Leads. */}
+        {visitorIntelligence && profile.network ? (
+          <div>
+            <Eyebrow>{t('inbox.theirNetwork') || 'Their network'}</Eyebrow>
+            <div className="mt-1">
+              <NetworkSignal intel={profile.network} />
+            </div>
+          </div>
+        ) : null}
 
         {source.length > 0 ? (
           <div>

@@ -31,7 +31,7 @@ docs/notebooklm/
 └── features/                              ← one self-sufficient doc per major feature
     ├── OYECHATS_FEATURE_CHATBOT.md            ← grounded AI chatbot + knowledge training
     ├── OYECHATS_FEATURE_QUALIFICATION.md      ← silent BANT/MEDDIC/CHAMP/GPCTBA+C&I lead scoring
-    ├── OYECHATS_FEATURE_LIVE_CHAT.md          ← human handoff, routing, canned responses, offline messaging
+    ├── OYECHATS_FEATURE_LIVE_CHAT.md          ← human handoff, queueing/claiming, canned responses, offline messaging
     ├── OYECHATS_FEATURE_LEAD_ENRICHMENT.md    ← email verification + company lookup
     ├── OYECHATS_FEATURE_JOURNEY_ANALYTICS.md  ← visitor page-journey tracking
     ├── OYECHATS_FEATURE_WIDGET_BRANDING.md    ← one-line install + auto brand-matching + customization
@@ -71,13 +71,15 @@ Each document is self-sufficient: uploading **only that one file** to a fresh No
 
 ## Unresolved [VERIFY] Items Across the Package
 
-These are flagged, not silently resolved — close them before stating the affected claim as settled fact:
+These are flagged, not silently resolved — close them before stating the affected claim as settled fact. Items struck through were closed in the 2026-08-31 documentation audit by reading the shipped source rather than a describing document.
 
-1. **Dashboard navigation/IA conflict** — `docs/oyechats-technical-story.md` and the active `app/CLAUDE.md` rebuild mandate describe two different sidebar structures for the admin dashboard. Neither was confirmed against a live screenshot. Noted in both `marketing/OYECHATS_SOURCE_OF_TRUTH.md` and `setup/OYECHATS_SETUP_AND_WORKFLOW.md`.
+> **One correction from that audit is a standing rule, not a footnote:** the live-chat **routing** claim (item 4) was sourced from a module docstring describing code that nothing calls. Any capability claim built on a docstring, a config column, or a design document — rather than on a traced call path — should be treated as unverified until the caller is found.
+
+1. ~~**Dashboard navigation/IA conflict**~~ — **CLOSED.** Resolved against `app/src/shell/nav.ts:74-110`, the one definition the rail, breadcrumbs and command palette all read. Neither documented IA is what ships. The rail is **Home · Inbox · Leads · Journey · Analytics · Chatbots**, with **Billing** and **Settings** in the footer; Journey is a top-level route, and the customer-facing noun is **"Chatbots," not "AI Agents."** Corrected in `marketing/OYECHATS_SOURCE_OF_TRUTH.md`, `setup/OYECHATS_SETUP_AND_WORKFLOW.md`, `marketing/OYECHATS_MASTER_KNOWLEDGE.md` and `features/OYECHATS_FEATURE_JOURNEY_ANALYTICS.md`.
 2. **Launch Studio step-order mismatch** — `app/CLAUDE.md`'s mandate describes an aspirational 8-step onboarding order, but the shipped `app/src/features/launch-studio/steps.config.ts` defines a different, merged 7-step sequence. `setup/OYECHATS_SETUP_AND_WORKFLOW.md` follows the shipped code as ground truth and states the mismatch plainly; three step component files (`ConnectStep.tsx`, `KnowledgeStep.tsx`, `PlanStep.tsx`) exist on disk but are not wired into the live component map — dead code, not an alternate live path.
-3. **USD billing rail** — root `CLAUDE.md`'s billing table states Razorpay/INR is the single provider; separate project history references a USD rail "staged behind a flag." Not independently re-confirmed against code in this pass — treat Razorpay/INR as the only *confirmed live* rail. See `technical/OYECHATS_TECHNICAL_KNOWLEDGE.md` and `features/OYECHATS_FEATURE_BILLING.md`.
-4. **Departments/routing granularity** — the `Department` DB model and routing service exist, but department-aware automatic routing is not live yet (only manual transfer). See `features/OYECHATS_FEATURE_LIVE_CHAT.md`.
-5. **Terminology rollout completeness** — "Bot → AI Agent" and "Session → Conversation" are the confirmed intended direction, but full rollout across every customer-facing surface was not independently re-audited file-by-file.
+3. ~~**USD billing rail**~~ — **CLOSED.** `INTL_PAYMENTS_ENABLED` defaults `false` (`api/app/config.py:428`) and every USD charge path 409s while it is off (`api/app/api/subscription_routes.py:554`). USD is display-only; Razorpay/INR is the sole live rail. See `technical/OYECHATS_TECHNICAL_KNOWLEDGE.md` §7.2 and `features/OYECHATS_FEATURE_BILLING.md`.
+4. **Live-chat routing is not live at all** — corrected, not merely flagged. The `Department` model and a three-strategy routing service both exist, but `select_operator` (`api/app/services/live_chat_routing_service.py:85`) has **no caller anywhere in the API**, so `Bot.live_chat_routing_strategy` changes nothing. A waiting visitor is announced to the whole eligible operator pool and the first to accept takes the chat. **Never say a chat is routed, balanced, or assigned to a chosen operator.** See `features/OYECHATS_FEATURE_LIVE_CHAT.md` §3.4.
+5. **Terminology** — partially closed. **"Bot → Chatbot" is what shipped**; "AI Agent" did not (the string survives once in all of `app/src`, in a filename), so the earlier "Bot → AI Agent" mapping is retired. "Session → Conversation" remains the intended direction and was not re-audited surface-by-surface — still open.
 6. **CI/CD, HA/scaling posture, backup restore-testing** — only what's directly documented in root `CLAUDE.md` is stated; pipeline internals, standby infrastructure, and backup restore-test cadence are flagged `[VERIFY]` in `technical/OYECHATS_TECHNICAL_KNOWLEDGE.md` rather than assumed.
 
 None of these block using the package — they exist so any claim built from it is stated deliberately, or not at all, rather than guessed.

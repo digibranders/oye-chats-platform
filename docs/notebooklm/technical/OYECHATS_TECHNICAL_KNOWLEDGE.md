@@ -15,11 +15,13 @@ OyeChats is a multi-tenant SaaS platform that ingests a business's website and d
 | Surface | Directory | Port (dev) | Stack | Purpose |
 |---|---|---|---|---|
 | Backend API | `api/` | 8000 | FastAPI · SQLAlchemy 2.0 · PostgreSQL 16 + pgvector · LiteLLM · ARQ | REST + SSE + WebSocket; RAG; auth; ingestion; billing |
-| Chat Widget | `widget/` | 5173 dev / 4173 preview | React 19 · Vite 7 · Tailwind v4 | Embeddable IIFE bundle rendered into a shadow root |
+| Chat Widget | `widget/` | 5173 dev / 4173 preview | React 19 · Vite 7 · Tailwind v4 | Two-stage embed: a tiny loader IIFE the customer script-tags, plus lazily-imported ESM app chunks rendered into a shadow root |
 | Admin Dashboard | `app/` | 5174 | React 19 · Vite 8 · React Router 7 · Recharts | Bot/knowledge/leads/billing management; live-chat operator console |
 | Marketing Site | `../oyechats-website/` (sibling repo, not in this monorepo) | 3000 | Next.js 16 · React 19 · Tailwind v4 | Public site; reads live pricing from the platform API so published and charged price cannot drift |
 
 **[T1/T2]** — confirmed in root `CLAUDE.md`'s architecture table and directory tree. Three apps live in this repo (`api/`, `widget/`, `app/`); the marketing site is a separate repository entirely.
+
+> **Multilingual reality check.** The backend knows a longer list of locales, but the dashboard and the widget each ship exactly **two** UI dictionaries — English and Hindi (`app/src/i18n/locales/{en,hi}.ts`, `widget/src/i18n/locales/{en,hi}.js`) — and the language picker offers only locales with a shipped dictionary. Do not describe the product as multilingual beyond English and Hindi. **[T1]**
 
 ### Tech stack summary
 
@@ -32,8 +34,8 @@ OyeChats is a multi-tenant SaaS platform that ingests a business's website and d
 | Vector DB | PostgreSQL 16 + pgvector | Hybrid: `Vector(768)` column + `TSVECTOR` column, same table |
 | Backend framework | FastAPI, SQLAlchemy 2.0, Alembic | Python 3.11, `uv` for dependency management |
 | Background queue | ARQ on Redis | Runs as `oyechats-worker.service` |
-| Web scraping | Spider.cloud (primary) + Jina Reader (fallback) | Off-box/managed fetch — no local headless browser |
-| File storage | Cloudflare R2 (S3-compatible) | Internal module is still named `b2_service.py` for historical reasons; bucket is on R2 in production |
+| Web scraping | Jina Reader (primary) + Spider.cloud (fallback) | `CRAWL_PROVIDER_PRIMARY` defaults to `"jina"` (`api/app/config.py:674`). Off-box/managed fetch — no local headless browser |
+| File storage | Cloudflare R2 (S3-compatible) | `api/app/services/r2_service.py`. Env vars use the `R2_` prefix, with the legacy `B2_*` names still accepted as fallbacks — the module was renamed from `b2_service.py`, so older material naming that file is out of date |
 | Email | Brevo (Sendinblue) | Transactional only |
 | Payments | Razorpay | Single provider, INR-only rail as of this review |
 | Rate limiting | SlowAPI on Redis | Per-route, keyed on bot+visitor together |
@@ -45,7 +47,7 @@ OyeChats is a multi-tenant SaaS platform that ingests a business's website and d
 
 ## 2. Architecture: Request Flow, Widget to LLM and Back
 
-1. **Embed.** The customer's page loads `<script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx">`. The widget is a self-contained IIFE (~416KB) bundling its own React runtime. It locates its own `<script>` tag, reads `data-bot-key`, sets `window.OYECHATS_BOT_KEY`, injects a sibling CSS file, and creates `<div id="oyechats-widget-root">`. **[T1/T2]**
+1. **Embed (two stages).** The customer's page loads `<script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx">`. That file is **not** the app — it is a deliberately tiny **loader IIFE** (`widget/src/loader.js`, built by `vite.loader.config.js`, budgeted at **8 KB gzipped** by `size-limit`). The loader locates its own `<script>` tag, reads `data-bot-key`, sets `window.OYECHATS_BOT_KEY`, exposes `window.OyeChats` as a stub-and-queue API so host-page code can call `.on('ready')`/`.open()`/`.identify()` before the app exists, honours `window.OYECHATS_ASYNC_INIT` for consent-gated installs, then fetches `<base>/app/manifest.json`, validates the hashed entry-chunk and stylesheet filenames against a strict pattern (so a tampered manifest cannot point the widget off-CDN), dynamic-imports the entry chunk and calls its `init()`. If boot fails it clears its cached promise so a later `OyeChats.init()` can retry without a page reload. **Stage 2** (`widget/src/app-entry.jsx`) creates `<div id="oyechats-widget-root">`, attaches the shadow root, injects the hashed stylesheet and mounts React (its own bundled copy). Chat, live chat, markdown, the lead/handoff/quotation forms, Sentry and every non-English locale are separate lazy chunks, so a visitor who never opens the widget pays only for the launcher. **[T1 — `widget/package.json` `size-limit` budgets; root `CLAUDE.md` "Widget Embedding"]**
 2. **Isolation.** On first interaction the widget attaches a **shadow root** (`container.attachShadow({mode: 'open'})`) and renders its React tree into `#oyechats-shadow-inner` inside it, with its stylesheet injected as a `<link>` inside the same shadow root — confirmed in `widget/src/app-entry.jsx`. **[T1]** This guarantees the host page's CSS/JS can never leak in or out.
 3. **Config fetch.** The widget requests the bot's public config (colors, avatar, welcome text, live-chat/lead-form toggles, business hours) using the `X-Bot-Key` header.
 4. **Message send.** A visitor question posts to the chat route with `X-Bot-Key`. The backend resolves the bot via `get_current_bot` (`api/app/api/auth.py`), enforces the domain allowlist if configured, checks workspace suspension, and applies a rate limit bucketed on **bot key + visitor address together** (SlowAPI/Redis). **[T1/T2]**
@@ -57,18 +59,18 @@ OyeChats is a multi-tenant SaaS platform that ingests a business's website and d
 10. **Generation.** LiteLLM routes to the primary model (`gpt-5.4-mini`), falling back automatically to `gemini-2.5-flash` on failure; tokens stream back over SSE. **[T1/T2]**
 11. **Stream sanitization.** A live sanitizer strips internal control markers (buffering across chunk boundaries) and runs an output-side prompt-leakage guard that truncates the stream if the model starts reproducing its system prompt. **[T2]**
 12. **Post-generation repair.** Formatting repair, media-card whitelist validation, meeting/message card resolution, handoff-safety-net detection, and qualification-tag safety net all run after the stream closes, before the closing SSE frame — which is *always* sent even if the DB write fails. **[T2]**
-13. **Fire-and-forget background work.** Qualification extraction, a groundedness audit (LLM-as-judge on the generated answer), and Langfuse tracing all run asynchronously via ARQ, never blocking the visitor's response. **[T1/T2]**
+13. **Fire-and-forget background work.** Qualification extraction, a groundedness audit (LLM-as-judge on the generated answer), and Langfuse tracing all run after the stream closes, never blocking the visitor's response. **Not on ARQ** — despite the platform having a Redis-backed queue, both hand off to a shared in-process thread pool via `core/thread_pool.submit_background` (`rag_service.py:7274`, `:7291`). The practical consequence, worth stating rather than glossing: this work is **non-durable**. An API restart between the stream closing and the extraction finishing loses that turn's qualification update silently — there is no retry and no dead-letter, which is exactly what ARQ would have provided. **[T1]**
 
 ---
 
 ## 3. Data Model
 
-Confirmed directly against `api/app/db/models.py` (2,734 lines, ~38 mapped classes). **[T1]** Grouped by domain area; table names are the literal `__tablename__` values.
+Confirmed directly against `api/app/db/models.py`, which declares **51 `__tablename__` values** (`grep -c __tablename__`). **[T1]** The groups below are the ones you will actually touch, not the full list; `models.py` is the single source of truth. Root `CLAUDE.md` now states 51 as well — an older "25 tables" figure in either document is superseded.
 
 ### Core
 - **`clients`** (`Client`) — the account/workspace: email, hashed password, `api_key`, `max_bots`, `is_superadmin`, `is_bot_manager`.
 - **`oauth_accounts`** (`OAuthAccount`) — linked social sign-in identities.
-- **`bots`** (`Bot`) — a chatbot instance: `bot_key`, system prompt, colors/logos, business hours, `live_chat_enabled`, `qualification_framework`.
+- **`bots`** (`Bot`) — a chatbot instance: `bot_key`, system prompt, colors/logos, business hours, `live_chat_enabled`, `bant_config` (JSONB). **There is no `Bot.qualification_framework` column** — the bot's chosen framework is read out of `bant_config` by `qualification_service._framework_name` (`models.py:361`, `qualification_service.py:577`). The `qualification_framework` *column* lives on `chat_sessions`, where it stamps which framework scored that conversation.
 - **`documents`** (`Document`) — ingested passages: text + `Vector(768)` + `TSVECTOR`, source provenance, content fingerprint, active flag.
 - **`lead_info`** (`LeadInfo`) — captured contact, 1:1 with a chat session.
 - **`company_profile`** (`CompanyProfile`) — cached company-domain enrichment, reused across leads from the same company.
@@ -76,7 +78,7 @@ Confirmed directly against `api/app/db/models.py` (2,734 lines, ~38 mapped class
 - **`activation_events`** (`ActivationEvent`) — free-form onboarding funnel events (studio opened, widget installed, etc.).
 
 ### Conversation / live chat
-- **`chat_sessions`** (`ChatSession`) — status enum `bot|waiting|live|closed`, qualification scores/tier, visitor rating, `assigned_operator_id`.
+- **`chat_sessions`** (`ChatSession`) — status enum `bot|waiting|live|closed`, qualification scores/tier, `qualification_framework` (the per-conversation stamp, `models.py:985`), `dimension_scores`, `last_probed_dimension`, visitor rating, `assigned_operator_id`.
 - **`chat_messages`** (`ChatMessage`) — role `user|bot|operator|system`, `trace_id` for Langfuse correlation.
 - **`operators`** (`Operator`) — team member: own `operator_api_key`, role `owner|admin|operator`, `max_concurrent_chats`.
 - **`operator_invites`** (`OperatorInvite`) — pending workspace invitations.
@@ -128,7 +130,7 @@ Document upload or crawl → **extraction** (`extraction.py`: PDF via pypdf, DOC
 Confirmed directly in `api/app/ingestion/embedder.py`'s module docstring: **[T1]**
 - Provider: Google `gemini-embedding-001`, single provider, no cross-model fallback — the docstring states explicitly that "mixing embedding models corrupts vector search."
 - Output: 768-dim, **L2-normalized client-side** to match the pgvector column.
-- Throughput constraint: **1 text per request** — there is no batch embedding API for this model, which is why a dedicated `embed_rate_limiter.py` module and an `embed.concurrency` tuning knob exist (per prior engineering log, `embedding-speed-optimization`).
+- Throughput: **batched, not one-per-request.** `gemini_embedding.py` calls the `batchEmbedContents` REST endpoint with up to `_MAX_BATCH` = **100 texts per call** (`api/app/services/gemini_embedding.py:55,92,180`) and fans batches out across `EMBED_CONCURRENCY` workers (default 8, `config.py:93`). The important subtlety, stated in that module's own docstring: **Gemini's quota is counted per content item, not per HTTP call**, so batching saves round-trips but not quota — sustained throughput is capped by `EMBED_RPM_LIMIT` (default 2850, `config.py:101`), not by batch size or worker count. This corrects an earlier revision of this document, which asserted "1 text per request — there is no batch embedding API," contradicting §1's own tech-stack table. **[T1]**
 - Failure mode: on persistent embedding failure, `embed_chunks` **raises** rather than substituting a different model — ingestion retries via ARQ, and at *query* time the pipeline degrades to full-text-only search rather than failing the request.
 
 ### 4.3 Hybrid retrieval
@@ -247,8 +249,12 @@ closed  = terminal
 ```
 Transitions are enforced centrally with row-level locking and a compare-and-swap guard; a failed CAS fails loudly rather than silently no-op-ing, because callers key real side effects (notifications, assignment) off the transition's success. **[T2]**
 
-### 6.3 Routing
-Three selectable strategies (customer-configurable): **least-busy** (default — fewest active conversations, tie-broken by a rotating cursor), **round-robin** (strict cursor advance regardless of load), **first-available** (first online operator with capacity). Routing is described as a pure decision function — it selects and does nothing else; the caller performs assignment/notification, which keeps selection logic race-free and testable. **[T2]**
+### 6.3 Routing — the module exists; nothing calls it
+`live_chat_routing_service.py` implements three selectable strategies (**least-busy** default, **round-robin**, **first-available**) as a pure decision function: it selects and does nothing else, leaving assignment and notification to the caller. That description, taken from the module's own docstring, is what earlier revisions of this document reported. **[T2]**
+
+It is dead code. `select_operator` (`api/app/services/live_chat_routing_service.py:85`) is the module's only entry point and has **no caller anywhere in `api/`** — a grep across the service and route layers returns the definition and its unit tests, nothing else. `Bot.live_chat_routing_strategy` is persisted and settable but read by nobody, so changing it has no effect. **[T1]**
+
+What actually happens: `request_handoff` (`api/app/services/live_chat_service.py:885`) queues the session and fans a queue update out to every eligible operator (local sockets unioned with Redis presence, department-scoped where set), plus Web Push to each subscribed device. The first operator to accept wins under a race-safe lock. Assignment is **operator-pull, first-click-wins** — there is no server-side selection step. The admin dashboard documents the same conclusion in `app/src/features/agents/advanced/behaviour.config.ts:472-491`, which is why that settings page deliberately ships no control for the strategy. **[T1]**
 
 ### 6.4 ARQ background worker architecture
 Runs as `oyechats-worker.service` on Redis. **[T1/T2]** Confirmed job entry point: `api/app/worker/tasks.py`. The worker executes both triggered jobs (crawl, ingestion, webhook delivery, push dispatch, email send) and clock-driven jobs. Confirmed clock schedule from the technical narrative (Part 12):
@@ -277,7 +283,7 @@ Confirmed via the `CreditLedger` model (`credit_ledger` table) and the FIFO self
 Deduction priority order (documented, consistent with the `grant_id` FK design): plan credits first (use-it-or-lose-it, reset on renewal) → top-ups by earliest expiry (FIFO) → manual adjustments last. Every mutation takes a per-account advisory lock to prevent overselling under concurrent conversations. **[T2]**
 
 ### 7.2 Razorpay integration
-Single payment rail, INR-only per root `CLAUDE.md`'s billing table (a USD rail is referenced elsewhere in project memory as "staged behind a flag" — **[VERIFY]**, not independently confirmed in this pass). Recurring payment is mandate-based (Razorpay's UPI/eMandate model), which per prior project memory constrains plan-change mechanics — the Update Subscription API is blocked for UPI/eMandate subscriptions, so plan changes go through cancel+recreate+re-authorization rather than an in-place update. `api/app/services/razorpay_service.py` is the confirmed integration module. **[T1/T2]**
+Single payment rail, INR-only per root `CLAUDE.md`'s billing table. The USD rail is now confirmed rather than assumed: `INTL_PAYMENTS_ENABLED` defaults to `false` (`api/app/config.py:428`) and the charge paths refuse instead of charging while it is off — top-up 409s `intl_usd_pending`, checkout 409s unless the flag puts it on the USD rail (`GET /subscriptions/geo` docstring, `api/app/api/subscription_routes.py:554`). USD is therefore **display-only**: a non-Indian customer is shown USD, and no INR debit can contradict it because no debit happens at all. **[T1]** Recurring payment is mandate-based (Razorpay's UPI/eMandate model), which per prior project memory constrains plan-change mechanics — the Update Subscription API is blocked for UPI/eMandate subscriptions, so plan changes go through cancel+recreate+re-authorization rather than an in-place update. `api/app/services/razorpay_service.py` is the confirmed integration module. **[T1/T2]**
 
 ### 7.3 Webhook idempotency (inbound, from Razorpay)
 Confirmed via the `processed_webhooks` / `failed_webhooks` tables: every inbound gateway event is signature-verified and recorded by identity before processing, so replayed or duplicated events cannot double-grant credits or double-issue invoices. Events that fail processing are dead-lettered to `failed_webhooks` rather than dropped, and can be replayed manually from the control tower. Signature-verification failures are counted and alerted on. **[T1/T2]**
@@ -311,7 +317,7 @@ Not confirmed / not present in the reviewed documentation: horizontal scaling st
 
 Each of the following is drawn from an actual code comment, docstring, or explicit rationale encountered during this review — not inferred.
 
-**Widget ships as a self-contained IIFE, not an npm package.** Root `CLAUDE.md` states the widget bundles its own React runtime and mounts by locating its own `<script>` tag — the explicit design goal stated is "works on any platform... anything with a `<body>` tag," matching the embed model of Intercom/Crisp/Drift rather than a framework-specific component library. **[T2]**
+**Widget ships as a script tag, not an npm package — and the script tag is a loader, not the app.** The design goal stated in root `CLAUDE.md` is "works on any platform... anything with a `<body>` tag," matching the embed model of Intercom/Crisp/Drift rather than a framework-specific component library. The refinement worth stating precisely: the customer-facing file ships on *every page view of every customer site*, so it is kept to a loader budgeted at 8 KB gzipped, and the React app (its own bundled runtime included) is a code-split ESM import that only downloads when the widget is actually needed. The eager path — loader + entry + vendor — is budgeted at roughly 90 KB gzipped, and each further surface is its own lazy chunk. Enforced in CI by `npm run size`. **[T1 — `widget/package.json` `size-limit`]**
 
 **Brand-color extraction needs a second, raw-HTML fetch — separate from the markdown-based crawl.** Directly from `brand_color_extractor.py`'s docstring: the crawl providers (Spider, Jina) return page bodies as **markdown**, which strips CSS and inline styles — the only signal available for a customer's palette. The module therefore performs one additional raw-HTML GET of the seed URL specifically to parse `<style>` blocks, inline `style=""`, `<meta name="theme-color">`, and SVG fill/stroke attributes. It is explicitly kept "cheap and deterministic: no LLM, no headless browser, one HTTP GET." **[T1]**
 
@@ -331,7 +337,7 @@ Each of the following is drawn from an actual code comment, docstring, or explic
 
 ### Spot-checks performed for this document (files read directly, not taken on faith from prior docs)
 - `api/app/services/rag_service.py` (6,606 lines) — hybrid search, RRF, CAG-lite, query rewriting/caching, relevance gate wiring, structured events, groundedness check.
-- `api/app/db/models.py` (2,734 lines) — full table inventory via `__tablename__` grep, confirming the 25-table claim in root `CLAUDE.md` is structurally accurate (this review counted ~38 mapped classes across the domains listed; the "25 tables" figure in `CLAUDE.md` groups some junction/auxiliary tables together — treat both as consistent, not contradictory).
+- `api/app/db/models.py` — full table inventory via `__tablename__` grep: **51 tables**. This replaces both the earlier "~38 mapped classes" estimate in this document and the "25 tables" summary figure; root `CLAUDE.md` now carries 51 too.
 - `api/app/api/auth.py` (1,646 lines) — all four header constants, all `get_current_*` dependency docstrings, the `X-Workspace-Id`/`X-Impersonation-Token` mechanisms.
 - `api/app/core/ssrf.py` (417 lines) — full read; SSRF guard, DNS-rebinding fix (AR-42), TLS verification pinning.
 - `api/app/services/brand_color_extractor.py` — module docstring confirming the markdown-strips-CSS rationale.
@@ -341,9 +347,9 @@ Each of the following is drawn from an actual code comment, docstring, or explic
 - `api/app/config.py` — confirmed `CAG_LITE_THRESHOLD` default (20).
 
 ### Open [VERIFY] items — not confirmed in this review
-- **USD billing rail**: root `CLAUDE.md`'s billing table states "Razorpay (INR) — single provider," but prior project memory (outside the two primary sources for this document) references a USD rail "staged behind a flag." This document did not independently verify which is current — **[VERIFY]**.
+- ~~**USD billing rail**~~ — **closed.** Confirmed in code: `INTL_PAYMENTS_ENABLED` defaults `false` (`api/app/config.py:428`); the USD rail exists, is display-only, and every USD charge path 409s while the flag is off (`api/app/api/subscription_routes.py:554`). INR/Razorpay is the sole live rail. **[T1]**
 - **CI/CD pipeline internals**: the three GitHub Actions workflow filenames (`ci.yml`, `deploy-api.yml`, `deploy-widget.yml`) are confirmed to exist by name in root `CLAUDE.md`, but their trigger conditions, staging/rollback mechanics, and test-gating rules were not read in this pass — **[VERIFY]**.
 - **Horizontal scaling / high availability**: only a single droplet and single Postgres instance are documented. Whether there is a standby database, load balancer, or multi-region plan is **[VERIFY]** — not stated as present or absent in the reviewed docs.
 - **Backup restore-testing**: a backup script exists (`api/scripts/backup.sh`) but its cadence, retention window, and whether restores are periodically tested were not confirmed — **[VERIFY]**.
 - **Reranker model identity**: root `CLAUDE.md` names FlashRank as the cross-encoder reranker; this document did not open `api/app/services/reranker.py` to independently confirm model choice or version — treat as **[T2]**, not **[T1]**.
-- **Exact current table count**: this document counted table classes directly in `models.py` and arrived at a number of mapped domain tables consistent with, but not numerically re-verified against, the "25 tables" figure quoted in root `CLAUDE.md`'s summary table — **[VERIFY]** if an exact count matters for a specific claim.
+- ~~**Exact current table count**~~ — **closed.** `grep -c __tablename__ api/app/db/models.py` returns **51**. **[T1]**

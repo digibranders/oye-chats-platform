@@ -1,5 +1,13 @@
 # Integrate OyeChats with WordPress
 
+> **Branded plans must also include the "Powered by OyeChats" anchor** next to the script
+> tag. It is not decoration: the widget mounts into a shadow root from JS after the visitor
+> clicks, so its in-widget badge is invisible to crawlers, and this anchor is the only
+> attribution that reaches the served HTML. Copy the exact snippet your dashboard shows on
+> the Deploy page — workspaces with the `branding_removable` entitlement get a variant
+> without it.
+
+
 ## Option A — Theme footer (most common)
 
 In your theme's `footer.php`, just before `</body>`:

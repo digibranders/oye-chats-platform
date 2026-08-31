@@ -10,6 +10,15 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-10-derived-chat-avatar-design.md` (rev 2)
 
+> **Naming note, 2026-08-31 (documentation audit).** This plan shipped, and its task bodies are
+> left unedited. One thing to know before grepping: the module landed as
+> **`api/app/services/favicon_extractor.py`**, not `site_icon_extractor.py`. Every one of the
+> ~50 `site_icon_extractor` references below (including the test paths) means that file. The
+> behaviour is the one this plan specifies — rank `apple-touch-icon` above generic icons,
+> SSRF-guarded fetch, Pillow validation, normalise through the manual-logo pipeline, and write
+> only into an empty avatar slot — and `Bot.bot_logo_source` is real and enforced
+> (`crawl_orchestrator.py:355,387,400`).
+
 **Branch:** `development`. Never checkout, commit to, or push from `main`.
 
 ---

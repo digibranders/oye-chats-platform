@@ -11,7 +11,7 @@ Team & Operator Management is how a business adds its own people to OyeChats so 
 It covers four connected pieces:
 1. **Invites** — owner/admin sends an email invite; the invitee accepts and becomes an Operator. [T1: `invite_routes.py`]
 2. **Roles** — `owner`, `admin`, `operator`, each with a strict privilege hierarchy. [T1: `operator_routes.py` `_ROLE_RANK`]
-3. **Departments** — groups of Operators (e.g. "Sales", "Support") with their own business hours, used to route live chats. [T1: `operator_routes.py` Department endpoints]
+3. **Departments** — groups of Operators (e.g. "Sales", "Support") with their own business hours, used to scope who a waiting chat is announced to and to target a manual transfer. [T1: `operator_routes.py` Department endpoints]
 4. **Presence & notifications** — who's online right now, and how an Operator gets pinged (in-app bell + Web Push to their phone/desktop) when a visitor needs a human. [T1: `operator_presence_service.py`, `notification_service.py`, `push_service.py`]
 
 ## 2. Who Cares & Why
@@ -39,13 +39,13 @@ It covers four connected pieces:
 
 **Departments** [T1: `operator_routes.py` Department CRUD]
 - A workspace's first Operator auto-creates a default "General" department if none exists yet.
-- Each department can have its own **business hours** (JSONB schedule) — e.g. Sales open 9–6, Support open 24/7 in the *same* workspace — and live-chat routing/handoff availability is resolved per-department against these hours. [T1: `update_department`, `live_chat_availability_service`]
+- Each department can have its own **business hours** (JSONB schedule) — e.g. Sales open 9–6, Support open 24/7 in the *same* workspace — and live-chat handoff availability is resolved per-department against these hours, as is the set of operators a waiting visitor is announced to. [T1: `update_department`, `live_chat_availability_service`, `live_chat_service._fan_out_queue_update`]
 - Deleting a department doesn't delete its people — Operators are simply unassigned (moved to no department), never removed.
 
 **Presence (who's online right now)** [T1: `operator_presence_service.py`]
 - Redis-backed heartbeat: each connected Operator's dashboard sends a heartbeat roughly every 30 seconds; presence has a 60-second TTL, so missing two heartbeats drops them from "online."
 - Falls back gracefully to Postgres `last_seen_at` if Redis is unavailable, so a Redis blip doesn't take live chat fully offline — this is explicitly documented in code as a deliberate degraded-mode design, not an oversight.
-- Presence drives real product decisions, not just a UI dot: the live-chat routing/availability engine uses it to decide whether a visitor sees "an agent is available," gets queued, or falls back to the offline-message form.
+- Presence drives real product decisions, not just a UI dot: the live-chat availability engine uses it to decide whether a visitor sees "an agent is available," gets queued, or falls back to the offline-message form. It decides *whether* anyone can take the chat — never *who*; there is no operator-selection step (see `OYECHATS_FEATURE_LIVE_CHAT.md` §3.4).
 
 **Notifications & multi-device alerts** [T1: `notification_service.py`, `push_service.py`, `notification_broadcaster.py`]
 - Two channels: an in-app bell/banner (persisted, so an Operator who was on a different tab still sees the request when they switch back) and **Web Push** to phone/desktop.
@@ -68,7 +68,7 @@ It covers four connected pieces:
 2. Rahul gets an email, clicks the accept link, lands on the airlock page showing "You've been invited to join [Brand]'s workspace as an Operator," signs up, and accepts. He's now a scoped Operator — he can see and answer live chats for the Sales bot only, nothing else in the workspace.
 3. Priya creates two departments: "Sales" (9am–6pm) and "Support" (24/7), and assigns Rahul to Sales.
 4. Rahul opens the dashboard on his laptop each morning — his presence heartbeat marks him "Online." He also has Web Push enabled on his phone, with quiet hours set 10pm–8am.
-5. A website visitor asks a question the AI can't confidently answer and requests a human. Because it's during Sales' business hours and Rahul is online, the availability engine routes the handoff to him — he gets both an in-app bell alert and a push notification.
+5. A website visitor asks a question the AI can't confidently answer and requests a human. Because it's during Sales' business hours and Rahul is online, availability resolves to `available`, the waiting visitor is announced to every eligible operator, and Rahul — the only one online in Sales — gets both an in-app bell alert and a push notification. He accepts, and the chat is his. Nothing selected him: had a colleague been online too, both would have been pinged and the first to accept would have taken it.
 6. That evening, another visitor requests a handoff outside Sales hours. No Operator is online on the dashboard, but Rahul still has a push subscription — the system queues the visitor and fires a push (his quiet hours haven't started yet), rather than immediately showing the visitor an offline form.
 7. Priya later reviews the Members page: sees Rahul's active-chat count, last-seen time, and can promote him to `admin` if she wants him managing invites too — but she personally remains the only one who can name a new `owner`.
 
@@ -80,7 +80,7 @@ It covers four connected pieces:
 - Departments with independent business-hours schedules. [T1]
 - Redis-backed real-time presence with DB degraded-mode fallback. [T1]
 - Two-channel notifications (in-app + Web Push) with category-level opt-out and quiet hours. [T1]
-- Push-aware handoff routing (queues via push even with zero active dashboard viewers). [T1]
+- Push-aware handoff (queues via push even with zero active dashboard viewers). [T1] Note this is *promotion from the offline form to a real queue*, not operator selection — and it is deliberately limited to the `ALL_OFFLINE`/`NO_OPERATORS` verdicts, so a bot with live chat switched off, out of hours, or with a full queue is not promoted. [T1]
 - Plan-gated operator seat limits, enforced per-bot (not workspace-wide), with a self-heal 409 guard against concurrent seat races. [T1]
 
 **Known limits / not positioned:**

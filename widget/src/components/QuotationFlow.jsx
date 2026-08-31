@@ -7,6 +7,7 @@ import {
     acceptQuotation,
     skipQuotation,
     submitLeadCapture,
+    validateEmail as checkEmailWithServer,
 } from '../services/api';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -48,8 +49,13 @@ const QuotationFlow = ({ sessionId, settings, initialState, onComplete }) => {
         setSubmitting(true);
         try {
             await skipQuotation(sessionId);
-            finish('skipped');
+        } catch (err) {
+            // Skip is the escape hatch. Whatever the server said, the visitor
+            // asked to leave the flow, so close it locally rather than trapping
+            // them in a card with no way out.
+            console.error('[OyeChats] quotation skip failed', err);
         } finally {
+            finish('skipped');
             setSubmitting(false);
         }
     }, [submitting, sessionId, finish]);
@@ -164,6 +170,17 @@ const QuotationFlow = ({ sessionId, settings, initialState, onComplete }) => {
             setError('');
             setSubmitting(true);
             try {
+                // Server-side deliverability check, same gate the lead-capture,
+                // handoff and offline forms already apply. This was the one
+                // visitor form that skipped it, and it is the form whose address
+                // gets emailed a priced quotation. ``validateEmail`` fails OPEN
+                // (an unreachable vendor resolves ``valid: true``), so a real
+                // lead is never rejected because the checker is down.
+                const verdict = await checkEmailWithServer(trimmed);
+                if (!verdict.valid) {
+                    setError(verdict.reason || 'Please enter a valid email address.');
+                    return;  // the `finally` below clears `submitting`
+                }
                 await submitLeadCapture(sessionId, { email: trimmed });
                 const next = await acceptQuotation(sessionId);
                 setState(next);

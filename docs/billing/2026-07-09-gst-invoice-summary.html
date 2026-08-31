@@ -129,6 +129,39 @@
     </nav>
   </header>
 
+  <div class="danger callout">
+    <b>⚠️ Superseded on its central premise: pricing became GST-EXCLUSIVE on 26 August 2026.</b>
+    <p>This page was written on 2026-07-09 against a GST-<b>inclusive</b> catalogue and is left unedited,
+    because it is the record of what was decided in July and why. Read every worked example on it with
+    this correction in mind:</p>
+    <ul>
+      <li><b>"The customer pays the sticker price; you do not add tax on top" is no longer how OyeChats
+      charges.</b> Every published price is now a <b>base</b> price, exclusive of GST. A domestic customer
+      is debited <code>base + GST</code>, added at charge time by
+      <code>api/app/core/tax.py::gross_charge_minor</code> — ₹1,199 listed is ₹1,414.82 debited. Because
+      Razorpay Subscriptions have no tax layer of their own, every INR plan is minted at base + GST.</li>
+      <li><b>An international sale is an export of services</b>, carries no Indian GST, and is charged the
+      listed USD price with no uplift. That treatment is unchanged; what changed is the domestic side.</li>
+      <li><b>§8's "a rate change moves your margin, not the customer's price" is inverted.</b> Under
+      exclusive pricing a rate change moves the <b>customer's</b> price — and, because each Razorpay plan
+      is minted at base + GST and Razorpay plans are immutable, it also means re-minting every plan and
+      re-authorising every customer.</li>
+      <li><b>The invoicing engine itself was NOT changed, and this page's description of it still stands.</b>
+      The charge is <code>base + tax</code>, so the captured amount is itself tax-inclusive of the base and
+      the existing <code>inclusive=True</code> carve-out recovers the advertised base exactly.
+      <code>SellerProfile.price_inclusive</code> remains pinned <code>true</code>, and setting it false is
+      still refused (<code>seller_profile_service.py:220-224</code>) — that lock is correct, not a
+      leftover.</li>
+      <li><b>The ₹1,799 / ₹3,599 plans the examples are worked on are retired.</b>
+      <code>api/scripts/seed_plans.py</code> now holds ₹599 / ₹1,199 / ₹2,999 / ₹5,999 as bases. The
+      arithmetic on this page is still a correct illustration of the tax engine; the amounts are not
+      current prices.</li>
+    </ul>
+    <p>Current sources of truth: <code>api/app/core/tax.py</code> and
+    <code>docs/billing/razorpay-plan-ids.md</code> §"Re-minting for GST-exclusive pricing". The companion
+    review <code>2026-07-09-gst-billing-ca-review.md</code> carries the same correction in more detail.</p>
+  </div>
+
   <!-- CONCLUSION -->
   <section class="card" id="conclusion">
     <h2><span class="n">1</span>Conclusion</h2>

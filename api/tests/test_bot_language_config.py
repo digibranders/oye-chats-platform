@@ -330,3 +330,52 @@ def test_turning_multilingual_off_from_the_card_clears_operator_translation(monk
     assert response.status_code == 200, response.text
     assert bot.language_config["enabled"] is False
     assert bot.language_config["operator_translation_enabled"] is False
+
+
+# ── supported_locales is validated on write ──────────────────────────────────
+
+
+def test_an_unknown_locale_is_rejected(monkeypatch):
+    """``language_config`` is a free-form bounded JSON object, so any string at
+    all was accepted, offered to visitors in the picker, and then lockable onto
+    a session by ``POST /chat/language`` — which resolves direction, display
+    name and prompt directive from the locale catalogue and gets nothing back
+    for a code that is not in it."""
+    bot = _language_bot({"enabled": True, "supported_locales": ["en-IN"]})
+    response, _ = _patch_language(monkeypatch, bot, {"supported_locales": ["en-IN", "xx-ZZ"]})
+
+    assert response.status_code == 422
+    assert "xx-ZZ" in response.text
+    # Rejected, not silently filtered: a settings page that quietly drops half
+    # a selection disagrees with what it shows.
+    assert bot.language_config["supported_locales"] == ["en-IN"]
+
+
+def test_a_catalogue_locale_the_widget_has_no_dictionary_for_is_still_accepted(monkeypatch):
+    """The boundary is the locale catalogue, not the widget's UI dictionary.
+    ``ar-SA`` is a language the bot can converse in, so it stays writable; that
+    its chrome renders in English is surfaced through ``LocaleInfo.ui_translated``
+    rather than by refusing the write."""
+    bot = _language_bot({"enabled": True, "supported_locales": ["en-IN"]})
+    response, _ = _patch_language(monkeypatch, bot, {"supported_locales": ["en-IN", "ar-SA"]})
+
+    assert response.status_code == 200
+    assert bot.language_config["supported_locales"] == ["en-IN", "ar-SA"]
+
+
+def test_a_non_list_supported_locales_is_rejected(monkeypatch):
+    bot = _language_bot({"enabled": True, "supported_locales": ["en-IN"]})
+    response, _ = _patch_language(monkeypatch, bot, {"supported_locales": "en-IN"})
+
+    assert response.status_code == 422
+    assert bot.language_config["supported_locales"] == ["en-IN"]
+
+
+def test_a_patch_that_does_not_touch_locales_is_unaffected(monkeypatch):
+    """Validation is on the INCOMING value, so a legacy row holding a code that
+    predates this check stays editable."""
+    bot = _language_bot({"enabled": False, "supported_locales": ["en-IN", "xx-ZZ"]})
+    response, _ = _patch_language(monkeypatch, bot, {"enabled": True})
+
+    assert response.status_code == 200
+    assert bot.language_config["enabled"] is True

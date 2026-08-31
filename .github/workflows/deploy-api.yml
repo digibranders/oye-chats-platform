@@ -269,7 +269,7 @@ jobs:
               "GATE_MODEL=gemini/gemini-2.5-flash" \
               "ENRICHMENT_MODEL=gemini/gemini-2.5-flash" \
               "CRAWLER_BROWSER_RECYCLE=10" \
-              "RELEVANCE_GATE_ENABLED=${RELEVANCE_GATE_ENABLED}" \
+              "RELEVANCE_GATE_ENABLED=${RELEVANCE_GATE_ENABLED:-true}" \
               "CHUNK_ENRICHMENT_ENABLED=${CHUNK_ENRICHMENT_ENABLED}" \
               "CRAWLER_JS_ALL_PAGES=${CRAWLER_JS_ALL_PAGES}" \
               "EMBED_PROVIDER=${EMBED_PROVIDER:-google}" \
@@ -310,7 +310,7 @@ jobs:
               "VAPID_PRIVATE_KEY_FILE=${VAPID_PRIVATE_KEY_FILE_PATH}" \
               "REOON_API_KEY=${REOON_API_KEY}" \
               "IPAPI_IS_KEY=${IPAPI_IS_KEY}" \
-              "WS_BACKPLANE_ENABLED=${WS_BACKPLANE_ENABLED:-false}" \
+              "WS_BACKPLANE_ENABLED=${WS_BACKPLANE_ENABLED:-true}" \
               > api/.env
 
             # Non-root services (audit F06): after the one-time

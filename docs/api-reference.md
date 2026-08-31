@@ -2,21 +2,48 @@
 
 Base URL: `https://api.oyechats.com` (production) / `http://localhost:8000` (development)
 
+> **Scope of this page.** It documents the long-standing core surface and is **not
+> exhaustive** — whole route groups are absent (subscriptions and billing, invites and
+> `/me/workspaces`, quotation, push, inbound Razorpay webhooks, affiliates, and most of
+> `/analytics`). The **authoritative, always-current reference is the generated OpenAPI
+> schema** at `/docs` (Swagger) or `/openapi.json`. Where the two disagree, believe
+> OpenAPI. Verified against source 2026-08-31.
+
 ## Authentication
 
-All API requests require one of two authentication headers:
+Requests carry one of **four** identity headers:
 
 | Header | Purpose | Example |
 |--------|---------|---------|
+| `X-API-Key` | Customer / admin / super-admin endpoints | Client API key |
 | `X-Bot-Key` | Widget (visitor-facing) endpoints | `bot-6a427d4529b9` |
-| `X-API-Key` | Admin/operator endpoints | Client or Operator API key |
+| `X-Operator-Key` | Operator endpoints | `operators.operator_api_key` |
+| `X-Agent-Key` | Legacy alias for `X-Operator-Key`, from the agent → operator rename | — |
 
-The `X-Bot-Key` is a public key embedded in the widget script tag. The `X-API-Key` is a private key assigned to each client account or operator.
+The `X-Bot-Key` is **public by design** — it sits in the page source of every customer
+site. Treat any route that accepts it as unauthenticated for threat-modelling purposes:
+it identifies a bot, it does not authenticate a caller.
+
+Two further headers **narrow an already-authenticated request** rather than establishing
+identity:
+
+| Header | Effect |
+|--------|--------|
+| `X-Workspace-Id` | Sent alongside `X-API-Key`. If it names a workspace other than the caller's own, the resolver looks up the caller's linked-operator role there and resolves the request as an **operator** in that workspace. No match → `403`. |
+| `X-Impersonation-Token` | Carries a super-admin impersonation grant. |
+
+Resolved by the FastAPI dependencies in `api/app/api/auth.py`: `get_current_bot`,
+`get_current_client`, `get_current_client_strict`, `get_current_operator`,
+`get_current_client_or_operator`, `get_current_affiliate`.
 
 ## Rate Limits
 
-- Chat endpoints: **30 requests/minute** per bot key
-- Other endpoints: Per-endpoint limits via `@limiter.limit()`
+- `/chat/stream`: **30 requests/minute**, keyed on **`{bot_key}:{ip}`** — per bot *per
+  visitor address*, not per bot. One bot serves far more than 30 requests a minute in
+  aggregate; a single visitor is what gets capped. Reading it as a per-tenant cap gets
+  capacity planning wrong in both directions.
+- Other endpoints: per-route limits via `@limiter.limit()`. There are **no implicit
+  default limits** — `default_limits` is empty, so a route without a decorator has none.
 
 Rate limit responses return `429 Too Many Requests`.
 
@@ -290,19 +317,28 @@ List all documents for a bot. **Auth: `X-API-Key`**
 
 Delete a document and all its chunks/embeddings. **Auth: `X-API-Key`**
 
-### POST /upload
+### POST /ingest
 
-Upload a document (PDF, DOCX, or TXT) for ingestion. **Auth: `X-API-Key`**
+Upload documents (PDF, DOCX, TXT, MD) for ingestion. **Auth: `X-API-Key`** · rate-limited
+`10/minute` per API key.
+
+> There is **no `POST /upload`** on this API. (`/upload-logo`, `/chat/upload-url`,
+> `/feedback/upload` and `/operators/upload-chat-file` are unrelated routes.)
 
 **Request:** `multipart/form-data`
-- `file` — the document file
-- `bot_id` — target bot ID
+- `files` — one or more document files
+- `bot_id` — target bot ID (query parameter)
 
-The document goes through the full ingestion pipeline: extraction → cleaning → chunking → embedding → storage.
+Subscription-gated and email-verification-gated. Credit-metered at
+`credit_cost.document_upload` per file, charged against the **post-validation** file count
+so unsupported extensions and oversize files don't burn credits, and refunded per file if a
+write later fails. The documents then go through the full ingestion pipeline: extraction →
+cleaning → chunking → embedding → storage.
 
 ### POST /crawl
 
-Crawl a website and ingest its content. **Auth: `X-API-Key`**
+Crawl a website and ingest its content. **Auth: `X-API-Key`** · returns `202 Accepted`
+(the crawl runs in the ARQ worker; poll for progress).
 
 **Request Body:**
 ```json
@@ -312,7 +348,14 @@ Crawl a website and ingest its content. **Auth: `X-API-Key`**
 }
 ```
 
-Crawls up to 50 pages, max depth 3, with 5 concurrent requests. Each page is processed through the ingestion pipeline.
+Fetching is HTTP-only through Jina Reader / Spider.cloud — there is no page-depth or
+browser-concurrency setting. **The binding cap is characters, not pages**, and it comes
+from the workspace's plan knowledge quota. A quota-aborted crawl still completes with
+`status=done`; read `pages_ingested`, `pages_failed`, `aborted` and `abort_reason` from
+`result_payload` to tell "read the whole site" from "stopped at page 25 of 400".
+
+Related: `POST /crawl/discover`, `POST /crawl/diff`, `POST /crawl/cancel`,
+`POST /ingest/preview-cost`.
 
 ---
 
@@ -320,13 +363,31 @@ Crawls up to 50 pages, max depth 3, with 5 concurrent requests. Each page is pro
 
 All analytics endpoints require **Auth: `X-API-Key`**.
 
+There are eighteen routes under `/analytics`; the five below are the ones this page has
+always covered. For the rest — `unanswered-questions`, `qualification-funnel`,
+`ratings-summary`, `resolution-summary`, `queue-summary`, `language-breakdown`, `by-bot`,
+`by-bot.csv`, and the five `journey/*` endpoints — read `/openapi.json`.
+
 ### GET /analytics/dashboard
 
 Summary statistics for the authenticated client.
 
+**Query Parameters:** `bot_id`, `days` (1-365, optional — omit for all time)
+
 ### GET /analytics/activity
 
-Chat activity over time (for charting).
+Chat activity over time (for charting). Returns `[{"date": "YYYY-MM-DD", "messages": N}]`.
+
+**Query Parameters:** `bot_id`, `days` (1-365, optional), `tz` (IANA zone, default `UTC`)
+
+> **Send `tz`.** `date` is a *calendar day*, and a calendar day only exists inside a zone.
+> The caller reads it as a local date, so a viewer east of UTC who omits `tz` has every
+> message before their local dawn filed a day early — the month-edge off-by-one. The
+> dashboard sends `Intl.DateTimeFormat().resolvedOptions().timeZone`. An invalid zone
+> returns `422`, never a silently wrong series.
+>
+> Omitting `days` returns full history, which is an unbounded aggregate over the whole
+> `chat_messages × chat_sessions` join. Pass it.
 
 ### GET /analytics/top-questions
 

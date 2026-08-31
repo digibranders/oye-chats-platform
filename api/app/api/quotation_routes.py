@@ -37,14 +37,16 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.api.auth import get_current_bot, get_current_client_strict
 from app.config import QUOTATION_EMAIL_DELAY_SECONDS
 from app.core.cache import bot_config_key, cache_delete
-from app.db.models import Bot, ChatSession, Client
+from app.core.metrics import increment_metric_counter
+from app.core.rate_limit import key_from_bot_key, limiter
+from app.db.models import Bot, ChatMessage, ChatSession, Client, EmailSuppression
 from app.db.repository import get_lead_info_by_session
 from app.db.session import get_session
 from app.services import email_service
@@ -101,6 +103,74 @@ def _bot_plan_allows(bot: Bot, db) -> bool:
     except Exception:
         return False
     return (ent.plan_slug or "").lower() in QUOTATION_PLAN_SLUGS
+
+
+# Abuse ceilings for the widget runtime. These four routes authenticate with
+# ``X-Bot-Key``, which is public by design: it ships in the page source of every
+# customer site, so anyone who views source can post to them. ``accept`` is the
+# one with a side effect that leaves the building (three emails from our own
+# verified sending domain), so it gets the same tight ceiling as
+# ``POST /chat/transcript``, the other widget route that mails a visitor. The
+# navigation steps are looser because a visitor legitimately goes back and forth
+# between the service list and its requirements. Keyed per bot-key + source IP
+# (``key_from_bot_key``), like the rest of the widget surface, so one abusive
+# origin cannot starve a bot's real visitors.
+QUOTATION_STEP_RATE_LIMIT = "20/minute"
+QUOTATION_ACCEPT_RATE_LIMIT = "3/minute"
+
+
+def _guard_quotation_runtime(db, bot: Bot, catalog: QuotationCatalog, session: ChatSession) -> None:
+    """Apply the GET's three gates — catalog enabled · plan · BANT trigger — to
+    a widget WRITE as well.
+
+    They used to live only on ``GET /chat/quotation``, which is the one caller
+    that can be skipped entirely: the routes below take a public bot key, so a
+    bot downgraded out of Professional kept running the whole paid flow (and
+    emailing) for anyone posting straight at the POSTs. BANT is re-checked on
+    every step rather than trusted from activation time because activation is
+    itself a GET the poster never has to make.
+    """
+    if not catalog.enabled or not catalog.services:
+        raise HTTPException(status_code=409, detail="quotation_disabled")
+    if not _bot_plan_allows(bot, db):
+        raise HTTPException(status_code=403, detail="plan_upgrade_required")
+    marked = _bant_marked_count(session, only=catalog.required_categories or None)
+    if marked < catalog.effective_threshold():
+        raise HTTPException(status_code=403, detail="quotation_not_triggered")
+
+
+def _has_conversation(db, session_id: str) -> bool:
+    """True when the session carries at least one chat message.
+
+    The gate on every visitor-facing quotation email. Without it the flow is an
+    open mailer: create a session, post a lead email of your choosing to
+    ``/chat/lead-capture``, walk the three quotation POSTs, and OyeChats mails
+    an arbitrary address from its own verified domain. A session that never
+    exchanged a single message is not a quote request.
+    """
+    count = db.execute(
+        select(func.count()).select_from(ChatMessage).where(ChatMessage.session_id == session_id)
+    ).scalar()
+    return bool(count)
+
+
+def _is_email_suppressed(db, bot_id: int, email: str) -> bool:
+    """True when ``email`` has unsubscribed from THIS bot's mail.
+
+    Scoped to ``bot_id`` exactly as the manual follow-up gate is
+    (``lead_routes``): unsubscribing from one company's bot must never silence
+    an unrelated customer's bot that the same person also talked to.
+    """
+    address = (email or "").strip().lower()
+    if not address:
+        return False
+    row = db.execute(
+        select(EmailSuppression).where(
+            EmailSuppression.bot_id == bot_id,
+            EmailSuppression.email == address,
+        )
+    ).scalar_one_or_none()
+    return row is not None
 
 
 # ── Admin schemas ────────────────────────────────────────────────────────────
@@ -548,7 +618,13 @@ def _send_quotation_owner_email(db, bot: Bot, session: ChatSession) -> None:
                 reply_to=visitor_email or None,
             )
     except Exception:
-        logger.warning("Quotation owner-email dispatch failed (non-blocking)", exc_info=True)
+        # ``error``, not ``warning``: nothing downstream records a per-quote
+        # delivery outcome, so this log line plus the counter below are the only
+        # evidence a quote notification never left the building. ERROR is also
+        # what Sentry's LoggingIntegration promotes to an event. Session id only,
+        # never the visitor's address — this record reaches Sentry unscrubbed.
+        logger.error("Quotation owner-email dispatch failed | session=%s", session.id, exc_info=True)
+        increment_metric_counter("quotation_email_failed", bot_id=getattr(bot, "id", None))
 
 
 def _unique_service_names(line_items: list[dict]) -> list[str]:
@@ -578,6 +654,9 @@ def _send_quotation_visitor_email(db, bot: Bot, session: ChatSession) -> None:
         visitor_email = (getattr(lead, "email", None) or "").strip()
         if not visitor_email:
             return
+        if _is_email_suppressed(db, bot.id, visitor_email):
+            logger.info("Quotation visitor-email suppressed (unsubscribed) | session=%s", session.id)
+            return
 
         bot_name = getattr(bot, "name", None) or "AI Assistant"
         company_name = getattr(bot, "company_name", None) or bot_name
@@ -591,7 +670,9 @@ def _send_quotation_visitor_email(db, bot: Bot, session: ChatSession) -> None:
             reply_to=client_reply_to,
         )
     except Exception:
-        logger.warning("Quotation visitor-email dispatch failed (non-blocking)", exc_info=True)
+        # See ``_send_quotation_owner_email``: loud, counted, and free of PII.
+        logger.error("Quotation visitor-email dispatch failed | session=%s", session.id, exc_info=True)
+        increment_metric_counter("quotation_email_failed", bot_id=getattr(bot, "id", None))
 
 
 def _send_quotation_document_email(db, bot: Bot, session: ChatSession) -> None:
@@ -611,6 +692,9 @@ def _send_quotation_document_email(db, bot: Bot, session: ChatSession) -> None:
         visitor_email = (getattr(lead, "email", None) or "").strip()
         if not visitor_email:
             return
+        if _is_email_suppressed(db, bot.id, visitor_email):
+            logger.info("Quotation document-email suppressed (unsubscribed) | session=%s", session.id)
+            return
 
         bot_name = getattr(bot, "name", None) or "AI Assistant"
         company_name = getattr(bot, "company_name", None) or bot_name
@@ -627,7 +711,9 @@ def _send_quotation_document_email(db, bot: Bot, session: ChatSession) -> None:
             reply_to=client_reply_to,
         )
     except Exception:
-        logger.warning("Quotation document-email dispatch failed (non-blocking)", exc_info=True)
+        # See ``_send_quotation_owner_email``: loud, counted, and free of PII.
+        logger.error("Quotation document-email dispatch failed | session=%s", session.id, exc_info=True)
+        increment_metric_counter("quotation_email_failed", bot_id=getattr(bot, "id", None))
 
 
 def dispatch_quotation_document_email_for_session(session_id: str, bot_id: int) -> None:
@@ -655,9 +741,10 @@ def dispatch_quotation_document_email_for_session(session_id: str, bot_id: int) 
                 return
             _send_quotation_document_email(db, bot, session)
     except Exception:
-        logger.warning(
-            "Quotation document-email dispatch failed for session %s (non-blocking)", session_id, exc_info=True
-        )
+        # Terminal for this quote: ARQ drops the job after 3 tries and no
+        # delivery row is written, so this is the last chance to be seen.
+        logger.error("Quotation document-email dispatch failed | session=%s", session_id, exc_info=True)
+        increment_metric_counter("quotation_email_failed", bot_id=bot_id)
 
 
 def _schedule_quotation_emails(db, bot: Bot, session: ChatSession) -> None:
@@ -676,7 +763,15 @@ def _schedule_quotation_emails(db, bot: Bot, session: ChatSession) -> None:
     document email inline rather than dropping it — better an on-time email in
     dev than none. Best-effort throughout: neither send nor an enqueue blip may
     fail the accept the quote has already committed to.
+
+    Nothing is sent for a session that never exchanged a message. See
+    :func:`_has_conversation`.
     """
+    if not _has_conversation(db, session.id):
+        logger.warning("Quotation emails skipped: session has no messages | session=%s", session.id)
+        increment_metric_counter("quotation_email_no_conversation", bot_id=getattr(bot, "id", None))
+        return
+
     # Owner + visitor acknowledgement: immediate.
     _send_quotation_owner_email(db, bot, session)
     _send_quotation_visitor_email(db, bot, session)
@@ -700,6 +795,35 @@ def _schedule_quotation_emails(db, bot: Bot, session: ChatSession) -> None:
                 exc_info=True,
             )
     _send_quotation_document_email(db, bot, session)
+
+
+def dispatch_quotation_emails_for_session(session_id: str, bot_id: int) -> None:
+    """Re-load bot + session on a fresh DB session and fire the completion
+    e-mail fan-out. Entry point for the FastAPI background task scheduled by
+    ``accept_quote``, i.e. it runs AFTER the accept response is written.
+
+    ``_schedule_quotation_emails`` makes three ``enqueue_sync`` calls (owner,
+    visitor acknowledgement, deferred document). ``accept_quote`` is a sync
+    route, so it runs in the threadpool with no event loop and each of those
+    calls builds and tears down its own Redis pool inline. Three sequential
+    round-trips in front of the visitor's "Get my quote" click bought nothing;
+    the same work off the request path costs them nothing. Best-effort: a
+    missing bot/session or any downstream failure is logged, never raised.
+    """
+    try:
+        with get_session() as db:
+            bot = db.get(Bot, bot_id)
+            if bot is None:
+                logger.warning("Quotation email fan-out: bot %s not found", bot_id)
+                return
+            session = _load_session(db, bot, session_id)
+            if session is None:
+                logger.warning("Quotation email fan-out: session %s not found for bot %s", session_id, bot_id)
+                return
+            _schedule_quotation_emails(db, bot, session)
+    except Exception:
+        logger.error("Quotation email fan-out failed | session=%s", session_id, exc_info=True)
+        increment_metric_counter("quotation_email_failed", bot_id=bot_id)
 
 
 def _choosing_view(catalog: QuotationCatalog, state: dict) -> ChoosingView | None:
@@ -890,7 +1014,12 @@ def get_quotation_state(
 
 
 @router.post("/chat/quotation/select-services", response_model=QuotationStateOut)
-def select_services(payload: SelectServicesIn, bot: Bot = Depends(get_current_bot)) -> QuotationStateOut:
+@limiter.limit(QUOTATION_STEP_RATE_LIMIT, key_func=key_from_bot_key)
+def select_services(
+    payload: SelectServicesIn,
+    request: Request,
+    bot: Bot = Depends(get_current_bot),
+) -> QuotationStateOut:
     """Persist the visitor's single service pick and move to the ``choosing``
     phase (the requirement checklist). An empty selection is treated as a skip.
 
@@ -908,6 +1037,7 @@ def select_services(payload: SelectServicesIn, bot: Bot = Depends(get_current_bo
         session = _load_session(db, bot, payload.session_id, for_update=True)
         if session is None:
             raise HTTPException(status_code=404, detail="session_not_found")
+        _guard_quotation_runtime(db, bot, catalog, session)
 
         state = dict(session.quotation_state or {})
         if state.get("status") in ("complete", "skipped"):
@@ -943,7 +1073,12 @@ def select_services(payload: SelectServicesIn, bot: Bot = Depends(get_current_bo
 
 
 @router.post("/chat/quotation/requirements", response_model=QuotationStateOut)
-def submit_requirements(payload: RequirementsIn, bot: Bot = Depends(get_current_bot)) -> QuotationStateOut:
+@limiter.limit(QUOTATION_STEP_RATE_LIMIT, key_func=key_from_bot_key)
+def submit_requirements(
+    payload: RequirementsIn,
+    request: Request,
+    bot: Bot = Depends(get_current_bot),
+) -> QuotationStateOut:
     """Record the visitor's selections for their chosen service and move to
     ``quoting``. Each selection is a ticked ``item`` (no option_id) or a picked
     option on a ``choice``. An empty/invalid pick set is treated as a skip."""
@@ -978,6 +1113,7 @@ def submit_requirements(payload: RequirementsIn, bot: Bot = Depends(get_current_
         session = _load_session(db, bot, payload.session_id, for_update=True)
         if session is None:
             raise HTTPException(status_code=404, detail="session_not_found")
+        _guard_quotation_runtime(db, bot, catalog, session)
 
         state = dict(session.quotation_state or {})
         if state.get("status") in ("complete", "skipped"):
@@ -1017,7 +1153,13 @@ def submit_requirements(payload: RequirementsIn, bot: Bot = Depends(get_current_
 
 
 @router.post("/chat/quotation/accept", response_model=QuotationStateOut)
-def accept_quote(payload: SkipIn, bot: Bot = Depends(get_current_bot)) -> QuotationStateOut:
+@limiter.limit(QUOTATION_ACCEPT_RATE_LIMIT, key_func=key_from_bot_key)
+def accept_quote(
+    payload: SkipIn,
+    request: Request,
+    background: BackgroundTasks,
+    bot: Bot = Depends(get_current_bot),
+) -> QuotationStateOut:
     """Mark the quote accepted; widget then proceeds to handoff with the
     quote persisted on the session for the operator to see."""
     catalog = _normalize(bot.quotation_catalog)
@@ -1039,6 +1181,8 @@ def accept_quote(payload: SkipIn, bot: Bot = Depends(get_current_bot)) -> Quotat
                 total=total,
             )
 
+        _guard_quotation_runtime(db, bot, catalog, session)
+
         state["status"] = "complete"
         state["completed_at"] = datetime.now(UTC).isoformat()
         session.quotation_state = state
@@ -1048,8 +1192,9 @@ def accept_quote(payload: SkipIn, bot: Bot = Depends(get_current_bot)) -> Quotat
         # visitor immediately ("Your quote request", no pricing), and defer the
         # priced "Your quotation" document (PDF) by ~10 min per spec.
         # Best-effort; the quote is already saved, so a dispatch/scheduling
-        # failure must never fail the accept.
-        _schedule_quotation_emails(db, bot, session)
+        # failure must never fail the accept. Runs as a background task so the
+        # three Redis enqueues do not sit in front of the visitor's response.
+        background.add_task(dispatch_quotation_emails_for_session, session.id, bot.id)
         return QuotationStateOut(
             active=False,
             status="complete",
@@ -1062,9 +1207,20 @@ def accept_quote(payload: SkipIn, bot: Bot = Depends(get_current_bot)) -> Quotat
 
 
 @router.post("/chat/quotation/skip", response_model=QuotationStateOut)
-def skip_quotation(payload: SkipIn, bot: Bot = Depends(get_current_bot)) -> QuotationStateOut:
+@limiter.limit(QUOTATION_STEP_RATE_LIMIT, key_func=key_from_bot_key)
+def skip_quotation(
+    payload: SkipIn,
+    request: Request,
+    bot: Bot = Depends(get_current_bot),
+) -> QuotationStateOut:
     """Visitor escape hatch — end the flow immediately, preserving partial
-    picks so the operator still sees what they chose."""
+    picks so the operator still sees what they chose.
+
+    Rate-limited like the other widget writes, but deliberately NOT put behind
+    ``_guard_quotation_runtime``: skip closes the flow, sends nothing and costs
+    nothing, so gating it could only ever strand a visitor mid-flow behind a
+    catalog the admin just disabled or a plan that lapsed this minute.
+    """
     catalog = _normalize(bot.quotation_catalog)
     with get_session() as db:
         session = _load_session(db, bot, payload.session_id, for_update=True)

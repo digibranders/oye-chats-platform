@@ -4,6 +4,35 @@
 **Scope:** `api/` (FastAPI backend), `app/` (React admin dashboard), production infrastructure
 **Method:** Static code analysis of the whole repo + **live read-only inspection of the production droplet** (hardware, Postgres, Redis, nginx logs, systemd). No load tests were executed (see §Load-Test Strategy). Every claim is labelled **MEASURED** (observed on prod), **CONFIG-DERIVED** (read from config/code), or **ESTIMATED** (reasoned projection).
 
+> ## STATUS 2026-08-31 — partly landed. Still a live to-do list; do not treat it as history.
+>
+> **Closed since publication (verified in code):**
+> - **Missing hot-path indexes** (§3, P1 #1) — `alembic/versions/e1f2a3b4c5d6_hot_path_chat_indexes.py`
+>   adds `chat_messages(session_id, created_at DESC)` and `chat_sessions(bot_id, created_at DESC)`
+>   with `CREATE INDEX CONCURRENTLY`. Re-measured on a seeded 1.1M-row copy: 20.6ms → 0.035ms.
+> - **N+1 in `get_global_feedback_data`** (§3) — now a single aliased join (`repository.py`).
+> - **`get_message_activity` unbounded aggregate** (§3) — honours `days`, and the route passes it
+>   (`analytics_routes.py:165`). Day bucketing now takes a validated IANA `tz`.
+> - **Redis pub/sub backplane for the WebSocket ConnectionManager** (P1 #4) — `services/ws_backplane.py`,
+>   plus `systemd/oyechats-ws.service`, which serves `/ws/*` from one worker so
+>   `oyechats-api.service` can run `WEB_CONCURRENCY=2`. The "why one worker" section below
+>   is therefore **history, not current design** — but the split is opt-in per host
+>   (`WS_BACKPLANE_ENABLED` defaults false and the deploy does not install the unit), so
+>   confirm with `systemctl cat oyechats-ws` before assuming a given box runs it.
+>
+> **Still open (re-verified 2026-08-31):**
+> - **S1 / S2** — the streaming path still opens one sync session and holds it across the token
+>   loop. `AI_ENGINEERING_REVIEW.md` AR-08 descoped the same defect as needing a dedicated
+>   refactor rather than a batch fix.
+> - **S3** — no global in-flight ceiling; still only per-key SlowAPI buckets.
+> - **P1 #5** — uploads are still local-disk (`DOCUMENTS_DIR`, `document_routes.py:237`).
+> - **P3 #8** — BANT extraction is still on the 3-thread `submit_background` pool, not ARQ.
+> - **The stale partial-index comment** flagged in §3 is still there, now at `models.py:1027-1028`:
+>   it cites `ix_chat_sessions_bot_id_lead_viewed_at` "see migration d4e5f6a7b8c9", and neither
+>   the migration nor the index exists anywhere in `alembic/versions/`.
+>
+> The topology table below is the 2026-08-14 measurement. Re-measure before quoting it.
+
 ---
 
 ## Executive Summary
@@ -45,6 +74,14 @@ Neither is a problem *today*. Both must be addressed before onboarding meaningfu
 ### Why one worker (this is deliberate, not an oversight)
 
 `gunicorn.conf.py` and the systemd unit both pin `WEB_CONCURRENCY=1` with a long docstring: the live-chat WebSocket `ConnectionManager` holds visitor/operator sockets in **in-process dicts**, and nginx pins clients to the single upstream port but *cannot* route a visitor and their operator to the same worker. Multi-worker would silently break live chat until a Redis pub/sub backplane ("Phase 3") lands. **The single-worker constraint is the master constraint the whole capacity story flows from.**
+
+> **Superseded 2026-08-31.** The backplane landed. `api/systemd/oyechats-ws.service`
+> now serves `/ws/*` from a single worker on 127.0.0.1:8001 (nginx routes it there,
+> `nginx/oyechats-locations.conf:41`) and `api/systemd/oyechats-api.service:66` sets
+> `WEB_CONCURRENCY=2`. `gunicorn.conf.py`'s docstring still describes the old pin and
+> claims "the unit pins WEB_CONCURRENCY=1 explicitly" — that comment is stale, the unit
+> is not. Everything downstream in this audit that reasons from "1 worker" (§6 capacity,
+> §7 risk matrix) is computed against the old topology.
 
 ---
 

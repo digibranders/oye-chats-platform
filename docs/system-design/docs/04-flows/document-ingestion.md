@@ -1,6 +1,6 @@
 # Document ingestion
 
-> **Audience:** New engineers · **Read time:** 4 min · **Last updated:** 2026-04-28
+> **Audience:** New engineers · **Read time:** 4 min · **Last updated:** 2026-08-31
 
 ## TL;DR
 
@@ -24,7 +24,7 @@ sequenceDiagram
       participant Pipeline as ingestion/pipeline.py
     end
     box rgb(252,231,243) AI
-      participant OpenAI
+      participant Gemini as Google Gemini
     end
     box rgb(220,252,231) Data
       participant DB as Postgres + pgvector
@@ -49,13 +49,13 @@ sequenceDiagram
         Pipeline->>R2: GET object
         Pipeline->>Pipeline: extract via pypdf/python-docx/text
     else URL
-        Pipeline->>Pipeline: crawl via Playwright/crawl4ai (recycle every 10 pages)
+        Pipeline->>Pipeline: fetch pages via Jina Reader (primary) / Spider.cloud (fallback)
     end
     Pipeline->>Pipeline: clean (whitespace, control chars)
     Pipeline->>Pipeline: chunk (recursive, 1000 chars / 200 overlap by default)
-    Pipeline->>OpenAI: embeddings.create(text-embedding-3-small)
-    OpenAI-->>Pipeline: 1536-d vectors (batched)
-    Pipeline->>DB: INSERT documents (chunk_index, content, embedding, content_tsv)
+    Pipeline->>Gemini: batchEmbedContents(gemini-embedding-001)
+    Gemini-->>Pipeline: 768-d vectors (100/batch, 8 batches concurrent)
+    Pipeline->>DB: INSERT documents (document_name, source, content, embedding) + UPDATE search_vector
     Worker-->>API: task complete
     Admin->>API: GET /documents/{id} (poll)
     API-->>Admin: status=ready
@@ -65,14 +65,16 @@ sequenceDiagram
 
 | File | Role |
 |---|---|
-| [`api/app/api/document_routes.py`](../../../api/app/api/document_routes.py) | Upload + crawl endpoints |
-| [`api/app/ingestion/pipeline.py`](../../../api/app/ingestion/pipeline.py) | Orchestrator |
-| [`api/app/ingestion/extraction.py`](../../../api/app/ingestion/extraction.py) | pypdf, python-docx, text |
-| [`api/app/ingestion/cleaner.py`](../../../api/app/ingestion/cleaner.py) | Normalisation |
-| [`api/app/ingestion/chunking.py`](../../../api/app/ingestion/chunking.py) | LangChain `RecursiveCharacterTextSplitter` |
-| [`api/app/ingestion/embedder.py`](../../../api/app/ingestion/embedder.py) | OpenAI batched embeddings |
-| [`api/app/ingestion/crawler.py`](../../../api/app/ingestion/crawler.py) | Playwright + crawl4ai |
-| [`api/app/worker/tasks.py`](../../../api/app/worker/tasks.py) | `task_ingest_documents`, `task_ingest_web_batch` |
+| [`api/app/api/document_routes.py`](../../../../api/app/api/document_routes.py) | Upload + crawl endpoints |
+| [`api/app/ingestion/pipeline.py`](../../../../api/app/ingestion/pipeline.py) | Orchestrator |
+| [`api/app/ingestion/extraction.py`](../../../../api/app/ingestion/extraction.py) | pypdf, python-docx, text |
+| [`api/app/ingestion/cleaner.py`](../../../../api/app/ingestion/cleaner.py) | Normalisation |
+| [`api/app/ingestion/chunking.py`](../../../../api/app/ingestion/chunking.py) | LangChain `RecursiveCharacterTextSplitter` |
+| [`api/app/ingestion/embedder.py`](../../../../api/app/ingestion/embedder.py) | Gemini batched embeddings (768-dim, L2-normalised) → [`services/gemini_embedding.py`](../../../../api/app/services/gemini_embedding.py) |
+| [`api/app/services/crawl_orchestrator.py`](../../../../api/app/services/crawl_orchestrator.py) | Crawl orchestration (there is no `ingestion/crawler.py`) |
+| [`api/app/services/jina_service.py`](../../../../api/app/services/jina_service.py) · [`spider_service.py`](../../../../api/app/services/spider_service.py) | The two HTTP fetch backends |
+| [`api/app/services/url_discovery.py`](../../../../api/app/services/url_discovery.py) | Sitemap / link discovery ahead of the fetch |
+| [`api/app/worker/tasks.py`](../../../../api/app/worker/tasks.py) | `task_ingest_documents`, `task_ingest_web_batch` |
 
 ## Configurable parameters
 
@@ -80,22 +82,27 @@ sequenceDiagram
 |---|---|---|
 | `CHUNK_SIZE` | 1000 | Char target per chunk |
 | `CHUNK_OVERLAP` | 200 | Overlap between adjacent chunks |
-| `CRAWLER_JS_ALL_PAGES` | false | If true, run Playwright (JS render) at all crawl depths (for SPAs) |
-| `CRAWLER_BROWSER_RECYCLE` | 10 | Restart Chromium every N pages (memory) |
+| `CRAWL_PROVIDER_PRIMARY` | `jina` | Which scrape backend is tried first — **Jina Reader, not Spider**. The other becomes the fallback; a super-admin can flip it at runtime via `pricing_config` `crawl.provider_primary` |
+| `JINA_FALLBACK_ENABLED` | true | Allow falling back to the non-primary provider |
+| `EMBED_CONCURRENCY` | 8 | Embed batches in flight |
+| `EMBED_RPM_LIMIT` | 2850 | Client-side throttle beneath the Gemini project quota |
 | `CHUNK_ENRICHMENT_ENABLED` | false | If true, ask Gemini to add a 1-line summary to each chunk before embedding |
 | `ENRICHMENT_MODEL` | `gemini/gemini-2.5-flash` | Model for enrichment |
 
 ## Credit metering
 
-Each `task_ingest_web_batch` deducts **3 credits per page crawled** (configurable via `pricing_config.credit_cost.url_scan`). File uploads do not consume credits in the current pricing — only the embedding API cost is borne by OyeChats.
+Each crawled page deducts `pricing_config.credit_cost.url_scan` credits — **5 by default** (`credit_service.py:175`; the seed file agrees). File uploads are **also** metered: `credit_cost.document_upload` (1) is a floor, scaled by `credit_cost.document_upload_words_per_credit` (250 words per credit). Crawl deductions carry an `idempotency_key` (`ingest:{client}:{bot}:{job}:{url_sha}`) backed by a partial unique index, so a retried page is not double-charged.
 
 ## Failure modes
 
-- **OpenAI embeddings 429** → exponential retry inside the pipeline; surfaces as `status=failed` after exhausting attempts.
-- **Crawler timeout (660s nginx limit)** → batch is split; remaining pages re-enqueued.
-- **Out of credits** → web crawl fails fast at credit check before fetching; file upload still proceeds (no credit gate today).
-- **Worker dies mid-pipeline** → ARQ marks job pending again; partial chunks may exist in DB but `status` is gated, so the next worker run reprocesses idempotently (chunks are upserted by `(bot_id, source_path, chunk_index)`).
+- **Gemini embedding 429 / outage** → the client self-throttles to `EMBED_RPM_LIMIT`; on persistent failure `embed_chunks` raises and ingestion retries via ARQ. There is deliberately **no cross-model embedding fallback** — mixing embedding models corrupts the vector space.
+- **Crawler timeout** → nginx allows 660s on `/crawl`; `CRAWL_SUBPROCESS_TIMEOUT` (1600s) bounds the job itself, which runs in the ARQ worker with progress and a lock in Redis.
+- **Quota-aborted crawl** → `result_payload` now carries `pages_ingested`, `pages_failed`, `aborted` and `abort_reason` alongside the fetched count, and `status` stays `done`. The binding cap is **characters** (Free 2,500; Starter 50,000), not pages — a 400-page crawl on Starter typically stops around page 25, and the dashboard must render `pages_ingested`, never the fetched count.
+- **Fallback provider unavailable** → the fallback call is guarded, so a partially successful primary crawl keeps its pages instead of being discarded and reported "failed".
+- **Out of credits** → web crawl fails fast at the credit check before fetching.
+- **Worker dies mid-pipeline** → ARQ re-queues the job. Per-URL idempotency comes from `delete_chunks_for_url(document_name, bot_id)` before each insert plus the ledger `idempotency_key`; there is no `(bot_id, source_path, chunk_index)` upsert key — `documents` has neither `source_path` nor `chunk_index`.
+- **Page deleted from the customer's site** → the orphan sweep removes its chunks, gated on `check_urls_alive` confirming a 404/410. It was dead code twice over until 2026-08-31 (a scheme-vs-host comparison that could never match, and an unreachable `not ordered_urls` guard), so stale prices could be quoted indefinitely.
 
 ## Why this matters
 
-This is the only flow that **costs OyeChats money on every run** (OpenAI embeddings are billed per token). Watch the per-bot embedding cost in [`Analytics`](../../../app/src/pages/Analytics.jsx). The pipeline is the place to introduce reranking, hybrid retrievers, or alternate embedding models — see [scaling plan](/09-capacity/scaling-plan) for what's queued.
+This is the only flow that **costs OyeChats money on every run** (Gemini embeddings and the scrape providers are both billed per use). Watch per-bot ingestion cost in the dashboard's analytics area (`app/src/features/analytics/`). The pipeline is the place to introduce reranking, hybrid retrievers, or alternate embedding models — see [scaling plan](/09-capacity/scaling-plan) for what's queued.

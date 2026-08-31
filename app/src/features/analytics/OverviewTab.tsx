@@ -31,10 +31,10 @@ import { useTranslation } from '../../i18n/useTranslation';
 /**
  * Overview — the period, and the period before it.
  *
- * Every tile states the window it covers, and the two that the API can actually
- * window carry a comparison against the equivalent window before them. The two
- * that it cannot — qualified leads and the positive-answer rate, neither of
- * which takes a date filter — say "all time" rather than borrowing the range's
+ * Every tile states the window it covers, and the two that carry a comparison
+ * against the equivalent window before them are the two the API can compare.
+ * The one figure the API cannot window at all — qualified leads, whose endpoint
+ * takes no date filter — says "all time" rather than borrowing the range's
  * label, because a figure wearing the wrong period is worse than one wearing
  * none.
  */
@@ -42,7 +42,8 @@ export function OverviewTab({ botId, range }: { botId: number | null; range: Res
   const { t } = useTranslation();
   const { hasFeature } = useEntitlements();
   const headline = useHeadlineTotals(botId, range);
-  const messages = useMessageSeries(botId);
+  // Twice the range: `splitWindows` cuts the comparison out of this series.
+  const messages = useMessageSeries(botId, range.extendedDays);
   const leads = useLeadStats(botId);
   const gaps = useUnansweredQuestions(botId, range.days);
 
@@ -137,7 +138,12 @@ export function OverviewTab({ botId, range }: { botId: number | null; range: Res
                 value: headline.totals
                   ? formatPercent(headline.totals.positiveFeedbackRate / 100)
                   : undefined,
-                period: t('analytics.allTime') || 'All time',
+                // No `period` of its own: `/analytics/dashboard` windows the
+                // feedback rate on the rated message's own date, so this tile
+                // covers the strip's window like the two beside it. It used to
+                // state "All time", which was true only while the endpoint
+                // ignored `?days=` — reading it as all-time now understates
+                // every workspace whose helpfulness has moved.
                 loading: headline.loading,
               },
             ]}

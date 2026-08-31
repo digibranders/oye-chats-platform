@@ -258,3 +258,56 @@ def test_spider_fetch_concurrency_clamps_and_falls_back(monkeypatch):
     assert runtime_config.get_spider_fetch_concurrency() == 1
     monkeypatch.setattr(runtime_config, "get", lambda key, default=None: 500)
     assert runtime_config.get_spider_fetch_concurrency() == 50
+
+
+@pytest.mark.asyncio
+async def test_a_dead_fallback_keeps_the_primary_partial_result(monkeypatch):
+    """An unavailable fallback must not destroy a partially-successful crawl.
+
+    Default primary is Jina, so the fallback is Spider, and
+    ``spider_service.fetch_urls`` raises unconditionally when ``SPIDER_API_KEY``
+    is unset. A crawl where the primary delivered 95 of 100 pages (5 genuine
+    404s) then raised out of ``fetch_urls`` entirely: the crawl was reported
+    ``failed`` and the 95 good pages were discarded from the result, even
+    though streaming had already committed AND billed them.
+    """
+    monkeypatch.setattr(crawl_provider, "JINA_FALLBACK_ENABLED", True)
+    monkeypatch.setattr(crawl_provider, "_provider_order", lambda: ("jina", "spider"))
+    urls = ["https://a.test/1", "https://a.test/2", "https://a.test/3"]
+
+    async def partial_jina(u, **kw):
+        return {
+            "results": [{"url": "https://a.test/1", "content": "a"}, {"url": "https://a.test/3", "content": "c"}],
+            "recommended_colors": ["#fff"],
+            "discovered_total": len(u),
+            "queue_remaining": 0,
+        }
+
+    async def unconfigured_spider(u, **kw):
+        raise CrawlerError("SPIDER_API_KEY is not configured")
+
+    monkeypatch.setattr(crawl_provider, "_jina_fetch_urls", partial_jina)
+    monkeypatch.setattr(crawl_provider, "_spider_fetch_urls", unconfigured_spider)
+
+    data = await crawl_provider.fetch_urls(urls, use_js=False, client_id=1)
+    assert [p["url"] for p in data["results"]] == ["https://a.test/1", "https://a.test/3"]
+    assert data["recommended_colors"] == ["#fff"]
+
+
+@pytest.mark.asyncio
+async def test_a_dead_fallback_still_raises_when_the_primary_produced_nothing(monkeypatch):
+    """No results from either provider is a real failure and must surface."""
+    monkeypatch.setattr(crawl_provider, "JINA_FALLBACK_ENABLED", True)
+    monkeypatch.setattr(crawl_provider, "_provider_order", lambda: ("jina", "spider"))
+
+    async def empty_jina(u, **kw):
+        return {"results": [], "recommended_colors": [], "discovered_total": 0, "queue_remaining": 0}
+
+    async def unconfigured_spider(u, **kw):
+        raise CrawlerError("SPIDER_API_KEY is not configured")
+
+    monkeypatch.setattr(crawl_provider, "_jina_fetch_urls", empty_jina)
+    monkeypatch.setattr(crawl_provider, "_spider_fetch_urls", unconfigured_spider)
+
+    with pytest.raises(CrawlerError):
+        await crawl_provider.fetch_urls(["https://a.test/1"], use_js=False, client_id=1)

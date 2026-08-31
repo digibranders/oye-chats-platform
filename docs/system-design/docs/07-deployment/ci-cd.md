@@ -1,6 +1,6 @@
 # CI / CD pipelines
 
-> **Audience:** Ops · New engineers · **Read time:** 5 min · **Last updated:** 2026-08-28
+> **Audience:** Ops · New engineers · **Read time:** 5 min · **Last updated:** 2026-08-31
 
 ## TL;DR
 
@@ -33,18 +33,18 @@ flowchart LR
     subgraph CI["ci.yml · gating"]
       direction TB
       ci_back["Backend<br/>ruff · pytest<br/>+ pgvector service"]:::job
-      ci_widget["Widget<br/>lint · build · bundle-size"]:::job
-      ci_admin["Admin<br/>lint · build"]:::job
+      ci_widget["Widget<br/>lint · build · e2e · size"]:::job
+      ci_admin["Admin<br/>lint · tsc --noEmit<br/>vitest · build · e2e"]:::job
     end
 
     subgraph DeployAPI["deploy-api.yml"]
       direction TB
       api_ssh["SSH to droplet"]:::job
       api_reset["git reset --hard origin/main"]:::job
-      api_env["regenerate .env from 19 secrets"]:::job
+      api_env["regenerate .env from ~60 secrets/vars"]:::job
       api_uv["uv sync deps"]:::job
       api_alembic["alembic upgrade head"]:::job
-      api_systemd["restart worker, then api"]:::job
+      api_systemd["restart worker → api → ws"]:::job
       api_nginx["reload nginx (if changed)"]:::job
       api_health["health gate /health/full<br/>6 × 7.5s"]:::job
       api_ssh --> api_reset --> api_env --> api_uv --> api_alembic --> api_systemd --> api_nginx --> api_health
@@ -73,7 +73,7 @@ flowchart LR
 
 ## `ci.yml` (gating)
 
-Path: [`.github/workflows/ci.yml`](../../../.github/workflows/ci.yml)
+Path: [`.github/workflows/ci.yml`](../../../../.github/workflows/ci.yml)
 
 Triggers: `push` to `development` · `pull_request` to `main`.
 
@@ -82,14 +82,14 @@ Jobs:
 | Job | Steps |
 |---|---|
 | **Backend** | Spin up `pgvector/pgvector:pg16` service · `uv sync` · `uv run ruff check .` · `uv run pytest` (with `APP_ENV=testing`, `DB_URL=postgresql://test:test@localhost:5432/test`, `GOOGLE_API_KEY=test-key`) |
-| **Widget** | `npm ci` · `npm run lint` · `npm run build` (with `VITE_API_URL=https://api.oyechats.com`) · bundle-size assertion · upload `dist/` artifact |
-| **Admin** | `npm ci` · `npm run lint` · `npm run build` (with `VITE_API_URL=https://api.oyechats.com`) |
+| **Widget** | `npm ci` · `npm run lint` · `npm run build` (with `VITE_API_URL=https://api.oyechats.com`) · Playwright (`npm run e2e:install` then `npm run e2e`) · `npm run size` bundle budgets · upload `dist/` artifact |
+| **Admin** | `npm ci` · `npm run lint` · `npx tsc --noEmit` · `npx vitest run` · `npm run build` · Playwright browser suite (`npm run e2e`, which drives `vite preview`, so what is under test is what ships) |
 
 Gate: PR can't merge unless all three pass (branch protection on `main`).
 
 ## `deploy-api.yml` (production rollout)
 
-Path: [`.github/workflows/deploy-api.yml`](../../../.github/workflows/deploy-api.yml)
+Path: [`.github/workflows/deploy-api.yml`](../../../../.github/workflows/deploy-api.yml)
 
 Triggers: `push` to `main` (paths: `api/**`) · manual `workflow_dispatch`.
 
@@ -108,6 +108,7 @@ sequenceDiagram
       participant DB as Postgres
       participant SystemdWorker as oyechats-worker
       participant SystemdAPI as oyechats-api
+      participant SystemdWS as oyechats-ws
       participant Nginx
     end
 
@@ -115,15 +116,18 @@ sequenceDiagram
     Droplet->>Droplet: cd /opt/oyechats/platform
     Droplet->>Droplet: git fetch + git reset --hard origin/main
     Note right of Droplet: hard reset clears any local hotfixes;<br/>.env is gitignored so it survives
-    Droplet->>Droplet: regenerate api/.env from 19 GitHub secrets
+    Droplet->>Droplet: regenerate api/.env from GitHub secrets + repo variables
     Droplet->>Droplet: cd api && uv sync
-    Droplet->>Droplet: install Playwright Chromium if missing
+    Droplet->>Droplet: probe WeasyPrint/pango (warn only — invoice PDFs)
+    Droplet->>Droplet: create the non-root `oyechats` user + file grants (idempotent)
     Droplet->>DB: alembic upgrade head
     Droplet->>Droplet: cp systemd/*.service /etc/systemd/system/
     Droplet->>Droplet: systemctl daemon-reload
     Droplet->>SystemdWorker: systemctl restart oyechats-worker
     Note right of SystemdWorker: worker first so /health/full sees its heartbeat
     Droplet->>SystemdAPI: systemctl restart oyechats-api
+    Droplet->>SystemdWS: systemctl restart oyechats-ws — ONLY if the unit is installed
+    Note right of SystemdWS: skipped silently on a host without the split,<br/>so "does this host run it?" is a per-host fact
     Droplet->>Nginx: nginx -t && systemctl reload nginx (if config diff)
 
     loop 6 attempts × 7.5s
@@ -136,19 +140,24 @@ sequenceDiagram
     end
     alt all 6 fail
         Droplet->>GH: log journalctl -u oyechats-api -u oyechats-worker
+        Droplet->>Droplet: roll back to the previous healthy release + restart
         Droplet->>GH: exit 1 (workflow fails red)
     else passed
         Droplet->>GH: success
     end
 ```
 
-19 secrets fed in: `DB_URL`, `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `CORS_ORIGINS`, `R2_*` (Cloudflare R2; legacy `B2_*` env names also accepted as fallback — see [`config.py`](../../../api/app/config.py)), `SENTRY_DSN_BACKEND`, `LANGFUSE_*`, `BREVO_API_KEY`, `REDIS_URL`, `RELEVANCE_GATE_ENABLED`, `CHUNK_ENRICHMENT_ENABLED`, `CRAWLER_JS_ALL_PAGES`, `RERANK_ENABLED`, plus SSH (`DO_HOST`, `DO_USER`, `DO_SSH_KEY`).
+**Roughly sixty** secrets and repo variables are forwarded (the `envs:` list on the ssh-action step is the authoritative inventory), covering: `DB_URL`, `REDIS_URL`, `CORS_ORIGINS`; the LLM keys; the embedding block (`EMBED_PROVIDER`, `GEMINI_EMBED_MODEL`, `EMBED_DIMENSIONS`, `EMBED_CONCURRENCY`); the crawl block (`SPIDER_API_KEY`, `SPIDER_REQUEST_MODE`, `JINA_API_KEY`, `JINA_FALLBACK_ENABLED`); `R2_*` (legacy `B2_*` still accepted as a fallback — see [`config.py`](../../../../api/app/config.py)); email (`BREVO_API_KEY`, `EMAIL_PROVIDER`, `SES_*`); the Razorpay block including the seat and USD plan ids; OAuth, VAPID, `REOON_API_KEY`, `IPAPI_IS_KEY`, `WS_BACKPLANE_ENABLED`; observability (`SENTRY_DSN_BACKEND`, `SENTRY_RELEASE`, `LANGFUSE_*`); and SSH (`DO_HOST`, `DO_USER`, `DO_SSH_KEY`).
 
-Hardcoded prod values inside the deploy script: `LLM_MODEL=openai/gpt-5.4-mini`, `FALLBACK_MODEL=gemini/gemini-2.5-flash`, `GATE_MODEL=gemini/gemini-2.5-flash`, `ENRICHMENT_MODEL=gemini/gemini-2.5-flash`, `CHUNK_SIZE=1000`, `CHUNK_OVERLAP=200`, `RELEVANCE_THRESHOLD=0.55`, `RERANK_TOP_N=5`, `CAG_LITE_THRESHOLD=20`, `CRAWLER_BROWSER_RECYCLE=10`, `WORKER_ENABLED=true`, `MODERATION_ENABLED=true`.
+Hardcoded prod values inside the deploy script: `LLM_MODEL=openai/gpt-5.4-mini`, `FALLBACK_MODEL=gemini/gemini-2.5-flash`, `GATE_MODEL=gemini/gemini-2.5-flash`, `ENRICHMENT_MODEL=gemini/gemini-2.5-flash`, `CHUNK_SIZE=1000`, `CHUNK_OVERLAP=200`, `RELEVANCE_THRESHOLD=0.55`, `RERANK_TOP_N=5`, `CAG_LITE_THRESHOLD=20`, `WORKER_ENABLED=true`, `MODERATION_ENABLED=true`.
+
+> **Never emit a bare `${VAR}` into `.env`.** An unset repo variable expands to an **empty-but-present** key, and systemd's `EnvironmentFile=` then sets it to `""` — which `os.getenv(k, default)` returns *instead of* the default. `RELEVANCE_GATE_ENABLED` was written that way and therefore ran **disabled** in production, silently switching off the control behind the product's "answers only from your knowledge base" guarantee. Every optional value now uses the `${VAR:-default}` form (e.g. `RELEVANCE_GATE_ENABLED=${RELEVANCE_GATE_ENABLED:-true}`, `WS_BACKPLANE_ENABLED=${WS_BACKPLANE_ENABLED:-false}`), the config module treats empty as unset, and a test asserts the deploy script never re-introduces a bare `${VAR}`.
+
+> **No headless browser and no local embedding model run on this box.** Crawling is off-box (Jina Reader primary, Spider.cloud fallback) and embeddings are Google Gemini, so `playwright`, `crawl4ai` and `fastembed` were removed from the dependency set. `uv sync` installs a leaner tree and no Chromium/ONNX RAM is consumed — that was the original OOM cause. Do not add a "install Chromium if missing" step back.
 
 ## `deploy-app.yml` (admin dashboard)
 
-Path: [`.github/workflows/deploy-app.yml`](../../../.github/workflows/deploy-app.yml)
+Path: [`.github/workflows/deploy-app.yml`](../../../../.github/workflows/deploy-app.yml)
 
 Triggers: `push` to `main` (paths: `app/**`) · manual.
 
@@ -188,7 +197,7 @@ production.
 
 ## `deploy-widget.yml` (CDN publish)
 
-Path: [`.github/workflows/deploy-widget.yml`](../../../.github/workflows/deploy-widget.yml)
+Path: [`.github/workflows/deploy-widget.yml`](../../../../.github/workflows/deploy-widget.yml)
 
 Triggers: `push` to `main` (paths: `widget/**`) · manual.
 

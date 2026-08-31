@@ -4,9 +4,22 @@ Production-grade k6 load-testing system for the OyeChats API. Built to answer
 capacity questions with **measured** evidence while making it **hard to hit
 production or spend real LLM money**.
 
-Latest measured run: [`results/RESULTS_2026-08-14.md`](results/RESULTS_2026-08-14.md)
-(headline: the chat concurrency **knee is at 15 = the DB pool size**; two missing
-indexes cost **up to 588×** on the hottest query at 1.1M rows).
+Results live in `results/` and are **never overwritten** — each file is a
+point-in-time measurement, so read the dates rather than assuming the newest
+conclusion supersedes an older number measured under different conditions:
+
+| Run | What it settled |
+|---|---|
+| [`RESULTS_2026-08-14.md`](results/RESULTS_2026-08-14.md) | The chat-concurrency **knee is at 15 = the DB pool size**; two missing indexes cost up to **588×** on the hottest query at 1.1M rows |
+| [`RESULTS_AFTER_FIXES_2026-08-14.md`](results/RESULTS_AFTER_FIXES_2026-08-14.md) | Same rig, after those fixes |
+| [`RESULTS_ASYNC_OFFLOAD_2026-08-14.md`](results/RESULTS_ASYNC_OFFLOAD_2026-08-14.md) | Async offload of blocking work |
+| [`RESULTS_1K2K_CAPACITY_2026-08-14.md`](results/RESULTS_1K2K_CAPACITY_2026-08-14.md) | Open-widget capacity at 1k / 2k |
+| [`SCALABILITY_SCOPE_2026-08-17.md`](results/SCALABILITY_SCOPE_2026-08-17.md) | **The latest, and the one that drove a change**: one gunicorn worker is the limit, and it is pinned by in-process WebSocket state. Became [`docs/live-chat-process-split-plan.md`](../docs/live-chat-process-split-plan.md), shipped 2026-08-20 |
+
+> The knee figure above was measured against the then-current single-worker pool of
+> `5 + 10 = 15`. Production now runs two API workers at `3 + 5 = 8` each, so the
+> per-worker knee moved with it. The *shape* of the finding — the knee sits at the pool
+> size — is what carries forward; the number does not.
 
 ## Layout
 

@@ -113,6 +113,34 @@ echo '15 3 * * 0 root /usr/local/sbin/refresh-cf-real-ip.sh >> /var/log/refresh-
 
 ## 3. Deploy the nginx snippets
 
+> ⚠️ **STATUS 2026-08-31 — this section would mislead you today.** It assumes
+> production serves from the repo's `api/nginx/oyechats-api.conf`. It does not, and
+> as far as anyone has verified it never did. Checked on the box during the
+> 2026-08-20 WebSocket rollout: production serves from a single **Certbot-managed**
+> file at `/etc/nginx/sites-available/oyechats-api` (symlinked from `sites-enabled/`,
+> **no `.conf` suffix**), which is not in git, has **one** catch-all `location /`, and
+> defines **no `upstream oyechats_api`**. The repo's `oyechats-api.conf` and
+> `oyechats-locations.conf` describe an intended configuration, not the running one.
+>
+> Consequences for the steps below:
+> - Copying `oyechats-locations.conf` into `snippets/` is a **no-op** — nothing
+>   `include`s it. Do not assume the location blocks it contains are live.
+> - The claim that `oyechats-api.conf` "already includes `cloudflare-real-ip.conf`"
+>   is **not true of the running config**. To make the realip module actually take
+>   effect you must add `include /etc/nginx/snippets/cloudflare-real-ip.conf;` to the
+>   live Certbot file yourself, back it up first (`cp /etc/nginx/sites-available/oyechats-api
+>   /root/oyechats-api.nginx.$(date +%F).bak`), and reload by hand.
+> - The parenthetical about "the commented `:443` block, ready for when TLS is
+>   enabled" is stale: TLS has been live since Certbot took the file over.
+> - `deploy-api.yml`'s nginx reload is guarded on
+>   `/etc/nginx/sites-enabled/oyechats-api.conf`, **a path that does not exist**, so
+>   deploys never reload nginx. Every change here needs a manual
+>   `nginx -t && systemctl reload nginx`.
+>
+> **Section 4's verification steps remain valid and are the thing to trust** — they
+> test observable behaviour rather than file layout. Run them; do not infer from the
+> copy commands that the lockdown is in place.
+
 Both snippets live in the repo under `api/nginx/`. Copy them to the server's
 `snippets/` directory (referenced by `oyechats-api.conf` via
 `include /etc/nginx/snippets/...`):

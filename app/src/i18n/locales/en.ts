@@ -3084,6 +3084,7 @@ const en = {
     theVisitorHasLeftThe: 'The visitor has left the page. They will see your reply when they return.',
     theVisitorSkippedTheQuotation: 'The visitor skipped the quotation flow.',
     theVisitorStartedButDid: 'The visitor started but did not finish a quote.',
+    theirNetwork: 'Their network',
     theseDetailsMayBeOut: 'These details may be out of date.',
     theseNotesAndTagsStay: 'These notes and tags stay in this browser. Nobody else on your team can see them.',
     theyDidNotLeaveAn: 'They did not leave an email address, so there is no way to reply to this one.',

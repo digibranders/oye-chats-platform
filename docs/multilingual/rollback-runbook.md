@@ -43,7 +43,7 @@ behaviour.
 ### How to actually flip a switch
 
 `PUT /superadmin/pricing-config/{key}` upserts
-(`api/app/api/superadmin_routes_v2.py:880-886`), so a key works whether or not
+(`api/app/api/superadmin_routes_v2.py:1147`), so a key works whether or not
 a row already exists, and the write is recorded in the audit log.
 
 ```bash

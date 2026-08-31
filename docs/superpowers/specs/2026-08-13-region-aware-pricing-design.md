@@ -1,8 +1,16 @@
 # Region-Aware Pricing in the Chat Widget — Design
 
 - **Date:** 2026-08-13
-- **Status:** Approved (design) — pending implementation plan
+- **Status:** Approved (design) · **SHIPPED** — see the note below
 - **Scope:** Backend only (`api/`). No widget, admin, or knowledge-base changes.
+
+> **Status update, 2026-08-31 (documentation audit).** Body left unedited; only the status
+> line changed, because "pending implementation plan" no longer describes reality. The
+> query-time currency directive is live in the prompt builder: `rag_service.py:5388-5400`
+> resolves the visitor's region and emits *"Show ONLY the Indian Rupee (INR, ₹) price."* or
+> the USD equivalent, and `rag_service.py:4110-4112` cites this file by path as the source of
+> that behaviour. The "only one currency" clause makes it inert for single-currency bots, as
+> §"Key insight" intended, so it applies with no per-bot config.
 
 ## Problem
 

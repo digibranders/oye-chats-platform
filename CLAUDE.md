@@ -227,21 +227,27 @@ Document Upload/Crawl
 User Question
   → Hybrid Search   (vector similarity + full-text TSVECTOR — rag_service.py)
   → CAG-lite        (skip retrieval if ≤ CAG_LITE_THRESHOLD chunks — default 20)
-  → Relevance Gate  (optional, RELEVANCE_GATE_ENABLED — Gemini scores chunks)
+  → Relevance Gate  (RELEVANCE_GATE_ENABLED, default **true** — Gemini scores chunks)
   → Rerank          (optional, RERANK_ENABLED — FlashRank cross-encoder)
   → Context Build   (top chunks + chat history + system prompt)
   → LLM Generation  (LiteLLM → OpenAI gpt-5.4-mini → Gemini 2.5 Flash fallback, streaming — llm_service.py)
   → SSE → Widget
-  → BANT/MEDDIC extraction runs in ARQ background after stream closes (qualification_service.py)
+  → BANT/MEDDIC extraction after stream closes (qualification_service.py) — NOT ARQ:
+                      it runs on the shared 3-thread pool via `core/thread_pool.submit_background`
+                      (rag_service.py:7274, :8761). Non-durable: lost on restart.
 ```
 
-## Database Schema (25 tables)
+## Database Schema (51 tables; the 25 that matter most are below)
+
+> `models.py` declares 51 `__tablename__`s. The groups below are the ones you will
+> actually touch; for the full list read `api/app/db/models.py`, which is the
+> single source of truth.
 
 **Core**
 - **Client** — Account (email, hashed_password, api_key, max_bots, is_superadmin, is_bot_manager)
-- **Bot** — Chatbot instance (bot_key, system_prompt, colors, logos, business_hours, live_chat_enabled, qualification_framework, demo_screenshot_*)
+- **Bot** — Chatbot instance (bot_key, system_prompt, colors, logos, business_hours, live_chat_enabled, bant_config, demo_screenshot_*). There is **no** `qualification_framework` column here — the bot's framework lives inside the `bant_config` JSON (`qualification_service._framework_name`, models.py:274).
 - **Document** — Ingested content chunks (text + `Vector(768)` + TSVECTOR)
-- **ChatSession** — Conversation (status: bot|waiting|live|closed, BANT scores/tier, visitor_rating, assigned_operator_id)
+- **ChatSession** — Conversation (status: bot|waiting|live|closed, BANT scores/tier, `qualification_framework` stamp, `dimension_scores`, `last_probed_dimension`, visitor_rating, assigned_operator_id)
 - **ChatMessage** — Individual messages (role: user|bot|operator|system, trace_id)
 - **LeadInfo** — Captured contact (1:1 with session)
 - **MeetingBooking** — Calendly/Zcal booking confirmations
@@ -322,7 +328,8 @@ Resolved via FastAPI dependencies in `api/app/api/auth.py`: `get_current_bot`, `
   ```bash
   ssh -i ~/.ssh/oyechats_deploy -o IdentitiesOnly=yes root@159.223.45.213
   ```
-- **Services on box**: `oyechats-api.service` (Gunicorn, 127.0.0.1:8000), `oyechats-worker.service` (ARQ), `postgresql@16-main`, `nginx` (80/443).
+- **Services on box**: `oyechats-api.service` (Gunicorn, 127.0.0.1:8000), `oyechats-worker.service` (ARQ), `postgresql@16-main`, `nginx` (80/443), plus `oyechats-backup.timer` (nightly dump).
+- **WebSocket topology**: `api/systemd/oyechats-ws.service` serves `/ws/*` from a dedicated **single-worker** process on 127.0.0.1:8001 so `oyechats-api.service` can run `WEB_CONCURRENCY=2`; nginx routes `/ws/` to it (`api/nginx/oyechats-locations.conf:41`). Cross-process frames travel over the Redis backplane (`services/ws_backplane.py`, `WS_BACKPLANE_ENABLED`, which defaults **false**). The deploy restarts this unit only if it is already installed, so whether a given host runs the split is a per-host fact — check `systemctl cat oyechats-ws` before assuming.
 - **Health endpoints**: `GET /health`, `GET /health/live`, `GET /health/full` on `127.0.0.1:8000`.
 - **Read-only ops only** unless the user explicitly authorizes restarts or writes — production reads via remote shell still require explicit user approval per session.
 
@@ -385,7 +392,10 @@ npx vite preview --port 4173     # Serve built widget for embedding tests
 ```bash
 cd app
 npm install && npm run dev       # Dev server (localhost:5174)
-npm run build                    # Production build (consumed by Vercel)
+npm run build                    # Production build (Vercel builds this too)
+npx tsc --noEmit                 # Typecheck — `npm run build` does NOT typecheck
+npx vitest run                   # Unit tests
+npm run e2e                      # Playwright browser suite (needs a build first)
 ```
 
 ### Local dev — Docker Compose alternative
@@ -440,14 +450,24 @@ npm install && npm run dev       # Dev server (localhost:3000)
 | Widget chat UI | `widget/src/components/ChatWindow.jsx` |
 | Widget live-chat UI | `widget/src/components/LiveChatMode.jsx` |
 | Vite dev-server config | `widget/vite.config.js` (prod uses the two configs above) |
-| Admin app router | `app/src/App.jsx` |
-| Admin embed UI | `app/src/pages/Chatbot.jsx` (was `Interface.jsx`, now a tab) |
-| Admin bot settings tabs | `app/src/pages/Settings.jsx` (+ BrandingTab/MessagesTab/AdvancedSettingsTab) |
-| Admin live-chat operator console | `app/src/pages/LiveChat.jsx` (rendered inside `Support.jsx`) |
-| Admin leads | `app/src/pages/Leads.jsx` |
-| Admin billing | `app/src/pages/Billing.jsx` |
-| Admin qualification config | `app/src/pages/Qualification.jsx` |
+| Admin app router | `app/src/app/routes.tsx` (+ `App.tsx`, `ProtectedLayout.tsx`) |
+| Admin shell (rail · topbar · switcher) | `app/src/shell/` |
+| Admin API client | `app/src/services/api.ts` |
+| Admin embed / deploy UI | `app/src/features/agents/channels/DeployPage.tsx` (+ `SnippetSection.tsx`); snippet variants in `app/src/data/widgetEmbed.ts` |
+| Admin widget appearance & messages | `app/src/features/agents/experience/ExperiencePage.tsx` |
+| Admin knowledge base / crawl | `app/src/features/agents/knowledge/` |
+| Admin live-chat operator console | `app/src/features/inbox/InboxPage.tsx` |
+| Admin leads | `app/src/features/leads/LeadsPage.tsx` |
+| Admin billing | `app/src/features/workspace/billing/` |
+| Admin qualification config | `app/src/features/agents/advanced/QualificationPage.tsx` |
+| Admin analytics | `app/src/features/analytics/` |
+| Admin onboarding / first run | `app/src/onboarding/` |
 
+> The dashboard lives under `app/src/features/**` (one directory per product area),
+> `app/src/shell/**` (chrome) and `app/src/app/**` (routing). There is no
+> `app/src/App.jsx`, and `app/src/pages/` now holds only the unauthenticated auth
+> screens (Login, Register, VerifyEmail, ForgotPassword, OAuthCallback).
+>
 > ⚠️ **Every `app/src/*` entry above is a TECHNICAL reference only** — use it to find which APIs, hooks and business logic to reuse, never as a UX, layout or navigation reference. The pages, flows, IA and navigation are being rebuilt from first principles; see [`app/CLAUDE.md`](app/CLAUDE.md) and [`app/DESIGN.md`](app/DESIGN.md).
 
 ## Tech Stack
@@ -456,21 +476,21 @@ npm install && npm run dev       # Dev server (localhost:3000)
 |-------|-----------|-------|
 | LLM (primary) | OpenAI `gpt-5.4-mini` | Routed via LiteLLM |
 | LLM (fallback) | Google `gemini-2.5-flash` | Auto-fallback in LiteLLM |
-| Gate / enrichment LLM | `gemini-2.5-flash` | CRAG relevance gate + chunk enrichment (off by default) |
+| Gate / enrichment LLM | `gemini-2.5-flash` | CRAG relevance gate (`RELEVANCE_GATE_ENABLED`, **on** by default — it is the control behind the "answers only from your knowledge base" guarantee) + chunk enrichment (`CHUNK_ENRICHMENT_ENABLED`, off by default). Effective gate model is resolved at call time by `runtime_config.get_gate_model()`, not by the `GATE_MODEL` env constant. |
 | Embeddings | Google `gemini-embedding-001` | 768-dim, Matryoshka-truncated, client-side L2-normalized; batched **100 texts/call** via `batchEmbedContents`, 8-way concurrent (`EMBED_CONCURRENCY`). Quota is counted **per content item, not per HTTP call**, so batching saves round-trips, not quota — sustained throughput is capped by `EMBED_RPM_LIMIT` (default 2850). Model is now marked **Legacy** by Google; `gemini-embedding-2` is current (8192 input tokens vs 2048, auto-normalizes truncated dims) but its embedding space is **incompatible** — adopting it means re-embedding the whole corpus. |
 | Vector DB | PostgreSQL 16 + pgvector | Hybrid search: `Vector(768)` + `TSVECTOR` |
 | Backend | FastAPI · SQLAlchemy 2.0 · Alembic | Python 3.11; `uv` for deps |
 | Background queue | ARQ on Redis | `oyechats-worker.service` |
 | Frontend | React 19 · Vite 7/8 · Tailwind v4 | Widget = loader IIFE + lazy ESM chunks in a shadow root; Admin = SPA |
-| Web Scraping | Spider.cloud (primary) + Jina Reader (fallback) | URL ingestion, HTTP-only (no local browser) |
-| File Storage | Cloudflare R2 (S3-compatible) | Env vars use `R2_` prefix; internal code module name is still `b2_service.py` for legacy reasons but the bucket is on Cloudflare R2 in production |
+| Web Scraping | Jina Reader (primary) + Spider.cloud (fallback) | URL ingestion, HTTP-only (no local browser). `CRAWL_PROVIDER_PRIMARY` defaults to `"jina"` (config.py:674); the other provider becomes the fallback. Super-admin can flip it at runtime via `pricing_config` `crawl.provider_primary`. |
+| File Storage | Cloudflare R2 (S3-compatible) | Env vars use the `R2_` prefix (legacy `B2_*` names still accepted as fallbacks); the module is `api/app/services/r2_service.py` |
 | Email | Brevo (Sendinblue) | Transactional |
 | Payments | Razorpay (INR) — single provider | Webhook idempotency via `processed_webhooks` |
 | Real-time | WebSocket (`ws_routes.py`) | Live chat bidirectional messaging |
 | Rate limiting | SlowAPI on Redis | Per-route + IP/key |
 | Observability | Langfuse + Sentry | **Two separate Langfuse projects**: "OyeChats Prod" (keys in GitHub Secrets) and "OyeChats Dev" (keys in local `.env`). Traces go to the matching project — no mixing. Toggle via `LANGFUSE_FORCE_DISABLE=true` if needed. |
 | CDN | Cloudflare R2 | `cdn.oyechats.com/oyechats-widget.js` |
-| CI/CD | GitHub Actions | `ci.yml`, `deploy-api.yml`, `deploy-widget.yml` |
+| CI/CD | GitHub Actions | `ci.yml`, `deploy-api.yml`, `deploy-widget.yml`, `deploy-app.yml` |
 | Dependency Mgmt | uv (Python) + npm (JavaScript) | |
 
 ## Skill routing

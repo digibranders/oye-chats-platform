@@ -1,5 +1,13 @@
 # Integrate OyeChats with Next.js
 
+> **Branded plans must also include the "Powered by OyeChats" anchor** next to the script
+> tag. It is not decoration: the widget mounts into a shadow root from JS after the visitor
+> clicks, so its in-widget badge is invisible to crawlers, and this anchor is the only
+> attribution that reaches the served HTML. Copy the exact snippet your dashboard shows on
+> the Deploy page — workspaces with the `branding_removable` entitlement get a variant
+> without it.
+
+
 ## App Router (recommended)
 
 ```tsx
@@ -25,6 +33,11 @@ export default function RootLayout({ children }) {
 `strategy="lazyOnload"` waits for browser idle — no impact on LCP/CLS, no fight with the hero image for bandwidth. Switch to `afterInteractive` only if you need `OyeChats.on('ready')` handlers to fire earlier.
 
 ## With `@oyechats/next` package
+
+> **Availability unverified.** This wrapper exists in the platform repo at
+> `widget/packages/next` (version `0.1.0`), but whether it is published to npm has not been
+> confirmed. If `npm i @oyechats/next` fails, use the plain `<Script>` install above — it is
+> the supported path and the wrapper adds nothing you cannot do with it.
 
 ```tsx
 import { OyeChatsWidget } from '@oyechats/next'

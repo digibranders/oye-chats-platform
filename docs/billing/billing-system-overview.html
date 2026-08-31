@@ -112,6 +112,35 @@
 
 <div class="wrap">
 
+  <div class="callout c-warn">
+    <span class="t">⚠️ Snapshot of 25 June / 9 July 2026. Three things in it are no longer true.</span>
+    This page is left unedited below, because the reasoning it records — why the dual-currency
+    <em>fixed</em> model, why a floating per-cycle charge is impossible under UPI Autopay, why Stripe was
+    abandoned — is still the reasoning the system rests on. What has since changed:
+    <ol>
+      <li><b>Pricing is GST-EXCLUSIVE (26 Aug 2026).</b> Every published price is a <b>base</b> price. A
+      domestic customer is debited base + GST, added at charge time by
+      <span class="mono">core/tax.py::gross_charge_minor</span>; an international customer is an export of
+      services, pays no Indian GST, and is charged the listed USD price. Because the charge is
+      <span class="mono">base + tax</span> the invoicing engine was not changed — the carve-out recovers the
+      advertised base exactly, and <span class="mono">SellerProfile.price_inclusive</span> stays pinned
+      <span class="mono">true</span>.</li>
+      <li><b>Every price and plan ID in §3 is retired.</b> ₹449 / ₹949 / ₹1,399 and $9 / $19 / $39 were
+      superseded by the 13–14 Aug re-pricing (<span class="mono">seed_plans.py</span> now holds ₹599 /
+      ₹1,199 / ₹2,999 / ₹5,999 and $7.99 / $15.99 / $45.99 / $89.99), and the INR plans must be re-minted at
+      base + GST on top of that. The <span class="mono">plan_TE3…</span> ids in the §3 table are in the
+      <b>retired</b> table of the canonical reference and must not be wired. Take plan ids and amounts from
+      <span class="mono">docs/billing/razorpay-plan-ids.md</span> only.</li>
+      <li><b>§2's "non-Indian customers pay a real $19 via Stripe" is wrong, and §14 on this same page says
+      so.</b> Stripe was removed wholesale in July 2026; there is no Stripe code path. When
+      <span class="mono">INTL_PAYMENTS_ENABLED</span> is switched on, the USD rail is separate
+      <em>Razorpay</em> plan objects priced in USD.</li>
+    </ol>
+    Current sources of truth: <span class="mono">api/app/core/tax.py</span>,
+    <span class="mono">api/scripts/seed_plans.py</span>, and
+    <span class="mono">docs/billing/razorpay-plan-ids.md</span>.
+  </div>
+
   <div class="toc">
     <h3>Contents</h3>
     <ol>

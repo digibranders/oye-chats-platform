@@ -183,6 +183,28 @@ _SKIP_EXTENSIONS = frozenset(
 # ``/sitemap-0`` or ``/feed`` that the extension filter misses.
 _SKIP_PATH_PREFIXES = ("/sitemap", "/feed", "/rss", "/atom", "/wp-json")
 
+# A numbered continuation of one of those paths (``/sitemap-0``, ``/feed2``).
+# The suffix has to be digits-only: anything else is a word, and a word is a
+# real page.
+_NUMBERED_SUFFIX_RE = re.compile(r"^[-_]?\d+/?$")
+
+
+def _matches_skip_prefix(path: str, prefix: str) -> bool:
+    """Whether ``path`` IS one of the skiplisted paths, not merely starts like one.
+
+    A bare ``startswith`` made the skiplist swallow real pages: ``/feedback``,
+    ``/rss-guide``, ``/atomic-habits`` and ``/sitemapping`` were all silently
+    excluded from discovery, so the customer's crawl never saw them. Match the
+    path exactly, at a ``/`` boundary, or as the numbered continuation the
+    skiplist was written for.
+    """
+    if path == prefix or path.startswith(prefix + "/"):
+        return True
+    if not path.startswith(prefix):
+        return False
+    return _NUMBERED_SUFFIX_RE.match(path[len(prefix) :]) is not None
+
+
 # WordPress (and similar CMS) shortlink query-only params that resolve to the
 # same canonical post/page as another URL the crawler already has. Pages whose
 # query string consists *only* of these keys are duplicates. Keeping them
@@ -212,7 +234,7 @@ def _is_html_url(url: str) -> bool:
         return False
     path = urlparse(url).path.lower()
     for prefix in _SKIP_PATH_PREFIXES:
-        if path.startswith(prefix):
+        if _matches_skip_prefix(path, prefix):
             return False
     dot = path.rfind(".")
     if dot == -1:
@@ -229,6 +251,7 @@ async def discover_website_urls(
     *,
     max_urls: int = 500,
     timeout: float = 20.0,
+    stats: dict | None = None,
 ) -> list[str]:
     """Return up to *max_urls* content-page URLs found on the site.
 
@@ -240,6 +263,12 @@ async def discover_website_urls(
         max_urls:  Hard cap on the number of URLs returned. Callers pass the
                    plan's ``max_crawl_pages`` ceiling so we never overcount.
         timeout:   Wall-clock time budget for the whole discovery (seconds).
+        stats:     Optional out-dict. Receives ``total_found``: how many
+                   qualifying pages were seen BEFORE ``max_urls`` truncation.
+                   The returned list is capped, so its length can never express
+                   "we found 547 pages but your plan covers 200" — the crawl's
+                   coverage-shortfall number was computed from the capped list
+                   and was therefore structurally always zero.
 
     Returns:
         Deduplicated list of URLs, shortest paths first.
@@ -285,8 +314,14 @@ async def discover_website_urls(
         page_urls: list[str] = []
         seen_pages: set[str] = set()
         fetched_maps: set[str] = set()
+        # Every qualifying page seen, including the ones past ``max_urls``.
+        # Counted only within sitemaps we were going to fetch anyway (the
+        # cap still stops us fetching MORE documents), so this costs no extra
+        # network.
+        total_found = 0
 
         async def _parse_sitemap(url: str, depth: int) -> None:
+            nonlocal total_found
             if url in fetched_maps or depth > 2 or len(page_urls) >= max_urls:
                 return
             fetched_maps.add(url)
@@ -315,9 +350,12 @@ async def discover_website_urls(
                         and robots_rules.can_fetch(_USER_AGENT, loc)
                     ):
                         seen_pages.add(loc)
-                        page_urls.append(loc)
-                        if len(page_urls) >= max_urls:
-                            return
+                        total_found += 1
+                        # Past the cap we keep COUNTING but stop collecting, so
+                        # the caller can tell the customer how much of their
+                        # site did not fit.
+                        if len(page_urls) < max_urls:
+                            page_urls.append(loc)
 
         for s in sitemap_seeds[:4]:
             if len(page_urls) >= max_urls:
@@ -333,8 +371,11 @@ async def discover_website_urls(
         # "robots.txt-declared sitemap ∪ {seed_url}".
         if _is_html_url(seed_url) and seed_url not in seen_pages and robots_rules.can_fetch(_USER_AGENT, seed_url):
             seen_pages.add(seed_url)
+            total_found += 1
             page_urls.insert(0, seed_url)
 
+        if stats is not None:
+            stats["total_found"] = max(total_found, len(page_urls))
         return page_urls[:max_urls]
 
 

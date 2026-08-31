@@ -39,11 +39,25 @@ and never needs updating.
    (Settings → Webhooks → Add New Webhook)
    - **URL:** `https://nuclei-rundown-okay.ngrok-free.dev/webhooks/razorpay`
    - **Secret:** must equal `RAZORPAY_WEBHOOK_SECRET` in `api/.env`
-   - **Active events:** `subscription.activated`, `subscription.charged`,
-     `subscription.cancelled`, `subscription.completed`, `subscription.halted`,
-     `subscription.pending`, `payment.captured`, `payment.failed`, `order.paid`,
+   - **Active events:** `subscription.authenticated`, `subscription.activated`,
+     `subscription.charged`, `subscription.cancelled`, `subscription.completed`,
+     `subscription.halted`, `subscription.pending`, `subscription.paused`,
+     `subscription.resumed`, `payment.captured`, `payment.failed`, `order.paid`,
      `refund.created`, `refund.processed`, `refund.failed`,
-     `payment.dispute.created`, `payment.dispute.lost`, `payment.dispute.won`
+     `payment.dispute.created`, `payment.dispute.lost`, `payment.dispute.won`,
+     `token.cancelled`, `token.paused`
+
+     > The list above is the full handler map in
+     > `razorpay_service.py:2579-2617`. Five of them were missing from this
+     > runbook: `subscription.authenticated` (the deferred-start path — a
+     > promo/trial subscription stays `authenticated` until `start_at`, so
+     > without it a deferred-start sub is never materialised locally),
+     > `subscription.paused` / `subscription.resumed` (handled as halt and
+     > re-activate), and the two `token.*` events (`TOKEN_REVOKED_EVENTS`, which
+     > prune a saved instrument the moment Razorpay revokes it). Anything not in
+     > the map is answered `Unhandled event type`, so subscribing to more is
+     > harmless; subscribing to fewer means that path is simply never exercised
+     > locally.
 
 Verified 2026-07-03: `GET /health` returns 200 through the tunnel, and
 `POST /webhooks/razorpay` with a bad signature returns 400 (signature check

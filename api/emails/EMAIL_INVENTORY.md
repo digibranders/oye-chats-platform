@@ -29,10 +29,12 @@
 ### Rendering — all in code (one design system)
 **Every email now renders raw HTML in Python** from the shared design system in
 `app/services/email_design.py` (monochrome + single-indigo-accent, dark-mode hardened
-for Outlook). There are **no Brevo saved templates in the send path** — all 20 senders
-build HTML and dispatch through `_send_brevo_email()` (which supports attachments, used
-by invoices). The gallery in `emails/gallery/` is generated from these same senders, so
-what you review is what customers receive.
+for Outlook). There are **no Brevo saved templates in the send path** — all 30 senders
+build HTML and dispatch through `send_email_async()` → `_send_raw_email()` →
+`_send_brevo_email()` (which supports attachments, used by invoices). The gallery in
+`emails/gallery/` is generated from these same senders, so what you review is what
+customers receive — but note it renders **19 of the 30**, not all of them; see
+`emails/gallery/README.md`.
 
 The legacy `_send_brevo_template()` transport and the `TEMPLATE_*` IDs (57–63) still
 exist for backward-compat and the super-admin catalogue, but nothing sends through them.

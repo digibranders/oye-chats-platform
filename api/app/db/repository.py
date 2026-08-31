@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import Float, case, cast, desc, func, insert, or_, select, text
 from sqlalchemy.exc import IntegrityError
@@ -940,26 +941,48 @@ def _doc_owner_filter(bot_id=None, client_id=None):
     return and_(tenant, Document.is_active.is_(True))
 
 
+def _session_window_filter(days: int | None):
+    """Trailing-window filter on ``ChatSession.created_at``, empty when ``days`` is None."""
+    if days is None:
+        return []
+    return [ChatSession.created_at >= datetime.now(UTC) - timedelta(days=days)]
+
+
 def get_dashboard_stats(session, client_id: int = None, bot_id: int = None, days: int = None):
     """Fetch aggregate statistics for admin dashboard.
 
     Args:
-        days: When provided, restricts conversation/message counts to the
-              last N days.  active_users and total_documents are always live.
+        days: When provided, restricts conversation/message/feedback counts to
+              the last N days.  active_users and total_documents are always live.
+
+    Each figure is windowed on its OWN timestamp. Conversations are cut on
+    ``ChatSession.created_at``, messages and the feedback rated on them on
+    ``ChatMessage.created_at``. Cutting the message count on the session's date
+    (as this did) both under- and over-counts: a conversation opened 40 days ago
+    that the visitor returned to today contributed none of today's turns, while
+    one opened a day inside the window contributed every turn it would ever
+    receive, next month's included. It also disagreed with
+    ``get_message_activity``, which has always bucketed on the message's date,
+    so the same dashboard page carried two definitions of "messages".
     """
     sf = _session_owner_filter(bot_id, client_id)
     df = _doc_owner_filter(bot_id, client_id)
 
-    # Optional time window filter on ChatSession.created_at
-    time_filter = []
+    # Optional time window. Timezone-aware UTC rather than naive ``utcnow()``:
+    # every column compared against it is ``timestamptz``, so a naive value is
+    # only correct while the database server happens to run on UTC.
+    session_time_filter = []
+    message_time_filter = []
     if days is not None:
-        cutoff = datetime.utcnow() - timedelta(days=days)
-        time_filter = [ChatSession.created_at >= cutoff]
+        cutoff = datetime.now(UTC) - timedelta(days=days)
+        session_time_filter = [ChatSession.created_at >= cutoff]
+        message_time_filter = [ChatMessage.created_at >= cutoff]
 
-    total_sessions = session.execute(select(func.count(ChatSession.id)).where(sf, *time_filter)).scalar() or 0
+    total_sessions = session.execute(select(func.count(ChatSession.id)).where(sf, *session_time_filter)).scalar() or 0
 
     total_messages = (
-        session.execute(select(func.count(ChatMessage.id)).join(ChatSession).where(sf, *time_filter)).scalar() or 0
+        session.execute(select(func.count(ChatMessage.id)).join(ChatSession).where(sf, *message_time_filter)).scalar()
+        or 0
     )
 
     root_name_expr = func.coalesce(
@@ -967,7 +990,7 @@ def get_dashboard_stats(session, client_id: int = None, bot_id: int = None, days
     )
     total_sources = session.execute(select(func.count(func.distinct(root_name_expr))).where(df)).scalar() or 0
 
-    fifteen_mins_ago = datetime.utcnow() - timedelta(minutes=15)
+    fifteen_mins_ago = datetime.now(UTC) - timedelta(minutes=15)
     active_users = (
         session.execute(
             select(func.count(ChatSession.id)).where(sf, ChatSession.last_active_at >= fifteen_mins_ago)
@@ -981,7 +1004,7 @@ def get_dashboard_stats(session, client_id: int = None, bot_id: int = None, days
             func.sum(case((ChatMessage.feedback == 1, 1), else_=0)).label("positive"),
         )
         .join(ChatSession)
-        .where(sf, ChatMessage.role == "bot", ChatMessage.feedback.isnot(None))
+        .where(sf, ChatMessage.role == "bot", ChatMessage.feedback.isnot(None), *message_time_filter)
     ).first()
     success_rate = 0
     if fb_result and fb_result.total > 0:
@@ -1021,13 +1044,20 @@ def get_dashboard_stats(session, client_id: int = None, bot_id: int = None, days
     }
 
 
-def get_ratings_summary(session, client_id: int = None, bot_id: int = None):
-    """Fetch post-chat visitor rating summary (avg, total, distribution by 1 to 5 stars)."""
+def get_ratings_summary(session, client_id: int = None, bot_id: int = None, days: int = None):
+    """Fetch post-chat visitor rating summary (avg, total, distribution by 1 to 5 stars).
+
+    ``days`` optionally restricts to conversations started in the last N days;
+    omitting it keeps the all-time figure. The window is cut on
+    ``ChatSession.created_at`` because the rating has no timestamp of its own -
+    it is written back onto the session when the visitor closes the chat.
+    """
     sf = _session_owner_filter(bot_id, client_id)
+    time_filter = _session_window_filter(days)
 
     rows = session.execute(
         select(ChatSession.visitor_rating, func.count(ChatSession.id).label("cnt"))
-        .where(sf, ChatSession.visitor_rating.isnot(None))
+        .where(sf, ChatSession.visitor_rating.isnot(None), *time_filter)
         .group_by(ChatSession.visitor_rating)
     ).all()
 
@@ -1051,13 +1081,19 @@ def get_ratings_summary(session, client_id: int = None, bot_id: int = None):
     }
 
 
-def get_resolution_summary(session, client_id: int = None, bot_id: int = None):
-    """Fetch post-chat visitor resolution summary (resolved, unresolved, rate)."""
+def get_resolution_summary(session, client_id: int = None, bot_id: int = None, days: int = None):
+    """Fetch post-chat visitor resolution summary (resolved, unresolved, rate).
+
+    ``days`` optionally restricts to conversations started in the last N days,
+    on the same basis as ``get_ratings_summary``; omitting it keeps the
+    all-time figure.
+    """
     sf = _session_owner_filter(bot_id, client_id)
+    time_filter = _session_window_filter(days)
 
     rows = session.execute(
         select(ChatSession.visitor_resolved, func.count(ChatSession.id).label("cnt"))
-        .where(sf, ChatSession.visitor_resolved.isnot(None))
+        .where(sf, ChatSession.visitor_resolved.isnot(None), *time_filter)
         .group_by(ChatSession.visitor_resolved)
     ).all()
 
@@ -1257,15 +1293,24 @@ def get_unanswered_questions(
     the representative shown is the most-recent phrasing. Ordered by frequency,
     with recency as the tiebreak.
 
-    Scoped to a single ``bot_id`` when given, else to every bot owned by
-    ``client_id``. ``days`` optionally limits to a trailing window.
+    Scoped to a single ``bot_id`` when given - intersected with ``client_id``
+    ownership, so the query is tenant-safe on its own - else to every bot owned
+    by ``client_id``. ``days`` optionally limits to a trailing window.
     """
     params: dict = {"limit": limit}
+    owned = "s.bot_id IN (SELECT id FROM bots WHERE client_id = :client_id)"
     if bot_id is not None:
         scope = "s.bot_id = :bot_id"
         params["bot_id"] = bot_id
+        if client_id is not None:
+            # Defence in depth: the route verifies ownership one call earlier,
+            # but a query that answers for any bot id it is handed is one
+            # forgotten check away from serving another tenant's visitor
+            # questions. Keep the owner predicate in the SQL as well.
+            scope = f"{scope} AND {owned}"
+            params["client_id"] = client_id
     else:
-        scope = "s.bot_id IN (SELECT id FROM bots WHERE client_id = :client_id)"
+        scope = owned
         params["client_id"] = client_id
 
     since = ""
@@ -1310,18 +1355,46 @@ def get_unanswered_questions(
     ]
 
 
-def get_message_activity(session, client_id: int = None, days: int = None, bot_id: int = None):
-    """Fetch message activity grouped by date."""
+def get_message_activity(session, client_id: int = None, days: int = None, bot_id: int = None, tz: str = "UTC"):
+    """Fetch message activity grouped by date.
+
+    Returns ``[{"date": "YYYY-MM-DD", "messages": N}, ...]`` ordered by date.
+
+    ``tz`` is the IANA zone the day boundaries are cut in, defaulting to UTC.
+    It matters because the caller reads each ``date`` key as a *local* date:
+    truncating a ``timestamptz`` in the database's own zone files every message
+    an IST visitor sent before 05:30 under the previous day, which walks the
+    figure across a month edge.
+
+    ``days`` limits the series to the last N whole days in ``tz`` (today
+    included), matching how the dashboard trims the same series client-side.
+    Without it this is an unbounded aggregate over the workspace's entire
+    history, which is a real timeout on a busy account.
+
+    Raises ``ValueError`` for an unknown zone name.
+    """
+    try:
+        zone = ZoneInfo(tz)
+    except (KeyError, ValueError) as exc:
+        raise ValueError(f"Unknown timezone: {tz!r}") from exc
+
     sf = _session_owner_filter(bot_id, client_id)
+    # ``timezone(<zone>, ts)`` renders the instant as wall-clock time in that
+    # zone; ``date()`` then cuts the bucket on the visitor's midnight.
+    bucket = func.date(func.timezone(tz, ChatMessage.created_at)).label("activity_date")
     stmt = (
-        select(
-            func.date(ChatMessage.created_at).label("activity_date"), func.count(ChatMessage.id).label("message_count")
-        )
+        select(bucket, func.count(ChatMessage.id).label("message_count"))
         .join(ChatSession)
         .where(sf)
         .group_by("activity_date")
         .order_by("activity_date")
     )
+
+    if days is not None and days > 0:
+        local_midnight = (datetime.now(zone) - timedelta(days=days - 1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        stmt = stmt.where(ChatMessage.created_at >= local_midnight.astimezone(UTC))
 
     results = session.execute(stmt).all()
     return [{"date": str(r.activity_date), "messages": r.message_count} for r in results if r.activity_date]

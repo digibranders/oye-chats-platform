@@ -1,5 +1,13 @@
 # GDPR consent with Cookiebot / OneTrust
 
+> **Branded plans must also include the "Powered by OyeChats" anchor** next to the script
+> tag. It is not decoration: the widget mounts into a shadow root from JS after the visitor
+> clicks, so its in-widget badge is invisible to crawlers, and this anchor is the only
+> attribution that reaches the served HTML. Copy the exact snippet your dashboard shows on
+> the Deploy page — workspaces with the `branding_removable` entitlement get a variant
+> without it.
+
+
 OyeChats supports deferred init so the widget only mounts after the visitor accepts cookies.
 
 ## 1. Set the deferred-init flag BEFORE the loader script

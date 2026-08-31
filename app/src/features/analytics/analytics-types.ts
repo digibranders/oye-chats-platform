@@ -25,19 +25,27 @@ function readNumber(record: Record<string, unknown>, ...keys: string[]): number 
 /**
  * Headline totals, from `getDashboardStats`.
  *
- * Only `totalConversations` and `totalMessages` honour the endpoint's `?days=`
- * filter — it narrows on `ChatSession.created_at`. `activeVisitors` is a live
- * fifteen-minute figure and `positiveFeedbackRate` is computed over all rated
- * answers ever, so both are labelled with their own period on screen rather
- * than inheriting the page's range. Rendering them under the range control's
- * label would be a lie the reader has no way to detect.
+ * `totalConversations`, `totalMessages` and `positiveFeedbackRate` all honour
+ * the endpoint's `?days=` filter, each cut on its own timestamp: conversations
+ * on `ChatSession.created_at`, messages and the feedback rated on them on
+ * `ChatMessage.created_at`. `activeVisitors` is a live fifteen-minute figure
+ * and `knowledgeSources` is a current count, so those two are labelled with
+ * their own period on screen rather than inheriting the page's range.
+ * Rendering them under the range control's label would be a lie the reader has
+ * no way to detect.
  */
 export interface WorkspaceTotals {
   totalConversations: number;
   totalMessages: number;
   /** Sessions active in the last fifteen minutes. Never windowed. */
   activeVisitors: number;
-  /** Share of rated answers that got a thumbs-up, 0 to 100. Never windowed. */
+  /**
+   * Share of rated answers that got a thumbs-up, 0 to 100.
+   *
+   * Windowed by `?days=` on the rated message's own date. It was all-time until
+   * the endpoint was fixed to honour the window it was asked for, so anything
+   * still labelling this figure "all time" is now wrong.
+   */
   positiveFeedbackRate: number;
   /** Distinct knowledge sources indexed. Never windowed. */
   knowledgeSources: number;
