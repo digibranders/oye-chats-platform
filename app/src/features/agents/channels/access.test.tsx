@@ -97,9 +97,12 @@ describe('session continuity', () => {
     expect(screen.getByText(/A wildcard will not work here/)).toBeInTheDocument();
   });
 
-  it('names the pinned parent once one is set', () => {
+  it('reports that a parent is pinned, and leaves the value in the field', () => {
     render(<Harness website="https://acme.com" sessionShareDomain="acme.com" />);
-    expect(screen.getByText('Pinned · acme.com')).toBeInTheDocument();
+    // The badge carries the STATE. Naming the domain in it clipped even a short
+    // one against `Badge`'s `max-w-40`, and the field below already holds it.
+    expect(screen.getByText('Pinned')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Pin a parent domain' })).toHaveValue('acme.com');
   });
 });
 
