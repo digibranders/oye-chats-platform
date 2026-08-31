@@ -310,7 +310,7 @@ jobs:
               "VAPID_PRIVATE_KEY_FILE=${VAPID_PRIVATE_KEY_FILE_PATH}" \
               "REOON_API_KEY=${REOON_API_KEY}" \
               "IPAPI_IS_KEY=${IPAPI_IS_KEY}" \
-              "WS_BACKPLANE_ENABLED=${WS_BACKPLANE_ENABLED:-false}" \
+              "WS_BACKPLANE_ENABLED=${WS_BACKPLANE_ENABLED:-true}" \
               > api/.env
 
             # Non-root services (audit F06): after the one-time
