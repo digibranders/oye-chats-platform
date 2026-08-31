@@ -197,6 +197,21 @@ def _leave_queue_transition(session_id: str) -> bool:
         return False
 
 
+def _drop_from_local_queue(session_id: str) -> None:
+    """Forget a session this process still believes is queued.
+
+    ``leave_queue`` wrote the database and stopped there, leaving the id in
+    ``manager.waiting_queue`` with its timeout task still armed. That orphan
+    fired minutes later at a visitor who was back in bot mode and closed the
+    conversation out from under them. The DB write is what actually removes
+    them from the queue (it is derived from ``ChatSession.status``); this drops
+    this process's copies so nothing stale can act on them later.
+    """
+    if session_id in manager.waiting_queue:
+        manager.waiting_queue.remove(session_id)
+    manager._cancel_timeout(session_id)
+
+
 def _visitor_end_transition(session_id: str) -> bool:
     """Visitor ended the live chat: live → bot, only if still live."""
     try:
@@ -204,6 +219,46 @@ def _visitor_end_transition(session_id: str) -> bool:
         return True
     except (InvalidTransitionError, ValueError):
         return False
+
+
+#: Roles allowed to act on a conversation they are not assigned to. Owners and
+#: admins are the escalation path for a colleague who walked away mid-chat, and
+#: they already close and transfer other operators' chats over REST.
+_ESCALATION_ROLES = frozenset({"owner", "admin"})
+
+
+def _operator_may_act_on_session(chat_session, operator_id: int, operator_role: str | None) -> bool:
+    """Whether this operator may drive this live conversation.
+
+    The socket handlers checked, at most, that the conversation's bot belonged
+    to the operator's workspace, which is not the same question: every operator
+    in a workspace could type into, attach files to and close every colleague's
+    conversation. ``typing`` / ``read_receipt`` had no check at all, so any
+    authenticated operator could drive any workspace's visitor widget.
+    """
+    if chat_session.assigned_operator_id == operator_id:
+        return True
+    return (operator_role or "") in _ESCALATION_ROLES
+
+
+def _operator_holds(session_id: str, operator_id: int) -> bool:
+    """Whether ``operator_id`` is the assignee of this LIVE conversation.
+
+    Used by the ``typing`` and ``read_receipt`` branches, which had no check at
+    all and so let any authenticated operator, in any tenant, drive another
+    workspace's visitor widget by naming its session id. Assignment implies the
+    workspace, so no separate tenant query is needed.
+
+    The answer comes from ``_assigned_operator``: one database read, then this
+    process's cache, because these frames arrive on every keystroke and a query
+    per frame would put the database behind an unauthenticated typing loop. The
+    cache is re-synced against the database by the manager's 5-minute cleanup
+    tick, so a chat transferred in another process can cost the new operator
+    their typing indicator until that tick lands. That is the same staleness
+    window ``route_visitor_message`` already lives with, and it fails safe: the
+    frame is dropped, never misrouted.
+    """
+    return manager._assigned_operator(session_id, consult_db=True) == operator_id
 
 
 def _operator_close_transition(session_id: str, operator_id: int) -> bool:
@@ -629,6 +684,7 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
 
                     queue_svc.abandon(session_id, session)
                 _leave_queue_transition(session_id)
+                _drop_from_local_queue(session_id)
                 await ws.send_json({"type": "queue_left"})
 
             # Visitor deliberately ended the chat (clicked "End chat and return
@@ -641,11 +697,12 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                 with get_session() as session:
                     bot = session.execute(select(Bot).where(Bot.id == bot_id)).scalar_one_or_none()
                     bot_name = bot.name if bot else "AI Assistant"
+                    owner_client_id = bot.client_id if bot else None
                     add_chat_message(
                         session, session_id, role="system", content="Visitor ended the live chat.", bot_id=bot_id
                     )
                     session.commit()
-                await manager.close_chat(session_id, bot_name)
+                await manager.close_chat(session_id, bot_name, client_id=owner_client_id)
 
             # No trailing unknown-type branch: ``parse_frame`` rejects any
             # type not in ``VISITOR_FRAMES`` before the chain is entered, so
@@ -708,6 +765,7 @@ def _resolve_operator_from_key(
                 True,
                 operator.preferred_locale,
                 operator.avatar_url,
+                operator.role,
             )
 
         # Client api_key auth. Find or create the owner's operator record.
@@ -772,6 +830,7 @@ def _resolve_operator_from_key(
             operator.is_online,
             operator.preferred_locale,
             operator.avatar_url,
+            operator.role,
         )
 
 
@@ -820,7 +879,16 @@ async def operator_websocket(
         await ws.close(code=4003, reason="Invalid authentication key")
         return
 
-    operator_id, operator_name, client_id, department_id, is_online, operator_locale, operator_avatar = result
+    (
+        operator_id,
+        operator_name,
+        client_id,
+        department_id,
+        is_online,
+        operator_locale,
+        operator_avatar,
+        operator_role,
+    ) = result
 
     # ── Seat-limit enforcement: cap concurrent online operators per subscription ──
     # ``operator_quantity`` on Subscription is the customer's purchased seat count
@@ -933,6 +1001,12 @@ async def operator_websocket(
                             f"belonging to a different client. Rejected"
                         )
                         continue
+                    if not _operator_may_act_on_session(chat_session, operator_id, operator_role):
+                        logger.warning(
+                            f"Operator {operator_id} attempted to message session {target_session} "
+                            f"assigned to operator {chat_session.assigned_operator_id}. Rejected"
+                        )
+                        continue
 
                     # The operator writes in THEIR language; the visitor reads
                     # in the session's. Both come from server state.
@@ -1000,6 +1074,12 @@ async def operator_websocket(
                     bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
                     if not bot or bot.client_id != client_id:
                         continue
+                    if not _operator_may_act_on_session(chat_session, operator_id, operator_role):
+                        logger.warning(
+                            f"Operator {operator_id} attempted to attach a file to session {target_session} "
+                            f"assigned to operator {chat_session.assigned_operator_id}. Rejected"
+                        )
+                        continue
 
                     file_content = f"[File: {filename}]({file_url})"
                     add_chat_message(session, target_session, role="operator", content=file_content, bot_id=None)
@@ -1011,13 +1091,13 @@ async def operator_websocket(
 
             elif msg_type == "typing":
                 target_session = frame.session_id
-                if target_session:
+                if target_session and _operator_holds(target_session, operator_id):
                     await manager.send_typing_to_visitor(target_session)
 
             elif msg_type == "read_receipt":
                 # Operator confirms they've read messages up to this ID
                 target_session = frame.session_id
-                if target_session:
+                if target_session and _operator_holds(target_session, operator_id):
                     await manager.send_read_receipt_to_visitor(target_session, frame.last_read_id)
 
             elif msg_type == "close_chat":
@@ -1037,6 +1117,12 @@ async def operator_websocket(
                                     f"belonging to a different client. Rejected"
                                 )
                                 continue
+                            if not _operator_may_act_on_session(chat_session, operator_id, operator_role):
+                                logger.warning(
+                                    f"Operator {operator_id} attempted to close session {target_session} "
+                                    f"assigned to operator {chat_session.assigned_operator_id}. Rejected"
+                                )
+                                continue
                             # Capture bot_name before session closes (avoid DetachedInstanceError)
                             bot_name = bot.name
                     # CAS from "live" (F31): the row-locked state machine wins or
@@ -1053,7 +1139,7 @@ async def operator_websocket(
                                 bot_id=None,
                             )
                             session.commit()
-                        await manager.close_chat(target_session, bot_name)
+                        await manager.close_chat(target_session, bot_name, client_id=client_id)
 
     except WebSocketDisconnect:
         heartbeat_task.cancel()
