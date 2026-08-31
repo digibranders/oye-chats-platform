@@ -1,15 +1,18 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ExternalLink } from 'lucide-react';
 import {
   Card,
   CardBody,
   Columns,
+  ConfirmDialog,
   EmptyState,
   ErrorState,
   LockedState,
   Page,
   PageHeader,
+  SaveBar,
+  SettingGroup,
   Skeleton,
   Stack,
   TabPanel,
@@ -18,11 +21,19 @@ import {
 } from '../../../ui';
 import { useAgent } from '../../../context/AgentContext';
 import { useEntitlements } from '../../../hooks/useEntitlements';
-import { getBotDemoUrl } from '../../../services/api';
-import { agentPath } from '../../../shell/nav';
+import { getBotDemoUrl, getClientSettings, updateBot } from '../../../services/api';
 import { platforms } from '../../../data/platformIntegrations';
+import { useSettingsDraft } from '../advanced/useSettingsDraft';
 import { useDeployData } from './useDeployData';
-import { widgetHeartbeat } from './deployModel';
+import { ownSiteRisk, widgetHeartbeat } from './deployModel';
+import { AccessSection } from './AccessSection';
+import {
+  type AccessDraft,
+  accessChanged,
+  parseAccess,
+  sessionShareDomainError,
+  toAccessPayload,
+} from './accessModel';
 import { DemoLinkCard } from './DemoLinkCard';
 import { InstallStatusCard } from './InstallStatusCard';
 import { SnippetSection } from './SnippetSection';
@@ -99,11 +110,15 @@ function DeploySkeleton() {
  * state on screen together: the snippet on the left, the install status pinned
  * on the right, and everything else behind one tabbed help card.
  *
- * **The settings that were here are not install steps.** The origin allow-list
- * and the session-continuity parent are on Behaviour ▸ Access now, under that
- * page's single draft and single save bar; the in-widget credit line is on
- * Experience ▸ Branding, which already owned its on/off switch. Deploy carries
- * no save state of its own at all.
+ * **Access is here, under one draft and one save bar.** The origin allow-list
+ * and the session-continuity parent spent a release on Behaviour. What was
+ * wrong with them on the old version of this page was never the address: it was
+ * that each sat in its own card with its own Save button and its own unguarded
+ * dirty state, three hand-rolled save contracts on one screen. They are back
+ * because the allow-list is the most common reason a correctly-pasted snippet
+ * shows nothing, and the reader diagnosing that is here, reading the install
+ * status and the checklist that names it. The in-widget credit line stayed on
+ * Experience ▸ Branding, which already owned its on/off switch.
  *
  * Nothing on this page is a wizard step and nothing blocks: the customer can
  * copy the snippet, hand it to a developer, close the tab, and come back in a
@@ -116,6 +131,42 @@ export function DeployPage() {
   const { hasFeature, loading: entitlementsLoading } = useEntitlements();
   const [platformId, setPlatformId] = useState<string | null>(null);
   const [helpTab, setHelpTab] = useState<HelpTab | null>(null);
+  const [confirmingLockout, setConfirmingLockout] = useState(false);
+
+  // The access slice is loaded and saved on its own rather than through
+  // `useDeployData`. That hook owns the install *reading* — a polled query with
+  // its own cache and its own refetch on every verification tick — and an
+  // editable draft sharing it would have the customer's half-typed allow-list
+  // replaced by a poll. `load` is memoised because it is an effect dependency.
+  const loadAccess = useCallback(
+    async (id: number): Promise<AccessDraft> => parseAccess(await getClientSettings(id)),
+    [],
+  );
+  const saveAccess = useCallback(
+    async (id: number, draft: AccessDraft, initial: AccessDraft) => {
+      // Only when the slice actually moved. Writing an untouched allow-list back
+      // is how a security control gets rewritten by someone who never opened it.
+      if (accessChanged(draft, initial)) await updateBot(id, toAccessPayload(draft));
+    },
+    [],
+  );
+  const access = useSettingsDraft<AccessDraft>({
+    agentId: deploy.agentId ?? null,
+    load: loadAccess,
+    save: saveAccess,
+  });
+
+  // `update` is stable where `access` is not, so the memoised section below
+  // actually stays memoised instead of taking a fresh callback every render.
+  const { update: updateAccess } = access;
+  const setAccess = useCallback(
+    (patch: {
+      allowedDomains?: string[];
+      domainCheckEnabled?: boolean;
+      sessionShareDomain?: string;
+    }) => updateAccess((previous) => ({ ...previous, ...patch })),
+    [updateAccess],
+  );
 
   // The snippet variant is entitlement-driven and keys off the plan, not off the
   // chatbot's own `show_branding` flag: a paid customer who chooses to keep the
@@ -239,6 +290,37 @@ export function DeployPage() {
   const demoUrl = getBotDemoUrl(botKey);
   const domains = bot.allowed_domains ?? [];
 
+  // The status rail and the troubleshooting checklist read the *saved* list, not
+  // the draft: they report what the server is enforcing right now, and an
+  // unsaved edit is not that. `deploy.retry()` after a commit is what keeps the
+  // two in step.
+  const accessDraft = access.draft;
+  const accessInitial = access.initial;
+  const sessionError = accessDraft ? sessionShareDomainError(accessDraft.sessionShareDomain) : null;
+
+  // The one save on this page that can take the customer's own widget offline.
+  const risk = accessDraft
+    ? ownSiteRisk({
+        website,
+        domains: accessDraft.allowedDomains,
+        enabled: accessDraft.domainCheckEnabled,
+      })
+    : null;
+  const lockingOut =
+    risk !== null &&
+    accessDraft !== null &&
+    accessInitial !== null &&
+    accessChanged(accessDraft, accessInitial);
+
+  // Commit, then re-read the chatbot, so the status rail and the troubleshooting
+  // checklist stop reporting the allow-list that was enforced a moment ago.
+  // `commit` resolves either way and reports its own failure through `saveError`;
+  // re-reading after a failed save is harmless, it returns the same row.
+  const commitAccess = async () => {
+    await access.commit();
+    deploy.retry();
+  };
+
   // A broken install opens on the checklist; everyone else opens on the steps
   // for their own stack. The reader's own choice always wins once they make one.
   const activeHelpTab: HelpTab =
@@ -267,6 +349,30 @@ export function DeployPage() {
                 devInviteEmail={bot.dev_invite_email ?? null}
                 devInviteSentAt={bot.dev_invite_sent_at ?? null}
               />
+
+              {/* Directly under the snippet, and above the help tabs, because it
+                  is the most common reason a correctly-pasted snippet renders
+                  nothing. `scroll-mt` keeps the heading clear of the sticky
+                  topbar when the status rail's "Allowed domains" link jumps
+                  here. It renders only once loaded rather than as a skeleton:
+                  the snippet above it is the page's job and must not wait on a
+                  second request to appear. */}
+              {accessDraft ? (
+                <div id="access" className="scroll-mt-24">
+                  <SettingGroup
+                    title="Access"
+                    description="Where this chatbot is allowed to run, and how far a conversation follows a visitor."
+                  >
+                    <AccessSection
+                      website={website}
+                      domains={accessDraft.allowedDomains}
+                      domainCheckEnabled={accessDraft.domainCheckEnabled}
+                      sessionShareDomain={accessDraft.sessionShareDomain}
+                      onChange={setAccess}
+                    />
+                  </SettingGroup>
+                </div>
+              ) : null}
 
               {/* Help, only when wanted: two tabs over one card, instead of two
                   more cards the reader has to scroll past to reach anything. A
@@ -331,7 +437,7 @@ export function DeployPage() {
                 })}
                 website={website}
                 domains={domains}
-                accessHref={agentPath(agentId, 'behaviour')}
+                accessHref="#access"
                 verifiedNow={deploy.verifiedNow}
                 checking={deploy.checking}
                 onStartVerifying={deploy.startVerifying}
@@ -362,6 +468,48 @@ export function DeployPage() {
           }
         />
       </Stack>
+
+      {/* Outside the grid, because it spans the form it saves. It appears only
+          once there is a draft to save, so a page whose access request is still
+          in flight does not show a save bar over nothing. */}
+      {accessDraft ? (
+        <SaveBar
+          dirty={access.dirty}
+          saving={access.saving}
+          saved={access.saved}
+          saveError={access.saveError}
+          blockedReason={sessionError ? 'Fix the pinned parent domain under Access to save.' : null}
+          onSave={() => {
+            if (lockingOut) setConfirmingLockout(true);
+            else void commitAccess();
+          }}
+          onDiscard={access.discard}
+          guard="this chatbot’s access settings"
+        />
+      ) : null}
+
+      {/* The allow-list is the fastest way in the product for a customer to take
+          their own widget offline, so saving one that does not cover their own
+          site is confirmed rather than merely accepted. The guard exists because
+          of one exact asymmetry: the backend strips `www.` from a stored entry
+          and does not strip it from the browser's `Origin` header. */}
+      <ConfirmDialog
+        open={confirmingLockout}
+        onOpenChange={setConfirmingLockout}
+        title="This will block your own website"
+        description={
+          risk
+            ? `Your chatbot is set up for ${risk.host}, and that address does not match anything on this list. Save it and the widget will stop loading there — visitors will see nothing at all. Adding ${risk.suggestions.join(' and ')} fixes it.`
+            : ''
+        }
+        confirmLabel="Save anyway"
+        cancelLabel="Go back and fix it"
+        destructive
+        onConfirm={async () => {
+          await commitAccess();
+          setConfirmingLockout(false);
+        }}
+      />
     </Page>
   );
 }

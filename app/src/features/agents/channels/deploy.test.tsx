@@ -24,9 +24,9 @@ beforeEach(() => {
  * driven from the keyboard, and that each of the four states a surface owes its
  * user actually renders one.
  *
- * The allow-list and session-continuity editors moved to Behaviour ▸ Access
- * (they were never install steps), and their tests moved with them to
- * `advanced/access.test.tsx`. The in-widget credit line merged into
+ * The allow-list and session-continuity editors are on this page, under its
+ * single draft: the controls are covered by `access.test.tsx` and the save
+ * contract by `DeployPage.test.tsx`. The in-widget credit line merged into
  * Experience ▸ Branding, which already owned its on/off switch.
  */
 
@@ -44,7 +44,7 @@ describe('InstallStatusCard', () => {
     heartbeat: widgetHeartbeat({ installedAt: null, lastSeenAt: null, lastOrigin: null }),
     website: 'https://acme.com',
     domains: [] as string[],
-    accessHref: '/chatbots/7/behaviour',
+    accessHref: '#access',
     verifiedNow: false,
     checking: false,
     onStartVerifying: vi.fn(),
@@ -186,10 +186,9 @@ describe('InstallStatusCard', () => {
         status={installStatus({ installedAt: '2026-08-01T09:00:00.000Z', claimed: false, checking: false })}
       />,
     );
-    expect(screen.getByRole('link', { name: '2' })).toHaveAttribute(
-      'href',
-      '/chatbots/7/behaviour',
-    );
+    // A fragment on this same page: the allow-list is edited under the snippet
+    // now, not on another tab.
+    expect(screen.getByRole('link', { name: '2' })).toHaveAttribute('href', '#access');
   });
 
   it('says nothing about liveness before the widget has ever been seen', () => {

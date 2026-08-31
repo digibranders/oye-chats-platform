@@ -6,7 +6,6 @@ import {
   Paperclip,
   ThumbsUp,
 } from 'lucide-react';
-import { normalizeDomain } from '../channels/deployModel';
 
 /**
  * Behaviour — the configuration model for the technical corner of a chatbot.
@@ -19,11 +18,12 @@ import { normalizeDomain } from '../channels/deployModel';
  * | `featureFlags` | `feature_flags` | shallow-merged server-side |
  * | `widgetConfig` | `widget_config` | shallow-merged server-side |
  * | `operatorTimeoutSeconds` | `operator_timeout_seconds` | `int 5..3600` |
- * | `allowedDomains` | `allowed_domains` | list of hostnames, normalised |
- * | `domainCheckEnabled` | `domain_check_enabled` | bool |
- * | `sessionShareDomain` | `session_share_domain` | one parent domain, no wildcard |
  *
  * Deliberately absent, and why:
+ *
+ * - **`allowed_domains`, `domain_check_enabled` and `session_share_domain`** are
+ *   owned by Deploy ▸ Access (`features/agents/channels/accessModel.ts`), beside
+ *   the install status that sends people looking for them.
  *
  * - **Live chat's queue timeout, queue cap, handoff delay and on/off switch** are
  *   writable, but Experience already owns them (`features/agents/experience/botConfig.ts`).
@@ -342,12 +342,6 @@ export interface BehaviourDraft {
   widgetConfig: Record<string, number>;
   /** Seconds an operator has to accept a handoff before it is re-offered. */
   operatorTimeoutSeconds: number;
-  /** Origins allowed to embed this chatbot. Empty allows everything. */
-  allowedDomains: string[];
-  /** Whether the allow-list is enforced at all. */
-  domainCheckEnabled: boolean;
-  /** A pinned cookie parent for session continuity. Empty = auto-detect. */
-  sessionShareDomain: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -386,12 +380,6 @@ export function parseBehaviour(raw: Record<string, unknown>): BehaviourDraft {
     widgetConfig: mergeConfig(raw.widget_config),
     operatorTimeoutSeconds:
       typeof timeout === 'number' && Number.isFinite(timeout) ? timeout : OPERATOR_TIMEOUT.default,
-    allowedDomains: Array.isArray(raw.allowed_domains)
-      ? raw.allowed_domains.filter((entry): entry is string => typeof entry === 'string')
-      : [],
-    domainCheckEnabled: raw.domain_check_enabled === true,
-    sessionShareDomain:
-      typeof raw.session_share_domain === 'string' ? raw.session_share_domain.trim() : '',
   };
 }
 
@@ -410,64 +398,6 @@ export function toBehaviourPayload(draft: BehaviourDraft): Record<string, unknow
     widget_config: draft.widgetConfig,
     operator_timeout_seconds: draft.operatorTimeoutSeconds,
   };
-}
-
-// ── Access (allowed_domains · domain_check_enabled · session_share_domain) ───
-
-/**
- * The three columns that decide **where** this chatbot is allowed to run.
- *
- * They used to live on Deploy, beneath the snippet, each with its own save
- * button and its own unguarded dirty state. They are not install steps: the
- * allow-list is a security control over a public embed key, and the session
- * parent is a cookie scope. Both belong with the chatbot's other settings,
- * under this page's single draft and single save bar.
- *
- * They are a separate payload from `toBehaviourPayload` because they are a
- * separate concern, and because sending them on every save of an unrelated flag
- * would rewrite an allow-list the customer never opened.
- */
-export function toAccessPayload(draft: BehaviourDraft): Record<string, unknown> {
-  const trimmed = draft.sessionShareDomain.trim();
-  return {
-    allowed_domains: draft.allowedDomains,
-    domain_check_enabled: draft.domainCheckEnabled,
-    // An empty string clears the override server-side and returns the widget to
-    // auto-detect. Continuity itself never turns off.
-    session_share_domain: trimmed ? (normalizeDomain(trimmed) ?? trimmed) : '',
-  };
-}
-
-/**
- * Why a pinned parent cannot be saved, in the customer's terms.
- *
- * The backend raises on a wildcard (`_normalize_session_share_domain`) because
- * the value becomes a cookie `Domain`, which is one parent and not a pattern. It
- * is said here rather than surfaced as a 422.
- */
-export function sessionShareDomainError(value: string): string | null {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) return null;
-  if (trimmed.startsWith('*.')) {
-    return 'A wildcard will not work here. Use the parent domain on its own, e.g. acme.com.';
-  }
-  if (!normalizeDomain(trimmed)) return 'That is not a domain. Use a hostname like acme.com.';
-  return null;
-}
-
-/** True when the access slice differs, so an untouched allow-list is not rewritten. */
-export function accessChanged(next: BehaviourDraft, previous: BehaviourDraft): boolean {
-  return (
-    next.domainCheckEnabled !== previous.domainCheckEnabled ||
-    next.sessionShareDomain !== previous.sessionShareDomain ||
-    next.allowedDomains.length !== previous.allowedDomains.length ||
-    next.allowedDomains.some((entry, index) => entry !== previous.allowedDomains[index])
-  );
-}
-
-/** True when anything outside the access slice differs. */
-export function behaviourChanged(next: BehaviourDraft, previous: BehaviourDraft): boolean {
-  return JSON.stringify(toBehaviourPayload(next)) !== JSON.stringify(toBehaviourPayload(previous));
 }
 
 /*
