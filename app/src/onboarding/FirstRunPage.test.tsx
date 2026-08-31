@@ -83,7 +83,10 @@ describe('FirstRunPage', () => {
     await user.type(screen.getByLabelText(/your website/i), 'acme.com');
     await user.click(screen.getByRole('button', { name: /start reading my site/i }));
 
-    await waitFor(() => expect(navigate).toHaveBeenCalledWith('/welcome/42', { replace: true }));
+    // The Knowledge page, where the crawl it just kicked off reports itself.
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith('/chatbots/42/knowledge', { replace: true }),
+    );
     expect(createBot).toHaveBeenCalledWith({ name: 'Acme', website: 'https://acme.com' });
     expect(crawlWebsite).toHaveBeenCalledWith('https://acme.com', 42);
   });

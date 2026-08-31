@@ -112,7 +112,14 @@ export function FirstRunPage() {
           // explain it and offer the ways out. Swallowing it silently would be
           // wrong; re-throwing into an unhandled rejection helps nobody.
         });
-        navigate(`/welcome/${bot.id}`, { replace: true });
+        // The chatbot's own Knowledge page, which is where the crawl it just
+        // started actually reports itself: pages found, pages indexed, and the
+        // failures worth acting on. The first run used to end on a standalone
+        // first-chat screen instead, which answered from a corpus that was
+        // usually seconds old and left the customer with nowhere obvious to go
+        // next. Landing on the real surface keeps them inside the console, with
+        // the setup journey above the page telling them what follows.
+        navigate(agentPath(bot.id, 'knowledge'), { replace: true });
         return;
       }
 
