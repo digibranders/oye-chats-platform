@@ -637,7 +637,7 @@ ARCHIVE_DIR = "archive"
 # RERANK_ENABLED=false  (set true to activate FlashRank cross-encoder reranking
 # RERANK_TOP_N=5) final top-n docs passed to LLM after reranking
 # CAG_LITE_THRESHOLD=20. Bots with ≤ this many chunks skip retrieval; all chunks injected directly
-# RELEVANCE_GATE_ENABLED=false. Set true to activate CRAG-style relevance gate (LLM judge, Gemini Flash)
+# RELEVANCE_GATE_ENABLED=true. CRAG-style relevance gate (LLM judge, Gemini Flash); set false to disable
 # GATE_MODEL=gemini/gemini-2.5-flash. Model used for relevance scoring (cheapest capable)
 # RELEVANCE_THRESHOLD=0.5. Chunks scoring below this cause the gate to fire and block generation
 

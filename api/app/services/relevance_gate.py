@@ -55,7 +55,12 @@ class _RelevanceScoreResult(BaseModel):
     score: float = Field(ge=0.0, le=1.0, description="Relevance score from 0.0 (unrelated) to 1.0 (directly answers)")
 
 
-RELEVANCE_GATE_ENABLED: bool = os.getenv("RELEVANCE_GATE_ENABLED", "true").lower() in (
+# ``or "true"`` rather than a getenv default: the deploy writes this key
+# unconditionally (deploy-api.yml), so an unset repo variable produces an
+# empty-but-present ``RELEVANCE_GATE_ENABLED=`` line. systemd's
+# EnvironmentFile then sets it to "", which getenv returns instead of the
+# default, silently disabling scope enforcement in production.
+RELEVANCE_GATE_ENABLED: bool = (os.getenv("RELEVANCE_GATE_ENABLED") or "true").lower() in (
     "1",
     "true",
     "yes",
