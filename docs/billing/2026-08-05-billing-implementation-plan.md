@@ -1,5 +1,28 @@
 # Billing System — Implementation Plan to Target State (2026-08-05)
 
+> ## ⚠️ Largely executed. Re-verify a wave before treating it as open work.
+>
+> Spot-checked against the tree on **2026-08-31**. Landed, each confirmed in source:
+> **0.1** — `Invoice.kind` exists (migration `a1f3c9d47e21_invoice_kind`, with
+> `ADDON_INVOICE_KINDS` in `models.py:2195`) and `clawback_refund`'s legacy fallback is
+> opt-in, shipped as `allow_unlinked_fallback` rather than the `allow_legacy_fallback`
+> name this plan proposes. **0.5** — `Invoice.refunded_minor` exists (migration
+> `d3f7a1b9c2e4`). **1.1** — `billing_country` is frozen under a live mandate
+> (`subscription_routes.py:1133`, `_billing_country_locked_409` at `:1768`, reason
+> `billing_country_locked`, exactly as specified).
+>
+> **Not re-verified:** 0.2, 0.3, 0.4, and Waves 1.2 onward. Check the named symbol before
+> re-implementing anything here; several fixes shipped under a different name from the one
+> the plan proposes.
+>
+> **One assumption moved underneath it.** Pricing became **GST-exclusive** on 26 Aug 2026
+> (`core/tax.py::gross_charge_minor`). This plan's mechanics are unaffected — the invoicing
+> engine was deliberately not changed — but any amount quoted below is a GST-inclusive
+> August figure.
+>
+> Kept because the reasoning is the durable part, in particular 0.1's rule that a missed
+> clawback is recoverable while a wrong one is not.
+
 **Objective:** take the current billing stack to the blueprint
 (`2026-08-05-ideal-billing-system-blueprint.md`) by closing every gap in
 `2026-08-05-billing-full-code-review.md`.

@@ -32,7 +32,9 @@ A visitor asks a question. The answer comes back immediately, in the business's 
 
 Behind that one reply, the conversation is quietly being scored against a real sales-qualification framework — no interrogation, no chip-tapping gauntlet by default, just a silent read on how ready this visitor is. **[T2 — Part 7, Part 7.1]** The moment that visitor crosses into "worth a human's time," the business's team is notified everywhere they might be looking. **[T2 — Part 7.4, Part 9.6]**
 
-If the visitor wants a person, one shows up — routed to whoever's actually free, arriving already holding the full conversation, the visitor's journey, and their qualification score, so nobody starts cold. **[T2 — Part 9.7]**
+If the visitor wants a person, one shows up — the whole team is pinged at once, whoever's free claims the conversation, and they arrive already holding the full transcript, the visitor's journey, and their qualification score, so nobody starts cold. **[T1 — `api/app/services/live_chat_service.py:885`]**
+
+*(Wording matters here. Say the team is notified and someone claims it. Do not say the chat is "routed" to an operator, load-balanced, or sent to "whoever's free" as though the system chose them — nothing selects an operator. See `features/OYECHATS_FEATURE_LIVE_CHAT.md` §3.4.)*
 
 ---
 
@@ -117,6 +119,8 @@ The strongest approved messages, preserved close to source wording:
 - **Do not depict visitors being asked a rapid-fire sequence of qualifying questions.** Interactive qualification chips ship off by default; the default experience is silent background scoring. **[T2 — Part 7.1]**
 - **Do not invent customer names, logos, testimonials, or case studies.** None exist in any inspected source.
 - **Do not use generic AI-hype language** ("revolutionary," "game-changing," "cutting-edge") — the approved brand tone is plain-spoken and confident, not hype-adjective-stacked. **[T3 — `docs/oyechats-marketing-story.md`]**
+- **Do not claim automatic routing, load balancing, or "smart assignment" of live chats.** The routing module exists but nothing calls it; assignment is broadcast-then-first-accept. **[T1 — `api/app/services/live_chat_routing_service.py:85`, zero callers]**
+- **Do not promise scheduled or emailed performance reports.** There is no report generator, no scheduler entry for one and no report email sender. What exists is a dashboard with trailing 7/30/90-day windows, which the customer opens themselves. **[T1 — absence confirmed across `api/app/worker/tasks.py` cron entries and `email_service.py`]**
 
 ---
 

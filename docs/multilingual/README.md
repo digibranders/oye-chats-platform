@@ -124,10 +124,36 @@ Phase 7: Admin Dashboard i18n            <- independent of Phase 6
 
 ## Non-negotiable architectural rules (carried from the source plan, verified against the repo)
 
-1. **Explicit selection > website locale > `<html lang>` > browser language >
-   persisted preference > message detection > geo fallback > bot default.**
+1. **Explicit selection > website locale > `<html lang>` > trusted first-message
+   detection > browser language > persisted preference > bot default.**
    Once a visitor explicitly picks a language, it is authoritative until they
    change it again.
+
+   > **Corrected 2026-08-31.** The order above is what the code does today
+   > (`api/app/api/chat_routes.py:278`, `_DETECTION_OVERRIDABLE_SOURCES`), and it
+   > differs from the source plan in two ways.
+   >
+   > **Message detection moved up, above `browser` and `persisted`.** Leaving it
+   > below them made it dead code: `resolve_initial_locale` consults
+   > `Accept-Language`, every browser sends one, and any `en-*` header matches a
+   > bot offering `en-IN`, so the resolved source was `browser` for essentially
+   > every real visitor and detection never ran. A visitor typing pure Devanagari
+   > was pinned to English and answered in English. It now outranks exactly the
+   > two weak tiers — a header the browser sends and a value carried over from a
+   > previous visit are not statements about what this visitor is typing right
+   > now — and still loses to an explicit choice and to a locale the customer
+   > declared (`site` / `html_lang`).
+   >
+   > **There is no `geo` tier.** `resolve_initial_locale`
+   > (`api/app/services/language_service.py:359`) has five candidate tiers plus
+   > the default and never consults IP geo; `LanguageContext.source` still lists
+   > `geo` as a legal value but nothing ever emits it. This is consistent with
+   > rule 4 below, not a gap.
+   >
+   > The `browser`, `html_lang` and detection tiers are additionally gated on the
+   > bot's `language_config.auto_detect` flag — the dashboard's "Detect the
+   > visitor's language" toggle, which until 2026-08-31 was written by the admin
+   > UI and read by nothing.
 2. **Language is a conversation property**, not an app-wide setting. Widget UI
    locale, conversation language, and operator/dashboard locale are three
    independent state slices, confirmed nowhere conflated in the current

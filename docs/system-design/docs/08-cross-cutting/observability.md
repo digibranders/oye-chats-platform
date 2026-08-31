@@ -1,6 +1,6 @@
 # Observability
 
-> **Audience:** Ops · CTO · **Read time:** 4 min · **Last updated:** 2026-07-08
+> **Audience:** Ops · CTO · **Read time:** 4 min · **Last updated:** 2026-08-31
 
 ## TL;DR
 
@@ -24,7 +24,8 @@ flowchart LR
 
     subgraph Procs["Processes"]
       direction TB
-      API[["FastAPI app"]]:::proc
+      API[["FastAPI app · 2 workers"]]:::proc
+      WS[["WebSocket app · 1 worker"]]:::proc
       Worker[["ARQ worker"]]:::proc
       LLM[["LiteLLM call"]]:::proc
     end
@@ -48,6 +49,7 @@ flowchart LR
     API -- "errors · perf · safety-net metrics" --> Sentry
     Worker -- "errors · perf" --> Sentry
     API -- "stdout · stderr" --> Journal
+    WS -- "stdout · stderr" --> Journal
     Worker -- "stdout · stderr" --> Journal
     LLM -- "trace events" --> Langfuse
 
@@ -92,7 +94,7 @@ Actual response shape (both `/health` and `/health/full` share `_gather_health()
 
 `llm.import_ok` is the cheap "is litellm still a real package" check (the exact signal that was missing during the 2026-07-01 outage). `llm.probe_ok` is a real `litellm.completion(...)` call, cached for `HEALTH_LLM_PROBE_TTL_SECONDS` (default 30s) so polling doesn't multiply into a burst of paid LLM calls — this is what actually catches a revoked key, billing block, or provider outage; `import_ok` alone cannot. When `probe_ok` is false, `detail` carries the exception type/message.
 
-Implemented in [`api/app/main.py`](../../../api/app/main.py).
+Implemented in [`api/app/main.py`](../../../../api/app/main.py).
 
 ## Sentry
 
@@ -101,7 +103,9 @@ Implemented in [`api/app/main.py`](../../../api/app/main.py).
 | API DSN | `SENTRY_DSN_BACKEND` |
 | Frontend DSN | `VITE_SENTRY_DSN` (optional) |
 | Tags | `service=api`, `release=<github_sha>` (set as `SENTRY_RELEASE`) |
-| Sample rates | 10% traces, 10% profiles |
+| Sample rates | 10% traces (`traces_sample_rate=0.1`). **Profiling and structured logs are deliberately OFF** — on the free plan, profile hours ran out and Sentry paused ingestion for the whole project, which takes error reporting down with it. Do not re-enable without a paid plan |
+| PII | `send_default_pii=False` **plus** `core/sentry_scrub.py` on both `before_send` and `before_send_transaction`. The flag alone is not enough: the SDK still attaches every request header, and its scrub list omits `CF-Connecting-IP` — the one header carrying the real visitor address behind Cloudflare, and the one `chat_routes` reads first. Transactions bypass `before_send` entirely and carry the same request block, so both hooks are required |
+| Background work | `core/thread_pool.submit_background` forks an isolation scope **per task**, not per thread. Three long-lived threads serve every caller, so without it a breadcrumb from one visitor's geolocation lookup attached itself to the next unrelated error on that thread |
 | Used for | Errors, performance traces, slow endpoints |
 
 Routes are auto-tagged so it's easy to find "which endpoint is failing 5% of the time".
@@ -122,6 +126,9 @@ When enabled, every chat turn becomes a viewable trace: input, retrieved chunks,
 ```bash
 # tail API logs
 journalctl -u oyechats-api -f -n 200
+
+# tail WebSocket logs — a live-chat-only problem lives here, not in the API unit
+journalctl -u oyechats-ws -f -n 200
 
 # tail worker logs
 journalctl -u oyechats-worker -f -n 200
@@ -144,8 +151,11 @@ From [runbooks](../../../runbooks/) and ops experience:
 | `db_pool_stats.checked_out` | `/health` body | < `size` | Pool exhausted — slow queries |
 | Worker `NRestarts` | `systemctl show oyechats-worker -p NRestarts` | not climbing | Crash loop |
 | Sentry error rate | Sentry UI | spikes are bad | Recent regression |
+| Webhook delivery exhaustion | Sentry (ERROR: "delivery EXHAUSTED") | 0 | A customer integration has gone permanently dark for that event |
+| Groundedness / refusal counters | `GET /superadmin/safety-net-metrics` | stable | Answer-quality regression rather than availability. The groundedness judge is **observability only** — its verdict is recorded, never enforced |
 | `/chat/stream` p95 latency | Sentry transactions | < 5s to first token | LLM provider slow / retrieval slow |
-| OpenAI 429 count | LiteLLM logs (journalctl) | 0 | Rate limit hit; consider bump or fallback |
+| OpenAI 429 count | LiteLLM logs (journalctl) | 0 | Rate limit hit; consider a tier bump. Gemini 429s matter more — they hit embeddings and both gates too |
+| `[retrieval] keyword_arm_by_language` | journalctl | keyword hits > 0 for English | The keyword arm is pinned to the `'english'` config, so a non-English session is effectively vector-only |
 
 ## Logging conventions
 
@@ -159,6 +169,7 @@ From [runbooks](../../../runbooks/) and ops experience:
 - **No metrics pipeline** (Prometheus, CloudWatch, etc.). Health endpoints carry the basics; RAG safety-net events (moderation blocks, injection attempts, groundedness scores) now have rolling hourly counters queryable via `GET /superadmin/safety-net-metrics`, but there's still no dashboarding/graphing layer over them.
 - **Alerting is Sentry-based, not a dedicated on-call platform.** Better Stack + UptimeRobot continuously probe `/health` and `/health/full` (confirmed live 2026-07-08 — see TL;DR); security-relevant safety-net events (injection attempts, prompt leaks, moderation blocks) now forward to Sentry as warning-level messages so Sentry's alert rules can page on them. There is still no PagerDuty/dedicated on-call rotation — Sentry → Slack is the full chain.
 - **No log aggregator** (Loki / ELK). One droplet means `journalctl` is sufficient today; multi-host requires shipping logs.
+- **No alarm on the WS backplane's effective state.** `WS_BACKPLANE_ENABLED` gates cross-process live-chat delivery, publishes are fail-open by design, and the deploy defaults the API process's copy to `false` — so a misconfiguration presents as "handoffs silently notify nobody" with nothing red anywhere. Redis liveness is not a proxy for it.
 
 ## Why this matters
 
@@ -166,7 +177,8 @@ When a customer says "the bot stopped responding," the answer order is:
 1. `/health/full` from your laptop — green or red? (the `llm` field now reflects a real completion probe, not just an import check)
 2. `journalctl -u oyechats-api -f` for last 5 minutes
 3. Sentry for spikes
-4. Langfuse trace for the specific session
-5. `GET /superadmin/safety-net-metrics` if the complaint is about answer quality (hallucination, off-topic refusals) rather than availability
+4. `journalctl -u oyechats-ws` if the complaint is specifically about **live chat** rather than the bot
+5. Langfuse trace for the specific session
+6. `GET /superadmin/safety-net-metrics` if the complaint is about answer quality (hallucination, off-topic refusals) rather than availability
 
 If any step fails, the runbook for that subsystem kicks in. See [Reliability](/08-cross-cutting/reliability) for failure-mode matrix and links to runbooks.

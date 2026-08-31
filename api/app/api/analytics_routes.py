@@ -162,14 +162,26 @@ def get_dashboard_analytics_endpoint(
 @router.get("/activity")
 def get_activity_analytics_endpoint(
     bot_id: RowId | None = Query(None),
+    days: int | None = Query(None, ge=1, le=365, description="Restrict the series to the last N whole days in `tz`"),
+    tz: str = Query("UTC", max_length=64, description="IANA zone the day buckets are cut in (e.g. Asia/Kolkata)"),
     auth: dict = Depends(get_current_client_or_operator),
 ):
-    """Retrieve message activity over time for charts."""
+    """Retrieve message activity over time for charts.
+
+    Response shape is unchanged: ``[{"date": "YYYY-MM-DD", "messages": N}]``.
+    ``days`` is optional and defaults to the full history the endpoint has
+    always returned, so existing callers that trim client-side keep working;
+    passing it is what turns an unbounded aggregate into a bounded one. ``tz``
+    decides which midnight a message falls on - the caller reads ``date`` as a
+    local date, so a viewer east of UTC must send their own zone or every
+    message before their local dawn is filed a day early.
+    """
     try:
         _verify_bot_ownership(bot_id, auth["client_id"])
         with get_session() as session:
-            activity = get_message_activity(session, client_id=auth["client_id"], bot_id=bot_id)
-            return activity
+            return get_message_activity(session, client_id=auth["client_id"], bot_id=bot_id, days=days, tz=tz)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except HTTPException:
         raise
     except Exception as e:
@@ -297,13 +309,18 @@ def get_visitors_endpoint(
 @router.get("/ratings-summary")
 def get_ratings_summary_endpoint(
     bot_id: RowId | None = Query(None),
+    days: int | None = Query(None, ge=1, le=365, description="Restrict to conversations started in the last N days"),
     auth: dict = Depends(get_current_client_or_operator),
 ):
-    """Retrieve post-chat visitor rating summary (avg, total, distribution)."""
+    """Retrieve post-chat visitor rating summary (avg, total, distribution).
+
+    ``days`` is optional; omitting it returns the all-time figure this endpoint
+    has always returned.
+    """
     try:
         _verify_bot_ownership(bot_id, auth["client_id"])
         with get_session() as session:
-            return get_ratings_summary(session, client_id=auth["client_id"], bot_id=bot_id)
+            return get_ratings_summary(session, client_id=auth["client_id"], bot_id=bot_id, days=days)
     except HTTPException:
         raise
     except Exception as e:
@@ -314,13 +331,18 @@ def get_ratings_summary_endpoint(
 @router.get("/resolution-summary")
 def get_resolution_summary_endpoint(
     bot_id: RowId | None = Query(None),
+    days: int | None = Query(None, ge=1, le=365, description="Restrict to conversations started in the last N days"),
     auth: dict = Depends(get_current_client_or_operator),
 ):
-    """Retrieve post-chat visitor resolution summary (resolved, unresolved, rate)."""
+    """Retrieve post-chat visitor resolution summary (resolved, unresolved, rate).
+
+    ``days`` is optional; omitting it returns the all-time figure this endpoint
+    has always returned.
+    """
     try:
         _verify_bot_ownership(bot_id, auth["client_id"])
         with get_session() as session:
-            return get_resolution_summary(session, client_id=auth["client_id"], bot_id=bot_id)
+            return get_resolution_summary(session, client_id=auth["client_id"], bot_id=bot_id, days=days)
     except HTTPException:
         raise
     except Exception as e:

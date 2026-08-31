@@ -1,10 +1,12 @@
 # Multi-tenancy strategy
 
-> **Audience:** New engineers · CTO · **Read time:** 4 min · **Last updated:** 2026-04-28
+> **Audience:** New engineers · CTO · **Read time:** 4 min · **Last updated:** 2026-08-31
 
 ## TL;DR
 
-Single shared database, tenant-scoped at two granularities: **`client_id`** for billing/auth/team, **`bot_id`** for chat/knowledge/leads. `bot_id` is the modern primary key for tenant scoping in chat surfaces; `client_id` on `documents` and `chat_sessions` is **legacy nullable** and being phased out.
+Single shared database, tenant-scoped at two granularities: **`client_id`** for auth and team, **`bot_id`** for chat/knowledge/leads. `bot_id` is the modern key for tenant scoping in chat surfaces; `client_id` on `documents` and `chat_sessions` is **legacy nullable** and being phased out.
+
+Billing has since become a **third**, hybrid case: `subscriptions.bot_id` and `credit_ledger.bot_id` are non-NULL for a bot with its own subscription and NULL for legacy client-level pooling, so a balance query must pick the right scope rather than assuming `client_id`.
 
 ## Tenancy primitives
 
@@ -50,7 +52,8 @@ flowchart LR
 
 | Concern | Tenant key | Reason |
 |---|---|---|
-| Billing, plan, credits, invoices, seats, payment methods | `client_id` | One contract per company |
+| Auth, invoices, seats, payment methods | `client_id` | One contract per company |
+| Plan, credits, subscription | `client_id` **or** `(client_id, bot_id)` | Per-bot billing: a bot can fund itself. `credit_service._scope_clause` picks the scope, and `attributed_bot_id` is reporting-only and must never be summed for balances |
 | Operators, departments, canned responses | `client_id` | Shared team across all bots the company runs |
 | Bot config, knowledge base, sessions, leads, BANT, webhooks | `bot_id` | Each bot is an isolated product (a website, a property, a vertical) |
 | Auth from widget | `bot_id` (via `X-Bot-Key`) | Public-key safe to ship in customer site source |
@@ -83,12 +86,14 @@ sequenceDiagram
 
 Tenant enforcement happens at the **repository / route boundary** — every read/write that takes a public input (session_id, bot_key) re-asserts that the row's `bot_id` matches the authenticated bot. There is no row-level security in the database; the application is the gate.
 
+`search_similar_documents` is the pattern to copy: when both `bot_id` and `client_id` are available it ANDs **both** into the WHERE clause, matching the `_owner_filter` every other owner-scoped query uses. It is defence in depth on the hottest query path — not currently exploitable, because both ids derive from the same authenticated `Bot` row, but a future caller passing an attacker-influenced `bot_id` with a fixed `client_id` would otherwise have no second gate.
+
 ## Why `client_id` is still on `documents` and `chat_sessions`
 
 These columns date back to before the multi-bot model. They are:
 
 - **Nullable**: new rows have `bot_id` only and `client_id IS NULL`.
-- **Backfilled where possible**: migration `e7b1f2c4d8a9_backfill_chat_sessions_bot_id.py` populated `bot_id` for existing rows where it could be inferred.
+- **Backfilled where possible**: an early migration populated `bot_id` for existing rows wherever it could be inferred. (Check `api/alembic/versions/` for the current file name — the one this page used to cite no longer exists.)
 - **Read-only legacy**: code reads from `bot_id` and falls through to `client_id` only on the older repository helpers.
 - **To be dropped**: once the dual-write lookup is gone from `repository.py`, a future migration removes the column.
 
@@ -107,6 +112,7 @@ A row leak between tenants is the worst-class bug in a multi-tenant SaaS. Two re
 
 - **Lead viewed-at** — early version updated by `session_id` only; fixed to scope by `bot_id` so a malicious widget couldn't update another tenant's lead.
 - **Webhook delivery log** — initial version returned all deliveries for all webhooks if the client had any active webhook; fixed by filtering on `webhook.bot_id IN (client's bots)`.
+- **Unanswered-questions analytics** — `get_unanswered_questions` dropped the `client_id` predicate whenever a `bot_id` was supplied, relying entirely on the caller's ownership check. Now scoped through the owning client's bots, so the query is safe independent of its caller. It scopes via the bots subquery rather than `chat_sessions.client_id`, which is nullable and would have dropped legacy rows — the legacy-nullable column above is exactly why.
 
 ## Data isolation per tier
 
@@ -120,4 +126,4 @@ A move to schema-per-tenant or db-per-tenant would only happen for compliance re
 
 ## Why this matters
 
-Every new endpoint must consciously pick `client_id` vs `bot_id` as its tenant scope. Picking wrong leaks data. The C4 component diagram and the auth dependencies in [`auth.py`](../../../api/app/api/auth.py) push you toward the right answer — but it's still a deliberate decision per route.
+Every new endpoint must consciously pick `client_id` vs `bot_id` as its tenant scope — and, on a billing surface, whether the scope is the client pool or a specific bot's ledger. Picking wrong leaks data or corrupts a balance. The C4 component diagram and the auth dependencies in [`auth.py`](../../../../api/app/api/auth.py) push you toward the right answer — but it's still a deliberate decision per route.

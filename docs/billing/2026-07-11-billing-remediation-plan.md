@@ -1,5 +1,29 @@
 # Billing & Invoicing Remediation Implementation Plan
 
+> ## ✅ Executed and shipped. The checkboxes below were never ticked; do not read them as open work.
+>
+> All eight findings landed in the 15 commits that became **PR #260**, changelogged in
+> [`2026-07-11-pre-merge-runbook.md`](./2026-07-11-pre-merge-runbook.md) §1. Spot-checked
+> against the tree on 2026-08-31: `razorpay_service.create_plan_for_price` (finding B),
+> `razorpay_service.rebuild_upgrade_checkout` (D), `credit_service.reverse_refund_clawback`
+> and `expire_old_topups` (E, O1, O3, O4), and `CreditLedger.idempotency_key` with its
+> partial unique index `uq_credit_ledger_idempotency_key` (H) all exist.
+>
+> Two references in the body are stale in a way that matters if you try to follow it
+> literally:
+>
+> * **Alembic head `c4e2f6a8b1d3` is gone.** The 2026-07-16 relaunch squashed 106
+>   revisions into `b6c86b4c8434_baseline_schema`. Branch a new revision off the current
+>   `alembic heads`, never off the head named here.
+> * **Prices became GST-EXCLUSIVE on 26 Aug 2026.** Nothing in this plan's mechanics
+>   changes — the invoicing engine was deliberately left alone — but any worked amount
+>   below is a July, GST-inclusive figure. See
+>   [`razorpay-plan-ids.md`](./razorpay-plan-ids.md#re-minting-for-gst-exclusive-pricing).
+>
+> Kept, not deleted, because the *why* is the durable part: the anti-pattern it names
+> ("entitlement granted before the gateway confirms the money") is the rule the money path
+> is still built on, and each phase records the reasoning behind a fix that is now load-bearing.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Close the 8 confirmed money-loss / GST-exposure findings from the 2026-07-10 billing review (`docs/billing/2026-07-11-billing-invoice-system-review.md`) without regressing the core money path.

@@ -8,11 +8,46 @@
 
 No files were modified during this review.
 
+> ## ✅ The rework was done. This is now a record, not a status report.
+>
+> **Re-verified against the tree on 2026-08-31.** The verdict below was acted on;
+> a reader arriving today should not conclude that widget language detection is
+> broken. Left unedited otherwise, because the reasoning — especially why C1 and
+> H5 had to be fixed together — is the reason the current design looks the way it
+> does.
+>
+> Closed, each checked against source:
+>
+> | Finding | Now |
+> |---|---|
+> | **C1** widget detection dead | Fixed. `localeResolver.js:71-72` guards on `=== undefined`, and `ChatWidget.jsx:74-86` passes `site`, `htmlLang` and `browser` explicitly. |
+> | **C2** `/chat/language` bypassed validation | Fixed. `chat_routes.py:1644-1661` rate-limits (`20/minute`, `key_from_bot_key`) and refuses a bot that has not enabled multilingual, rather than only gating validation. |
+> | **C3** explicit choice not locked pre-session | Fixed. `ChatWindow.jsx:1286` sends the real `languageSource`; the first `/chat/stream` carries `explicit`. |
+> | **C4** i18n + `lucide-react` in the eager vendor chunk | Fixed. `vite.app.config.js:47-72` keeps both out of `vendor` and gives each locale its own chunk. |
+> | **H1** `console.*` shipping | Fixed. `esbuild.drop` restored (`vite.app.config.js:21`). |
+> | **H2** lint error | Fixed. The unused `lazy` import is gone. |
+> | **H3** `site` tier discarded backend-side | Fixed. `chat_routes.py:397` maps it, with the reason inline. |
+> | **M4** locale metadata triplicated | Fixed. `widget/src/i18n/localeCatalog.js` is the widget's single copy, held to the backend by parity tests. |
+> | **M5** module-level `sa.Column` reuse | Fixed. `c8f5b2e0a3d9` builds columns inside `_new_columns()`. |
+> | **M6** two events for one state change | Fixed. Only `localeChanged` survives. |
+> | **M8** `navigator.language` only | Fixed. `localeResolver.js:25` reads `navigator.languages`. |
+> | **M9** default-enabled semantics disagreed | Fixed. The widget now uses `langCfg.enabled === true`, matching the backend. |
+>
+> Still open, re-confirmed today:
+>
+> * **M7** — `normalize_locale` (`language_service.py:247-251`) splits an
+>   `Accept-Language` header at the first comma, so q-values are still ignored and
+>   `en-US,en;q=0.9,hi;q=0.8` against a Hindi-only bot still falls to the default.
+>   Partially masked since 2026-08-31: first-message detection now outranks the
+>   `browser` tier, so a visitor who actually writes Hindi is picked up anyway.
+>
+> Not re-verified line by line: H4, H5, H6, H7, H8, H9, M1, M2, M3, M10-M14.
+
 ---
 
 ## Executive Verdict
 
-# 🔴 REWORK REQUIRED
+# 🔴 REWORK REQUIRED — *closed; see the banner above*
 
 The architecture is sound and faithful to the agreed design. The implementation has a defect that makes the headline Phase 2 feature non-functional in production, plus a validation bypass that will corrupt Phase 3 behaviour on bots that never enabled multilingual. Both are proven below with executable evidence, not inference.
 

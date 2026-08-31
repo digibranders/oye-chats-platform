@@ -1,10 +1,31 @@
 # Plan — Visitor Journey Tracking (Pre + Post Chat)
 
-Status: **DRAFT — awaiting user approval before implementation**
+Status: **SHIPPED** (verified against source 2026-08-31). Retained as the decision
+record — §2 non-goals and §10 locked decisions are still the governing rationale — not
+as a plan of work.
 Owner: `platform/`
 Touches: `widget/`, `api/`, `app/` (Analytics tab under Admin Platform 2.0)
 
+> **As-built deltas from this plan.** The mechanism landed as designed; some names did not.
+>
+> | Plan says | Shipped as |
+> |---|---|
+> | `_MAX_JOURNEY_ENTRIES` 50 → 200 (§4.2) | `chat_routes.py:102` — `200` ✓ |
+> | `_merge_journey`, append-with-dedup-tail (§4.3) | `chat_routes.py:1992` ✓ |
+> | `phase` / `event` on entries (§4.1) | `_JOURNEY_PHASES = {"pre","chat","post"}`, `chat_routes.py:108` ✓ |
+> | `markChatEvent`, `sendJourneyUpdate` (§5) | `widget/src/services/api.js:799`, `:839` ✓ |
+> | `services/analytics_service.py` (§6) | `services/journey_analytics_service.py` |
+> | `/analytics/journeys/*`, three endpoints (§6) | `/analytics/journey/*`, **five** endpoints — `analytics_routes.py:741-850` |
+> | `journey_analytics` plan flag, read-side gate (§10.3) | `plan_entitlements_service.is_journey_analytics_enabled{,_for_bot}` ✓ |
+> | Journeys view under Analytics (§7) | `app/src/features/analytics/JourneyPage.tsx` and siblings ✓ |
+>
+> Two corrections landed later and are **not** described below, because they are fixes to
+> the shipped thing rather than parts of this plan: `a1cd992` gave the day-bucketing an
+> explicit IANA `tz`, and `fdf6e9f` made the dashboard send the reader's zone. See
+> [`timezone-handling.md`](timezone-handling.md) §4b.
+
 ---
+
 
 ## 1. Goal
 

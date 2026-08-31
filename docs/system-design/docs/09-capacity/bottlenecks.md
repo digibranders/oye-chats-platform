@@ -1,10 +1,10 @@
 # Bottlenecks
 
-> **Audience:** CTO · Eng · **Read time:** 5 min · **Last updated:** 2026-04-28
+> **Audience:** CTO · Eng · **Read time:** 5 min · **Last updated:** 2026-08-31
 
 ## TL;DR
 
-Ranked by *which-pinches-first* under sustained growth. The droplet SPOF and the 1-worker WebSocket ceiling sit at the top; LLM cost and embedding throughput live further down (those are budget questions, not architectural).
+Ranked by *which-pinches-first* under sustained growth. The droplet SPOF is now alone at the top: the 1-worker WebSocket ceiling that used to sit beside it was resolved on 2026-08-20 by splitting `/ws/*` into its own process behind a Redis backplane, which let the API go to two workers. LLM cost and embedding throughput live further down (those are budget questions, not architectural).
 
 ## Ranking
 
@@ -23,16 +23,16 @@ flowchart TB
     subgraph Hot["🔥 Hot · top fix-now"]
       direction TB
       A["1. Single droplet SPOF<br/>total outage if it dies"]:::hot
-      B["2. 1-worker gunicorn<br/>WS presence in-memory caps fan-out"]:::hot
-      C["3. 2 GB RAM tight<br/>streaming + Langfuse pressure"]:::hot
+      B["2. Single WS process<br/>one event loop for every socket"]:::hot
+      C["3. Redis on the delivery path<br/>backplane failure is SILENT"]:::hot
     end
 
-    subgraph Warm["♨ Warm · plan now · fix in Phase 2"]
+    subgraph Warm["♨ Warm · plan now · fix in Phase 3"]
       direction TB
       D["4. Postgres + pgvector colocated<br/>disk + RAM contention"]:::warm
       E["5. Redis colocated<br/>same disk + RAM"]:::warm
       F["6. Single ARQ worker process<br/>CPU-bound tasks serialise"]:::warm
-      G["7. Embedding cost on URL crawls<br/>OpenAI bill scales linearly"]:::warm
+      G["7. Embedding + scrape cost on crawls<br/>Gemini + Jina bills scale linearly"]:::warm
     end
 
     subgraph Cold["❄ Cold · monitor · fix later"]
@@ -56,28 +56,29 @@ flowchart TB
 | Mitigation today | systemd `Restart=always`; nightly R2 backups |
 | Resolution path | [Phase 3](/09-capacity/scaling-plan): hot-standby behind a load balancer; managed Postgres |
 
-### 2. 1-worker Gunicorn ceiling
+### 2. Single WebSocket process
 
-| Symptom | New WebSocket connections start to lag once event loop saturates (~300 connections empirical) |
+| Symptom | New WebSocket connections lag once the one event loop saturates (~300 connections, empirical) |
 |---|---|
-| Detection | `/chat/stream` p95 climbs; WebSocket disconnect rate climbs |
-| Mitigation today | None — capped by design |
-| Resolution path | [Phase 2](/09-capacity/scaling-plan): replace `ConnectionManager` with Redis pub/sub; bump `WEB_CONCURRENCY` |
+| Detection | WebSocket disconnect rate climbs; operator "typing" and read receipts go sluggish |
+| Mitigation today | Outgoing translation is dispatched into per-session tasks rather than awaited inside the receive loop, so one slow translation no longer stalls that operator's other conversations for up to 4s |
+| Resolution path | The backplane already makes N WS processes possible in principle; the work is presence-key ownership and sticky routing, not the fan-out |
 
-### 3. 2 GB RAM tight
+### 3. Redis is now on the live-chat delivery path
 
-| Symptom | OOM killer on the API or worker; Langfuse kept off because of it |
+| Symptom | Handoffs raised on the API process never reach an operator. The operator sees "Waiting (0)" beside a sidebar badge of 1 |
 |---|---|
-| Detection | journalctl shows `out of memory` or service restart loops; `redis_evicted_keys` rising |
-| Mitigation today | Langfuse disabled; `max_requests=1000` recycles workers periodically |
-| Resolution path | Upsize droplet to 4 GB (cheap, immediate); long-term move Postgres off-box |
+| Why it is nasty | Backplane publishes are **best-effort and fail open by design** (a Redis outage must never turn a visitor's message into a 500), so the failure is silent. And `WS_BACKPLANE_ENABLED` defaults **false**: the WS unit pins it true for its own process, while the deploy writes `${WS_BACKPLANE_ENABLED:-false}` into the API's `.env` |
+| Detection | Compare the queue badge against `GET /operators/queue`; check Redis reachability from both processes; confirm the repo variable is actually set |
+| Mitigation today | `cancel_handoff`, `request_handoff`, accept, transfer, the operator roster and `broadcast_qualified_bot_changed` all union local sockets with Redis presence rather than iterating a per-process dict |
+| Resolution path | Alarm on the flag's effective value per process, not just on Redis liveness |
 
 ### 4. Postgres + pgvector colocated
 
 | Symptom | DB queries slow during simultaneous crawl + chat; pool starvation |
 |---|---|
-| Detection | `db_pool_stats.checked_out` near `pool_size`; query log shows long `SELECT` on `documents` |
-| Mitigation today | `pool_pre_ping`, `pool_recycle=1800` |
+| Detection | `db_pool_stats.checked_out` near `pool_size`; query log shows long `SELECT` on `documents`. Watch for the misleading shape: `CHAT_MAX_CONCURRENCY` above the per-worker pool ceiling produces worker kills and 30s+ p95 while Postgres sits **100% idle** |
+| Mitigation today | `pool_pre_ping`, `pool_recycle=1800`, and the divided per-worker budget (3+5 × 2 workers) |
 | Resolution path | Move to managed Postgres (DO managed or RDS-equivalent); bump pool size; review pgvector index strategy |
 
 ### 5. Redis colocated
@@ -86,31 +87,31 @@ flowchart TB
 |---|---|
 | Detection | `redis_evicted_keys` > 0 in `/health` body |
 | Mitigation today | Monitor + manual `maxmemory` bump |
-| Resolution path | Managed Redis once Phase 2 lands |
+| Resolution path | Managed Redis in [Phase 3](/09-capacity/scaling-plan) — now a delivery-path decision, not just a cache one |
 
 ### 6. Single ARQ worker
 
 | Symptom | Webhook delivery and ingestion fall behind on busy days |
 |---|---|
-| Detection | `webhook_deliveries WHERE status='pending'` count rises; `documents WHERE status='queued'` lingers |
-| Mitigation today | Tasks are async, so I/O-bound work overlaps; CPU-bound serializes |
+| Detection | `webhook_deliveries WHERE next_retry_at <= now() AND delivered_at IS NULL` backs up (there is no `status` column); crawl progress in Redis stalls |
+| Mitigation today | Tasks are async and the pipeline is now almost entirely network-bound (no local browser, no local embedding model), so work overlaps freely |
 | Resolution path | Run multiple worker processes (no code change required for ARQ) once droplet has CPU headroom; longer-term separate workers per task class |
 
-### 7. Embedding cost on crawls
+### 7. Embedding + scrape cost on crawls
 
-| Symptom | OpenAI bill spikes on customers crawling large sites |
+| Symptom | Gemini and Jina bills spike on customers crawling large sites |
 |---|---|
-| Detection | OpenAI dashboard; per-bot embedding cost in admin Analytics |
-| Mitigation today | 3 credits per page crawled passes cost to customer; `CRAWLER_BROWSER_RECYCLE` controls memory but not cost |
-| Resolution path | Per-tenant max-pages clamp; consider cheaper local embedding model; dedupe near-duplicate chunks before embedding |
+| Detection | Provider dashboards; per-bot ingestion cost in the console's analytics |
+| Mitigation today | 5 credits per page crawled passes cost to the customer; the **character** quota (Free 2,500 / Starter 50,000) is the binding cap and aborts the crawl long before the page count would; a per-URL `idempotency_key` stops retries being charged twice |
+| Resolution path | Dedupe near-duplicate chunks before embedding; surface the abort reason prominently so a customer on a small plan understands why their 400-page site stopped at ~25 pages |
 
 ### 8. LLM provider RPM
 
-| Symptom | OpenAI 429s on chat; latency climbs |
+| Symptom | OpenAI 429s on chat; latency climbs. Gemini 429s are worse — they hit embeddings and both gates as well as the fallback |
 |---|---|
-| Detection | LiteLLM logs in journalctl; Sentry tags with `provider=openai status=429` |
-| Mitigation today | LiteLLM auto-falls back to Gemini |
-| Resolution path | Bump OpenAI tier; add a third provider; consider self-hosted small model for low-stakes turns |
+| Detection | LiteLLM logs in journalctl; `EMBED_QUERY_MAX_WAIT_S` abandonments showing up as keyword-only retrieval |
+| Mitigation today | LiteLLM auto-falls back to Gemini for chat; the embed client self-throttles to `EMBED_RPM_LIMIT` |
+| Resolution path | Bump the Gemini tier and raise `EMBED_RPM_LIMIT` with it; add a third chat provider. **Do not** add a second *embedding* provider — mixing embedding spaces corrupts retrieval |
 
 ### 9. Nginx single instance
 
@@ -122,14 +123,15 @@ flowchart TB
 
 | Symptom | Risky changes break prod when CI passed |
 |---|---|
-| Resolution path | Spin up a `staging` droplet + DB + Razorpay/Stripe sandboxes |
+| Resolution path | Spin up a `staging` droplet + DB + a Razorpay sandbox |
 
 ## Cost-vs-impact matrix
 
 | Bottleneck | Cost to fix | Impact when fixed |
 |---|---|---|
-| 2 GB → 4 GB droplet | ~$10/mo | Re-enable Langfuse, OOM headroom |
-| Multi-worker Phase 2 | ~1 sprint of eng | Removes WS ceiling; enables horizontal API |
+| Bigger droplet | ~$10/mo | OOM headroom for three co-resident Python processes |
+| ~~Multi-worker Phase 2~~ | **done (2026-08-20)** | WS split + Redis backplane; API now runs 2 workers |
+| Multiple WS processes | ~1 sprint of eng | Removes the single-event-loop socket ceiling |
 | Managed Postgres | ~$30+/mo | Removes DB SPOF + RAM contention |
 | Hot-standby droplet | ~droplet cost × 2 + LB | Removes API SPOF |
 | Staging env | ~$30/mo + setup | Risk reduction; not capacity |

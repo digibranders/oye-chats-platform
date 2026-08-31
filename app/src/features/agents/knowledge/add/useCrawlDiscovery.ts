@@ -116,7 +116,21 @@ export function useCrawlDiscovery({
   }, [crawlIsOurs, crawlStatus, onChanged]);
 
   const budget = discovery ? crawlBudgetOf(discovery) : null;
-  const hasPageList = (discovery?.urls?.length ?? 0) > 0;
+  /**
+   * Is there a real page list to pick from, or only the address we were given?
+   *
+   * `> 1`, not `> 0`. Server-side discovery always returns at least the seed
+   * URL, so `> 0` was true for every site ever checked — which sent
+   * `ordered_urls` on every crawl, which put the backend on its `fetch_urls`
+   * branch, which never runs `crawl_website`, which is the only path to link
+   * discovery and the recursive crawl. A client-rendered SPA with no sitemap
+   * discovers exactly its homepage and was then crawled as exactly its
+   * homepage, and the advice it produced ("turn on JavaScript") could not help,
+   * because the page cap was never what limited it. With the list omitted the
+   * backend falls through sitemap → link discovery → recursive crawl on its
+   * own.
+   */
+  const hasPageList = (discovery?.urls?.length ?? 0) > 1;
   const pageCount = hasPageList ? selected.length : (discovery?.total_found ?? 0);
   const preflight = budget ? crawlPreflight(budget, Math.max(pageCount, 0), planSlug) : null;
   const cost = budget ? pageCount * budget.costPerPage : 0;

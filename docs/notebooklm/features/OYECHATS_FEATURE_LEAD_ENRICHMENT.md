@@ -21,9 +21,10 @@ Both run silently, in the background, on infrastructure the visitor never sees.
 - **Business owners** avoid wasting outreach credits/time chasing addresses that will bounce.
 - **Marketing teams** get a cleaner picture of which companies are actually engaging with the site.
 
-Plan gating is two-tiered: [T1, `api/app/services/plan_entitlements_service.py`]
-- **Email verification itself** (the Reoon check powering both the widget's live blur-check and the background lead check) is gated to the **Standard and Professional** plans — Free and Starter skip the Reoon call entirely rather than paying for a check they can't act on.
-- **The full "Network & risk" enrichment display** — IP/company signal, the email-validity badge, and the manual "Send follow-up" button — is gated narrower, to **Professional only**. On Free/Starter/Standard the section renders as a locked upsell teaser rather than partial data (`VisitorIntelligenceSection.tsx`'s `LockedTeaser`).
+Plan gating is two-tiered, and both tiers have widened since this document was first written — the 14-day signup trial and the Enterprise tier were both added to the entitlement sets: [T1, `api/app/services/plan_entitlements_service.py`]
+- **Email verification itself** (the Reoon check powering both the widget's live blur-check and the background lead check) is gated to `trial`, `standard`, `professional` and `enterprise` (`EMAIL_VERIFICATION_SLUGS`, line 642) — Free and Starter skip the Reoon call entirely rather than paying for a check they can't act on.
+- **The full "Network & risk" enrichment display** — IP/company signal, the email-validity badge, and the manual "Send follow-up" button — is gated narrower, to `trial`, `professional` and `enterprise` (`VISITOR_INTELLIGENCE_SLUGS`, line 531). On Free/Starter/Standard the section renders as a locked upsell teaser rather than partial data (`VisitorIntelligenceSection.tsx`'s `LockedTeaser`).
+- In plain marketing terms: verification runs from **Standard up**, the enrichment display from **Professional up**, and a customer inside their 14-day trial sees both. Do not depict either as available on Free or Starter.
 
 ---
 
@@ -54,7 +55,7 @@ Plan gating is two-tiered: [T1, `api/app/services/plan_entitlements_service.py`]
 
 ## 4. What It Looks Like
 
-In the lead detail drawer (Leads page, Professional plan), a "Network & risk" section shows: [T1, `VisitorIntelligenceSection.tsx`]
+In the lead detail drawer (Leads page, Professional-and-above), a "Network & risk" section shows: [T1, `app/src/features/leads/VisitorIntelligenceSection.tsx`]
 
 - A company card (if resolved): company name, domain, and an explicit disclaimer — *"Derived from the visitor's network — not a confirmed employer"* — because the AI Agent never claims certainty it doesn't have.
 - If no company name qualifies but a network operator is known, a plainer line: *"Connecting via [ISP/ASN name]"*.
@@ -63,6 +64,8 @@ In the lead detail drawer (Leads page, Professional plan), a "Network & risk" se
 - A "Send follow-up email" button that is always visible (never silently hidden), but disabled with an explanation when the address failed validation, and asks for one-click confirmation when the address was never checked.
 
 On lower plans, this entire section is replaced by a locked teaser: *"Network signal & email validity are locked — Upgrade to Professional to see this and send a manual follow-up."*
+
+The company/network line is **also** now rendered inside the live-chat Inbox, not only the Leads drawer: the `NetworkSignal` component was extracted out of the Leads section and reused in the operator's visitor panel under the same per-bot plan gate, so an operator mid-conversation can see who they are talking to. Before that it was computed, plan-gated and shipped in the API payload with no render site at all — the data reached the operator's browser and nothing drew it. [T1, `app/src/features/leads/NetworkSignal.tsx`, `app/src/features/inbox/VisitorPanel.tsx`]
 
 ---
 
@@ -97,6 +100,6 @@ On lower plans, this entire section is replaced by a locked teaser: *"Network si
 
 - All mechanics above are confirmed directly in current code as of this writing: `reoon_service.py`, `ip_intel_service.py`, `company_profile_service.py`, `email_domain_service.py`, `domain_normalizer.py`, `plan_entitlements_service.py` (gating logic, functions `is_visitor_intelligence_enabled_for_bot` and `is_email_validation_enabled_for_bot`), `VisitorIntelligenceSection.tsx` (UI, `app/src/features/leads/`).
 - The "0 usable company names out of 10 real lookups" and "3 of 11 quick-mode results wrong" figures are pulled directly from code comments citing a specific internal test/plan document (`docs/superpowers/plans/2026-08-08-visitor-intelligence.md`); the underlying plan document itself was **not** independently re-read for this doc — treat the figures as [T2], sourced via code comment rather than the primary document.
-- Plan-gating is now directly confirmed in `plan_entitlements_service.py`: `EMAIL_VERIFICATION_SLUGS = {"standard", "professional"}` gates the Reoon check itself; `VISITOR_INTELLIGENCE_SLUGS = {"professional"}` gates the IP/company signal, the validity badge, and the follow-up button, plus grants the feature to any bespoke (non-seeded) paid plan slug. This supersedes any earlier assumption of a single "Professional-only" boundary for the whole feature.
+- Plan-gating is directly confirmed in `plan_entitlements_service.py`, and the slug sets have grown since an earlier revision of this doc quoted them: `EMAIL_VERIFICATION_SLUGS = {"trial", "standard", "professional", "enterprise"}` (line 642) gates the Reoon check itself; `VISITOR_INTELLIGENCE_SLUGS = {"trial", "professional", "enterprise"}` (line 531) gates the IP/company signal, the validity badge and the follow-up button, plus grants the feature to any bespoke (non-seeded) paid plan slug. The two-gate boundary is unchanged; only the membership widened.
 - The free-email-provider list in `email_domain_service.py` currently holds ~93 entries (counted directly from source), not "100+" — corrected in this pass.
 - No customer testimonial, case study, or numeric "leads enriched" / "reply rate" statistic exists anywhere in the inspected source — do not invent one.

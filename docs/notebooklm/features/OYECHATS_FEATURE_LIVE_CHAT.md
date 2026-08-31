@@ -1,4 +1,4 @@
-# OyeChats Feature — Live Chat Handoff & Routing
+# OyeChats Feature — Live Chat Handoff & Queueing
 
 *This document is self-sufficient as the sole NotebookLM knowledge source on this one feature. Evidence tags: [T1] = confirmed directly in code, [T2] = confirmed in project documentation (`CLAUDE.md`), [T3] = positioned/marketing framing, [VERIFY] = flagged, not fully confirmed.*
 
@@ -6,15 +6,15 @@
 
 ## 1. What This Feature Is
 
-Live Chat Handoff is the mechanism by which a conversation that started with the AI agent gets handed to a real human on the business's team — with full context, no cold start — when the visitor needs it. It bundles four things that work together as one feature: **handoff & state transitions**, **queueing & routing** (getting the visitor to the right, available operator), **canned responses** (fast, consistent replies for operators), and **offline messaging** (a graceful fallback when no one is available). [T1]
+Live Chat Handoff is the mechanism by which a conversation that started with the AI agent gets handed to a real human on the business's team — with full context, no cold start — when the visitor needs it. It bundles four things that work together as one feature: **handoff & state transitions**, **queueing & claiming** (holding the visitor durably and getting them in front of every available operator until one takes them), **canned responses** (fast, consistent replies for operators), and **offline messaging** (a graceful fallback when no one is available). [T1]
 
 This is not a separate "support ticket" system bolted onto the chatbot — it's the same conversation thread, the same session, just changing who's answering. [T1 — `session_state_machine.py`]
 
 ## 2. Who Cares & Why
 
-- **Business owner / CEO / CMO** — the AI shouldn't be a wall between a ready buyer and a sale. When a visitor needs a human — a pricing negotiation, a trust question, a complex edge case — the system routes them to a real teammate automatically, without the visitor having to leave the chat, re-explain themselves, or find a "contact us" form. [T3]
+- **Business owner / CEO / CMO** — the AI shouldn't be a wall between a ready buyer and a sale. When a visitor needs a human — a pricing negotiation, a trust question, a complex edge case — the system puts them in front of the whole available team at once — every device, immediately — without the visitor having to leave the chat, re-explain themselves, or find a "contact us" form. [T3]
 - **Operator (the team member answering chats)** — receives chats already carrying the visitor's conversation history, qualification signals, and journey — never starts cold. [T1 — `session_state_machine.py` audit log + full ChatSession context]
-- **Visitor** — never notices a "system switch." They keep typing in the same window; the response quality and speed of routing is the only thing that changes. [T3]
+- **Visitor** — never notices a "system switch." They keep typing in the same window; who is answering, and how fast, is the only thing that changes. [T3]
 
 ## 3. How It Actually Works
 
@@ -45,13 +45,13 @@ If no operator is free, the visitor enters a **FIFO queue** — persisted in Pos
 Visitors can time out of the queue (configurable per bot), abandon (close the widget), or get dequeued the instant an operator frees up.
 
 ### 3.4 Routing — who actually gets the chat
-When an operator becomes available, one of three routing strategies (configurable per bot) decides who receives the next chat: [T1 — `live_chat_routing_service.py`]
+**Nothing selects an operator. Assignment is operator-pull, first-click-wins.** When a visitor requests a human, `request_handoff` puts the session on the queue and fans a queue update out to *every* eligible operator in the workspace (department-scoped where a department is set) — plus a Web Push to every subscribed device. Whoever accepts first takes the chat, under a race-safe lock; the others' notifications update to "Claimed by [operator]". [T1 — `api/app/services/live_chat_service.py:885` `request_handoff` → `_fan_out_queue_update`; accept path in `api/app/api/operator_routes.py`]
 
-- **`least_busy`** (default) — the operator with the fewest active chats right now; ties broken by round-robin so load stays evenly spread.
-- **`round_robin`** — strict rotation regardless of current load, for predictable fairness.
-- **`first_available`** — simplest option, mainly for single-operator workspaces.
+A routing module (`live_chat_routing_service.py`) does exist and does implement three strategies — `least_busy`, `round_robin`, `first_available` — and `Bot.live_chat_routing_strategy` is a real, persisted, settable column. **But its only entry point, `select_operator` (`live_chat_routing_service.py:85`), has no caller anywhere in the API.** It is exercised only by its own unit tests. Changing a bot's routing strategy therefore changes nothing at all. The admin dashboard states this in its own source: *"`Bot.live_chat_routing_strategy` would choose how a waiting chat picks an operator. Its only reader, `live_chat_routing_service.select_operator`, has no caller anywhere in the API; assignment is operator-pull, set when someone accepts a waiting chat."* [T1 — `app/src/features/agents/advanced/behaviour.config.ts:472-491`, which is why that page deliberately ships no control for the setting]
 
-**Department-aware automatic routing is not live yet.** The data model fully supports departments (see below), and the code comment explicitly documents this as a deliberate v2 scope decision — auto-routing today is single-pool across all online operators for a bot, not filtered by department. [T1 — code comment, `live_chat_routing_service.py`: *"The spec ships single-pool routing first. Department-aware routing is a v2 feature... The current code path doesn't filter by department but the data model supports it."*]
+> **Do not claim, in any customer-facing material, that OyeChats routes a chat to a chosen operator, balances load across a team, or picks "whoever's free."** It broadcasts and lets the team claim. That is a defensible product behaviour — it is simply not the one the routing module's docstring describes, and the module's docstring is what earlier versions of this document were reading.
+
+**Department-aware automatic routing is not live yet** — and neither is *any* automatic routing. The data model fully supports departments (see below), and the code comment explicitly documents this as a deliberate v2 scope decision — auto-routing today is single-pool across all online operators for a bot, not filtered by department. [T1 — code comment, `live_chat_routing_service.py`: *"The spec ships single-pool routing first. Department-aware routing is a v2 feature... The current code path doesn't filter by department but the data model supports it."*]
 
 ### 3.5 Departments — what does exist today
 Departments are a real, implemented data grouping for operators (`Department` model, [T2 — root `CLAUDE.md`: *"Department — Operator grouping"*]) used for two things right now:
@@ -84,9 +84,9 @@ This is explicitly the graceful fallback — the visitor is never left with a de
 **Scenario A — daytime, operator available:**
 1. A visitor has been chatting with the AI agent; the conversation reaches a point where they ask for a human (or the AI itself flags it — see the Qualification feature doc for the trigger logic).
 2. Session transitions `bot → waiting`. Availability resolves to `available`.
-3. Routing selects an operator (say, `least_busy`) instantly — no queue.
-4. That operator's dashboard (and every device they're logged into) gets a push notification with the visitor's full context: what they asked the AI, their qualification signal, their page journey.
-5. Operator accepts (first device to click wins the race-safe lock). Session transitions `waiting → live`. The operator replies — possibly using a canned response for a common question — in the same window the visitor has been in the whole time.
+3. The session is queued and announced to every eligible operator at once — no operator is pre-selected.
+4. Every announced operator's dashboard (and every device each of them is logged into) gets a push notification with the visitor's full context: what they asked the AI, their qualification signal, their page journey.
+5. The first operator to accept takes it (a race-safe lock settles both the cross-operator and the cross-device race). Session transitions `waiting → live`. The operator replies — possibly using a canned response for a common question — in the same window the visitor has been in the whole time.
 6. Operator resolves the chat; transitions `live → closed`, or `live → bot` if they want the AI to keep handling the tail end.
 
 **Scenario B — after hours, no one online:**
@@ -99,14 +99,15 @@ This is explicitly the graceful fallback — the visitor is never left with a de
 **What it does:**
 - Enforces valid state transitions with a full audit trail (never a silently corrupted session status).
 - Queues visitors durably in Postgres — survives restarts, doesn't rely on Redis alone.
-- Routes by three configurable strategies, evenly or fairly distributing load.
+- Announces a waiting visitor to the whole eligible operator pool and settles the claim race safely.
 - Alerts every operator device at once, resolves races safely.
 - Falls back gracefully to an offline form with dual (team + visitor) email confirmation when no one's available.
 - Supports manual transfer to another operator *or* a department mid-conversation.
 
 **What it does not do (yet):**
-- **No automatic department-based routing at first contact** — this is explicitly a documented v2 feature, not live. [T1]
-- No admin-facing "average wait time" queue analytics UI was confirmed in this pass — the queue service notes this as a `v2` intention (*"gives the admin a queryable history for the 'who waited how long' admin analytics in v2"*) [T1 — code comment; treat current-state analytics claims as **[VERIFY]**].
+- **No automatic routing of any kind.** No operator is selected for a chat; the pool is notified and the first to accept gets it. The three-strategy routing module is present but unreachable — `select_operator` has zero callers. [T1]
+- **No automatic department-based routing at first contact** — separately, even the department filter is a documented v2 feature. [T1]
+- Queue-wait analytics has since shipped: `GET /analytics/queue-summary` ("Retrieve live-chat queue depth and historical wait-time / abandonment") closes the `v2` intention the queue service's comment describes. [T1 — `api/app/api/analytics_routes.py:353`]
 - The handoff has no dedicated "transfer moment" UI beyond the Transfer dialog.
 
 **Critical framing point:** the AI never replaces the person — it hands off to a human who then closes the conversation; the AI qualifies and first-responds, a person on the business's team still does the closing.
@@ -118,14 +119,15 @@ This is explicitly the graceful fallback — the visitor is never left with a de
 | State machine transitions, audit logging | `api/app/services/session_state_machine.py` | [T1] |
 | Availability states + visitor actions | `api/app/services/live_chat_availability_service.py` | [T1] |
 | Postgres-backed FIFO queue | `api/app/services/live_chat_queue_service.py` | [T1] |
-| Three routing strategies | `api/app/services/live_chat_routing_service.py` | [T1] |
+| Three routing strategies exist in a module that nothing calls | `api/app/services/live_chat_routing_service.py:85` (`select_operator`, zero callers); corroborated by `app/src/features/agents/advanced/behaviour.config.ts:472-491` | [T1] |
+| Assignment is broadcast-then-first-accept, not selection | `api/app/services/live_chat_service.py:885` `request_handoff`; accept path in `api/app/api/operator_routes.py` | [T1] |
 | Department routing is NOT automatic yet (v2) | Code comment in `live_chat_routing_service.py` | [T1] |
 | Manual transfer to operator OR department exists today | `app/src/features/inbox/TransferDialog.tsx` | [T1] |
 | Per-department business hours | `live_chat_availability_service.py` | [T1] |
 | Multi-device push, race-safe accept | `api/app/services/push_service.py` | [T1] |
 | Canned responses, shared across team | `api/app/api/canned_response_routes.py` | [T1] |
 | Offline messaging + dual email confirmation | `api/app/api/offline_message_routes.py` | [T1] |
-| Admin queue-wait-time analytics ("who waited how long") | Code comment says "v2" — **not confirmed as shipped** | [VERIFY] |
+| Admin queue-wait-time analytics ("who waited how long") | `api/app/api/analytics_routes.py:353` `GET /analytics/queue-summary` | [T1 — shipped] |
 | Exact current Inbox page visual layout/polish | Inferred from file names in `app/src/features/inbox/`, not a live screenshot | [VERIFY] |
 
-**Do not claim:** automatic department routing, a dedicated "handoff animation" in the real product, or queue-wait analytics as a current admin feature — all three are either v2-scoped or unconfirmed.
+**Do not claim:** automatic routing of any kind (including load balancing or "routed to whoever's free"), automatic department routing, or a dedicated "handoff animation" in the real product. Queue-wait analytics, listed as [VERIFY] above, **is** now shipped: `GET /analytics/queue-summary` returns live queue depth plus historical wait-time and abandonment (`api/app/api/analytics_routes.py:353`).

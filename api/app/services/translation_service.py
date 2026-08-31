@@ -261,6 +261,22 @@ class TranslationService:
         except Exception:
             logger.debug("translation cache write failed (non-blocking)", exc_info=True)
 
+    def is_cached(self, text: str, source_language: str, target_language: str) -> bool:
+        """Would :meth:`translate` answer this from cache, with no provider call?
+
+        Read-only and side-effect free (no counters), so the billing gate can
+        ask "has anyone already paid a provider for this exact string?" BEFORE
+        it debits. A miss here is not load-bearing: it costs one charge for a
+        translation that then turns out to be cached, which is the behaviour
+        this replaces, not a new failure mode.
+        """
+        source = language_from_locale(source_language) or source_language
+        target = language_from_locale(target_language) or target_language
+        if not text or not text.strip() or source == target:
+            return False
+        cached = self._cache_read(translation_key(source, target, text))
+        return isinstance(cached, str) and bool(cached)
+
     async def translate(
         self,
         text: str,
@@ -434,6 +450,63 @@ def charge_for_translation(bot, message_id: int | None, target_language: str) ->
         return False
 
 
+def translation_is_free(bot, text: str, source_language: str, target_language: str) -> bool:
+    """True when this exact translation is already in the shared cache.
+
+    The cache is keyed on ``(source, target, text)`` and deliberately shared
+    across tenants, so a hit costs no provider call and must cost no credit
+    either: charging for one billed a workspace for work another workspace had
+    already paid for. Best-effort. A cache that cannot be read answers False,
+    which just means the normal charge applies.
+    """
+    if bot is None:
+        return False
+    try:
+        return translation_service.is_cached(text, source_language, target_language)
+    except Exception:
+        logger.debug("translation cache probe failed (non-blocking)", exc_info=True)
+        return False
+
+
+def refund_translation_charge(bot, message_id: int | None, target_language: str) -> None:
+    """Reverse the reservation :func:`charge_for_translation` made.
+
+    Called on the provider-failure branch only. The credit bought nothing: the
+    visitor (or operator) was handed the untranslated original, and a provider
+    degraded for a minute otherwise billed a workspace once per message it
+    failed to translate, with nothing that ever gave those credits back.
+
+    Best-effort and silent, exactly like the charge: a refund that cannot be
+    written is a logged warning, never an exception into a delivery path. The
+    deduction's idempotency key is unchanged, so a later retry of the SAME
+    message and target is deduped rather than charged again, which is the
+    conservative direction to be wrong in.
+    """
+    if bot is None:
+        return
+
+    from app.db.session import get_session
+    from app.services import credit_service
+
+    try:
+        with get_session() as session:
+            cost = credit_service.get_credit_cost(session, TRANSLATION_ACTION)
+            if cost <= 0:
+                return  # priced to zero, nothing was charged
+            credit_service.refund(
+                session,
+                bot.client_id,
+                cost,
+                reference_id=message_id,
+                note=f"Refund: translation to {target_language} unavailable",
+                bot_id=credit_service.resolve_bot_ledger_bot_id(bot),
+                attributed_bot_id=bot.id,
+            )
+            session.commit()
+    except Exception:
+        logger.warning("translation refund failed | bot_id=%s", getattr(bot, "id", None), exc_info=True)
+
+
 def store_translation(
     message_id: int,
     target_language: str,
@@ -584,12 +657,19 @@ async def _translate_incoming(session_id: str, message_id: int, content: str) ->
         if language_from_locale(source_language) == target:
             increment_metric_counter("translation_skipped_same_language", bot_id=bot.id)
             return
-        if not charge_for_translation(bot, message_id, target):
+        # A cache hit costs no provider call, so it costs no credit. Charging
+        # before the lookup billed a workspace for a string somebody else had
+        # already paid to translate.
+        charged = not translation_is_free(bot, content, source_language, target)
+        if charged and not charge_for_translation(bot, message_id, target):
             return
 
         try:
             result = await translation_service.translate(content, source_language, target, bot_id=bot.id)
         except TranslationUnavailable:
+            # The credit bought nothing; give it back before degrading.
+            if charged:
+                refund_translation_charge(bot, message_id, target)
             store_translation(message_id, target, status="failed")
             await manager.send_translation_to_operator(
                 session_id,
@@ -652,12 +732,18 @@ async def translate_outgoing(
     if source == target:
         increment_metric_counter("translation_skipped_same_language", bot_id=bot.id)
         return content, None
-    if not charge_for_translation(bot, message_id, target):
+    # Same two corrections as the incoming path: a cache hit is not a billable
+    # event, and a credit spent on a translation the provider never returned is
+    # given back rather than kept.
+    charged = not translation_is_free(bot, content, source, target)
+    if charged and not charge_for_translation(bot, message_id, target):
         return content, None
 
     try:
         result = await translation_service.translate(content, source, target, bot_id=bot.id)
     except TranslationUnavailable:
+        if charged:
+            refund_translation_charge(bot, message_id, target)
         if message_id is not None:
             store_translation(message_id, target, status="failed")
         return content, None
@@ -784,7 +870,13 @@ async def _backfill_transcript(session_id: str) -> None:
 
         # Oldest first so the transcript fills in reading order.
         for message_id, content, source_language in reversed(pending):
-            if not charge_for_translation(bot, message_id, target):
+            # Same metering contract as the socket paths: a cache hit costs
+            # nothing, and a provider failure is refunded. Opening one Hindi
+            # conversation backfills up to TRANSCRIPT_BACKFILL_LIMIT messages,
+            # so charging per message rather than per provider call billed a
+            # workspace for its own canned responses already in the cache.
+            charged = not translation_is_free(bot, content, source_language, target)
+            if charged and not charge_for_translation(bot, message_id, target):
                 # Out of credits or gated: stop rather than hammering the
                 # ledger once per remaining message.
                 break
@@ -793,6 +885,8 @@ async def _backfill_transcript(session_id: str) -> None:
                     content, source_language, target, bot_id=bot.id, timeout=TRANSLATION_BACKFILL_TIMEOUT_S
                 )
             except TranslationUnavailable:
+                if charged:
+                    refund_translation_charge(bot, message_id, target)
                 store_translation(message_id, target, status="failed")
                 continue
             store_translation(

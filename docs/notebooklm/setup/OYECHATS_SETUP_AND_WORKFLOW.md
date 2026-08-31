@@ -79,7 +79,7 @@ The intended daily rhythm, synthesized from `app/CLAUDE.md`'s stated design phil
 
 1. **Home** — a daily operational overview: is the agent healthy, how many conversations happened, recent leads, usage against plan, recommended next actions. The question it answers: *"Is my AI healthy?"* **[T2]**
 2. **AI Agents** — per-agent configuration and health, with (per the mandate) exactly six tabs: **Overview · Knowledge · Experience · Channels · Analytics · Advanced**. An operator checking in on a specific agent lands here, not in a generic settings page. **[T2]**
-3. **Inbox** — the live-chat operator console: conversations the AI has escalated to a human sit in a queue, an operator picks one up (or is auto-routed one) with full context already loaded, and takes over from the AI mid-conversation. Full handoff mechanics (routing strategies, multi-device notification, the audited state machine) live in the Live Chat Handoff feature doc — this document only places Inbox in the daily loop. **[T2]**
+3. **Inbox** — the live-chat operator console: conversations the AI has escalated to a human sit in a queue, the whole eligible operator pool is notified, and an operator claims one — with full context already loaded — and takes over from the AI mid-conversation. Nothing auto-routes a chat to a particular person; see the Live Chat Handoff feature doc §3.4. **[T1 — `api/app/services/live_chat_service.py:885`]**
 4. **Leads** — the daily review surface for captured, qualified, and enriched visitor records that conversations produced. Full qualification/enrichment mechanics live in their own feature docs. **[T2]**
 5. **Analytics** — how the agent is performing and what visitors did before/during/after chatting; the reporting layer on top of the operational tools above. **[T2]**
 6. **Workspace** — the deliberately-separated administrative area: team members, billing, usage, security, API keys, integrations, workspace settings. Per the mandate, agent-level configuration is never placed here. **[T2]**
@@ -90,30 +90,28 @@ The intended daily rhythm, synthesized from `app/CLAUDE.md`'s stated design phil
 
 ## 5. Dashboard Navigation / IA
 
-**⚠️ [VERIFY] — this is a known, unresolved conflict already documented in `docs/notebooklm/marketing/OYECHATS_SOURCE_OF_TRUTH.md`, stated here plainly rather than re-resolved:**
-
-- `docs/oyechats-technical-story.md` describes one sidebar: **Home, Chatbots, Support, Leads, Journey, Analytics, Workspace, Settings** (plus Launch Studio).
-- `app/CLAUDE.md` — the literal, currently-active build mandate for everything under `app/` — specifies a *different*, single sidebar:
+**The IA conflict this section used to flag is now closed — against the shipped source, not against either document.** `docs/oyechats-technical-story.md` and the `app/CLAUDE.md` build mandate each describe a sidebar, and **the build matches neither**. `app/src/shell/nav.ts` is the single definition the rail, the breadcrumbs and the command palette all read. What ships:
 
 ```
-🏠 Home        🤖 AI Agents        💬 Inbox        👥 Leads        📊 Analytics        ⚙ Workspace
+Home · Inbox · Leads · Journey · Analytics · Chatbots      (rail)
+Billing · Settings                                          (rail footer)
 ```
 
-with an explicit instruction: *"Nothing else. No Build. No standalone Settings. No duplicated navigation."* The mandate also explicitly forbids reusing the existing navigation as a UX reference — the old IA is a technical reference only, not a target.
+Three things the two documents got wrong, worth stating because each is easy to repeat: **Journey is its own top-level route** (`/journey`) rather than a tab inside Analytics; the customer-facing noun is **"Chatbots," not "AI Agents"** (the string "AI Agent" survives once in all of `app/src`, in a filename); and **Settings is a real footer item**, with no rail item called "Workspace" at all. **[T1 — `app/src/shell/nav.ts:74-110`]**
 
-**This document treats `app/CLAUDE.md`'s six-item IA as the target/intended structure** — it is the governing mandate for ongoing work — but does **not** assert it is fully, pixel-confirmed live in production today. No live screenshot or route-file audit was performed as part of this document's research pass. **Any depiction of exact on-screen sidebar labels must be verified against the actually-deployed dashboard first.**
+A chatbot's own tabs, from `AGENT_NAV` in the same file, each answering one question in the file's own words:
 
-Per the mandate, each of the four major areas answers exactly one question:
-
-| Page | Question it answers |
+| Tab | Question it answers |
 |---|---|
-| Home | "Is my AI healthy?" |
-| AI Agents → Overview | "Is my AI healthy?" (per-agent) |
-| AI Agents → Knowledge | "What does my AI know?" |
-| AI Agents → Experience | "What will visitors see?" |
-| AI Agents → Channels | "Where is my AI connected?" |
-| AI Agents → Analytics | "How is my AI performing?" |
-| AI Agents → Advanced | "How do I configure technical behaviour?" |
+| Overview | "Is this chatbot healthy?" |
+| Knowledge | "What does it know?" |
+| Experience | "What do visitors see?" |
+| Deploy | "Where is it live?" |
+| Qualification | "How are leads scored?" |
+| Quotation | "What can it price?" |
+| Behaviour | "How does it decide what to say?" |
+
+`nav.ts` records the renames deliberately: *"'Deploy' replaces 'Channels', which was a plural noun over exactly one channel. 'Behaviour' replaces 'Advanced', which read as here-be-dragons and was a dead end on the free plan. Qualification is promoted out of it, because it is a revenue surface and not a technical one."* The mandate's six-tab list (Overview · Knowledge · Experience · Channels · Analytics · Advanced) is **forward intent, not shipped state** — do not cite it as current fact.
 
 ---
 
@@ -144,7 +142,7 @@ She signs up for OyeChats and lands directly in **Launch Studio**.
 6. **Deploy** — she picks WordPress from the platform list, copies a short snippet scoped to her actual bot key, and pastes it into her theme's footer.
 7. **Verification** — OyeChats polls her live site every few seconds. Within moments, `widget_installed_at` is detected, and "Go to dashboard" unlocks. She's live.
 
-**Day two:** Priya opens the dashboard. Home shows three overnight conversations and one new lead. She clicks into Inbox and sees one conversation flagged for a human — a visitor asking about a bulk wholesale order, which the AI correctly routed for a human touch. She picks it up, already has the visitor's prior messages in front of her, and closes the sale herself. Later that week she invites her one support hire as an operator, scoped to that same bot, so the two of them share the Inbox queue going forward.
+**Day two:** Priya opens the dashboard. Home shows three overnight conversations and one new lead. She clicks into Inbox and sees one conversation flagged for a human — a visitor asking about a bulk wholesale order, which the AI correctly flagged for a human touch. She picks it up, already has the visitor's prior messages in front of her, and closes the sale herself. Later that week she invites her one support hire as an operator, scoped to that same bot, so the two of them share the Inbox queue going forward.
 
 ---
 
@@ -160,12 +158,13 @@ She signs up for OyeChats and lands directly in **Launch Studio**.
 
 **Open [VERIFY] items — do not present as settled fact without further checking:**
 1. **The 8-step vs. 7-step mismatch** (Section 2.1) — `app/CLAUDE.md`'s mandate describes 8 aspirational steps; shipped code has 7. This document follows the shipped code as ground truth, per the source-hierarchy rule that working code outranks a planning document, but flags the mismatch explicitly rather than silently picking a winner.
-2. **Dashboard IA** (Section 5) — whether the six-item `app/CLAUDE.md` sidebar (Home/AI Agents/Inbox/Leads/Analytics/Workspace) is fully shipped in production, versus the older eight-item IA described in `docs/oyechats-technical-story.md`. This is the same unresolved conflict already logged in `OYECHATS_SOURCE_OF_TRUTH.md`'s Conflict Log — repeated here because it's directly load-bearing for this document's Section 5, not independently re-resolved.
+2. ~~**Dashboard IA**~~ (Section 5) — **closed.** Read directly from `app/src/shell/nav.ts:74-110`; neither documented IA is what ships. Section 5 now carries the shipped structure, and `OYECHATS_SOURCE_OF_TRUTH.md`'s Conflict Log has been updated to match.
 3. **The "realistic daily loop" narrative in Section 4** is a synthesis built from the six areas' individually-documented purposes, not a verbatim documented workflow — reasonable, but not a quoted source.
 4. **Priya scenario in Section 7** is an illustrative composite for narrative purposes, built entirely from confirmed mechanics above — it is not a real customer case study, and must never be presented as one (no named customer or testimonial exists in any inspected source, per the Source of Truth doc's Business Outcome Claims table).
 
 **Do-not-invent reminders, consistent with the rest of this package:**
 - Do not claim the 8-step plan is what a customer experiences today.
 - Do not depict onboarding as skippable, or Verification as optional — the code gates "Go to dashboard" behind a genuinely detected live install.
-- Do not depict specific sidebar labels as confirmed on-screen fact without a fresh screenshot check.
+- Do not take sidebar labels from `app/CLAUDE.md` or `docs/oyechats-technical-story.md` — both are wrong about the shipped build. Take them from `app/src/shell/nav.ts`.
+- Do not say a handoff is "routed" to an operator. The pool is notified; whoever accepts first gets it.
 - Do not turn the Priya scenario into a claimed real testimonial.

@@ -37,7 +37,9 @@ export function ConversationsTab({
   );
   const effectiveDays = effectiveRange.days ?? days ?? 30;
 
-  const messages = useMessageSeries(botId);
+  // Twice the range: `splitWindows` cuts the previous window out of this same
+  // series, so the days before the selected one have to have been fetched.
+  const messages = useMessageSeries(botId, effectiveRange.extendedDays);
 
   const queueQuery = useQuery({
     queryKey: ['queue-summary', botId, effectiveDays],

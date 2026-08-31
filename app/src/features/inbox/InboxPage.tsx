@@ -18,6 +18,8 @@ import { Link } from 'react-router-dom';
 import { addSelfAsOperator, getCannedResponses } from '../../services/api';
 import { useEntitlements } from '../../hooks/useEntitlements';
 import { useBotContext } from '../../context/BotContext';
+import { useSelectedBotPlanSlug } from '../../hooks/useSelectedBotPlanSlug';
+import { planIncludesVisitorIntelligence } from '../../lib/planGates';
 import type { CannedResponse } from '../../types/domain';
 import { ChatPane } from './ChatPane';
 import { ConversationList } from './ConversationList';
@@ -131,6 +133,15 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
 
   const offline = useOfflineMessages(botId);
   const qualified = useQualifiedSessions(liveChat, socket.qualifiedVersion);
+
+  // The same gate the Leads drawer applies to the same field, read the same
+  // way: per chatbot, because billing attaches to the Bot. `/session/{id}/
+  // details` has no visitor-intelligence gate of its own, so without this a
+  // workspace that has since dropped off Professional would still be shown the
+  // company its old lookups resolved. `null` while the chatbot resolves holds
+  // the gate closed rather than flashing paid data.
+  const planSlug = useSelectedBotPlanSlug();
+  const visitorIntelligence = planSlug !== null && planIncludesVisitorIntelligence(planSlug);
 
   // Connection trouble is announced, not laid out. Three `Alert`s used to render
   // between the header and the grid, so a reconnect resized the transcript and
@@ -310,6 +321,8 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
         // no resolved language and never reached the quotation flow.
         languageCode: null,
         quotation: null,
+        // A form submission carries no session and so no IP lookup.
+        network: null,
       };
     }
     return details.details ? profileFromSession(details.details, selected.name) : null;
@@ -486,6 +499,7 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
     loading: details.loading,
     error: details.error,
     onRetry: details.reload,
+    visitorIntelligence,
   };
 
   return (

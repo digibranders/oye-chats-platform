@@ -4,6 +4,27 @@
 **Target:** solves the "one email, multiple roles" identity mess by shifting from separate Operator identities to invite-based membership + workspace switching.
 **Realistic effort:** 3–4 days full implementation. This doc is the source of truth for the whole feature.
 
+> **Status: SHIPPED** (verified against source 2026-08-31). Retained as the decision record —
+> §1 locked decisions, §6 gotchas and §9 "not in v1" are still the governing rationale — not
+> as a plan of work.
+>
+> | Plan | Shipped as |
+> |---|---|
+> | `OperatorInvite` model + partial unique index (§2.1) | `db/models.py:1317` (`operator_invites`, `ux_operator_invites_pending_unique`) ✓ |
+> | `operators.linked_client_id` + partial unique (§2.2) | `db/models.py:1286`, index at `:1310` ✓ |
+> | `invite_routes.py`, four owner routes + two token routes (§3.1-3.2) | `api/app/api/invite_routes.py:231,306,331,373,398,445` ✓ |
+> | `GET /me/workspaces` (§3.3) | `invite_routes.py:500` ✓ |
+> | `X-Workspace-Id` fork in the auth resolver (§4) | `api/app/api/auth.py:47-48, 385, 407, 638` ✓ |
+> | Invite lifecycle service | `api/app/services/invite_service.py` (create/accept/revoke/resend, seat lock, RBAC) ✓ |
+> | `WorkspaceContext` (§5.1) | `app/src/context/WorkspaceContext.tsx` ✓ |
+> | Airlock page (§5.6) | `app/src/features/workspace/InviteAirlock.tsx` ✓ |
+> | Workspace pill at `layouts/WorkspacePill.jsx` (§5.4) | `app/src/shell/WorkspaceSwitcher.tsx` — different name and home; the admin console was rebuilt in TypeScript under `features/` and `shell/` after this plan was written |
+> | `services/api.js` interceptor (§5.2) | `app/src/services/api.ts` |
+>
+> Treat every `.jsx` path and every `app/src/pages/*` or `app/src/layouts/*` reference in §5
+> as **pre-rebuild naming**. The mechanism shipped; the file layout did not survive the
+> console rebuild.
+
 ---
 
 ## 1. Core architectural decisions (locked)

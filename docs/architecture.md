@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Last verified against the source on 2026-08-20. Every claim below was checked
+Last verified against the source on 2026-08-31. Every claim below was checked
 against the code, not carried over from a previous revision. If you change the
 shape of the system, change this file in the same commit.
 
@@ -12,7 +12,7 @@ separate repository.
 ```
 platform/
 ├── api/          FastAPI REST + SSE + WebSocket, RAG pipeline, ARQ worker  (8000)
-├── widget/       Embeddable chat widget, IIFE bundle          (5173 dev / 4173 preview)
+├── widget/       Embeddable widget: loader IIFE + lazy ESM app (5173 dev / 4173 preview)
 ├── app/          React admin dashboard SPA                                 (5174)
 ├── docs/         This documentation
 └── load-tests/   k6 scenarios and the capacity measurements quoted below
@@ -36,8 +36,10 @@ Business logic, persistence, and AI orchestration.
   `Vector(768)` column. Batched 100 texts per call
 - **Document processing:** pypdf and python-docx for extraction, recursive
   splitting for chunking
-- **Web crawling:** Spider.cloud primary, Jina Reader fallback. **HTTP only, no
-  local browser.** Nothing drives Chromium
+- **Web crawling:** **Jina Reader primary, Spider.cloud fallback** — `CRAWL_PROVIDER_PRIMARY`
+  defaults to `"jina"` (`config.py:674`) and the super-admin can flip it at runtime via
+  `pricing_config` `crawl.provider_primary`. **HTTP only, no local browser.** Nothing drives
+  Chromium
 - **Storage:** Cloudflare R2, S3-compatible (`r2_service.py`)
 - **Email:** Brevo, transactional
 - **Payments:** Razorpay, INR, single rail
@@ -57,9 +59,13 @@ is how invoice PDFs once appeared only intermittently.
 
 A self-contained bundle customers embed with one script tag.
 
-- **Output:** IIFE `oyechats-widget.js` plus a sibling stylesheet
+- **Output:** a small loader IIFE (`oyechats-widget.js`, the only URL customers reference)
+  plus hashed, code-split ESM chunks under `app/` that it resolves through `app/manifest.json`
 - **Stack:** React 19, Vite 7, Tailwind CSS 4
-- **Isolation:** bundles its own React, so it cannot conflict with the host page
+- **Isolation:** an open shadow root plus its own bundled React, so it cannot conflict with the
+  host page in either direction
+- **Budgets:** enforced by `size-limit` (`npm run size`) — loader 8 KB gzipped, eager vendor
+  chunk 67 KB gzipped. See [`widget-embedding.md`](widget-embedding.md)
 - **Transport:** REST plus SSE for streaming answers, WebSocket for live chat
 
 ### Admin Dashboard (`app/`)
@@ -75,8 +81,8 @@ console.
 ```
 1. Sign up          POST /auth/register        Client record
 2. Create a bot     POST /bots                 Bot record with a unique bot_key
-3. Add knowledge    POST /upload               extract -> chunk -> embed -> pgvector
-   or               POST /crawl                Spider.cloud or Jina -> same pipeline
+3. Add knowledge    POST /ingest               extract -> chunk -> embed -> pgvector
+   or               POST /crawl                Jina Reader or Spider.cloud -> same pipeline
 4. Copy the embed snippet from the dashboard
 5. Paste into the site:
    <script src="cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>
@@ -94,13 +100,19 @@ Ingestion runs in the ARQ worker, not inline in the request.
    a. Hybrid search      vector similarity + TSVECTOR keyword, scoped to that bot
    b. CAG-lite           bots at or under CAG_LITE_THRESHOLD (20) chunks skip
                          retrieval entirely and inject every chunk
-   c. Relevance gate     optional, off by default (RELEVANCE_GATE_ENABLED)
+   c. Relevance gate     ON by default (RELEVANCE_GATE_ENABLED=true). Blocking:
+                         if every chunk scores below threshold the pipeline
+                         refuses rather than generating from irrelevant material
    d. Rerank             optional, off by default (RERANK_ENABLED, FlashRank)
    e. Context assembly   top chunks + history + system prompt
    f. Generation         LiteLLM, streamed as SSE
 5. Widget renders markdown as tokens arrive
 6. ChatMessage stored with a Langfuse trace_id
-7. BANT or MEDDIC extraction runs in the worker AFTER the stream closes
+7. BANT or MEDDIC extraction runs AFTER the stream closes, on the shared
+   3-thread background pool (core/thread_pool.submit_background) - NOT in ARQ,
+   so it is non-durable and a restart loses that turn's signals
+8. Groundedness audit also runs after the stream, observability-only:
+   the verdict is logged and discarded, never used to block or rewrite
 ```
 
 ### Live Chat Handoff
@@ -108,10 +120,11 @@ Ingestion runs in the ARQ worker, not inline in the request.
 ```
 1. Visitor requests a human
 2. Session status moves bot -> waiting -> live
-3. An operator is assigned by the bot's routing strategy:
-     least_busy   (default) fewest active chats, ties broken by a round-robin cursor
-     round_robin  strict cursor advance regardless of load
-     simple       first available
+3. Assignment is operator-PULL: a waiting chat is advertised to every eligible
+   operator and assigned to whoever accepts it first. There is no automatic
+   selection. (Bot.live_chat_routing_strategy and its three strategies exist in
+   live_chat_routing_service.select_operator, but that function has NO CALLER
+   anywhere in the API and the column is never read - see the note below.)
 4. Messaging over WebSocket
 5. No operator available, the visitor leaves an offline message
 ```
@@ -119,6 +132,14 @@ Ingestion runs in the ARQ worker, not inline in the request.
 WebSocket endpoints: `/ws/chat/{session_id}` for visitors, `/ws/operator` for
 operators, and `/ws/agent` as a compatibility alias from the agent-to-operator
 rename.
+
+> **Routing is configured but not wired.** `Bot.live_chat_routing_strategy` is stored,
+> defaulted and never read; its only reader, `live_chat_routing_service.select_operator`,
+> has zero callers. `Bot.operator_disconnect_timeout` is inert the same way
+> (`live_chat_service._operator_disconnect_timeout` sleeps a class constant). The console
+> deliberately exposes no control for either, and says so at
+> `app/src/features/agents/advanced/behaviour.config.ts:473-492`. Do not describe
+> least-busy / round-robin / first-available assignment as shipped behaviour.
 
 ## Authentication
 
@@ -190,13 +211,31 @@ Measured, one worker against the split topology:
 | 30 | 3.13 rps, 8,511 ms, 3.2% shed | 6.67 rps, 679 ms, 0% shed |
 | 50 | 4.90 rps, 10,686 ms, 38.1% shed | 9.70 rps, 2,191 ms, 0% shed |
 
-**Why one worker today.** `ConnectionManager` holds sockets in per-process
-dictionaries, so a visitor and their operator must land in the same process. That
-pinned the whole API to `WEB_CONCURRENCY=1` for a constraint only WebSockets
-imposed. The fix, a dedicated single-worker WebSocket process with a Redis
-backplane between processes, is merged and **inert**: `WS_BACKPLANE_ENABLED`
-defaults to false and `oyechats-ws.service` is not installed. See
-[`live-chat-process-split-rollout.md`](live-chat-process-split-rollout.md).
+**The process split shipped on 2026-08-20.** `ConnectionManager` holds sockets in
+per-process dictionaries, so a visitor and their operator must land in the same process.
+That pinned the whole API to `WEB_CONCURRENCY=1` for a constraint only WebSockets imposed.
+The fix — `/ws/*` served by `oyechats-ws.service`, a dedicated **single-worker** process on
+127.0.0.1:8001, with a Redis backplane carrying frames between processes — is now live.
+
+Production shape today, per `api/systemd/oyechats-api.service`:
+
+| Setting | Value | Why |
+|---|---|---|
+| `WEB_CONCURRENCY` (API) | **2** | not the rig's 4: the rig ran Postgres on a separate node, here everything is co-resident on 2 vCPU / 4 GB |
+| `WEB_CONCURRENCY` (WS) | **1**, pinned | raising it re-creates the original bug inside the WS unit; the backplane routes *between* processes, it does not make one `ConnectionManager` span them |
+| `DB_POOL_SIZE` + `DB_MAX_OVERFLOW` | 3 + 5 per worker | 2 x 8 = 16 total, the two-worker line in `db/session.py` |
+| `CHAT_MAX_CONCURRENCY` | **6** | must stay under the now-8 per-worker pool ceiling, not the single-worker default of 10 |
+
+`WS_BACKPLANE_ENABLED` still defaults to **false** in code and is set on by repo variable,
+and the deploy restarts `oyechats-ws` only if it is already installed — so whether a given
+host runs the split is a per-host fact. Check `systemctl cat oyechats-ws` before assuming.
+See [`live-chat-process-split-rollout.md`](live-chat-process-split-rollout.md).
+
+> **A consequence worth knowing:** because the API process and the WS process are different
+> processes, `ConnectionManager.operator_connections` is permanently empty on the process
+> that raises a handoff. Every fan-out that iterated that dict notified nobody in production
+> until `0e233fa` routed them through Redis presence + `deliver_to_operator`. Any new
+> operator-facing fan-out must use that path, not the local dict.
 
 **Vector search and tenancy.** Retrieval is filtered by `bot_id`. A single
 approximate index spanning every tenant is a correctness hazard, not just a slow
@@ -233,7 +272,7 @@ the deploy uses.
 | Backend | FastAPI, SQLAlchemy 2.0, Alembic, Python 3.11 |
 | Queue | ARQ on Redis |
 | Frontend | React 19, Vite 7/8, Tailwind CSS 4 |
-| Crawling | Spider.cloud primary, Jina Reader fallback, HTTP only |
+| Crawling | Jina Reader primary, Spider.cloud fallback, HTTP only |
 | Storage | Cloudflare R2 |
 | Email | Brevo |
 | Payments | Razorpay, INR |

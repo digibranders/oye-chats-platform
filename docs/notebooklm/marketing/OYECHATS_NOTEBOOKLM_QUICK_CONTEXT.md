@@ -16,7 +16,7 @@
 1. Website/document ingestion → private AI knowledge base ("Training").
 2. Grounded, hallucination-resistant conversational answers.
 3. Silent sales qualification (BANT/MEDDIC/CHAMP/GPCTBA+C&I) — interactive interrogation chips are **off by default**.
-4. Live human handoff with routing, queueing, multi-device operator alerts.
+4. Live human handoff with a durable queue and multi-device operator alerts — the team is notified and whoever's free claims the chat (**there is no automatic routing; do not say "routed"**).
 5. Enriched, exportable lead records (contact, company, journey, qualification).
 6. Journey analytics (page trail before/during/after chat).
 7. Credit-metered billing with real invoicing; lapsed subscriptions pause knowledge (never delete it).
@@ -37,8 +37,11 @@
 - Do not cite any ROI/conversion-rate/revenue number — none exist in source material.
 - Do not claim visitors are rapid-fire interrogated by qualification chips — the default experience is silent background scoring.
 - Do not claim USD/multi-currency billing as live — Razorpay/INR is the sole live payment rail.
+- Do not claim live chats are routed, load-balanced, or assigned to a chosen operator — assignment is broadcast-then-first-accept.
+- Do not promise scheduled or emailed performance reports — none exist; the customer opens a dashboard with 7/30/90-day windows.
+- Multilingual ships **English and Hindi only** in the dashboard; do not imply a long language list.
 - Do not use generic AI-hype language or invented customer names/logos/testimonials.
-- Do not state the exact dashboard nav labels as confirmed current fact without verification — two sources disagree on current information architecture (see `OYECHATS_SOURCE_OF_TRUTH.md`).
+- Dashboard nav labels are now settled against `app/src/shell/nav.ts`: **Home · Inbox · Leads · Journey · Analytics · Chatbots**, with Billing and Settings in the footer. The product noun is **"Chatbot," not "AI Agent."** Do not take labels from `app/CLAUDE.md` or `docs/oyechats-technical-story.md` — neither matches the build.
 
 **Final approved message:**
 > "OyeChats. You only talk to buyers."

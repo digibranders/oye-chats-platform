@@ -1327,6 +1327,7 @@ const hi = {
     theVisitorHasLeftThe: 'आगंतुक पेज छोड़ चुका है। लौटने पर वे आपका उत्तर देखेंगे।',
     theVisitorSkippedTheQuotation: 'विज़िटर ने कोटेशन प्रक्रिया छोड़ दी।',
     theVisitorStartedButDid: 'विज़िटर ने शुरू किया पर कोटेशन पूरा नहीं किया।',
+    theirNetwork: 'उनका नेटवर्क',
     theseDetailsMayBeOut: 'ये विवरण पुराने हो सकते हैं।',
     theseNotesAndTagsStay: 'ये नोट्स और टैग इसी ब्राउज़र में रहते हैं। आपकी टीम का कोई और इन्हें नहीं देख सकता।',
     theyDidNotLeaveAn: 'उन्होंने कोई ईमेल पता नहीं छोड़ा, इसलिए इसका उत्तर देने का कोई तरीका नहीं है।',

@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import uuid
+from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
@@ -54,6 +55,7 @@ from app.services.qualification_service import (
     get_framework_config,
     get_tier,
 )
+from app.services.session_state_machine import InvalidTransitionError, transition_session
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +63,46 @@ router = APIRouter(prefix="/operators", tags=["operators"])
 
 # The three roles ``_require_manager_role`` and the RBAC checks branch on.
 OperatorRole = Literal["owner", "admin", "operator"]
+
+# ── /handoff idempotency ─────────────────────────────────────────────────────
+#
+# The widget re-polls ``POST /operators/handoff`` every 15s for as long as it is
+# showing the offline form, and the endpoint used to re-run its entire fan-out
+# on every call: an audit row, a webhook, one email per configured recipient, a
+# push dispatch, a deferred escalation job, a bell notification, and a fresh
+# queue timer. One visitor with a tab open produced roughly four of each per
+# minute, indefinitely. Inside this window a repeat call still returns the
+# current state, it just does not wake anybody a second time.
+#
+# Per-process, like ``ws_routes._should_email_visitor_message``: with two API
+# workers the worst case is one fan-out per worker per window, which is a far
+# cry from one every 15s. Bounded at 1000 entries; oldest are evicted FIFO.
+HANDOFF_DEDUPE_SECONDS = 60
+_HANDOFF_DEDUPE_MAX = 1000
+_handoff_dedupe: dict[str, datetime] = {}
+
+
+def _handoff_fanout_allowed(key: str) -> bool:
+    """True when ``/handoff`` may fire the side effects behind ``key`` again.
+
+    ``key`` is namespaced per fan-out, not merely per session: the queue fan-out
+    and the offline-form fallback are independent windows, so suppressing a
+    repeated fallback audit row must never suppress the notification for a real
+    handoff that lands moments later because the team came online.
+
+    Updates the debounce marker as a side effect when it returns True.
+    """
+    now = datetime.now(UTC)
+    last = _handoff_dedupe.get(key)
+    if last is not None and (now - last).total_seconds() < HANDOFF_DEDUPE_SECONDS:
+        return False
+    _handoff_dedupe[key] = now
+    if len(_handoff_dedupe) > _HANDOFF_DEDUPE_MAX:
+        cutoff = sorted(_handoff_dedupe.values())[len(_handoff_dedupe) // 2]
+        for sid, ts in list(_handoff_dedupe.items()):
+            if ts < cutoff:
+                _handoff_dedupe.pop(sid, None)
+    return True
 
 
 def resolve_operator_seat_limit(db, client_id: int, bot_id: int | None) -> int:
@@ -947,50 +989,76 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
         # queue UI (it will fall back to the offline form on its own when the
         # ``queue_timeout_seconds`` window elapses without an accept).
         if availability.suggested_action == availability_svc.SuggestedAction.OFFLINE_FORM:
-            from sqlalchemy import exists, or_
-
-            from app.db.models import Operator as _OperatorModel
-            from app.db.models import OperatorPushSubscription as _PushSub
-
-            workspace_operator_ids = (
-                session.execute(select(_OperatorModel.id).where(_OperatorModel.client_id == db_bot.client_id))
-                .scalars()
-                .all()
+            # Promotion exists for one situation: the workspace WANTS the chat
+            # but nobody is on a socket right now, so a push may still wake
+            # someone. It must never override the states that are a decision
+            # rather than an absence. ``feature_disabled`` is the customer's own
+            # ``live_chat_enabled`` toggle (the plan gate above only answers the
+            # PLAN half - ``is_live_chat_enabled_for_bot`` says so explicitly),
+            # ``out_of_hours`` is their published schedule, and ``queue_full``
+            # is the capacity ceiling that exists to stop the queue growing.
+            # Promoting any of those queued a visitor the workspace had already
+            # declined to queue, as soon as a single push-subscription row
+            # existed anywhere in the workspace.
+            promotable = availability.state in (
+                availability_svc.LiveChatState.ALL_OFFLINE,
+                availability_svc.LiveChatState.NO_OPERATORS,
             )
-            has_push_subscriber = session.execute(
-                select(
-                    exists().where(
-                        or_(
-                            _PushSub.client_id == db_bot.client_id,
-                            _PushSub.operator_id.in_(workspace_operator_ids) if workspace_operator_ids else False,
+
+            has_push_subscriber = False
+            has_active_ws = False
+            if promotable:
+                from sqlalchemy import exists, or_
+
+                from app.db.models import Operator as _OperatorModel
+                from app.db.models import OperatorPushSubscription as _PushSub
+
+                workspace_operator_ids = (
+                    session.execute(select(_OperatorModel.id).where(_OperatorModel.client_id == db_bot.client_id))
+                    .scalars()
+                    .all()
+                )
+                has_push_subscriber = session.execute(
+                    select(
+                        exists().where(
+                            or_(
+                                _PushSub.client_id == db_bot.client_id,
+                                _PushSub.operator_id.in_(workspace_operator_ids) if workspace_operator_ids else False,
+                            )
                         )
                     )
-                )
-            ).scalar()
+                ).scalar()
 
-            from app.services.notification_broadcaster import broadcaster
+                from app.services.notification_broadcaster import broadcaster
 
-            has_active_ws = broadcaster.connection_count(db_bot.client_id) > 0
+                has_active_ws = broadcaster.connection_count(db_bot.client_id) > 0
 
             if not has_push_subscriber and not has_active_ws:
-                # Original behaviour, no realtime channel reaches anyone, so
-                # the visitor's only useful action is the offline form.
-                session.add(
-                    ChatAuditLog(
-                        session_id=request.session_id,
-                        action="handoff_fell_back",
-                        details={
-                            "reason": availability.state.value,
-                            "requested_department_id": request.department_id,
-                        },
+                # Either the state forbids queueing at all, or no realtime
+                # channel reaches anyone; the visitor's only useful action is
+                # the offline form.
+                #
+                # Deduped on its own window: the widget re-polls every 15s for
+                # as long as it shows the form, and one audit row per poll per
+                # visitor is unbounded growth for no added information.
+                if _handoff_fanout_allowed(f"fellback:{request.session_id}"):
+                    session.add(
+                        ChatAuditLog(
+                            session_id=request.session_id,
+                            action="handoff_fell_back",
+                            details={
+                                "reason": availability.state.value,
+                                "requested_department_id": request.department_id,
+                            },
+                        )
                     )
-                )
-                session.commit()
+                    session.commit()
                 logger.info(
-                    "Handoff fell back to offline form (no active push/WS subscribers): session=%s bot=%s reason=%s",
+                    "Handoff fell back to offline form: session=%s bot=%s reason=%s promotable=%s",
                     request.session_id,
                     bot.id,
                     availability.state.value,
+                    promotable,
                 )
                 return {
                     "success": True,
@@ -1024,6 +1092,34 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
         # notify flow. ALL_BUSY still queues (visitor will wait for capacity);
         # AVAILABLE queues and the next operator notification fires.
 
+        # Idempotency for the widget's 15s re-poll. Decided here, before any
+        # side effect runs, and reused for every one of them below so a repeat
+        # call still reports the current state without waking the workspace
+        # again (and without restarting the queue timer).
+        may_notify = _handoff_fanout_allowed(f"queued:{request.session_id}")
+
+        # ``closed`` is terminal in the state machine, and this write reopens
+        # it. That is deliberate: after ``/resolve`` the widget drops the
+        # visitor back to the bot on the SAME session id, so refusing here
+        # would leave a returning visitor with no way to reach a human again.
+        # It is recorded so the bypass is visible in the audit trail instead of
+        # being silent. The principled fix is a ``closed → waiting`` edge in
+        # ``session_state_machine._TRANSITIONS`` so this write can go through
+        # ``transition_session`` like the others.
+        if chat_session.status == "closed":
+            session.add(
+                ChatAuditLog(
+                    session_id=request.session_id,
+                    action="handoff_reopened_closed_session",
+                    details={"state": availability.state.value},
+                )
+            )
+            logger.info(
+                "Handoff reopened a closed session: session=%s bot=%s",
+                request.session_id,
+                bot.id,
+            )
+
         # Update session status
         chat_session.status = "waiting"
         chat_session.handoff_reason = (
@@ -1035,17 +1131,18 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
         timeout = db_bot.operator_timeout_seconds if db_bot else 120
 
         # Audit log. Handoff requested
-        session.add(
-            ChatAuditLog(
-                session_id=request.session_id,
-                action="handoff_requested",
-                details={
-                    "reason": request.reason,
-                    "department_id": request.department_id,
-                    "state": availability.state.value,
-                },
+        if may_notify:
+            session.add(
+                ChatAuditLog(
+                    session_id=request.session_id,
+                    action="handoff_requested",
+                    details={
+                        "reason": request.reason,
+                        "department_id": request.department_id,
+                        "state": availability.state.value,
+                    },
+                )
             )
-        )
         session.commit()
 
         # Bust the state cache, the queue size just changed.
@@ -1054,6 +1151,19 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
         # Get visitor name for queue display
         lead_info = get_lead_info_by_session(session, request.session_id)
         visitor_name = lead_info.name if lead_info else None
+
+        # Cache queue timeout for the response. Read BEFORE the session
+        # closes so the value travels out cleanly. Needed on every call,
+        # deduped or not, because the widget uses it to time its own fallback.
+        queue_timeout = db_bot.live_chat_queue_timeout_seconds or 20
+
+        if not may_notify:
+            logger.info(
+                "Handoff re-poll within the %ss dedupe window, side effects skipped: session=%s bot=%s",
+                HANDOFF_DEDUPE_SECONDS,
+                request.session_id,
+                bot.id,
+            )
 
         # Fire webhook for handoff_requested event
         from app.services.webhook_service import fire_webhook
@@ -1069,14 +1179,15 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
                 "email": lead_info.email,
                 "phone": lead_info.phone,
             }
-        fire_webhook(bot.id, "handoff_requested", webhook_data)
+        if may_notify:
+            fire_webhook(bot.id, "handoff_requested", webhook_data)
 
         # Email the team. Operators may not be watching the dashboard when a
         # visitor queues (that's exactly when this matters most), so this is
         # the notification path for "come look, someone's waiting" - same
         # email_on_* / notification_emails machinery as the qualified-lead
         # notification. Never blocks the handoff response on send failure.
-        if getattr(db_bot, "email_on_handoff", True):
+        if may_notify and getattr(db_bot, "email_on_handoff", True):
             from app.services.email_service import get_notification_recipients, send_handoff_request_email
 
             recipients = get_notification_recipients(db_bot, "handoff_requested")
@@ -1089,36 +1200,33 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
                     except Exception:
                         logger.warning("handoff_request_email_failed | bot=%s session=%s", bot.id, request.session_id)
 
-        # Cache queue timeout for the response. Read BEFORE the session
-        # closes so the value travels out cleanly.
-        queue_timeout = db_bot.live_chat_queue_timeout_seconds or 20
-
         # Fan-out Web Push to any eligible operator who isn't already
         # watching the dashboard via WebSocket. The "user is trying to
         # connect" email has been deliberately removed in favour of push.
         # Email now only fires when the visitor actually *sends a message*
         # in a waiting/unattended session (handled in ws_routes).
-        from app.worker.enqueue import enqueue_sync
+        if may_notify:
+            from app.worker.enqueue import enqueue_sync
 
-        enqueue_sync(
-            "task_dispatch_handoff_push",
-            request.session_id,
-            bot.id,
-            request.department_id,
-            visitor_name,
-            request.reason,
-            queue_timeout,
-        )
-        # Schedule a cleanup pass for after the visitor's queue-timeout window
-        # so stale on-device notifications get tag-replaced with "chat ended"
-        # if no operator accepted. ARQ honours ``_defer_by`` natively.
-        from datetime import timedelta as _td
+            enqueue_sync(
+                "task_dispatch_handoff_push",
+                request.session_id,
+                bot.id,
+                request.department_id,
+                visitor_name,
+                request.reason,
+                queue_timeout,
+            )
+            # Schedule a cleanup pass for after the visitor's queue-timeout
+            # window so stale on-device notifications get tag-replaced with
+            # "chat ended" if no operator accepted. ARQ honours ``_defer_by``.
+            from datetime import timedelta as _td
 
-        enqueue_sync(
-            "task_handoff_escalation",
-            request.session_id,
-            _defer_by=_td(seconds=queue_timeout + 1),
-        )
+            enqueue_sync(
+                "task_handoff_escalation",
+                request.session_id,
+                _defer_by=_td(seconds=queue_timeout + 1),
+            )
 
         # In-app bell + global banner. Persisted so an operator who was on
         # /knowledge when the handoff arrived can still see the request
@@ -1132,21 +1240,27 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
 
                 dept = session.get(Department, request.department_id)
                 dept_name = dept.name if dept else None
-            notify_handoff_request(
-                session,
-                client_id=bot.client_id,
-                session_id=request.session_id,
-                visitor_name=visitor_name,
-                bot_name=bot.name,
-                department_id=request.department_id,
-                department_name=dept_name,
-            )
+            if may_notify:
+                notify_handoff_request(
+                    session,
+                    client_id=bot.client_id,
+                    session_id=request.session_id,
+                    visitor_name=visitor_name,
+                    bot_name=bot.name,
+                    department_id=request.department_id,
+                    department_name=dept_name,
+                )
         except Exception:
             logger.exception("Failed to record handoff_request notification")
 
     # Schedule in-memory queue update as a background task so the REST response
     # is not held up by WebSocket sends. asyncio.create_task() is safe here
     # because async endpoints run directly on the event loop.
+    #
+    # Always called, even for a deduped re-poll: the queue bookkeeping and the
+    # visitor's timeout have to stay correct (a visitor who cancels and asks
+    # again inside the dedupe window must still be queued and still time out).
+    # Only the operator fan-out is suppressed.
     asyncio.create_task(
         manager.request_handoff(
             request.session_id,
@@ -1157,6 +1271,7 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
             bot_id=bot.id,
             bot_name=bot.name,
             client_id=bot.client_id,
+            notify_operators=may_notify,
         )
     )
 
@@ -1426,7 +1541,9 @@ async def accept_chat(
     # DB already committed status='live', the in-memory manager is secondary.
     # If accept_chat returns False (already assigned in memory to another operator),
     # that means DB and memory diverged. Force-sync memory to match DB truth.
-    accepted = await manager.accept_chat(session_id, operator_id, operator_name, operator_avatar)
+    accepted = await manager.accept_chat(
+        session_id, operator_id, operator_name, operator_avatar, client_id=auth["client_id"]
+    )
     if not accepted:
         logger.warning(
             f"DB accepted chat {session_id} for operator {operator_id} but in-memory "
@@ -1465,19 +1582,28 @@ async def close_chat(session_id: SessionId, auth=Depends(get_current_client_or_o
         # Capture bot_name inside the session block. Accessing bot.name after session.close()
         # raises DetachedInstanceError because SQLAlchemy expires objects on commit.
         bot_name = bot.name
-        # Audit log. Chat closed by operator
         operator_id = auth.get("operator_id") or chat_session.assigned_operator_id
-        session.add(
-            ChatAuditLog(
-                session_id=session_id,
-                operator_id=operator_id,
-                action="closed",
-            )
-        )
-        chat_session.status = "bot"
-        chat_session.assigned_operator_id = None
         bot_id = bot.id
-        session.commit()
+        current_status = chat_session.status
+
+    # Through the state machine, not around it. The direct write here had no
+    # row lock and no CAS, so it could clobber a transition another worker had
+    # just committed, and it resurrected a terminal ``closed`` conversation
+    # back to ``bot``. ``expected_current`` is the status just read, which
+    # keeps every legitimate close working (live and waiting both close) while
+    # still losing loudly to a concurrent accept/transfer/resolve.
+    if current_status == "closed":
+        return {"success": True, "status": "closed"}
+    try:
+        transition_session(
+            session_id,
+            "bot",
+            operator_id=operator_id,
+            audit_action="closed",
+            expected_current=current_status,
+        )
+    except InvalidTransitionError:
+        raise HTTPException(status_code=409, detail="Conversation changed state before it could be closed.") from None
 
     # Fire webhook for chat_closed event
     from app.services.webhook_service import fire_webhook
@@ -1491,7 +1617,7 @@ async def close_chat(session_id: SessionId, auth=Depends(get_current_client_or_o
         },
     )
 
-    asyncio.create_task(manager.close_chat(session_id, bot_name))
+    asyncio.create_task(manager.close_chat(session_id, bot_name, client_id=auth["client_id"]))
 
     return {"success": True, "status": "bot"}
 
@@ -1522,17 +1648,23 @@ async def resolve_chat(session_id: SessionId, auth=Depends(get_current_client_or
 
         bot_name = bot.name
         operator_id = auth.get("operator_id") or chat_session.assigned_operator_id
-        session.add(
-            ChatAuditLog(
-                session_id=session_id,
-                operator_id=operator_id,
-                action="resolved",
-            )
-        )
-        chat_session.status = "closed"
-        chat_session.assigned_operator_id = None
         bot_id = bot.id
-        session.commit()
+        current_status = chat_session.status
+
+    # Same CAS as ``/close`` above. ``closed`` is terminal, so a second resolve
+    # is a no-op rather than a second audit row.
+    if current_status == "closed":
+        return {"success": True, "status": "closed"}
+    try:
+        transition_session(
+            session_id,
+            "closed",
+            operator_id=operator_id,
+            audit_action="resolved",
+            expected_current=current_status,
+        )
+    except InvalidTransitionError:
+        raise HTTPException(status_code=409, detail="Conversation changed state before it could be resolved.") from None
 
     from app.services.webhook_service import fire_webhook
 
@@ -1546,7 +1678,7 @@ async def resolve_chat(session_id: SessionId, auth=Depends(get_current_client_or
         },
     )
 
-    asyncio.create_task(manager.close_chat(session_id, bot_name))
+    asyncio.create_task(manager.close_chat(session_id, bot_name, client_id=auth["client_id"]))
 
     return {"success": True, "status": "closed"}
 
@@ -1621,7 +1753,15 @@ async def transfer_chat(session_id: SessionId, request: TransferRequest, auth=De
             target_name = target_operator.name
 
             # Notify via WebSocket
-            asyncio.create_task(manager.transfer_chat(session_id, old_operator_id, target_operator.id, target_name))
+            asyncio.create_task(
+                manager.transfer_chat(
+                    session_id,
+                    old_operator_id,
+                    target_operator.id,
+                    target_name,
+                    client_id=auth["client_id"],
+                )
+            )
 
             return {"success": True, "transferred_to": target_name, "operator_id": target_operator.id}
 
@@ -2905,7 +3045,9 @@ async def takeover_bot_session(
     if department_id is not None:
         manager._session_departments[session_id] = department_id
 
-    accepted = await manager.accept_chat(session_id, operator_id, operator_name, operator_avatar)
+    accepted = await manager.accept_chat(
+        session_id, operator_id, operator_name, operator_avatar, client_id=auth["client_id"]
+    )
     if not accepted:
         logger.warning(
             "Takeover for %s succeeded in DB but manager.accept_chat reported "
@@ -3025,7 +3167,10 @@ async def translate_for_session(
             "status": "same_language",
         }
 
-    if not translation_svc.charge_for_translation(bot, body.message_id, target_language):
+    # Same metering contract as the socket paths: a cache hit costs nothing,
+    # and a provider failure is refunded rather than kept.
+    charged = not translation_svc.translation_is_free(bot, body.text, source_base, target_language)
+    if charged and not translation_svc.charge_for_translation(bot, body.message_id, target_language):
         raise HTTPException(status_code=402, detail="Translation is unavailable on this plan or balance.")
 
     try:
@@ -3033,6 +3178,8 @@ async def translate_for_session(
             body.text, source_base, target_language, bot_id=bot_id
         )
     except translation_svc.TranslationUnavailable:
+        if charged:
+            translation_svc.refund_translation_charge(bot, body.message_id, target_language)
         if body.message_id is not None:
             translation_svc.store_translation(body.message_id, target_language, status="failed")
         raise HTTPException(status_code=503, detail="Translation provider is unavailable. Try again.") from None

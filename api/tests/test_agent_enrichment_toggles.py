@@ -133,10 +133,21 @@ class TestTheCallSitesPassTheRightAction:
 
         assert self._actions_passed_in(chat_routes._enrich_lead_in_background) == {"email_verification"}
 
-    def test_the_widget_blur_check_gates_on_email_verification(self):
+    def test_the_visitor_facing_verdict_gates_on_email_verification(self):
+        """RETARGETED, not relaxed. The widget's blur check and the
+        meeting-booking attendee check now ask one helper (``_email_verdict``)
+        for a verdict instead of each restating the gate, so the gate is one
+        function deeper than it was. The property under test is unchanged: the
+        visitor-facing verification path reads the ``email_verification``
+        toggle and nothing else, and both call sites really do go through it.
+        """
+        import inspect
+
         from app.api import chat_routes
 
-        assert self._actions_passed_in(chat_routes.validate_email_endpoint) == {"email_verification"}
+        assert self._actions_passed_in(chat_routes._email_verdict) == {"email_verification"}
+        for func in (chat_routes.validate_email_endpoint, chat_routes.meeting_booked_endpoint):
+            assert "_email_verdict(" in inspect.getsource(func), f"{func.__name__} skips the shared verdict"
 
     def test_the_ip_resolver_gates_on_company_name(self):
         from app.api import chat_routes

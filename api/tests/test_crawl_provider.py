@@ -10,8 +10,10 @@ async def test_sitemap_first_scrapes_discovered_urls(monkeypatch):
     (this is what reaches all sitemap pages, not just depth-N link-reachable)."""
     seen = {}
 
-    async def fake_discover(u, *, max_urls, timeout):
+    async def fake_discover(u, *, max_urls, timeout, stats=None):
         seen["cap"] = max_urls
+        if stats is not None:
+            stats["total_found"] = 47  # the site has more pages than the cap allows
         return ["https://a.test/1", "https://a.test/2", "https://a.test/3"]
 
     async def fake_fetch(urls, **kw):
@@ -33,6 +35,10 @@ async def test_sitemap_first_scrapes_discovered_urls(monkeypatch):
     data = await crawl_provider.crawl_website("https://a.test", max_pages=250, use_js=False, client_id=1)
     assert seen["cap"] == 250  # capped at max_pages
     assert seen["scraped"] == ["https://a.test/1", "https://a.test/2", "https://a.test/3"]
+    # The shortfall the customer needs to see: discovery found 47 pages, the
+    # cap let 3 through. Reporting the truncated list length here made the
+    # orchestrator's "pages dropped" always zero.
+    assert data["discovered_total"] == 47
     assert len(data["results"]) == 3
 
 

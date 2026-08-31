@@ -389,8 +389,23 @@ class TestPhase3FirstTurnDetection:
         assert result.source == "message_detected"
         assert ensure.call_args.kwargs["language_source"] == "message_detected"
 
-    def test_detection_skipped_when_browser_header_resolves(self, monkeypatch):
-        # An Accept-Language header that resolves must win over message detection.
+    def test_confident_detection_outranks_the_browser_header(self, monkeypatch):
+        """REPLACES an expectation that made detection unreachable in production.
+
+        This previously asserted the Accept-Language header wins over a
+        confident script detection. That is wrong about the product, and it
+        made the whole feature dead code: ``resolve_initial_locale`` consults
+        Accept-Language, every browser sends one, and any ``en-*`` header
+        matches a bot offering ``en-IN``, so ``source`` was ``browser`` for
+        essentially every real visitor and detection (gated on ``default``)
+        never ran. A visitor typing pure Devanagari was answered in English.
+
+        The header says what the visitor's BROWSER is configured to; the
+        message says what they are actually typing. A confident script
+        detection outranks the weak tiers (browser, persisted) and nothing
+        else: an explicit choice and a customer-declared site locale still
+        win, and are covered separately below.
+        """
         bot = _build_bot()
         body = ChatRequest(question="नमस्ते", session_id=SESSION_ID)
         db = _mock_db(row=None)
@@ -400,8 +415,54 @@ class TestPhase3FirstTurnDetection:
         result = _resolve_visitor_language_and_update_session(
             _request_with_header("fr-FR,fr;q=0.9"), body, bot, SESSION_ID
         )
+        assert result.source == "message_detected"
+        assert result.locale == "hi-IN"
+
+    def test_an_undetectable_message_leaves_the_browser_header_in_place(self, monkeypatch):
+        """The browser tier still decides when the message carries no signal."""
+        bot = _build_bot()
+        body = ChatRequest(question="Bonjour, je voudrais des informations", session_id=SESSION_ID)
+        db = _mock_db(row=None)
+        monkeypatch.setattr("app.api.chat_routes.get_session", lambda: _session_ctx(db))
+        monkeypatch.setattr("app.api.chat_routes.ensure_chat_session", MagicMock())
+
+        result = _resolve_visitor_language_and_update_session(
+            _request_with_header("fr-FR,fr;q=0.9"), body, bot, SESSION_ID
+        )
         assert result.source == "browser"
         assert result.locale == "fr-FR"
+
+    def test_an_explicit_choice_is_never_overridden_by_detection(self, monkeypatch):
+        """Detection outranks the weak tiers only. A visitor's own pick wins."""
+        bot = _build_bot()
+        body = ChatRequest(
+            question="नमस्ते मुझे मदद चाहिए",
+            session_id=SESSION_ID,
+            locale="fr-FR",
+            language_source="explicit",
+        )
+        db = _mock_db(row=None)
+        monkeypatch.setattr("app.api.chat_routes.get_session", lambda: _session_ctx(db))
+        monkeypatch.setattr("app.api.chat_routes.ensure_chat_session", MagicMock())
+
+        result = _resolve_visitor_language_and_update_session(_request_with_header(None), body, bot, SESSION_ID)
+        assert result.source == "explicit"
+        assert result.locale == "fr-FR"
+
+    def test_a_site_declared_locale_is_never_overridden_by_detection(self, monkeypatch):
+        bot = _build_bot()
+        body = ChatRequest(
+            question="नमस्ते मुझे मदद चाहिए",
+            session_id=SESSION_ID,
+            locale="fr-FR",
+            language_source="site",
+        )
+        db = _mock_db(row=None)
+        monkeypatch.setattr("app.api.chat_routes.get_session", lambda: _session_ctx(db))
+        monkeypatch.setattr("app.api.chat_routes.ensure_chat_session", MagicMock())
+
+        result = _resolve_visitor_language_and_update_session(_request_with_header(None), body, bot, SESSION_ID)
+        assert result.source == "site"
 
     def test_detection_never_runs_for_locked_session(self, monkeypatch):
         bot = _build_bot()
@@ -413,14 +474,29 @@ class TestPhase3FirstTurnDetection:
 
         def _spy(text):
             called["detect"] = True
-            return ("hi", 1.0)
+            return ("hi", 1.0, 6)
 
-        monkeypatch.setattr("app.api.chat_routes.detect_message_language", _spy)
+        monkeypatch.setattr("app.api.chat_routes.detect_message_language_detail", _spy)
         result = _resolve_visitor_language_and_update_session(_request_with_header(None), body, bot, SESSION_ID)
         assert called["detect"] is False
         assert result.locale == "en-IN"
 
-    def test_low_confidence_detection_not_persisted(self, monkeypatch):
+    def test_code_switched_hinglish_is_detected(self, monkeypatch):
+        """REPLACES an expectation that rejected the detector's main use case.
+
+        This previously asserted "मुझे pricing चाहिए" falls to the bot default
+        because its confidence (0.42, the share of letters in the dominant
+        script) is under the 0.85 floor. Hindi is the only non-English
+        language OyeChats actually ships, and Hinglish is how it is typed, so
+        the floor as written excluded the input the feature exists for.
+
+        Script PRESENCE is evidence a share cannot express: a visitor who
+        types Devanagari at all is not writing English. The floor still
+        applies, but a detection also clears the bar on absolute non-Latin
+        letter count, which noise (one borrowed word, a signature) cannot
+        reach. ``confidence`` itself keeps its meaning and is persisted
+        unchanged, see ``test_persisted_confidence_is_still_the_raw_share``.
+        """
         bot = _build_bot(
             language_config={
                 "enabled": True,
@@ -428,7 +504,6 @@ class TestPhase3FirstTurnDetection:
                 "supported_locales": ["en-IN", "hi-IN"],
             }
         )
-        # Code-switched: below the 0.85 persist threshold.
         body = ChatRequest(question="मुझे pricing चाहिए", session_id=SESSION_ID)
         db = _mock_db(row=None)
         monkeypatch.setattr("app.api.chat_routes.get_session", lambda: _session_ctx(db))
@@ -436,7 +511,46 @@ class TestPhase3FirstTurnDetection:
         monkeypatch.setattr("app.api.chat_routes.ensure_chat_session", ensure)
 
         result = _resolve_visitor_language_and_update_session(_request_with_header(None), body, bot, SESSION_ID)
-        # Falls to bot default, not the low-confidence detection.
+        assert result.source == "message_detected"
+        assert result.language == "hi"
+
+    def test_persisted_confidence_is_still_the_raw_share(self, monkeypatch):
+        """The relaxed bar must not launder a 0.42 detection into a 0.85 one."""
+        bot = _build_bot(
+            language_config={
+                "enabled": True,
+                "default_locale": "en-IN",
+                "supported_locales": ["en-IN", "hi-IN"],
+            }
+        )
+        body = ChatRequest(question="मुझे pricing चाहिए", session_id=SESSION_ID)
+        db = _mock_db(row=None)
+        monkeypatch.setattr("app.api.chat_routes.get_session", lambda: _session_ctx(db))
+        ensure = MagicMock()
+        monkeypatch.setattr("app.api.chat_routes.ensure_chat_session", ensure)
+
+        result = _resolve_visitor_language_and_update_session(_request_with_header(None), body, bot, SESSION_ID)
+        assert result.confidence < 0.85
+        assert ensure.call_args.kwargs["language_confidence"] == result.confidence
+
+    def test_a_single_stray_glyph_does_not_flip_an_english_message(self, monkeypatch):
+        """The absolute-count floor is what keeps the relaxed bar honest."""
+        bot = _build_bot(
+            language_config={
+                "enabled": True,
+                "default_locale": "en-IN",
+                "supported_locales": ["en-IN", "hi-IN"],
+            }
+        )
+        body = ChatRequest(
+            question="Please send the pricing plan, thanks — क्या",
+            session_id=SESSION_ID,
+        )
+        db = _mock_db(row=None)
+        monkeypatch.setattr("app.api.chat_routes.get_session", lambda: _session_ctx(db))
+        monkeypatch.setattr("app.api.chat_routes.ensure_chat_session", MagicMock())
+
+        result = _resolve_visitor_language_and_update_session(_request_with_header(None), body, bot, SESSION_ID)
         assert result.source == "default"
         assert result.language == "en"
 
@@ -457,3 +571,143 @@ class TestPhase3FirstTurnDetection:
         result = _resolve_visitor_language_and_update_session(_request_with_header(None), body, bot, SESSION_ID)
         assert result.source == "default"
         assert result.language == "en"
+
+
+class TestAutoDetectToggleIsHonoured:
+    """``language_config.auto_detect`` is written by the dashboard's "Detect the
+    visitor's language" switch, described there as "From their browser, the page
+    they are on, and their first message." It was persisted and read by nothing:
+    the only grep hit in the backend was the column default, so a customer who
+    turned it off still got every one of those three tiers.
+    """
+
+    def _bot(self, auto_detect):
+        return _build_bot(
+            language_config={
+                "enabled": True,
+                "default_locale": "en-IN",
+                "supported_locales": ["en-IN", "hi-IN", "fr-FR"],
+                "auto_detect": auto_detect,
+            }
+        )
+
+    def test_browser_header_is_ignored_when_detection_is_off(self, monkeypatch):
+        body = ChatRequest(question="Hello", session_id=SESSION_ID)
+        db = _mock_db(row=None)
+        monkeypatch.setattr("app.api.chat_routes.get_session", lambda: _session_ctx(db))
+        monkeypatch.setattr("app.api.chat_routes.ensure_chat_session", MagicMock())
+
+        result = _resolve_visitor_language_and_update_session(
+            _request_with_header("fr-FR,fr;q=0.9"), body, self._bot(False), SESSION_ID
+        )
+        assert result.source == "default"
+        assert result.locale == "en-IN"
+
+    def test_html_lang_is_ignored_when_detection_is_off(self, monkeypatch):
+        body = ChatRequest(question="Hello", session_id=SESSION_ID, locale="fr-FR", language_source="html_lang")
+        db = _mock_db(row=None)
+        monkeypatch.setattr("app.api.chat_routes.get_session", lambda: _session_ctx(db))
+        monkeypatch.setattr("app.api.chat_routes.ensure_chat_session", MagicMock())
+
+        result = _resolve_visitor_language_and_update_session(
+            _request_with_header(None), body, self._bot(False), SESSION_ID
+        )
+        assert result.source == "default"
+
+    def test_message_detection_is_skipped_when_detection_is_off(self, monkeypatch):
+        body = ChatRequest(question="नमस्ते मुझे मदद चाहिए", session_id=SESSION_ID)
+        db = _mock_db(row=None)
+        monkeypatch.setattr("app.api.chat_routes.get_session", lambda: _session_ctx(db))
+        monkeypatch.setattr("app.api.chat_routes.ensure_chat_session", MagicMock())
+
+        result = _resolve_visitor_language_and_update_session(
+            _request_with_header(None), body, self._bot(False), SESSION_ID
+        )
+        assert result.source == "default"
+        assert result.language == "en"
+
+    def test_an_explicit_choice_still_works_with_detection_off(self, monkeypatch):
+        """The switch turns off DETECTION, not the visitor's own selection."""
+        body = ChatRequest(question="Hello", session_id=SESSION_ID, locale="hi-IN", language_source="explicit")
+        db = _mock_db(row=None)
+        monkeypatch.setattr("app.api.chat_routes.get_session", lambda: _session_ctx(db))
+        monkeypatch.setattr("app.api.chat_routes.ensure_chat_session", MagicMock())
+
+        result = _resolve_visitor_language_and_update_session(
+            _request_with_header(None), body, self._bot(False), SESSION_ID
+        )
+        assert result.source == "explicit"
+        assert result.locale == "hi-IN"
+
+    def test_a_config_without_the_key_still_detects(self, monkeypatch):
+        """Absent means on, so no existing bot changes behaviour."""
+        bot = _build_bot(
+            language_config={
+                "enabled": True,
+                "default_locale": "en-IN",
+                "supported_locales": ["en-IN", "hi-IN"],
+            }
+        )
+        body = ChatRequest(question="Hello", session_id=SESSION_ID)
+        db = _mock_db(row=None)
+        monkeypatch.setattr("app.api.chat_routes.get_session", lambda: _session_ctx(db))
+        monkeypatch.setattr("app.api.chat_routes.ensure_chat_session", MagicMock())
+
+        result = _resolve_visitor_language_and_update_session(
+            _request_with_header("hi-IN,hi;q=0.9"), body, bot, SESSION_ID
+        )
+        assert result.source == "browser"
+
+
+class TestVisitorLanguageSwitchIsEnforcedServerSide:
+    """``allow_visitor_language_switch`` was checked only by the widget, which
+    hides its picker. The endpoint authenticates with the PUBLIC bot key, so
+    anyone reading a customer's page source could switch and lock a session
+    language for a bot whose owner had turned switching off.
+    """
+
+    def _bot(self, allow):
+        return _build_bot(
+            language_config={
+                "enabled": True,
+                "default_locale": "en-IN",
+                "supported_locales": ["en-IN", "hi-IN"],
+                "allow_visitor_language_switch": allow,
+            }
+        )
+
+    def test_switching_is_refused_when_the_customer_disabled_it(self, monkeypatch):
+        write = MagicMock()
+        monkeypatch.setattr("app.api.chat_routes.get_session", lambda: _session_ctx(MagicMock()))
+        monkeypatch.setattr("app.api.chat_routes.update_chat_session_language", write)
+
+        response = TestClient(_build_app(bot_override=self._bot(False))).post(
+            "/chat/language", json={"session_id": SESSION_ID, "locale": "hi-IN"}
+        )
+        assert response.status_code == 403
+        write.assert_not_called()
+
+    def test_switching_still_works_when_enabled(self, monkeypatch):
+        monkeypatch.setattr("app.api.chat_routes.get_session", lambda: _session_ctx(MagicMock()))
+        monkeypatch.setattr("app.api.chat_routes.update_chat_session_language", MagicMock())
+
+        response = TestClient(_build_app(bot_override=self._bot(True))).post(
+            "/chat/language", json={"session_id": SESSION_ID, "locale": "hi-IN"}
+        )
+        assert response.status_code == 200
+
+    def test_the_pre_session_explicit_tier_is_gated_too(self, monkeypatch):
+        """The picker rides the first /chat/stream turn when no session exists
+        yet, so enforcing only at the endpoint left the same bypass open."""
+        body = ChatRequest(question="Hello", session_id=SESSION_ID, locale="hi-IN", language_source="explicit")
+        db = _mock_db(row=None)
+        monkeypatch.setattr("app.api.chat_routes.get_session", lambda: _session_ctx(db))
+        ensure = MagicMock()
+        monkeypatch.setattr("app.api.chat_routes.ensure_chat_session", ensure)
+
+        result = _resolve_visitor_language_and_update_session(
+            _request_with_header("en-US,en;q=0.9"), body, self._bot(False), SESSION_ID
+        )
+        assert result.locked is False
+        assert result.source != "explicit"
+        assert result.locale != "hi-IN"

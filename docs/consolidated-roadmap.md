@@ -15,8 +15,21 @@
 >
 > Anything already implemented as of 2026-07-04 is **not** repeated here. For the verified
 > audit evidence behind these items, see the two retained reference reports:
-> [`PRODUCTION_READINESS_REVIEW_2026-07-03.md`](./PRODUCTION_READINESS_REVIEW_2026-07-03.md)
+> `PRODUCTION_READINESS_REVIEW_2026-07-03.md`
 > and [`ai-response-audit-fynix-2026-04.md`](./ai-response-audit-fynix-2026-04.md).
+
+> **Broken reference (noted 2026-08-31):** `PRODUCTION_READINESS_REVIEW_2026-07-03.md` is
+> cited here and from [`README.md`](./README.md) but **is not present in `docs/`**. The link
+> has been de-linked rather than the citation deleted, because that citation is the only
+> surviving record of what this roadmap rests on. Either restore the file or drop the
+> reference — do not leave a live link that 404s.
+
+> **Staleness warning (2026-08-31):** this file was verified against the code on
+> **2026-07-04** and has not been re-verified since. Two months of work have landed,
+> including the live-chat process split (shipped 2026-08-20), the operator-invite and
+> workspace-switcher feature, journey analytics, the admin PWA, and eight defect-fix commits
+> on `claude/codebase-feature-audit-nhw0xa`. Re-check any item here against the source
+> before scheduling it — some of it is already done.
 
 **Status legend:** 🔴 not started · 🟡 partial / superseded-approach shipped · 🔵 non-code gate (business/legal/ops)
 

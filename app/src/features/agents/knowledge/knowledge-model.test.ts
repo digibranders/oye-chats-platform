@@ -5,6 +5,9 @@ import {
   canUseDeltaRecrawl,
   charactersAsWords,
   crawlBudgetOf,
+  crawlCoverageOf,
+  crawlDoneMessage,
+  crawlFellShort,
   crawlPreflight,
   crawlUrlFor,
   gapWindowLabel,
@@ -348,5 +351,117 @@ describe('upload ingestion', () => {
     expect(uploadSkipReason(undefined)).toBeNull();
     // An unrecognised reason is passed through rather than swallowed.
     expect(uploadSkipReason('something_new')).toBe('something_new');
+  });
+});
+
+describe('crawl coverage — what the chatbot can actually answer from', () => {
+  /** A `done` crawl's `result_payload`, as the worker writes it. */
+  function payload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      message: 'Crawling and ingestion completed successfully',
+      pages_processed: 400,
+      pages_ingested: 400,
+      pages_failed: 0,
+      pages_discovered: 400,
+      pages_dropped: 0,
+      aborted: false,
+      abort_reason: null,
+      ...overrides,
+    };
+  }
+
+  it('reports the pages indexed, not the pages fetched', () => {
+    // The whole defect in one assertion. A Starter customer's 400-page crawl
+    // stops on the character quota around page 25; `pages_processed` still
+    // says 400 because the crawler really did read them.
+    const coverage = crawlCoverageOf(
+      payload({ pages_ingested: 25, aborted: true, abort_reason: 'knowledge_quota' }),
+    );
+    expect(coverage).not.toBeNull();
+    expect(coverage?.ingested).toBe(25);
+    expect(coverage?.processed).toBe(400);
+    expect(crawlFellShort(coverage!)).toBe(true);
+    expect(crawlDoneMessage(coverage!).body).toContain('25 pages of the 400');
+  });
+
+  it('congratulates only a crawl that actually covered the site', () => {
+    const coverage = crawlCoverageOf(payload());
+    expect(crawlFellShort(coverage!)).toBe(false);
+    expect(crawlDoneMessage(coverage!)).toMatchObject({ tone: 'success', title: undefined });
+    expect(crawlDoneMessage(coverage!).body).toBe('Finished — this chatbot read 400 pages.');
+  });
+
+  it('counts a page the content hash proved unchanged as covered', () => {
+    // A delta re-crawl of a site nothing has changed on stores nothing and is
+    // still complete coverage. `pages_ingested` includes those pages, so this
+    // must not read as a shortfall.
+    const coverage = crawlCoverageOf(payload({ pages_processed: 120, pages_ingested: 120 }));
+    expect(crawlFellShort(coverage!)).toBe(false);
+  });
+
+  it('names the limit that stopped it, because the remedies differ', () => {
+    const credits = crawlDoneMessage(
+      crawlCoverageOf(payload({ pages_ingested: 30, aborted: true, abort_reason: 'credits' }))!,
+    );
+    expect(credits.tone).toBe('warning');
+    expect(credits.title).toMatch(/credits ran out/i);
+    expect(credits.body).toMatch(/Add credits/);
+
+    const quota = crawlDoneMessage(
+      crawlCoverageOf(
+        payload({ pages_ingested: 30, aborted: true, abort_reason: 'knowledge_quota' }),
+      )!,
+    );
+    expect(quota.title).toMatch(/knowledge base is full/i);
+    expect(quota.body).toMatch(/Move up a plan/);
+
+    // Never the JavaScript advice: a quota has nothing to do with rendering,
+    // and that sentence sent people to debug a site that was working.
+    expect(credits.body).not.toMatch(/JavaScript/i);
+    expect(quota.body).not.toMatch(/JavaScript/i);
+  });
+
+  it('does not raise a warning over pages the plan cap never let it fetch', () => {
+    // `pages_dropped` is URLs discovery enqueued and the crawl never reached: a
+    // per-crawl page cap, but equally a robots-blocked path. The cap is stated
+    // on this screen before a customer spends anything, and a brass banner on
+    // an otherwise clean crawl is how a reader learns to ignore brass banners.
+    const coverage = crawlCoverageOf(
+      payload({ pages_processed: 100, pages_ingested: 100, pages_discovered: 340, pages_dropped: 240 }),
+    );
+    expect(crawlFellShort(coverage!)).toBe(false);
+    expect(crawlDoneMessage(coverage!).tone).toBe('success');
+  });
+
+  it('counts those pages in the denominator once there IS a shortfall', () => {
+    // Once the crawl stopped early, the honest comparison is against the whole
+    // site rather than against the slice it happened to fetch first.
+    const coverage = crawlCoverageOf(
+      payload({
+        pages_processed: 100,
+        pages_ingested: 60,
+        pages_discovered: 340,
+        pages_dropped: 240,
+        aborted: true,
+        abort_reason: 'credits',
+      }),
+    );
+    expect(crawlDoneMessage(coverage!).body).toContain('60 pages of the 340');
+  });
+
+  it('falls back rather than announcing zero for a payload it cannot read', () => {
+    // The result lands a beat after the terminal status, and a worker older
+    // than these keys never sends them. `null` tells the caller to keep using
+    // the count it already has.
+    expect(crawlCoverageOf(null)).toBeNull();
+    expect(crawlCoverageOf({ pages_processed: 12 })).toBeNull();
+    expect(crawlCoverageOf('done')).toBeNull();
+    expect(crawlCoverageOf([])).toBeNull();
+  });
+
+  it('never renders a shortfall out of a payload that disagrees with itself', () => {
+    const coverage = crawlCoverageOf(payload({ pages_processed: 3, pages_ingested: 10 }));
+    expect(coverage?.processed).toBe(10);
+    expect(crawlFellShort(coverage!)).toBe(false);
   });
 });

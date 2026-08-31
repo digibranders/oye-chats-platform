@@ -1,7 +1,16 @@
 # OyeChats email gallery
 
-All **19** transactional/lifecycle emails the platform sends, rendered as standalone,
-self-contained HTML in one folder. Open `index.html` for the browsable grid.
+**19 of the 30** transactional/lifecycle emails the platform sends, rendered as
+standalone, self-contained HTML in one folder. Open `index.html` for the browsable grid.
+
+> **This gallery is a sample, not the full catalogue.** The complete list of senders —
+> currently 30, CI-enforced by `tests/test_email_inventory_accuracy.py` — lives in
+> [`../EMAIL_INVENTORY.md`](../EMAIL_INVENTORY.md). The eleven not rendered here (the
+> quotation set, operator/install invites, seat re-auth, and the dunning sequence) are
+> simply absent from `scripts/build_email_gallery.py`'s render list. **Adding a sender does
+> not add it here**, and nothing fails if you forget: the accuracy test guards the
+> inventory doc, not this folder. If you add a customer-visible email, add it to the
+> generator too.
 
 ## Design system
 
@@ -41,12 +50,13 @@ uv run python scripts/build_email_gallery.py
 ## Status — wired to production
 
 These files are **generated from the real senders** in `app/services/email_service.py`
-(the generator monkeypatches the dispatcher and captures each email's HTML), so the
-gallery is exactly what customers receive — it cannot drift. The shared design system
-lives in `app/services/email_design.py`. All 19 emails render in code; there are no
-Brevo saved templates in the send path anymore.
+(the generator monkeypatches the dispatcher and captures each email's HTML), so for the
+nineteen it covers, the gallery is exactly what customers receive and cannot drift in
+*content*. It can and does drift in *coverage* — see the note at the top. The shared
+design system lives in `app/services/email_design.py`. All 30 emails render in code;
+there are no Brevo saved templates in the send path anymore.
 
-## The 19 templates
+## The 19 rendered here
 
 | # | File | Category | Audience |
 |---|------|----------|----------|

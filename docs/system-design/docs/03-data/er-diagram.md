@@ -1,10 +1,14 @@
 # ER diagram
 
-> **Audience:** New engineers · **Read time:** 8 min · **Last updated:** 2026-04-28
+> **Audience:** New engineers · **Read time:** 8 min · **Last updated:** 2026-08-31
 
 ## TL;DR
 
-23 tables. Five domains: **Core** (clients, bots, documents, sessions, messages, leads), **Live chat** (operators, departments, audit, canned, offline), **Qualification** (BANT signals, visitor events, growth events, meeting bookings), **Billing** (plans, subscriptions, usage, invoices, payment methods, credit ledger, pricing config, processed webhooks), **Webhooks** (custom registrations + delivery log).
+`models.py` declares **51 tables**. This page diagrams the **25 core ones** across five domains: **Core** (clients, bots, documents, sessions, messages, leads), **Live chat** (operators, departments, audit, canned, offline), **Qualification** (BANT signals, visitor events, growth events, meeting bookings), **Billing** (plans, subscriptions, usage, invoices, payment methods, credit ledger, pricing config, processed webhooks) and **Webhooks** (custom registrations + delivery log).
+
+The other 26 are real and in production — OAuth accounts, company profiles, operator invites, the live-chat queue, promotions, invoice counters, failed webhooks, audit logs, coupons, LLM call logs, impersonation tokens, the affiliate/referral family, discounted plan cache, reconciliation runs, billing-funnel and activation events, platform feedback, push subscriptions and Expo tokens, notifications, events and email suppressions. They are omitted here for legibility, not because they are unused; [`api/app/db/models.py`](../../../../api/app/db/models.py) is the inventory.
+
+Only columns that carry meaning for the relationships are listed on each entity — none of these boxes is a complete column list. See [schema reference](/03-data/schema-reference).
 
 ## Conventions
 
@@ -12,6 +16,7 @@
 - All tables have `created_at` / `updated_at` unless noted.
 - `ondelete=CASCADE` shown as solid arrow; `SET NULL` shown as dotted.
 - `client_id` on `Document` and `ChatSession` is **legacy nullable** — `bot_id` is the modern FK. See [multi-tenancy](/03-data/multi-tenancy).
+- Entity boxes list *selected* columns, not the full set.
 
 ## Full ER (zoomable)
 
@@ -29,6 +34,8 @@ erDiagram
     CLIENTS ||--o{ PAYMENT_METHODS : has
     CLIENTS ||--o{ CREDIT_LEDGER : has
 
+    BOTS ||--o{ SUBSCRIPTIONS : "funds (per-bot billing)"
+    BOTS ||--o{ CREDIT_LEDGER : "isolated ledger"
     BOTS ||--o{ DOCUMENTS : "indexed by (modern)"
     BOTS ||--o{ CHAT_SESSIONS : has
     BOTS ||--o{ LEAD_INFO : captures
@@ -72,21 +79,31 @@ erDiagram
     BOTS {
         int id PK
         int client_id FK
+        int plan_id FK
+        int subscription_id FK
         string bot_key UK
         string name
         text system_prompt
-        json colors
+        json bant_config "rubric AND framework name"
+        float relevance_threshold
         json business_hours
         bool live_chat_enabled
+        json language_config
+        string demo_screenshot_url
     }
 
     DOCUMENTS {
         int id PK
         int client_id FK "legacy nullable"
         int bot_id FK "modern"
+        string document_name
+        string source "upload|crawl"
+        bool is_active
+        string file_hash
         text content
-        vector embedding "1536d"
-        tsvector content_tsv
+        int source_char_count
+        vector embedding "768d"
+        tsvector search_vector
     }
 
     CHAT_SESSIONS {
@@ -96,10 +113,14 @@ erDiagram
         int assigned_operator_id FK
         int department_id FK
         string status "bot|waiting|live|closed"
-        string qualification_framework
+        string qualification_framework "per-session stamp"
+        string last_probed_dimension
+        json dimension_scores
         int bant_score
         string bant_tier
         int visitor_rating
+        string language_code
+        string language_source
     }
 
     CHAT_MESSAGES {
@@ -107,7 +128,12 @@ erDiagram
         string session_id FK
         string role "user|bot|operator|system"
         text content
+        int feedback
+        bool is_unanswered
         string trace_id "Langfuse"
+        json media_card
+        string source_language
+        json translations
     }
 
     LEAD_INFO {
@@ -124,9 +150,12 @@ erDiagram
         string session_id FK
         int message_id FK
         string dimension
+        text signal_text
+        string extracted_value
+        string confidence
         int score_before
         int score_after
-        string source "llm|cta_click"
+        string source "llm|cta_click|operator_override"
     }
 
     VISITOR_EVENTS {
@@ -134,14 +163,13 @@ erDiagram
         string session_id FK
         int bot_id FK
         string event_type
-        json payload
+        json event_data
     }
 
     BOT_GROWTH_EVENTS {
         int id PK
         int bot_id FK
         string event_type
-        json metadata
     }
 
     OPERATORS {
@@ -183,6 +211,9 @@ erDiagram
         int bot_id FK
         string session_id FK
         int department_id FK
+        string visitor_name
+        string visitor_email
+        text message_body
         string status "new|read|replied"
     }
 
@@ -191,93 +222,124 @@ erDiagram
         int bot_id FK
         string url
         string secret
-        json event_filter
-        bool active
+        json events
+        bool is_active
     }
 
     WEBHOOK_DELIVERIES {
         int id PK
         int webhook_id FK
         string event_type
-        int attempt
-        string status
+        json payload
+        int attempt "one ROW per attempt"
+        int status_code "no status column"
+        text response_body
         timestamp next_retry_at
+        timestamp delivered_at
     }
 
     MEETING_BOOKINGS {
         int id PK
         string session_id FK
         int bot_id FK
-        string provider "calendly|zcal"
-        string booking_id
+        string booking_url
+        timestamp meeting_time
+        string attendee_email
+        string status
     }
 
     PLANS {
         int id PK
         string slug UK
-        int monthly_price_cents
+        string currency
+        int monthly_price_cents "BASE, GST-exclusive"
+        int monthly_price_usd_cents
         int credits_per_month
         int included_operator_seats
-        json feature_flags
+        int trial_days
+        json limits
+        json features
+        string razorpay_plan_id_monthly
+        string razorpay_plan_id_monthly_usd
     }
 
     SUBSCRIPTIONS {
         int id PK
         int client_id FK
         int plan_id FK
-        string status "trialing|active|past_due|canceled|paused|expired"
-        string provider "stripe|razorpay|manual"
-        string provider_subscription_id
+        int bot_id FK "NULL = client-level (legacy)"
+        string status "trialing|active|past_due|canceled|expired"
+        string billing_cycle
+        string payment_provider "razorpay|manual"
+        string razorpay_subscription_id
         timestamp current_period_end
+        timestamp last_granted_period_end
+        bool cancel_at_period_end "INTENT, not a gateway fact"
+        timestamp gateway_cancel_executed_at
     }
 
     USAGE_RECORDS {
         int id PK
         int client_id FK
         int plan_id FK
-        date period_start
-        int ai_messages
-        int url_scans
-        int live_chat_messages
+        timestamp period_start
+        int ai_messages_used
+        int url_scans_used
+        int live_chat_messages_used
+        int overage_messages
     }
 
     INVOICES {
         int id PK
         int client_id FK
         int subscription_id FK
+        int bot_id FK
         int amount_cents
+        string currency
         string status
-        string provider_invoice_id
+        string razorpay_payment_id UK
+        string invoice_number
+        int taxable_value_minor
+        int total_tax_minor
+        int credit_note_of_id FK
     }
 
     PAYMENT_METHODS {
         int id PK
         int client_id FK
+        string provider
         string type "card|upi|bank"
         string last4
+        string upi_handle
+        string razorpay_token_id
         bool is_default
     }
 
     CREDIT_LEDGER {
         int id PK
         int client_id FK
-        int grant_id FK "self-FK for FIFO"
+        int bot_id FK "ledger scope; NULL = client pool"
+        int attributed_bot_id FK "REPORTING ONLY"
+        int grant_id FK "self-FK for allocation"
         int delta "signed"
-        string reason
-        timestamp expires_at "NULL for plan grants"
+        enum reason "PG enum credit_reason"
+        string idempotency_key
+        int reference_id
+        timestamp expires_at "NULL = never expires"
     }
 
     PRICING_CONFIG {
-        int id PK
-        string key UK
+        text key PK "no id column"
         json value
         int updated_by FK
+        timestamp updated_at
     }
 
     PROCESSED_WEBHOOKS {
-        string event_id PK
-        string provider PK
-        timestamp received_at
+        text event_id PK "single-column PK"
+        text provider "indexed, NOT part of the PK"
+        text payload_digest UK "partial-unique second dedup key"
+        timestamp processed_at
     }
 ```
 
@@ -388,4 +450,9 @@ erDiagram
 
 ## Why this matters
 
-This diagram is generated by hand from [`api/app/db/models.py`](../../../api/app/db/models.py). When that file changes, this page must update — the executing engineer adds/edits the relevant entity in the right sub-diagram and the full diagram. See [schema reference](/03-data/schema-reference) for column-level detail.
+This diagram is maintained by hand from [`api/app/db/models.py`](../../../../api/app/db/models.py), which is the source of truth. When that file changes, this page must update — the executing engineer adds or edits the relevant entity in the right sub-diagram and in the full diagram. See [schema reference](/03-data/schema-reference) for column-level detail.
+
+Two structural points that the diagram encodes and are easy to miss:
+
+- **Billing can be per-bot.** `subscriptions.bot_id` and `credit_ledger.bot_id` are non-NULL for a bot with its own subscription, and NULL for legacy client-level pooling. Balance maths must key on `bot_id` alone; `attributed_bot_id` answers "which bot spent it?" and would corrupt both balances if summed on.
+- **`webhook_deliveries` is append-only.** One row per attempt, no `status` column, state derived from `delivered_at` / `next_retry_at`.

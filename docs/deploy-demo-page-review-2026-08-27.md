@@ -4,6 +4,19 @@ Date: 2026-08-27
 Scope: `api/app/api/bot_routes.py` (`/demo/{bot_key}`), `app/src/features/agents/channels/DeployPage.tsx`, `app/src/features/agents/experience/WebsitePreviewDialog.tsx`, `app/src/services/api.js`
 Status: implemented on `claude/admin-redesign`. Sections 1 to 6 are the review and research that led to the design; section 7 is what was built.
 
+> **Reading note (2026-08-31).** This is a **dated review**, kept for its reasoning — §5's
+> technique comparison, §7's "capture at train time, serve static at view time" decision,
+> and §8's live-testing findings including the scroll-reveal limitation. It is not a
+> description of current behaviour, and two things have moved since:
+>
+> - §1 says the demo page "has two render paths". It now has **three**, in descending order
+>   of fidelity: live frame (`?url=`, framing permitted), **captured screenshot as the
+>   default for a shared link**, and the hero page as last resort. That is §7 shipped.
+> - Every `app/src/services/api.js` reference is a dead path. The admin console was rebuilt
+>   in TypeScript; the file is `app/src/services/api.ts` and `getBotDemoUrl` /
+>   `getBotPreviewUrl` live at `:2513` / `:2515`. Line numbers cited anywhere in this
+>   document are as-of 2026-08-27 and should not be trusted.
+
 ---
 
 ## 1. What the demo link does today

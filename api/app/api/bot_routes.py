@@ -65,7 +65,7 @@ from app.schemas.validators import (
 )
 from app.services.brand_tone import BRAND_TONE_PRESETS, CUSTOM_PRESET, is_valid_preset_value, preset_text
 from app.services.email_service import send_install_invite_email
-from app.services.language_service import is_multilingual_enabled
+from app.services.language_service import KNOWN_LOCALES, is_multilingual_enabled, normalize_locale
 
 # Upper bound on per-bot domain list size. 50 covers every realistic case
 # (apex + wildcard + a handful of staging/sandbox subdomains) while preventing
@@ -1066,6 +1066,41 @@ def _find_bot_by_website(session, client_id: int, website: str | None) -> Bot | 
 
 # IMPORTANT: Static sub-paths MUST be defined before /{bot_id} dynamic routes
 # to prevent FastAPI from trying to parse "settings" as an integer bot_id.
+
+
+def _validate_supported_locales(language_config: dict) -> None:
+    """Refuse a ``supported_locales`` entry the platform has no locale for.
+
+    ``language_config`` is a free-form bounded JSON object, so this list was
+    accepted verbatim: any string at all could be stored, offered to visitors
+    in the picker, and then locked onto a session by ``POST /chat/language``,
+    which resolves direction, display name and prompt directive from the
+    catalogue and gets nothing back for a code that is not in it.
+
+    ``KNOWN_LOCALES`` is the boundary. An unrecognised code is rejected rather
+    than dropped: silently discarding half a customer's selection is how a
+    settings page ends up disagreeing with what is stored.
+    """
+    if "supported_locales" not in language_config:
+        return
+    raw = language_config["supported_locales"]
+    if not isinstance(raw, list):
+        raise HTTPException(
+            status_code=422,
+            detail="language_config.supported_locales must be a list of locale codes.",
+        )
+    unknown = [
+        entry for entry in raw if not isinstance(entry, str) or (normalize_locale(entry) or "") not in KNOWN_LOCALES
+    ]
+    if unknown:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Unsupported locale(s) in language_config.supported_locales: "
+                f"{', '.join(str(entry) for entry in unknown)}. "
+                f"Choose from: {', '.join(sorted(KNOWN_LOCALES))}."
+            ),
+        )
 
 
 def _effective_language_config(bot) -> dict:
@@ -3527,8 +3562,15 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
 
             # Merge language_config. Partial updates must not wipe existing language config
             if "language_config" in update_data and update_data["language_config"] is not None:
+                incoming_lang = update_data.pop("language_config")
+                # Validated on the INCOMING value, not the merge: every write
+                # of the key goes through this, while a legacy row that already
+                # holds an unknown code stays editable (validating the merge
+                # would 422 a customer's unrelated `enabled` toggle until they
+                # rewrote a list this UI may not even be showing them).
+                _validate_supported_locales(incoming_lang)
                 current_lang = dict(bot.language_config or {})
-                current_lang.update(update_data.pop("language_config"))
+                current_lang.update(incoming_lang)
                 # Operator translation (Phase 4) depends on the multilingual
                 # feature being on: the session language it translates to and
                 # from is written only by the language resolver, which returns

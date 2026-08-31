@@ -4359,6 +4359,24 @@ def _forfeit_and_convert_to_free(session: Session, local: Subscription) -> None:
     # drops the cache; without it the downgraded account keeps the purchased
     # plan's limits and features for the 60s TTL.
     plan_entitlements_service.invalidate(local.client_id)
+
+    # Tell them. This makes the same conversion the day-15 cron makes, for a
+    # customer who went further than most: they authorised a mandate and then
+    # withdrew it before it ever billed. Landing them on Free in silence means
+    # their credits drop and their knowledge pauses with no message explaining
+    # either. Same email as the day-15 path so the two read identically, and
+    # after the commit-shaped work above so a mail failure cannot roll back the
+    # conversion.
+    from app.db.models import Client as ClientModel
+    from app.services.email_service import send_trial_ended_email
+
+    owner = session.get(ClientModel, local.client_id)
+    if owner is not None and owner.email:
+        try:
+            send_trial_ended_email(owner.email, name=owner.name, plan_name=free_plan.name)
+        except Exception as exc:
+            logger.warning("trial-conversion-cancel email failed for client %s: %s", local.client_id, exc)
+
     logger.info(
         "Client %s cancelled a trial conversion before its first charge: unspent credits forfeited "
         "and the account converted to Free",

@@ -134,6 +134,7 @@ export default {
             operator_left_named: '{name} left',
             error_over_capacity: 'We’re temporarily over capacity for this chatbot. Please try again later or reach us by email.',
             error_maintenance: 'We’re briefly offline for maintenance. Please try again in a few minutes.',
+            error_rate_limited: 'You’re sending messages a little quickly. Please wait a moment and try again.',
             error_generic: 'I’m sorry, I couldn’t generate a response. Please try again.',
         },
         // The offline / "leave a message" form, shown when no operator is

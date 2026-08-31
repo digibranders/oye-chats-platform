@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { X, Plus, Clock, MoreHorizontal, Mail, CheckCircle2, AlertCircle, User, Phone, MessageSquare, LogOut, Star, XCircle, ChevronDown, Headphones, Globe } from 'lucide-react';
-import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, cancelHandoff, getSessionStatus, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail, getPendingConnectRequest, respondToConnectRequest, submitFeedback, markChatEvent, validateEmail as checkEmailWithServer, getQuotationState, changeSessionLanguage } from '../services/api';
+import { isAbortError, sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, cancelHandoff, getSessionStatus, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail, getPendingConnectRequest, respondToConnectRequest, submitFeedback, markChatEvent, validateEmail as checkEmailWithServer, getQuotationState, changeSessionLanguage } from '../services/api';
 import { getController } from '../widget-controller.js';
 import { themeConfigs } from './themeConfigs';
 import BotAvatar from './BotAvatar';
@@ -23,6 +23,7 @@ import { t, getLocale, setLocale as setI18nLocale, onLocaleChange, getLanguageCo
 import { SEEDED, authoredCopy } from '../i18n/seededCopy.js';
 import { displayTextFor } from '../lib/liveChatTranslation.js';
 import { isInvalidTransition, nextChatMode } from '../lib/chatModeMachine.js';
+import { startBoundedPoll } from '../lib/boundedPoll.js';
 import { formatHeaderDateTime } from '../i18n/formatters.js';
 
 // Lazy-loaded. Only fetched when the user actually triggers handoff, lead capture, or booking.
@@ -39,6 +40,12 @@ const LanguageSelector = lazyWithRetry(() => import('./LanguageSelector'));
 const API_URL = (typeof window !== 'undefined' && window.OYECHATS_API_URL) || import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
 const FALLBACK_PATTERNS = /don't have that specific information|I'm not sure about that|couldn't find.*information|not contained in/i;
+
+// Offline-form availability probe. Ten minutes of waiting for an operator to
+// come online is generous; past that the visitor is writing a message, not
+// waiting for a chat, and an unbounded probe is just load with no reader.
+const OFFLINE_POLL_INTERVAL_MS = 15000;
+const OFFLINE_POLL_MAX_TICKS = 40;
 
 // Stable identifiers for system dividers. Several effects add and later remove
 // the "connecting" divider; they used to find it by comparing `m.text` against
@@ -429,6 +436,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // Streaming chunk buffer
     const chunkBufferRef = useRef('');
     const rafRef = useRef(null);
+    // Aborts the in-flight /chat/stream request. Closing or unmounting the
+    // widget used to leave both the fetch and the generation it is driving
+    // running to completion, holding a backend concurrency slot for up to 60s
+    // on behalf of a visitor who has already gone.
+    const streamAbortRef = useRef(null);
 
     const messagesEndRef = useRef(null);
     const inputRef = useRef(null);
@@ -449,6 +461,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // Qualified-lead card is up: gates both its own inline render and hiding the
     // composer, so the two can never drift out of sync.
     const showQualifiedCard = !!qualifiedPopup && chatMode === 'bot' && !showBooking && !meetingBooked;
+
+    // Abort any in-flight stream when the widget goes away. ChatWidget unmounts
+    // ChatWindow on close, so this covers both closing and teardown: without it
+    // the request and the generation behind it kept running for a visitor who
+    // is no longer there.
+    useEffect(() => () => {
+        streamAbortRef.current?.abort();
+        streamAbortRef.current = null;
+    }, []);
 
     // ── Mobile viewport sizing (keyboard + iOS safe area) ──────────────────────
     // Exposed imperatively so ChatInput's onBlur can force a re-sync when iOS
@@ -1251,7 +1272,14 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             chunkBufferRef.current = '';
             if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
 
+            // One stream in flight at a time. Abort any predecessor before
+            // arming the controller for this one.
+            streamAbortRef.current?.abort();
+            const abortController = new AbortController();
+            streamAbortRef.current = abortController;
+
             await sendMessageStream(userMsg.text, sessionId, {
+                signal: abortController.signal,
                 ctaDimension,
                 locale: currentLocale,
                 language: getLanguageCode(currentLocale),
@@ -1393,6 +1421,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             : err?.status === 503
                             ? (t('system.error_maintenance')
                                 || 'We’re briefly offline for maintenance. Please try again in a few minutes.')
+                            // 429 is the chat limiter, not a fault. Telling a
+                            // fast typist the bot is broken is simply wrong.
+                            : err?.status === 429
+                            ? (t('system.error_rate_limited')
+                                || 'Sending too quickly. Please wait a moment.')
                             : (t('system.error_generic')
                                 || 'I’m sorry, I couldn’t generate a response. Please try again.');
                     if (placeholderId !== null) {
@@ -1455,8 +1488,16 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 }
                 return prev;
             });
-        } catch {
+        } catch (err) {
             setIsTyping(false);
+            // We aborted this stream on purpose (widget closed / unmounted).
+            // Nothing to tell the visitor, who is no longer looking.
+            if (isAbortError(err)) return;
+            // ``onError`` above already rendered a message for this failure.
+            // Appending the generic one on top of it showed two contradictory
+            // bubbles for a single error — "we're temporarily over capacity"
+            // followed immediately by "I couldn't generate a response".
+            if (err?.handled) return;
             setMessages(prev => [...prev, {
                 id: Date.now() + 2,
                 text: t('system.error_generic')
@@ -2057,7 +2098,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     name: liveChatState?.capturedName || '',
                     email: liveChatState?.capturedEmail || '',
                 });
-                if (cancelled) return;
+                if (cancelled) return false;
                 const action = res?.suggested_action;
                 if (action === 'route' || action === 'wait') {
                     const opName = res?.online_operator_name
@@ -2074,17 +2115,29 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         queueTimeoutSeconds: res?.queue_timeout_seconds,
                         onlineOperatorCount: res?.online_operator_count,
                     }));
+                    // Answered. Stop: `setLiveChatState` above preserves
+                    // `fallbackReason` and `chatMode` stays 'unavailable', so
+                    // this effect's deps never change and NOTHING else here
+                    // clears the timer. Left running, one open tab re-fired the
+                    // whole handoff fan-out every 15s indefinitely.
+                    return true;
                 }
+                return false;
             } catch {
                 // Silent. Next tick will retry. The visitor is still happily
                 // typing their offline message either way.
+                return false;
             }
         };
 
-        const interval = setInterval(poll, 15000);
+        const stop = startBoundedPoll({
+            tick: poll,
+            intervalMs: OFFLINE_POLL_INTERVAL_MS,
+            maxTicks: OFFLINE_POLL_MAX_TICKS,
+        });
         return () => {
             cancelled = true;
-            clearInterval(interval);
+            stop();
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [chatMode, liveChatState?.fallbackReason, offlineSubmitted, sessionId]);

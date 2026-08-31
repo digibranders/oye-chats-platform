@@ -6,7 +6,7 @@ import logging
 from datetime import UTC, datetime
 
 from fastapi import WebSocket
-from sqlalchemy import select
+from sqlalchemy import func, select
 from starlette.websockets import WebSocketDisconnect
 
 from app.db.models import Bot, ChatSession, Operator
@@ -120,6 +120,14 @@ class ConnectionManager:
     # Default timeouts. Used when no bot-specific value is available.
     DEFAULT_VISITOR_DISCONNECT_TIMEOUT = 120  # seconds
     DEFAULT_OPERATOR_DISCONNECT_TIMEOUT = 60  # seconds
+
+    # How long a conversation handed back to the queue (operator dropped or
+    # went offline mid-chat) may wait before the visitor is told nobody is
+    # available. Matches ``request_handoff``'s own default, so a re-queued
+    # visitor is on the same clock as a fresh one. The per-bot
+    # ``operator_timeout_seconds`` is not reachable from the re-queue paths
+    # without a second query per orphaned session.
+    REQUEUE_TIMEOUT_SECONDS = 120
 
     # Terminal close code for an operator socket the server is revoking. The
     # console maps this to auth-failed and deliberately does NOT reconnect,
@@ -411,7 +419,7 @@ class ConnectionManager:
                 self._mark_session_closed(session_id)
                 # Clean up in-memory state and notify operator
                 operator_id = self.assignments.pop(session_id, None)
-                self._session_client_ids.pop(session_id, None)
+                owner_client_id = self._session_client_ids.pop(session_id, None)
                 self._session_departments.pop(session_id, None)
                 self._session_metadata.pop(session_id, None)
                 if operator_id:
@@ -419,7 +427,7 @@ class ConnectionManager:
                         operator_id,
                         {"type": "chat_closed", "session_id": session_id},
                     )
-                await self.broadcast_operators_update()
+                await self.broadcast_operators_update(owner_client_id)
         except asyncio.CancelledError:
             pass
         finally:
@@ -521,7 +529,7 @@ class ConnectionManager:
             logger.info(f"Flushed {len(queued)} queued messages to operator {operator_id}")
 
         # Broadcast updated roster to all operators
-        await self.broadcast_operators_update()
+        await self.broadcast_operators_update(client_id)
 
         # Visitor-facing "operator_joined" broadcast. Only when this operator
         # was the FIRST to come online for the workspace (i.e. the workspace
@@ -715,16 +723,33 @@ class ConnectionManager:
 
                 if orphaned_sessions:
                     logger.info(f"Re-queued {len(orphaned_sessions)} sessions from offline operator {operator_id}")
-                    # Notify all connected operators about updated queue
-                    for oid in list(self.operator_connections.keys()):
-                        await self._notify_operator_queue(oid)
+                    await self._re_advertise_requeued(orphaned_sessions)
 
                 # Broadcast updated roster to all remaining operators
-                await self.broadcast_operators_update()
+                await self.broadcast_operators_update(client_id_for_presence)
         except asyncio.CancelledError:
             pass
         finally:
             self._operator_disconnect_tasks.pop(operator_id, None)
+
+    async def _re_advertise_requeued(self, session_ids: list[str]) -> None:
+        """Put re-queued conversations back in front of the team, with a clock.
+
+        Both re-queue paths (grace-period expiry and an explicit go-offline)
+        flipped ``status`` to ``waiting`` and stopped there: no timeout task, so
+        the row sat ``waiting`` indefinitely and counted towards ``QUEUE_FULL``
+        for up to an hour, and a local-only fan-out, so no operator was told a
+        conversation had come back. Both are fixed here, in one place, because
+        the two callers must not drift apart again.
+        """
+        for session_id in session_ids:
+            self._start_timeout(session_id, self.REQUEUE_TIMEOUT_SECONDS)
+
+        for owner_client_id in {self._session_client_ids.get(sid) for sid in session_ids}:
+            # Department is deliberately not filtered: the sessions in one batch
+            # can span departments, and ``_visible_queue_for_operator`` applies
+            # the department rule per row for each recipient anyway.
+            await self._fan_out_queue_update(owner_client_id)
 
     async def mark_operator_offline_now(
         self,
@@ -808,8 +833,7 @@ class ConnectionManager:
 
         if orphaned_sessions:
             logger.info(f"Re-queued {len(orphaned_sessions)} session(s) after operator {operator_id} went offline")
-            for oid in list(self.operator_connections.keys()):
-                await self._notify_operator_queue(oid)
+            await self._re_advertise_requeued(orphaned_sessions)
 
         # Drop in-memory roster state for this operator so the broadcast shows them offline.
         self._operator_departments.pop(operator_id, None)
@@ -818,7 +842,7 @@ class ConnectionManager:
         self._operator_client_ids.pop(operator_id, None)
         self._operator_message_queue.pop(operator_id, None)
 
-        await self.broadcast_operators_update()
+        await self.broadcast_operators_update(client_id_for_presence)
         return len(orphaned_sessions)
 
     async def handle_operator_deactivated(self, operator_id: int) -> int:
@@ -868,6 +892,7 @@ class ConnectionManager:
         bot_id: int | None = None,
         bot_name: str | None = None,
         client_id: int | None = None,
+        notify_operators: bool = True,
     ):
         """Add visitor to the waiting queue and notify operators.
 
@@ -875,6 +900,12 @@ class ConnectionManager:
         and active-chat payloads so the UI can label each conversation
         with which bot it belongs to. Without these the operator has no
         way to tell whether an incoming chat is from bot1 or bot2.
+
+        ``notify_operators=False`` keeps the queue bookkeeping (membership,
+        metadata, the visitor's position, the timeout) and skips only the
+        operator fan-out. The handoff endpoint passes False for a re-poll it has
+        already announced, so the team is not re-alerted every 15 seconds while
+        the queue state itself stays correct.
         """
         if session_id not in self.waiting_queue:
             # Reject if queue is full
@@ -905,12 +936,77 @@ class ConnectionManager:
         )
 
         # Notify relevant operators (tenant-scoped, then department-aware)
-        for operator_id in list(self.operator_connections.keys()):
-            if self._should_notify_operator(operator_id, department_id, session_client_id=client_id):
-                await self._notify_operator_queue(operator_id)
+        if notify_operators:
+            await self._fan_out_queue_update(client_id, department_id)
 
-        # Start timeout
-        self._start_timeout(session_id, timeout_seconds)
+        # Start the timeout, but never RE-start a running one. The widget
+        # re-requests a handoff every 15s while it waits, and restarting here
+        # pushed the visitor's deadline out by a full window each time, so the
+        # fallback to the offline form could never actually fire.
+        running = self._timeout_tasks.get(session_id)
+        if running is None or running.done():
+            self._start_timeout(session_id, timeout_seconds)
+
+    def _queue_notify_targets(self, client_id: int | None) -> set[int]:
+        """Every operator to address about a queue change, wherever they are.
+
+        The union of this process's sockets and Redis presence for the
+        workspace. Local sockets alone are not enough: nginx routes ``/ws/`` to
+        ``oyechats-ws`` while ``POST /operators/handoff`` lands on
+        ``oyechats-api``, so the process raising a handoff holds ZERO operator
+        sockets and a fan-out over ``operator_connections`` there reaches
+        nobody. Presence is the only cross-process view of who is online; the
+        backplane then delivers to whichever process holds the socket.
+
+        Presence is already partitioned by workspace, so the ids it contributes
+        are tenant-correct by construction. A presence outage degrades to
+        local-only delivery rather than failing the caller.
+        """
+        targets: set[int] = set(self.operator_connections.keys())
+        if client_id is None:
+            return targets
+        try:
+            targets |= set(presence.get_online_operator_ids(client_id))
+        except Exception:
+            logger.warning("queue notify: presence lookup failed, using local sockets", exc_info=True)
+        return targets
+
+    async def _fan_out_queue_update(
+        self,
+        client_id: int | None,
+        department_id: int | None = None,
+        *,
+        exclude: int | None = None,
+    ) -> None:
+        """Push a fresh queue snapshot to every operator entitled to see it.
+
+        Each recipient's snapshot is recomputed from the database by
+        ``_visible_queue_for_operator``, which applies the tenant + department
+        rules per row, so this is safe to send to an operator resolved from
+        presence rather than from a local socket.
+        """
+        from app.services.ws_backplane import deliver_to_operator
+
+        for operator_id in self._queue_notify_targets(client_id):
+            if operator_id == exclude:
+                continue
+            # A LOCAL socket may belong to any tenant, so a KNOWN workspace
+            # still goes through the F03 filter. Presence-derived ids are
+            # workspace-scoped already, and an operator whose workspace this
+            # process never cached is left to ``_visible_queue_for_operator``,
+            # which resolves the scope from the database and fails closed there.
+            if (
+                operator_id in self.operator_connections
+                and self._operator_client_ids.get(operator_id) is not None
+                and not self._should_notify_operator(operator_id, department_id, session_client_id=client_id)
+            ):
+                continue
+            visible = await asyncio.to_thread(self._visible_queue_for_operator, operator_id)
+            await deliver_to_operator(
+                self,
+                operator_id,
+                {"type": "queue_update", "waiting": visible, "count": len(visible)},
+            )
 
     def _should_notify_operator(
         self, operator_id: int, department_id: int | None, session_client_id: int | None = None
@@ -932,7 +1028,12 @@ class ConnectionManager:
         return operator_dept == department_id
 
     async def accept_chat(
-        self, session_id: str, operator_id: int, operator_name: str, operator_avatar: str | None = None
+        self,
+        session_id: str,
+        operator_id: int,
+        operator_name: str,
+        operator_avatar: str | None = None,
+        client_id: int | None = None,
     ) -> bool:
         """Operator accepts a waiting chat. Returns False if already accepted by a *different* operator.
 
@@ -945,25 +1046,57 @@ class ConnectionManager:
         Callers that don't have it may omit it; the manager falls back to the
         avatar cached at ``connect_operator`` time, and the widget falls back to
         initials when neither is present.
+
+        ``client_id`` is the owning workspace. Pass it: the fan-out below has to
+        find operators through Redis presence, and on the process that serves
+        ``POST /operators/accept`` neither ``_session_client_ids`` nor
+        ``_operator_client_ids`` holds anything, so without it the queue and
+        roster updates reach nobody.
         """
         if session_id not in self._accept_locks:
             self._accept_locks[session_id] = asyncio.Lock()
 
         async with self._accept_locks[session_id]:
-            return await self._accept_chat_inner(session_id, operator_id, operator_name, operator_avatar)
+            return await self._accept_chat_inner(session_id, operator_id, operator_name, operator_avatar, client_id)
 
     async def _accept_chat_inner(
-        self, session_id: str, operator_id: int, operator_name: str, operator_avatar: str | None = None
+        self,
+        session_id: str,
+        operator_id: int,
+        operator_name: str,
+        operator_avatar: str | None = None,
+        client_id: int | None = None,
     ) -> bool:
         existing_assignee = self.assignments.get(session_id)
         if existing_assignee is not None:
             if existing_assignee == operator_id:
                 # Already assigned to this operator. Idempotent success
                 return True
-            logger.warning(
-                f"Chat {session_id} already assigned to operator {existing_assignee}, ignoring accept from {operator_id}"
+            # Memory and the database can legitimately disagree: this map is
+            # per-process, and the accept/transfer that produced this call
+            # committed ``assigned_operator_id`` in another worker. Re-read
+            # before refusing, otherwise the visitor never receives the
+            # "connected" frame below and sits on a spinner until the 8s
+            # status poll rescues them.
+            # ``_assigned_operator`` answers from this map first, so the stale
+            # entry has to come out before it will read the database at all.
+            self.assignments.pop(session_id, None)
+            db_assignee = self._assigned_operator(session_id, consult_db=True)
+            if db_assignee is None:
+                # No answer (session not live, or the lookup failed). Keep the
+                # entry we had rather than leaving the session unassigned, which
+                # would let the next accept from anyone win.
+                self.assignments[session_id] = existing_assignee
+            if db_assignee != operator_id:
+                logger.warning(
+                    f"Chat {session_id} already assigned to operator {existing_assignee}, "
+                    f"ignoring accept from {operator_id}"
+                )
+                return False
+            logger.info(
+                f"Chat {session_id} was cached as operator {existing_assignee}; "
+                f"the database says {operator_id}. Continuing with database truth"
             )
-            return False
 
         if session_id in self.waiting_queue:
             self.waiting_queue.remove(session_id)
@@ -998,16 +1131,26 @@ class ConnectionManager:
         )
 
         # Notify all other operators: updated queue + roster
-        for other_operator_id in list(self.operator_connections.keys()):
-            if other_operator_id != operator_id:
-                await self._notify_operator_queue(other_operator_id)
+        session_client_id = (
+            client_id or self._session_client_ids.get(session_id) or self._operator_client_ids.get(operator_id)
+        )
+        await self._fan_out_queue_update(
+            session_client_id,
+            self._session_departments.get(session_id),
+            exclude=operator_id,
+        )
 
-        await self.broadcast_operators_update()
+        await self.broadcast_operators_update(session_client_id)
         logger.info(f"Operator {operator_id} ({operator_name}) accepted chat {session_id}")
         return True
 
-    async def close_chat(self, session_id: str, bot_name: str = "AI Assistant"):
-        """Operator closes a live chat, returns to bot mode."""
+    async def close_chat(self, session_id: str, bot_name: str = "AI Assistant", client_id: int | None = None):
+        """Operator closes a live chat, returns to bot mode.
+
+        ``client_id`` names the owning workspace so the roster broadcast can
+        reach operators whose socket lives in another process. See
+        ``accept_chat`` for why the cached maps cannot supply it there.
+        """
         operator_id = self.assignments.pop(session_id, None)
         self._accept_locks.pop(session_id, None)
         self._cancel_timeout(session_id)
@@ -1033,13 +1176,22 @@ class ConnectionManager:
                 },
             )
 
-        await self.broadcast_operators_update()
+        await self.broadcast_operators_update(client_id or self._session_client_ids.get(session_id))
         logger.info(f"Chat {session_id} closed")
 
     async def transfer_chat(
-        self, session_id: str, old_operator_id: int | None, new_operator_id: int, new_operator_name: str
+        self,
+        session_id: str,
+        old_operator_id: int | None,
+        new_operator_id: int,
+        new_operator_name: str,
+        client_id: int | None = None,
     ):
-        """Transfer a live chat from one operator to another."""
+        """Transfer a live chat from one operator to another.
+
+        ``client_id`` names the owning workspace, for the same cross-process
+        reason as ``accept_chat``.
+        """
         self.assignments[session_id] = new_operator_id
         self._cancel_timeout(session_id)
 
@@ -1099,10 +1251,12 @@ class ConnectionManager:
         )
 
         # Update all operators: queue + roster
-        for operator_id in list(self.operator_connections.keys()):
-            await self._notify_operator_queue(operator_id)
+        workspace_id = (
+            client_id or self._session_client_ids.get(session_id) or self._operator_client_ids.get(new_operator_id)
+        )
+        await self._fan_out_queue_update(workspace_id)
 
-        await self.broadcast_operators_update()
+        await self.broadcast_operators_update(workspace_id)
         logger.info(
             f"Chat {session_id} transferred from operator {old_operator_id} to {new_operator_id} ({new_operator_name})"
         )
@@ -1136,11 +1290,63 @@ class ConnectionManager:
 
     # ── Roster broadcast ──
 
-    async def broadcast_operators_update(self):
+    def _workspace_roster(self, client_id: int) -> list[dict]:
+        """One workspace's roster from cross-process truth (presence + database).
+
+        Used for a recipient whose socket is held by another process, where the
+        local ``operator_connections`` / ``assignments`` maps say nothing. An
+        operator counts as on the roster when presence has them online, or when
+        they still hold live conversations (the grace-period case the local
+        builder covers with ``_operator_disconnect_tasks``).
+
+        Runs sync SQLAlchemy, so callers must invoke it off the event loop.
+        """
+        try:
+            online = set(presence.get_online_operator_ids(client_id))
+        except Exception:
+            logger.warning("roster: presence lookup failed for client=%s", client_id, exc_info=True)
+            online = set()
+
+        with get_session() as db:
+            names = dict(db.execute(select(Operator.id, Operator.name).where(Operator.client_id == client_id)).all())
+            counts = dict(
+                db.execute(
+                    select(ChatSession.assigned_operator_id, func.count(ChatSession.id))
+                    .where(
+                        ChatSession.status == "live",
+                        ChatSession.assigned_operator_id.in_(names),
+                    )
+                    .group_by(ChatSession.assigned_operator_id)
+                ).all()
+            )
+
+        roster: list[dict] = []
+        for operator_id, name in names.items():
+            active = int(counts.get(operator_id, 0))
+            if operator_id not in online and active == 0:
+                continue
+            roster.append(
+                {
+                    "operator_id": operator_id,
+                    "name": name or "",
+                    "active_chats": active,
+                    "is_online": operator_id in online,
+                }
+            )
+        return roster
+
+    async def broadcast_operators_update(self, client_id: int | None = None):
         """Push current operator roster to all connected operators.
 
         Includes operators that are within their grace period (WS dropped but not
         yet timed out) so their active_chats count stays visible to the team.
+
+        ``client_id`` names the workspace whose roster changed. Pass it whenever
+        it is known: without it this can only reach sockets held by THIS
+        process, which in production is none of them for any caller reached over
+        HTTP. With it, operators found through Redis presence are sent a roster
+        rebuilt from presence + the database, since the local maps that back the
+        payload below are empty in that process.
         """
         # Build the roster tagged with each operator's owning client_id, then
         # fan out to each operator ONLY the entries for their own workspace,
@@ -1187,6 +1393,24 @@ class ConnectionManager:
             await self._send_to_operator(
                 operator_id,
                 {"type": "operators_update", "operators": operators_payload},
+            )
+
+        if client_id is None:
+            return
+        remote = self._queue_notify_targets(client_id) - set(self.operator_connections)
+        if not remote:
+            return
+        # Rebuilt from presence + the database: the local roster above is empty
+        # in the process that serves the REST routes, and sending that would
+        # blank the console's team list instead of updating it.
+        from app.services.ws_backplane import deliver_to_operator
+
+        remote_roster = await asyncio.to_thread(self._workspace_roster, client_id)
+        for operator_id in remote:
+            await deliver_to_operator(
+                self,
+                operator_id,
+                {"type": "operators_update", "operators": remote_roster},
             )
 
     # ── Bot-mode presence (real-time "currently chatting" signal) ────────────
@@ -1313,9 +1537,14 @@ class ConnectionManager:
         outcome: str,
         visitor_name: str | None = None,
     ):
-        """Push the visitor's decision back to the initiating operator."""
-        if operator_id not in self.operator_connections:
-            return
+        """Push the visitor's decision back to the initiating operator.
+
+        No local-socket guard: the operator who raised the request is on the
+        WS process and this runs on the API process, so the guard meant a
+        declined or expired request never resolved and the console was left
+        with a pending state nothing ever cleared. ``_send_to_operator``
+        already prefers a local socket and publishes otherwise.
+        """
         await self._send_to_operator(
             operator_id,
             {
@@ -1338,12 +1567,16 @@ class ConnectionManager:
             "type": "qualified_bot_changed",
             "session_id": session_id,
         }
-        for operator_id, owner_client_id in list(self._operator_client_ids.items()):
-            if owner_client_id != client_id:
+        from app.services.ws_backplane import deliver_to_operator
+
+        for operator_id in self._queue_notify_targets(client_id):
+            # Local sockets can belong to any tenant, so they keep the F03
+            # filter; presence-derived ids are workspace-scoped already.
+            if operator_id in self.operator_connections and not self._should_notify_operator(
+                operator_id, None, session_client_id=client_id
+            ):
                 continue
-            if operator_id not in self.operator_connections:
-                continue
-            await self._send_to_operator(operator_id, msg)
+            await deliver_to_operator(self, operator_id, msg)
 
     # ── Message routing ──
 
@@ -1667,10 +1900,22 @@ class ConnectionManager:
             await asyncio.sleep(timeout_seconds)
             if session_id in self.waiting_queue:
                 self.waiting_queue.remove(session_id)
-                self._mark_session_waiting_exit(session_id)
+                # The database CAS is the arbiter, not this process's queue
+                # list. A timer started on one worker cannot be cancelled by an
+                # accept served on another, and ``leave_queue`` used to leave
+                # the id behind entirely, so the in-memory check alone let a
+                # stale task close a conversation that had been live for
+                # nearly the whole window.
+                expired = self._mark_session_waiting_exit(session_id)
                 self._session_client_ids.pop(session_id, None)
                 self._session_departments.pop(session_id, None)
                 self._session_metadata.pop(session_id, None)
+                if not expired:
+                    logger.info(
+                        f"Timeout for {session_id} lost the CAS (session left 'waiting' elsewhere). "
+                        f"Not notifying the visitor"
+                    )
+                    return
                 await self._send_to_visitor(
                     session_id,
                     {
@@ -1684,8 +1929,15 @@ class ConnectionManager:
 
     # ── Internal helpers ──
 
-    def _mark_session_waiting_exit(self, session_id: str):
-        """Persist queue exit for waiting sessions to avoid stale DB-backed queues."""
+    def _mark_session_waiting_exit(self, session_id: str) -> bool:
+        """Persist queue exit for waiting sessions to avoid stale DB-backed queues.
+
+        Returns True only when the CAS actually won, i.e. this call is what took
+        the session out of ``waiting``. Callers must key their visitor-facing
+        side effects off that: a lost CAS means somebody else already moved the
+        session (an accept, a cancel, an earlier timeout) and telling the
+        visitor "unavailable" would tear down a conversation that is fine.
+        """
         try:
             transition_session(
                 session_id,
@@ -1693,10 +1945,12 @@ class ConnectionManager:
                 expected_current="waiting",
                 audit_action="timeout",
             )
+            return True
         except (InvalidTransitionError, ValueError):
-            pass  # Session already transitioned. Safe to ignore
+            return False  # Session already transitioned. Safe to ignore
         except Exception as e:
             logger.warning(f"Failed to persist waiting-exit state for {session_id}: {e}")
+            return False
 
     async def _restore_visitor_state(self, session_id: str) -> None:
         """Push current state to a freshly connected visitor WebSocket.
@@ -1825,7 +2079,12 @@ class ConnectionManager:
                 await ws.send_json(data)
             except Exception as e:
                 logger.warning(f"Failed to send to operator {operator_id}: {e}")
-                self.disconnect_operator(operator_id)
+                # Grace-arming variant, not the bare drop: ``route_visitor_message``
+                # only queues an undeliverable message when a grace-period task
+                # exists, so dropping the socket without starting one made every
+                # subsequent visitor message vanish from the console instead of
+                # being flushed on reconnect.
+                await self.disconnect_operator_and_broadcast(operator_id)
 
     def _visible_queue_for_operator(self, operator_id: int) -> list[dict]:
         """Build this operator's visible queue from the DATABASE.

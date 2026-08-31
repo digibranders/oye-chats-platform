@@ -5,6 +5,25 @@
 **Method:** 100% code-based. Documentation, docstrings, and prior reports were treated as *claims* and verified against the actual implementation. No file was modified.
 **Scope:** `oye-chats-platform/api` (Razorpay integration, invoicing/GST, credit ledger, subscriptions, plans/pricing) + billing UIs in `oye-chats-platform/app`, `oyechats-admin`, and `oyechats-website`.
 
+> ## ✅ Findings A–H were closed. Two premises have since moved.
+>
+> **Re-checked 2026-08-31.** The eight confirmed findings were remediated in PR #260 (plan:
+> [`2026-07-11-billing-remediation-plan.md`](./2026-07-11-billing-remediation-plan.md);
+> changelog: [`2026-07-11-pre-merge-runbook.md`](./2026-07-11-pre-merge-runbook.md) §1). The
+> **§7 documentation-drift table is also resolved** — `CLAUDE.md` now reads "Razorpay (INR)
+> — single provider" and no longer lists `api/app/services/billing_service.py`.
+>
+> Left unedited, because the review's value is its reasoning and its severity calls, not its
+> status. Read these two with the correction in mind:
+>
+> * **§1's "Razorpay is a single point of failure for *all* revenue" still stands**, and is a
+>   deliberate position, not an oversight — see `billing-system-overview.html` §14 for why the
+>   Stripe rail was built and then removed.
+> * **Pricing became GST-EXCLUSIVE on 26 Aug 2026.** Every price is now a base price and a
+>   domestic customer is debited base + GST (`core/tax.py::gross_charge_minor`). The invoicing
+>   engine described here was NOT changed, so the carve-out this review assesses is still the
+>   shipped one.
+
 ---
 
 ## 1. Executive summary

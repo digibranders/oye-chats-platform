@@ -435,9 +435,24 @@ INTL_PAYMENTS_ENABLED = os.getenv("INTL_PAYMENTS_ENABLED", "false").lower() in (
 # channel and the process owning the socket writes the frame
 # (app/services/ws_backplane.py).
 #
-# OFF by default: it is a prerequisite for raising WEB_CONCURRENCY, not a change
-# to today's single-worker behaviour. Enable it BEFORE adding workers, never after.
-WS_BACKPLANE_ENABLED = os.getenv("WS_BACKPLANE_ENABLED", "false").lower() in ("1", "true", "yes")
+# ON by default, because the precondition this flag was waiting for has been
+# met. The rule below is the original one and it still holds: enable the
+# backplane BEFORE adding workers, never after. Workers were added —
+# oyechats-api.service pins WEB_CONCURRENCY=2, and nginx routes /ws/ to a
+# separate single-worker process (oyechats-ws.service, which pins this flag
+# true). The API process is the PUBLISHER: with it false there, every
+# cross-process frame no-ops silently and fail-open, so a handoff raised on the
+# API process never reaches an operator holding a socket on the WS process —
+# "Waiting (0)" beside a sidebar badge of 1, with no error anywhere.
+#
+# An empty value counts as unset: the deploy writes this key unconditionally,
+# so an unset repo variable would otherwise land as WS_BACKPLANE_ENABLED= and
+# resolve to "" rather than the default (the same trap that silently disabled
+# RELEVANCE_GATE_ENABLED).
+#
+# Still inert without Redis: ws_backplane._enabled() requires REDIS_URL too, so
+# a box with no Redis behaves exactly as before.
+WS_BACKPLANE_ENABLED = (os.getenv("WS_BACKPLANE_ENABLED") or "true").lower() in ("1", "true", "yes")
 
 # Display-only USD/INR rate used when rendering non-Indian quotes on the
 # pricing page. The gateway never sees this. INR remains the only currency
@@ -637,7 +652,7 @@ ARCHIVE_DIR = "archive"
 # RERANK_ENABLED=false  (set true to activate FlashRank cross-encoder reranking
 # RERANK_TOP_N=5) final top-n docs passed to LLM after reranking
 # CAG_LITE_THRESHOLD=20. Bots with ≤ this many chunks skip retrieval; all chunks injected directly
-# RELEVANCE_GATE_ENABLED=false. Set true to activate CRAG-style relevance gate (LLM judge, Gemini Flash)
+# RELEVANCE_GATE_ENABLED=true. CRAG-style relevance gate (LLM judge, Gemini Flash); set false to disable
 # GATE_MODEL=gemini/gemini-2.5-flash. Model used for relevance scoring (cheapest capable)
 # RELEVANCE_THRESHOLD=0.5. Chunks scoring below this cause the gate to fire and block generation
 

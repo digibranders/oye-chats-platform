@@ -1,27 +1,42 @@
 # Widget Embedding Guide
 
-The OyeChats widget is a self-contained JavaScript bundle that renders an AI chatbot on any website. It works on any platform — Next.js, React, WordPress, Webflow, Shopify, plain HTML — anything with a `<body>` tag.
+The OyeChats widget renders an AI chatbot on any website. It works on any platform — Next.js, React, WordPress, Webflow, Shopify, plain HTML — anything with a `<body>` tag.
 
 ## How It Works
 
-The widget (`oyechats-widget.js`) is an IIFE (Immediately Invoked Function Expression) bundle (~416KB) that:
+The embed is a **two-stage load**: a tiny loader IIFE the customer script-tags, plus a code-split ESM app it pulls in at runtime. The customer-facing file ships on every page view, so it is kept deliberately small; the React app only downloads when it is actually needed.
 
-1. Finds its own `<script>` tag and reads the `data-bot-key` attribute
-2. Sets `window.OYECHATS_BOT_KEY` globally
-3. Loads sibling CSS (`oyechats-widget.css`) into a Shadow DOM root for complete style isolation from the host page
-4. Creates a `<div id="oyechats-widget-root">` in the DOM
-5. Renders a React app with its own bundled React instance (isolated from the host page)
-6. Communicates with the backend API via `X-Bot-Key` header
+### Stage 1 — the loader (`widget/src/loader.js` → `dist/oyechats-widget.js`)
+
+1. Finds its own `<script>` tag and reads `data-bot-key` / `data-api-key` / `data-api-url`
+2. Sets `window.OYECHATS_BOT_KEY` (or `OYECHATS_API_KEY`) globally
+3. Exposes `window.OyeChats` as a **stub-and-queue** API, so host-page code can call `OyeChats.on('ready', cb)`, `.open()`, `.identify()` before the app exists; queued calls replay once the app registers
+4. Honors `window.OYECHATS_ASYNC_INIT` for consent-gated (GDPR) installs — see [`../widget/docs/integrations/cookiebot.md`](../widget/docs/integrations/cookiebot.md)
+5. Fetches `<base>/app/manifest.json`, resolves the hashed entry chunk and stylesheet, and **validates both filenames against a strict pattern**, so a tampered manifest cannot point the widget at anything outside the CDN base
+6. Dynamic-imports the entry chunk and calls its `init()`
+
+> If the boot fails (CORS, CDN blip, a manifest 404 mid-deploy) the loader clears its cached promise, so a later `OyeChats.init()` can retry without a full page reload.
+
+### Stage 2 — the app (`widget/src/app-entry.jsx` → `dist/app/oyechats-*.js`)
+
+1. Creates a `<div id="oyechats-widget-root">` and attaches an **open shadow root**, isolating widget styles from the host page in both directions
+2. Injects the hashed stylesheet the loader resolved
+3. Renders React (its own bundled copy) inside the shadow root
+4. Communicates with the backend API via the `X-Bot-Key` header
 
 ## Production Embed
 
-Add this single line before the closing `</body>` tag:
+Add this before the closing `</body>` tag:
 
 ```html
 <script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>
+<a href="https://www.oyechats.com/?ref=bot-xxx&utm_source=widget&utm_medium=referral"
+   rel="nofollow" style="font-size:11px;color:inherit;opacity:0.7;text-decoration:none">Powered by OyeChats</a>
 ```
 
 Replace `bot-xxx` with the bot key from the admin dashboard. That's it — the widget handles everything else automatically.
+
+> **The `<a>` is not decoration, and it is not optional on branded plans.** The widget mounts into a shadow root from JS *after* the visitor clicks the launcher, so its in-widget "Powered by" badge is invisible to every crawler. This anchor is the only attribution that lands in the customer's served HTML. It is visible (hidden text would penalise the *customer's* domain), `nofollow` (a sitewide self-placed link is a named link scheme), and `color:inherit` so it can never render invisible on a dark host background. Workspaces with the `branding_removable` entitlement get a snippet without it — the dashboard emits both variants from `app/src/data/widgetEmbed.ts`.
 
 ## What the Visitor Sees
 
@@ -32,13 +47,15 @@ Replace `bot-xxx` with the bot key from the admin dashboard. That's it — the w
 
 ## Widget Architecture
 
-### Entry Point (`widget/src/main.jsx`)
+### Entry points
 
-The entry point handles bootstrapping:
-- Detects the script tag and extracts `data-bot-key` (or legacy `data-api-key`)
-- Initializes Sentry error tracking if configured
-- Creates the root DOM container
-- Renders the React application
+| File | Role |
+|---|---|
+| `widget/src/loader.js` | Production customer entry. Built by `vite.loader.config.js` into `dist/oyechats-widget.js` |
+| `widget/src/app-entry.jsx` | Production app entry. Built by `vite.app.config.js` into `dist/app/` with hashed names |
+| `widget/src/main.jsx` | **Dev server only.** Used by `npm run dev`; not part of the production build |
+
+Sentry is lazy — it is not in the eager payload and loads on first error (or when `window.OYECHATS_DEBUG` is set).
 
 ### API Client (`widget/src/services/api.js`)
 
@@ -60,39 +77,54 @@ Communicates with the backend. Key functions:
 
 ```
 widget/src/
-├── main.jsx              # Entry point, shadow root bootstrap, bot key detection
-├── App.jsx               # Root component
-├── services/
-│   └── api.js            # Backend API client
-└── components/           # 14 UI components
-    ├── ChatWindow.jsx    # Main chat interface
-    ├── Launcher.jsx      # Floating button
-    ├── MessageBubble.jsx # Individual messages
-    ├── LeadForm.jsx      # Contact capture form
-    └── ...               # Input, headers, feedback, etc.
+├── loader.js             # Production entry: stub-and-queue API + manifest resolution
+├── app-entry.jsx         # Production app entry: shadow root + React mount
+├── main.jsx              # Dev-server entry only
+├── widget-controller.js  # Singleton bridge between window.OyeChats and React
+├── services/api.js       # Backend API client (SSE parsing, journey tracking)
+├── lib/                  # chatModeMachine, boundedPoll, slashCommands, liveChatTranslation
+├── i18n/                 # localeCatalog (eager) + per-locale dictionaries (lazy)
+└── components/
+    ├── ChatWidget.jsx    # Launcher + panel shell
+    ├── ChatWindow.jsx    # Main chat interface (lazy)
+    ├── LiveChatMode.jsx  # Operator conversation (lazy)
+    ├── LeadCaptureForm.jsx · HandoffForm.jsx · QuotationFlow.jsx · MeetingBooking.jsx  (lazy)
+    └── MediaCard.jsx · MessageBubble.jsx · ...
 ```
 
 ## Build Process
 
-The widget is built with Vite into a JS+CSS artifact pair:
+`npm run build` runs **two** Vite builds in order — the app first, then the loader — and copies the host fixture:
 
 ```bash
 cd widget
-npm run build
+npm run build     # build:app → build:loader → copy-host-fixture
+npm run size      # enforce the per-chunk gzipped budgets
 ```
 
 **Output files:**
-- `dist/oyechats-widget.js` — IIFE bundle with React and widget logic
-- `dist/oyechats-widget.css` — Widget styles loaded into the shadow root at runtime
+- `dist/oyechats-widget.js` — the loader IIFE, the only file customers reference
+- `dist/app/manifest.json` — maps `src/app-entry.jsx` and `style.css` to their hashed filenames
+- `dist/app/oyechats-*.[hash].js` — the code-split ESM app chunks
+- `dist/app/oyechats-app.[hash].css` — the stylesheet injected into the shadow root
 
-### Vite Configuration (`widget/vite.config.js`)
+### Vite configuration
 
-Key build settings:
-- **Format:** IIFE (no module imports needed by the host page)
-- **Entry:** `src/main.jsx`
-- **Output names:** `oyechats-widget.js` + `oyechats-widget.css`
-- **CSS loading:** Runtime derives `.css` from the script URL and appends it to the shadow root
-- **Dev CORS:** Enabled for local development
+| Config | Builds | Format |
+|---|---|---|
+| `vite.loader.config.js` | `src/loader.js` → `dist/oyechats-widget.js` | IIFE, unhashed (a stable customer-facing URL) |
+| `vite.app.config.js` | `src/app-entry.jsx` → `dist/app/*` | ESM, hashed, code-split, `cssCodeSplit=false` |
+| `vite.config.js` | dev server only (`npm run dev`) | — |
+
+### Size budgets
+
+Budgets are enforced by `size-limit` and live in `widget/package.json` under the `size-limit` key, which is the authoritative list. Read them there rather than trusting a copy — the headline shapes are:
+
+- **Loader: 8 KB gzipped.** This is what every page view pays.
+- **Vendor chunk (React + axios + services): 67 KB gzipped.** Eagerly loaded.
+- Chat, markdown, live chat, each form and each non-English locale are separately budgeted and **lazy**.
+
+> The vendor chunk is currently running at roughly **99.9 % of its 67 KB ceiling**. Treat any new import that lands in the eager path as a budget decision, not an implementation detail — `npm run size` is the gate and it will fail before a build does.
 
 ## Development vs. Production
 
@@ -122,9 +154,12 @@ Then embed on your test page:
 
 ### Production Deployment
 
-The built bundle is deployed to `cdn.oyechats.com`:
-- `https://cdn.oyechats.com/oyechats-widget.js`
-- `https://cdn.oyechats.com/oyechats-widget.css`
+The whole of `dist/` is deployed to `cdn.oyechats.com` (Cloudflare R2) by `deploy-widget.yml`:
+- `https://cdn.oyechats.com/oyechats-widget.js` — the loader (stable URL, must not be hashed)
+- `https://cdn.oyechats.com/app/manifest.json` — the chunk manifest the loader reads
+- `https://cdn.oyechats.com/app/oyechats-*.[hash].js|css` — the app chunks
+
+Because chunk filenames are hashed and the loader resolves them through the manifest, the app directory must be published **before** (or atomically with) the manifest — a manifest pointing at chunks that are not up yet is exactly the mid-deploy 404 the loader's retry path exists to survive.
 
 ## Customization
 
@@ -146,18 +181,19 @@ All widget customization is done through the admin dashboard (Bot Settings → A
 
 The widget is designed to not interfere with the host page:
 
-- **Own React instance:** The bundle includes its own React 19 — it doesn't use or conflict with any React on the host page
-- **Scoped DOM:** All widget UI lives inside `<div id="oyechats-widget-root">`
-- **Scoped styles:** CSS is prefixed/scoped to avoid leaking into the host page
-- **No global pollution:** Only `window.OYECHATS_BOT_KEY` and `window.OYECHATS_API_KEY` are set globally
+- **Own React instance:** The app bundles its own React 19 — it doesn't use or conflict with any React on the host page
+- **Shadow DOM:** All widget UI lives inside an **open shadow root** on `<div id="oyechats-widget-root">`. That is what isolates styles in *both* directions — the host page cannot restyle the widget, and the widget cannot leak into the host page. It is stronger than prefixing.
+- **Globals:** `window.OYECHATS_BOT_KEY` / `window.OYECHATS_API_KEY`, plus `window.OyeChats` (the public API — see [`../widget/docs/public-api.md`](../widget/docs/public-api.md))
 - **Console prefix:** All logs are prefixed with `[OyeChats]`
 
 ## Naming Conventions
 
 | Item | Value |
 |------|-------|
-| Widget bundle | `oyechats-widget.js` + `oyechats-widget.css` |
-| DOM container | `oyechats-widget-root` |
+| Widget loader (customer script tag) | `oyechats-widget.js` |
+| Widget app chunks | `app/oyechats-*.[hash].js` · `app/oyechats-app.[hash].css` |
+| Chunk manifest | `app/manifest.json` |
+| DOM container | `oyechats-widget-root` (open shadow root) |
 | Window globals | `window.OYECHATS_BOT_KEY`, `window.OYECHATS_API_KEY` |
 | Console prefix | `[OyeChats]` |
 | Production CDN | `cdn.oyechats.com/oyechats-widget.js` |

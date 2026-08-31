@@ -379,10 +379,13 @@ must equal, in paise.
 | Operator seat | ₹449 | ₹529.82 | `52982` |
 | Branding add-on | ₹499 | ₹588.82 | `58882` |
 
-> **Confirm Professional annual before minting it.** `scripts/seed_plans.py` holds `2818800`
-> (₹28,188, ₹2,349/mo × 12) and the table above follows it. `api/tests/test_tax.py` lists `2878800`
-> (₹28,788) in its live-base-price list. One of the two is wrong. Settle it against the seed file,
-> which this runbook treats as the price source of truth, before a plan is minted at either figure.
+> **~~Confirm Professional annual before minting it.~~ Settled — mint ₹33,261.84.**
+> `scripts/seed_plans.py` holds `2818800` (₹28,188, ₹2,349/mo × 12) and the table above follows it.
+> `api/tests/test_tax.py` used to list `2878800` (₹28,788) in its live-base-price list, which was the
+> disagreement this note flagged. It was settled in the seed file's favour: `test_tax.py:272` now
+> carries `2818800` with the comment "seed_plans.py is the charge source of truth", and
+> `test_annual_discount_derived.py` uses the same figure throughout. There is no longer a second
+> candidate — the base is ₹28,188 and the amount to mint is the row above.
 
 ### Procedure
 

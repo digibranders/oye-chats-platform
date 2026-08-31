@@ -426,3 +426,105 @@ def test_the_paid_plan_card_stops_once_billing_has_actually_started(db):
     assert _build_trial_payload(db, client.id) is None, (
         "a long-paying account is still being shown a trial-conversion card"
     )
+
+
+def test_change_plan_defers_the_first_debit_for_a_mid_trial_buyer(db, monkeypatch):
+    """The route, not the helper.
+
+    ``resolve_trial_defer_at`` has four unit tests and they all passed while the
+    feature was broken, because the console routes a trialing customer's plan
+    pick to ``/change-plan`` rather than ``/checkout`` and that call site did not
+    exist. This drives the endpoint and asserts on what reaches Razorpay: a
+    future ``start_at`` and the conversion note that earns the grant at
+    authentication and the forfeit that balances it.
+    """
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.api import auth as auth_dep
+    from app.api import subscription_routes as sr
+
+    client = _client(db, email="changeplan-defer@e.com")
+    # A real mid-trial buyer has verified; the route gates on it.
+    client.is_verified = True
+    db.flush()
+    db.commit()
+    trial = _plan(db, "trial", credits=500, trial_days=14, price=0)
+    standard = _plan(db, "standard", credits=2500)
+    sub = _trialing(db, client, trial, days_left=11)
+
+    captured: dict = {}
+
+    def _fake_create_subscription(session, cl, plan, cycle, *, start_at=None, extra_notes=None, **kw):
+        captured["start_at"] = start_at
+        captured["notes"] = extra_notes
+        return {"subscription_id": "sub_deferred_test", "short_url": "https://rzp.test/x"}
+
+    monkeypatch.setattr(rzp, "create_subscription", _fake_create_subscription)
+
+    app = FastAPI()
+    app.include_router(sr.router)
+    app.dependency_overrides[auth_dep.get_current_client] = lambda: client
+    app.dependency_overrides[auth_dep.get_current_client_strict] = lambda: client
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _session_cm():
+        yield db
+
+    monkeypatch.setattr(sr, "get_session", _session_cm)
+
+    api = TestClient(app, raise_server_exceptions=False)
+    res = api.post("/subscriptions/change-plan", json={"plan_id": standard.id, "billing_cycle": "monthly"})
+
+    assert res.status_code in (200, 201, 202), res.text
+    # The billing clock never moves: the debit is the trial's own end, which is
+    # in the future and well past the 48h floor at 11 days out.
+    assert captured["start_at"] is not None, "mid-trial change-plan charged immediately"
+    assert captured["start_at"] > int(datetime.now(UTC).timestamp())
+    assert abs(captured["start_at"] - int(sub.trial_end.timestamp())) <= 1
+    # The note is what makes the grant-at-auth and the forfeit-on-cancel fire.
+    assert (captured["notes"] or {}).get(sr.TRIAL_CONVERSION_NOTE) == "1"
+
+
+def test_the_silent_conversion_tells_the_customer(db, monkeypatch):
+    """Cancelling an unbilled conversion moved the account to Free in silence.
+
+    The day-15 path emails (``worker/tasks.py`` sends ``send_trial_ended_email``
+    on every conversion it makes). This path makes the same conversion, for a
+    customer who went further than most by authorising a mandate, and said
+    nothing: their credits dropped and their knowledge paused with no message.
+    Same email, same reason, so the two conversions read identically.
+    """
+    sent: list[dict] = []
+    from app.services import email_service
+
+    monkeypatch.setattr(
+        email_service,
+        "send_trial_ended_email",
+        lambda to_email, **kw: sent.append({"to": to_email, **kw}),
+    )
+
+    client = _client(db, email="silent-convert@e.com")
+    standard = _plan(db, "standard", credits=2500)
+    free = _plan(db, "free", credits=200, price=0)
+    local = Subscription(
+        client_id=client.id,
+        plan_id=standard.id,
+        status="authenticated",
+        billing_cycle="monthly",
+        payment_provider="razorpay",
+        razorpay_subscription_id="sub_unbilled_cancel",
+    )
+    local.plan = standard
+    db.add(local)
+    db.flush()
+    db.commit()
+
+    rzp._forfeit_and_convert_to_free(db, local)
+    db.commit()
+
+    assert len(sent) == 1, "an unbilled conversion cancel converted the account in silence"
+    assert sent[0]["to"] == client.email
+    assert sent[0]["plan_name"] == free.name
