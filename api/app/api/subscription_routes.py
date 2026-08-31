@@ -269,9 +269,18 @@ def resolve_trial_defer_at(
     Two adjustments, both customer-favourable. A consumed promo slot must be
     honoured, so the LATER of the two protections wins rather than the trial
     silently cancelling a longer free period. And the result is floored at 48
-    hours out, because a date inside the eMandate pre-debit notice window is one
-    the gateway will not accept; a day-13 buyer therefore gets billing at
-    now+48h, up to a day of extra grace rather than a refusal.
+    hours out, which buys a day-13 buyer up to a day of extra grace.
+
+    That floor is a safety margin, not a gateway rule, and the distinction was
+    checked rather than assumed: probing Razorpay TEST on 2026-08-31, the
+    subscriptions API accepted ``start_at`` at +30 minutes, +6 hours, +48 hours
+    and +11 days alike, every one echoed back with zero drift. So the gateway
+    will not refuse a near-term date at CREATION time. What the floor protects
+    is the DEBIT: RBI's pre-debit notification applies to the charge, not to the
+    subscription record, so a same-day first debit is the one plausibly at risk
+    of failing later for want of notice. If that turns out to be unnecessary,
+    ``_TRIAL_DEFER_FLOOR`` is the single constant to change, and shrinking it
+    only ever moves a customer's first charge earlier.
 
     None when there is nothing to defer: no trial, or one that has already
     lapsed. Those buyers are charged normally.

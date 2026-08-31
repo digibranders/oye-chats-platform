@@ -303,6 +303,33 @@ too near, that constant is the one thing to change.
 
 ---
 
+## Razorpay sandbox proof (run 2026-08-31, TEST mode)
+
+Step 5's gateway questions, answered against the real API rather than reasoned
+from documentation. Every subscription created was cancelled afterwards.
+
+| Probe | Result |
+|---|---|
+| `start_at` at +11 days (the normal trial case) | accepted, echoed back with **0s drift** |
+| `start_at` at +48h, +6h, +30min | **all accepted** |
+| our own `create_subscription` with a conversion note | `status=created`, `paid_count=0`, note present, `short_url` minted |
+
+Two conclusions:
+
+1. **The deferral works end to end.** Our service mints a mandate whose first
+   debit is the trial's own end, charges nothing at purchase, and carries the
+   conversion note the grant and forfeit both key on.
+2. **The 48h floor is not a gateway rule.** The plan reasoned it as an eMandate
+   pre-debit notice window the gateway would refuse inside. It does not refuse:
+   +30 minutes was accepted. The floor stays as a safety margin on the DEBIT
+   (RBI's notice requirement applies to the charge, not the record), and
+   `resolve_trial_defer_at`'s docstring now says so instead of stating a gateway
+   constraint that does not exist.
+
+**Still requiring a human at the modal:** the `created` to `authenticated`
+transition after a customer actually authorises. Everything up to the modal is
+now observed; only the customer's own tap is not.
+
 ## Rollback
 
 **Before step 3**, rollback is the deploy: revert API and app, and the
