@@ -5,6 +5,15 @@
 **Depends on:** the existing issue + revoke endpoints (`superadmin_routes_v2.py:281`, `:323`) and
 the `impersonation_tokens` table (`models.py:1810`) — both already shipped.
 
+> **Status update, 2026-08-31 (documentation audit).** **This has since shipped.** The design
+> body below is left unedited as the record of what was decided, but §1's central factual
+> claim — *"nothing redeems the token… the string `impersonation` does not appear anywhere in
+> `oye-chats-platform/app`"* — is no longer true and should not be quoted as current state.
+> `POST /auth/impersonation/redeem` exists (`api/app/api/auth_routes.py:1310`), per-request
+> auth handles impersonation (`api/app/api/auth.py:156`), and the dashboard ships
+> `app/src/shell/ImpersonationBanner.tsx` and `ImpersonationNotice.tsx`. Read §1 as the
+> problem statement it was on 2026-08-05, not as an open gap.
+
 ---
 
 ## 1. Problem & Goal

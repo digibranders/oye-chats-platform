@@ -1,8 +1,18 @@
 # Emailing the install snippet to a developer
 
-**Status:** approved, not yet implemented
+**Status:** approved · **SHIPPED** — see the note below
 **Date:** 2026-08-27
 **Surface:** `/chatbots/:id/deploy` — the Snippet card
+
+> **Status update, 2026-08-31 (documentation audit).** The design body below is left
+> unedited — it is the record of what was decided and why. Only this line is added, because
+> the header said "not yet implemented" and that is no longer true: the server-side send
+> exists at `api/app/api/bot_routes.py:3117`, whose own docstring opens *"Replaces a
+> `mailto:` link, which handed the briefing to the operating system…"* — the exact problem
+> §"The problem" describes. Verify the three consequences it lists (silent no-op without a
+> mail client, a tick that means "you clicked", and the false `install_snippet_copied`
+> activation event) are each actually closed before treating the whole spec as discharged;
+> the audit confirmed the endpoint's existence, not every downstream behaviour.
 
 ## The problem
 
