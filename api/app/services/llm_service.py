@@ -707,11 +707,28 @@ async def generate_response_stream(
     max_tokens: int | None = None,
     temperature: float | None = None,
     metadata: dict | None = None,
+    status: dict | None = None,
 ):
     """Async generator: stream text chunks via LiteLLM.
 
     ``system_prompt``: see :func:`_generate_response` (AR-27). Sent as a
     separate ``role: system`` message on both the primary and fallback calls.
+
+    ``status``: optional caller-owned dict this generator writes the call
+    OUTCOME into, mirroring the ``(text, failed)`` tuple :func:`_generate_response`
+    returns. Every failure branch below yields a human-readable error *string*
+    so the visitor sees something, which makes the failure indistinguishable
+    from a real answer to a caller that only counts yielded chunks. Callers
+    that bill, cache or persist the result need a structural signal instead:
+
+    * ``status["error"]`` — True when any failure branch ran (so the caller
+      must not cache the text it just received).
+    * ``status["failed"]`` — True only when NO real answer tokens reached the
+      caller (so the caller may refund the turn). False on a mid-stream
+      failure that already delivered partial content.
+
+    Untouched on a clean stream, so a caller that pre-seeds neither key can
+    treat "absent" as success.
 
     Fallback chain:
     1. Primary model (``LLM_MODEL``. Default: OpenAI gpt-5.4-mini)
@@ -722,8 +739,16 @@ async def generate_response_stream(
     raises ``TimeoutError`` within ``_STREAM_CHUNK_TIMEOUT_S`` seconds instead of
     blocking the event loop forever.
     """
+
+    def _mark(failed: bool) -> None:
+        """Record a failure branch in the caller's ``status`` dict (see docstring)."""
+        if status is not None:
+            status["error"] = True
+            status["failed"] = failed
+
     if not PRIMARY_MODEL_KEY_SET:
         logger.error(f"Cannot stream response: API key for primary model '{_primary_model()}' is not set.")
+        _mark(True)
         yield "Configuration error: AI service is not configured. Please contact the administrator."
         return
 
@@ -743,6 +768,7 @@ async def generate_response_stream(
         return
     except TimeoutError as e:
         logger.error(str(e))
+        _mark(primary_chunks_yielded == 0)
         yield " [Response timed out. Please try again.]"
         return
     except Exception as primary_err:
@@ -753,6 +779,9 @@ async def generate_response_stream(
                 f"({type(primary_err).__name__}): {primary_err}. Suppressing fallback to avoid "
                 "concatenating two answers on the same SSE stream."
             )
+            # Partial content already reached the visitor, so this is an error
+            # (don't cache it) but not a total failure (don't refund it).
+            _mark(False)
             yield " [Response interrupted. Please try again.]"
             return
         logger.warning(
@@ -763,25 +792,31 @@ async def generate_response_stream(
     # Fallback to secondary model
     if not FALLBACK_MODEL_KEY_SET:
         logger.error(f"Fallback model unavailable: API key for '{_fallback_model()}' is not set.")
+        _mark(True)
         yield " [I encountered an error. Please try again.]"
         return
 
+    fallback_chunks_yielded = 0
     try:
         logger.info(f"LLM stream fallback | model={_fallback_model()}")
         increment_metric_counter("llm_fallback_triggered")
         async for chunk in _stream_from_model(
             _fallback_model(), prompt, max_tokens, metadata, temperature, system_prompt
         ):
+            fallback_chunks_yielded += 1
             yield chunk
     except TimeoutError as e:
         logger.error(f"Fallback stream timed out: {e}")
+        _mark(fallback_chunks_yielded == 0)
         yield " [Response timed out. Please try again.]"
     except _LLM_CONTEXT_OVERFLOW_ERROR_TYPE as fallback_err:
         # AR-20: both primary and fallback overflowed, same conversation
         # reproduces this deterministically, so don't tell the visitor to
         # "try again" (see LLM_CONTEXT_OVERFLOW_MESSAGE for why).
         _classify_and_log_llm_error(fallback_err, context="stream-fallback")
+        _mark(fallback_chunks_yielded == 0)
         yield f" [{LLM_CONTEXT_OVERFLOW_MESSAGE}]"
     except Exception as fallback_err:
         _classify_and_log_llm_error(fallback_err, context="stream-fallback")
+        _mark(fallback_chunks_yielded == 0)
         yield " [I encountered an error. Please try again.]"
