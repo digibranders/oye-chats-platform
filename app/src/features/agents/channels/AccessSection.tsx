@@ -84,11 +84,9 @@ function AccessSectionInner({
 
   const websiteApex = useMemo(() => normalizeDomain(website ?? ''), [website]);
   const trimmed = sessionShareDomain.trim();
-  const normalized = normalizeDomain(trimmed);
   // A wildcard is a legitimate allow-list entry and an illegitimate cookie
   // domain, so it gets its own message rather than the generic one.
   const sessionError = sessionShareDomainError(sessionShareDomain);
-  const scope = normalized ?? websiteApex;
 
   // The reassuring reading of the allow-list is a state, not a warning: as an
   // `Alert` it was a bordered, tinted box inside the card restating in two
@@ -172,7 +170,13 @@ function AccessSectionInner({
 
       <SettingRow
         label="Pin a parent domain"
-        badge={<Badge tone="neutral">{trimmed ? `Pinned · ${trimmed}` : `Automatic${scope ? ` · ${scope}` : ''}`}</Badge>}
+        /* The state, not the value. `Badge` is capped at `max-w-40` and
+           truncates inside that, so naming the domain here clipped even a short
+           one ("Automatic · oyechats.c…" needed 149px against 148px). The domain
+           is already on the row twice over: the placeholder below names the
+           detected apex, and a pinned one is the field's own value. A badge
+           repeating it bought an ellipsis and nothing else. */
+        badge={<Badge tone="neutral">{trimmed ? 'Pinned' : 'Automatic'}</Badge>}
         description="Conversations follow visitors across your subdomains. One parent domain, no wildcard."
         stacked
         error={sessionError ?? undefined}

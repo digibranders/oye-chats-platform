@@ -358,20 +358,41 @@ export function DeployPage() {
                   the snippet above it is the page's job and must not wait on a
                   second request to appear. */}
               {accessDraft ? (
-                <div id="access" className="scroll-mt-24">
-                  <SettingGroup
-                    title="Access"
-                    description="Where this chatbot is allowed to run, and how far a conversation follows a visitor."
-                  >
-                    <AccessSection
-                      website={website}
-                      domains={accessDraft.allowedDomains}
-                      domainCheckEnabled={accessDraft.domainCheckEnabled}
-                      sessionShareDomain={accessDraft.sessionShareDomain}
-                      onChange={setAccess}
-                    />
-                  </SettingGroup>
-                </div>
+                <SettingGroup
+                  id="access"
+                  /* `full`, not the default `form`, and deliberately against
+                     the prop's "genuinely a wide table" wording.
+
+                     This column is 968px and every other block in it — the
+                     snippet, the help tabs — fills it. At the form measure the
+                     section rendered 672px, 296px narrower than the cards above
+                     and below, so the page stepped in and back out mid-scroll.
+                     That is the same defect `BehaviourPage` records against its
+                     own former `Measure width="form"`: a block visibly narrower
+                     than its neighbours reads as a broken shell rather than as
+                     a choice. The form measure is right where the whole column
+                     IS the form; here this is one block among wider ones.
+
+                     It does not cost the pair rule. `SettingRow` caps each
+                     label→control pair at `--container-pair` (640) regardless,
+                     so no control drifts away from the label naming it — the
+                     controls simply sit at 640 inside a wider card, which is
+                     what that token exists to guarantee.
+
+                     `id` rides the section itself, which also brings the shared
+                     `scroll-mt-gutter` for the status rail's jump link. */
+                  width="full"
+                  title="Access"
+                  description="Where this chatbot is allowed to run, and how far a conversation follows a visitor."
+                >
+                  <AccessSection
+                    website={website}
+                    domains={accessDraft.allowedDomains}
+                    domainCheckEnabled={accessDraft.domainCheckEnabled}
+                    sessionShareDomain={accessDraft.sessionShareDomain}
+                    onChange={setAccess}
+                  />
+                </SettingGroup>
               ) : null}
 
               {/* Help, only when wanted: two tabs over one card, instead of two
