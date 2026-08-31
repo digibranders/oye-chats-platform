@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.models import Bot, Operator, Plan, PricingConfig, Subscription, UsageRecord
+from app.services.seat_math import seat_floor_for
 
 logger = logging.getLogger(__name__)
 
@@ -554,7 +555,11 @@ def assign_default_plan_to_client(session: Session, client_id: int) -> Subscript
         plan_id=default_plan.id,
         status=sub_status,
         billing_cycle="monthly",
-        operator_quantity=1,
+        # The plan's own included count, not a hardcoded 1. A default plan that
+        # includes no operator seats (Free) was seeded a mirror of one, which is
+        # what put "0 / 1" on its billing page and told the live-chat gate the
+        # workspace held a seat it had never been granted.
+        operator_quantity=seat_floor_for(default_plan),
         current_period_start=period_start,
         current_period_end=period_end,
         trial_start=trial_start,

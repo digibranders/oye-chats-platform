@@ -55,6 +55,8 @@ from app.services.plan_service import (
     lock_client_for_billing,
 )
 from app.services.razorpay_service import TRIAL_CONVERSION_NOTE
+from app.services.seat_math import UNLIMITED_SEATS as _UNLIMITED_SEATS
+from app.services.seat_math import seat_ceiling_blocks, seat_floor_for
 from app.services.seller_profile_service import charge_tax_rate_bps
 
 logger = logging.getLogger(__name__)
@@ -3095,7 +3097,7 @@ def change_seat_count(
         if plan is None:
             raise HTTPException(status_code=500, detail="Subscription has no associated plan.")
 
-        floor = int(plan.included_operator_seats or 1)
+        floor = seat_floor_for(plan)
         if floor < 0:
             # UNLIMITED (-1) included seats: there is no add-on to sell. Falling
             # through would compute ``extra_seats = new_total - (-1)`` and mint a
@@ -3119,12 +3121,18 @@ def change_seat_count(
         # would happily sell seats past that cap, charging for capacity
         # the client could never activate.
         ceiling = (plan.limits or {}).get("operators")
-        if isinstance(ceiling, int) and ceiling > 0:
-            if new_total > ceiling:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Cannot exceed the {ceiling} seat(s) allowed on your plan. Upgrade for more.",
+        has_ceiling = isinstance(ceiling, int) and not isinstance(ceiling, bool) and ceiling != _UNLIMITED_SEATS
+        if has_ceiling:
+            if seat_ceiling_blocks(plan, new_total=new_total):
+                # A plan granting zero operators can never use a seat, so say
+                # that rather than quoting a "0 seat(s) allowed" limit at
+                # someone who is trying to buy their first one.
+                detail = (
+                    "Your plan does not include operator seats. Upgrade to add a teammate."
+                    if ceiling == 0
+                    else f"Cannot exceed the {ceiling} seat(s) allowed on your plan. Upgrade for more."
                 )
+                raise HTTPException(status_code=400, detail=detail)
         elif new_total > _MAX_OPERATOR_SEATS_ABSOLUTE:
             # §5: a plan with no ``limits.operators`` had NO ceiling, so an
             # unbounded delta could mint hundreds of seat charges in one call.

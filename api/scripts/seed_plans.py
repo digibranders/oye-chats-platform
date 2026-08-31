@@ -187,7 +187,7 @@ _PLANS: list[dict] = [
         "annual_price_usd_cents": 7788,  # $77.88 ($6.49/mo × 12)
         "trial_days": 0,  # the only trial is the signup trial row
         "included_operator_seats": 1,
-        "extra_seat_price_cents": 44900,  # ₹449
+        "extra_seat_price_cents": 49900,  # ₹499
         "extra_seat_price_usd_cents": 500,  # $5
         "is_default": False,
         "is_public": True,
@@ -195,7 +195,7 @@ _PLANS: list[dict] = [
         "limits": {
             "credits": 1000,
             "bots": 1,
-            "operators": 1,
+            "operators": 5,
             "leads": -1,
             "page_scraping": 500,
             "documents": 20,
@@ -230,7 +230,7 @@ _PLANS: list[dict] = [
         "annual_price_usd_cents": 15588,  # $155.88 ($12.99/mo × 12)
         "trial_days": 0,  # the signup trial replaced the Standard-only offer
         "included_operator_seats": 2,
-        "extra_seat_price_cents": 44900,  # ₹449
+        "extra_seat_price_cents": 49900,  # ₹499
         "extra_seat_price_usd_cents": 500,
         "is_default": False,
         "is_public": True,
@@ -238,7 +238,7 @@ _PLANS: list[dict] = [
         "limits": {
             "credits": 2500,
             "bots": 1,
-            "operators": 2,
+            "operators": 10,
             "leads": -1,
             "page_scraping": 2000,
             "documents": -1,  # unlimited. Standard trusts the char cap + credit gate
@@ -276,7 +276,7 @@ _PLANS: list[dict] = [
         "annual_price_usd_cents": 45588,  # $455.88 ($37.99/mo × 12)
         "trial_days": 0,  # the only trial is the signup trial row
         "included_operator_seats": 3,
-        "extra_seat_price_cents": 44900,  # ₹449
+        "extra_seat_price_cents": 49900,  # ₹499
         "extra_seat_price_usd_cents": 500,
         "is_default": False,
         "is_public": True,
@@ -284,7 +284,7 @@ _PLANS: list[dict] = [
         "limits": {
             "credits": 8000,
             "bots": 1,
-            "operators": 3,
+            "operators": 25,
             "leads": -1,
             "page_scraping": 5000,
             "documents": -1,  # unlimited (Professional)

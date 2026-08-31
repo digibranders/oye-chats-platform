@@ -52,12 +52,32 @@ function renderDialog(props: Partial<React.ComponentProps<typeof SeatDialog>> = 
       plan={STANDARD}
       currentSeats={2}
       seatsUsed={1}
+      grossSeatPriceMinor={58882}
+      taxRateBps={1800}
       botId={null}
       onChanged={onChanged}
       {...props}
     />,
   );
   return { onChanged, onOpenChange };
+}
+
+/** Render with control over `open`, for testing what survives a close. */
+function renderDialogWithRerender() {
+  const props = {
+    onOpenChange: vi.fn(),
+    plan: STANDARD,
+    currentSeats: 2,
+    seatsUsed: 1,
+    grossSeatPriceMinor: 58882,
+    taxRateBps: 1800,
+    botId: null,
+    onChanged: vi.fn(),
+  };
+  const view = render(<SeatDialog open {...props} />);
+  return {
+    rerender: (open: boolean) => view.rerender(<SeatDialog open={open} {...props} />),
+  };
 }
 
 /** Set the seat total, then submit. */
@@ -68,7 +88,7 @@ async function setSeatsAndSubmit(total: string, button: RegExp) {
 
 /** Raise the seat count by one and submit. */
 async function addOneSeat() {
-  await setSeatsAndSubmit('3', /add seats/i);
+  await setSeatsAndSubmit('3', /continue to checkout/i);
 }
 
 const CHECKOUT = {
@@ -157,5 +177,122 @@ describe('changes that move no money', () => {
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
     expect(razorpay.openRazorpayCheckout).not.toHaveBeenCalled();
     expect(onChanged.mock.calls[0][0]).toMatch(/removed/i);
+  });
+});
+
+/**
+ * What the dialog SAYS, which is the half that was wrong.
+ *
+ * Seats bill against one global Razorpay add-on, so the charge is the canonical
+ * seat price. A plan row carries a copy of that price which is deliberately `0`
+ * on every tier that sells no seats. The dialog multiplied the plan copy, so on
+ * those tiers it quoted nothing and then reassured the customer that nothing
+ * would be charged — while the server would have charged the canonical price.
+ */
+describe('the price it quotes', () => {
+  it('names the per-seat price before anything is touched', () => {
+    renderDialog();
+    // ₹588.82 = ₹499 + 18% GST, the amount the seat mandate actually debits.
+    expect(screen.getByText(/588\.82/)).toBeInTheDocument();
+    expect(screen.getByText(/GST included/i)).toBeInTheDocument();
+  });
+
+  it('totals the extra seats, and only the extra ones', () => {
+    // Standard includes 2. Going to 4 buys 2, not 4.
+    renderDialog();
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '4' } });
+    expect(screen.getByText('2 extra seats')).toBeInTheDocument();
+    expect(screen.getByText(/1,177\.64/)).toBeInTheDocument();
+  });
+
+  it('never says a charged seat is free', async () => {
+    // The exact regression: a plan whose own row prices seats at 0 (Free, the
+    // trial, Enterprise all seed it that way) used to render the reassurance.
+    const freePriced = buildPlan({
+      id: 9,
+      slug: 'standard',
+      name: 'Standard',
+      included_operator_seats: 2,
+      extra_seat_price_cents: 0,
+      limits: { operators: 10 },
+    }) as PlanView;
+    renderDialog({ plan: freePriced });
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '4' } });
+    expect(screen.queryByText(/nothing extra is charged/i)).toBeNull();
+    expect(screen.getByText(/1,177\.64/)).toBeInTheDocument();
+  });
+
+  it('refuses to start a purchase it could not price', () => {
+    renderDialog({ grossSeatPriceMinor: null });
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '3' } });
+    expect(screen.getByRole('button', { name: /continue to checkout/i })).toBeDisabled();
+    expect(screen.getByText(/could not load the seat price/i)).toBeInTheDocument();
+  });
+});
+
+describe('plans with nothing to sell', () => {
+  it('explains a plan that includes no seats instead of offering a stepper', () => {
+    const free = buildPlan({
+      id: 1,
+      slug: 'free',
+      name: 'Free',
+      included_operator_seats: 0,
+      extra_seat_price_cents: 0,
+      limits: { operators: 0 },
+    }) as PlanView;
+    renderDialog({ plan: free, currentSeats: 0, seatsUsed: 0 });
+    expect(screen.getByText(/does not include operator seats/i)).toBeInTheDocument();
+    expect(screen.queryByRole('spinbutton')).toBeNull();
+  });
+
+  it('explains an unlimited plan rather than selling against it', () => {
+    const enterprise = buildPlan({
+      id: 6,
+      slug: 'enterprise',
+      name: 'Enterprise',
+      included_operator_seats: -1,
+      extra_seat_price_cents: 0,
+      limits: { operators: -1 },
+    }) as PlanView;
+    renderDialog({ plan: enterprise, currentSeats: -1, seatsUsed: 4 });
+    expect(screen.getByText(/nothing to buy or remove/i)).toBeInTheDocument();
+    expect(screen.queryByRole('spinbutton')).toBeNull();
+  });
+
+  it('will not sell past the plan ceiling', () => {
+    renderDialog();
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '11' } });
+    expect(screen.getByText(/allows up to 10 seats/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /continue to checkout/i })).toBeDisabled();
+  });
+});
+
+describe('the cancelled-purchase notice', () => {
+  it('does not survive into a freshly opened dialog', async () => {
+    api.changeOperatorSeats.mockResolvedValue({ requires_authorization: true, checkout: CHECKOUT });
+    razorpay.openRazorpayCheckout.mockRejectedValue({ code: 'dismissed' });
+    const { rerender } = renderDialogWithRerender();
+
+    await setSeatsAndSubmit('3', /continue to checkout/i);
+    expect(await screen.findByText(/not been charged/i)).toBeInTheDocument();
+
+    // Close, reopen. The notice was cleared only inside `submit`, so it used to
+    // reappear over an untouched dialog and tell someone a purchase they had
+    // never started was cancelled.
+    rerender(false);
+    rerender(true);
+    expect(screen.queryByText(/not been charged/i)).toBeNull();
+  });
+
+  it('clears as soon as the count is edited again', async () => {
+    api.changeOperatorSeats.mockResolvedValue({ requires_authorization: true, checkout: CHECKOUT });
+    razorpay.openRazorpayCheckout.mockRejectedValue({ code: 'dismissed' });
+    renderDialog();
+
+    await setSeatsAndSubmit('3', /continue to checkout/i);
+    expect(await screen.findByText(/not been charged/i)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '4' } });
+    expect(screen.queryByText(/not been charged/i)).toBeNull();
   });
 });

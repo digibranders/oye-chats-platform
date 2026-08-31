@@ -40,6 +40,13 @@ export interface PlanSummaryProps {
   agentsUsed: number;
   /** Operator seats currently filled. */
   seatsUsed: number;
+  /**
+   * What ONE extra seat debits per month, tax included, in the charge currency.
+   * From the server, NOT `plan.extraSeatPriceMinor`: seats bill against a single
+   * global add-on, so the charge is the canonical price, while the plan row
+   * carries a copy that is `0` on every tier which sells no seats.
+   */
+  grossSeatPriceMinor: number | null;
   onChangePlan: () => void;
   onManageSeats: () => void;
   onCancel: () => void;
@@ -70,6 +77,7 @@ export function PlanSummary({
   geo,
   agentsUsed,
   seatsUsed,
+  grossSeatPriceMinor,
   onChangePlan,
   onManageSeats,
   onCancel,
@@ -84,6 +92,16 @@ export function PlanSummary({
   const trialOffer = plan ? formatTrialOffer(plan.trialDays) : null;
   const agentQuota = plan?.limits.bots;
   const seatQuota = plan?.includedSeats ?? 0;
+  // `limits.operators` is the hard cap on seats this plan can ever hold, and it
+  // gates operator creation too. When it leaves no room above the included
+  // count there is genuinely nothing to sell, so the row says "upgrade" rather
+  // than quoting a per-seat price for a purchase the server would refuse.
+  const seatCeiling = plan?.limits?.operators;
+  const seatsBuyable =
+    seatQuota !== UNLIMITED_LIMIT &&
+    typeof seatCeiling === 'number' &&
+    seatCeiling !== UNLIMITED_LIMIT &&
+    seatCeiling > seatQuota;
 
   return (
     <Card>
@@ -208,9 +226,11 @@ export function PlanSummary({
         <SettingRow
           label="Operator seats"
           description={
-            plan && plan.extraSeatPriceMinor > 0 && seatQuota !== UNLIMITED_LIMIT
-              ? `${formatSeatAllowance(seatQuota)} included, then ${formatMoneyMinor(plan.extraSeatPriceMinor, CHARGE_CURRENCY)} each per month.`
-              : `${formatSeatAllowance(seatQuota)} included.`
+            seatQuota === UNLIMITED_LIMIT
+              ? 'Unlimited operator seats.'
+              : seatsBuyable && grossSeatPriceMinor
+                ? `${formatSeatAllowance(seatQuota)} included, then ${formatMoneyMinor(grossSeatPriceMinor, CHARGE_CURRENCY)} each per month.`
+                : `${formatSeatAllowance(seatQuota)} included. Upgrade for more.`
           }
           controlWidth="auto"
         >
@@ -226,7 +246,11 @@ export function PlanSummary({
                 hideLabel
                 size="sm"
                 used={seatsUsed}
-                limit={Math.max(subscription.seats, seatQuota)}
+                /* The seats this workspace HOLDS: the plan's included count plus
+                   any it has paid for. Not `max(seats, quota)`, which reported a
+                   phantom seat on a plan including none, because the mirror it
+                   read was itself defaulted to one. */
+                limit={Math.max(subscription.seats, seatQuota, 0)}
               />
             )}
             <Button

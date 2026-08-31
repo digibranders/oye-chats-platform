@@ -53,6 +53,24 @@ export interface BillingData {
   plan: PlanView | null;
   /** The downgrade re-auth grace row, which is `past_due` but is NOT a failed payment. */
   reauth: ReauthView | null;
+  /**
+   * What ONE extra operator seat actually debits per month, tax included, in the
+   * workspace's charge currency.
+   *
+   * Read from the server rather than from `plan.extraSeatPriceMinor`, because
+   * those are two different numbers. Every extra seat bills against a single
+   * global Razorpay seat plan, so the charge is the canonical price; a plan row
+   * carries a copy that is `0` on Free, the trial and Enterprise. The dialog
+   * used the plan copy, so on those tiers it quoted nothing and then told the
+   * customer their seats were free — while the server would have charged the
+   * canonical price. Display and charge have to be the same number.
+   *
+   * Null while the charge currency is still resolving. Never quote a seat price
+   * from a null.
+   */
+  grossExtraSeatPriceMinor: number | null;
+  /** GST rate behind the gross figures above, for the tax note. */
+  taxRateBps: number | null;
 }
 
 /** The tax identity, in both the shape the panel renders and the shape the form edits. */
@@ -77,6 +95,18 @@ export interface UseBillingDataResult {
 
 function envelope(raw: unknown): Record<string, unknown> {
   return raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+}
+
+/**
+ * A money figure, or null when the server did not send one.
+ *
+ * Deliberately NOT `toNumber`, which coerces a missing field to `0`. Zero is a
+ * real price ("this costs nothing") and absence is "we do not know yet", and a
+ * seat quote must never round the second into the first.
+ */
+function finiteOrNull(value: unknown): number | null {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 /**
@@ -108,6 +138,8 @@ export function useBillingData(botId: number | null = null): UseBillingDataResul
         subscription: buildSubscription(raw.subscription),
         plan: buildPlan(raw.plan),
         reauth: buildReauth(raw.reauth),
+        grossExtraSeatPriceMinor: finiteOrNull(raw.gross_extra_seat_price_cents),
+        taxRateBps: finiteOrNull(raw.tax_rate_bps),
       };
     },
   });

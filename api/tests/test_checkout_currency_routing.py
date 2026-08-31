@@ -574,6 +574,6 @@ def test_current_subscription_carries_the_gross_recurring_figures(db):
         )
 
     assert body["tax_rate_bps"] == 1800
-    # ₹449 seat and ₹499 branding bases, each plus 18%.
-    assert body["gross_extra_seat_price_cents"] == 52982
+    # ₹499 seat and ₹499 branding bases, each plus 18%.
+    assert body["gross_extra_seat_price_cents"] == 58882
     assert body["gross_branding_addon_price_cents"] == 58882

@@ -2792,6 +2792,45 @@ class DiscountedPlanCache(Base):
     )
 
 
+class SeatPlanCache(Base):
+    """Reuse cache for API-minted extra-operator-seat Razorpay plans.
+
+    Seats used to bill against ONE plan pinned in the environment
+    (``RAZORPAY_SEAT_PLAN_ID``). Razorpay plans are immutable and a plan's amount
+    IS the debit, so every seat price change meant minting a plan by hand in the
+    dashboard and repointing that variable in lockstep. Miss the second half and
+    the console quotes one price while the mandate collects another, which is the
+    one thing the seat pricing invariant exists to prevent. It also left no way
+    to bill a discounted seat at all: the pinned plan had exactly one amount.
+
+    Keyed on the CHARGED amount rather than the base, for the same reason
+    ``DiscountedPlanCache`` is: a GST-rate change moves the charge without moving
+    the base, and a cache keyed on the base would keep handing back a plan minted
+    at the old rate. A new price, a new discount or a new tax rate all resolve to
+    a different ``amount_minor`` and therefore mint once and are reused after.
+
+    Bounded by distinct charged amounts, not by customers: one row per price the
+    product has ever actually billed on each rail.
+    """
+
+    __tablename__ = "seat_plan_cache"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    # Rail this cached plan bills on. A Razorpay plan's currency is fixed at
+    # creation, so the INR and USD seat plans for one amount are different
+    # objects and must not share a row.
+    currency = Column(String(3), default="INR", server_default="INR", nullable=False)
+    # Minor units in ``currency``, GST INCLUSIVE — what Razorpay debits.
+    amount_minor = Column(Integer, nullable=False)
+    razorpay_plan_id = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("currency", "amount_minor", name="uq_seat_plan_amount"),
+        CheckConstraint("amount_minor > 0", name="chk_seat_plan_amount_positive"),
+    )
+
+
 class ReferralConversion(Base):
     """Snapshot of commission/discount terms when a referral converts to paid.
 

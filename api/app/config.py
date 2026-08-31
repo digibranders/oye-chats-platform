@@ -369,8 +369,8 @@ RAZORPAY_SEAT_PLAN_ID_USD: str | None = os.getenv("RAZORPAY_SEAT_PLAN_ID_USD") o
 # and the USD amount is the international-rail equivalent. A plan row's
 # ``extra_seat_price_cents`` is kept equal to this by the seed + the plan-edit
 # guard. Display always equals charge.
-#   INR: ₹449/seat/month · International: $5/seat/month
-RAZORPAY_SEAT_PLAN_PRICE_CENTS: int = int(os.getenv("RAZORPAY_SEAT_PLAN_PRICE_CENTS", "44900"))
+#   INR: ₹499/seat/month · International: $5/seat/month
+RAZORPAY_SEAT_PLAN_PRICE_CENTS: int = int(os.getenv("RAZORPAY_SEAT_PLAN_PRICE_CENTS", "49900"))
 EXTRA_SEAT_PRICE_USD_CENTS: int = int(os.getenv("EXTRA_SEAT_PRICE_USD_CENTS", "500"))
 
 # RAZORPAY_BRANDING_PLAN_ID / _USD. Razorpay Plan IDs for the branding-removal

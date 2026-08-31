@@ -64,7 +64,7 @@ from app.config import (
     RAZORPAY_WEBHOOK_SECRET,
 )
 from app.core.dates import add_months
-from app.core.pricing import charge_currency, format_amount
+from app.core.pricing import charge_currency, format_amount, seat_price
 from app.core.tax import SupplyKind, gross_charge_minor, supply_kind
 from app.db.models import (
     Bot,
@@ -74,10 +74,12 @@ from app.db.models import (
     Invoice,
     Plan,
     ProcessedWebhook,
+    SeatPlanCache,
     Subscription,
     plan_charge_only_clauses,
 )
 from app.services import credit_service, email_service, invoice_service
+from app.services.seat_math import seat_floor_for
 from app.services.seller_profile_service import charge_tax_rate_bps
 
 if TYPE_CHECKING:
@@ -1082,6 +1084,79 @@ def create_plan_for_price(
     return plan["id"]
 
 
+def resolve_seat_plan_id(
+    session: Session,
+    *,
+    currency: str,
+    base_minor: int,
+    rate_bps: int,
+) -> str:
+    """The Razorpay plan that bills ONE extra operator seat at this price.
+
+    Minted on demand and cached, rather than pinned in the environment. Razorpay
+    plans are immutable and a plan's amount IS the debit, so the old single
+    ``RAZORPAY_SEAT_PLAN_ID`` meant every price change needed a plan minted by
+    hand in the dashboard and that variable repointed in the same breath. Doing
+    one without the other left the console quoting one figure while the mandate
+    collected another, which is the exact failure the seat-price invariant
+    exists to prevent. It also made a discounted seat unbillable: one pinned
+    plan can hold one amount.
+
+    ``base_minor`` is the BASE price, exclusive of tax, AFTER any discount. The
+    discount belongs on the base because tax is owed on what is actually
+    charged; computing it on the undiscounted figure over-collects.
+
+    The cache is keyed on the CHARGED amount, not the base, for the reason
+    ``DiscountedPlanCache`` is: a GST-rate change moves the charge while the
+    base stands still, and a base-keyed cache would keep handing back a plan
+    minted at the old rate.
+    """
+    if base_minor <= 0:
+        # Free, the trial and Enterprise all carry a seat price of 0 and none of
+        # them sells seats, so arriving here with one is a bug upstream. Razorpay
+        # would reject a zero-amount plan anyway; fail with a readable reason
+        # instead of a gateway error.
+        raise ValueError(f"seat base price must be positive, got {base_minor}")
+
+    charge_minor = gross_charge_minor(
+        int(base_minor),
+        rate_bps=rate_bps,
+        kind="export" if currency == "USD" else "intra",
+    )
+
+    cached = session.scalars(
+        select(SeatPlanCache)
+        .where(SeatPlanCache.currency == currency)
+        .where(SeatPlanCache.amount_minor == charge_minor)
+    ).first()
+    if cached is not None:
+        return cached.razorpay_plan_id
+
+    plan_id = create_plan_for_price(
+        name=f"OyeChats operator seat {currency}",
+        amount_paise=int(base_minor),
+        period="monthly",
+        currency=currency,
+        rate_bps=rate_bps,
+    )
+    session.add(
+        SeatPlanCache(
+            currency=currency,
+            amount_minor=charge_minor,
+            razorpay_plan_id=plan_id,
+        )
+    )
+    session.flush()
+    logger.info(
+        "Minted Razorpay seat plan %s for %s %s (base %s)",
+        plan_id,
+        charge_minor,
+        currency,
+        base_minor,
+    )
+    return plan_id
+
+
 def create_seat_addon_subscription(
     session: Session,
     client: Client,
@@ -1108,13 +1183,23 @@ def create_seat_addon_subscription(
     # the /seats route reaches here directly, bypassing the checkout gate.
     if currency == "USD" and not config.INTL_PAYMENTS_ENABLED and client.id not in CHECKOUT_TEST_CLIENT_IDS:
         raise IntlPaymentsDisabled(f"client {client.id} resolves to the USD seat rail but INTL_PAYMENTS_ENABLED is off")
-    seat_plan_id = RAZORPAY_SEAT_PLAN_ID_USD if currency == "USD" else RAZORPAY_SEAT_PLAN_ID
-    if not seat_plan_id:
-        env_var = "RAZORPAY_SEAT_PLAN_ID_USD" if currency == "USD" else "RAZORPAY_SEAT_PLAN_ID"
-        raise RazorpayBillingError(
-            f"Extra-seat billing is not configured for the {currency} rail ({env_var} is unset). "
-            "Set it to the environment's seat add-on plan id."
-        )
+    # Minted on demand for whatever the seat costs right now, and cached by
+    # charged amount. A price change is a code deploy, not a dashboard visit
+    # plus an env repoint that must not be forgotten. ``RAZORPAY_SEAT_PLAN_ID``
+    # is no longer read here; a pinned plan could hold exactly one amount, which
+    # is also why a discounted seat could not be billed at all.
+    rate_bps = charge_tax_rate_bps(session)
+    seat_base_minor, _seat_currency = seat_price(
+        inr_cents=config.RAZORPAY_SEAT_PLAN_PRICE_CENTS,
+        usd_cents=config.EXTRA_SEAT_PRICE_USD_CENTS,
+        currency=currency,
+    )
+    seat_plan_id = resolve_seat_plan_id(
+        session,
+        currency=currency,
+        base_minor=seat_base_minor,
+        rate_bps=rate_bps,
+    )
 
     rzp = _get_razorpay()
     try:
@@ -1149,7 +1234,7 @@ def create_seat_addon_subscription(
         subscription["id"],
         client,
         extra_seats,
-        rate_bps=charge_tax_rate_bps(session),
+        rate_bps=rate_bps,
         short_url=subscription.get("short_url"),
     )
 
@@ -1966,7 +2051,7 @@ def derive_operator_quantity(plan: Plan | None, seat_addon_quantity: int | None)
     UNLIMITED, and the mirror stays ``-1`` rather than becoming a nonsense
     finite count (``-1 + 2 == 1``) that reads back as a one-seat cap.
     """
-    included = int((plan.included_operator_seats if plan else 1) or 1)
+    included = seat_floor_for(plan)
     if included < 0:
         return -1  # UNLIMITED. Paid add-on seats are meaningless on top of it.
     return included + int(seat_addon_quantity or 0)
@@ -1986,7 +2071,7 @@ def update_subscription_quantity(
     """
     new_quantity = max(int(new_quantity), 0)
     plan = sub.plan
-    floor = int(plan.included_operator_seats) if plan and plan.included_operator_seats else 1
+    floor = seat_floor_for(plan)
     if new_quantity < floor:
         raise ValueError(f"Cannot set seats below included floor of {floor}")
 
