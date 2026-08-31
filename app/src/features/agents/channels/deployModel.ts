@@ -128,7 +128,7 @@ export interface WidgetHeartbeat {
  * anyone can forge with two lines of curl. It is presented as a support
  * diagnostic and labelled as reported rather than verified, and nothing in this
  * console may branch on it. Enforcement of where the widget may run is
- * `allowed_domains`, which is configured under Behaviour ▸ Access.
+ * `allowed_domains`, which is configured under Access on this same page.
  */
 export function widgetHeartbeat({
   installedAt,
@@ -413,7 +413,7 @@ export function troubleshootItems(input: TroubleshootInput): TroubleshootItem[] 
     items.push({
       id: 'allow-list',
       title: `Your allow-list is turning away ${risk.host}`,
-      body: `Allowed domains is on, and ${risk.host} does not match any entry, so every request from your own site is rejected before it reaches your chatbot. Add ${risk.suggestions.join(' and ') || 'your website'} under Behaviour ▸ Access.`,
+      body: `Allowed domains is on, and ${risk.host} does not match any entry, so every request from your own site is rejected before it reaches your chatbot. Add ${risk.suggestions.join(' and ') || 'your website'} under Access, further up this page.`,
     });
   } else if (domainCheckEnabled && domainsConfigured > 0) {
     items.push({

@@ -10,13 +10,8 @@ import {
   SettingRow,
   TagInput,
 } from '../../../ui';
-import {
-  MAX_DOMAINS,
-  domainNotice,
-  entriesForWebsite,
-  normalizeDomain,
-} from '../channels/deployModel';
-import { sessionShareDomainError } from './behaviour.config';
+import { MAX_DOMAINS, domainNotice, entriesForWebsite, normalizeDomain } from './deployModel';
+import { sessionShareDomainError } from './accessModel';
 
 export interface AccessSectionProps {
   /** The public address this chatbot is configured for, if any. */
@@ -37,14 +32,19 @@ export interface AccessSectionProps {
  * Where this chatbot is allowed to run: the origin allow-list, and the parent
  * domain a conversation follows a visitor across.
  *
- * **These moved here from Deploy.** They were the last three of eight
- * full-width cards on the install page, each with its own Save button, its own
+ * **These are on Deploy, under one draft and one save bar.** They spent a
+ * release on Behaviour, moved there because on the *old* Deploy they were the
+ * last three of eight full-width cards, each with its own Save button, its own
  * `dirty`/`saved`/`error` state machine and its own inline success alert — three
  * hand-rolled save contracts on one page, none of them guarded against
- * navigating away mid-edit. Neither is an install step: the allow-list is a
- * security control over a public embed key, and the session parent is a cookie
- * scope. They belong with the chatbot's other settings, under this page's single
- * draft and single save bar.
+ * navigating away mid-edit. That was the real defect, and it is fixed by the
+ * shared draft this section now sits in, not by the address.
+ *
+ * They belong here because of when they are needed. The allow-list is the most
+ * common reason a correctly-pasted snippet renders nothing, and the reader
+ * diagnosing that is on this page, looking at the install status and the
+ * troubleshooting checklist that names it. Sending them to another tab to fix
+ * the thing this page just told them was wrong is the split worth avoiding.
  *
  * The allow-list guard survives the move and lives on the page's save action,
  * because of one exact asymmetry in the backend. It normalises a stored entry by

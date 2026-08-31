@@ -3,17 +3,21 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { AccessSection } from './AccessSection';
-import { sessionShareDomainError, toAccessPayload, accessChanged, parseBehaviour } from './behaviour.config';
+import {
+  sessionShareDomainError,
+  toAccessPayload,
+  accessChanged,
+  parseAccess,
+} from './accessModel';
 
 /**
- * The origin allow-list and the session-continuity parent, after they moved off
- * Deploy — where they were two of three hand-rolled save contracts on an install
- * page — and became rows under Behaviour's single draft.
+ * The origin allow-list and the session-continuity parent, as rows on Deploy
+ * under that page's single draft — not as the hand-rolled per-card save
+ * contracts they were the last time they lived on this page.
  *
- * The lock-out confirmation moved with them to the page's save action, and is
- * covered by `BehaviourPage.test.tsx`; what is covered here is that the controls
- * still normalise the way the server does and still refuse a value it would
- * reject.
+ * The lock-out confirmation sits on the page's save action and is covered by
+ * `DeployPage.test.tsx`; what is covered here is that the controls still
+ * normalise the way the server does and still refuse a value it would reject.
  */
 
 const base = {
@@ -101,17 +105,17 @@ describe('session continuity', () => {
 
 describe('the access payload', () => {
   it('normalises a pinned parent the way the backend stores it', () => {
-    const draft = { ...parseBehaviour({}), sessionShareDomain: 'https://www.acme.com/' };
+    const draft = { ...parseAccess({}), sessionShareDomain: 'https://www.acme.com/' };
     expect(toAccessPayload(draft).session_share_domain).toBe('acme.com');
   });
 
   it('clears the override with an empty string rather than omitting the field', () => {
-    const draft = { ...parseBehaviour({}), sessionShareDomain: '   ' };
+    const draft = { ...parseAccess({}), sessionShareDomain: '   ' };
     expect(toAccessPayload(draft)).toHaveProperty('session_share_domain', '');
   });
 
   it('is not sent when nothing in the slice moved', () => {
-    const loaded = parseBehaviour({ allowed_domains: ['acme.com'], domain_check_enabled: true });
+    const loaded = parseAccess({ allowed_domains: ['acme.com'], domain_check_enabled: true });
     expect(accessChanged(loaded, loaded)).toBe(false);
     expect(accessChanged({ ...loaded, allowedDomains: ['other.com'] }, loaded)).toBe(true);
   });

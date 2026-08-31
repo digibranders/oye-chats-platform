@@ -1,5 +1,4 @@
 import { CheckCircle2, ExternalLink, RefreshCw } from 'lucide-react';
-import { Link } from 'react-router-dom';
 import {
   ABSENT,
   Alert,
@@ -28,7 +27,11 @@ export interface InstallStatusCardProps {
   website: string | null;
   /** The origins allowed to embed this chatbot. Empty means any. */
   domains: readonly string[];
-  /** Where the allow-list is edited — Behaviour ▸ Access. */
+  /**
+   * Where the allow-list is edited. It is a fragment on this same page rather
+   * than a route, so this is a plain anchor: a router `Link` to `#access` would
+   * be resolved as a path and match nothing.
+   */
   accessHref: string;
   /** True only when the transition was observed on this page, just now. */
   verifiedNow: boolean;
@@ -162,8 +165,8 @@ export function InstallStatusCard({
               {
                 label: t('agents.allowedDomains') || 'Allowed domains',
                 value: (
-                  <Link
-                    to={accessHref}
+                  <a
+                    href={accessHref}
                     className="text-accent-600 underline-offset-2 hover:underline"
                   >
                     {domains.length > 0 ? (
@@ -171,7 +174,7 @@ export function InstallStatusCard({
                     ) : (
                       t('agents.any') || 'Any'
                     )}
-                  </Link>
+                  </a>
                 ),
               },
             ]}
