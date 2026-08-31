@@ -5,6 +5,9 @@ import { Alert, Badge, Button, ConfirmDialog, LockedState, Tooltip, buttonClass 
 import { sendLeadFollowUp } from '../../services/api';
 import type { Lead } from '../../types/domain';
 import { LeadSection } from './LeadSection';
+// One presentation of the network signal, shared with the inbox's visitor pane.
+import { NetworkSignal } from './NetworkSignal';
+import { asRecord, hasNetworkSignal } from './visitorNetwork';
 import { useTranslation } from '../../i18n/useTranslation';
 
 /**
@@ -18,66 +21,6 @@ import { useTranslation } from '../../i18n/useTranslation';
  * The follow-up button now confirms. It sends a real email to a real person on
  * a single click, and it did so with no confirmation and no way back.
  */
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function asText(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-/**
- * Is there anything worth rendering in this IP signal?
- *
- * Kept apart from the component because a component returning `null` is still a
- * truthy element to its caller, so `<CompanySignal/> ?? fallback` would never
- * show the fallback.
- */
-function hasNetworkSignal(intel: Record<string, unknown>): boolean {
-  return Boolean(
-    asText(intel.company_name) ||
-      asText(intel.asn_org) ||
-      intel.is_vpn === true ||
-      intel.is_proxy === true ||
-      intel.is_tor === true,
-  );
-}
-
-function NetworkSignal({ intel }: { intel: Record<string, unknown> }) {
-  const company = asText(intel.company_name);
-  const domain = asText(intel.company_domain);
-  const asn = asText(intel.asn_org);
-  const masked = intel.is_vpn === true || intel.is_proxy === true || intel.is_tor === true;
-
-  // `company_name` arrives already filtered: the API strips it for every
-  // hosting range, ISP range and carrier brand, so anything reaching here is a
-  // range somebody could actually be employed by. Two different things are
-  // rendered — a company, or the network that routed them — never one hedged.
-  // Not a box. The drawer is the surface; a section here is a heading and a
-  // hairline, and this one already sits under both.
-  return (
-    <div className="space-y-2">
-      {company ? (
-        <div>
-          <Tooltip content="Derived from the visitor’s network. Not a confirmed employer.">
-            <p className="inline-block cursor-default text-base font-medium text-text-primary">
-              {company}
-            </p>
-          </Tooltip>
-          {domain ? <p className="break-all text-xs text-text-secondary">{domain}</p> : null}
-        </div>
-      ) : asn ? (
-        <p className="text-prose text-text-secondary">
-          Connecting via <span className="text-text-primary">{asn}</span>
-        </p>
-      ) : null}
-      {masked ? <Alert tone="warning">VPN or proxy — signal unreliable.</Alert> : null}
-    </div>
-  );
-}
 
 function FollowUp({ sessionId, isValidEmail, email }: {
   sessionId: string;

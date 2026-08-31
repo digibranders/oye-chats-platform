@@ -89,11 +89,23 @@ export function useHeadlineTotals(botId: number | null, range: ResolvedRange) {
   };
 }
 
-/** The full daily message series. One request, windowed on the client. */
-export function useMessageSeries(botId: number | null) {
+/**
+ * The daily message series. One request, split into windows on the client.
+ *
+ * `fetchDays` is what the endpoint is asked for, and it is twice the selected
+ * window rather than the window itself: the comparison on this page is cut from
+ * this one series by `splitWindows`, so the days *before* the selected window
+ * have to be in it. `null` asks for the whole history, which is what the "all
+ * time" range means and the only range that should ever pay for it.
+ *
+ * The zone goes with it. Buckets are cut server-side and read back here as
+ * local dates, so a request that names no zone attributes an IST visitor's
+ * first five and a half hours to the previous day.
+ */
+export function useMessageSeries(botId: number | null, fetchDays: number | null) {
   const query = useQuery({
-    queryKey: keys.analytics.activity(botId, null),
-    queryFn: () => getActivityStats(scope(botId)),
+    queryKey: keys.analytics.activity(botId, fetchDays),
+    queryFn: () => getActivityStats(scope(botId), { days: fetchDays }),
     select: (activity) => buildDailySeries(activity),
     enabled: botId != null,
   });

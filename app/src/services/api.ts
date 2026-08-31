@@ -1469,14 +1469,44 @@ export const getDashboardStats = async (
 };
 
 /**
- * Fetches message activity grouped by date for charts.
- * @param {number} days - Number of days to fetch (optional, handled by backend)
- * @returns {Promise<Array>} Array of { date, messages }
+ * The reader's own IANA zone, or `UTC` where the runtime cannot name one.
+ *
+ * `/analytics/activity` cuts its day buckets in the zone it is given and the
+ * client reads every `date` key as a LOCAL date, so a viewer east of UTC who
+ * sends nothing has every message before their local dawn filed under the
+ * previous day — the month-edge off-by-one an IST customer sees for everything
+ * sent between 00:00 and 05:30.
  */
-export const getActivityStats = async (botId?: number): Promise<ActivityPoint[]> => {
+export const readerTimeZone = (): string => {
     try {
-        const url = botId ? `/analytics/activity?bot_id=${botId}` : '/analytics/activity';
-        const response = await api.get(url);
+        return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    } catch {
+        return 'UTC';
+    }
+};
+
+/**
+ * Fetches message activity grouped by date for charts.
+ *
+ * @param botId Scope to one chatbot. Omitted, the whole workspace.
+ * @param options.days Trailing whole days in `tz`, today included. Omitted, the
+ *   endpoint returns the workspace's entire history — an unbounded aggregate
+ *   and a real timeout on a busy account, so a caller that windows the series
+ *   afterwards should ask for exactly the days it will use.
+ * @param options.tz IANA zone the day buckets are cut in. Defaults to the
+ *   reader's own, which is the zone their `date` keys are read back in.
+ * @returns Array of { date, messages }
+ */
+export const getActivityStats = async (
+    botId?: number,
+    options: { days?: number | null; tz?: string } = {},
+): Promise<ActivityPoint[]> => {
+    try {
+        const params = new URLSearchParams();
+        if (botId) params.set('bot_id', String(botId));
+        if (options.days) params.set('days', String(options.days));
+        params.set('tz', options.tz || readerTimeZone());
+        const response = await api.get(`/analytics/activity?${params.toString()}`);
         return response.data;
     } catch (error) {
         console.error('API Error fetching activity stats:', error);

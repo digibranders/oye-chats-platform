@@ -4,11 +4,15 @@ import type { ActivityPoint } from '../../types/domain';
  * The daily message series, and the two windows every comparison on this page
  * is made of.
  *
- * `/analytics/activity` returns one row per day for all of history and takes no
- * window parameter, so the windowing is done here, once, from a single request.
- * That is also why the comparison is honest: the current window and the one
- * before it are cut from the same series with the same rule, rather than being
- * two figures from two endpoints with two definitions.
+ * `/analytics/activity` returns one row per day, and is asked for twice the
+ * selected window so both of them fit in one request. The splitting is done
+ * here, once. That is why the comparison is honest: the current window and the
+ * one before it are cut from the same series with the same rule, rather than
+ * being two figures from two endpoints with two definitions.
+ *
+ * The day buckets are cut server-side in the zone `getActivityStats` sends —
+ * the reader's own — which is what makes reading each `date` key as a local
+ * date below correct rather than a five-and-a-half-hour lie in Kolkata.
  */
 
 /** One day on the message-volume series. */

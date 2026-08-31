@@ -22,7 +22,7 @@ import type { KnowledgeSource } from '../../../../types/domain';
 import { useEntitlements } from '../../../../hooks/useEntitlements';
 import { CrawlPageTree } from '../CrawlPageTree';
 import { IngestionProgress } from '../IngestionProgress';
-import type { Allowance } from '../knowledge-model';
+import { crawlCoverageOf, crawlDoneMessage, type Allowance } from '../knowledge-model';
 import { useCrawlDiscovery } from './useCrawlDiscovery';
 import { useTranslation } from '../../../../i18n/useTranslation';
 
@@ -116,6 +116,14 @@ export function WebsiteFlow({
     );
   }
 
+  // What the chatbot can actually answer from, not what the crawler fetched.
+  // `crawl.pagesCrawled` is the fetched count, and a crawl stopped by a plan
+  // cap at page 25 of 400 still carries 400 — which is how a Starter customer
+  // came to be told their chatbot had read all 400. `null` while the result
+  // payload is still in flight, or from a worker predating those keys, and the
+  // fetched count is then the best figure available.
+  const coverage = crawl.status === 'done' ? crawlCoverageOf(crawl.result) : null;
+
   /**
    * The four terminal outcomes are mutually exclusive, so they are one `Alert`
    * rather than four stacked conditionals. Up to six alerts in four tones could
@@ -125,11 +133,13 @@ export function WebsiteFlow({
   const outcome = !crawlIsOurs
     ? null
     : crawl.status === 'done'
-      ? {
-          tone: 'success' as const,
-          title: undefined,
-          body: `Finished — this chatbot read ${formatNumber(crawl.pagesCrawled)} page${crawl.pagesCrawled === 1 ? '' : 's'}.`,
-        }
+      ? coverage
+        ? crawlDoneMessage(coverage)
+        : {
+            tone: 'success' as const,
+            title: undefined,
+            body: `Finished — this chatbot read ${formatNumber(crawl.pagesCrawled)} page${crawl.pagesCrawled === 1 ? '' : 's'}.`,
+          }
       : crawl.status === 'limit'
         ? {
             // Not a reading problem. The site was fine and this workspace ran
