@@ -395,6 +395,31 @@ def _operator_wants_push(prefs: Any, event_type: str, now_utc: datetime) -> bool
     return not (isinstance(quiet, dict) and _in_quiet_hours(quiet, now_utc))
 
 
+# The three per-event push categories a freshly created account starts opted
+# OUT of. Mirrors ``_PUSH_EVENT_KEYS`` in ``api/app/api/operator_routes.py``.
+_NEW_ACCOUNT_MUTED_EVENTS = ("chat_transferred", "handoff_request", "offline_message")
+
+
+def muted_push_preferences() -> dict:
+    """Push prefs stamped on a NEW account: reachable, but every event off.
+
+    Absent prefs still mean "fully opted in" for every account created before
+    this (see ``_operator_wants_push``); that convention is unchanged. Only new
+    signups and new operators carry this explicit body, so they begin quiet and
+    turn on the events they want rather than being paged from minute one. The
+    master ``enabled`` stays True so the account only has to flip individual
+    events, and the shape matches ``_normalize_prefs`` so the preferences GET
+    echoes it back unchanged.
+    """
+    return {
+        "push": {
+            "enabled": True,
+            "events": {key: False for key in sorted(_NEW_ACCOUNT_MUTED_EVENTS)},
+            "quiet_hours": None,
+        }
+    }
+
+
 def client_wants_push(
     session: Session,
     client_id: int,

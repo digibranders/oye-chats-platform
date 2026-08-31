@@ -148,6 +148,28 @@ async function renderedText(page) {
  * Word-boundary matched so "End chat" does not match inside a longer Hindi
  * string that happens to embed a Latin product name.
  */
+async function expectPrivacyLine(root, text) {
+  /**
+   * The privacy line beneath the composer, asserted the way this file cares
+   * about it: the COPY must be right in both projects, while its visibility is
+   * a layout fact that differs by viewport.
+   *
+   * It is `hidden md:block` unconditionally, so a phone never renders it. That
+   * is deliberate (the mobile viewport reclaims the vertical space above the
+   * input), and it changed on the `steve` branch: it used to be visible on a
+   * phone until the visitor sent their first message. Asserting presence rather
+   * than skipping keeps this suite doing its actual job — proving the string is
+   * translated and rendered — instead of losing the assertion on one project.
+   */
+  const line = root.getByText(text)
+  await expect(line).toHaveCount(1)
+  if (test.info().project.name === 'mobile') {
+    await expect(line).not.toBeVisible()
+  } else {
+    await expect(line).toBeVisible({ timeout: 10_000 })
+  }
+}
+
 async function expectNoEnglishChrome(page, context) {
   const text = await renderedText(page)
   const found = ENGLISH_CHROME.filter((s) => text.includes(s))
@@ -159,7 +181,7 @@ test.describe('Phase 5 - the widget chrome speaks Hindi', () => {
     const root = await bootHindiVisitor(page)
 
     // Composer placeholder + the privacy link beneath it.
-    await expect(root.getByText('गोपनीयता नीति')).toBeVisible()
+    await expectPrivacyLine(root, 'गोपनीयता नीति')
     await expectNoEnglishChrome(page, 'the welcome state')
 
     // Slash palette: the labels live on a module-level constant, so this is
@@ -245,9 +267,9 @@ test.describe('Phase 5 - the widget chrome speaks Hindi', () => {
         },
       }),
     )
-    // Empty history on purpose: once the visitor has sent something the privacy
-    // line collapses to `hidden md:block`, so seeding history would make this
-    // assertion fail on the phone project for a reason unrelated to language.
+    // Empty history on purpose. The privacy line is `hidden md:block`, so it
+    // never paints on a phone; `expectPrivacyLine` asserts the copy in both
+    // projects and the visibility per project.
     await page.route(`${API}/chat/history/**`, (route) => route.fulfill({ json: [] }))
 
     await page.goto('/')
@@ -264,7 +286,7 @@ test.describe('Phase 5 - the widget chrome speaks Hindi', () => {
 
     // Assert the composer's own chrome BEFORE opening the menu: the dropdown
     // overlays the action bar on a phone viewport.
-    await expect(root.getByText('Privacy Policy')).toBeVisible({ timeout: 10_000 })
+    await expectPrivacyLine(root, 'Privacy Policy')
     // The menu only offers a transcript once there is a transcript to send, so
     // with an empty history the assertion that matters is the chrome itself.
     await expect(root.locator('button[title="More options"], button[title="Close"]')).not.toHaveCount(

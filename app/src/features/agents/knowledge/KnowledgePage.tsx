@@ -26,8 +26,8 @@ import { agentHealth } from '../../home/agentHealth';
 import type { Bot, KnowledgeSource } from '../../../types/domain';
 import { AgentHealthStrip } from '../AgentHealthStrip';
 import { AddKnowledgePanel } from './add/AddKnowledgePanel';
+import { agentPath } from '../../../shell/nav';
 import { AutoRetrainCard } from './AutoRetrainCard';
-import { KnowledgeGapsCard } from './KnowledgeGapsCard';
 import { PagesDrawer } from './PagesDrawer';
 import { RecrawlDialog } from './RecrawlDialog';
 import { SourcesTable } from './SourcesTable';
@@ -37,11 +37,8 @@ import {
   canUseDeltaRecrawl,
   crawlUrlFor,
   orderedUrlsForRecrawl,
-  parseGapWindow,
-  gapWindowParam,
   rootDomainOf,
   summarise,
-  type GapWindow,
   type SourceKind,
   type RecrawlDiff,
   type RecrawlMode,
@@ -154,7 +151,6 @@ export function KnowledgePage() {
 function KnowledgeContent({ agent }: { agent: Bot }) {
   const { t } = useTranslation();
   const [params, setParams] = useSearchParams();
-  const gapWindow = parseGapWindow(params.get('gaps'));
   // The source search and type filter live in the URL for the same reason the
   // chatbot list's do: "open Knowledge, filter to documents" should be a link.
   const sourceQuery = params.get('q') ?? '';
@@ -163,7 +159,7 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
     sourceKindParam === 'websites' || sourceKindParam === 'documents' ? sourceKindParam : 'all';
   const { entitlements, limitFor, planSlug, planName, loading: planLoading } = useEntitlements();
   const { crawl, startCrawl } = useCrawl();
-  const knowledge = useKnowledgeData(agent.id, gapWindow);
+  const knowledge = useKnowledgeData(agent.id);
   const { refresh: refreshAgent } = useAgent();
 
   const [drawerSource, setDrawerSource] = useState<string | null>(null);
@@ -210,19 +206,6 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
     [setParams],
   );
 
-  const setGapWindow = useCallback(
-    (next: GapWindow) => {
-      setParams(
-        (current) => {
-          const updated = new URLSearchParams(current);
-          updated.set('gaps', gapWindowParam(next));
-          return updated;
-        },
-        { replace: true },
-      );
-    },
-    [setParams],
-  );
 
   // Depends on `refreshAll`, never on the whole `knowledge` object: that object
   // is rebuilt on every render, so a callback keyed on it would change identity
@@ -549,13 +532,24 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
           }
           aside={
             <Stack>
-              <KnowledgeGapsCard
-                section={knowledge.gaps}
-                window={gapWindow}
-                onWindowChange={setGapWindow}
-              />
-
               <AutoRetrainCard agentId={agent.id} section={knowledge.autoRetrain} planName={planName} />
+
+              {/* The gaps list itself lives on Experience ▸ UAQ now; this points
+                  there from where the customer is deciding what to add next. */}
+              <Card>
+                <CardHeader
+                  size="sm"
+                  title={t('agents.questionsItCouldNotAnswer') || 'Questions it could not answer'}
+                />
+                <CardBody>
+                  <Link
+                    to={`${agentPath(agent.id, 'experience')}?tab=uaq`}
+                    className={buttonClass('secondary', 'sm')}
+                  >
+                    {t('agents.viewUnansweredQuestions') || 'View unanswered questions'}
+                  </Link>
+                </CardBody>
+              </Card>
             </Stack>
           }
         />

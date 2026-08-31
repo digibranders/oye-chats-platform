@@ -72,9 +72,9 @@ export interface LeadEnrichmentSectionProps {
  * Lead enrichment — the two metered add-ons, bound to
  * `Bot.email_verification_enabled` and `Bot.company_lookup_enabled`.
  *
- * It belongs on Qualification because it is about the *lead*, not the widget:
- * both enrichments only ever run on a captured contact, and both feed the same
- * scoring decision the rest of this page configures.
+ * It lives on the Experience ▸ Leads tab (the whole tab is gated to Standard and
+ * up). Presentational only: the toggles read from and write to the Experience
+ * draft, and this component holds no data source of its own.
  *
  * Both default OFF. Enrichment spends credits, so it is an explicit opt-in
  * rather than a paid feature left running until the customer finds this page.

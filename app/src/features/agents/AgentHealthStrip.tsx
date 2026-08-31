@@ -4,7 +4,7 @@
 // refresh's single-export rule is off here.
 /* eslint-disable react-refresh/only-export-components */
 import { type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { Badge, Card, CardBody, buttonClass } from '../../ui';
 import { agentPath } from '../../shell/nav';
 import type { AgentHealth } from '../home/agentHealth';
@@ -53,6 +53,17 @@ export interface AgentHealthStripProps {
  * everything else rather than under a heading of its own.
  */
 export function AgentHealthStrip({ agent, health, aside }: AgentHealthStripProps) {
+  const { pathname } = useLocation();
+
+  // A verdict's action is a pointer to where the work is done, and four of the
+  // six point at Knowledge. On Knowledge itself that made "Add knowledge" a
+  // button to the page you are already reading — directly above an empty state
+  // saying the same thing and the panel that actually does it. Suppressed by
+  // comparing destinations rather than by naming a page, so this stays true for
+  // any verdict added later and on any surface that adopts this band.
+  const target = health.action ? agentPath(agent.id, health.action.segment) : null;
+  const actionLeadsElsewhere = target !== null && target !== pathname;
+
   return (
     <Card>
       <CardBody className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -62,11 +73,8 @@ export function AgentHealthStrip({ agent, health, aside }: AgentHealthStripProps
         <h2 className="text-base font-semibold text-text-primary">{health.label}</h2>
         <p className="min-w-0 flex-1 text-xs text-text-secondary">{health.detail}</p>
         {aside}
-        {health.action ? (
-          <Link
-            to={agentPath(agent.id, health.action.segment)}
-            className={buttonClass('secondary', 'sm')}
-          >
+        {health.action && actionLeadsElsewhere ? (
+          <Link to={target as string} className={buttonClass('secondary', 'sm')}>
             {health.action.label}
           </Link>
         ) : null}

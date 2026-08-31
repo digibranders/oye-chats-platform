@@ -68,7 +68,7 @@ describe('FirstRunPage', () => {
   it('refuses to submit without a website, and says so on the field', async () => {
     const user = userEvent.setup();
     renderPage();
-    await user.click(screen.getByRole('button', { name: /start reading my site/i }));
+    await user.click(screen.getByRole('button', { name: /check my site/i }));
     expect(await screen.findByText(/enter the address of the site/i)).toBeInTheDocument();
     expect(createBot).not.toHaveBeenCalled();
   });
@@ -81,11 +81,17 @@ describe('FirstRunPage', () => {
     renderPage();
 
     await user.type(screen.getByLabelText(/your website/i), 'acme.com');
-    await user.click(screen.getByRole('button', { name: /start reading my site/i }));
+    await user.click(screen.getByRole('button', { name: /check my site/i }));
 
-    await waitFor(() => expect(navigate).toHaveBeenCalledWith('/welcome/42', { replace: true }));
+    // The Knowledge page, where the crawl it just kicked off reports itself.
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith('/chatbots/42/knowledge', { replace: true }),
+    );
     expect(createBot).toHaveBeenCalledWith({ name: 'Acme', website: 'https://acme.com' });
-    expect(crawlWebsite).toHaveBeenCalledWith('https://acme.com', 42);
+    // The crawl is NOT started here any more. The customer is handed to the
+    // Knowledge page with the address saved, where they see the page count
+    // before committing to a read of the whole site.
+    expect(crawlWebsite).not.toHaveBeenCalled();
   });
 
   it('starts with no website at all, and routes to where the content goes', async () => {
@@ -110,7 +116,7 @@ describe('FirstRunPage', () => {
     renderPage();
 
     await user.type(screen.getByLabelText(/your website/i), 'acme.com');
-    await user.click(screen.getByRole('button', { name: /start reading my site/i }));
+    await user.click(screen.getByRole('button', { name: /check my site/i }));
 
     expect(await screen.findByText(/your plan allows one chatbot/i)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /check your plan/i })).toHaveAttribute('href', '/billing');
@@ -123,3 +129,19 @@ describe('FirstRunPage', () => {
     expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument();
   });
 });
+
+/*
+ * The handoff race is deliberately NOT unit-tested here.
+ *
+ * `submit` awaits `refreshBots()` before navigating, which makes `bots.length`
+ * non-zero, and the render-level `<Navigate to="/">` guard at the top of this
+ * screen then beat the imperative navigate — so every website signup landed on
+ * Home. The fix is the `handedOff` latch.
+ *
+ * A test was written for it and deleted again: `useBotContext` is stubbed with
+ * a plain object here, so mutating `botContext.bots` re-renders nothing and the
+ * guard is never re-evaluated. The test passed identically with the latch
+ * removed, which makes it a claim of coverage rather than coverage. Reproducing
+ * it faithfully needs a real provider and React's own scheduling; it was
+ * verified in the browser instead.
+ */

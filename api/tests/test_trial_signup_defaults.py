@@ -66,7 +66,10 @@ def test_seed_matrix_defaults_the_trial_and_not_free():
     assert trial["is_public"] is False and trial["trial_days"] == 14
     assert trial["credits_per_month"] == 500
     assert trial["limits"]["max_crawl_pages"] == 100
-    assert trial["limits"]["knowledge_characters"] == 500_000
+    assert trial["limits"]["knowledge_characters"] == 100_000
+    # The free-page allowance the trial ships with, sized against real
+    # crawled pages (~5,200 chars each) so 25 pages fits inside the cap.
+    assert trial["limits"]["free_training_pages"] == 25
     assert trial["limits"]["bots"] == 1 and trial["limits"]["operators"] == 1
     assert trial["features"]["topup_allowed"] is False
     assert trial["features"]["first_training_free"] is True

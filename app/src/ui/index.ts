@@ -125,6 +125,8 @@ export { Drawer } from './overlays/Drawer';
 export type { DrawerProps, DrawerWidth } from './overlays/Drawer';
 export { ConfirmDialog } from './overlays/ConfirmDialog';
 export type { ConfirmDialogProps } from './overlays/ConfirmDialog';
+export { ImageCropDialog } from './overlays/ImageCropDialog';
+export type { ImageCropDialogProps } from './overlays/ImageCropDialog';
 export { PurchaseDialog, PurchaseSuccess } from './overlays/PurchaseDialog';
 export type {
   PurchaseDialogProps,

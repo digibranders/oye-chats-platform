@@ -75,7 +75,6 @@ const InviteAirlock = named(() => import('../features/workspace/InviteAirlock'),
 const SettingsPage = named(() => import('../features/settings'), 'SettingsPage');
 const SetupPage = named(() => import('../onboarding/SetupPage'), 'SetupPage');
 const FirstRunPage = named(() => import('../onboarding/FirstRunPage'), 'FirstRunPage');
-const FirstChatPage = named(() => import('../onboarding/FirstChatPage'), 'FirstChatPage');
 const UiGallery = named(() => import('../dev/UiGallery'), 'UiGallery');
 
 /**
@@ -163,7 +162,6 @@ export const router = createBrowserRouter([
                   // card on a screen structurally incapable of telling them
                   // their last payment had failed.
                   { path: 'welcome', element: <Route><FirstRunPage /></Route> },
-                  { path: 'welcome/:agentId', element: <Route><FirstChatPage /></Route> },
 
                   // ── Chatbots ────────────────────────────────────────────
                   {

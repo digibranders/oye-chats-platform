@@ -79,3 +79,33 @@ export function verifyUrlWithNext(pathname: string, search: string): string {
     next.startsWith('/') && !next.startsWith('//') && !next.startsWith('/verify-email');
   return safe ? `/verify-email?next=${encodeURIComponent(next)}` : '/verify-email';
 }
+
+
+/**
+ * Correct a locally-cached `admin_is_verified: 'true'` that the server denies.
+ *
+ * The gate above is positive-only by design: an absent or unreadable flag must
+ * never lock out a session we have no evidence against. The cost of that
+ * asymmetry is that a stale `'true'` is trusted forever. A stale `'false'`
+ * already self-heals, because the verify screen asks `/auth/me` on mount and
+ * releases a session the server considers verified; nothing did the reverse.
+ *
+ * That gap is not theoretical. It strands an account in the one state the
+ * console cannot explain: past the gate, inside the shell, and refused by every
+ * write the server gates on verification — which now includes creating the
+ * first chatbot, because the trial is granted at verification rather than at
+ * signup. The customer sees "an active subscription is required" on a first-run
+ * screen they should never have reached.
+ *
+ * Returns true when the flag has just been corrected and the session should be
+ * sent back to `/verify-email`.
+ */
+export function reconcileVerifiedFlag(serverIsVerified: boolean | undefined): boolean {
+  // Only positive evidence FROM THE SERVER acts. `undefined` is "not loaded",
+  // and treating it as unverified would bounce every session on first paint.
+  if (serverIsVerified !== false) return false;
+  if (getAuthItem('auth_type') === 'operator') return false;
+  if (getAuthItem('is_superadmin') === 'true') return false;
+  if (isImpersonating()) return false;
+  return getAuthItem('admin_is_verified') !== 'false';
+}

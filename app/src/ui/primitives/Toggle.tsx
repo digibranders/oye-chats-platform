@@ -186,6 +186,13 @@ export interface SwitchProps {
   label: string;
   /** Hides the label when a neighbouring row heading already names it. */
   hideLabel?: boolean;
+  /**
+   * Let the label/toggle row span its full container instead of the default
+   * `max-w-pair` cap. Off by default, because past ~640px the eye stops binding
+   * the two ends of a row (see the render note); opt in only where a wide panel
+   * genuinely wants the toggle at its far edge.
+   */
+  fullWidth?: boolean;
   description?: ReactNode;
   disabled?: boolean;
   size?: 'sm' | 'md';
@@ -217,7 +224,7 @@ export interface SwitchProps {
  * `disabled:` variants never got the chance to.
  */
 export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch(
-  { checked, onCheckedChange, label, hideLabel = false, description, disabled, size = 'md', name, className },
+  { checked, onCheckedChange, label, hideLabel = false, fullWidth = false, description, disabled, size = 'md', name, className },
   ref,
 ) {
   const fieldProps = useFieldControlProps();
@@ -284,7 +291,7 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
     // Capped at `--container-pair`. A `justify-between` row inside a 1440px card
     // put a switch 1,540px from the label naming it; past about 640px the eye
     // stops binding the two ends of a row and the middle reads as a hole.
-    <div className="flex max-w-pair items-start justify-between gap-4">
+    <div className={cn('flex items-start justify-between gap-4', fullWidth ? 'w-full' : 'max-w-pair')}>
       <span className="min-w-0">
         <span
           id={labelId}

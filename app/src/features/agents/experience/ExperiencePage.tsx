@@ -1,6 +1,6 @@
 import { type ReactElement, useEffect } from 'react';
 import { Link, useBlocker, useSearchParams } from 'react-router-dom';
-import { Bot } from 'lucide-react';
+import { Bot, Lock } from 'lucide-react';
 import { Badge, buttonClass, Card, CardBody, Columns, ConfirmDialog, EmptyState, ErrorState, LockedState, Page, PageHeader, SaveBar, Skeleton, Stack, StatusDot, TabPanel, Tabs, type TabItem } from '../../../ui';
 import { useExperience } from './useExperience';
 import { BrandingSection } from './BrandingSection';
@@ -8,8 +8,13 @@ import { MessagesSection } from './MessagesSection';
 import { VoiceSection } from './VoiceSection';
 import { HandoffSection } from './HandoffSection';
 import { LanguageSection } from './LanguageSection';
+import { LeadEnrichmentSection } from '../advanced/LeadEnrichmentSection';
+import { KnowledgeGapsCard } from '../knowledge/KnowledgeGapsCard';
+import { useKnowledgeGaps } from '../knowledge/useKnowledgeGaps';
 import { PreviewPanel } from './PreviewPanel';
 import { isSectionKey, SECTION_KEYS, SECTION_LABELS, summarizeSections, type SectionKey } from './experience-model';
+import { useEntitlements } from '../../../hooks/useEntitlements';
+import { planIncludesEmailVerification, planIncludesVisitorIntelligence } from '../../../lib/planGates';
 import { useTranslation } from '../../../i18n/useTranslation';
 
 /**
@@ -44,19 +49,27 @@ const TAB_PARAM = 'tab';
  * column and the user may be four tabs away from the change they made. The dot
  * carries the same fact where the choice is: it is `warning` toned and, because
  * colour is never the only signal, its accessible name says "unsaved changes". */
-function tabItems(dirtySections: readonly SectionKey[]): TabItem[] {
+function tabItems(dirtySections: readonly SectionKey[], leadsLocked: boolean): TabItem[] {
   return SECTION_KEYS.map((key) => ({
     value: key,
     label: SECTION_LABELS[key],
-    badge: dirtySections.includes(key) ? (
-      <StatusDot tone="warning" label={`${SECTION_LABELS[key]} has unsaved changes`} />
-    ) : undefined,
+    // A lock on the Leads tab when the plan (Free/Starter) does not include
+    // enrichment, so it reads as gated before the tab is even opened. The
+    // unsaved-changes dot cannot also apply: a locked tab has nothing to save.
+    badge:
+      key === 'leads' && leadsLocked ? (
+        <Lock aria-label="Available on Standard and up" className="h-3 w-3 text-text-tertiary" />
+      ) : dirtySections.includes(key) ? (
+        <StatusDot tone="warning" label={`${SECTION_LABELS[key]} has unsaved changes`} />
+      ) : undefined,
   }));
 }
 
 export function ExperiencePage(): ReactElement {
   const { t } = useTranslation();
   const experience = useExperience();
+  const { planSlug } = useEntitlements();
+  const gaps = useKnowledgeGaps(experience.agentId);
   const [params, setParams] = useSearchParams();
 
   const requested = params.get(TAB_PARAM);
@@ -160,7 +173,10 @@ export function ExperiencePage(): ReactElement {
 
   const { draft, baseline, meta, errors, readOnly } = experience;
   const blocked = Object.keys(errors).length > 0;
-  const tabs = tabItems(experience.dirtySections);
+  // Standard and up (== the email-verification gate). Free and Starter see the
+  // Leads tab locked with an upgrade nudge rather than disabled toggles.
+  const leadsUnlocked = planIncludesEmailVerification(planSlug);
+  const tabs = tabItems(experience.dirtySections, !leadsUnlocked);
 
   return (
     <Page width="wide">
@@ -240,6 +256,39 @@ export function ExperiencePage(): ReactElement {
                         onChange={experience.update}
                       />
                     ) : null}
+                    {item.value === 'leads' ? (
+                      leadsUnlocked ? (
+                        <LeadEnrichmentSection
+                          emailVerificationEnabled={draft.emailVerificationEnabled}
+                          onToggleEmailVerification={(next) => experience.update({ emailVerificationEnabled: next })}
+                          emailVerificationPlanAllows
+                          companyLookupEnabled={draft.companyLookupEnabled}
+                          onToggleCompanyLookup={(next) => experience.update({ companyLookupEnabled: next })}
+                          companyLookupPlanAllows={planIncludesVisitorIntelligence(planSlug)}
+                        />
+                      ) : (
+                        <LockedState
+                          size="panel"
+                          title={t('agents.leadEnrichmentStartsOnStandard') || 'Lead enrichment starts on Standard'}
+                          description={
+                            t('agents.verifyALeadsEmailAnd') ||
+                            'Verify a lead’s email and identify the company from their IP. Available on Standard and up.'
+                          }
+                          action={
+                            <Link to="/billing" className={buttonClass('primary', 'sm')}>
+                              {t('agents.comparePlans') || 'Compare plans'}
+                            </Link>
+                          }
+                        />
+                      )
+                    ) : null}
+                    {item.value === 'uaq' ? (
+                      <KnowledgeGapsCard
+                        section={gaps.section}
+                        window={gaps.window}
+                        onWindowChange={gaps.setWindow}
+                      />
+                    ) : null}
                   </TabPanel>
                 ))}
               </Tabs>
@@ -252,7 +301,7 @@ export function ExperiencePage(): ReactElement {
             // three times the width, under a segmented control stretched across
             // all of it. Capped, the stacked layout is the column layout with
             // the preview moved below the form, which is what it should read as.
-            <div className="max-w-96">
+            <div className="max-w-96 mt-16">
               <PreviewPanel
                 draft={draft}
                 agentName={experience.agentName}

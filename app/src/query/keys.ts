@@ -27,6 +27,7 @@ export const keys = {
     knowledgeState: (agentId: number) => ['agents', 'knowledge', agentId, 'state'] as const,
     crawlProgress: (agentId: number) => ['agents', 'crawl', agentId] as const,
     recrawl: (agentId: number) => ['agents', 'recrawl', agentId] as const,
+    installDomains: (agentId: number) => ['agents', 'install-domains', agentId] as const,
   },
 
   inbox: {

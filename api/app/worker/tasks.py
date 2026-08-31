@@ -60,6 +60,7 @@ async def task_crawl_and_ingest(
     use_js: bool,
     replace_source: str | None,
     cost_per_page: int,
+    free_pages: int = 0,
     max_depth: int | None = None,
     concurrency: int | None = None,
     ordered_urls: list[str] | None = None,
@@ -108,6 +109,7 @@ async def task_crawl_and_ingest(
         use_js=use_js,
         replace_source=replace_source,
         cost_per_page=cost_per_page,
+        free_pages=free_pages,
         max_depth=max_depth,
         concurrency=concurrency,
         ordered_urls=ordered_urls,
@@ -127,6 +129,7 @@ async def task_ingest_web_batch(
     pages: list[dict],
     bot_id: int | None = None,
     cost_per_page: int = 0,
+    free_pages: int = 0,
     deduct_reason: str = "url_scan",
     deduct_reference_id: int | None = None,
 ) -> dict:
@@ -155,6 +158,7 @@ async def task_ingest_web_batch(
             pages,
             bot_id=bot_id,
             cost_per_page=cost_per_page,
+            free_pages=free_pages,
             deduct_reason=deduct_reason,
             deduct_reference_id=deduct_reference_id,
             crawl_job_id=crawl_job_id,
@@ -3047,3 +3051,20 @@ async def task_dunning_emails(ctx: dict) -> int:
     if count:
         logger.info("task_dunning_emails: sent %d dunning email(s)", count)
     return count
+
+
+async def task_probe_bot_installs(ctx: dict, bot_id: int) -> dict:
+    """Fetch every domain a chatbot is associated with and report its install.
+
+    Runs here rather than on the request path for the same reason the demo
+    capture does: it makes up to 25 third-party HTTP requests, each with its own
+    timeout, so the worst case is minutes. The customer presses a button and
+    reads the answer when it lands.
+
+    Already async, so unlike the sync-body tasks around it there is nothing to
+    push into an executor: ``probe_bot_installs`` awaits aiohttp throughout and
+    never blocks the loop.
+    """
+    from app.services.install_probe import probe_bot_installs
+
+    return await probe_bot_installs(bot_id)

@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import {
@@ -89,6 +89,19 @@ function QuotationContent({ agentId }: { agentId: number }) {
     [update],
   );
 
+  // Which services are collapsed, by id — lifted here (not in each ServiceEditor)
+  // so the catalog-level "Collapse all / Expand all" can drive every row. A
+  // stale id from a removed service is harmless: it matches no row.
+  const [collapsedIds, setCollapsedIds] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleCollapse = useCallback((id: string) => {
+    setCollapsedIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
   const blocked = useMemo(() => (catalog ? blockedReason(catalog) : null), [catalog]);
 
   if (state.loadError) {
@@ -112,6 +125,10 @@ function QuotationContent({ agentId }: { agentId: number }) {
   // to decide whether to turn it on, and an inert page tells them nothing about
   // what they would be turning on. Editing is what is blocked, not reading.
   const configDisabled = !catalog.enabled;
+  const allCollapsed =
+    catalog.services.length > 0 && catalog.services.every((service) => collapsedIds.has(service.id));
+  const setAllCollapsed = (collapsed: boolean) =>
+    setCollapsedIds(collapsed ? new Set(catalog.services.map((service) => service.id)) : new Set());
 
   return (
     <Page>
@@ -146,20 +163,33 @@ function QuotationContent({ agentId }: { agentId: number }) {
             <Stack>
               <Card>
                 <CardHeader
-                  title={t('agents.services') || 'Services'}
+                  title={t('agents.services') || 'Requirements'}
                   titleAs="h2"
                   description={t('agents.theLineItemsThisChatbot') || 'The line items this chatbot can price. Visitors pick from these.'}
                   actions={
-                    <span className="figure text-xs text-text-tertiary">
-                      {catalog.services.length} of {MAX_SERVICES}
-                    </span>
+                    <div className="flex items-center gap-3">
+                      {catalog.services.length > 1 ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setAllCollapsed(!allCollapsed)}
+                        >
+                          {allCollapsed
+                            ? t('agents.expandAll') || 'Expand all'
+                            : t('agents.collapseAll') || 'Collapse all'}
+                        </Button>
+                      ) : null}
+                      <span className="figure text-xs text-text-tertiary">
+                        {catalog.services.length} of {MAX_SERVICES}
+                      </span>
+                    </div>
                   }
                 />
                 <CardBody className="space-y-4">
                   {catalog.services.length === 0 ? (
                     <EmptyState
                       size="panel"
-                      title={t('agents.noServicesYet') || 'No services yet'}
+                      title={t('agents.noServicesYet') || 'No requirements yet'}
                       description={t('agents.aQuoteIsAList') || 'A quote is a list of priced things. Add the first one, and the chatbot can start building estimates from it.'}
                     />
                   ) : (
@@ -170,6 +200,8 @@ function QuotationContent({ agentId }: { agentId: number }) {
                         index={index}
                         currency={catalog.currency}
                         disabled={configDisabled || state.saving}
+                        collapsed={collapsedIds.has(service.id)}
+                        onToggleCollapse={() => toggleCollapse(service.id)}
                         onChange={(patch) => patchService(index, patch)}
                         onRemove={() =>
                           update((previous) => ({
@@ -202,7 +234,7 @@ function QuotationContent({ agentId }: { agentId: number }) {
                       }))
                     }
                   >
-                    {t('agents.addService') || 'Add service'}
+                    {t('agents.addService') || 'Add requirement'}
                   </Button>
                 </CardBody>
               </Card>
@@ -216,7 +248,7 @@ function QuotationContent({ agentId }: { agentId: number }) {
                   <Field
                     label={t('agents.quoteIn') || 'Quote in'}
                     disabled={configDisabled}
-                    hint={t('agents.everyServicePriceIsStored') || 'Every service price is stored and quoted in this currency.'}
+                    hint={t('agents.everyServicePriceIsStored') || 'Every requirement price is stored and quoted in this currency.'}
                   >
                     <Select
                       label={t('agents.currency') || 'Currency'}
@@ -377,7 +409,7 @@ export function QuotationPage() {
                 <PropertyGrid
                   className="mt-2"
                   items={[
-                    { label: t('agents.services') || 'Services', value: t('agents.whatYouSellPricedPer') || 'What you sell, priced per unit' },
+                    { label: t('agents.services') || 'Requirements', value: t('agents.whatYouSellPricedPer') || 'What you sell, priced per unit' },
                     { label: t('agents.questions') || 'Questions', value: t('agents.whatTheChatbotAsksTo') || 'What the chatbot asks to scope each one' },
                     { label: t('agents.trigger') || 'Trigger', value: t('agents.howQualifiedAVisitorMust') || 'How qualified a visitor must be before it quotes' },
                   ]}

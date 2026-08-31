@@ -14,6 +14,10 @@ const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
     const [, setDisplayLocale] = useState(() => getLocale());
     useEffect(() => onLocaleChange(({ locale: next }) => setDisplayLocale(next)), []);
 
+    // An explicit empty string is the admin "off" state for the launcher text
+    // (the Launcher-text toggle in the console). Hide the tooltip in that case;
+    // a missing value still falls back to the default label.
+    const showLauncherText = settings?.launcher_name !== '';
     const launcherName = settings?.launcher_name || t('launcher.have_questions') || "Have Questions?";
     const launcherLogo = sanitizeImageUrl(settings?.launcher_logo);
     const avatarType = settings?.avatar_type || 'upload';
@@ -171,8 +175,9 @@ const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
                 </div>
             )}
 
-            {/* Tooltip. Visible only when greeting bubble is not showing */}
-            {!showGreeting && (
+            {/* Tooltip. Visible only when greeting bubble is not showing, and
+                only when the admin has not switched the launcher text off. */}
+            {!showGreeting && showLauncherText && (
                 <div className={`hidden md:block absolute bottom-full mb-4 mr-2 bg-white px-4 py-2 rounded-xl shadow-lg border border-gray-100 transition-opacity duration-200 whitespace-nowrap ${!isOpen && !isScrolling ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
                     <div className="text-sm font-medium text-gray-700">
                         <b>{launcherName}</b>

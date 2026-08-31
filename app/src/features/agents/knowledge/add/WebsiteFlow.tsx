@@ -239,6 +239,7 @@ export function WebsiteFlow({
         <Switch
           checked={useJs}
           disabled={crawlRunning}
+          fullWidth
           onCheckedChange={flow.setJavaScript}
           label={t('agents.thisSiteNeedsJavascriptTo') || 'This site needs JavaScript to show its text'}
           // The troubleshooting advice lives on the `no_content` outcome below,
@@ -272,16 +273,25 @@ export function WebsiteFlow({
                 // a bug or a rounding error, and the number people check before
                 // they commit is exactly this one.
                 value={budget.costPerPage === 0 ? t('agents.everyPageFound') || 'Every page found' : `${formatNumber(budget.affordablePages)} pages`}
+                // Three different truths, and quoting the wrong one is how a
+                // customer decides against a crawl that would not have cost
+                // them anything. With an allowance the price is a SPLIT, so
+                // naming only the per-page rate overstates it — 81 pages on 25
+                // free reads as 405 credits when the charge is 280.
                 hint={
                   budget.costPerPage === 0
                     ? t('agents.thisTrainingIsFree') || 'This training is free · balance unchanged'
-                    : `${formatNumber(budget.costPerPage)} credits a page · balance ${formatNumber(budget.balance)}`
+                    : budget.freePages > 0
+                      ? `First ${formatNumber(budget.freePages)} free · then ${formatNumber(budget.costPerPage)} credits a page · balance ${formatNumber(budget.balance)}`
+                      : `${formatNumber(budget.costPerPage)} credits a page · balance ${formatNumber(budget.balance)}`
                 }
               />
               <FigureRow
                 label={t('agents.selected') || 'Selected'}
                 value={
-                  budget.costPerPage === 0
+                  // `cost` already has the allowance taken off the top, so a
+                  // selection inside it reads as free without a special case.
+                  budget.costPerPage === 0 || cost === 0
                     ? `${formatNumber(pageCount)} pages · ${t('agents.thisIsFree') || 'free'}`
                     : `${formatNumber(pageCount)} pages · ${formatNumber(cost)} credits`
                 }

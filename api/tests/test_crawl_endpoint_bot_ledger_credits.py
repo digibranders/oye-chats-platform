@@ -84,7 +84,11 @@ def _patch_common(monkeypatch, *, balances_by_bucket: dict[str, int], plan_max_p
     # tier without the flag: every page is charged, exactly as before.
     monkeypatch.setattr(
         "app.services.plan_entitlements_service.get_entitlements",
-        lambda client_id, session, **kwargs: SimpleNamespace(has_feature=lambda name: False),
+        lambda client_id, session, **kwargs: SimpleNamespace(
+            has_feature=lambda name: False,
+            # The free-training allowance is a LIMIT now, not a feature flag.
+            limit_for=lambda name: 0,
+        ),
     )
 
     # This bot IS resolved to its own ledger bucket, the credit routing

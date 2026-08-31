@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { mockBackend } from './mockBackend';
+import { SECTION_KEYS } from '../../src/features/agents/experience/experience-model';
 
 /**
  * The agent Experience tab strip, measured in a real layout engine.
@@ -32,8 +33,13 @@ test.describe('Experience tabs at a narrow width', () => {
 
     const tabs = page.getByRole('tablist', { name: 'Experience settings' }).getByRole('tab');
     const count = await tabs.count();
-    // One per `SECTION_KEYS`: branding, messages, voice, language, handoff.
-    expect(count).toBe(5);
+    // One tab per `SECTION_KEYS`, imported rather than hardcoded. The literal
+    // that used to sit here went stale the moment two sections were added, and
+    // failed as a bare "expected 5, received 7" that says nothing about what
+    // changed. Importing it means adding a section updates this expectation
+    // with it, while still failing loudly if a section stops rendering a tab -
+    // which is the defect this file exists to catch.
+    expect(count).toBe(SECTION_KEYS.length);
 
     for (let i = 0; i < count; i += 1) {
       const tab = tabs.nth(i);

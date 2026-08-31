@@ -10,6 +10,13 @@ export interface WidgetBehaviourSectionProps {
   agentId: number;
   /** True when this chatbot's plan includes live chat. */
   liveChatAllowed: boolean;
+  /**
+   * True when the plan does not include these switches at all (Free). The
+   * server already forces every flag off for Free in `get_bot_settings_public`,
+   * so editing here would only stage a value the widget will never honour — the
+   * controls are shown read-only, with the upgrade nudge carried by the group.
+   */
+  locked?: boolean;
 }
 
 /**
@@ -27,9 +34,10 @@ export interface WidgetBehaviourSectionProps {
  * **The Free plan overrides every one of these to off.**
  * `get_bot_settings_public` rewrites the whole map for `plan_slug == "free"`
  * before the widget ever sees it, so a Free workspace could switch five things
- * on, save successfully, and watch none of them happen. The stored values are
- * shown as stored — flipping them here would misreport the record — with the
- * override stated once, on the group above.
+ * on, save successfully, and watch none of them happen. So on Free (`locked`)
+ * the controls render off and read-only — matching what the widget actually
+ * does, not the dormant stored value — with the upgrade nudge on the group
+ * above. The saved map is left untouched; only the display is forced off.
  *
  * **Queue position only means anything with live chat on.** Without it there is
  * no queue, so the switch is a no-op with no explanation.
@@ -43,6 +51,7 @@ function WidgetBehaviourSectionInner({
   onToggle,
   agentId,
   liveChatAllowed,
+  locked = false,
 }: WidgetBehaviourSectionProps) {
   return (
     <>
@@ -72,8 +81,9 @@ function WidgetBehaviourSectionInner({
             controlWidth="auto"
           >
             <Switch
-              checked={flags[flag.key] ?? flag.default}
+              checked={locked ? false : (flags[flag.key] ?? flag.default)}
               onCheckedChange={(next) => onToggle(flag.key, next)}
+              disabled={locked}
               label={flag.label}
               hideLabel
             />

@@ -47,11 +47,15 @@ function isTab(value: string | null): value is TabKey {
 export function IntegrationsPage() {
   const [params, setParams] = useSearchParams();
   const { selectedBot, bots, loading, error, refreshBots } = useBotContext();
-  const { hasFeature, entitlements } = useEntitlements();
+  const { hasFeature, entitlements, isFree } = useEntitlements();
 
   const bot = selectedBot ?? bots[0] ?? null;
   const webhooksUnlocked = hasFeature('webhooks');
   const emailAccess = entitlements.features.integrations === 'all' ? 'all' : 'reply_to_only';
+  // Email and meeting booking are whole-feature paid: the Free plan sees the
+  // upsell in place of the panel, the same treatment the Webhooks tab already
+  // gives a plan without them.
+  const integrationsUnlocked = !isFree;
 
   // Webhooks lead when they are available; otherwise the first tab a customer
   // can actually use is Email, and landing on a locked tab reads as a broken
@@ -128,11 +132,35 @@ export function IntegrationsPage() {
           </TabPanel>
 
           <TabPanel value="email">
-            <EmailPanel bot={bot} access={emailAccess} onSaved={() => void refreshBots()} />
+            {integrationsUnlocked ? (
+              <EmailPanel bot={bot} access={emailAccess} onSaved={() => void refreshBots()} />
+            ) : (
+              <LockedState
+                title="Email notifications are not on your plan"
+                description="Get told the moment a lead qualifies, a chat is handed to a human, or a visitor leaves a message, routed to the inboxes you choose."
+                action={
+                  <Link to="/billing" className={buttonClass('primary', 'md')}>
+                    See plans
+                  </Link>
+                }
+              />
+            )}
           </TabPanel>
 
           <TabPanel value="meetings">
-            <MeetingsPanel bot={bot} onSaved={() => void refreshBots()} />
+            {integrationsUnlocked ? (
+              <MeetingsPanel bot={bot} onSaved={() => void refreshBots()} />
+            ) : (
+              <LockedState
+                title="Meeting booking is not on your plan"
+                description="Let a qualified visitor book a call with your team straight from the chat, on your own Calendly or Zcal link."
+                action={
+                  <Link to="/billing" className={buttonClass('primary', 'md')}>
+                    See plans
+                  </Link>
+                }
+              />
+            )}
           </TabPanel>
         </Tabs>
       </Stack>

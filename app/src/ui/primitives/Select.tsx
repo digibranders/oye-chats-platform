@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { Select as BaseSelect } from '@base-ui/react/select';
 import { Check, ChevronDown } from 'lucide-react';
 import { cn } from '../lib/cn';
@@ -11,6 +11,8 @@ export interface SelectOption<T extends string = string> {
   value: T;
   label: string;
   disabled?: boolean;
+  /** An optional leading mark (e.g. a brand logo), shown in the list and the trigger. */
+  icon?: ReactNode;
 }
 
 export interface SelectProps<T extends string = string> {
@@ -106,7 +108,7 @@ export function Select<T extends string = string>({
   // real value replaces it. Passing both renders only `emptyOption` — see the
   // prop doc for why.
   const items = useMemo(() => {
-    const leading = emptyOption
+    const leading: SelectOption<T>[] = emptyOption
       ? [{ value: '' as T, label: emptyOption, disabled: false }]
       : placeholder
         ? [{ value: '' as T, label: placeholder, disabled: true }]
@@ -115,6 +117,10 @@ export function Select<T extends string = string>({
   }, [emptyOption, placeholder, options]);
   const labelFor = useMemo(() => {
     const byValue = new Map(items.map((item) => [item.value, item.label]));
+    return (v: unknown) => byValue.get(v as T);
+  }, [items]);
+  const iconFor = useMemo(() => {
+    const byValue = new Map(items.map((item) => [item.value, item.icon]));
     return (v: unknown) => byValue.get(v as T);
   }, [items]);
 
@@ -149,9 +155,19 @@ export function Select<T extends string = string>({
             print the placeholder forever on an uncontrolled select. */}
         <BaseSelect.Value
           placeholder={placeholder}
-          className="min-w-0 flex-1 truncate data-[placeholder]:text-text-disabled"
+          className="flex min-w-0 flex-1 items-center gap-2 data-[placeholder]:text-text-disabled"
         >
-          {(v: unknown) => labelFor(v) ?? placeholder ?? ''}
+          {(v: unknown) => {
+            const optionLabel = labelFor(v);
+            if (optionLabel === undefined) return placeholder ?? '';
+            const optionIcon = iconFor(v);
+            return (
+              <>
+                {optionIcon ? <span className="flex shrink-0 items-center">{optionIcon}</span> : null}
+                <span className="min-w-0 flex-1 truncate">{optionLabel}</span>
+              </>
+            );
+          }}
         </BaseSelect.Value>
         <BaseSelect.Icon>
           <ChevronDown aria-hidden className={cn('shrink-0 text-text-tertiary', geometry.icon)} />
@@ -187,6 +203,7 @@ export function Select<T extends string = string>({
                     'data-[disabled]:pointer-events-none data-[disabled]:text-text-disabled',
                   )}
                 >
+                  {item.icon ? <span className="flex shrink-0 items-center">{item.icon}</span> : null}
                   <BaseSelect.ItemText className="min-w-0 flex-1 truncate">
                     {item.label}
                   </BaseSelect.ItemText>

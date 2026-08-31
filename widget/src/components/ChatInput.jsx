@@ -79,11 +79,6 @@ const ChatInput = ({
     // Mobile keyboard
     onInputFocus,
     onInputBlur,
-    // True once the visitor has sent at least one message. Drives the
-    // mobile-only privacy-notice collapse so the tiny mobile viewport
-    // reclaims the vertical space above the input after the conversation
-    // has started (desktop keeps the notice visible throughout).
-    userHasSent = false,
     // Number of visitor-authored messages in the current session. Drives
     // the slash-command placeholder hint (`Write a message… or press / for
     // commands`) after the visitor is past the initial exchanges.
@@ -741,7 +736,7 @@ const ChatInput = ({
                             </button>
                         )}
                     </div>
-                    <p className={`text-[10px] text-gray-400 leading-snug text-center justify-self-center ${userHasSent ? 'hidden md:block' : ''}`}>
+                    <p className="col-start-2 text-[10px] text-gray-400 leading-snug text-center justify-self-center hidden md:block">
                         <a
                             href="https://www.oyechats.com/legal/privacy"
                             target="_blank"
@@ -756,13 +751,13 @@ const ChatInput = ({
                             href={branding.href}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="whitespace-nowrap text-[10px] font-semibold text-gray-300 hover:text-gray-400 transition-colors justify-self-end"
+                            className="col-start-3 whitespace-nowrap text-[10px] font-semibold text-gray-300 hover:text-gray-400 transition-colors justify-self-end"
                         >
                             {branding.lead ? `${branding.lead} ` : ''}
                             <span style={{ color: 'rgb(49% 23% 93%)' }}>{branding.brand}</span>
                         </a>
                     ) : (
-                        <span className="justify-self-end" />
+                        <span className="col-start-3 justify-self-end" />
                     )}
                 </div>
             )}

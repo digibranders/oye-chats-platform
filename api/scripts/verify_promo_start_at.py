@@ -66,7 +66,7 @@ try:  # python-dotenv is a dev dependency; tolerate its absence.
     from dotenv import load_dotenv
 
     load_dotenv()
-except Exception:  # noqa: BLE001. Env may already be exported; never fail here.
+except Exception:  # Env may already be exported; never fail here.  # noqa: BLE001
     pass
 
 from app.config import RAZORPAY_KEY_ID, RAZORPAY_TEST_PLAN_ID  # noqa: E402
@@ -129,7 +129,7 @@ def _list_invoice_summaries(client, sub_id: str) -> list[str]:
     """
     try:
         resp = client.invoice.all({"subscription_id": sub_id, "count": 20})
-    except Exception as exc:  # noqa: BLE001. Invoice listing is diagnostic only.
+    except Exception as exc:  # Invoice listing is diagnostic only.  # noqa: BLE001
         return [f"(could not list invoices: {exc})"]
     out = []
     for inv in resp.get("items", []):
@@ -201,7 +201,7 @@ def main() -> int:
                 "notes": {"purpose": "promo_start_at_verification", "oyechats_env": "verification"},
             }
         )
-    except Exception as exc:  # noqa: BLE001. Surface the gateway error verbatim.
+    except Exception as exc:  # Surface the gateway error verbatim.  # noqa: BLE001
         sys.exit(f"subscription.create failed: {exc}")
 
     sub_id = sub["id"]
@@ -228,7 +228,7 @@ def main() -> int:
         time.sleep(args.interval)
         try:
             sub = client.subscription.fetch(sub_id)
-        except Exception as exc:  # noqa: BLE001. Keep polling through transient errors.
+        except Exception as exc:  # Keep polling through transient errors.  # noqa: BLE001
             print(f"  [{datetime.now(IST):%H:%M:%S}] fetch error: {exc}")
             continue
 

@@ -37,6 +37,7 @@ from app.schemas.validators import (
 )
 from app.services.audit_service import record_audit
 from app.services.email_service import send_password_reset_email
+from app.services.push_service import muted_push_preferences
 from app.services.runtime_config import is_impersonation_enabled
 
 logger = logging.getLogger(__name__)
@@ -550,6 +551,99 @@ def get_current_user_endpoint(auth: dict = Depends(get_current_client_or_operato
         )
 
 
+def grant_default_plan_and_welcome(session, client) -> "TrialStatePayload | None":
+    """Open the client's first subscription, grant its credits, welcome them.
+
+    Called when we know the email address belongs to the person using it: from
+    ``verify_email`` once the OTP checks out, and from ``register`` only for an
+    account that arrives already verified (``DEV_AUTO_VERIFY_EMAIL`` locally,
+    OAuth in production, neither of which ever calls ``/verify-email``).
+
+    It used to run inline in ``register``, before any code was entered. That
+    funded a workspace for anyone who typed a stranger's address, and mailed
+    that stranger "your 14-day free trial is live" for an account they had
+    never opened.
+
+    Idempotent on the SUBSCRIPTION, not on the OTP being single-use: the
+    credits are real money, so a second call must find the existing row and do
+    nothing rather than grant again.
+
+    Never raises. A signup is not rolled back because the mail layer is down;
+    the day-1 cron follows up.
+    """
+    from datetime import UTC
+
+    from app.db.models import Subscription
+
+    existing = (
+        session.execute(select(Subscription).where(Subscription.client_id == client.id).limit(1)).scalars().first()
+    )
+    if existing is not None:
+        # Already granted. Report the current state without touching anything.
+        return _build_trial_payload(session, client.id)
+
+    subscription = None
+    try:
+        from app.services.plan_service import assign_default_plan_to_client
+
+        subscription = assign_default_plan_to_client(session, client.id)
+    except Exception as plan_err:
+        logger.warning("Could not assign default plan to client %s: %s", client.id, plan_err)
+        return None
+
+    if subscription is None or subscription.status != "trialing" or subscription.trial_end is None:
+        return None
+
+    trial_end = subscription.trial_end
+    if trial_end.tzinfo is None:
+        trial_end = trial_end.replace(tzinfo=UTC)
+    plan_row = subscription.plan
+    # ``None``, not 0, when the row cannot answer. The field is ``int | None``
+    # precisely so "unknown" is expressible; a zero would tell the dashboard
+    # nothing was granted while the credits sit in the ledger.
+    credits_granted = int(plan_row.credits_per_month or 0) if plan_row else None
+    trial_length_days = int(plan_row.trial_days or 0) if plan_row else 0
+
+    payload = TrialStatePayload(
+        status=subscription.status,
+        trial_end_at=trial_end.isoformat(),
+        days_remaining=trial_days_remaining(trial_end),
+        credits_granted=credits_granted,
+    )
+
+    # Guarded on the NUMBERS, not on the row. The template writes "your {N}-day
+    # free trial is live, you've got {C} credits", so either figure arriving as
+    # zero puts a claim in front of a customer that contradicts the
+    # subscription they just got. No numbers means no email; the payload above
+    # still tells the app.
+    if credits_granted and trial_length_days:
+        try:
+            from app.services.email_service import send_trial_welcome_email
+
+            send_trial_welcome_email(
+                client.email,
+                name=client.name,
+                trial_end=trial_end,
+                credits=credits_granted,
+                duration_days=trial_length_days,
+            )
+        except Exception as mail_err:
+            # send_trial_welcome_email is already defensive. This is the
+            # belt-and-braces guard for any import-time error.
+            logger.warning("trial_welcome_dispatch_failed for client %s: %s", client.id, mail_err)
+    else:
+        logger.warning(
+            "trial_welcome_skipped for client %s: subscription %s is trialing but resolves to "
+            "credits=%s duration_days=%s, so the welcome copy would contradict it",
+            client.id,
+            subscription.id,
+            credits_granted,
+            trial_length_days,
+        )
+
+    return payload
+
+
 def _build_trial_payload(session, client_id: int) -> "TrialStatePayload | None":
     """Resolve the dashboard's trial snapshot for a client.
 
@@ -736,9 +830,17 @@ def verify_email(request: Request, body: VerifyEmailRequest):
             client.email_otp_expires_at = None
             session.commit()
 
+            # The address is proved, so the workspace becomes real: the trial
+            # opens, its credits are granted, and the welcome goes out. All of
+            # this used to happen at registration, before the code was entered.
+            # Idempotent on the subscription, so a repeat verification finds the
+            # existing row and grants nothing twice.
+            trial_payload = grant_default_plan_and_welcome(session, client)
+            session.commit()
+
             clear_attempts("verify_email", body.email)
             logger.info("Email verified for client %s", client.id)
-            return {"message": "Email verified successfully."}
+            return {"message": "Email verified successfully.", "trial": trial_payload}
     except HTTPException:
         raise
     except Exception as e:
@@ -974,96 +1076,36 @@ def register(request: Request, body: RegisterRequest):
                 # first load (editable later in Billing details).
                 billing_country=body.billing_country or resolve_country(request),
                 is_superadmin=False,
+                # New accounts start reachable but with every push event off, so
+                # a fresh owner is not paged until they opt in per event. Existing
+                # accounts (null prefs) keep meaning "fully opted in".
+                notification_preferences=muted_push_preferences(),
             )
 
             session.add(new_client)
             session.flush()  # Get the client ID
             logger.info("Client INSERT flushed: id=%s", new_client.id)
 
-            # Auto-assign the default plan. Whether that yields a trialing
-            # or an active subscription depends on the plan seed
-            # (``Plan.trial_days``). Today the default plan is "trial", the
-            # non-public 14-day row, so a plain signup lands TRIALING with the
-            # row's credits granted inline, and there is no opt-in step: the
-            # trial is not something a customer starts, it is where they
-            # begin. The subscription row is bound locally so we can build the
-            # trial payload + welcome email without re-querying after commit.
-            subscription = None
-            try:
-                from app.services.plan_service import assign_default_plan_to_client
-
-                subscription = assign_default_plan_to_client(session, new_client.id)
-            except Exception as plan_err:
-                logger.warning(f"Could not assign default plan to client {new_client.id}: {plan_err}")
-
+            # The trial is NOT opened here. It is opened when the address is
+            # verified (``verify_email`` below), because until the six-digit
+            # code comes back we do not know the address belongs to the person
+            # using it. Granting at this point funded a workspace for anyone who
+            # typed a stranger's address, and mailed that stranger "your 14-day
+            # free trial is live" for an account they had never opened.
+            #
+            # The exception is an account that arrives ALREADY verified:
+            # ``DEV_AUTO_VERIFY_EMAIL`` locally, and OAuth, where the provider
+            # has done the proving. Neither ever calls ``/verify-email``, so
+            # deferring unconditionally would leave them with no subscription.
             session.commit()
             logger.info(f"Transaction committed successfully for client {new_client.id}")
 
             session.refresh(new_client)
 
-            # Build the trial payload + fire the welcome email AFTER commit.
-            # If the email layer crashes, we don't want to roll back the
-            # client row. They're already a customer, the day-1 cron will
-            # follow up.
             trial_payload: TrialStatePayload | None = None
-            if subscription is not None and subscription.status == "trialing" and subscription.trial_end is not None:
-                from app.services.email_service import send_trial_welcome_email
-
-                trial_end = subscription.trial_end
-                if trial_end.tzinfo is None:
-                    trial_end = trial_end.replace(tzinfo=UTC)
-                days_remaining = trial_days_remaining(trial_end)
-                plan_row = subscription.plan
-                # ``None``, not 0, when the row cannot answer. The field is
-                # ``int | None`` precisely so "unknown" is expressible, and the
-                # login-path builder already returns None for this case. A zero
-                # here would tell the dashboard nothing was granted while the
-                # credits sit in the ledger.
-                credits_granted = int(plan_row.credits_per_month or 0) if plan_row else None
-                trial_length_days = int(plan_row.trial_days or 0) if plan_row else 0
-
-                trial_payload = TrialStatePayload(
-                    status=subscription.status,
-                    trial_end_at=trial_end.isoformat(),
-                    days_remaining=days_remaining,
-                    credits_granted=credits_granted,
-                )
-
-                # Guarded on the NUMBERS, not on the row. The template writes
-                # "your {N}-day free trial is live, you've got {C} credits", so
-                # either figure arriving as zero puts a claim in front of a
-                # customer that contradicts the subscription they just got: the
-                # status is trialing, so the length is positive, and the credits
-                # are already in the ledger. A row present but carrying zeros
-                # fails this the same way a missing row does. No numbers means
-                # no email; the trial payload above still tells the app.
-                if credits_granted and trial_length_days:
-                    try:
-                        send_trial_welcome_email(
-                            new_client.email,
-                            name=new_client.name,
-                            trial_end=trial_end,
-                            credits=credits_granted,
-                            duration_days=trial_length_days,
-                        )
-                    except Exception as mail_err:
-                        # send_trial_welcome_email is already defensive. This is
-                        # the belt-and-braces guard for any import-time error.
-                        logger.warning(
-                            "trial_welcome_dispatch_failed for client %s: %s",
-                            new_client.id,
-                            mail_err,
-                        )
-                else:
-                    logger.warning(
-                        "trial_welcome_skipped for client %s: subscription %s is trialing "
-                        "but resolves to credits=%s duration_days=%s, so the welcome copy "
-                        "would contradict it",
-                        new_client.id,
-                        subscription.id,
-                        credits_granted,
-                        trial_length_days,
-                    )
+            if new_client.is_verified:
+                trial_payload = grant_default_plan_and_welcome(session, new_client)
+                session.commit()
 
             # Affiliate first-touch attribution. Best-effort. Invalid /
             # self-referral / inactive code all silently no-op so the

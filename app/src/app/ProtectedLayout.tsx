@@ -9,6 +9,7 @@ import { NotificationProvider } from '../context/NotificationContext';
 import { EntitlementsProvider } from '../context/EntitlementsContext';
 import { UpgradeModalProvider } from '../context/UpgradeModalContext';
 import { sessionNeedsEmailVerification, verifyUrlWithNext } from './emailVerificationGate';
+import { VerificationReconciler } from './VerificationReconciler';
 
 /**
  * Build a `/login?next=…` URL that round-trips the current deep link through
@@ -62,6 +63,10 @@ export function ProtectedLayout() {
 
   return (
     <WorkspaceProvider>
+      {/* Renders nothing. Watches the `/auth/me` the shell already fetches and
+          bounces a session the server does not consider verified, closing the
+          one direction the positive-only gate above cannot. */}
+      <VerificationReconciler />
       <BotProvider>
         <CrawlProvider>
           {/* CurrencyProvider (fed by /subscriptions/geo) lets billing surfaces

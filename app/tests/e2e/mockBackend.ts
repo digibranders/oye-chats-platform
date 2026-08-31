@@ -209,6 +209,12 @@ export async function mockBackend(page: Page, opts: MockOptions = {}): Promise<O
   // ORDER MATTERS. Playwright tries the most recently registered matching route
   // FIRST, so the catch-all goes down first and the specific handlers below
   // take precedence. Registering it last silently swallows every mock.
+  // Experience ▸ UAQ reads this. Without a stub the catch-all below answered
+  // `{}`, which is not a list, and the card fed it straight to `DataTable` — so
+  // the tab crashed the page rather than showing an empty state, and the crash
+  // was the bug this stub now keeps the suite honest about.
+  await page.route(`${API}/analytics/unanswered-questions*`, (route) => route.fulfill({ json: [] }));
+
   await page.route(`${API}/**`, (route) => route.fulfill({ json: {} }));
 
   await page.route(`${API}/auth/me/entitlements*`, (route) => route.fulfill({ json: ENTITLEMENTS }));

@@ -9,6 +9,7 @@ import {
   crawlDoneMessage,
   crawlFellShort,
   crawlPreflight,
+  creditsForPages,
   crawlUrlFor,
   gapWindowLabel,
   gapWindowParam,
@@ -26,6 +27,7 @@ import {
   uploadSkipReason,
   type RecrawlDiff,
 } from './knowledge-model';
+import type { CrawlDiscovery } from '../../../types/domain';
 import type { KnowledgeSource } from '../../../types/domain';
 
 /**
@@ -463,5 +465,60 @@ describe('crawl coverage — what the chatbot can actually answer from', () => {
     const coverage = crawlCoverageOf(payload({ pages_processed: 3, pages_ingested: 10 }));
     expect(coverage?.processed).toBe(10);
     expect(crawlFellShort(coverage!)).toBe(false);
+  });
+});
+
+describe('the free-training allowance', () => {
+  /**
+   * The allowance comes off the TOP of a crawl, so a selection's price is not
+   * `pages x costPerPage`. That multiplication quoted a trial customer 405
+   * credits for 81 pages when the first 25 were free and the charge was 280 —
+   * on the button they were about to press.
+   */
+  const withAllowance = (over: Partial<CrawlDiscovery> = {}): CrawlDiscovery => ({
+    total_found: 81,
+    capped: false,
+    cost_per_page: 5,
+    balance: 500,
+    free_pages: 25,
+    ...over,
+  });
+
+  it('charges only the pages past the allowance', () => {
+    const budget = crawlBudgetOf(withAllowance());
+    expect(creditsForPages(budget, 81)).toBe(280); // (81 - 25) x 5
+  });
+
+  it('charges nothing for a selection that fits inside it', () => {
+    const budget = crawlBudgetOf(withAllowance());
+    expect(creditsForPages(budget, 25)).toBe(0);
+    expect(creditsForPages(budget, 10)).toBe(0);
+  });
+
+  it('never returns a negative charge', () => {
+    const budget = crawlBudgetOf(withAllowance({ free_pages: 100 }));
+    expect(creditsForPages(budget, 3)).toBe(0);
+  });
+
+  it('reads an absent allowance as none, not as unlimited', () => {
+    // An older server omits the field. Treating that as unlimited would quote
+    // pages as free that the ledger is about to charge for.
+    const budget = crawlBudgetOf(withAllowance({ free_pages: undefined }));
+    expect(budget.freePages).toBe(0);
+    expect(creditsForPages(budget, 81)).toBe(405);
+  });
+
+  it('counts the free pages as affordable, not just what the balance buys', () => {
+    // 25 free + 500/5 = 125, capped at the 81 actually found.
+    const budget = crawlBudgetOf(withAllowance({ max_affordable_pages: undefined }));
+    expect(budget.affordablePages).toBe(81);
+  });
+
+  it('still affords the free pages on an empty balance', () => {
+    const budget = crawlBudgetOf(
+      withAllowance({ balance: 0, max_affordable_pages: undefined }),
+    );
+    expect(budget.affordablePages).toBe(25);
+    expect(creditsForPages(budget, 25)).toBe(0);
   });
 });

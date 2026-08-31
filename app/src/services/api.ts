@@ -1,6 +1,7 @@
 import axios from 'axios';
 import type { AxiosInstance, AxiosRequestHeaders, InternalAxiosRequestConfig } from 'axios';
 import { ApiError, type ApiAxiosError } from './apiTypes';
+import type { InstallDomains } from '../features/agents/channels/installDomainsModel';
 import { t as translateNow } from '../i18n/i18n';
 import { getAuthItem, setAuthItem, clearAuthStorage } from '../utils/authStorage';
 import {
@@ -2083,6 +2084,20 @@ export const uploadLogo = async (file: File): Promise<{ url: string }> => {
 };
 
 /**
+ * Re-derives the bot's website favicon on demand and returns it as an image
+ * Blob, so the caller can crop it into an avatar. Nothing is persisted server
+ * side — the crop is uploaded through {@link uploadLogo} like any other image.
+ */
+export const fetchSiteIcon = async (botId: number): Promise<Blob> => {
+    try {
+        const response = await api.post(`/bots/${botId}/site-icon`, null, { responseType: 'blob' });
+        return response.data as Blob;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to fetch the website icon');
+    }
+};
+
+/**
  * Uploads (or replaces) the current operator's own profile picture. Purely
  * optional - an operator who never calls this just shows initials.
  * @param {File} file - The image file to upload
@@ -2463,6 +2478,42 @@ export const getBot = async (botId: number): Promise<Bot> => {
     } catch (error) {
         console.error('API Error fetching bot:', error);
         throw buildApiError(error, 'Failed to load bot');
+    }
+};
+
+/**
+ * Every domain this chatbot has been seen on, checked against, or is allowed on.
+ *
+ * Replaces reading `widget_last_origin` off the bot row, which held one
+ * hostname and overwrote it, so a chatbot on several sites reported whichever
+ * called most recently.
+ */
+export const getInstallDomains = async (botId: number): Promise<InstallDomains> => {
+    try {
+        const response = await api.get(`/bots/${botId}/install-domains`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching install domains:', error);
+        throw buildApiError(error, 'Failed to load install status');
+    }
+};
+
+/**
+ * Ask the backend to go and fetch each domain now.
+ *
+ * Returns as soon as the check is dispatched, not when it finishes: it makes up
+ * to 25 third-party requests and runs on the worker. The caller polls
+ * `getInstallDomains` for the result.
+ */
+export const startInstallCheck = async (
+    botId: number,
+): Promise<{ success: boolean; checking: boolean; already_running: boolean }> => {
+    try {
+        const response = await api.post(`/bots/${botId}/install-domains/check`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error starting install check:', error);
+        throw buildApiError(error, 'Failed to start the check');
     }
 };
 

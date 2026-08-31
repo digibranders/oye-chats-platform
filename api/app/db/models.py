@@ -166,7 +166,7 @@ class Client(Base):
     bot_logo = Column(Text, nullable=True)
     launcher_name = Column(String, default="Have Questions?")
     launcher_logo = Column(Text, nullable=True)
-    primary_color = Column(String, default="#ba68c8")
+    primary_color = Column(String, default="#a21caf")
     background_color = Column(String, default="#ffffff")
     header_color = Column(String, default="#3A0CA3")
     recommended_colors = Column(JSONB, nullable=True)
@@ -351,7 +351,12 @@ class Bot(Base):
     bot_logo_source = Column(String, nullable=True)
     launcher_name = Column(String, default="Have Questions?", server_default="Have Questions?")
     launcher_logo = Column(Text, nullable=True)
-    primary_color = Column(String, default="#ba68c8", server_default="#ba68c8")
+    # #a21caf, not the #ba68c8 this carried for years. That shade renders at
+    # 3.56:1 as text on the white chat window — below the 4.5:1 the console's
+    # own contrast checker demands — so every chatbot was created carrying a
+    # colour the product immediately warned its owner about. This one is the
+    # same brand family at 6.32:1.
+    primary_color = Column(String, default="#a21caf", server_default="#a21caf")
     background_color = Column(String, default="#ffffff", server_default="#ffffff")
     header_color = Column(String, default="#3A0CA3", server_default="#3A0CA3")
     recommended_colors = Column(JSONB, nullable=True)
@@ -2792,33 +2797,40 @@ class DiscountedPlanCache(Base):
     )
 
 
-class SeatPlanCache(Base):
-    """Reuse cache for API-minted extra-operator-seat Razorpay plans.
+class AddonPlanCache(Base):
+    """Reuse cache for API-minted add-on Razorpay plans.
 
-    Seats used to bill against ONE plan pinned in the environment
-    (``RAZORPAY_SEAT_PLAN_ID``). Razorpay plans are immutable and a plan's amount
-    IS the debit, so every seat price change meant minting a plan by hand in the
-    dashboard and repointing that variable in lockstep. Miss the second half and
-    the console quotes one price while the mandate collects another, which is the
-    one thing the seat pricing invariant exists to prevent. It also left no way
-    to bill a discounted seat at all: the pinned plan had exactly one amount.
+    Add-ons used to bill against plans pinned in the environment
+    (``RAZORPAY_SEAT_PLAN_ID``, ``RAZORPAY_BRANDING_PLAN_ID``, and a USD twin
+    for each). Razorpay plans are immutable and a plan's amount IS the debit, so
+    every price change meant minting a plan by hand in the dashboard and
+    repointing a variable in lockstep. Miss the second half and the console
+    quotes one price while the mandate collects another — the one thing the
+    pricing invariant exists to prevent. It also left no way to bill a
+    discounted add-on: a pinned plan holds exactly one amount.
 
     Keyed on the CHARGED amount rather than the base, for the same reason
-    ``DiscountedPlanCache`` is: a GST-rate change moves the charge without moving
-    the base, and a cache keyed on the base would keep handing back a plan minted
-    at the old rate. A new price, a new discount or a new tax rate all resolve to
-    a different ``amount_minor`` and therefore mint once and are reused after.
+    ``DiscountedPlanCache`` is: a GST-rate change moves the charge without
+    moving the base, and a base-keyed cache would keep handing back a plan
+    minted at the old rate.
 
-    Bounded by distinct charged amounts, not by customers: one row per price the
-    product has ever actually billed on each rail.
+    ``addon_kind`` is part of the key, not decoration. A seat and a branding
+    removal can cost the same ₹499, and one Razorpay plan could technically
+    bill either — but the plan's item name is what the customer reads on the
+    checkout sheet and the invoice, so a shared row would tell someone buying
+    branding removal that they were paying for an operator seat.
+
+    Bounded by distinct priced add-ons, not by customers.
     """
 
-    __tablename__ = "seat_plan_cache"
+    __tablename__ = "addon_plan_cache"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    # Which add-on this plan bills. See the note above on why it is in the key.
+    addon_kind = Column(String(32), nullable=False)
     # Rail this cached plan bills on. A Razorpay plan's currency is fixed at
-    # creation, so the INR and USD seat plans for one amount are different
-    # objects and must not share a row.
+    # creation, so the INR and USD plans for one amount are different objects
+    # and must not share a row.
     currency = Column(String(3), default="INR", server_default="INR", nullable=False)
     # Minor units in ``currency``, GST INCLUSIVE — what Razorpay debits.
     amount_minor = Column(Integer, nullable=False)
@@ -2826,8 +2838,8 @@ class SeatPlanCache(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (
-        UniqueConstraint("currency", "amount_minor", name="uq_seat_plan_amount"),
-        CheckConstraint("amount_minor > 0", name="chk_seat_plan_amount_positive"),
+        UniqueConstraint("addon_kind", "currency", "amount_minor", name="uq_addon_plan_amount"),
+        CheckConstraint("amount_minor > 0", name="chk_addon_plan_amount_positive"),
     )
 
 
@@ -3188,3 +3200,76 @@ class EmailSuppression(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (UniqueConstraint("bot_id", "email", name="uq_email_suppressions_bot_email"),)
+
+
+class BotDomainInstall(Base):
+    """Where one chatbot has been seen, one row per (bot, domain).
+
+    Replaces the single ``Bot.widget_last_origin`` column, which could only ever
+    hold the hostname that called most recently. A customer running one chatbot
+    across five sites had four of them invisible, and the two-per-hour heartbeat
+    throttle meant the surviving value could lag reality by an hour.
+
+    Two INDEPENDENT producers write here, and they own different columns:
+
+    * the widget bootstrap, which reports ``observed_*`` — the widget called us
+      from this hostname;
+    * the active probe, which reports ``probe_*`` — we fetched this page and
+      looked for the script tag ourselves.
+
+    They are kept apart because they carry different trust and answer different
+    questions. Observation is self-reported: ``Origin`` is a browser header
+    anyone can forge with two lines of curl, so it proves traffic arrived
+    claiming to be this domain and nothing more. A probe is our own fetch, so it
+    can say a domain does NOT have the snippet — which no amount of passive data
+    can, because "no bootstrap from acme.com" is equally consistent with "not
+    installed" and "installed but nobody visited today".
+
+    Neither is an input to enforcement. Embed restriction stays
+    ``Bot.allowed_domains`` + ``auth._enforce_bot_origin``; a forgeable signal
+    that gates traffic is a bypass, and this table exists to inform a dashboard.
+    """
+
+    __tablename__ = "bot_domain_installs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    bot_id = Column(Integer, ForeignKey("bots.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    # Bare hostname, lowercased, no scheme and no port — the shape
+    # ``core.origin_check.extract_hostname`` returns, so an observed origin and
+    # a probed URL agree on what "the same domain" means. Note this is NOT the
+    # shape ``allowed_domains`` stores: that one strips a leading ``www.``.
+    # Reconciling the two is the API layer's job, not the table's.
+    hostname = Column(String(253), nullable=False)
+
+    # ── Passive: the widget bootstrapped and told us this was its origin ──
+    observed_first_at = Column(DateTime(timezone=True), nullable=True)
+    observed_last_at = Column(DateTime(timezone=True), nullable=True)
+
+    # ── Active: we fetched the page ourselves ──
+    # 'installed'   — this bot's snippet is present
+    # 'foreign'     — an OyeChats snippet is present, carrying a DIFFERENT key
+    # 'missing'     — page fetched fine, no OyeChats snippet in the served HTML
+    # 'unreachable' — could not fetch it (DNS, TLS, timeout, 4xx/5xx, blocked)
+    probe_status = Column(String(16), nullable=True)
+    probe_checked_at = Column(DateTime(timezone=True), nullable=True)
+    # The ``data-bot-key`` actually found, when one was. Populated for
+    # 'installed' (it equals this bot's key) and for 'foreign' (it does not),
+    # because "someone else's chatbot is on your page" is only actionable if we
+    # can say which.
+    probe_bot_key = Column(String(64), nullable=True)
+    # Why the probe failed, for the support conversation. Never shown as a
+    # cause the customer must fix on its own.
+    probe_detail = Column(String(200), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    bot = relationship("Bot", backref="domain_installs")
+
+    __table_args__ = (
+        UniqueConstraint("bot_id", "hostname", name="uq_bot_domain_install"),
+        CheckConstraint(
+            "probe_status IS NULL OR probe_status IN ('installed', 'foreign', 'missing', 'unreachable')",
+            name="chk_bot_domain_probe_status",
+        ),
+    )

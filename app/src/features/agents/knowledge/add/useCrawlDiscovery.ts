@@ -10,6 +10,7 @@ import { errorMessage } from '../knowledge-api';
 import {
   crawlBudgetOf,
   crawlPreflight,
+  creditsForPages,
   isWebsiteSource,
   normalizeSiteUrl,
   rootDomainOf,
@@ -133,7 +134,7 @@ export function useCrawlDiscovery({
   const hasPageList = (discovery?.urls?.length ?? 0) > 1;
   const pageCount = hasPageList ? selected.length : (discovery?.total_found ?? 0);
   const preflight = budget ? crawlPreflight(budget, Math.max(pageCount, 0), planSlug) : null;
-  const cost = budget ? pageCount * budget.costPerPage : 0;
+  const cost = budget ? creditsForPages(budget, pageCount) : 0;
 
   const alreadyTrained = useMemo(() => {
     const trimmed = url.trim();

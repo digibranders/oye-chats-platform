@@ -15,6 +15,7 @@ import {
   Switch,
 } from '../../../ui';
 import { useLocaleCatalog } from '../../../hooks/useLocaleCatalog';
+import { useEntitlements } from '../../../hooks/useEntitlements';
 import { type ExperienceDraft } from './experience-model';
 import { useTranslation } from '../../../i18n/useTranslation';
 
@@ -54,9 +55,13 @@ export function LanguageSection({
 }: LanguageSectionProps): ReactElement {
   const { t } = useTranslation();
   const { locales, ready, labelFor, localeNameFor, uiTranslatedFor } = useLocaleCatalog();
+  const { hasFeature } = useEntitlements();
 
   const off = !draft.multilingualEnabled;
   const disabled = readOnly || off;
+  // Live-chat translation only means anything with live chat, which Free does
+  // not have — shown off and locked there rather than as an inert switch.
+  const translationLocked = !hasFeature('live_chat');
 
   /**
    * Only languages the WIDGET is translated into can be added.
@@ -233,11 +238,12 @@ export function LanguageSection({
           </SettingRow>
           <SettingRow
             label={t('agents.translateLiveChat') || 'Translate live chat'}
+            badge={translationLocked ? <Badge tone="plan">Starter and above</Badge> : undefined}
             description={t('agents.visitorMessagesReachYourOperators') || 'Visitor messages reach your operators in their own language, and replies go back translated. Translation is metered in credits.'}
           >
             <Switch
-              checked={draft.operatorTranslation}
-              disabled={disabled}
+              checked={translationLocked ? false : draft.operatorTranslation}
+              disabled={disabled || translationLocked}
               onCheckedChange={(operatorTranslation) => onChange({ operatorTranslation })}
               label={t('agents.translateLiveChat') || 'Translate live chat'}
             />

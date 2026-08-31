@@ -49,6 +49,42 @@ _MAX_STYLESHEETS = 4
 _STYLESHEET_TIMEOUT_S = 5.0
 _MAX_STYLESHEET_BYTES = 512 * 1024  # 512 KB. Bigger than any real hand-authored bundle
 
+# WCAG AA for normal text. A recommended brand colour is offered as the widget's
+# accent AND painted as text on the white chat window, so one that cannot carry
+# text is not a candidate — the console would flag it the moment it was picked.
+MIN_BRAND_CONTRAST = 4.5
+_MIN_CONTRAST_ON_WHITE = MIN_BRAND_CONTRAST
+
+# A colour found only inside <svg> counts for less than one found in CSS.
+# Decorative artwork repeats: a browser-window mockup on a marketing homepage
+# contributed #ff5f57 and #febc2e — the macOS close and minimise buttons — and
+# frequency alone ranked them above brand tokens declared once in a custom
+# property. Illustration is not identity.
+_SVG_COLOR_WEIGHT = 1
+_CSS_COLOR_WEIGHT = 4
+
+_SVG_BLOCK_RE = re.compile(r"<svg\b.*?</svg\s*>", re.IGNORECASE | re.DOTALL)
+
+
+def _relative_luminance(hex6: str) -> float:
+    """WCAG relative luminance of an ``rrggbb`` string."""
+    r, g, b = (channel / 255 for channel in _hex_to_rgb(hex6))
+
+    def _linear(channel: float) -> float:
+        return channel / 12.92 if channel <= 0.03928 else ((channel + 0.055) / 1.055) ** 2.4
+
+    return 0.2126 * _linear(r) + 0.7152 * _linear(g) + 0.0722 * _linear(b)
+
+
+def contrast_on_white(hex6: str) -> float:
+    """Contrast ratio of ``rrggbb`` against #ffffff, the chat window's ground."""
+    return 1.05 / (_relative_luminance(hex6.lstrip("#")) + 0.05)
+
+
+def _carries_text(hex6: str) -> bool:
+    return contrast_on_white(hex6) >= _MIN_CONTRAST_ON_WHITE
+
+
 # Match ``<link ...>`` tags with ``rel="stylesheet"`` in any attribute order,
 # capturing the ``href``. Case-insensitive. The regex is intentionally
 # permissive: an HTML parser would be overkill for a single-tag extraction
@@ -263,6 +299,54 @@ def _iter_hex_colors(html: str) -> Iterable[str]:
         yield _rgb_bytes_to_hex(r, g, b)
 
 
+def _tally(document: str, counts: Counter, first_seen: dict, start_idx: int) -> int:
+    """Count one document's colours, weighting CSS above SVG artwork.
+
+    `<svg>` blocks are scanned separately at a lower weight rather than
+    excluded: a brand mark IS often an inline SVG, so its colour is real
+    evidence — just weaker than a token the stylesheet declares, and far weaker
+    than its raw repetition count suggests when the artwork is a decorative
+    mockup drawn dozens of times.
+    """
+    idx = start_idx
+    svg_regions = _SVG_BLOCK_RE.findall(document)
+    without_svg = _SVG_BLOCK_RE.sub(" ", document)
+
+    for source, weight in ((without_svg, _CSS_COLOR_WEIGHT), ("".join(svg_regions), _SVG_COLOR_WEIGHT)):
+        for hex6 in _iter_hex_colors(source):
+            if not _is_brandable(hex6):
+                idx += 1
+                continue
+            counts[hex6] += weight
+            first_seen.setdefault(hex6, idx)
+            idx += 1
+    return idx
+
+
+def _rank(counts: Counter, first_seen: dict, *, top_n: int) -> list[str]:
+    """Rank by weight, then drop what cannot carry text on the chat window.
+
+    Colours that cannot carry text on the white chat window sort last, so
+    decoration falls out of the top N on any site with enough usable colours to
+    fill it, while a light brand keeps its own palette rather than being told we
+    could not read its site.
+    """
+    if not counts:
+        return []
+    # Demoted, not dropped. A hard filter fixes the case that prompted this — a
+    # browser-window mockup whose close and minimise buttons outranked the brand
+    # — but it would also throw away the real colour of a genuinely amber or
+    # cyan brand, which is a worse failure and a silent one. Sorting unusable
+    # colours to the back pushes decoration out of the top N wherever the site
+    # has enough usable colours to fill it, and leaves a light brand its own
+    # palette where it does not.
+    ranked = sorted(
+        counts.items(),
+        key=lambda kv: (not _carries_text(kv[0]), -kv[1], first_seen[kv[0]]),
+    )
+    return [f"#{hex6}" for hex6, _ in ranked[:top_n]]
+
+
 def extract_colors_from_html(html: str, *, top_n: int = _DEFAULT_TOP_N) -> list[str]:
     """Return the top-N brandable hex colors from an HTML document.
 
@@ -274,17 +358,8 @@ def extract_colors_from_html(html: str, *, top_n: int = _DEFAULT_TOP_N) -> list[
         return []
     counts: Counter[str] = Counter()
     first_seen: dict[str, int] = {}
-    for idx, hex6 in enumerate(_iter_hex_colors(html)):
-        if not _is_brandable(hex6):
-            continue
-        counts[hex6] += 1
-        first_seen.setdefault(hex6, idx)
-
-    if not counts:
-        return []
-
-    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], first_seen[kv[0]]))
-    return [f"#{hex6}" for hex6, _ in ranked[:top_n]]
+    _tally(html, counts, first_seen, 0)
+    return _rank(counts, first_seen, top_n=top_n)
 
 
 def _iter_stylesheet_hrefs(html: str) -> Iterable[str]:
@@ -364,19 +439,8 @@ def _extract_colors_from_documents(documents: list[str], *, top_n: int) -> list[
     for document in documents:
         if not document:
             continue
-        for hex6 in _iter_hex_colors(document):
-            if not _is_brandable(hex6):
-                global_idx += 1
-                continue
-            counts[hex6] += 1
-            first_seen.setdefault(hex6, global_idx)
-            global_idx += 1
-
-    if not counts:
-        return []
-
-    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], first_seen[kv[0]]))
-    return [f"#{hex6}" for hex6, _ in ranked[:top_n]]
+        global_idx = _tally(document, counts, first_seen, global_idx)
+    return _rank(counts, first_seen, top_n=top_n)
 
 
 async def fetch_recommended_colors(url: str, *, top_n: int = _DEFAULT_TOP_N) -> list[str]:

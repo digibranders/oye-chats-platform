@@ -1,3 +1,4 @@
+import asyncio
 import html
 import ipaddress
 import logging
@@ -10,7 +11,7 @@ from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from pydantic import (
     AfterValidator,
     BaseModel,
@@ -65,6 +66,8 @@ from app.schemas.validators import (
 )
 from app.services.brand_tone import BRAND_TONE_PRESETS, CUSTOM_PRESET, is_valid_preset_value, preset_text
 from app.services.email_service import send_install_invite_email
+from app.services.install_probe import probe_is_running
+from app.services.install_registry import list_domain_installs, record_observed_domain
 from app.services.language_service import KNOWN_LOCALES, is_multilingual_enabled, normalize_locale
 
 # Upper bound on per-bot domain list size. 50 covers every realistic case
@@ -84,6 +87,27 @@ _HHMM_PATTERN = r"^(?:[01]\d|2[0-3]):[0-5]\d$"
 _MAX_SERVICES = 50
 _MAX_ANSWER_LINKS = 50
 _MAX_LEAD_FORM_FIELDS = 10
+
+# ``update_bot`` fields behind the paid Email and Meetings integrations. The
+# Free plan sees an upsell in place of both dashboard panels, and this route is
+# the only writer of these columns, so a plan gate here is what makes the block
+# real rather than cosmetic.
+_INTEGRATION_PAID_FIELDS = frozenset(
+    {
+        "notification_email",
+        "notification_emails",
+        "reply_to_email",
+        "email_on_qualified",
+        "email_on_handoff",
+        "email_on_offline",
+        "email_visitor_confirmation",
+        "meeting_booking_enabled",
+        "meeting_provider",
+        "calendly_url",
+        "zcal_url",
+        "calcom_url",
+    }
+)
 
 # ``bant_config`` holds a full qualification rubric (four-plus dimensions,
 # each with prompts and scored options), so it gets a larger budget than the
@@ -962,9 +986,9 @@ def _bot_to_response(bot: Bot, request: Request, *, plan_slug: str = "free", pla
         manual_field_overrides=bot.manual_field_overrides or [],
         bot_logo=bl,
         bot_logo_source=bot.bot_logo_source,
-        launcher_name=bot.launcher_name or "Have Questions?",
+        launcher_name=(bot.launcher_name if bot.launcher_name is not None else "Have Questions?"),
         launcher_logo=ll,
-        primary_color=bot.primary_color or "#ba68c8",
+        primary_color=bot.primary_color or "#a21caf",
         background_color=bot.background_color or "#ffffff",
         header_color=bot.header_color or "#3A0CA3",
         recommended_colors=bot.recommended_colors or [],
@@ -1177,6 +1201,11 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
                             widget_last_origin=_origin_hostname,
                         )
                     ).rowcount
+                    # Per-domain row, in the same transaction as the stamp.
+                    # Recorded whether or not `stamped` landed: a concurrent
+                    # bootstrap may have won the one-time stamp, but this
+                    # request still genuinely came from this hostname.
+                    record_observed_domain(_install_session, bot.id, _origin_hostname)
                     _install_session.commit()
                 if stamped:
                     cache_delete(bot_config_key(bot.bot_key))
@@ -1204,6 +1233,11 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
                                 widget_last_origin=_origin_hostname,
                             )
                         )
+                        # Piggybacks on the throttle decision above rather than
+                        # taking one of its own, so the per-domain table costs
+                        # no extra writes and opens no new forged-origin
+                        # budget. See `record_observed_domain`.
+                        record_observed_domain(_seen_session, bot.id, _origin_hostname)
                         _seen_session.commit()
         except Exception:
             logger.debug("widget install/heartbeat skipped for bot_id=%s", getattr(bot, "id", None), exc_info=True)
@@ -1289,9 +1323,9 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
     return {
         "bot_name": bot.name,
         "bot_logo": logo_url,
-        "launcher_name": bot.launcher_name or "Have Questions?",
+        "launcher_name": (bot.launcher_name if bot.launcher_name is not None else "Have Questions?"),
         "launcher_logo": launcher_logo_url,
-        "primary_color": bot.primary_color or "#ba68c8",
+        "primary_color": bot.primary_color or "#a21caf",
         "background_color": bot.background_color or "#ffffff",
         "header_color": bot.header_color or "#3A0CA3",
         "recommended_colors": bot.recommended_colors or [],
@@ -2297,9 +2331,15 @@ def list_bots(
                     company_description=b.company_description,
                     manual_field_overrides=b.manual_field_overrides or [],
                     bot_logo=bl,
-                    launcher_name=b.launcher_name or "Have Questions?",
+                    # Provenance, so a consumer can tell an avatar the
+                    # CUSTOMER set from one the crawl derived off the
+                    # site's favicon. Without it the setup checklist
+                    # could only ask "is there a logo", which a derived
+                    # favicon answers yes to.
+                    bot_logo_source=b.bot_logo_source,
+                    launcher_name=(b.launcher_name if b.launcher_name is not None else "Have Questions?"),
                     launcher_logo=ll,
-                    primary_color=b.primary_color or "#ba68c8",
+                    primary_color=b.primary_color or "#a21caf",
                     background_color=b.background_color or "#ffffff",
                     header_color=b.header_color or "#3A0CA3",
                     recommended_colors=b.recommended_colors or [],
@@ -3035,6 +3075,53 @@ def detect_brand_tone(bot_id: int, request: Request, auth=Depends(get_current_cl
         return {"brand_tone": bot.brand_tone, "brand_tone_preset": key}
 
 
+@router.post("/{bot_id}/site-icon")
+@limiter.limit("10/minute")
+def fetch_site_icon(bot_id: int, request: Request, auth=Depends(get_current_client_or_operator)):
+    """Re-fetch the bot's website favicon on demand and return it as a PNG.
+
+    The crawl only derives a favicon once, into an empty avatar slot, and keeps
+    no separate copy (see ``crawl_orchestrator._maybe_apply_favicon_avatar``), so
+    a customer who changed their avatar cannot get the site icon back from stored
+    state. The bot does keep its ``website``, so this re-derives it live instead:
+    it fetches through the same SSRF-guarded, size-capped extractor the crawl
+    uses and normalises the bytes with the same 512x512 logo pipeline, then hands
+    the PNG straight back. Nothing is persisted — the admin crops it in the
+    browser and saves it through the normal ``/client/upload-logo`` path, exactly
+    like any other image, so this route never touches the avatar itself.
+    """
+    _require_bot_management_access(auth)
+    with get_session() as session:
+        bot = _get_workspace_bot(session, bot_id, auth["client_id"])
+        website = (bot.website or "").strip()
+
+    if not website:
+        raise HTTPException(status_code=400, detail="Add your website URL first to use its icon.")
+
+    from app.services.favicon_extractor import fetch_favicon_image
+    from app.services.r2_service import process_image_for_logo
+
+    try:
+        # `fetch_favicon_image` is async (SSRF-guarded fetches); this route is a
+        # sync path operation running in a worker thread with no running loop, so
+        # a private `asyncio.run` is the safe bridge and keeps the DB work sync.
+        raw = asyncio.run(fetch_favicon_image(website))
+    except Exception:
+        logger.warning("site-icon fetch failed for bot %s (non-fatal)", bot_id, exc_info=True)
+        raw = None
+
+    if not raw:
+        raise HTTPException(status_code=404, detail="Couldn't find an icon on your website.")
+
+    png = process_image_for_logo(raw)
+    if not png:
+        raise HTTPException(status_code=422, detail="That icon couldn't be turned into an avatar.")
+
+    # `no-store`: the icon is re-derived live and the customer may change their
+    # site's favicon at any time, so a cached copy would go stale silently.
+    return Response(content=png, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
 @router.post("/{bot_id}/seed-questions")
 @limiter.limit("10/minute")
 def get_seed_questions(
@@ -3544,6 +3631,34 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
                     },
                 )
 
+            # Email notifications and meeting booking are paid features: the
+            # dashboard shows the Free plan an upsell in place of both panels
+            # (see IntegrationsPage). This route is the only writer of these
+            # columns, so without a gate here a direct PATCH would still persist
+            # settings a Free plan cannot use. Reject at the door, the same as
+            # the branding add-on above, so the stored state and the plan agree.
+            _integration_writes = sorted(_INTEGRATION_PAID_FIELDS & update_data.keys())
+            if _integration_writes:
+                from app.services.plan_entitlements_service import get_entitlements
+
+                if get_entitlements(auth["client_id"], session).plan_slug == "free":
+                    logger.warning(
+                        "Bot %s integration write rejected on free plan: %s",
+                        bot_id,
+                        _integration_writes,
+                    )
+                    raise HTTPException(
+                        status_code=403,
+                        detail={
+                            "error": "feature_not_available",
+                            "message": (
+                                "Email notifications and meeting booking are not included "
+                                "on the free plan. Upgrade to configure them."
+                            ),
+                            "fields": _integration_writes,
+                        },
+                    )
+
             # Sync logos
             if "bot_logo" in update_data:
                 update_data["launcher_logo"] = update_data["bot_logo"]
@@ -3904,3 +4019,164 @@ def delete_bot(bot_id: int, auth=Depends(get_current_client_or_operator)):
         cache_delete(bot_config_key(bot_key_val))
         logger.info(f"Bot {bot_id} deleted by workspace {auth['client_id']}")
         return {"message": "Bot deleted successfully"}
+
+
+def _domain_state(row) -> str:
+    """Collapse two independent signals into the one word the card shows.
+
+    Observation outranks the probe, always. ``observed_last_at`` means a real
+    browser on a real page loaded this chatbot; a probe is one fetch of served
+    HTML with no JavaScript run. A site that injects its snippet through a tag
+    manager serves markup with nothing in it, so letting a 'missing' probe
+    override a live observation would tell a working customer their site is
+    broken — and that customer is the one whose install we have the *most*
+    evidence for.
+
+    'foreign' collapses to 'missing' here rather than becoming its own state.
+    From this chatbot's point of view the fact is that its snippet is not on the
+    page; what was found instead travels separately as ``other_chatbot``, so a
+    page carrying both chatbots reads as live with a note, not as an alarm.
+    """
+    if row.observed_last_at is not None:
+        return "live"
+    if row.probe_status == "installed":
+        return "installed"
+    if row.probe_status in ("missing", "foreign"):
+        return "missing"
+    if row.probe_status == "unreachable":
+        return "unreachable"
+    return "unchecked"
+
+
+@router.get("/{bot_id}/install-domains")
+def get_install_domains(
+    bot_id: int,
+    request: Request,
+    auth=Depends(get_current_client_or_operator),
+):
+    """Every domain this chatbot is on, has been on, or is configured for.
+
+    Three sources merged into one list, because each answers a question the
+    others cannot. The allow-list says where the customer *intends* it to run
+    (and is the only source that can name a domain nothing has ever happened
+    on). Observation says where it has actually loaded. The probe says what our
+    own fetch found, including the two states passive data can never reach: a
+    domain with no snippet, and a domain running someone else's chatbot.
+
+    Wildcard allow-list entries are listed but never probed. ``*.acme.com`` is
+    not a hostname and there is no way to enumerate what it covers, so
+    reporting it as unreachable would be inventing a fault.
+    """
+    with get_session() as session:
+        bot = _get_workspace_bot(session, bot_id, auth["client_id"])
+        allowed = list(bot.allowed_domains or [])
+        rows = list_domain_installs(session, bot_id)
+
+        domains = []
+        seen_hosts = set()
+        for row in rows:
+            seen_hosts.add(row.hostname)
+            domains.append(
+                {
+                    "hostname": row.hostname,
+                    "state": _domain_state(row),
+                    "observed_first_at": row.observed_first_at,
+                    "observed_last_at": row.observed_last_at,
+                    "probe_status": row.probe_status,
+                    "probe_checked_at": row.probe_checked_at,
+                    "probe_detail": row.probe_detail,
+                    # Only ever another chatbot's key. Our own is not news, and
+                    # echoing a key back into the UI that already displays this
+                    # bot's key would just be noise.
+                    "other_chatbot": row.probe_bot_key if row.probe_status == "foreign" else None,
+                    # Whether enforcement would admit this origin today. A live
+                    # domain that is NOT allowed is the single most useful line
+                    # this endpoint can produce: it is a chatbot that works now
+                    # and stops the moment the allow-list is enforced.
+                    "allowed": is_origin_allowed(row.hostname, allowed) if allowed else True,
+                }
+            )
+
+        # Allow-list entries nothing has ever been recorded against. Without
+        # these the card silently omits exactly the domains a customer is most
+        # likely to be asking about: the one they just added and have not
+        # installed yet.
+        for entry in allowed:
+            host = (entry or "").strip().lower()
+            if not host or host in seen_hosts:
+                continue
+            if not host.startswith("*.") and is_origin_allowed(host, [e for e in allowed if e != entry]):
+                # Already covered by another entry (a wildcard, or its own
+                # `www.` twin), so listing it again would double-count one
+                # domain.
+                continue
+            domains.append(
+                {
+                    "hostname": host,
+                    "state": "unchecked",
+                    "observed_first_at": None,
+                    "observed_last_at": None,
+                    "probe_status": None,
+                    "probe_checked_at": None,
+                    "probe_detail": None,
+                    "other_chatbot": None,
+                    "allowed": True,
+                }
+            )
+
+        checked = [d["probe_checked_at"] for d in domains if d["probe_checked_at"]]
+        return {
+            "domains": domains,
+            "checking": probe_is_running(bot_id),
+            "last_checked_at": max(checked) if checked else None,
+        }
+
+
+@router.post("/{bot_id}/install-domains/check")
+@limiter.limit("6/hour")
+def start_install_check(
+    bot_id: int,
+    request: Request,
+    auth=Depends(get_current_client_or_operator),
+):
+    """Fetch each of this chatbot's domains and report what is on them.
+
+    Rate-limited because it spends egress against third-party sites on an
+    authenticated button press. Six an hour is far more than reading a
+    dashboard needs and low enough that the endpoint cannot be turned into a
+    request amplifier pointed at someone else's server.
+
+    Dispatch follows the demo-capture convention exactly: the worker when one is
+    running, an in-process background thread when ``WORKER_ENABLED`` is false.
+    Queueing unconditionally would leave the card saying "checking" against a
+    queue nobody drains.
+    """
+    _require_bot_management_access(auth)
+    with get_session() as session:
+        _get_workspace_bot(session, bot_id, auth["client_id"])
+
+    if probe_is_running(bot_id):
+        # Already in flight. Not an error: the customer pressed twice, and the
+        # honest response is the state they were asking about.
+        return {"success": True, "checking": True, "already_running": True}
+
+    from app.worker.enqueue import WORKER_ENABLED
+
+    try:
+        if WORKER_ENABLED:
+            from app.worker.enqueue import enqueue_sync
+
+            enqueue_sync("task_probe_bot_installs", bot_id, _job_id=f"install-probe:{bot_id}")
+        else:
+            from app.core.thread_pool import submit_background
+            from app.services.install_probe import run_install_probe_sync
+
+            submit_background(run_install_probe_sync, bot_id)
+    except Exception:
+        logger.warning("could not dispatch an install check for bot %s", bot_id, exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail="We could not start the check. Try again in a moment.",
+        ) from None
+
+    return {"success": True, "checking": True, "already_running": False}
