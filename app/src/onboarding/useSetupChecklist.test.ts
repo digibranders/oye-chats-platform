@@ -39,7 +39,6 @@ function withBot(over: Partial<Bot> = {}) {
 }
 
 const brandStep = (r: ReturnType<typeof withBot>) => r.steps.find((s) => s.id === 'brand')!;
-const testStep = (r: ReturnType<typeof withBot>) => r.steps.find((s) => s.id === 'test')!;
 
 describe('the "make it yours" step', () => {
   it('is not done on a chatbot nobody has touched', () => {
@@ -75,9 +74,15 @@ describe('the "make it yours" step', () => {
   });
 });
 
-describe('the "ask it a question" step', () => {
-  it('points at a surface where the question can actually be asked', () => {
-    // Overview is a dashboard of zeros with no input on it.
-    expect(testStep(withBot()).to).toBe('/welcome/7');
+describe('the steps themselves', () => {
+  it('does not ask the customer to chat with their own chatbot', () => {
+    // "Ask it a question" was removed. Its destination was wrong twice — first
+    // Overview, where the instruction cannot be followed, then a standalone
+    // screen that hand-rolled a chat UI and so showed a mock-up of the widget
+    // rather than the widget. It was never really a setup task either: someone
+    // who has trained a chatbot tries it without being told to.
+    const ids = withBot().steps.map((s) => s.id);
+    expect(ids).not.toContain('test');
+    expect(ids).toEqual(['create', 'train', 'brand', 'install', 'lead']);
   });
 });

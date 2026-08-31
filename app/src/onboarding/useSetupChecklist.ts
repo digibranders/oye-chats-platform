@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { getDashboardStats, getLeadStats } from '../services/api';
+import { getLeadStats } from '../services/api';
 import { useBotContext } from '../context/BotContext';
 import { keys } from '../query/keys';
 import { agentPath } from '../shell/nav';
@@ -50,13 +50,6 @@ export function useSetupChecklist() {
   // has several is past this checklist by definition.
   const primary: Bot | null = bots[0] ?? null;
 
-  const stats = useQuery({
-    queryKey: keys.analytics.dashboard(primary?.id ?? null, null),
-    queryFn: () => getDashboardStats(primary!.id),
-    enabled: Boolean(primary),
-    staleTime: 60_000,
-  });
-
   const leads = useQuery({
     queryKey: keys.leads.stats(primary?.id ?? null, null),
     queryFn: () => getLeadStats(primary!.id),
@@ -68,7 +61,6 @@ export function useSetupChecklist() {
     retry: false,
   });
 
-  const conversations = Number(stats.data?.total_conversations ?? 0);
   const indexedChunks = Number(primary?.indexed_chunk_count ?? 0);
   const capturedLeads = Number(leads.data?.total ?? 0);
   // "Make it yours" ticked on every chatbot ever created, because
@@ -113,18 +105,6 @@ export function useSetupChecklist() {
       description: translateNow('onboarding.yourColoursYourAvatarYour') || 'Your colours, your avatar, your greeting',
       done: branded,
       to: primary ? agentPath(primary.id, 'experience') : '/chatbots',
-    },
-    {
-      id: 'test',
-      label: translateNow('onboarding.askItAQuestion') || 'Ask it a question',
-      description: translateNow('onboarding.seeExactlyWhatAVisitor') || 'See exactly what a visitor gets',
-      done: conversations > 0,
-      // The first-chat screen, which is the only surface in the console where
-      // you can actually ask this chatbot something. It used to point at
-      // Overview, where the step is unperformable: a dashboard of zeros with no
-      // input on it, so the one instruction the step gives cannot be followed
-      // from the page it sends you to.
-      to: primary ? `/welcome/${primary.id}` : '/chatbots',
     },
     {
       id: 'install',
