@@ -8,6 +8,23 @@ by a published probe reaching all 3 subscribers. Two workers rather than the
 rig's four: see the reasoning in `api/systemd/oyechats-api.service`. The steps
 below remain the procedure of record, including rollback.
 
+> **How to read this document (added 2026-08-31).** Everything from "What this
+> changes" onward is the **pre-execution plan as written**, kept verbatim as the
+> record of what was done and why. Its present-tense claims ("nothing in production
+> has changed yet") describe 2026-08-20 *before* the window, not today. Two numbers
+> in it were superseded by the actual rollout — see the STATUS notes at step 4 and
+> in Verify — and both matter if you ever re-run this procedure.
+>
+> **Discovered after the fact (`0e233fa`, 2026-08-31):** the split created a defect
+> this runbook's Verify section did not catch. With `/ws/` on its own process,
+> `ConnectionManager.operator_connections` is permanently empty on the API process
+> that raises a handoff, so every fan-out iterating that dict notified **nobody** in
+> production — an operator with a healthy socket saw "Waiting (0)" beside a sidebar
+> badge of 1. `cancel_handoff` had always done it correctly (local sockets unioned
+> with Redis presence, then `deliver_to_operator`); `request_handoff` and five other
+> call sites had not. If you re-run this rollout, add to Verify: **a handoff raised
+> through the widget must reach an operator whose socket is on the OTHER process.**
+
 ---
 
 ## What this changes, in one line
@@ -185,6 +202,14 @@ Environment=WEB_CONCURRENCY=4
 sudo systemctl daemon-reload && sudo systemctl restart oyechats-api
 ```
 
+> **STATUS 2026-08-31 — what actually shipped was 2, not 4.** The rig that measured
+> four ran Postgres on a separate node; production is co-resident on 2 vCPU / 4 GB,
+> where `4 x 15 = 60` of `max_connections=100` before the ARQ worker's 10 and the WS
+> process's 5 is invented math. The unit today sets `WEB_CONCURRENCY=2`,
+> `DB_POOL_SIZE=3`, `DB_MAX_OVERFLOW=5` and `CHAT_MAX_CONCURRENCY=6`. **Do not paste
+> the `=4` line above onto the box** without also re-deriving the pool and gate
+> numbers — the reasoning is in `api/systemd/oyechats-api.service`.
+
 Check the boot log for the gate/pool warning added in Phase 5. If it fires,
 `CHAT_MAX_CONCURRENCY` is at or above the per-worker pool ceiling — fix that
 before leaving, or chat will drain the pool and gunicorn will start reaping
@@ -192,6 +217,11 @@ workers **while Postgres sits idle**, which reads like a database fault and
 sends you to the wrong tier.
 
 Default sizing is already correct: gate 10 < pool 5 + 10.
+
+> **STATUS 2026-08-31:** that line described the single-worker defaults. With the
+> shipped two-worker split the budget is *divided*, not multiplied, so the live
+> invariant is **gate 6 < pool 3 + 5**. The assertion still fires on inversion;
+> only the numbers moved.
 
 ---
 
@@ -203,6 +233,11 @@ Default sizing is already correct: gate 10 < pool 5 + 10.
 - `journalctl -u oyechats-api | grep -c "WORKER TIMEOUT"` → **0**.
 - Postgres connections stay inside the ceiling: 4 workers × 15 + worker 10 = 70
   against `max_connections=100`. Watch it for an hour.
+
+> **STATUS 2026-08-31:** recompute this for the topology you actually deploy. As
+> shipped it is 2 API workers × (3+5) = 16, plus the ARQ worker's 10 and the WS
+> process's 5 — 31 against `max_connections=100`, far inside the ceiling. The
+> 70-connection figure belongs to the four-worker plan that was not adopted.
 
 ---
 

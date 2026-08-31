@@ -1,6 +1,14 @@
 # Live-Chat Process Split — Implementation Plan
 
-**Status:** proposed
+**Status:** **SHIPPED 2026-08-20** — kept as the decision record, not as a to-do.
+Phases 0-5 merged; `/ws/*` is served by `oyechats-ws.service` (single worker,
+127.0.0.1:8001), nginx routes there, and `oyechats-api.service` runs
+`WEB_CONCURRENCY=2` — **not the 4 this plan proposed**; the rig that measured 4 ran
+Postgres on a separate node. See `api/systemd/oyechats-api.service` for the sizing
+argument and [`live-chat-process-split-rollout.md`](live-chat-process-split-rollout.md)
+for the executed procedure. Everything below is preserved as written; read §1 and §6
+for the reasoning, not §5 for a plan of work.
+**Originally:** proposed
 **Author:** engineering
 **Date:** 2026-08-17
 **Evidence base:** [`load-tests/results/SCALABILITY_SCOPE_2026-08-17.md`](../load-tests/results/SCALABILITY_SCOPE_2026-08-17.md)

@@ -6,6 +6,61 @@
 
 ---
 
+> ## ⚠️ CLAIMS REVIEW — 2026-08-31, unresolved
+>
+> This document is buyer-facing and is used to generate customer-facing video and
+> narration. A documentation audit checked its capability claims against the code. **Most
+> hold.** The ones below do not, and the copy has been left **unchanged on purpose** —
+> softening a sales claim quietly is the wrong fix, because each of these is a business
+> decision (build the capability, or change the pitch), not an editing decision. Resolve
+> them before this text is narrated, quoted in a deck, or shipped to a prospect.
+>
+> **1. "It routes fairly. You choose how chats get assigned to your team — spread evenly
+> across whoever's least busy, strict round-robin for predictable fairness, or simply
+> whoever's free first." (Part 9)** — **Not true today.** Assignment is operator-pull: a
+> waiting chat is advertised to every eligible operator and goes to whoever accepts first.
+> The three strategies are implemented in `live_chat_routing_service.select_operator`, but
+> that function has **zero callers** in the API, `Bot.live_chat_routing_strategy` is stored
+> and never read, and the console deliberately exposes no control for it
+> (`app/src/features/agents/advanced/behaviour.config.ts:473-492`). There is nothing a
+> customer can choose. This is the most concrete over-claim in the document and it names a
+> configurable capability by its options, which makes it checkable by a prospect in a trial.
+> The wiring is small — the selection logic exists and is tested — so "build it" is a real
+> option.
+>
+> **2. "the handoff kicks off automatically" (Part 6)** — Overstated. The bot *offers*: a
+> connect card is rendered and the **visitor** accepts. Nothing escalates a conversation to
+> a human without the visitor's action. Part 9's own wording ("the bot itself can recognize
+> when a question really needs a person and **offer** to bring one in") is accurate; Part 6
+> contradicts it. Aligning Part 6 to Part 9 costs nothing.
+>
+> **3. "Mobile push, reaching your team's phone through the app." (Part 13, echoed in
+> Part 9)** — **Unverified.** The backend does hold Expo push tokens and dispatches to them
+> (`push_service.py:163`, `:246`), so the transport is real. Whether a shipped OyeChats
+> mobile app exists for an operator to install is not determinable from this repository —
+> there is no mobile client in it. If there is no app, "through the app" should say
+> "installable web app" or be cut; if there is one, this note can go.
+>
+> **4. "Every single generated answer is quietly checked, after the fact, for whether its
+> claims were actually backed by your content." (Part 6)** — Directionally true, with two
+> caveats the word *every* papers over: the groundedness audit judges **prose** answers
+> only, and it is sampled (`GROUNDEDNESS_CHECK_SAMPLE_RATE`, currently `1.0`, i.e. every
+> turn — but it is a dial, not a guarantee). It is also **observability-only**: the verdict
+> is logged and discarded, and never blocks, rewrites or refuses an answer. Part 6 does not
+> claim it blocks, and the honest guarantee it *should* lean on is the relevance gate
+> described two paragraphs earlier, which genuinely does refuse. Low risk; worth a word.
+>
+> Everything else spot-checked held up, including the parts most likely to be exaggerated:
+> the four qualification frameworks (BANT / MEDDIC / CHAMP / GPCTBA+C&I all exist), the
+> scheduled auto-recrawl, the credit ledger, the reversible-lapse mechanic, the nightly
+> reconciliation, and "it won't make things up" (the relevance gate is on by default and
+> genuinely blocks).
+>
+> Engineering-facing counterpart: [`oyechats-technical-story.md`](oyechats-technical-story.md),
+> whose §9.4 has been corrected to describe the pull model.
+
+---
+
 ## Brand Guidelines & Visual Identity
 
 *Use this section to keep any generated video, imagery, or narration visually and tonally on-brand as real OyeChats material — not generic AI-SaaS stock styling.*

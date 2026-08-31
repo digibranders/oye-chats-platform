@@ -1,5 +1,16 @@
 # OyeChats Developer Onboarding (Code Graph)
 
+> ⚠️ **STALE SNAPSHOT — 2026-04-07. Read the shape, not the numbers.** This file was
+> generated once and has not been regenerated since. Everything below describes a
+> codebase roughly four months and several thousand tests behind `development`.
+> Known-wrong at the time of writing (2026-08-31): crawling no longer uses Playwright or
+> crawl4ai (it is HTTP-only via Jina Reader / Spider.cloud); the widget's production entry
+> is `loader.js` + `app-entry.jsx`, not `main.jsx`; the admin dashboard is TypeScript under
+> `app/src/features/**`, not `app/src/pages/*.jsx`; `models.py` declares 51 tables; and the
+> test count is off by more than an order of magnitude. Use it to find *where* subsystems
+> sit relative to each other, and verify anything specific against the source.
+
+
 > Auto-generated from code-review-graph. Last updated: 2026-04-07.
 
 ## Key Entry Points

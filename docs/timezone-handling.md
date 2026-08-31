@@ -2,9 +2,9 @@
 
 How OyeChats handles time across the stack.
 
-**Core principle:** *All timestamps are stored and computed in **UTC**. Local time appears in only two places — the **frontend display layer** and the **business-hours** feature.*
+**Core principle:** *All timestamps are stored and computed in **UTC**. Local time appears in only three places — the **frontend display layer**, the **business-hours** feature, and **analytics day-bucketing**, which takes an explicit IANA zone from the caller.*
 
-> Last reviewed: 2026-06-29 (counts re-verified against source: 81 `DateTime(timezone=True)` columns / 0 naive ✓; 73 `datetime.now(UTC)` in app code ✓). Related: [architecture.md](architecture.md), [database-schema.md](database-schema.md), [billing/2026-06-29-payment-system-review-report.md](billing/2026-06-29-payment-system-review-report.md) (timezone findings M5, N8, N9).
+> Last reviewed: 2026-08-31 (counts re-verified against source: **135** `DateTime(timezone=True)` columns / 0 naive ✓; **195** `datetime.now(UTC)` in app code ✓). Related: [architecture.md](architecture.md), [database-schema.md](database-schema.md), [billing/2026-06-29-payment-system-review-report.md](billing/2026-06-29-payment-system-review-report.md) (timezone findings M5, N8, N9).
 
 ---
 
@@ -19,6 +19,7 @@ Razorpay epoch ──fromtimestamp(ts, tz=UTC)──► billing math
   add_months() preserves wall-clock time-of-day
 
 Business hours: now(UTC) ──► ZoneInfo(bot's IANA tz) ──► open / closed
+Analytics buckets: timestamptz ──AT TIME ZONE <caller's IANA tz>──► local calendar day
 Geo headers (country) ──► currency display only (NOT timezone)
 ```
 
@@ -26,7 +27,7 @@ Geo headers (country) ──► currency display only (NOT timezone)
 
 ## 1. Database layer — uniformly timezone-aware
 
-Every `DateTime` column in [`api/app/db/models.py`](../api/app/db/models.py) is declared `DateTime(timezone=True)` — **all 81 of them; zero naive timestamp columns.** They default via `server_default=func.now()` (the Postgres server clock).
+Every `DateTime` column in [`api/app/db/models.py`](../api/app/db/models.py) is declared `DateTime(timezone=True)` — **all 135 of them; zero naive timestamp columns.** They default via `server_default=func.now()` (the Postgres server clock).
 
 Because the columns are `timestamptz`, Postgres stores the absolute instant in UTC internally regardless of the connection timezone, and reads return timezone-aware UTC datetimes. This is the foundation that makes "UTC everywhere" hold at rest.
 
@@ -36,9 +37,9 @@ Because the columns are `timestamptz`, Postgres stores the absolute instant in U
 
 The backend is disciplined about aware UTC:
 
-- **73** datetime creations use `datetime.now(UTC)` (timezone-aware).
+- **195** datetime creations use `datetime.now(UTC)` (timezone-aware).
 - Razorpay Unix-epoch fields are always parsed as UTC, e.g. `datetime.fromtimestamp(sub_entity["current_start"], tz=UTC)` — a naive parse would shift by the server offset.
-- Only **one** code path intentionally leaves UTC: business hours (§4).
+- Two code paths intentionally leave UTC: business hours (§4) and analytics day-bucketing (§4b).
 
 ### Shared helpers — [`api/app/core/dates.py`](../api/app/core/dates.py)
 
@@ -53,9 +54,9 @@ Centralized so the API, dashboard, billing badge, and reminder cron can never di
 
 [`api/app/core/geo.py`](../api/app/core/geo.py) resolves the visitor's **country** from edge headers (`CF-IPCountry`, `X-Vercel-IP-Country`, `CloudFront-Viewer-Country`, `X-Country-Code`). This drives **currency display** (IN → INR, otherwise USD), **not** timezone. Unknown country → treated as non-Indian. There is **no IP-based timezone detection** anywhere in the app.
 
-## 4. Business hours — the only "local time" feature
+## 4. Business hours — the customer-configured "local time" feature
 
-The single place the app evaluates "what time is it *there*." Each **bot** (or **department**, which overrides) stores a `business_hours` JSON blob ([`models.py` `Bot.business_hours`](../api/app/db/models.py)):
+The place the app evaluates "what time is it *there*" for a **bot**. Each **bot** (or **department**, which overrides) stores a `business_hours` JSON blob ([`models.py` `Bot.business_hours`](../api/app/db/models.py)):
 
 ```json
 {
@@ -75,25 +76,37 @@ The single place the app evaluates "what time is it *there*." Each **bot** (or *
 
 The **widget** mirrors this client-side ([`widget/src/components/ChatWidget.jsx`](../widget/src/components/ChatWidget.jsx)) using the bot's configured `timeZone`, so the "offline" banner matches the server's decision.
 
+## 4b. Analytics day buckets — the second place local time enters the backend
+
+A "messages per day" chart is a **calendar-day** question, and a calendar day only exists inside a zone. `GET /analytics/activity` therefore accepts an explicit IANA `tz` (default `UTC`, validated before it reaches SQL) and cuts its buckets with it; `get_message_activity` in [`repository.py`](../api/app/db/repository.py) does the `AT TIME ZONE` conversion.
+
+**Why this is a separate rule rather than an instance of §5.** Everywhere else the backend emits a UTC instant and the browser localises it, so the conversion is lossless and reversible. A day bucket is not an instant — it is an aggregation boundary, so the zone has to be chosen *before* the SQL runs and cannot be corrected on the client. Cutting buckets in the DB zone and letting the client read `date` as a local date is the classic month-edge off-by-one: for an IST reader, every message before 05:30 was filed to the previous day, and the last day of the month leaked into the next one.
+
+The admin dashboard sends `Intl.DateTimeFormat().resolvedOptions().timeZone`, so a reader sees their own days. **A caller that omits `tz` gets UTC days** — correct, but not the reader's days. Any new endpoint that groups by day inherits this rule: take the zone as a parameter, never assume the server's or the database's.
+
+> Related: `days` is also honoured on `/analytics/activity`, `/analytics/dashboard`, and the ratings/resolution summaries. It bounds what were previously unbounded full-history aggregates.
+
 ## 5. Frontend — display in the viewer's browser zone
 
 The backend always emits UTC (ISO 8601); the frontend converts to **the viewer's own browser timezone** via JS `Date`:
 
 - `toLocaleString()` / `toLocaleDateString()` / `toLocaleTimeString()` throughout the admin app and widget render in the user's local zone automatically.
-- [`app/src/components/BusinessHoursEditor.jsx`](../app/src/components/BusinessHoursEditor.jsx) uses `Intl.DateTimeFormat().resolvedOptions().timeZone` to pre-fill the admin's detected zone and `Intl.supportedValuesOf('timeZone')` for the IANA dropdown.
+- [`app/src/features/workspace/BusinessHoursEditor.tsx`](../app/src/features/workspace/BusinessHoursEditor.tsx) uses `Intl.DateTimeFormat().resolvedOptions().timeZone` to pre-fill the admin's detected zone and `Intl.supportedValuesOf('timeZone')` for the IANA dropdown.
 - The widget's [`ChatWindow.jsx`](../widget/src/components/ChatWindow.jsx) renders message times with `timeZoneName: 'short'`.
 
 **Intended consequence:** the same `created_at` instant is shown differently to an admin in Mumbai vs. New York — each sees their own local time.
 
 ## 6. Known gaps & cleanup items
 
-None are currently biting because the primary market is India (IST has no DST), but for correctness:
+Items 1-5 are not currently biting because the primary market is India (IST has no DST). Item 6 is a live divergence between this document and the code — see the note there.
 
 1. **`add_months` DST safety (review finding M5).** It copies wall-clock `tzinfo` literally. For a DST zone, "preserve wall-clock" shifts the real UTC instant by the DST delta across a boundary, and a spring-forward gap yields a non-existent local time with no `fold` handling. Safe for IST; a hazard if billing ever anchors to a DST zone. *Fix:* do period math in UTC, or normalize with `zoneinfo` + `fold`.
-2. **Deprecated naive calls in ingestion.** [`api/app/ingestion/pipeline.py`](../api/app/ingestion/pipeline.py) uses naive `datetime.utcnow()` / `datetime.now()` for log timestamps and filenames. `utcnow()` is deprecated in Python 3.12 and **removed in 3.14**. *Fix:* migrate to `datetime.now(UTC)`.
+2. ~~**Deprecated naive calls in ingestion.**~~ **RESOLVED.** `api/app/ingestion/pipeline.py` no longer contains a naive `utcnow()` or `datetime.now()`; `current_time` is built with `datetime.now(UTC).isoformat()` (`:285`, `:575`). Re-verified 2026-08-31.
 3. **`trial_days_remaining` uses `ceil`.** Correct for display, but must not be used as an access *gate* (would grant an extra calendar day). The expiry cron compares `trial_end < now()` directly — keep it that way.
 4. **`add_months` anniversary drift across a chain (review finding N8).** The short-month clamp `min(dt.day, last_of_month)` (`dates.py:58`) uses the *current* `dt.day`. If billing periods roll by calling `add_months(prev_period_end, 1)` rather than re-deriving from the original anchor, a 31st anchor ratchets down (Jan-31 → Feb-28 → Mar-28 → …) and never recovers. Safe only if callers always pass the original anchor. *Fix:* pass the anchor, or carry the anchor day separately.
-5. **Ingestion emits naive `ingest_date` (review findings T1 / N9).** [`api/app/ingestion/pipeline.py`](../api/app/ingestion/pipeline.py) writes `datetime.utcnow().isoformat()` (`:168,345`) into chunk metadata — a *naive* string with no `+00:00`, while every DB `timestamptz` and `datetime.now(UTC).isoformat()` carries the offset. Any consumer that parses and compares `ingest_date` aware-vs-naive hits `TypeError` (violating the §"Conventions" aware-to-aware rule). `:530,551` also use server-local `datetime.now()` for filenames. *Fix:* `datetime.now(UTC)` throughout.
+5. ~~**Ingestion emits naive `ingest_date` (review findings T1 / N9).**~~ **RESOLVED.** `ingest_date` (`pipeline.py:290`, `:658`) is now written from `datetime.now(UTC).isoformat()`, so it carries the `+00:00` offset and parses aware. Re-verified 2026-08-31.
+
+6. **Naive `datetime.utcnow()` still reaches three `timestamptz` comparisons in `repository.py` (OPEN — this is a code defect, not a doc gap).** `repository.py:1736` writes a naive `now_ts` into `Event.last_seen_at`; `:1782` compares `Event.starts_at >= naive_utcnow()`; `:1802` derives the `prune_stale_events` cutoff the same way. All three columns are `DateTime(timezone=True)`, and `models.py:3103-3105` states the intent explicitly ("timezone-aware so PAST/UPCOMING comparisons against `now(UTC)` are unambiguous no matter which timezone the customer's page or the server runs in"). Postgres resolves a naive value against the *session* `TimeZone`, so this is correct only while §1's operational dependency (server in UTC) happens to hold. *Fix:* `datetime.now(UTC)` at all three sites.
 
 ## Conventions for new code
 

@@ -3,6 +3,24 @@
 **Scope:** `platform/app/` (React admin dashboard) + `platform/api/` (FastAPI backend)
 **Goal:** Make the operator experience feel like a real installable app, and close the coverage holes in the existing Web Push implementation so no operator misses a chat.
 
+> **Status: SHIPPED** (verified against source 2026-08-31). Retained as the decision record
+> — particularly the "do not install `vite-plugin-pwa` / Workbox" constraint and the
+> non-goals — not as a plan of work. Every phase is present in the tree:
+>
+> | Phase | Evidence |
+> |---|---|
+> | 1 — installable shell | `app/public/manifest.webmanifest`; `app/public/icons/{icon-192,icon-512,icon-maskable-192,icon-maskable-512,apple-touch-icon-180}.png`; manifest + `apple-touch-icon` + `theme-color` wired in `app/index.html` |
+> | 2 — offline shell | `app/public/sw.js` — `BUILD_ID = '__OYECHATS_BUILD_ID__'`, `PRECACHE_ASSETS`, `CACHE_PREFIX = 'oyechats-shell-v'`, `IS_BUILT` guard; `app/public/offline.html` |
+> | 3.1 — multi-process presence | `worker/tasks.py:1868,2166,2232` use `operator_presence_service.get_online_operator_ids`, not `manager.operator_connections` |
+> | 3.2 — offline-form push | `task_dispatch_offline_message_push` (`worker/tasks.py:2206`), registered in `worker/settings.py` |
+> | 3.3 — transfer push | `chat_transferred` (`live_chat_service.py:1203`, `push_service.py:336`) |
+> | 3.4 — notification prefs | `push_service.filter_operators_by_push_prefs` (`:415`), consulted per dispatch |
+> | 3.5 — router extraction | `api/app/api/push_routes.py` |
+>
+> One number in §1.2 did not survive: `theme_color` shipped as `#010B23`, not the `#0b0f19`
+> proposed here. `app/index.html` and `manifest.webmanifest` agree with each other, which is
+> the invariant that mattered.
+
 ---
 
 ## Context — what already exists (do not rebuild)

@@ -2,6 +2,17 @@
 
 *A single end-to-end narrative of the entire product: what it is, how it is put together, and how every part of it works — from the moment a stranger lands on the marketing page to the moment a refund is clawed back eleven months later. No framework names, no language names, no library trivia. Only the system, its flows, and its pipelines.*
 
+> **Duplication notice (2026-08-31).** The body of this file is **byte-identical** to
+> [`oyechats-technical-story.md`](oyechats-technical-story.md) — only the title and the
+> audience blurb differ. Two copies of an 800-line system narrative will diverge the first
+> time someone corrects one of them. **Proposed canonical: `oyechats-technical-story.md`**,
+> because it carries explicit audience framing and is the file
+> [`oyechats-marketing-story.md`](oyechats-marketing-story.md) links to. This file is a
+> deletion candidate pending that decision; it has not been deleted, because the choice of
+> which name survives is the owner's to make. Until then, any correction must be applied to
+> **both** files.
+
+
 ---
 
 ## Part 0 — What OyeChats Is, In One Breath
@@ -221,7 +232,7 @@ Before any retrieval happens, several short-circuits fire in order. Each exists 
 
 **Safety screening.** The incoming message is screened for prompt-injection and manipulation patterns. If it trips the screen, a refusal is returned and no generation occurs.
 
-**Answer caching.** Repeated questions can be served from cache. But the cache is intelligently bypassed: handoff detection still runs on a cache hit so a visitor asking for a human is never served a stale cached answer instead; and bots whose knowledge contains media are never cached at all, because which media card is appropriate depends on conversational context that the cache key can't capture.
+**Answer caching.** Repeated questions can be served from cache. But the cache is intelligently bypassed: handoff detection still runs on a cache hit so a visitor asking for a human is never served a stale cached answer instead; and a turn that *produced* a media card is not cached, because which card is appropriate depends on conversational context the cache key can't capture. Note the scope: it is per-turn, not per-bot. Skipping the cache for any bot whose knowledge base contained a single media URL anywhere permanently disabled the QA cache for that whole bot.
 
 ### 6.4 Query Understanding
 
@@ -400,17 +411,15 @@ Before queuing anyone, the platform resolves availability from three inputs: are
 
 Operator presence is heartbeat-driven with a durable fallback, so a crashed browser tab doesn't leave a ghost operator online forever.
 
-### 9.4 Routing
+### 9.4 Assignment
 
-When an operator is available, one is selected using the customer's chosen strategy:
+**Assignment is operator-pull, not server-push.** A waiting conversation is advertised to every eligible operator — over their live dashboard socket, and through the notification fan-out in §9.6 — and it is assigned to whoever accepts it first. Nothing on the server picks a specific operator for a specific chat.
 
-**Least busy** (the default) picks whoever has the fewest active conversations, breaking ties with a rotating cursor so the same person doesn't always win when everyone is idle. Best for spreading load.
+> **A selection engine exists and is not wired in.** `live_chat_routing_service.select_operator` implements three strategies — least-busy with a round-robin tie-break, strict round-robin, and first-available — reading `Bot.live_chat_routing_strategy`. **That function has no caller anywhere in the API**, and the column is stored, defaulted and never read. The console deliberately exposes no control for it, because a control that saved and changed nothing would be worse than an absent one; the reasoning is written down at `app/src/features/agents/advanced/behaviour.config.ts:473-492`. `Bot.operator_disconnect_timeout` is inert in the same way.
+>
+> Do not describe strategy-based assignment as a shipped capability. Wiring it up is a real and fairly small piece of work — the selection logic is written and tested — but until `select_operator` has a caller, "you choose how chats get assigned" is not true of the product.
 
-**Round robin** advances strictly by cursor regardless of load. Chosen by teams who value predictable fairness over throughput.
-
-**First available** takes the first online operator with capacity. Simplest, and effectively equivalent for a one-person team.
-
-Routing is deliberately a pure decision: it selects, and nothing more. It does not assign, notify, or mutate state. Its caller does all of that, which is what keeps the selection logic testable and race-free.
+What the pull model does give you, and what a naive push model would not: a chat is never assigned to an operator who has closed their laptop, because acceptance *is* the proof of presence. The cost is that fairness is whoever-is-fastest rather than whoever-is-least-loaded.
 
 ### 9.5 The Queue
 
