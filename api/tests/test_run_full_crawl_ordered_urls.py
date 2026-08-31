@@ -58,13 +58,30 @@ async def test_ordered_urls_uses_fetch_urls_not_recursive_crawl(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_partial_crawl_skips_orphan_sweep(monkeypatch):
-    """A partial (ordered_urls) re-crawl with replace_source must NOT run the
-    orphan sweep. Otherwise it deletes pages outside the fetched slice."""
+async def test_ordered_recrawl_still_runs_the_orphan_sweep(monkeypatch):
+    """An ordered re-crawl MUST run the orphan sweep, gated on liveness.
+
+    This replaces an assertion that ``ordered_urls`` skips the sweep entirely.
+    That assertion was wrong about the product: ``replace_source`` is only ever
+    set by the dashboard's re-crawl, and that path sends the COMPLETE page list
+    it diffed (``orderedUrlsForRecrawl`` returns the whole new+unchanged set or
+    ``null``). The user-picked subset path is a FIRST crawl and carries no
+    ``replace_source`` at all. So the guard never protected a partial crawl; it
+    only made the sweep unreachable from the one UI that starts one, and pages
+    deleted from a customer's site kept their chunks forever. The real
+    protection against over-deleting is ``check_urls_alive``, which is still
+    required to confirm a 404/410 before anything is removed.
+    """
     from contextlib import contextmanager
     from unittest.mock import MagicMock
 
+    import app.services.url_discovery as url_discovery
+
     del_session = MagicMock()
+    q = del_session.query.return_value
+    q.filter.return_value = q
+    q.distinct.return_value = q
+    q.all.return_value = [("https://acme.test/retired",)]
 
     @contextmanager
     def fake_session():
@@ -78,7 +95,14 @@ async def test_partial_crawl_skips_orphan_sweep(monkeypatch):
             "queue_remaining": 0,
         }
 
+    checked = {}
+
+    async def fake_alive(urls, **kw):
+        checked["urls"] = list(urls)
+        return dict.fromkeys(urls, False)  # confirmed gone
+
     monkeypatch.setattr(orch, "fetch_urls", fake_fetch_urls)
+    monkeypatch.setattr(url_discovery, "check_urls_alive", fake_alive)
     monkeypatch.setattr(
         orch,
         "batch_web_ingestion",
@@ -102,5 +126,5 @@ async def test_partial_crawl_skips_orphan_sweep(monkeypatch):
         cost_per_page=5,
         ordered_urls=["https://acme.test/a"],
     )
-    # The sweep issues del_session.query(Document)...delete(); assert it never ran.
-    del_session.query.assert_not_called()
+    assert checked["urls"] == ["https://acme.test/retired"]
+    q.delete.assert_called_once()

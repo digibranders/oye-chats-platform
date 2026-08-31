@@ -101,7 +101,9 @@ async def test_consumer_accumulates_totals_on_success() -> None:
     def ok_ingest(wave: list[dict], offset: int) -> dict:
         return {
             "chunks": len(wave),
+            "pages_changed": len(wave),
             "pages_charged": len(wave),
+            "pages_failed": 0,
             "credits_deducted": len(wave) * 5,
         }
 
@@ -123,5 +125,13 @@ async def test_consumer_accumulates_totals_on_success() -> None:
 
     assert state["consumer_error"] is None
     assert state["billing_aborted"] is False
-    assert totals == {"chunks": 5, "pages_charged": 5, "credits_deducted": 25}
+    # ``pages_ingested`` / ``pages_failed`` are what the crawl summary reports
+    # to the customer, so they accumulate here alongside the billing totals.
+    assert totals == {
+        "chunks": 5,
+        "pages_charged": 5,
+        "credits_deducted": 25,
+        "pages_ingested": 5,
+        "pages_failed": 0,
+    }
     assert queue.empty()

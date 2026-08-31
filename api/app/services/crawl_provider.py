@@ -87,15 +87,23 @@ async def crawl_website(
        handle "no pages streamed" (the orchestrator's final ingest sweep does).
     """
     cap = max_pages or _FALLBACK_DISCOVERY_CAP
+    discovery_stats: dict = {}
     try:
-        discovered = await _discover_urls(url, max_urls=cap, timeout=25.0)
+        discovered = await _discover_urls(url, max_urls=cap, timeout=25.0, stats=discovery_stats)
     except Exception:
         logger.warning("Sitemap discovery failed for %s. Trying Spider link crawl", url, exc_info=True)
         discovered = []
 
     if len(discovered) > 1:
         logger.info("crawl_path mode=sitemap urls=%d url=%s cap=%s", len(discovered), url, cap)
-        return await fetch_urls(discovered, use_js=use_js, client_id=client_id, on_page=on_page, on_result=on_result)
+        data = await fetch_urls(discovered, use_js=use_js, client_id=client_id, on_page=on_page, on_result=on_result)
+        # ``fetch_urls`` can only report the length of the list it was handed,
+        # and that list is already truncated to ``cap``. Reporting it as the
+        # discovered total made the orchestrator's coverage shortfall
+        # ("N pages didn't fit your plan") structurally always zero. Use the
+        # pre-truncation count discovery actually saw.
+        data["discovered_total"] = max(int(discovery_stats.get("total_found") or 0), len(discovered))
+        return data
 
     # No usable sitemap. Before falling back to Spider's recursive crawl (the
     # only backend that can discover pages, so that path ignores the provider
@@ -191,7 +199,27 @@ async def fetch_urls(urls: list[str], **kwargs) -> dict:
         fallback,
         exc_info=primary_error is not None,
     )
-    fallback_data = await _fetcher(fallback)(missing, **kwargs)
+    try:
+        fallback_data = await _fetcher(fallback)(missing, **kwargs)
+    except CrawlerError:
+        # The fallback is unavailable (the commonest case: the other provider
+        # has no API key configured, so its fetch_urls raises unconditionally).
+        # That must not destroy a partially-successful crawl: with streaming
+        # on, the pages the primary DID return are already committed and
+        # BILLED, and letting this propagate reported the whole crawl as
+        # ``failed`` while the customer paid for it. Keep whatever the primary
+        # delivered; only re-raise when there is genuinely nothing to keep.
+        if primary_data is not None and primary_data.get("results"):
+            logger.warning(
+                "%s fallback failed after %s delivered %d/%d pages. Keeping the partial result",
+                fallback,
+                primary,
+                len(urls) - len(missing),
+                len(urls),
+                exc_info=True,
+            )
+            return primary_data
+        raise
 
     # Merge primary successes with the fallback retry, de-duplicated by URL and
     # emitted in the original input order (fallback wins for any overlap).

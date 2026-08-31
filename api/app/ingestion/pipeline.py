@@ -166,6 +166,37 @@ def _normalize_for_dedup_hash(text: str) -> str:
     return out
 
 
+def _crawl_page_unchanged(session, *, client_id: int, bot_id: int | None, url: str, file_hash: str) -> bool:
+    """Whether THIS page already stores active chunks with this exact hash.
+
+    ``repository.is_document_processed`` matches the hash across the WHOLE bot,
+    which turns a billing optimisation into content loss. The dedup hash
+    normalises every date to ``<DATE>`` (so a bumped "Last updated" doesn't
+    re-bill an unchanged page), and two event/webinar pages that differ only by
+    their date therefore hash identically: the second one was silently never
+    ingested, with the crawl still reporting success. Scoping the lookup to the
+    page's own ``document_name`` keeps "unchanged since the last crawl is free"
+    while making a DIFFERENT URL's identical hash irrelevant.
+
+    ``is_active`` matches the repository helper: a re-crawl after a downgrade
+    deactivated the old chunks must rebuild fresh active knowledge.
+    """
+    from sqlalchemy import select
+
+    from app.db.models import Document
+
+    stmt = select(Document.id).where(
+        Document.document_name == url,
+        Document.file_hash == file_hash,
+        Document.is_active.is_(True),
+    )
+    if bot_id:
+        stmt = stmt.where(Document.bot_id == bot_id)
+    elif client_id:
+        stmt = stmt.where(Document.client_id == client_id)
+    return session.execute(stmt.limit(1)).first() is not None
+
+
 def _ingest_document(
     client_id: int,
     source_name: str,
@@ -514,17 +545,33 @@ def batch_web_ingestion(
         instead of wasting embedding quota on pages that can't be paid for.
     """
     if not pages:
-        return {"chunks": 0, "pages_charged": 0, "credits_deducted": 0, "aborted": False, "abort_reason": None}
+        return {
+            "chunks": 0,
+            "pages_changed": 0,
+            "pages_unchanged": 0,
+            "pages_charged": 0,
+            "pages_failed": 0,
+            "credits_deducted": 0,
+            "aborted": False,
+            "abort_reason": None,
+        }
 
     # Local import: credit_service depends on db.models which already imports
     # heavily. Keep this lazy so importing pipeline.py stays cheap and there
     # is no risk of a circular import via app.services.
-    from app.db.models import Bot
+    from sqlalchemy import select
+
+    from app.db.models import Bot, CreditLedger
     from app.services import credit_service
 
     all_chunk_contents: list[str] = []
     all_chunk_metadatas: list[dict] = []
     page_boundaries: list[dict] = []  # Track which chunks belong to which page
+    # Pages the content hash proved identical to what's already stored. They
+    # are not re-ingested and not charged, but the bot DOES hold them, so the
+    # caller needs them to report real coverage: a delta re-crawl of an
+    # unchanged site changes nothing and still covers every page.
+    pages_unchanged = 0
     current_time = datetime.now(UTC).isoformat()
 
     with get_session() as session:
@@ -560,8 +607,11 @@ def batch_web_ingestion(
             # every page, even ones whose content hasn't changed since the
             # last crawl. Delta-mode (Standard+) leaves this False so the
             # dedup skip still makes truly-unchanged pages a no-op.
-            if not force_reingest and is_document_processed(session, client_id, file_hash, bot_id=bot_id):
-                logger.info(f"Skipping {url} (already processed)")
+            if not force_reingest and _crawl_page_unchanged(
+                session, client_id=client_id, bot_id=bot_id, url=url, file_hash=file_hash
+            ):
+                logger.info(f"Skipping {url} (unchanged since the last crawl)")
+                pages_unchanged += 1
                 continue
 
             # Title extraction runs on raw content. Markdown ``# Title`` survives
@@ -587,6 +637,10 @@ def batch_web_ingestion(
             chunks = chunk_text(pages_data, document_name=url)
 
             if not chunks:
+                # Nothing survived cleaning. Log it: this used to be the one
+                # skip with no trace at all, so a page that cleaned to '' was
+                # indistinguishable from one that was never fetched.
+                logger.info("Skipping %s (no text left after cleaning)", url)
                 continue
 
             chunk_contents = [c.page_content for c in chunks]
@@ -622,7 +676,9 @@ def batch_web_ingestion(
             return {
                 "chunks": 0,
                 "pages_changed": 0,
+                "pages_unchanged": pages_unchanged,
                 "pages_charged": 0,
+                "pages_failed": 0,
                 "credits_deducted": 0,
                 "aborted": False,
                 "abort_reason": None,
@@ -650,6 +706,10 @@ def batch_web_ingestion(
         # rollbacks (bad insert, ``InsufficientCredits``, kill switch, generic
         # DB error) don't inflate the number the summary reports upstream.
         pages_changed = 0
+        # Pages whose insert transaction failed outright. They contribute zero
+        # chunks and used to be counted nowhere, so a run where 40 of 200 pages
+        # hit a DB error was indistinguishable from a clean run of 200.
+        pages_failed = 0
         for boundary in page_boundaries:
             start = boundary["start_idx"]
             count = boundary["count"]
@@ -659,6 +719,9 @@ def batch_web_ingestion(
             page_metas = all_chunk_metadatas[start : start + count]
 
             page_source_chars = int(boundary.get("source_char_count", 0))
+            # Assume a real charge; the idempotency pre-check below flips this
+            # when the ledger already holds this page's deduction.
+            charged_now = True
 
             try:
                 # Remove stale chunks for this URL before inserting fresh ones.
@@ -728,6 +791,18 @@ def batch_web_ingestion(
                     if crawl_job_id:
                         url_hash = hashlib.sha256(boundary["url"].encode("utf-8")).hexdigest()[:24]
                         idem_key = f"ingest:{client_id}:{ledger_bot_id}:{crawl_job_id}:{url_hash}"
+                    # Did this call actually move credits? ``check_and_deduct``
+                    # returns a balance either way, so an idempotent no-op was
+                    # counted as a fresh charge: the final sweep re-offering a
+                    # page a streamed wave already billed reported the page and
+                    # its credits TWICE in the crawl summary.
+                    if idem_key is not None:
+                        charged_now = (
+                            session.execute(
+                                select(CreditLedger.id).where(CreditLedger.idempotency_key == idem_key).limit(1)
+                            ).first()
+                            is None
+                        )
                     credit_service.check_and_deduct(
                         session,
                         client_id,
@@ -741,7 +816,7 @@ def batch_web_ingestion(
                 session.commit()
                 total += count
                 pages_changed += 1
-                if cost_per_page > 0:
+                if cost_per_page > 0 and charged_now:
                     pages_charged += 1
                     credits_deducted += cost_per_page
             except credit_service.InsufficientCredits as exc:
@@ -787,6 +862,7 @@ def batch_web_ingestion(
             except Exception as e:
                 logger.error(f"Failed to insert chunks for {boundary['url']}: {e}")
                 session.rollback()
+                pages_failed += 1
                 continue
 
     # Invalidate cached QA responses AND stale relevance-gate judgments,
@@ -797,16 +873,19 @@ def batch_web_ingestion(
         cache_delete_prefix(gate_prefix_for_bot(bot_id))
 
     logger.info(
-        "Batch ingestion complete: %d chunks from %d pages (charged: %d page(s), %d credit(s))",
+        "Batch ingestion complete: %d chunks from %d pages (charged: %d page(s), %d credit(s), failed: %d page(s))",
         total,
         len(page_boundaries),
         pages_charged,
         credits_deducted,
+        pages_failed,
     )
     return {
         "chunks": total,
         "pages_changed": pages_changed,
+        "pages_unchanged": pages_unchanged,
         "pages_charged": pages_charged,
+        "pages_failed": pages_failed,
         "credits_deducted": credits_deducted,
         "aborted": aborted,
         "abort_reason": abort_reason,
