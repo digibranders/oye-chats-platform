@@ -18,6 +18,7 @@ from unittest.mock import patch
 
 import pytest
 
+from app import config
 from app.services import email_service
 
 
@@ -60,13 +61,26 @@ def test_every_link_points_at_a_route_that_exists():
     your first chat" was three 404s. The real pages are per chatbot and this
     email has no chatbot id, so every step points at the list they all start
     from.
+
+    Only CONSOLE links are checked. The email also links the marketing site
+    (``/docs``, ``/contact``), which is a different application with a different
+    router, and asserting console routes against it would be meaningless. The
+    two are told apart by prefix, which needs one guard: production gives them
+    separate hosts (``app.`` and ``www.``) but a developer ``.env`` may point
+    both at one localhost origin, and then every marketing link looks like a
+    console link and this test fails on a correct email. When they collide,
+    marketing paths are excluded by name rather than by prefix.
     """
     _, html = _send()
+    hosts_collide = email_service.APP_URL == config.MARKETING_URL
+    marketing_paths = {"/docs", "/contact", "/pricing", "/privacy", "/terms"}
     paths = {
         re.sub(r"^https?://[^/]+", "", href)
         for href in re.findall(r'href="([^"]+)"', html)
         if href.startswith(email_service.APP_URL)
     }
+    if hosts_collide:
+        paths -= marketing_paths
     assert paths <= {"", "/", "/chatbots"}, f"unrouted links in the welcome email: {sorted(paths)}"
     assert "/chatbots" in paths
 
