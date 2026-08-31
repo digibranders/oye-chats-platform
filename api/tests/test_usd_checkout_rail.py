@@ -185,35 +185,36 @@ def test_create_subscription_refuses_foreign_client_without_usd_plan(_intl_on):
 
 
 def test_seat_addon_uses_usd_seat_plan_for_foreign_client(_intl_on):
+    """The rail still decides the plan; it is minted per rail rather than pinned.
+
+    The seat plan is no longer read from ``RAZORPAY_SEAT_PLAN_ID(_USD)``. It is
+    minted on demand and cached by charged amount, so what this pins now is that
+    the mint is asked for the CLIENT's rail — a Razorpay plan's currency is fixed
+    at creation, so getting this wrong bills an international customer in rupees.
+    """
     from app.services import razorpay_service
 
     fake = _fake_rzp("sub_seat_usd")
     with (
         patch.object(razorpay_service, "_get_razorpay", return_value=fake),
-        patch.object(razorpay_service, "RAZORPAY_SEAT_PLAN_ID", "plan_seat_inr"),
-        patch.object(razorpay_service, "RAZORPAY_SEAT_PLAN_ID_USD", "plan_seat_usd"),
+        patch.object(razorpay_service, "charge_tax_rate_bps", return_value=1800),
+        patch.object(razorpay_service, "resolve_seat_plan_id", return_value="plan_seat_usd") as mint,
     ):
         payload = razorpay_service.create_seat_addon_subscription(
             MagicMock(), _make_client(billing_country="US"), extra_seats=2
         )
 
+    assert mint.call_args.kwargs["currency"] == "USD"
     assert fake.subscription.create.call_args.kwargs["data"]["plan_id"] == "plan_seat_usd"
     assert "$5" in payload["description"]
 
 
-def test_seat_addon_refuses_foreign_client_without_usd_seat_plan(_intl_on):
-    from app.services import razorpay_service
-
-    fake = _fake_rzp()
-    with (
-        patch.object(razorpay_service, "_get_razorpay", return_value=fake),
-        patch.object(razorpay_service, "RAZORPAY_SEAT_PLAN_ID", "plan_seat_inr"),
-        patch.object(razorpay_service, "RAZORPAY_SEAT_PLAN_ID_USD", None),
-        pytest.raises(razorpay_service.RazorpayBillingError, match="USD"),
-    ):
-        razorpay_service.create_seat_addon_subscription(MagicMock(), _make_client(billing_country="US"), extra_seats=1)
-
-    fake.subscription.create.assert_not_called()
+# ``test_seat_addon_refuses_foreign_client_without_usd_seat_plan`` was removed
+# with the configuration it guarded. There is no longer a pinned
+# ``RAZORPAY_SEAT_PLAN_ID_USD`` that can be left unset, because the plan is
+# minted on demand for whichever rail the client is on. The refusal that still
+# matters on this path — international payments switched off — is covered by
+# ``test_seat_addon_*`` above via ``IntlPaymentsDisabled``.
 
 
 def test_seat_addon_keeps_inr_seat_plan_for_domestic_client():
@@ -222,13 +223,14 @@ def test_seat_addon_keeps_inr_seat_plan_for_domestic_client():
     fake = _fake_rzp("sub_seat_inr")
     with (
         patch.object(razorpay_service, "_get_razorpay", return_value=fake),
-        patch.object(razorpay_service, "RAZORPAY_SEAT_PLAN_ID", "plan_seat_inr"),
-        patch.object(razorpay_service, "RAZORPAY_SEAT_PLAN_ID_USD", "plan_seat_usd"),
+        patch.object(razorpay_service, "charge_tax_rate_bps", return_value=1800),
+        patch.object(razorpay_service, "resolve_seat_plan_id", return_value="plan_seat_inr") as mint,
     ):
         payload = razorpay_service.create_seat_addon_subscription(
             MagicMock(), _make_client(billing_country="IN"), extra_seats=1
         )
 
+    assert mint.call_args.kwargs["currency"] == "INR"
     assert fake.subscription.create.call_args.kwargs["data"]["plan_id"] == "plan_seat_inr"
     # The base is named in the description, but asserting only on it stopped
     # pinning anything once the sheet started quoting the gross: "₹529.82

@@ -294,10 +294,12 @@ def test_create_seat_addon_subscription():
     fake = MagicMock()
     fake.subscription.create.return_value = {"id": "sub_seats", "status": "created"}
 
-    # RAZORPAY_SEAT_PLAN_ID has no baked-in default (it is env-only), so the seat
-    # add-on plan must be configured for this flow to run.
+    # The seat plan is minted on demand and cached by charged amount rather than
+    # pinned in the environment, so what is stubbed here is the resolver, not
+    # ``RAZORPAY_SEAT_PLAN_ID`` (which this path no longer reads).
     with (
-        patch.object(razorpay_service, "RAZORPAY_SEAT_PLAN_ID", "plan_test_seat"),
+        patch.object(razorpay_service, "resolve_seat_plan_id", return_value="plan_test_seat"),
+        patch.object(razorpay_service, "charge_tax_rate_bps", return_value=1800),
         patch.object(razorpay_service, "_get_razorpay", return_value=fake),
     ):
         result = razorpay_service.create_seat_addon_subscription(MagicMock(), _make_client(), extra_seats=3)

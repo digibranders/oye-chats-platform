@@ -58,6 +58,8 @@ def _sub(db, included=1):
 def test_first_seat_purchase_does_not_entitle_until_webhook(db):
     client, sub = _sub(db)
     rzp = MagicMock()
+    # Seat plans are minted on demand now, so the fake must answer the mint too.
+    rzp.plan.create.return_value = {"id": "plan_seat_minted"}
     rzp.subscription.create.return_value = {"id": "sub_seat"}
     with patch.object(razorpay_service, "_get_razorpay", return_value=rzp):
         checkout = razorpay_service.edit_seat_addon_quantity(db, sub, extra_seats=2)
@@ -114,6 +116,8 @@ def test_dismiss_then_retry_does_not_entitle(db):
     seat sub is still in `created` state and never charged."""
     client, sub = _sub(db)
     rzp = MagicMock()
+    # Seat plans are minted on demand now, so the fake must answer the mint too.
+    rzp.plan.create.return_value = {"id": "plan_seat_minted"}
     rzp.subscription.create.return_value = {"id": "sub_seat"}
     with patch.object(razorpay_service, "_get_razorpay", return_value=rzp):
         first = razorpay_service.edit_seat_addon_quantity(db, sub, extra_seats=2)
@@ -131,6 +135,8 @@ def test_dismiss_then_retry_does_not_entitle(db):
 def test_retry_with_changed_quantity_updates_created_sub(db):
     client, sub = _sub(db)
     rzp = MagicMock()
+    # Seat plans are minted on demand now, so the fake must answer the mint too.
+    rzp.plan.create.return_value = {"id": "plan_seat_minted"}
     rzp.subscription.create.return_value = {"id": "sub_seat"}
     with patch.object(razorpay_service, "_get_razorpay", return_value=rzp):
         razorpay_service.edit_seat_addon_quantity(db, sub, extra_seats=2)
@@ -149,6 +155,8 @@ def test_carry_does_not_self_entitle(db):
     pre-existing gap, deliberately NOT widened here)."""
     client, sub = _sub(db, included=1)
     rzp = MagicMock()
+    # Seat plans are minted on demand now, so the fake must answer the mint too.
+    rzp.plan.create.return_value = {"id": "plan_seat_minted"}
     rzp.subscription.create.return_value = {"id": "sub_seat_new"}
     with patch.object(razorpay_service, "_get_razorpay", return_value=rzp):
         result = razorpay_service.edit_seat_addon_quantity(db, sub, extra_seats=2, require_authorization=False)
@@ -163,6 +171,8 @@ def test_first_purchase_checkout_carries_short_url_for_reauth(db):
     (the plan-cutover carry) can email a re-authorization link."""
     client, sub = _sub(db)
     rzp = MagicMock()
+    # Seat plans are minted on demand now, so the fake must answer the mint too.
+    rzp.plan.create.return_value = {"id": "plan_seat_minted"}
     rzp.subscription.create.return_value = {"id": "sub_seat", "short_url": "https://rzp.io/i/seat"}
     with patch.object(razorpay_service, "_get_razorpay", return_value=rzp):
         checkout = razorpay_service.edit_seat_addon_quantity(db, sub, extra_seats=2)

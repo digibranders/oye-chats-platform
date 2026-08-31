@@ -273,6 +273,8 @@ def test_activation_cancels_old_seat_addon_and_carries_to_new_sub(db):
     db.commit()
 
     fake = MagicMock()
+    # Seat plans are minted on demand now, so the fake answers the mint too.
+    fake.plan.create.return_value = {"id": "plan_seat_minted"}
     fake.subscription.create.return_value = {"id": "sub_addon_new"}
     payload = _activation_payload(
         razorpay_sub_id="sub_new_seatcut",
@@ -369,6 +371,8 @@ def test_downstream_failure_does_not_mint_orphan_addon(db):
     db.commit()
 
     fake = MagicMock()
+    # Seat plans are minted on demand now, so the fake answers the mint too.
+    fake.plan.create.return_value = {"id": "plan_seat_minted"}
     fake.subscription.create.return_value = {"id": "sub_addon_reorder_new"}
     payload = _activation_payload(
         razorpay_sub_id="sub_new_reorder",
@@ -421,6 +425,8 @@ def test_promote_scheduled_change_cancels_old_seat_addon_and_carries_notes(db):
     db.commit()
 
     fake = MagicMock()
+    # Seat plans are minted on demand now, so the fake answers the mint too.
+    fake.plan.create.return_value = {"id": "plan_seat_minted"}
     fake.subscription.create.return_value = {
         "id": "sub_new_dgseat",
         "short_url": "https://rzp.io/i/abc",
@@ -479,6 +485,8 @@ def test_promote_scheduled_change_seat_carry_reaches_activation(db):
     db.commit()
 
     fake = MagicMock()
+    # Seat plans are minted on demand now, so the fake answers the mint too.
+    fake.plan.create.return_value = {"id": "plan_seat_minted"}
     fake.subscription.create.return_value = {
         "id": "sub_new_dge2e",
         "short_url": "https://rzp.io/i/def",
@@ -498,6 +506,8 @@ def test_promote_scheduled_change_seat_carry_reaches_activation(db):
         for c in fake.subscription.create.call_args_list
         if c.kwargs.get("data", {}).get("notes", {}).get("purpose") != "seat_addon"
     )
+    # Seat plans are minted on demand now, so the fake answers the mint too.
+    fake.plan.create.return_value = {"id": "plan_seat_minted"}
     fake.subscription.create.return_value = {"id": "sub_addon_dge2e_new"}
     activation_payload = {
         "subscription": {
