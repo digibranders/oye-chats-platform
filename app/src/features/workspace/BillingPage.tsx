@@ -248,6 +248,7 @@ export function BillingPage() {
                 geo={billing.geo.data ?? null}
                 agentsUsed={entitlements.usage?.bots ?? 0}
                 seatsUsed={entitlements.usage?.operators ?? 0}
+                grossSeatPriceMinor={core?.grossExtraSeatPriceMinor ?? null}
                 onChangePlan={() => setPicking(true)}
                 onManageSeats={() => setManagingSeats(true)}
                 onCancel={() => setCancelling(true)}
@@ -475,6 +476,9 @@ export function BillingPage() {
             plan={plan}
             currentSeats={subscription.seats}
             seatsUsed={entitlements.usage?.operators ?? 0}
+            grossSeatPriceMinor={core?.grossExtraSeatPriceMinor ?? null}
+            taxRateBps={core?.taxRateBps ?? null}
+            onUpgrade={() => setPicking(true)}
             botId={botId}
             onChanged={(message) => {
               announce(message);

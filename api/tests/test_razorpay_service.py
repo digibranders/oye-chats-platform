@@ -839,10 +839,10 @@ def _client_in(country: str = "IN"):
 def test_charged_price_display_leads_with_the_gross_and_names_the_split():
     from app.services import razorpay_service as rs
 
-    # ₹449 base + 18% GST = ₹529.82 debited.
-    out = rs.charged_price_display(_client_in(), 44900, 1800)
-    assert "529.82" in out
-    assert "449" in out and "GST" in out
+    # ₹499 base + 18% GST = ₹588.82 debited.
+    out = rs.charged_price_display(_client_in(), 49900, 1800)
+    assert "588.82" in out
+    assert "499" in out and "GST" in out
 
 
 def test_charged_price_display_symbol_can_be_pinned_to_the_amount_s_rail():
@@ -875,7 +875,7 @@ def test_seat_checkout_sheet_quotes_the_gross_not_the_base():
     from app.services import razorpay_service as rs
 
     payload = rs._seat_checkout_payload("sub_seat", _client_in(), 2, rate_bps=1800)
-    assert "529.82" in payload["description"], payload["description"]
+    assert "588.82" in payload["description"], payload["description"]
 
 
 def test_branding_checkout_sheet_quotes_the_gross_not_the_base():

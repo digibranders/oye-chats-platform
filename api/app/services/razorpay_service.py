@@ -78,6 +78,7 @@ from app.db.models import (
     plan_charge_only_clauses,
 )
 from app.services import credit_service, email_service, invoice_service
+from app.services.seat_math import seat_floor_for
 from app.services.seller_profile_service import charge_tax_rate_bps
 
 if TYPE_CHECKING:
@@ -1966,7 +1967,7 @@ def derive_operator_quantity(plan: Plan | None, seat_addon_quantity: int | None)
     UNLIMITED, and the mirror stays ``-1`` rather than becoming a nonsense
     finite count (``-1 + 2 == 1``) that reads back as a one-seat cap.
     """
-    included = int((plan.included_operator_seats if plan else 1) or 1)
+    included = seat_floor_for(plan)
     if included < 0:
         return -1  # UNLIMITED. Paid add-on seats are meaningless on top of it.
     return included + int(seat_addon_quantity or 0)
@@ -1986,7 +1987,7 @@ def update_subscription_quantity(
     """
     new_quantity = max(int(new_quantity), 0)
     plan = sub.plan
-    floor = int(plan.included_operator_seats) if plan and plan.included_operator_seats else 1
+    floor = seat_floor_for(plan)
     if new_quantity < floor:
         raise ValueError(f"Cannot set seats below included floor of {floor}")
 
