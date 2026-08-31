@@ -58,7 +58,7 @@ def test_discover_returns_credit_math(monkeypatch):
     # free the day that resolution changes.
     monkeypatch.setattr(
         "app.services.plan_entitlements_service.get_entitlements",
-        lambda client_id, session, **kwargs: SimpleNamespace(has_feature=lambda name: False),
+        lambda client_id, session, **kwargs: SimpleNamespace(has_feature=lambda name: False, limit_for=lambda name: 0),
     )
     monkeypatch.setattr("app.services.credit_service.get_credit_cost", lambda db, action: 5)
     # 100 credits -> 20 affordable pages; bot_id must be threaded through.

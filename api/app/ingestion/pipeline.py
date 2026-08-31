@@ -492,6 +492,7 @@ def batch_web_ingestion(
     bot_id: int | None = None,
     *,
     cost_per_page: int = 0,
+    free_pages: int = 0,
     deduct_reason: str = "url_scan",
     deduct_reference_id: int | None = None,
     embed_progress_cb: Callable[[int, int], None] | None = None,
@@ -513,8 +514,15 @@ def batch_web_ingestion(
             chunks are rolled back and ingestion continues with the next page.
             This guarantees the user is never charged for un-ingested chunks
             and never gets free chunks for an un-charged page.
-        deduct_reason: Credit ledger reason code; ignored when ``cost_per_page``
-            is 0. Defaults to ``"url_scan"``.
+        free_pages: How many of THIS crawl's pages are covered by the account's
+            remaining free-training allowance. Those pages ingest at zero cost
+            and the rest pay ``cost_per_page``. The allowance is counted and
+            resolved by ``document_routes.resolve_crawl_pricing``; this only
+            spends what it is handed. Charging is what decrements it, so a page
+            skipped by the content-dedup check does not consume the allowance
+            any more than it consumes credits.
+        deduct_reason: Credit ledger reason code; ignored when the effective
+            page cost is 0. Defaults to ``"url_scan"``.
         deduct_reference_id: Optional reference id to write on the ledger row
             (typically ``bot_id``); ignored when ``cost_per_page`` is 0.
         force_reingest: When True, skip the SHA-256 content dedup check so every
@@ -710,6 +718,11 @@ def batch_web_ingestion(
         # chunks and used to be counted nowhere, so a run where 40 of 200 pages
         # hit a DB error was indistinguishable from a clean run of 200.
         pages_failed = 0
+        # What is left of the account's free-training allowance for THIS run.
+        # Decremented only when a page actually commits, so a page skipped by
+        # the content-dedup check no more spends the allowance than it spends
+        # credits.
+        free_left = max(0, int(free_pages))
         for boundary in page_boundaries:
             start = boundary["start_idx"]
             count = boundary["count"]
@@ -722,6 +735,12 @@ def batch_web_ingestion(
             # Assume a real charge; the idempotency pre-check below flips this
             # when the ledger already holds this page's deduction.
             charged_now = True
+            # The price of THIS page. Pages inside the remaining free-training
+            # allowance cost nothing; the rest pay the plan's rate. Resolved per
+            # page rather than once per crawl because the allowance runs out
+            # partway through: a 40-page site on a 25-page allowance is 25 free
+            # pages followed by 15 charged ones, in one run.
+            page_cost = 0 if free_left > 0 else cost_per_page
 
             try:
                 # Remove stale chunks for this URL before inserting fresh ones.
@@ -762,7 +781,7 @@ def batch_web_ingestion(
                 # Atomic billing: deduct in the same TX as the chunk insert so
                 # we never end up with chunks-without-charge or charge-without-
                 # chunks if the worker dies between the two operations.
-                if cost_per_page == 0 and credit_service.is_kill_switch_active(session):
+                if page_cost == 0 and credit_service.is_kill_switch_active(session):
                     # A free crawl still SPENDS: up to a hundred pages of
                     # embedding per new signup, which is the highest-volume
                     # cohort there is. The kill switch lives inside
@@ -779,7 +798,7 @@ def batch_web_ingestion(
                     aborted = True
                     abort_reason = ABORT_REASON_KILL_SWITCH
                     break
-                if cost_per_page > 0:
+                if page_cost > 0:
                     # Per-(job, url) idempotency (finding H): a retry of this
                     # crawl job re-runs the same URL with the same key, so the
                     # second charge is a no-op. Keyed on URL (not loop index)
@@ -806,7 +825,7 @@ def batch_web_ingestion(
                     credit_service.check_and_deduct(
                         session,
                         client_id,
-                        cost_per_page,
+                        page_cost,
                         reason=deduct_reason,
                         reference_id=deduct_reference_id,
                         bot_id=ledger_bot_id,  # scope (None when pooled
@@ -816,9 +835,13 @@ def batch_web_ingestion(
                 session.commit()
                 total += count
                 pages_changed += 1
-                if cost_per_page > 0 and charged_now:
+                if page_cost > 0 and charged_now:
                     pages_charged += 1
-                    credits_deducted += cost_per_page
+                    credits_deducted += page_cost
+                elif page_cost == 0 and cost_per_page > 0 and free_left > 0:
+                    # This page was covered by the allowance and it committed,
+                    # so the allowance is one page smaller for the next.
+                    free_left -= 1
             except credit_service.InsufficientCredits as exc:
                 session.rollback()
                 logger.warning(

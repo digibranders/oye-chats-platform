@@ -108,10 +108,29 @@ _PLANS: list[dict] = [
             "documents": -1,
             # = Standard. 100 pages at ~4k chars is ~400k, so the page cap binds
             # first and this stays a backstop, not a wall.
-            "knowledge_characters": 500_000,
+            # 100,000 characters, not the 500,000 this used to carry — the
+            # same figure as Standard at ₹1,199 and ten times Starter at
+            # ₹599, so a free trial out-gave a paid tier tenfold on
+            # knowledge and made converting feel like a downgrade.
+            #
+            # Sized from the free-page allowance above rather than picked:
+            # 104 real crawled pages in production average 5,243 cleaned
+            # characters (median 4,732, p75 5,812), so 25 free pages is
+            # roughly 131,000 at the mean. 100,000 covers about 20 pages at
+            # p75 sizing, which is the working size of most small sites, and
+            # anything past it is the customer's own decision to spend
+            # credits on. Enforced per account by knowledge_quota_service.
+            "knowledge_characters": 100_000,
             "chat_history_days": 90,
             "max_crawl_depth": 4,
             "max_crawl_pages": 100,
+            # Pages the account may crawl at zero credits. Not a free
+            # first crawl: at 5 credits a page a 100-page site would have
+            # been handed the entire 500-credit grant, while a small site
+            # got a fraction of the same offer. A fixed allowance gives
+            # every trial the same deal and leaves the credits for
+            # actually evaluating the product.
+            "free_training_pages": 25,
             "max_crawl_js_pages": 50,
             "max_crawl_concurrency": 4,
         },
@@ -129,7 +148,7 @@ _PLANS: list[dict] = [
             "topup_allowed": False,
             "auto_recrawl": True,
             "integrations": "all",
-            "first_training_free": True,
+            "first_training_free": True,  # kept: surfaced in entitlements/UI copy
         },
         "marketing": {"tagline": "Fourteen days of everything, on one chatbot."},
     },

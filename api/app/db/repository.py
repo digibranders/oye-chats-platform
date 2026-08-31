@@ -457,15 +457,28 @@ def get_ingested_documents(session, client_id: int = None, bot_id: int = None):
 
 
 def get_pages_for_source(session, source: str, bot_id: int = None, client_id: int = None) -> dict:
-    """Return all unique crawled page URLs for a given root domain.
+    r"""Return all unique crawled page URLs for a given root domain.
 
-    ``source`` is the normalized root domain string returned by
-    ``get_ingested_documents`` (e.g. ``"fynix.digital"``).  We reuse the same
-    PostgreSQL expression so the filter matches the same rows.
+    ``source`` is a BARE root domain (e.g. ``"fynix.digital"``): the route that
+    calls this constrains it to ``^[A-Za-z0-9._\-]+$``, which admits no scheme
+    and no slash, and the drawer derives it with ``rootDomainOf`` for that
+    reason.
+
+    The expression below must therefore produce a bare host too. It used to
+    reuse the one from ``get_ingested_documents``, which keeps the scheme:
+    ``https://www.acme.com/pricing`` normalised to ``https://acme.com``, and
+    comparing that to ``acme.com`` matched nothing. Every website's page drawer
+    was empty — "No pages recorded" on a source the same screen reported as
+    trained with 81 pages — because the two halves normalised to different
+    shapes and nothing compared them.
+
+    Uploads keep their raw name: the regex only rewrites values that start with
+    a scheme, so a document called ``handbook.pdf`` is unchanged.
     """
-    root_name_expr = func.coalesce(
-        func.replace(func.substring(Document.document_name, r"^(https?://[^/]+)"), "www.", ""),
+    root_name_expr = func.regexp_replace(
         Document.document_name,
+        r"^https?://(www\.)?([^/]+).*$",
+        r"\2",
     )
 
     stmt = (
