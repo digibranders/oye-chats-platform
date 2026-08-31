@@ -6,6 +6,29 @@ This report covers a full assess → inventory → gap-analysis → implement �
 pass across all three applications in the monorepo (`api/`, `app/`, `widget/`).
 The k6 harness in `load-tests/` is performance tooling and is out of scope here.
 
+> ## STATUS 2026-08-31
+>
+> **Kept for the open half, not the closed half.** The launch blocker is fixed and
+> its full product-model reasoning is preserved in the migration itself
+> (`api/alembic/versions/f3a7c1e9b204_*.py`), so that section is history. What still
+> earns this file its place is "Remaining gaps (prioritized)" — which records *why*
+> each open gap does not block launch — and "Manual testing still required", which is
+> a live checklist.
+>
+> Two corrections:
+> - **The counts below are stale.** They were true on 2026-08-17. The suite has grown
+>   substantially since (the 2026-08-31 branch alone reports 140 app test files / 1,812
+>   app tests, up from 69 / 611 here). Re-count before quoting any number in this file.
+> - **The IPv6-loopback finding is still open.** `hostname === '::1'` is still there, now
+>   at `app/src/features/agents/channels/embedEnvironment.ts:14` (the file is TypeScript
+>   now, not `.js`). `new URL('http://[::1]:8000').hostname` returns the bracketed
+>   `'[::1]'`, so the branch remains dead and an IPv6-loopback API endpoint still resolves
+>   to `production`. Reported, still not fixed.
+>
+> The `injection_patterns.py` finding is unchanged and still pinned by
+> `api/tests/test_rag_injection_guards.py:105`; the file is at
+> `api/app/security/injection_patterns.py`.
+
 ## TL;DR
 
 **The repository was NOT an untested codebase.** It arrived with a large,

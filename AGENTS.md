@@ -2,6 +2,27 @@
 
 OyeChats is a **SaaS chatbot platform** where customers sign up, create chatbot instances, upload their knowledge base, and embed an AI chatbot on their website with a single script tag. The chatbot uses RAG (Retrieval-Augmented Generation) to answer visitor questions from the customer's documents.
 
+> **This file is the agent-facing rulebook, not the technical reference.**
+>
+> It used to carry its own copy of the architecture, schema, RAG pipeline, key-file
+> map and tech stack. That copy drifted until nearly every line of it was false: it
+> described an `admin/` directory (the dashboard is `app/`), an `aiorb-preview/`
+> directory and a `../landing/` sibling (neither exists), a self-contained ~416KB
+> IIFE with a sibling `oyechats-widget.css` (the widget is a ~3KB loader plus
+> code-split ESM chunks in a shadow root), OpenAI `text-embedding-3-small` at
+> 1536-dim into `Vector(384)` (embeddings are Gemini `gemini-embedding-001` at
+> 768-dim into `Vector(768)`, `models.py:788`), 2000/300 chunking (it is 1000/200,
+> `config.py:110-111`), Gemini as the primary LLM (it is OpenAI `gpt-5.4-mini` with
+> Gemini as the LiteLLM fallback, `config.py:45-46`), Playwright for scraping (there
+> is no local browser; crawling is Jina Reader primary + Spider.cloud fallback) and
+> Backblaze B2 for storage (it is Cloudflare R2, `services/r2_service.py`).
+>
+> Two hand-maintained copies of the same facts is how that happened, so there is now
+> exactly one: **[`CLAUDE.md`](./CLAUDE.md)**. Read it for architecture, the RAG
+> pipeline, the DB schema, auth headers, key files, the tech stack, environment
+> setup, production access and every development command. What stays here is only
+> what an agent must not get wrong before touching anything.
+
 ## Code Quality Gate
 > **Codex Agent reviews every edit.** Write clean, production-ready code on every change — no placeholders, no shortcuts, no "fix later" comments. Each edit is evaluated for correctness, type safety, error handling, and adherence to project conventions. Treat every diff as if it's going straight to a code review.
 
@@ -11,10 +32,21 @@ OyeChats is a **SaaS chatbot platform** where customers sign up, create chatbot 
 Run only the checks relevant to the files you changed:
 
 ### JavaScript / TypeScript Projects
-| Project | Directory | Lint | Typecheck | Build |
-|---------|-----------|------|-----------|-------|
-| Admin Dashboard | `admin/` | `npm run lint` | — (JS) | `npm run build` |
-| Chat Widget | `widget/` | `npm run lint` | — (JS) | `npm run build` |
+| Project | Directory | Lint | Typecheck | Tests | Build |
+|---------|-----------|------|-----------|-------|-------|
+| Admin Dashboard | `app/` | `npm run lint` | `npx tsc --noEmit` | `npx vitest run` | `npm run build` |
+| Chat Widget | `widget/` | `npm run lint` | — (JS) | `npm test` | `npm run build` |
+
+`app/` is TypeScript end to end, so `tsc --noEmit` is not optional there: Vite
+transpiles and strips types without checking them, and `npm run build` passes on
+code that does not typecheck.
+
+The admin dashboard also has a Playwright browser suite, and CI runs it. It needs
+the build first, because it drives `vite preview` rather than the dev server:
+
+```bash
+cd app && npm run build && npx playwright install chromium && npm run e2e
+```
 
 ### Python Backend
 | Check | Command (run inside conda `oye` env) |
@@ -39,199 +71,13 @@ Run only the checks relevant to the files you changed:
 - If you are on `main` by mistake: `git checkout development` immediately — do not commit.
 - When ready to release, create a PR from `development` → `main` on GitHub. The user will merge it from there.
 
-## How It Works (End-to-End)
+## Working inside `app/` (the admin dashboard)
 
-1. **Customer signs up** via the Admin Dashboard → gets an account
-2. **Creates a bot** → gets a unique `bot_key` (e.g., `bot-6a427d4529b9`)
-3. **Uploads documents** (PDF, DOCX, TXT) or **crawls a URL** → documents are chunked, embedded, and stored in pgvector
-4. **Copies the embed script** from the admin dashboard
-5. **Pastes the script** into their website's `<body>` tag:
-   ```html
-   <script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>
-   <a href="https://www.oyechats.com/?ref=bot-xxx&utm_source=widget&utm_medium=referral"
-      rel="nofollow" style="font-size:11px;color:inherit;opacity:0.7;text-decoration:none">Powered by OyeChats</a>
-   ```
-6. **Visitors see a chat widget** (floating button, bottom-right) → click to open → ask questions
-7. **Widget sends question** to backend API with `X-Bot-Key` header
-8. **RAG pipeline** performs hybrid search (vector + keyword) over that bot's documents
-9. **Google Gemini** generates a response using retrieved context
-10. **Response streams back** to the widget
+`app/` is under a complete rebuild mandate. Read [`app/CLAUDE.md`](app/CLAUDE.md)
+and [`app/DESIGN.md`](app/DESIGN.md) before writing anything there. Existing pages
+are pointers to reusable logic, never to UX worth keeping.
 
-## Architecture (4 Applications)
+## Everything else
 
-```
-oye-chats/
-├── platform/                     # Main platform (this repo)
-│   ├── api/                     # FastAPI REST API + RAG pipeline
-│   ├── widget/                  # Embeddable chat widget (builds to oyechats-widget.js)
-│   ├── admin/                   # React admin dashboard (bot management, analytics)
-│   └── aiorb-preview/           # 3D animated orb preview (optional)
-├── landing/                     # Next.js marketing landing page
-└── AGENTS.md                    # Root orientation (see platform/AGENTS.md for details)
-```
-
-| App | Directory | Port | Stack | Purpose |
-|-----|-----------|------|-------|---------|
-| Backend API | `api/` | 8000 | FastAPI, SQLAlchemy, pgvector | REST API, RAG pipeline, auth, document ingestion |
-| Chat Widget | `widget/` | 5173 (dev) / 4173 (preview) | React 19, Vite, Tailwind | Embeddable chat widget for customer websites |
-| Admin Dashboard | `admin/` | 5174 | React 19, Vite, React Router | Bot management, knowledge base, analytics, settings |
-| Landing Page | `../landing/` | 3000 | Next.js 16, React 19, Tailwind v4 | Marketing site at oyechats.com |
-
-## Widget Embedding — How It Works
-
-The widget (`oyechats-widget.js`) is a **self-contained IIFE bundle** (~416KB) that:
-
-1. Finds its own `<script>` tag and reads `data-bot-key`
-2. Sets `window.OYECHATS_BOT_KEY` globally
-3. Auto-injects its sibling CSS file (`oyechats-widget.css`) in production
-4. Creates a `<div id="oyechats-widget-root">` in the DOM
-5. Renders a React app (its own bundled React, isolated from the host page)
-6. Communicates with the backend via `X-Bot-Key` header
-
-**Works on any platform**: Next.js, React, WordPress, Webflow, Shopify, plain HTML — anything with a `<body>` tag. Same pattern as Intercom, Crisp, Drift.
-
-### Production Embed
-```html
-<script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>
-<a href="https://www.oyechats.com/?ref=bot-xxx&utm_source=widget&utm_medium=referral"
-   rel="nofollow" style="font-size:11px;color:inherit;opacity:0.7;text-decoration:none">Powered by OyeChats</a>
-```
-
-### Development Embed (IMPORTANT)
-The Vite **dev server** (`localhost:5173/src/main.jsx`) **cannot** be embedded on external sites. Vite's `@vitejs/plugin-react` injects a React Fast Refresh preamble only in its own `index.html`. Loading it cross-origin throws: `"@vitejs/plugin-react can't detect preamble"`.
-
-**To test the widget on another local site:**
-```bash
-cd platform/widget
-npm run build                    # Build the widget
-npx vite preview --port 4173     # Serve built files
-```
-Then embed:
-```html
-<script src="http://localhost:4173/oyechats-widget.js" data-bot-key="bot-xxx"></script>
-```
-
-## RAG Pipeline
-
-```
-Document Upload/Crawl
-  → Extraction (PDF/DOCX/TXT via extraction.py)
-  → Cleaning (cleaner.py)
-  → Chunking (recursive splitting, 2000 chars, 300 overlap — chunking.py, env-configurable)
-  → Embedding (OpenAI text-embedding-3-small, 1536-dim vectors — embedder.py)
-  → Storage (PostgreSQL pgvector — repository.py)
-
-User Question
-  → Hybrid Search (vector similarity + full-text TSVECTOR — rag_service.py)
-  → Context Building (top chunks + chat history)
-  → LLM Generation (Google Gemini 2.5 Flash, streaming — llm_service.py)
-  → BANT Tracking (optional sales qualification — rag_service.py)
-  → Response → Widget
-```
-
-## Database Schema (Key Models)
-
-- **Client** — User account (email, hashed password, API key, max bots)
-- **Bot** — Chatbot instance (bot_key, name, system_prompt, settings, colors, logos)
-- **Document** — Ingested content (text chunks + Vector(384) embeddings + TSVECTOR)
-- **ChatSession** — Conversation session (visitor tracking, BANT state, geolocation)
-- **ChatMessage** — Individual messages (role, content, feedback, Langfuse trace ID)
-
-Relationships: `Client → Bot → Document`, `Bot → ChatSession → ChatMessage`
-
-## API Headers & Auth
-
-- **Admin auth**: API key in `X-API-Key` header (set during login)
-- **Widget auth**: Bot key in `X-Bot-Key` header (from embed script's `data-bot-key`)
-- Backend resolves the bot from `X-Bot-Key` via `get_current_bot()` middleware
-
-## Key Naming Conventions
-
-| Item | Name |
-|------|------|
-| Widget bundle | `oyechats-widget.js` / `oyechats-widget.css` |
-| DOM container | `oyechats-widget-root` |
-| Window globals | `window.OYECHATS_BOT_KEY`, `window.OYECHATS_API_KEY` |
-| Console prefix | `[OyeChats]` |
-| Production CDN | `cdn.oyechats.com/oyechats-widget.js` |
-| Contact email | `developer@oyechats.com` |
-
-## Environment Setup
-
-- **Conda environment**: `oye` (Python 3.11)
-- **Dependency manager**: `uv` (inside conda env)
-
-## Development Commands
-
-### API (Backend)
-All backend commands MUST run within the conda `oye` environment.
-
-```bash
-conda activate oye && cd api
-
-uv sync                          # Install/sync dependencies
-uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload  # Dev server
-uv run pytest                    # Tests
-uv run ruff check .              # Linter
-uv add <package-name>            # Add dependency
-uv run alembic upgrade head      # DB migrations
-```
-
-Or prefix with `conda run -n oye --no-capture-output`:
-```bash
-conda run -n oye --no-capture-output bash -c "cd api && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
-```
-
-### Widget
-```bash
-cd widget
-npm install && npm run dev       # Dev server (localhost:5173) — for widget development only
-npm run build                    # Build oyechats-widget.js
-npx vite preview --port 4173     # Serve built widget for embedding tests
-```
-
-### Admin Dashboard
-```bash
-cd admin
-npm install && npm run dev       # Dev server (localhost:5174)
-```
-
-### Landing Page
-```bash
-cd ../landing
-npm install && npm run dev       # Dev server (localhost:3000)
-```
-
-## Key Files
-
-| Purpose | File |
-|---------|------|
-| Backend entry | `api/app/main.py` |
-| RAG pipeline | `api/app/services/rag_service.py` |
-| LLM service | `api/app/services/llm_service.py` |
-| DB models | `api/app/db/models.py` |
-| Bot routes | `api/app/api/bot_routes.py` |
-| Chat routes | `api/app/api/chat_routes.py` |
-| Document ingestion | `api/app/ingestion/pipeline.py` |
-| Embedding generation | `api/app/ingestion/embedder.py` |
-| Widget entry point | `widget/src/main.jsx` |
-| Widget API client | `widget/src/services/api.js` |
-| Widget chat UI | `widget/src/components/ChatWindow.jsx` |
-| Vite build config | `widget/vite.config.js` |
-| Admin embed scripts | `admin/src/pages/Chatbot.jsx` |
-| Admin bot settings UI | `admin/src/pages/Interface.jsx` |
-| Landing page layout | `../landing/src/app/layout.tsx` |
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| LLM | Google Gemini 2.5 Flash |
-| Embeddings | OpenAI text-embedding-3-small (1536-dim, API-based) |
-| Vector DB | PostgreSQL 16 + pgvector |
-| Backend | FastAPI + SQLAlchemy + Alembic |
-| Frontend | React 19 + Vite + Tailwind CSS |
-| Web Scraping | Playwright (Chromium) |
-| Cloud Storage | Backblaze B2 (S3-compatible) |
-| Observability | Langfuse (LLM traces) + Sentry (errors) |
-| Dependency Mgmt | uv (Python) + npm (JavaScript) |
+See [`CLAUDE.md`](./CLAUDE.md). If you find something in this file that contradicts
+it, `CLAUDE.md` and the code win — and the contradiction is a bug in this file.

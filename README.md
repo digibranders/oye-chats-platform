@@ -1,13 +1,13 @@
 # OyeChats
 
-A SaaS chatbot platform: customers sign up, create chatbot instances, upload a knowledge base, and embed a RAG-powered chatbot on their website with one `<script>` tag. Includes live-chat handoff to human operators, BANT/MEDDIC lead qualification, and a Razorpay/Stripe billing system.
+A SaaS chatbot platform: customers sign up, create chatbot instances, upload a knowledge base, and embed a RAG-powered chatbot on their website with one `<script>` tag. Includes live-chat handoff to human operators, BANT/MEDDIC lead qualification, and a Razorpay billing system (INR, single rail).
 
 ## Modules
 
 | Module | Stack | Purpose |
 |--------|-------|---------|
 | [`api/`](./api/) | FastAPI · SQLAlchemy 2.0 · pgvector · LiteLLM · ARQ | REST + SSE + WebSocket; RAG pipeline; auth; ingestion; billing |
-| [`widget/`](./widget/) | React 19 · Vite 7 · Tailwind v4 | Embeddable chat widget IIFE (`oyechats-widget.js`) |
+| [`widget/`](./widget/) | React 19 · Vite 7 · Tailwind v4 | Embeddable chat widget: a ~3KB loader IIFE (`oyechats-widget.js`) plus code-split ESM chunks it lazy-loads into a shadow root |
 | [`app/`](./app/) | React 19 · Vite 8 · React Router 7 · Recharts | Admin dashboard (bot config, KB, leads, billing, operator console) |
 
 The marketing site lives in a separate sibling repo (`oyechats-website/`, Next.js 16) and is not part of this monorepo.
@@ -87,8 +87,8 @@ Create `api/.env` from `api/.env.example`. The full list with defaults lives in 
 |----------|-------------|
 | `DB_URL` | Postgres connection string (`postgresql://oyechats:oyechats@localhost:5432/oyechats`) |
 | `APP_ENV` | `development`, `testing`, or `production` |
-| `OPENAI_API_KEY` | OpenAI key — used for embeddings (`text-embedding-3-small`) and primary chat completions |
-| `GOOGLE_API_KEY` | Google Gemini key — fallback chat model and gate / enrichment LLM |
+| `OPENAI_API_KEY` | OpenAI key — primary chat completions (`gpt-5.4-mini`) and the moderation pre-check |
+| `GOOGLE_API_KEY` | Google Gemini key — **embeddings** (`gemini-embedding-001`), the fallback chat model, and the gate / enrichment LLM |
 
 ### Required in production
 
@@ -98,9 +98,7 @@ Create `api/.env` from `api/.env.example`. The full list with defaults lives in 
 | `CORS_ORIGINS` | Comma-separated allowlist (no wildcard with credentials) |
 | `R2_KEY_ID`, `R2_APPLICATION_KEY`, `R2_BUCKET_NAME`, `R2_ENDPOINT` | Cloudflare R2 (S3-compatible) for file storage. Legacy `B2_*` env names are accepted as fallbacks. |
 | `BREVO_API_KEY` | Transactional email |
-| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` | Primary payment provider (INR) |
-| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | Fallback payment provider |
-| `BILLING_PROVIDER` | `razorpay` (default) or `stripe` |
+| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` | Payment provider (INR) — the sole rail. `BILLING_PROVIDER` defaults to `razorpay`; there is no `billing_service.py` and no Stripe service module, only vestigial `stripe_*` columns on `plans`. |
 | `SENTRY_DSN_BACKEND` | Error tracking |
 
 ### Tunable feature flags
@@ -109,11 +107,12 @@ Create `api/.env` from `api/.env.example`. The full list with defaults lives in 
 |----------|---------|--------|
 | `LLM_MODEL` | `openai/gpt-5.4-mini` | Primary chat model (LiteLLM identifier) |
 | `FALLBACK_MODEL` | `gemini/gemini-2.5-flash` | Auto-fallback chain |
-| `EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding (1536-dim) |
+| `GEMINI_EMBED_MODEL` | `gemini-embedding-001` | Google embedding, Matryoshka-truncated to 768-dim (`EMBED_DIMENSIONS`) |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1000` / `200` | Document chunking |
+| `CRAWL_PROVIDER_PRIMARY` | `jina` | Which scrape backend page fetches try first; the other becomes the fallback |
 | `MODERATION_ENABLED` | `true` | OpenAI moderation pre-check |
 | `CAG_LITE_THRESHOLD` | `20` | Skip retrieval for bots with ≤ N chunks |
-| `RELEVANCE_GATE_ENABLED` | `false` | CRAG-style relevance scoring |
+| `RELEVANCE_GATE_ENABLED` | `true` | CRAG-style relevance scoring — the control behind "answers only from your knowledge base". An **empty** value counts as unset (`relevance_gate.py:63`); see `deploy-api.yml`'s `${VAR:-true}`. |
 | `RERANK_ENABLED` | `false` | FlashRank cross-encoder rerank |
 | `WORKER_ENABLED` | `true` | If `false`, worker tasks fall back to in-process thread pool |
 | `LANGFUSE_FORCE_DISABLE` | — | Escape hatch for low-memory hosts |
@@ -138,9 +137,12 @@ uv run alembic revision --autogenerate -m "<message>"   # new migration
 ### Frontends
 
 ```bash
-cd widget && npm run lint && npm run build              # widget
-cd app && npm run lint && npm run build                 # admin
+cd widget && npm run lint && npm test && npm run build          # widget
+cd app && npm run lint && npx tsc --noEmit && npx vitest run && npm run build   # admin
 ```
+
+`app/` is TypeScript, and `npm run build` does not typecheck — `tsc --noEmit` is a
+separate, required gate. See [`CLAUDE.md`](./CLAUDE.md#mandatory-pre-completion-checks).
 
 ### Docker
 
@@ -175,9 +177,13 @@ Routers (each is mounted at the root, no `/api` prefix):
 | `/analytics/*` | `api/app/api/analytics_routes.py` | Dashboard metrics |
 | `/subscriptions/*`, `/credits/*` | `api/app/api/subscription_routes.py` | Plans, invoices, top-ups |
 | `/webhooks/*` | `api/app/api/webhook_routes.py` | Customer webhook registrations |
-| `/webhooks/billing/*` | `api/app/api/webhook_billing_routes.py` | Inbound Razorpay + Stripe webhooks |
-| `/superadmin/*` | `api/app/api/superadmin_routes.py` + `superadmin_plan_routes.py` | Super-admin only |
+| `/webhooks/billing/*` | `api/app/api/webhook_billing_routes.py` | Inbound Razorpay webhooks |
+| `/superadmin/*` | `api/app/api/superadmin_routes.py` + `superadmin_routes_v2.py`, `superadmin_plan_routes.py`, `superadmin_promotion_routes.py`, `superadmin_ops_routes.py` | Super-admin only |
 | `/client/*` | `api/app/api/client_routes.py` | Client account settings |
+| `/quotation/*` | `api/app/api/quotation_routes.py` | Widget quotation flow |
+| `/affiliates/*` | `api/app/api/affiliate_routes.py` | Affiliate / referral program |
+
+This table is a selection. `api/app/api/` holds 32 route modules and `main.py` mounts 36 routers; read `main.py` for the complete wiring.
 
 ## Tests
 
@@ -210,7 +216,7 @@ platform/
 │   ├── app/
 │   │   ├── main.py                   # entry · middleware · router wiring
 │   │   ├── config.py                 # env-driven settings
-│   │   ├── api/                      # route modules (17 routers)
+│   │   ├── api/                      # route modules (32 files, 36 mounted routers)
 │   │   │   ├── auth.py               # auth dependencies (get_current_*)
 │   │   │   ├── auth_routes.py        # register · login · OTP reset
 │   │   │   ├── bot_routes.py         # bot CRUD
@@ -221,20 +227,22 @@ platform/
 │   │   │   ├── operator_routes.py    # live-chat staff
 │   │   │   ├── subscription_routes.py # plans + credits + top-ups
 │   │   │   ├── webhook_routes.py     # customer webhook regs
-│   │   │   ├── webhook_billing_routes.py # inbound Razorpay/Stripe
+│   │   │   ├── webhook_billing_routes.py # inbound Razorpay
 │   │   │   └── …
 │   │   ├── services/                 # business logic
 │   │   │   ├── rag_service.py        # hybrid search + context assembly
 │   │   │   ├── llm_service.py        # LiteLLM wrapper (OpenAI → Gemini)
 │   │   │   ├── live_chat_service.py  # WebSocket ConnectionManager
-│   │   │   ├── billing_service.py    # Stripe
-│   │   │   ├── razorpay_service.py   # Razorpay (primary)
+│   │   │   ├── razorpay_service.py   # Razorpay (sole payment rail)
 │   │   │   ├── credit_service.py     # FIFO credit ledger
 │   │   │   ├── qualification_service.py # BANT / MEDDIC
 │   │   │   ├── lead_service.py       # tier transitions + decay
 │   │   │   ├── webhook_service.py    # outbound HMAC + retry
 │   │   │   ├── email_service.py      # Brevo
-│   │   │   ├── crawler_service.py    # Playwright + crawl4ai
+│   │   │   ├── crawl_orchestrator.py # crawl waves + streaming ingest
+│   │   │   ├── jina_service.py       # Jina Reader (primary crawl provider)
+│   │   │   ├── spider_service.py     # Spider.cloud (fallback)
+│   │   │   ├── ws_backplane.py       # Redis pub/sub for cross-process live chat
 │   │   │   ├── intent_service.py     # intent routing
 │   │   │   ├── relevance_gate.py     # CRAG-style gate
 │   │   │   ├── reranker.py           # FlashRank
@@ -244,7 +252,7 @@ platform/
 │   │   │   ├── extraction.py         # pypdf · python-docx · text
 │   │   │   ├── cleaner.py
 │   │   │   ├── chunking.py           # recursive splitter
-│   │   │   ├── embedder.py           # OpenAI text-embedding-3-small
+│   │   │   ├── embedder.py           # Gemini gemini-embedding-001 (768-dim)
 │   │   │   └── enrichment.py         # optional Gemini chunk-summary
 │   │   ├── worker/                   # ARQ tasks
 │   │   ├── db/                       # models · session · repository
@@ -270,20 +278,20 @@ platform/
 |-------|-----------|
 | LLM (primary) | OpenAI `gpt-5.4-mini` via LiteLLM |
 | LLM (fallback) | Google `gemini-2.5-flash` |
-| Embeddings | OpenAI `text-embedding-3-small` (1536-dim) |
+| Embeddings | Google `gemini-embedding-001` (768-dim, L2-normalized) |
 | Vector DB | PostgreSQL 16 + pgvector (hybrid search with `TSVECTOR` keyword) |
 | Backend | FastAPI · SQLAlchemy 2.0 · Alembic · Pydantic v2 |
 | Background queue | ARQ on Redis |
 | Frontend | React 19 · Vite 7/8 · Tailwind v4 · React Router 7 |
-| Web crawl | Playwright (Chromium) + crawl4ai |
+| Web crawl | Jina Reader (primary) + Spider.cloud (fallback) — HTTP only, no local browser |
 | File storage | Cloudflare R2 (S3-compatible) |
 | Email | Brevo |
-| Payments | Razorpay (primary, INR) + Stripe (fallback) |
+| Payments | Razorpay (INR) — single provider |
 | Real-time | WebSocket (`ws_routes.py`) |
 | Rate limiting | SlowAPI on Redis |
-| Observability | Sentry · Langfuse (currently disabled in prod due to memory) |
+| Observability | Sentry · Langfuse (enabled whenever both keys are set; `LANGFUSE_FORCE_DISABLE=true` is the kill switch) |
 | CDN | Cloudflare R2 + CDN — `cdn.oyechats.com/oyechats-widget.js` |
-| Deploy | DigitalOcean droplet · systemd · Nginx · GitHub Actions |
+| Deploy | DigitalOcean droplet · systemd · Nginx · GitHub Actions (`ci.yml`, `deploy-api.yml`, `deploy-widget.yml`, `deploy-app.yml`) |
 | Dependency mgmt | `uv` (Python) + `npm` (JavaScript) |
 | Containerisation | Docker + Docker Compose (local dev only) |
 

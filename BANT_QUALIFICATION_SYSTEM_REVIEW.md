@@ -5,6 +5,22 @@
 **Lens:** Senior engineering correctness/architecture review + senior B2B marketing/sales-ops review of what the scores actually mean to a customer's sales team.
 **Posture:** Adversarial. Verdicts are not softened for morale.
 
+> ## STATUS 2026-08-31 — all five findings are FIXED. Read this for the *reasoning*, not as a to-do list.
+>
+> Every BR-* below has landed, and the code names them:
+>
+> | ID | Fixed in | Evidence |
+> |---|---|---|
+> | BR-01 | Composite score/tier now framework-aware | `rag_service.py:3061` calls `calculate_composite_score(dimension_scores, config)`; `lead_service.py:10` imports it and `framework_dimension_keys`; `bot_routes.py:1361` no longer hardcodes BANT dimension names |
+> | BR-02 | Deterministic CTA scoring | `rag_service._score_cta_answer` (`:2520`) matches the tapped label against the dimension's rubric with no LLM round-trip, bypassing the 10-char skip floor. Hardened again on 2026-08-31: the visitor-supplied `cta_dimension` is validated against the dimension the server actually probed (`_trusted_cta`, `rag_service.py:6571`, `:7806`) — before that, a forged value could skip the empty-context refusal and force a tier transition |
+> | BR-03 | Operator correction path | `operator_routes.py:2404` — audited manual correct/reset of one dimension's score |
+> | BR-04 | Preset defaults | `qualification_service.py:8` — every dimension across every preset now defaults `cta_enabled` false |
+> | BR-05 | Generalised decay | `lead_service.py:167-208` — decay reads `dimension_scores` and a per-dimension `{dim}_decay_per_30d` rate |
+>
+> §3 ("What's Actually Good Here") and §4 (the market research grounding the
+> four-framework product decision, and why budget pills default off) are the
+> reason this file is still here. §5's fix order is history.
+
 ---
 
 ## 1. Executive Summary
