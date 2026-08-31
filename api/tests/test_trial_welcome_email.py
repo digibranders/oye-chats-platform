@@ -18,17 +18,8 @@ from unittest.mock import patch
 
 import pytest
 
-from app.services import email_design, email_service
-
-# email_service and email_design each did ``from app.config import APP_URL,
-# MARKETING_URL`` at import time, binding their own module-local copies. Local
-# dev deliberately sets both to the same value (http://localhost:5174) so
-# every email link is clickable against one running server; in production
-# they are different domains (app.oyechats.com vs www.oyechats.com). A test
-# that reads the ambient values would pass or fail depending on which .env
-# happened to be loaded, so both are pinned here to distinct fake domains.
-_APP_URL = "https://app.test.invalid"
-_MARKETING_URL = "https://www.test.invalid"
+from app import config
+from app.services import email_service
 
 
 def _send(**overrides):
@@ -40,12 +31,7 @@ def _send(**overrides):
         "duration_days": 14,
     }
     kwargs.update(overrides)
-    with (
-        patch.object(email_service, "send_email_async") as send,
-        patch.object(email_service, "APP_URL", _APP_URL),
-        patch.object(email_design, "APP_URL", _APP_URL),
-        patch.object(email_design, "MARKETING_URL", _MARKETING_URL),
-    ):
+    with patch.object(email_service, "send_email_async") as send:
         email_service.send_trial_welcome_email("ada@example.com", **kwargs)
     assert send.call_count == 1
     args, _ = send.call_args
@@ -75,13 +61,26 @@ def test_every_link_points_at_a_route_that_exists():
     your first chat" was three 404s. The real pages are per chatbot and this
     email has no chatbot id, so every step points at the list they all start
     from.
+
+    Only CONSOLE links are checked. The email also links the marketing site
+    (``/docs``, ``/contact``), which is a different application with a different
+    router, and asserting console routes against it would be meaningless. The
+    two are told apart by prefix, which needs one guard: production gives them
+    separate hosts (``app.`` and ``www.``) but a developer ``.env`` may point
+    both at one localhost origin, and then every marketing link looks like a
+    console link and this test fails on a correct email. When they collide,
+    marketing paths are excluded by name rather than by prefix.
     """
     _, html = _send()
+    hosts_collide = email_service.APP_URL == config.MARKETING_URL
+    marketing_paths = {"/docs", "/contact", "/pricing", "/privacy", "/terms"}
     paths = {
         re.sub(r"^https?://[^/]+", "", href)
         for href in re.findall(r'href="([^"]+)"', html)
-        if href.startswith(_APP_URL)
+        if href.startswith(email_service.APP_URL)
     }
+    if hosts_collide:
+        paths -= marketing_paths
     assert paths <= {"", "/", "/chatbots"}, f"unrouted links in the welcome email: {sorted(paths)}"
     assert "/chatbots" in paths
 
