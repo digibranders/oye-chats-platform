@@ -937,6 +937,169 @@ async def operator_websocket(
     heartbeat_task = asyncio.create_task(_operator_presence_heartbeat(ws, operator_id, client_id))
     rate_limiter = _RateLimiter(_OPERATOR_MSG_LIMIT)
 
+    # One lock per conversation this connection is sending into, so replies
+    # within a conversation stay ordered while different conversations run
+    # concurrently. Per-connection (not global): only the assigned operator,
+    # or an owner/admin stepping in, can send into a session at all, and the
+    # dict dies with the socket rather than growing for the process lifetime.
+    session_send_locks: dict[str, asyncio.Lock] = {}
+    inflight_sends: set[asyncio.Task] = set()
+
+    async def _deliver_operator_message(target_session: str, content: str) -> None:
+        """Persist, translate and route ONE operator reply. Runs detached."""
+        # Validate session ownership. Operator can only message sessions
+        # belonging to their client's bots and in "live" status
+        translation_bot = None
+        target_language: str | None = None
+        op_db_id: int | None = None
+        sender_locale: str | None = None
+        with get_session() as session:
+            chat_session = session.execute(
+                select(ChatSession).where(ChatSession.id == target_session)
+            ).scalar_one_or_none()
+            if not chat_session or chat_session.status != "live":
+                return
+            bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
+            if not bot or bot.client_id != client_id:
+                logger.warning(
+                    f"Operator {operator_id} attempted to message session {target_session} "
+                    f"belonging to a different client. Rejected"
+                )
+                return
+            if not _operator_may_act_on_session(chat_session, operator_id, operator_role):
+                logger.warning(
+                    f"Operator {operator_id} attempted to message session {target_session} "
+                    f"assigned to operator {chat_session.assigned_operator_id}. Rejected"
+                )
+                return
+
+            # Re-read rather than reuse the connect-time capture. An
+            # operator who picks a language mid-shift writes the row
+            # through ``PUT /operators/me/language``; nothing reconnects
+            # this socket and no frame carries the new value. The INCOMING
+            # direction already reads the row per message, so the stale
+            # capture made the two directions disagree: the operator
+            # started receiving translated visitor messages immediately
+            # while every reply they sent went out untranslated, stamped
+            # with the wrong ``source_language`` for later backfill.
+            sender_locale = (
+                session.execute(
+                    select(Operator.preferred_locale).where(Operator.id == operator_id)
+                ).scalar_one_or_none()
+                or operator_locale
+            )
+
+            # The operator writes in THEIR language; the visitor reads
+            # in the session's. Both come from server state.
+            target_language = chat_session.language_code
+            persisted_op = add_chat_message(
+                session,
+                target_session,
+                role="operator",
+                content=content,
+                bot_id=None,
+                source_language=sender_locale,
+            )
+            session.commit()
+            op_db_id = persisted_op.id
+
+            if is_translation_enabled(bot) and sender_locale and target_language:
+                translation_bot = bot
+                session.expunge(bot)
+
+        # The original is committed above, so translation can only ever
+        # change WHICH string the visitor is shown, never whether a
+        # message exists. Awaiting is safe here (no delivery tick is
+        # pending) and necessary: the translated text must be persisted
+        # before delivery so a reconnect re-renders the same string.
+        delivered_content, translated_from = content, None
+        if translation_bot is not None:
+            delivered_content, translated_from = await translate_outgoing(
+                target_session,
+                op_db_id,
+                content,
+                translation_bot,
+                sender_locale,
+                target_language,
+            )
+
+        await manager.route_operator_message(
+            target_session,
+            content,
+            operator_name,
+            operator_avatar,
+            delivered_content=delivered_content,
+            translated_from=translated_from,
+            message_id=op_db_id,
+        )
+
+    async def _deliver_operator_file(
+        target_session: str, file_url: str, filename: str, content_type_val: str | None
+    ) -> None:
+        """Persist and route ONE operator attachment. Runs detached."""
+        with get_session() as session:
+            chat_session = session.execute(
+                select(ChatSession).where(ChatSession.id == target_session)
+            ).scalar_one_or_none()
+            if not chat_session or chat_session.status != "live":
+                return
+            bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
+            if not bot or bot.client_id != client_id:
+                return
+            if not _operator_may_act_on_session(chat_session, operator_id, operator_role):
+                logger.warning(
+                    f"Operator {operator_id} attempted to attach a file to session {target_session} "
+                    f"assigned to operator {chat_session.assigned_operator_id}. Rejected"
+                )
+                return
+
+            file_content = f"[File: {filename}]({file_url})"
+            add_chat_message(session, target_session, role="operator", content=file_content, bot_id=None)
+            session.commit()
+
+        await manager.route_operator_file(
+            target_session, file_url, filename, content_type_val, operator_name, operator_avatar
+        )
+
+    def _dispatch_send(target_session: str, coro) -> None:
+        """Queue one outbound item behind this conversation's earlier ones.
+
+        The lock is acquired inside the task, and tasks are scheduled in
+        creation order, so the queue is FIFO per conversation while different
+        conversations proceed in parallel.
+        """
+        lock = session_send_locks.setdefault(target_session, asyncio.Lock())
+
+        async def _run() -> None:
+            async with lock:
+                await coro
+
+        task = asyncio.create_task(_run())
+        inflight_sends.add(task)
+        task.add_done_callback(inflight_sends.discard)
+
+    async def _settle_session_sends(target_session: str) -> None:
+        """Wait for this conversation's queued replies to land.
+
+        Used before a terminal action on the session. Acquiring the lock is
+        the wait: the queue is empty exactly when nothing else holds it.
+        """
+        lock = session_send_locks.get(target_session)
+        if lock is not None:
+            async with lock:
+                pass
+
+    async def _drain_inflight_sends() -> None:
+        """Let dispatched replies finish before this handler returns.
+
+        Cancelling them would lose the message an operator sent a moment before
+        closing the tab, and it is already accepted (rate-limited, parsed) by
+        the time the task exists. They hold no reference to the socket, so a
+        disconnect does not affect them.
+        """
+        if inflight_sends:
+            await asyncio.gather(*list(inflight_sends), return_exceptions=True)
+
     try:
         # Queue snapshot is already sent by connect_operator() via _notify_operator_queue.
         # No additional send needed here, the manager is the single source of truth.
@@ -983,74 +1146,15 @@ async def operator_websocket(
                 if not target_session or not content:
                     continue
 
-                # Validate session ownership. Operator can only message sessions
-                # belonging to their client's bots and in "live" status
-                translation_bot = None
-                target_language: str | None = None
-                op_db_id: int | None = None
-                with get_session() as session:
-                    chat_session = session.execute(
-                        select(ChatSession).where(ChatSession.id == target_session)
-                    ).scalar_one_or_none()
-                    if not chat_session or chat_session.status != "live":
-                        continue
-                    bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
-                    if not bot or bot.client_id != client_id:
-                        logger.warning(
-                            f"Operator {operator_id} attempted to message session {target_session} "
-                            f"belonging to a different client. Rejected"
-                        )
-                        continue
-                    if not _operator_may_act_on_session(chat_session, operator_id, operator_role):
-                        logger.warning(
-                            f"Operator {operator_id} attempted to message session {target_session} "
-                            f"assigned to operator {chat_session.assigned_operator_id}. Rejected"
-                        )
-                        continue
-
-                    # The operator writes in THEIR language; the visitor reads
-                    # in the session's. Both come from server state.
-                    target_language = chat_session.language_code
-                    persisted_op = add_chat_message(
-                        session,
-                        target_session,
-                        role="operator",
-                        content=content,
-                        bot_id=None,
-                        source_language=operator_locale,
-                    )
-                    session.commit()
-                    op_db_id = persisted_op.id
-
-                    if is_translation_enabled(bot) and operator_locale and target_language:
-                        translation_bot = bot
-                        session.expunge(bot)
-
-                # The original is committed above, so translation can only ever
-                # change WHICH string the visitor is shown, never whether a
-                # message exists. Awaiting is safe here (no delivery tick is
-                # pending) and necessary: the translated text must be persisted
-                # before delivery so a reconnect re-renders the same string.
-                delivered_content, translated_from = content, None
-                if translation_bot is not None:
-                    delivered_content, translated_from = await translate_outgoing(
-                        target_session,
-                        op_db_id,
-                        content,
-                        translation_bot,
-                        operator_locale,
-                        target_language,
-                    )
-
-                await manager.route_operator_message(
-                    target_session,
-                    content,
-                    operator_name,
-                    operator_avatar,
-                    delivered_content=delivered_content,
-                    translated_from=translated_from,
-                    message_id=op_db_id,
-                )
+                # Dispatched off the receive loop. Persisting and translating a
+                # reply takes up to the translation budget (4s), and this loop
+                # is a sequential ``await ws.receive_json()``: awaiting here
+                # froze this operator's typing indicators, read receipts and
+                # every message to their OTHER open conversations behind one
+                # slow provider call. ``_dispatch_send`` is what keeps the gain
+                # from costing ordering, two replies typed into the SAME
+                # conversation still persist and deliver in the order sent.
+                _dispatch_send(target_session, _deliver_operator_message(target_session, content))
 
             elif msg_type == "file":
                 # File sharing. Operator sends a file URL. Rate-limited on the
@@ -1065,28 +1169,13 @@ async def operator_websocket(
                 if not target_session or not file_url or not _is_safe_file_url(file_url):
                     continue
 
-                with get_session() as session:
-                    chat_session = session.execute(
-                        select(ChatSession).where(ChatSession.id == target_session)
-                    ).scalar_one_or_none()
-                    if not chat_session or chat_session.status != "live":
-                        continue
-                    bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
-                    if not bot or bot.client_id != client_id:
-                        continue
-                    if not _operator_may_act_on_session(chat_session, operator_id, operator_role):
-                        logger.warning(
-                            f"Operator {operator_id} attempted to attach a file to session {target_session} "
-                            f"assigned to operator {chat_session.assigned_operator_id}. Rejected"
-                        )
-                        continue
-
-                    file_content = f"[File: {filename}]({file_url})"
-                    add_chat_message(session, target_session, role="operator", content=file_content, bot_id=None)
-                    session.commit()
-
-                await manager.route_operator_file(
-                    target_session, file_url, filename, content_type_val, operator_name, operator_avatar
+                # An attachment is conversation content like any reply, so it
+                # goes through the same per-session queue: a file sent right
+                # after a message must not overtake it while that message is
+                # still being translated.
+                _dispatch_send(
+                    target_session,
+                    _deliver_operator_file(target_session, file_url, filename, content_type_val),
                 )
 
             elif msg_type == "typing":
@@ -1103,6 +1192,10 @@ async def operator_websocket(
             elif msg_type == "close_chat":
                 target_session = frame.session_id
                 if target_session:
+                    # Terminal for the conversation, so anything already queued
+                    # for it must land first. A reply overtaken by its own
+                    # "chat ended" notice is worse than a moment's delay here.
+                    await _settle_session_sends(target_session)
                     bot_name = None
                     with get_session() as session:
                         chat_session = session.execute(
@@ -1143,9 +1236,11 @@ async def operator_websocket(
 
     except WebSocketDisconnect:
         heartbeat_task.cancel()
+        await _drain_inflight_sends()
         await manager.disconnect_operator_and_broadcast(operator_id)
     except Exception as e:
         heartbeat_task.cancel()
+        await _drain_inflight_sends()
         # Same reasoning as the visitor handler above: an operator closing
         # their console tab is routine, not an incident.
         detail = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__

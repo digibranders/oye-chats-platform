@@ -485,8 +485,25 @@ def detect_message_language(text: str) -> tuple[str | None, float]:
     ``_resolve_visitor_language_and_update_session``); it never overrides a
     locked or already-resolved session language.
     """
+    language, confidence, _letters = detect_message_language_detail(text)
+    return (language, confidence)
+
+
+def detect_message_language_detail(text: str) -> tuple[str | None, float, int]:
+    """:func:`detect_message_language` plus the raw evidence behind the score.
+
+    The third element is the ABSOLUTE number of letters in the dominant
+    non-Latin script. The share alone cannot decide whether a detection is
+    trustworthy, because code-switched input dilutes it: "मुझे pricing चाहिए"
+    is unambiguously Hindi and scores 0.42, while a single stray Devanagari
+    glyph in an English sentence can score higher on a very short message. The
+    caller combines the two (see ``chat_routes._detection_is_trusted``), which
+    is why the count is returned rather than folded into the confidence,
+    ``confidence`` is persisted on the session and must keep meaning "share of
+    letters", not "how sure the caller decided to be".
+    """
     if not text or not isinstance(text, str):
-        return (None, 0.0)
+        return (None, 0.0, 0)
 
     counts: dict[str, int] = {}
     latin = 0
@@ -506,9 +523,9 @@ def detect_message_language(text: str) -> tuple[str | None, float]:
 
     # Require a minimal amount of non-Latin signal before committing.
     if scripted < 2:
-        return (None, 0.0)
+        return (None, 0.0, 0)
 
     dominant = max(counts, key=counts.get)
     total_letters = scripted + latin
     confidence = counts[dominant] / total_letters if total_letters else 0.0
-    return (dominant, round(confidence, 4))
+    return (dominant, round(confidence, 4), counts[dominant])
