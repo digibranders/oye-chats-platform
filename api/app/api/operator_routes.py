@@ -3167,7 +3167,10 @@ async def translate_for_session(
             "status": "same_language",
         }
 
-    if not translation_svc.charge_for_translation(bot, body.message_id, target_language):
+    # Same metering contract as the socket paths: a cache hit costs nothing,
+    # and a provider failure is refunded rather than kept.
+    charged = not translation_svc.translation_is_free(bot, body.text, source_base, target_language)
+    if charged and not translation_svc.charge_for_translation(bot, body.message_id, target_language):
         raise HTTPException(status_code=402, detail="Translation is unavailable on this plan or balance.")
 
     try:
@@ -3175,6 +3178,8 @@ async def translate_for_session(
             body.text, source_base, target_language, bot_id=bot_id
         )
     except translation_svc.TranslationUnavailable:
+        if charged:
+            translation_svc.refund_translation_charge(bot, body.message_id, target_language)
         if body.message_id is not None:
             translation_svc.store_translation(body.message_id, target_language, status="failed")
         raise HTTPException(status_code=503, detail="Translation provider is unavailable. Try again.") from None

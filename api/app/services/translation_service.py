@@ -870,7 +870,13 @@ async def _backfill_transcript(session_id: str) -> None:
 
         # Oldest first so the transcript fills in reading order.
         for message_id, content, source_language in reversed(pending):
-            if not charge_for_translation(bot, message_id, target):
+            # Same metering contract as the socket paths: a cache hit costs
+            # nothing, and a provider failure is refunded. Opening one Hindi
+            # conversation backfills up to TRANSCRIPT_BACKFILL_LIMIT messages,
+            # so charging per message rather than per provider call billed a
+            # workspace for its own canned responses already in the cache.
+            charged = not translation_is_free(bot, content, source_language, target)
+            if charged and not charge_for_translation(bot, message_id, target):
                 # Out of credits or gated: stop rather than hammering the
                 # ledger once per remaining message.
                 break
@@ -879,6 +885,8 @@ async def _backfill_transcript(session_id: str) -> None:
                     content, source_language, target, bot_id=bot.id, timeout=TRANSLATION_BACKFILL_TIMEOUT_S
                 )
             except TranslationUnavailable:
+                if charged:
+                    refund_translation_charge(bot, message_id, target)
                 store_translation(message_id, target, status="failed")
                 continue
             store_translation(
