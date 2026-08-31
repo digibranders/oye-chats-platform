@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  reconcileVerifiedFlag,
   shouldGateForEmailVerification,
   verifyUrlWithNext,
   type GateInputs,
@@ -80,5 +81,53 @@ describe('verifyUrlWithNext', () => {
 
   it('drops a protocol-relative path (open-redirect guard)', () => {
     expect(verifyUrlWithNext('//evil.example/pwn', '')).toBe('/verify-email');
+  });
+});
+
+describe('reconcileVerifiedFlag', () => {
+  /**
+   * The other direction. The gate is positive-only so it never locks out a
+   * session on a guess, which means a stale `'true'` is believed forever. A
+   * stale `'false'` already self-heals on the verify screen; this is the cure
+   * for the opposite, and without it an account sits inside the shell being
+   * refused by every write the server gates on verification.
+   */
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it('corrects a cached true that the server denies', () => {
+    window.localStorage.setItem('admin_is_verified', 'true');
+    expect(reconcileVerifiedFlag(false)).toBe(true);
+  });
+
+  it('does nothing before the answer has loaded', () => {
+    window.localStorage.setItem('admin_is_verified', 'true');
+    // `undefined` is "not loaded". Bouncing on it would send every session to
+    // the verify screen on first paint.
+    expect(reconcileVerifiedFlag(undefined)).toBe(false);
+  });
+
+  it('does nothing when the server agrees the session is verified', () => {
+    window.localStorage.setItem('admin_is_verified', 'true');
+    expect(reconcileVerifiedFlag(true)).toBe(false);
+  });
+
+  it('does not re-fire once the flag already says false', () => {
+    // The gate itself handles it from here; acting again would fight it.
+    window.localStorage.setItem('admin_is_verified', 'false');
+    expect(reconcileVerifiedFlag(false)).toBe(false);
+  });
+
+  it('leaves operators alone, because /auth/me reports the OWNER', () => {
+    window.localStorage.setItem('admin_is_verified', 'true');
+    window.localStorage.setItem('auth_type', 'operator');
+    expect(reconcileVerifiedFlag(false)).toBe(false);
+  });
+
+  it('leaves super-admins alone, matching the server bypass', () => {
+    window.localStorage.setItem('admin_is_verified', 'true');
+    window.localStorage.setItem('is_superadmin', 'true');
+    expect(reconcileVerifiedFlag(false)).toBe(false);
   });
 });

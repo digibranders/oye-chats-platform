@@ -27,6 +27,10 @@ vi.mock('../context/EntitlementsContext', () => ({
 vi.mock('../context/UpgradeModalContext', () => ({
   UpgradeModalProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
+// Same reason as the providers above: the reconciler watches `/auth/me` to
+// correct a stale `admin_is_verified: 'true'`, and has its own unit tests. What
+// is under test here is only which of the two synchronous redirects fires.
+vi.mock('./VerificationReconciler', () => ({ VerificationReconciler: () => null }));
 // The impersonation bar is a shell banner now, rendered by `ShellBanners`
 // inside `AppShell` — nothing this layout mounts.
 
