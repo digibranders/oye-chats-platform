@@ -299,6 +299,14 @@ export interface CrawlDiscovery {
   balance?: number;
   max_affordable_pages?: number;
   cost_per_page?: number;
+  /**
+   * Pages this ACCOUNT may still crawl at zero credits, from its plan's
+   * free-training allowance. Comes off the top of any crawl: with 25 left and
+   * 81 pages selected, 25 are free and 56 are charged.
+   *
+   * Absent on older servers, which is read as none rather than as unlimited.
+   */
+  free_pages?: number;
 }
 
 /** A single message in a conversation, as returned by getChatHistory. */

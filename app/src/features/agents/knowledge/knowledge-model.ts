@@ -354,8 +354,13 @@ export interface CrawlBudget {
   costPerPage: number;
   /** Credit balance of the ledger this crawl will actually drain. */
   balance: number;
-  /** How many pages the balance covers. */
+  /** How many pages the balance covers, INCLUDING any free ones. */
   affordablePages: number;
+  /**
+   * Pages the account may still crawl at zero credits. Comes off the top, so
+   * the charge for a selection is `(selected - freePages) x costPerPage`.
+   */
+  freePages: number;
   /** The plan's per-crawl page ceiling, or `null` when the plan has none. */
   perCrawlLimit: number | null;
 }
@@ -369,15 +374,21 @@ export function crawlBudgetOf(discovery: CrawlDiscovery): CrawlBudget {
   // where the division happens instead.
   const costPerPage = Math.max(0, discovery.cost_per_page ?? 1);
   const balance = discovery.balance ?? 0;
+  // Absent on an older server means none, never unlimited: quoting pages as
+  // free that the ledger is about to charge for is the expensive direction.
+  const freePages = Math.max(0, discovery.free_pages ?? 0);
   const planMax = discovery.plan_max;
   return {
     found: discovery.total_found,
     capped: discovery.capped,
     costPerPage,
     balance,
+    freePages,
     affordablePages:
       discovery.max_affordable_pages ??
-      (costPerPage === 0 ? discovery.total_found : Math.floor(balance / costPerPage)),
+      (costPerPage === 0
+        ? discovery.total_found
+        : Math.min(discovery.total_found, freePages + Math.floor(balance / costPerPage))),
     perCrawlLimit: planMax === undefined || planMax === UNLIMITED || planMax < 0 ? null : planMax,
   };
 }
@@ -390,6 +401,18 @@ export function crawlBudgetOf(discovery: CrawlDiscovery): CrawlBudget {
  * request — the console this replaces started the crawl, took the 403 or the
  * 402, and rendered the raw server sentence.
  */
+/**
+ * What a selection of pages actually costs.
+ *
+ * The free-training allowance comes off the top, so this is not
+ * `pages x costPerPage`. That multiplication quoted a trial customer 405
+ * credits for 81 pages when the first 25 were free and the real charge was 280
+ * — and it quoted it on the button they were about to press.
+ */
+export function creditsForPages(budget: CrawlBudget, pages: number): number {
+  return Math.max(0, pages - budget.freePages) * budget.costPerPage;
+}
+
 export function crawlPreflight(
   budget: CrawlBudget,
   selectedPages: number,
