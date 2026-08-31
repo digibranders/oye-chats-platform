@@ -9,7 +9,7 @@ const getApiUrl = () => {
     if (typeof window !== 'undefined' && window.OYECHATS_API_URL) {
         return window.OYECHATS_API_URL;
     }
-    return import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
+    return import.meta.env?.VITE_API_URL || 'https://api.oyechats.com';
 };
 const API_URL = getApiUrl();
 
@@ -68,11 +68,21 @@ const _readWithTimeout = (reader) =>
         );
     });
 
-export const sendMessageStream = async (message, sessionId, { onMetadata, onChunk, onFinalMetadata, onError, ctaDimension, locale, language, languageSource }) => {
+// True for the DOMException an aborted fetch/read rejects with. An abort is
+// something WE asked for (the visitor closed the widget), so it is not a
+// failure to report: no console noise, no onError, no error bubble.
+export const isAbortError = (error) => error?.name === 'AbortError';
+
+export const sendMessageStream = async (message, sessionId, { onMetadata, onChunk, onFinalMetadata, onError, ctaDimension, locale, language, languageSource, signal }) => {
     try {
         const response = await fetch(`${API_URL}/chat/stream`, {
             method: 'POST',
             headers: getHeaders(),
+            // Lets the caller cancel the request when the widget is closed or
+            // unmounted. Without it the fetch AND the server-side generation it
+            // is driving both run to completion — up to 60s of a backend
+            // concurrency slot held for a visitor who has already left.
+            ...(signal && { signal }),
             body: JSON.stringify({
                 question: message,
                 session_id: sessionId,
@@ -96,6 +106,15 @@ export const sendMessageStream = async (message, sessionId, { onMetadata, onChun
                 );
                 err.status = 402;
                 err.code = 'over_capacity';
+                throw err;
+            }
+            // 429 = the visitor is typing faster than the chat limiter allows.
+            // A pacing problem, not a broken bot — say so, or they read the
+            // generic failure below as "this thing is down".
+            if (response.status === 429) {
+                const err = new Error('Sending too quickly. Please wait a moment.');
+                err.status = 429;
+                err.code = 'rate_limited';
                 throw err;
             }
             // 503 = global kill switch / billing paused.
@@ -202,8 +221,19 @@ export const sendMessageStream = async (message, sessionId, { onMetadata, onChun
         const tail = stripper.flush();
         if (tail) onChunk?.(tail);
     } catch (error) {
+        // An abort is a deliberate cancellation, not a failure: rethrow so the
+        // caller's control flow unwinds, but report nothing.
+        if (isAbortError(error)) throw error;
         console.error("[OyeChats] Streaming error:", error);
-        onError?.(error);
+        if (onError) {
+            onError(error);
+            // ``onError`` has now put a visitor-facing message on screen. Mark
+            // the error handled so the caller's outer catch doesn't append a
+            // second, contradictory bubble on top of it — "we're temporarily
+            // over capacity" immediately followed by "I couldn't generate a
+            // response" was one stream error, rendered twice.
+            if (typeof error === 'object' && error) error.handled = true;
+        }
         throw error;
     }
 };
