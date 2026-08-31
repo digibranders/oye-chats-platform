@@ -1,6 +1,6 @@
-import { type ReactElement, useCallback, useState } from 'react';
+import { type ReactElement, useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Bot, Trash2 } from 'lucide-react';
+import { Bot, Globe, Trash2 } from 'lucide-react';
 import {
   Alert,
   Badge,
@@ -9,6 +9,7 @@ import {
   CardBody,
   CardHeader,
   FileDrop,
+  ImageCropDialog,
   LoadingRows,
   SegmentedControl,
   Spinner,
@@ -20,7 +21,7 @@ import { useEntitlements } from '../../../hooks/useEntitlements';
 import { ColorField } from './ColorField';
 import { NON_TEXT_CONTRAST_MIN, TEXT_CONTRAST_MIN } from './contrast';
 import { AVATAR_ACCEPT, AVATAR_HINT, MAX_AVATAR_BYTES, validateAvatarFile } from './avatarRules';
-import { errorMessage, uploadAvatar } from './experience-api';
+import { errorMessage, fetchSiteIcon, uploadAvatar } from './experience-api';
 import {
   DEFAULT_PRIMARY_COLOR,
   WIDGET_ON_PRIMARY,
@@ -72,6 +73,22 @@ export function BrandingSection({
   const { hasFeature, loading: entitlementsLoading } = useEntitlements();
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [fetchingIcon, setFetchingIcon] = useState(false);
+  // The picked image is held as an object URL only while the crop dialog is
+  // open. The ref lets us revoke exactly the URL we made — even across the
+  // re-renders the upload triggers — so a fast picker can't leak them.
+  const [cropSrc, setCropSrc] = useState<string | null>(null);
+  const cropUrlRef = useRef<string | null>(null);
+
+  const releaseCropUrl = useCallback(() => {
+    if (cropUrlRef.current) {
+      URL.revokeObjectURL(cropUrlRef.current);
+      cropUrlRef.current = null;
+    }
+  }, []);
+
+  // Never leak the object URL if the tab unmounts mid-crop.
+  useEffect(() => releaseCropUrl, [releaseCropUrl]);
 
   const canRemoveBranding = hasFeature('branding_removable');
 
@@ -79,8 +96,10 @@ export function BrandingSection({
   // the only swatches here that are actually *their* brand.
   const swatches = meta.recommendedColors.slice(0, 6);
 
+  // Picking a file no longer uploads it — it opens the cropper. Only the square
+  // the customer frames is sent, so the server's centre-crop becomes a no-op.
   const handleFiles = useCallback(
-    async (files: File[]): Promise<void> => {
+    (files: File[]): void => {
       const file = files[0];
       if (!file) return;
       const reason = validateAvatarFile(file);
@@ -88,18 +107,61 @@ export function BrandingSection({
         setUploadError(reason);
         return;
       }
+      setUploadError(null);
+      releaseCropUrl();
+      const url = URL.createObjectURL(file);
+      cropUrlRef.current = url;
+      setCropSrc(url);
+    },
+    [releaseCropUrl],
+  );
+
+  const closeCrop = useCallback(() => {
+    setCropSrc(null);
+    releaseCropUrl();
+  }, [releaseCropUrl]);
+
+  // Re-derive the site's favicon on demand and drop it into the same cropper as
+  // an upload. The crawl only sets the favicon once into an empty slot and keeps
+  // no copy, so this is how a customer who has since changed their avatar gets
+  // the site icon back — fetched live from the bot's own website.
+  const handleUseSiteIcon = useCallback(async () => {
+    if (agentId === null) return;
+    setUploadError(null);
+    setFetchingIcon(true);
+    try {
+      const blob = await fetchSiteIcon(agentId);
+      releaseCropUrl();
+      const url = URL.createObjectURL(blob);
+      cropUrlRef.current = url;
+      setCropSrc(url);
+    } catch (cause) {
+      setUploadError(
+        errorMessage(cause, t('agents.couldntGetYourWebsitesIcon') || "Couldn't get your website's icon — upload one instead."),
+      );
+    } finally {
+      setFetchingIcon(false);
+    }
+  }, [agentId, releaseCropUrl, t]);
+
+  const handleCropped = useCallback(
+    async (blob: Blob): Promise<void> => {
       setUploading(true);
       setUploadError(null);
       try {
+        const file = new File([blob], 'avatar.png', { type: blob.type || 'image/png' });
         const url = await uploadAvatar(file);
         onChange({ botLogo: url, avatarType: 'upload' });
+        closeCrop();
       } catch (cause) {
-        setUploadError(errorMessage(cause, t('agents.thatImageCouldNotBe2') || 'That image could not be uploaded. Please try again.'));
+        setUploadError(
+          errorMessage(cause, t('agents.thatImageCouldNotBe2') || 'That image could not be uploaded. Please try again.'),
+        );
       } finally {
         setUploading(false);
       }
     },
-    [onChange, t],
+    [onChange, t, closeCrop],
   );
 
   return (
@@ -200,8 +262,25 @@ export function BrandingSection({
                 maxFiles={1}
                 multiple={false}
                 disabled={readOnly || uploading}
-                onFiles={(files) => void handleFiles(files)}
+                onFiles={handleFiles}
               />
+              {meta.website ? (
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={readOnly || uploading || fetchingIcon}
+                    loading={fetchingIcon}
+                    onClick={() => void handleUseSiteIcon()}
+                    iconLeft={<Globe aria-hidden />}
+                  >
+                    {t('agents.useMyWebsitesIcon') || "Use my website's icon"}
+                  </Button>
+                  <span className="min-w-0 truncate text-xs text-text-tertiary">
+                    {t('agents.pulledFromYourSiteThenCrop') || 'Pulled from your site, then crop it to fit.'}
+                  </span>
+                </div>
+              ) : null}
               {uploadError ? (
                 <Alert tone="danger" title={t('agents.thatImageCouldNotBe') || 'That image could not be used'} live>
                   {uploadError}
@@ -314,6 +393,21 @@ export function BrandingSection({
           )}
         </CardBody>
       </Card>
+
+      <ImageCropDialog
+        open={cropSrc !== null}
+        onOpenChange={(next) => {
+          if (!next) closeCrop();
+        }}
+        src={cropSrc}
+        onCropped={handleCropped}
+        aspect={1}
+        round
+        outputSize={512}
+        busy={uploading}
+        title={t('agents.cropYourAvatar') || 'Crop your avatar'}
+        confirmLabel={t('agents.useThisImage') || 'Use this image'}
+      />
     </div>
   );
 }

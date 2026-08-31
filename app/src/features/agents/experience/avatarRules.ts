@@ -73,4 +73,4 @@ export function validateAvatarFile(file: File): string | null {
  * part that is ours to say: what happens to the image after it is uploaded.
  */
 export const AVATAR_HINT =
-  'Square images work best — we crop to the centre square and resize to 512×512.';
+  'Square images work best. We size your picture to a 512×512 square.';

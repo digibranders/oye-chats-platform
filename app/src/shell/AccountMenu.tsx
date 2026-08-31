@@ -65,7 +65,7 @@ export function AccountMenu({ collapsed }: { collapsed: boolean }) {
           collapsed && 'justify-center px-0',
         )}
       >
-        <Avatar name={name} size="sm" />
+        <Avatar name={name} src={data?.avatar_url} size="sm" />
         {!collapsed ? (
           <span className="min-w-0 flex-1">
             <span className="block truncate text-base font-medium text-rail-text">{name}</span>

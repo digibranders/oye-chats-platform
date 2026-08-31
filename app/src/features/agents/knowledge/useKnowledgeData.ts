@@ -1,14 +1,9 @@
 import { useCallback } from 'react';
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
-import {
-  getDocuments,
-  getKnowledgeState,
-  getUnansweredQuestions,
-} from '../../../services/api';
+import { getDocuments, getKnowledgeState } from '../../../services/api';
 import { keys } from '../../../query/keys';
-import type { KnowledgeSource, KnowledgeState, UnansweredQuestion } from '../../../types/domain';
+import type { KnowledgeSource, KnowledgeState } from '../../../types/domain';
 import { errorMessage, fetchRecrawlStatus, isForbidden, type RecrawlStatus } from './knowledge-api';
-import type { GapWindow } from './knowledge-model';
 import { t as translateNow } from '../../../i18n/i18n';
 
 /**
@@ -35,7 +30,7 @@ export interface Section<T> {
   retry: () => void;
 }
 
-function toSection<TRaw, TData>(
+export function toSection<TRaw, TData>(
   query: UseQueryResult<TRaw>,
   select: (raw: TRaw) => TData,
   fallback: TData,
@@ -52,7 +47,6 @@ function toSection<TRaw, TData>(
 }
 
 const NO_SOURCES: KnowledgeSource[] = [];
-const NO_GAPS: UnansweredQuestion[] = [];
 
 /** The cap on the gaps list. It is a nudge toward what to add next, not a report. */
 export const GAPS_LIMIT = 20;
@@ -63,14 +57,13 @@ export interface KnowledgeData {
   sources: Section<KnowledgeSource[]>;
   /** Whether a lapse to Free deactivated this chatbot's stored knowledge. */
   state: Section<KnowledgeState>;
-  gaps: Section<UnansweredQuestion[]>;
   autoRetrain: Section<RecrawlStatus | null>;
   /** Refetch everything this page shows. */
   refreshAll: () => void;
   refreshing: boolean;
 }
 
-export function useKnowledgeData(agentId: number | null, gapWindow: GapWindow): KnowledgeData {
+export function useKnowledgeData(agentId: number | null): KnowledgeData {
   const client = useQueryClient();
 
   const sourcesQuery = useQuery({
@@ -82,16 +75,6 @@ export function useKnowledgeData(agentId: number | null, gapWindow: GapWindow): 
   const stateQuery = useQuery({
     queryKey: keys.agents.knowledgeState(agentId ?? -1),
     queryFn: () => getKnowledgeState(agentId ?? undefined),
-    enabled: agentId !== null,
-  });
-
-  const gapsQuery = useQuery({
-    queryKey: keys.analytics.unanswered(agentId, gapWindow),
-    queryFn: () =>
-      getUnansweredQuestions(agentId ?? undefined, {
-        limit: GAPS_LIMIT,
-        ...(gapWindow === null ? {} : { days: gapWindow }),
-      }),
     enabled: agentId !== null,
   });
 
@@ -122,12 +105,6 @@ export function useKnowledgeData(agentId: number | null, gapWindow: GapWindow): 
       EMPTY_STATE,
       translateNow('agents.weCouldNotCheckWhether') || 'We could not check whether this knowledge is active.',
     ),
-    gaps: toSection(
-      gapsQuery,
-      (rows) => rows ?? NO_GAPS,
-      NO_GAPS,
-      translateNow('agents.weCouldNotLoadThe3') || 'We could not load the questions your chatbot could not answer.',
-    ),
     autoRetrain: toSection(
       autoRetrainQuery,
       (status) => status,
@@ -138,7 +115,6 @@ export function useKnowledgeData(agentId: number | null, gapWindow: GapWindow): 
     refreshing:
       sourcesQuery.isFetching ||
       stateQuery.isFetching ||
-      gapsQuery.isFetching ||
       autoRetrainQuery.isFetching,
   };
 }

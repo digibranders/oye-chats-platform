@@ -1,6 +1,7 @@
 import {
   BarChart3,
   Bot,
+  Brain,
   Building2,
   Compass,
   CreditCard,
@@ -12,7 +13,6 @@ import {
   MessagesSquare,
   Receipt,
   Settings2,
-  Sparkles,
   Target,
   Users,
 } from 'lucide-react';
@@ -96,7 +96,7 @@ export interface AgentNavItem extends Omit<NavItem, 'to'> {
 
 export const AGENT_NAV: readonly AgentNavItem[] = [
   { segment: 'overview', label: 'Overview', icon: Gauge, hint: 'Is this chatbot healthy?' },
-  { segment: 'knowledge', label: 'Knowledge', icon: Sparkles, hint: 'What does it know?' },
+  { segment: 'knowledge', label: 'Knowledge', icon: Brain, hint: 'What does it know?' },
   { segment: 'experience', label: 'Experience', icon: MessagesSquare, hint: 'What do visitors see?' },
   { segment: 'deploy', label: 'Deploy', icon: Globe, hint: 'Where is it live?' },
   { segment: 'qualification', label: 'Qualification', icon: Target, hint: 'How are leads scored?' },

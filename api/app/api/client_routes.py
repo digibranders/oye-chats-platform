@@ -90,7 +90,7 @@ def get_client_settings(
         return {
             "bot_name": bot_db.name,
             "bot_logo": logo_url,
-            "launcher_name": bot_db.launcher_name or "Have Questions?",
+            "launcher_name": (bot_db.launcher_name if bot_db.launcher_name is not None else "Have Questions?"),
             "launcher_logo": launcher_logo_url,
             "primary_color": bot_db.primary_color or "#ba68c8",
             "background_color": bot_db.background_color or "#ffffff",

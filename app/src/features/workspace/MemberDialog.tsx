@@ -1,19 +1,23 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
+  Avatar,
   Button,
   ConfirmDialog,
   Dialog,
   Field,
+  ImageCropDialog,
   Input,
   RadioCards,
   Select,
   buttonClass,
   toast,
 } from '../../ui';
-import { updateOperator } from '../../services/api';
+import { removeOperatorAvatar, updateOperator, uploadOperatorAvatar } from '../../services/api';
+import { AVATAR_ACCEPT, AVATAR_HINT, validateAvatarFile } from '../agents/experience/avatarRules';
+import { keys } from '../../query/keys';
 import type { Department, Operator } from '../../types/domain';
 import {
   assignableRoles,
@@ -67,11 +71,32 @@ export function MemberDialog({
   isSelf,
   onSaved,
 }: MemberDialogProps) {
+  const queryClient = useQueryClient();
   const [role, setRole] = useState<WorkspaceRole>('operator');
   const [departmentId, setDepartmentId] = useState('');
   const [capacity, setCapacity] = useState('3');
   const [capacityError, setCapacityError] = useState<string | null>(null);
   const [confirmingRole, setConfirmingRole] = useState(false);
+  // The picture is self-service only (the `/operators/me/avatar` endpoints act
+  // on the caller), so it is shown for `isSelf` and tracked locally: the parent
+  // holds the opened `member` as a snapshot that a background refetch does not
+  // replace, so the dialog reflects an upload from this state, not the prop.
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  // The picked file is not uploaded on choice; it opens the cropper, and only
+  // the square the person frames is sent. The ref lets us revoke exactly the
+  // object URL we made, even across the re-renders the upload triggers.
+  const [cropSrc, setCropSrc] = useState<string | null>(null);
+  const cropUrlRef = useRef<string | null>(null);
+  const releaseCropUrl = useCallback(() => {
+    if (cropUrlRef.current) {
+      URL.revokeObjectURL(cropUrlRef.current);
+      cropUrlRef.current = null;
+    }
+  }, []);
+  // Never leak the object URL if the dialog unmounts mid-crop.
+  useEffect(() => releaseCropUrl, [releaseCropUrl]);
 
   // Seeded during render, keyed on the member's id. Two reasons it is not an
   // effect: the dialog would paint one frame of the previous member's values,
@@ -85,6 +110,64 @@ export function MemberDialog({
     setCapacity(String(member.max_concurrent_chats ?? 3));
     setCapacityError(null);
     setConfirmingRole(false);
+    setAvatarUrl(member.avatar_url ?? null);
+    setAvatarError(null);
+  }
+
+  // The picture saves on its own endpoint — never with the role/capacity form,
+  // whose Save this dialog also carries. Both refresh the shell's account chip
+  // and the members list, which read this face.
+  function onAvatarSaved(nextUrl: string | null) {
+    setAvatarUrl(nextUrl);
+    void queryClient.invalidateQueries({ queryKey: keys.session.me() });
+    onSaved();
+  }
+
+  const closeCrop = useCallback(() => {
+    setCropSrc(null);
+    releaseCropUrl();
+  }, [releaseCropUrl]);
+
+  const uploadAvatar = useMutation({
+    mutationFn: async (file: File) => (await uploadOperatorAvatar(file)).avatar_url,
+    onSuccess: (nextUrl) => {
+      onAvatarSaved(nextUrl);
+      closeCrop();
+      toast.success('Picture updated');
+    },
+  });
+
+  const removeAvatar = useMutation({
+    mutationFn: async () => {
+      await removeOperatorAvatar();
+    },
+    onSuccess: () => {
+      onAvatarSaved(null);
+      toast.success('Picture removed');
+    },
+  });
+
+  // Picking a file opens the cropper rather than uploading: the person frames
+  // the square themselves instead of the server centre-cropping for them.
+  function chooseAvatar(file: File | undefined) {
+    if (!file) return;
+    const reason = validateAvatarFile(file);
+    if (reason) {
+      setAvatarError(reason);
+      return;
+    }
+    setAvatarError(null);
+    releaseCropUrl();
+    const url = URL.createObjectURL(file);
+    cropUrlRef.current = url;
+    setCropSrc(url);
+  }
+
+  // The cropper hands back a square Blob; awaited so it stays open and busy
+  // until the upload resolves, and surfaces an upload failure in its own Alert.
+  async function handleCropped(blob: Blob): Promise<void> {
+    const file = new File([blob], 'avatar.png', { type: blob.type || 'image/png' });
+    await uploadAvatar.mutateAsync(file);
   }
 
   const save = useMutation({
@@ -159,6 +242,48 @@ export function MemberDialog({
                 ? save.error.message
                 : 'Something went wrong. Please try again.'}
             </Alert>
+          ) : null}
+
+          {isSelf ? (
+            <Field label="Picture" hint={AVATAR_HINT} error={avatarError ?? undefined}>
+              <span className="flex items-center gap-3">
+                <Avatar name={member.name || member.email} size="lg" src={avatarUrl} />
+                {/* A hidden input driven by real buttons: a styled `<label>`
+                    wrapping a file input is not in the tab order as a button and
+                    announces as a label, so the keyboard path to it is guesswork. */}
+                <input
+                  ref={fileInput}
+                  type="file"
+                  accept={AVATAR_ACCEPT.join(',')}
+                  className="sr-only"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    // Cleared so choosing the same file twice still fires.
+                    event.target.value = '';
+                    chooseAvatar(file);
+                  }}
+                />
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={uploadAvatar.isPending || removeAvatar.isPending}
+                  onClick={() => fileInput.current?.click()}
+                >
+                  {avatarUrl ? 'Replace' : 'Upload'}
+                </Button>
+                {avatarUrl ? (
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    loading={removeAvatar.isPending}
+                    disabled={uploadAvatar.isPending}
+                    onClick={() => removeAvatar.mutate()}
+                  >
+                    Remove
+                  </Button>
+                ) : null}
+              </span>
+            </Field>
           ) : null}
 
           <Field
@@ -243,6 +368,18 @@ export function MemberDialog({
         confirmLabel="Change role"
         destructive={role === 'owner' || member.role === 'owner'}
         onConfirm={confirmRoleChange}
+      />
+
+      <ImageCropDialog
+        open={cropSrc !== null}
+        onOpenChange={(next) => {
+          if (!next) closeCrop();
+        }}
+        src={cropSrc}
+        onCropped={handleCropped}
+        outputSize={512}
+        busy={uploadAvatar.isPending}
+        title="Crop your picture"
       />
     </>
   );

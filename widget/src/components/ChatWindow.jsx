@@ -2685,10 +2685,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             {chatMode === 'bot' && (isReturningUser || messages.filter(m => m.sender === 'user').length > 0) && (
                                 <button
                                     onClick={handleNewChat}
-                                    className="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center transition-colors text-gray-400 hover:text-gray-600"
+                                    className="w-9 h-9 md:w-7 md:h-7 rounded-full hover:bg-gray-100 flex items-center justify-center transition-colors text-gray-400 hover:text-gray-600"
                                     title={t('header.start_new_chat') || 'Start New Chat'}
                                 >
-                                    <Plus className="w-4 h-4" />
+                                    <Plus className="w-5 h-5 md:w-4 md:h-4" />
                                 </button>
                             )}
                             {hasMenuOptions && (
@@ -2702,10 +2702,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             )}
                             <button
                                 onClick={handleHeaderClose}
-                                className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors"
+                                className="w-9 h-9 md:w-7 md:h-7 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors"
                                 title={t('header.close') || 'Close'}
                             >
-                                <X className="w-5 h-5" />
+                                <X className="w-6 h-6 md:w-5 md:h-5" />
                             </button>
 
                             {showHeaderMenu && hasMenuOptions && (
@@ -3687,7 +3687,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     uploadProgress={uploadProgress}
                     onInputFocus={scrollToBottom}
                     onInputBlur={resyncViewport}
-                    userHasSent={messages.some((m) => m.sender === 'user')}
                     userMessageCount={messages.reduce((n, m) => (m.sender === 'user' ? n + 1 : n), 0)}
                     onNewChat={chatMode === 'bot' && !isInitializing ? handleNewChat : undefined}
                     onClearMessages={chatMode === 'bot' && !isInitializing ? handleClearMessages : undefined}

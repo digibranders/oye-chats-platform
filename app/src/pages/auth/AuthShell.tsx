@@ -3,57 +3,18 @@ import { Link } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { Card, CardBody, CardSection, cn } from '../../ui';
 import { useTranslation } from '../../i18n/useTranslation';
+// import { AuthWaveIllustration } from './AuthWaveIllustration';
 
 export interface AuthShellProps {
   title: string;
   description?: ReactNode;
   children: ReactNode;
-  /**
-   * A secondary row under the card's body — a resend control, a way out.
-   *
-   * Rendered as a `CardSection`, so its hairline reaches the card's edges.
-   * `ForgotPassword` and `VerifyEmail` both drew this rule themselves *inside*
-   * `CardBody`'s padding, where it floats as a short line 20–24px short of both
-   * edges rather than dividing the card — on the two screens users reach when
-   * something has already gone wrong.
-   */
   secondary?: ReactNode;
-  /** A single line under the card: the link to the other side of the flow. */
   footer?: ReactNode;
-  /** A way back out of a multi-step flow, above the title. */
   back?: { to: string; label: string };
   className?: string;
 }
 
-/**
- * The frame every signed-out screen sits in: ink on the left, the task on the
- * right.
- *
- * The split earns its half of the viewport by being the product rather than an
- * advert for it. It is the same ink as the navigation rail, at the same
- * near-black, so the first thing anyone sees is the surface they are about to
- * work in — sign in and the rail is already there, in the same place, in the
- * same colour. The panel this replaced was a different palette, a different
- * type scale and a different mood from everything behind the sign-in button:
- * a violet gradient with floating orbs, four generic feature cards and a
- * framer-motion entrance, selling to someone who had already decided.
- *
- * What the panel says is two lines of plain type and nothing else. No gradient,
- * no glow, no animation, no stock iconography. On ink, restraint is the whole
- * effect.
- *
- * **The split fires at `xl`, not `lg`.** At exactly 1024 the panel took 488px
- * and the form column 536, so a `max-w-md` card sat in 44px gutters — visibly
- * tighter than at 1023, where it is centred in the whole viewport — and the
- * panel's headline wrapped to three lines. That is the most common laptop width
- * in the product's analytics. At 1280 the panel is 610 and the column 670, which
- * is the ratio the design wants; below it, one centred column is strictly
- * better.
- *
- * Below the split the panel is not rendered at all, rather than stacked above
- * the form. A phone that has to scroll past a marketing panel to reach a
- * password field is being asked to pay for someone else's layout.
- */
 export function AuthShell({
   title,
   description,
@@ -71,28 +32,14 @@ export function AuthShell({
         className,
       )}
     >
-      {/*
-        `aria-hidden`, and deliberately so. Every word in here is decorative
-        restatement of the page the form already titles, so to a screen reader
-        it is a lot of preamble standing between the landmark and the task.
-        The mark inside it is decorative for the same reason -- the visible
-        `<h1>` on the right is what names this screen.
-      */}
       <aside
         aria-hidden
-        className="relative hidden flex-col justify-between bg-rail p-10 text-rail-text xl:flex xl:p-14"
+        className="relative hidden flex-col justify-between overflow-hidden bg-rail p-12 text-rail-text xl:flex xl:p-16"
       >
-        {/*
-          The white knock-out, not the dark one. `/new_dark.png` is black ink on
-          transparent and `--color-rail` is #17171A, so the wordmark at the top
-          of this panel rendered black on black — the exact failure
-          `OyeChatsMark.onInk` documents, one directory away.
+        {/* <AuthWaveIllustration /> */}
 
-          Boxed to the same measure as the copy below it, so the mark, the
-          headline and the paragraph share one left edge instead of the mark
-          floating at the panel's own padding.
-        */}
-        <div className="max-w-md">
+        {/* Top-left brand mark with generous breathing room */}
+        <div className="relative z-10 max-w-md">
           <img
             src="/new_white.png"
             alt=""
@@ -101,26 +48,24 @@ export function AuthShell({
           />
         </div>
 
-        <div className="max-w-md">
-          <p className="font-mono text-2xs uppercase tracking-eyebrow text-rail-text-muted">
-            {t('auth.oyechats') || 'OyeChats'}
+        {/* Calm content block in lower-left / lower-middle area */}
+        <div className="relative z-10 max-w-lg mb-8">
+          <p className="font-mono text-2xs uppercase tracking-eyebrow text-rail-accent font-medium">
+            {t('auth.oyechats') || 'OYECHATS'}
           </p>
-          {/* `text-2xl`, the top of the seven-rung scale. `text-3xl` is not on it
-              at all and compiled only because Tailwind's default survives the
-              token reset — a 30px headline in a system whose largest rung is
-              28. */}
-          <p className="mt-4 text-2xl font-semibold leading-tight tracking-tight">
-            {t('auth.anAssistantThatHasRead') || 'An assistant that has read everything you have written.'}
-          </p>
+          <h2 className="mt-4 text-2xl font-semibold leading-tight tracking-tight text-rail-text">
+            {t('auth.anAssistantThatHasRead') || (
+              <>
+                An assistant that has read<br />everything you have written.
+              </>
+            )}
+          </h2>
           <p className="mt-4 text-prose text-rail-text-muted">
             {t('auth.uploadWhatYouKnowPaste') || 'Upload what you know. Paste one line into your site.'}
           </p>
         </div>
 
-        {/* The third slot is deliberately empty: `justify-between` holds the
-            headline in the panel's optical centre, and the line that used to sit
-            here was a third claim under two that had already made it. */}
-        <div aria-hidden />
+        <div aria-hidden className="relative z-10" />
       </aside>
 
       <main className="flex min-h-screen items-center justify-center px-4 py-10 sm:py-16 xl:min-h-0 xl:py-14">

@@ -14,6 +14,7 @@ import {
 import { updateBot } from '../../../services/api';
 import type { Bot } from '../../../types/domain';
 import { MEETING_PROVIDERS, readIntegrations, validateMeetingUrl } from './emailModel';
+import { MEETING_PROVIDER_ICONS } from './meetingProviderIcons';
 
 export interface MeetingsPanelProps {
   bot: Bot;
@@ -134,6 +135,7 @@ export function MeetingsPanel({ bot, onSaved }: MeetingsPanelProps) {
               options={MEETING_PROVIDERS.map((candidate) => ({
                 value: candidate.id,
                 label: candidate.name,
+                icon: MEETING_PROVIDER_ICONS[candidate.id],
               }))}
               onValueChange={(nextId) => {
                 const next = MEETING_PROVIDERS.find((candidate) => candidate.id === nextId)!;

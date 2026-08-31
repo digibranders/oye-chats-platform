@@ -581,6 +581,88 @@ class TestUpdateBot:
         assert bot.live_chat_queue_timeout_seconds == 45
         assert bot.live_chat_max_queue_size == 25
 
+    def _integration_bot(self):
+        return SimpleNamespace(
+            id=5,
+            client_id=1,
+            bot_key="bot-xyz",
+            name="Bot",
+            reply_to_email=None,
+            notification_email=None,
+            notification_emails=None,
+            meeting_booking_enabled=False,
+            meeting_provider=None,
+            calendly_url=None,
+            zcal_url=None,
+            calcom_url=None,
+            feature_flags={},
+            language_config={},
+            widget_messages={},
+            widget_config={},
+            bant_config=None,
+            manual_field_overrides=[],
+        )
+
+    def _run_patch(self, monkeypatch, bot, plan_slug, payload):
+        from app.api import bot_routes
+
+        session = MagicMock()
+        session.execute.return_value = _ExecuteResult(bot)
+        monkeypatch.setattr(bot_routes, "get_session", lambda: _session_ctx(session))
+
+        with (
+            patch("app.api.bot_routes.cache_delete"),
+            patch(
+                "app.services.plan_entitlements_service.get_entitlements",
+                return_value=SimpleNamespace(plan_slug=plan_slug),
+            ),
+        ):
+            app = _build_app(auth_override=_client_auth())
+            return TestClient(app).patch("/bots/5", json=payload)
+
+    def test_free_plan_cannot_write_email_fields(self, monkeypatch):
+        """A Free plan is 403'd on an email write, and nothing is persisted.
+
+        The dashboard hides the Email panel on Free, but this route is the only
+        writer of the column, so a direct PATCH must be refused too.
+        """
+        bot = self._integration_bot()
+        response = self._run_patch(monkeypatch, bot, "free", {"reply_to_email": "owner@example.com"})
+
+        assert response.status_code == 403
+        assert response.json()["detail"]["error"] == "feature_not_available"
+        assert bot.reply_to_email is None
+
+    def test_free_plan_cannot_write_meeting_fields(self, monkeypatch):
+        bot = self._integration_bot()
+        response = self._run_patch(monkeypatch, bot, "free", {"meeting_booking_enabled": True})
+
+        assert response.status_code == 403
+        assert response.json()["detail"]["error"] == "feature_not_available"
+        assert bot.meeting_booking_enabled is False
+
+    def test_paid_plan_can_write_email_and_meeting_fields(self, monkeypatch):
+        bot = self._integration_bot()
+        response = self._run_patch(
+            monkeypatch,
+            bot,
+            "standard",
+            {"reply_to_email": "owner@example.com", "meeting_booking_enabled": True},
+        )
+
+        assert response.status_code == 200
+        assert bot.reply_to_email == "owner@example.com"
+        assert bot.meeting_booking_enabled is True
+
+    def test_free_plan_write_of_unrelated_field_is_not_blocked(self, monkeypatch):
+        """The gate fires only on the integration fields: a Free plan can still
+        save an ordinary setting, and the entitlements lookup is never reached."""
+        bot = self._integration_bot()
+        response = self._run_patch(monkeypatch, bot, "free", {"name": "Renamed"})
+
+        assert response.status_code == 200
+        assert bot.name == "Renamed"
+
 
 class TestBotResponseRoundTrip:
     """Schema-level guarantee that the four editor fields round-trip.

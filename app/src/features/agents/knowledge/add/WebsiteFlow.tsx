@@ -239,6 +239,7 @@ export function WebsiteFlow({
         <Switch
           checked={useJs}
           disabled={crawlRunning}
+          fullWidth
           onCheckedChange={flow.setJavaScript}
           label={t('agents.thisSiteNeedsJavascriptTo') || 'This site needs JavaScript to show its text'}
           // The troubleshooting advice lives on the `no_content` outcome below,

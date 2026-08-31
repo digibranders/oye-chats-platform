@@ -39,7 +39,7 @@ import { t as translateNow } from '../../../i18n/i18n';
 
 // ── The four groups the page is divided into ─────────────────────────────────
 
-export const SECTION_KEYS = ['branding', 'messages', 'voice', 'language', 'handoff'] as const;
+export const SECTION_KEYS = ['branding', 'messages', 'voice', 'language', 'handoff', 'leads', 'uaq'] as const;
 export type SectionKey = (typeof SECTION_KEYS)[number];
 
 export const SECTION_LABELS: Record<SectionKey, string> = {
@@ -48,6 +48,10 @@ export const SECTION_LABELS: Record<SectionKey, string> = {
   voice: 'Voice',
   language: 'Language',
   handoff: 'Handoff',
+  leads: 'Leads',
+  // Read-only: the questions the chatbot could not answer. No draft fields map
+  // to it, so it never registers as unsaved.
+  uaq: 'UAQ',
 };
 
 export function isSectionKey(value: string): value is SectionKey {
@@ -179,6 +183,9 @@ export interface ExperienceDraft {
   businessHours: BusinessHours | null;
   leadFormEnabled: boolean;
   leadFormFields: LeadFormField[];
+  /** Metered lead enrichments (Leads tab). Both are Bot columns, plan-gated. */
+  emailVerificationEnabled: boolean;
+  companyLookupEnabled: boolean;
 }
 
 export type DraftField = keyof ExperienceDraft;
@@ -234,6 +241,8 @@ export const FIELD_SECTION: Record<DraftField, SectionKey> = {
   businessHours: 'handoff',
   leadFormEnabled: 'handoff',
   leadFormFields: 'handoff',
+  emailVerificationEnabled: 'leads',
+  companyLookupEnabled: 'leads',
 };
 
 /**
@@ -549,6 +558,8 @@ export function draftFromBot(raw: Record<string, unknown>): ExperienceDraft {
     businessHours: parseBusinessHours(raw.business_hours),
     leadFormEnabled: asBoolean(raw.lead_form_enabled),
     leadFormFields: parseLeadFields(raw.lead_form_fields),
+    emailVerificationEnabled: asBoolean(raw.email_verification_enabled),
+    companyLookupEnabled: asBoolean(raw.company_lookup_enabled),
   };
 }
 
@@ -778,6 +789,8 @@ export function patchFromDraft(
   if (changed.has('businessHours')) patch.business_hours = businessHoursPayload(draft.businessHours);
   if (changed.has('leadFormEnabled')) patch.lead_form_enabled = draft.leadFormEnabled;
   if (changed.has('leadFormFields')) patch.lead_form_fields = draft.leadFormFields;
+  if (changed.has('emailVerificationEnabled')) patch.email_verification_enabled = draft.emailVerificationEnabled;
+  if (changed.has('companyLookupEnabled')) patch.company_lookup_enabled = draft.companyLookupEnabled;
 
   // `language_config` is one JSONB column, not a merged sub-document: the
   // server replaces it wholesale, so a partial patch would drop the keys it

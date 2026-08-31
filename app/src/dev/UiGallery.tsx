@@ -59,6 +59,7 @@ import {
   CONTROL_BASE,
   CONTROL_SIZE,
   ConfirmDialog,
+  ImageCropDialog,
   PurchaseDialog,
   PurchaseSuccess,
   type PurchasePhase,
@@ -2629,6 +2630,26 @@ const NARROW_TABLE = {
 
 const DRAWER_WIDTHS: DrawerWidth[] = ['xs', 'sm', 'md', 'lg', 'xl'];
 
+/** A throwaway image so the crop demo has something to frame without shipping a
+ *  binary asset into the bundle. */
+function makeSampleImage(): string {
+  const canvas = document.createElement('canvas');
+  canvas.width = 480;
+  canvas.height = 360;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    const gradient = ctx.createLinearGradient(0, 0, 480, 360);
+    gradient.addColorStop(0, '#2b54c8');
+    gradient.addColorStop(1, '#e9effd');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 480, 360);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '600 44px system-ui, sans-serif';
+    ctx.fillText('Crop me', 140, 195);
+  }
+  return canvas.toDataURL('image/png');
+}
+
 function OverlaysPanel() {
   const [dialogSize, setDialogSize] = useState<DialogSize | null>(null);
   const [drawerWidth, setDrawerWidth] = useState<DrawerWidth | null>(null);
@@ -2638,6 +2659,7 @@ function OverlaysPanel() {
   const [simpleConfirmOpen, setSimpleConfirmOpen] = useState(false);
   const [purchaseOpen, setPurchaseOpen] = useState(false);
   const [purchasePhase, setPurchasePhase] = useState<PurchasePhase>('confirm');
+  const [cropSrc, setCropSrc] = useState<string | null>(null);
   const [columns, setColumns] = useState({ status: true, owner: false });
   const [onlyQualified, setOnlyQualified] = useState(false);
 
@@ -2680,6 +2702,13 @@ function OverlaysPanel() {
                 </Button>
                 <Button variant="secondary" onClick={() => setSimpleConfirmOpen(true)}>
                   Discard draft…
+                </Button>
+              </div>
+            </Demo>
+            <Demo label="ImageCropDialog · pan, zoom, round crop">
+              <div className="flex flex-wrap gap-2">
+                <Button variant="secondary" onClick={() => setCropSrc(makeSampleImage())}>
+                  Crop an image…
                 </Button>
               </div>
             </Demo>
@@ -3092,6 +3121,16 @@ function OverlaysPanel() {
         doneTitle="Branding removed"
         doneMessage="The “Powered by OyeChats” badge is gone from your widget."
         greetingName="Priya"
+      />
+
+      <ImageCropDialog
+        open={cropSrc !== null}
+        onOpenChange={(open) => {
+          if (!open) setCropSrc(null);
+        }}
+        src={cropSrc}
+        onCropped={() => setCropSrc(null)}
+        outputSize={512}
       />
     </Stack>
   );

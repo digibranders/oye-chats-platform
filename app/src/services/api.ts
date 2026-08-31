@@ -2083,6 +2083,20 @@ export const uploadLogo = async (file: File): Promise<{ url: string }> => {
 };
 
 /**
+ * Re-derives the bot's website favicon on demand and returns it as an image
+ * Blob, so the caller can crop it into an avatar. Nothing is persisted server
+ * side — the crop is uploaded through {@link uploadLogo} like any other image.
+ */
+export const fetchSiteIcon = async (botId: number): Promise<Blob> => {
+    try {
+        const response = await api.post(`/bots/${botId}/site-icon`, null, { responseType: 'blob' });
+        return response.data as Blob;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to fetch the website icon');
+    }
+};
+
+/**
  * Uploads (or replaces) the current operator's own profile picture. Purely
  * optional - an operator who never calls this just shows initials.
  * @param {File} file - The image file to upload

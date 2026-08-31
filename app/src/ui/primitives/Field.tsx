@@ -48,6 +48,19 @@ export interface FieldProps {
    * `--container-pair`, so this never drifts a screen away from the label.
    */
   trailing?: ReactNode;
+  /**
+   * Where the `trailing` element sits on the label row.
+   *
+   * `'pair'` (default) caps the row at `--container-pair` so the label and its
+   * trailing control stay bound — the right choice when the trailing element is
+   * a note or reset link with nothing beneath it to align to.
+   *
+   * `'edge'` drops the cap so the trailing element aligns to the field's right
+   * edge. Use it when the control below is full-width and the trailing element
+   * governs it — e.g. a switch that enables the input under it: at `'pair'` the
+   * switch stops short of the input's right edge and reads as floating mid-row.
+   */
+  trailingAlign?: 'pair' | 'edge';
   disabled?: boolean;
   /** Hides the label visually but keeps it for assistive tech. */
   hideLabel?: boolean;
@@ -91,6 +104,7 @@ export function Field({
   required = false,
   optional = false,
   trailing,
+  trailingAlign = 'pair',
   disabled = false,
   hideLabel = false,
   reserveMessageSpace,
@@ -132,8 +146,15 @@ export function Field({
           if (!trailing) return labelNode;
           return (
             // Capped, like every other label→control pair in the system: past
-            // about 640px the eye stops binding the two ends of a row.
-            <div className="flex max-w-pair items-center justify-between gap-3">
+            // about 640px the eye stops binding the two ends of a row. `'edge'`
+            // opts out of the cap to align the trailing control to the field's
+            // right edge, over a full-width control beneath it.
+            <div
+              className={cn(
+                'flex items-center justify-between gap-3',
+                trailingAlign === 'edge' ? 'w-full' : 'max-w-pair',
+              )}
+            >
               {labelNode}
               <span className="flex shrink-0 items-center gap-2">{trailing}</span>
             </div>

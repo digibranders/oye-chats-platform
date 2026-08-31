@@ -224,17 +224,37 @@ export function HandoffSection({
           description={t('agents.thisChatbotsOwnHours') || 'This chatbot\'s own hours.'}
         />
         <CardBody className="flex flex-col gap-4">
-          {errors.businessHours ? (
-            <Alert tone="danger" title={t('agents.thisScheduleWouldNeverOpen') || 'This schedule would never open'}>
-              {errors.businessHours}
-            </Alert>
-          ) : null}
-          <BusinessHoursField
-            value={draft.businessHours}
-            onChange={(businessHours) => onChange({ businessHours })}
-            errors={errors}
-            disabled={readOnly}
-          />
+          {!entitlementsLoading && isFree ? (
+            // Business hours only govern the offline banner, which is a live-chat
+            // concept — Free has no live chat, so the schedule is inert. Shown
+            // locked with the same Starter+ nudge the rest of this section uses.
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <Badge tone="plan">Starter and above</Badge>
+                <p className="mt-2 text-prose text-text-secondary">
+                  {t('agents.businessHoursLocked') ||
+                    'Set the hours this chatbot is staffed and show an offline banner outside them.'}
+                </p>
+              </div>
+              <Link to="/billing" className={buttonClass('secondary', 'sm')}>
+                {t('agents.comparePlans') || 'Compare plans'}
+              </Link>
+            </div>
+          ) : (
+            <>
+              {errors.businessHours ? (
+                <Alert tone="danger" title={t('agents.thisScheduleWouldNeverOpen') || 'This schedule would never open'}>
+                  {errors.businessHours}
+                </Alert>
+              ) : null}
+              <BusinessHoursField
+                value={draft.businessHours}
+                onChange={(businessHours) => onChange({ businessHours })}
+                errors={errors}
+                disabled={readOnly}
+              />
+            </>
+          )}
         </CardBody>
       </Card>
 

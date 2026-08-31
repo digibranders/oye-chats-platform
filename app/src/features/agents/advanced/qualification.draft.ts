@@ -20,8 +20,6 @@ export interface QualificationDraft {
   framework: string;
   /** The typed view of `Bot.bant_config`. */
   model: QualModel;
-  emailVerificationEnabled: boolean;
-  companyLookupEnabled: boolean;
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -69,18 +67,6 @@ export function parseQualification(
     enabled: raw.bant_enabled !== false,
     framework,
     model: parseModel(config, framework, preset),
-    // `=== true`, not `!== false`: both enrichment columns default OFF, so an
-    // absent field must read as OFF. Enrichment spends credits.
-    emailVerificationEnabled: raw.email_verification_enabled === true,
-    companyLookupEnabled: raw.company_lookup_enabled === true,
-  };
-}
-
-/** The `PATCH /bots/{id}` body for the two metered enrichments. */
-export function toEnrichmentPayload(draft: QualificationDraft): Record<string, unknown> {
-  return {
-    email_verification_enabled: draft.emailVerificationEnabled,
-    company_lookup_enabled: draft.companyLookupEnabled,
   };
 }
 
@@ -104,10 +90,3 @@ export function scoringChanged(draft: QualificationDraft, initial: Qualification
   );
 }
 
-/** True when either metered enrichment differs. */
-export function enrichmentChanged(draft: QualificationDraft, initial: QualificationDraft): boolean {
-  return (
-    draft.emailVerificationEnabled !== initial.emailVerificationEnabled ||
-    draft.companyLookupEnabled !== initial.companyLookupEnabled
-  );
-}

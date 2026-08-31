@@ -303,7 +303,9 @@ export function Transcript({
                     // the moment the meta line changed size.
                     'flex items-start gap-2',
                     mine && 'flex-row-reverse',
-                    groupStart ? 'mt-3 first:mt-0' : 'mt-0.5',
+                    // A clear gap when the speaker changes so visitor and chatbot
+                    // bubbles do not touch; a tight one within one speaker's run.
+                    groupStart ? 'mt-5 first:mt-0' : 'mt-0.5',
                   )}
                 >
                   {/* The AI gets a mark, not initials: two letters beside the

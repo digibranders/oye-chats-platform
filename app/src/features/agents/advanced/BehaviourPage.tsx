@@ -189,6 +189,7 @@ function BehaviourContent({
               flags={draft.featureFlags}
               liveChatAllowed={liveChatAllowed}
               onToggle={setFlag}
+              locked={isFree}
             />
             {/* Its own read and its own write, deliberately outside the draft: a
                 kill switch takes effect when it is pressed, not when a save bar at
