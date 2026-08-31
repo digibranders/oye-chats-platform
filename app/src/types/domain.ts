@@ -35,6 +35,15 @@ export interface Bot {
   company_name?: string;
   primary_color?: string;
   bot_logo?: string | null;
+  /**
+   * Who last wrote the avatar. `null` = nobody ever has; `'manual'` = the
+   * customer did (uploading one OR removing one); `'derived'` = the crawl took
+   * it from the site's favicon.
+   *
+   * The distinction matters wherever "has the customer branded this?" is being
+   * asked: a derived favicon puts a picture on a chatbot nobody has touched.
+   */
+  bot_logo_source?: string | null;
   /** Configured avatar style: 'upload' (bot_logo image) | 'orb' | 'mascot'. */
   avatar_type?: string | null;
   /** Orb avatar colour (used when avatar_type === 'orb'); falls back to primary_color. */

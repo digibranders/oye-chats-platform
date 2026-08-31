@@ -39,6 +39,10 @@ export interface SetupStep {
  * The checklist never becomes a gate. Every step deep-links to the real surface
  * where that work is done, and the user can do them in any order or not at all.
  */
+/** Seeded on every new chatbot (`Bot.primary_color` / `Bot.avatar_type`). */
+const DEFAULT_PRIMARY_COLOR = '#ba68c8';
+const DEFAULT_AVATAR_TYPE = 'upload';
+
 export function useSetupChecklist() {
   const { bots, loading: botsLoading } = useBotContext();
 
@@ -67,7 +71,21 @@ export function useSetupChecklist() {
   const conversations = Number(stats.data?.total_conversations ?? 0);
   const indexedChunks = Number(primary?.indexed_chunk_count ?? 0);
   const capturedLeads = Number(leads.data?.total ?? 0);
-  const branded = Boolean(primary?.bot_logo || primary?.avatar_type);
+  // "Make it yours" ticked on every chatbot ever created, because
+  // `avatar_type` is a STYLE SELECTOR with a default of `'upload'`, not a
+  // record of anyone having chosen anything. `Boolean(bot_logo || avatar_type)`
+  // was therefore true from the moment the row existed, and the checklist
+  // struck the step through on a chatbot still carrying the seeded colour and
+  // no avatar at all.
+  //
+  // What actually answers it: the customer set or removed an avatar
+  // (`bot_logo_source === 'manual'`), picked a style other than the default, or
+  // moved the brand colour off the seeded one. A crawl-DERIVED favicon is
+  // deliberately not enough — the product did that, not them.
+  const branded =
+    primary?.bot_logo_source === 'manual' ||
+    (primary?.avatar_type ?? DEFAULT_AVATAR_TYPE) !== DEFAULT_AVATAR_TYPE ||
+    (primary?.primary_color ?? DEFAULT_PRIMARY_COLOR).toLowerCase() !== DEFAULT_PRIMARY_COLOR;
   const installed = Boolean(primary?.widget_installed_at);
 
   // Every step carries one. Two of the six used to pass `''`, so the checklist
@@ -101,7 +119,12 @@ export function useSetupChecklist() {
       label: translateNow('onboarding.askItAQuestion') || 'Ask it a question',
       description: translateNow('onboarding.seeExactlyWhatAVisitor') || 'See exactly what a visitor gets',
       done: conversations > 0,
-      to: primary ? agentPath(primary.id, 'overview') : '/chatbots',
+      // The first-chat screen, which is the only surface in the console where
+      // you can actually ask this chatbot something. It used to point at
+      // Overview, where the step is unperformable: a dashboard of zeros with no
+      // input on it, so the one instruction the step gives cannot be followed
+      // from the page it sends you to.
+      to: primary ? `/welcome/${primary.id}` : '/chatbots',
     },
     {
       id: 'install',

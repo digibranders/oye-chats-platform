@@ -2297,6 +2297,12 @@ def list_bots(
                     company_description=b.company_description,
                     manual_field_overrides=b.manual_field_overrides or [],
                     bot_logo=bl,
+                    # Provenance, so a consumer can tell an avatar the
+                    # CUSTOMER set from one the crawl derived off the
+                    # site's favicon. Without it the setup checklist
+                    # could only ask "is there a logo", which a derived
+                    # favicon answers yes to.
+                    bot_logo_source=b.bot_logo_source,
                     launcher_name=b.launcher_name or "Have Questions?",
                     launcher_logo=ll,
                     primary_color=b.primary_color or "#ba68c8",
