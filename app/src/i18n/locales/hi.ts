@@ -3282,6 +3282,8 @@ const hi = {
     checkYourPlan: 'अपना प्लान जाँचें',
     crawlYourSiteOrUpload: 'अपनी साइट क्रॉल करें या दस्तावेज़ अपलोड करें',
     createMyChatbot: 'मेरा चैटबॉट बनाएँ',
+    checkMySite: 'मेरी साइट जाँचें',
+    weWillCheckYourSite: 'आगे आप देखेंगे कि कितने पेज मिले।',
     createYourChatbot: 'अपना चैटबॉट बनाएँ',
     stepDone: '(हो गया)',
     stepCurrent: '(अगला चरण)',

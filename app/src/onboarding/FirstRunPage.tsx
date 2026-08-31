@@ -16,7 +16,7 @@ import {
   buttonClass,
   normalizeUrl,
 } from '../ui';
-import { createBot, crawlWebsite } from '../services/api';
+import { createBot } from '../services/api';
 import { useBotContext } from '../context/BotContext';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { agentPath } from '../shell/nav';
@@ -70,6 +70,9 @@ export function FirstRunPage() {
   const [nameTouched, setNameTouched] = useState(false);
   const [errors, setErrors] = useState<FirstRunErrors>({});
   const [submitting, setSubmitting] = useState(false);
+  // Latched, not derived from `submitting`: the guard must stay down through the
+  // render that clears `submitting`, which happens after the navigate.
+  const [handedOff, setHandedOff] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
   const fallbackName = currentWorkspaceName?.trim() || t('onboarding.myChatbot') || 'My chatbot';
@@ -83,8 +86,16 @@ export function FirstRunPage() {
     setName(suggested);
   }, [suggested, nameTouched]);
 
-  // A workspace that already has a chatbot is past this screen by definition.
-  if (!loading && bots.length > 0) {
+  // A workspace that already has a chatbot is past this screen by definition —
+  // UNLESS this screen is the one that just created it.
+  //
+  // `submit` awaits `refreshBots()` so the destination has the new chatbot, and
+  // the `finally` clears `submitting` after navigating. Both re-render with a
+  // chatbot now present, and a render-level redirect beats an imperative one,
+  // so this guard fired on the way out and sent every website signup to Home.
+  // The customer saw the form vanish and the dashboard appear, which is
+  // indistinguishable from nothing having happened.
+  if (!loading && bots.length > 0 && !handedOff) {
     return <Navigate to="/" replace />;
   }
 
@@ -102,16 +113,22 @@ export function FirstRunPage() {
         name: name.trim(),
         ...(source === 'website' ? { website: normalizeUrl(website) } : {}),
       });
+      // Before the refresh, because the refresh is what trips the guard above.
+      setHandedOff(true);
       await refreshBots();
 
       if (source === 'website') {
-        // Deliberately not awaited. The crawl takes minutes; the customer takes
-        // seconds. `getCrawlProgress` on the next screen is how they follow it.
-        void crawlWebsite(normalizeUrl(website), bot.id).catch(() => {
-          // A failure here surfaces through the progress poll, which can
-          // explain it and offer the ways out. Swallowing it silently would be
-          // wrong; re-throwing into an unhandled rejection helps nobody.
-        });
+        // The crawl is NOT started here. It used to fire on submit, so a
+        // customer who typed an address was committed to a full read of it
+        // before ever being shown how big it was — no page count, no chance to
+        // narrow it, and on a large site a long wait they did not choose.
+        //
+        // The chatbot's Knowledge page already asks the question properly: it
+        // pre-fills this address, reports how many pages were found, states the
+        // plan's crawl ceiling, and only then offers to train. Handing over
+        // with the address saved and nothing spent is the same two clicks for a
+        // small site and the difference between a decision and a surprise for a
+        // large one.
         // The chatbot's own Knowledge page, which is where the crawl it just
         // started actually reports itself: pages found, pages indexed, and the
         // failures worth acting on. The first run used to end on a standalone
@@ -227,7 +244,7 @@ export function FirstRunPage() {
                 canvas at both bottom edges. */}
             <CardFooter className="justify-between">
               <p className="text-xs text-text-tertiary">
-                {source === 'website' ? t('onboarding.youCanTalkToIt') || 'You can talk to it while it reads.' : null}
+                {source === 'website' ? t('onboarding.weWillCheckYourSite') || 'Next you will see how many pages it found.' : null}
               </p>
               <div className="flex flex-wrap items-center gap-2">
                 {/* Skippable, like every step of Linear's onboarding and none of
@@ -244,7 +261,7 @@ export function FirstRunPage() {
                   {t('onboarding.skipForNow') || 'Skip for now'}
                 </Button>
                 <Button type="submit" loading={submitting} disabled={submitting}>
-                  {source === 'website' ? t('onboarding.startReadingMySite') || 'Start reading my site' : t('onboarding.createMyChatbot') || 'Create my chatbot'}
+                  {source === 'website' ? t('onboarding.checkMySite') || 'Check my site' : t('onboarding.createMyChatbot') || 'Create my chatbot'}
                 </Button>
               </div>
             </CardFooter>

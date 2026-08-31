@@ -3287,6 +3287,8 @@ const en = {
     checkYourPlan: 'Check your plan',
     crawlYourSiteOrUpload: 'Crawl your site or upload documents',
     createMyChatbot: 'Create my chatbot',
+    checkMySite: 'Check my site',
+    weWillCheckYourSite: 'Next you will see how many pages it found.',
     createYourChatbot: 'Create your chatbot',
     stepDone: '(done)',
     stepCurrent: '(next step)',
