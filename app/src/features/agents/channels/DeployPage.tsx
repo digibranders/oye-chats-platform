@@ -458,6 +458,12 @@ export function DeployPage() {
                 })}
                 website={website}
                 domains={domains}
+                installs={deploy.domains}
+                domainsLoading={deploy.domainsLoading}
+                domainsChecking={deploy.domainsChecking}
+                domainsCheckedAt={deploy.domainsCheckedAt}
+                onCheckDomains={deploy.checkDomains}
+                domainsCheckError={deploy.domainsCheckError}
                 accessHref="#access"
                 verifiedNow={deploy.verifiedNow}
                 checking={deploy.checking}

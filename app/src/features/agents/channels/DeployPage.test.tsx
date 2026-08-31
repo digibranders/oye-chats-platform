@@ -73,6 +73,12 @@ function mountDeploy(botOverrides: Record<string, unknown> = {}) {
     stopVerifying: vi.fn(),
     save: vi.fn(),
     saving: false,
+    domains: [],
+    domainsLoading: false,
+    domainsChecking: false,
+    domainsCheckedAt: null,
+    checkDomains: vi.fn(),
+    domainsCheckError: null,
   } as unknown as ReturnType<typeof useDeployData>);
   return { retry };
 }

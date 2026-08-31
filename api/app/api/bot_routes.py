@@ -65,6 +65,8 @@ from app.schemas.validators import (
 )
 from app.services.brand_tone import BRAND_TONE_PRESETS, CUSTOM_PRESET, is_valid_preset_value, preset_text
 from app.services.email_service import send_install_invite_email
+from app.services.install_probe import probe_is_running
+from app.services.install_registry import list_domain_installs, record_observed_domain
 from app.services.language_service import KNOWN_LOCALES, is_multilingual_enabled, normalize_locale
 
 # Upper bound on per-bot domain list size. 50 covers every realistic case
@@ -1177,6 +1179,11 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
                             widget_last_origin=_origin_hostname,
                         )
                     ).rowcount
+                    # Per-domain row, in the same transaction as the stamp.
+                    # Recorded whether or not `stamped` landed: a concurrent
+                    # bootstrap may have won the one-time stamp, but this
+                    # request still genuinely came from this hostname.
+                    record_observed_domain(_install_session, bot.id, _origin_hostname)
                     _install_session.commit()
                 if stamped:
                     cache_delete(bot_config_key(bot.bot_key))
@@ -1204,6 +1211,11 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
                                 widget_last_origin=_origin_hostname,
                             )
                         )
+                        # Piggybacks on the throttle decision above rather than
+                        # taking one of its own, so the per-domain table costs
+                        # no extra writes and opens no new forged-origin
+                        # budget. See `record_observed_domain`.
+                        record_observed_domain(_seen_session, bot.id, _origin_hostname)
                         _seen_session.commit()
         except Exception:
             logger.debug("widget install/heartbeat skipped for bot_id=%s", getattr(bot, "id", None), exc_info=True)
@@ -3910,3 +3922,164 @@ def delete_bot(bot_id: int, auth=Depends(get_current_client_or_operator)):
         cache_delete(bot_config_key(bot_key_val))
         logger.info(f"Bot {bot_id} deleted by workspace {auth['client_id']}")
         return {"message": "Bot deleted successfully"}
+
+
+def _domain_state(row) -> str:
+    """Collapse two independent signals into the one word the card shows.
+
+    Observation outranks the probe, always. ``observed_last_at`` means a real
+    browser on a real page loaded this chatbot; a probe is one fetch of served
+    HTML with no JavaScript run. A site that injects its snippet through a tag
+    manager serves markup with nothing in it, so letting a 'missing' probe
+    override a live observation would tell a working customer their site is
+    broken — and that customer is the one whose install we have the *most*
+    evidence for.
+
+    'foreign' collapses to 'missing' here rather than becoming its own state.
+    From this chatbot's point of view the fact is that its snippet is not on the
+    page; what was found instead travels separately as ``other_chatbot``, so a
+    page carrying both chatbots reads as live with a note, not as an alarm.
+    """
+    if row.observed_last_at is not None:
+        return "live"
+    if row.probe_status == "installed":
+        return "installed"
+    if row.probe_status in ("missing", "foreign"):
+        return "missing"
+    if row.probe_status == "unreachable":
+        return "unreachable"
+    return "unchecked"
+
+
+@router.get("/{bot_id}/install-domains")
+def get_install_domains(
+    bot_id: int,
+    request: Request,
+    auth=Depends(get_current_client_or_operator),
+):
+    """Every domain this chatbot is on, has been on, or is configured for.
+
+    Three sources merged into one list, because each answers a question the
+    others cannot. The allow-list says where the customer *intends* it to run
+    (and is the only source that can name a domain nothing has ever happened
+    on). Observation says where it has actually loaded. The probe says what our
+    own fetch found, including the two states passive data can never reach: a
+    domain with no snippet, and a domain running someone else's chatbot.
+
+    Wildcard allow-list entries are listed but never probed. ``*.acme.com`` is
+    not a hostname and there is no way to enumerate what it covers, so
+    reporting it as unreachable would be inventing a fault.
+    """
+    with get_session() as session:
+        bot = _get_workspace_bot(session, bot_id, auth["client_id"])
+        allowed = list(bot.allowed_domains or [])
+        rows = list_domain_installs(session, bot_id)
+
+        domains = []
+        seen_hosts = set()
+        for row in rows:
+            seen_hosts.add(row.hostname)
+            domains.append(
+                {
+                    "hostname": row.hostname,
+                    "state": _domain_state(row),
+                    "observed_first_at": row.observed_first_at,
+                    "observed_last_at": row.observed_last_at,
+                    "probe_status": row.probe_status,
+                    "probe_checked_at": row.probe_checked_at,
+                    "probe_detail": row.probe_detail,
+                    # Only ever another chatbot's key. Our own is not news, and
+                    # echoing a key back into the UI that already displays this
+                    # bot's key would just be noise.
+                    "other_chatbot": row.probe_bot_key if row.probe_status == "foreign" else None,
+                    # Whether enforcement would admit this origin today. A live
+                    # domain that is NOT allowed is the single most useful line
+                    # this endpoint can produce: it is a chatbot that works now
+                    # and stops the moment the allow-list is enforced.
+                    "allowed": is_origin_allowed(row.hostname, allowed) if allowed else True,
+                }
+            )
+
+        # Allow-list entries nothing has ever been recorded against. Without
+        # these the card silently omits exactly the domains a customer is most
+        # likely to be asking about: the one they just added and have not
+        # installed yet.
+        for entry in allowed:
+            host = (entry or "").strip().lower()
+            if not host or host in seen_hosts:
+                continue
+            if not host.startswith("*.") and is_origin_allowed(host, [e for e in allowed if e != entry]):
+                # Already covered by another entry (a wildcard, or its own
+                # `www.` twin), so listing it again would double-count one
+                # domain.
+                continue
+            domains.append(
+                {
+                    "hostname": host,
+                    "state": "unchecked",
+                    "observed_first_at": None,
+                    "observed_last_at": None,
+                    "probe_status": None,
+                    "probe_checked_at": None,
+                    "probe_detail": None,
+                    "other_chatbot": None,
+                    "allowed": True,
+                }
+            )
+
+        checked = [d["probe_checked_at"] for d in domains if d["probe_checked_at"]]
+        return {
+            "domains": domains,
+            "checking": probe_is_running(bot_id),
+            "last_checked_at": max(checked) if checked else None,
+        }
+
+
+@router.post("/{bot_id}/install-domains/check")
+@limiter.limit("6/hour")
+def start_install_check(
+    bot_id: int,
+    request: Request,
+    auth=Depends(get_current_client_or_operator),
+):
+    """Fetch each of this chatbot's domains and report what is on them.
+
+    Rate-limited because it spends egress against third-party sites on an
+    authenticated button press. Six an hour is far more than reading a
+    dashboard needs and low enough that the endpoint cannot be turned into a
+    request amplifier pointed at someone else's server.
+
+    Dispatch follows the demo-capture convention exactly: the worker when one is
+    running, an in-process background thread when ``WORKER_ENABLED`` is false.
+    Queueing unconditionally would leave the card saying "checking" against a
+    queue nobody drains.
+    """
+    _require_bot_management_access(auth)
+    with get_session() as session:
+        _get_workspace_bot(session, bot_id, auth["client_id"])
+
+    if probe_is_running(bot_id):
+        # Already in flight. Not an error: the customer pressed twice, and the
+        # honest response is the state they were asking about.
+        return {"success": True, "checking": True, "already_running": True}
+
+    from app.worker.enqueue import WORKER_ENABLED
+
+    try:
+        if WORKER_ENABLED:
+            from app.worker.enqueue import enqueue_sync
+
+            enqueue_sync("task_probe_bot_installs", bot_id, _job_id=f"install-probe:{bot_id}")
+        else:
+            from app.core.thread_pool import submit_background
+            from app.services.install_probe import run_install_probe_sync
+
+            submit_background(run_install_probe_sync, bot_id)
+    except Exception:
+        logger.warning("could not dispatch an install check for bot %s", bot_id, exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail="We could not start the check. Try again in a moment.",
+        ) from None
+
+    return {"success": True, "checking": True, "already_running": False}

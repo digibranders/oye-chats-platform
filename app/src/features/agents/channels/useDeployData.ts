@@ -3,7 +3,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   getApiBaseUrl,
   getBot,
+  getInstallDomains,
   recordActivationEvent,
+  startInstallCheck,
   updateBot,
 } from '../../../services/api';
 import { keys } from '../../../query/keys';
@@ -11,6 +13,7 @@ import { useAgent } from '../../../context/AgentContext';
 import { useBotContext } from '../../../context/BotContext';
 import { getEmbedEnvironment } from './embedEnvironment';
 import { VERIFY_POLL_MS, VERIFY_TIMEOUT_MS, installStatus, type InstallStatus } from './deployModel';
+import { sortDomains, type DomainInstall } from './installDomainsModel';
 import type { PlatformEnv } from '../../../data/platformIntegrations';
 import type { Bot } from '../../../types/domain';
 import { t as translateNow } from '../../../i18n/i18n';
@@ -56,6 +59,16 @@ function toFailure(error: unknown): LoadFailure {
  */
 const CLAIM_PREFIX = 'oyechats.deploy.claimed.';
 
+/**
+ * How often to re-read the inventory while a check is in flight.
+ *
+ * Slower than the widget-verification poll deliberately. That one races a
+ * person refreshing their own site in another tab; this one waits on our own
+ * worker making up to 25 outbound requests, and asking every two seconds would
+ * be 30 pointless round-trips per check.
+ */
+const DOMAIN_POLL_MS = 4_000;
+
 function readClaim(botId: number): boolean {
   try {
     return window.localStorage.getItem(`${CLAIM_PREFIX}${botId}`) === '1';
@@ -100,6 +113,18 @@ export interface DeployData {
   /** Persist a partial chatbot update and re-read the normalised result. */
   save: (patch: Record<string, unknown>) => Promise<DeployBot>;
   saving: boolean;
+
+  /** Every domain this chatbot is on, has been on, or is allowed on. */
+  domains: DomainInstall[];
+  domainsLoading: boolean;
+  /** A probe of those domains is running right now. */
+  domainsChecking: boolean;
+  /** When the last probe finished, or null if one has never run. */
+  domainsCheckedAt: string | null;
+  /** Go and fetch every domain now. */
+  checkDomains: () => void;
+  /** The check could not be started. Shown, not swallowed. */
+  domainsCheckError: string | null;
 }
 
 /**
@@ -243,6 +268,45 @@ export function useDeployData(): DeployData {
     [mutation],
   );
 
+  /**
+   * The per-domain inventory.
+   *
+   * Polled only while a check is actually running. The probe fetches up to 25
+   * third-party sites on the worker, so the answer arrives seconds to a minute
+   * after the button press and the customer is watching; the rest of the time
+   * this is a plain cached read, because domains do not change on their own.
+   */
+  const domainsQuery = useQuery({
+    queryKey: keys.agents.installDomains(agentId ?? 0),
+    queryFn: () => getInstallDomains(agentId as number),
+    enabled: agentId != null,
+    staleTime: 30_000,
+    retry: false,
+    refetchInterval: (query) => (query.state.data?.checking ? DOMAIN_POLL_MS : false),
+  });
+
+  const checkMutation = useMutation({
+    mutationFn: async () => {
+      if (agentId == null) throw new Error('No chatbot selected.');
+      return startInstallCheck(agentId);
+    },
+    onSuccess: () => {
+      // Re-read immediately so `checking` flips true and the poll above starts,
+      // rather than waiting out the 30s staleTime with a dead button.
+      if (agentId != null) void queryClient.invalidateQueries({ queryKey: keys.agents.installDomains(agentId) });
+    },
+  });
+
+  const checkDomains = useCallback(() => {
+    if (checkMutation.isPending) return;
+    checkMutation.mutate();
+  }, [checkMutation]);
+
+  const domains = useMemo(
+    () => sortDomains(domainsQuery.data?.domains ?? []),
+    [domainsQuery.data],
+  );
+
   const status = installStatus({ installedAt, claimed, checking });
 
   return {
@@ -260,5 +324,15 @@ export function useDeployData(): DeployData {
     stopVerifying,
     save,
     saving: mutation.isPending,
+    domains,
+    domainsLoading: agentId != null && domainsQuery.isPending,
+    // `isPending` on the mutation counts too: between the button press and the
+    // server confirming dispatch there is a gap where nothing is running yet
+    // and the button must still read as busy.
+    domainsChecking: Boolean(domainsQuery.data?.checking) || checkMutation.isPending,
+    domainsCheckedAt: domainsQuery.data?.last_checked_at ?? null,
+    checkDomains,
+    domainsCheckError:
+      checkMutation.error instanceof Error ? checkMutation.error.message : null,
   };
 }

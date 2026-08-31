@@ -6,6 +6,7 @@ import { InstallStatusCard } from './InstallStatusCard';
 import { SnippetSection } from './SnippetSection';
 import { PlatformGuide } from './PlatformGuide';
 import { installStatus, widgetHeartbeat } from './deployModel';
+import type { DomainInstall } from './installDomainsModel';
 import { recordActivationEvent, sendInstallInvite } from '../../../services/api';
 
 vi.mock('../../../services/api', () => ({
@@ -50,6 +51,12 @@ describe('InstallStatusCard', () => {
     onStartVerifying: vi.fn(),
     onStopVerifying: vi.fn(),
     onTroubleshoot: vi.fn(),
+    installs: [] as DomainInstall[],
+    domainsLoading: false,
+    domainsChecking: false,
+    domainsCheckedAt: null,
+    onCheckDomains: vi.fn(),
+    domainsCheckError: null,
   };
 
   it('says "waiting", not "error", before anyone has installed anything', () => {
@@ -130,8 +137,10 @@ describe('InstallStatusCard', () => {
       />,
     );
     expect(screen.getByRole('heading', { name: 'Live on your website' })).toBeInTheDocument();
-    // Label → value, not four stacked paragraphs.
-    expect(screen.getAllByRole('term')).toHaveLength(4);
+    // Label → value, not stacked paragraphs. Three now, not four: `Loaded
+    // from` moved out into the per-domain inventory, which says the same thing
+    // for every domain instead of only for whichever called most recently.
+    expect(screen.getAllByRole('term')).toHaveLength(3);
     expect(screen.getByText('First seen')).toBeInTheDocument();
     expect(screen.getByText('Last seen')).toBeInTheDocument();
   });
@@ -157,24 +166,36 @@ describe('InstallStatusCard', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
-  it('marks the origin as reported by the browser rather than as proof', async () => {
+  it('distinguishes a browser sighting from our own fetch', async () => {
+    // This replaces a tooltip on the old single `Loaded from` row. The honesty
+    // requirement did not go away with that row, it moved: the inventory has
+    // to keep saying which signal it is quoting, because an observed origin is
+    // a browser-supplied header and a probe is our own fetch, and the two are
+    // trusted differently.
     renderWithRouter(
       <InstallStatusCard
         {...base}
         installedAt="2026-08-01T09:00:00.000Z"
-        heartbeat={widgetHeartbeat({
-          installedAt: '2026-08-01T09:00:00.000Z',
-          lastSeenAt: '2026-08-19T11:30:00.000Z',
-          lastOrigin: 'shop.acme.com',
-        })}
+        installs={[
+          {
+            hostname: 'shop.acme.com',
+            state: 'live',
+            observed_first_at: '2026-08-01T09:00:00.000Z',
+            observed_last_at: '2026-08-19T11:30:00.000Z',
+            probe_status: null,
+            probe_checked_at: null,
+            probe_detail: null,
+            other_chatbot: null,
+            allowed: true,
+          },
+        ]}
         status={installStatus({ installedAt: '2026-08-01T09:00:00.000Z', claimed: false, checking: false })}
       />,
     );
     expect(screen.getByText('shop.acme.com')).toBeInTheDocument();
-    // The caveat is a tooltip on the label it qualifies, not a 34-word sentence
-    // in the smallest, faintest type on the page.
-    await userEvent.hover(screen.getByRole('button', { name: 'About Loaded from' }));
-    expect(await screen.findByText(/reported by the browser/i)).toBeInTheDocument();
+    // Named as a visitor sighting, not as an unqualified fact about the site.
+    expect(screen.getByText(/last visitor here/i)).toBeInTheDocument();
+    expect(screen.getByText(/real visitors have loaded/i)).toBeInTheDocument();
   });
 
   it('links the allow-list to the page that now owns it', () => {
@@ -408,5 +429,129 @@ describe('SnippetSection — emailing the developer', () => {
     await open(user);
     const mailto = screen.getByRole('link', { name: /my mail app/i });
     expect(mailto).toHaveAttribute('href', expect.stringContaining('mailto:'));
+  });
+});
+
+/* --------------------------------------------------- the domain inventory */
+
+describe('InstallStatusCard ▸ domains', () => {
+  const base = {
+    status: installStatus({ installedAt: '2026-08-01T10:00:00Z', claimed: false, checking: false }),
+    installedAt: '2026-08-01T10:00:00Z',
+    heartbeat: widgetHeartbeat({
+      installedAt: '2026-08-01T10:00:00Z',
+      lastSeenAt: '2026-08-31T10:00:00Z',
+      lastOrigin: 'acme.com',
+    }),
+    website: 'https://acme.com',
+    domains: [] as string[],
+    accessHref: '#access',
+    verifiedNow: false,
+    checking: false,
+    onStartVerifying: vi.fn(),
+    onStopVerifying: vi.fn(),
+    onTroubleshoot: vi.fn(),
+    installs: [] as DomainInstall[],
+    domainsLoading: false,
+    domainsChecking: false,
+    domainsCheckedAt: null,
+    onCheckDomains: vi.fn(),
+    domainsCheckError: null,
+  };
+
+  function install(over: Partial<DomainInstall> = {}): DomainInstall {
+    return {
+      hostname: 'acme.com',
+      state: 'unchecked',
+      observed_first_at: null,
+      observed_last_at: null,
+      probe_status: null,
+      probe_checked_at: null,
+      probe_detail: null,
+      other_chatbot: null,
+      allowed: true,
+      ...over,
+    };
+  }
+
+  it('lists every domain, not just the one that called most recently', () => {
+    // The whole point of the rebuild. The old card read a single overwritten
+    // column, so a chatbot on three sites showed one of them.
+    renderWithRouter(
+      <InstallStatusCard
+        {...base}
+        installs={[
+          install({ hostname: 'acme.com', state: 'live', observed_last_at: '2026-08-31T10:00:00Z' }),
+          install({ hostname: 'shop.acme.com', state: 'installed', probe_status: 'installed' }),
+          install({ hostname: 'blog.acme.com', state: 'missing', probe_status: 'missing' }),
+        ]}
+      />,
+    );
+    expect(screen.getByText('acme.com')).toBeInTheDocument();
+    expect(screen.getByText('shop.acme.com')).toBeInTheDocument();
+    expect(screen.getByText('blog.acme.com')).toBeInTheDocument();
+  });
+
+  it('names the other chatbot when it finds one', () => {
+    renderWithRouter(
+      <InstallStatusCard
+        {...base}
+        installs={[
+          install({
+            hostname: 'acme.com',
+            state: 'missing',
+            probe_status: 'foreign',
+            other_chatbot: 'bot-000000000000',
+          }),
+        ]}
+      />,
+    );
+    // "Somebody else's chatbot is on your page" is only actionable if we say
+    // which one, and this is the state no amount of passive data can reach.
+    expect(screen.getByText('bot-000000000000')).toBeInTheDocument();
+  });
+
+  it('offers a check and reports it back to the caller', async () => {
+    const onCheckDomains = vi.fn();
+    renderWithRouter(<InstallStatusCard {...base} onCheckDomains={onCheckDomains} />);
+    await userEvent.click(screen.getByRole('button', { name: /check my domains/i }));
+    expect(onCheckDomains).toHaveBeenCalledOnce();
+  });
+
+  it('cannot be asked to check twice while a check is running', async () => {
+    const onCheckDomains = vi.fn();
+    renderWithRouter(
+      <InstallStatusCard {...base} domainsChecking onCheckDomains={onCheckDomains} />,
+    );
+    const button = screen.getByRole('button', { name: /checking/i });
+    expect(button).toBeDisabled();
+    await userEvent.click(button);
+    expect(onCheckDomains).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a failure to start rather than swallowing it', () => {
+    renderWithRouter(
+      <InstallStatusCard {...base} domainsCheckError="We could not start the check." />,
+    );
+    expect(screen.getByText('We could not start the check.')).toBeInTheDocument();
+  });
+
+  it('says something useful when there are no domains at all', () => {
+    renderWithRouter(<InstallStatusCard {...base} installs={[]} />);
+    // Not a fault: an empty allow-list means the chatbot runs anywhere, which
+    // is the default a new account is in.
+    expect(screen.getByText(/no domains recorded yet/i)).toBeInTheDocument();
+  });
+
+  it('no longer shows the single "Loaded from" origin', () => {
+    // Superseded by the list, which says the same thing per domain and with
+    // provenance. Keeping both was one fact printed twice.
+    renderWithRouter(
+      <InstallStatusCard
+        {...base}
+        installs={[install({ hostname: 'acme.com', state: 'live', observed_last_at: '2026-08-31T10:00:00Z' })]}
+      />,
+    );
+    expect(screen.queryByText('Loaded from')).toBeNull();
   });
 });

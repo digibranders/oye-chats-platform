@@ -3051,3 +3051,20 @@ async def task_dunning_emails(ctx: dict) -> int:
     if count:
         logger.info("task_dunning_emails: sent %d dunning email(s)", count)
     return count
+
+
+async def task_probe_bot_installs(ctx: dict, bot_id: int) -> dict:
+    """Fetch every domain a chatbot is associated with and report its install.
+
+    Runs here rather than on the request path for the same reason the demo
+    capture does: it makes up to 25 third-party HTTP requests, each with its own
+    timeout, so the worst case is minutes. The customer presses a button and
+    reads the answer when it lands.
+
+    Already async, so unlike the sync-body tasks around it there is nothing to
+    push into an executor: ``probe_bot_installs`` awaits aiohttp throughout and
+    never blocks the loop.
+    """
+    from app.services.install_probe import probe_bot_installs
+
+    return await probe_bot_installs(bot_id)

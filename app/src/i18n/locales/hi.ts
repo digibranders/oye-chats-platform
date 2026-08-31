@@ -2313,6 +2313,38 @@ const hi = {
     liveChatCopyIsAvailable: 'लाइव-चैट कॉपी Starter और उससे ऊपर के प्लान पर उपलब्ध है।',
     liveOnYourSite: 'आपकी साइट पर लाइव',
     liveOnYourWebsite: 'आपकी वेबसाइट पर लाइव',
+    // ── प्रति-डोमेन इंस्टॉल सूची (Deploy ▸ इंस्टॉल कार्ड) ──
+    yourDomains: 'आपके डोमेन',
+    checked: 'जाँचा गया',
+    checkMyDomains: 'मेरे डोमेन जाँचें',
+    checkingDomains: 'जाँच हो रही है',
+    noDomainsRecordedYet:
+        'अभी कोई डोमेन दर्ज नहीं है। अपनी साइट पर स्निपेट जोड़ें, या नीचे Access में अपने डोमेन जोड़कर दोबारा जाँचें।',
+    foundInstead: 'इसके बजाय मिला',
+    lastVisitorHere: 'यहाँ अंतिम विज़िटर',
+    liveDomainDetail: 'असली विज़िटर इस डोमेन पर आपका चैटबॉट लोड कर चुके हैं।',
+    liveButNotAllowed: 'लाइव है, पर आपकी अनुमति-सूची में नहीं',
+    liveButNotAllowedDetail:
+        'विज़िटर इसे अभी यहाँ इस्तेमाल कर रहे हैं। डोमेन प्रतिबंध चालू करने पर यह साइट तब तक ब्लॉक रहेगी जब तक आप इसे जोड़ नहीं देते।',
+    snippetFound: 'स्निपेट मिला',
+    snippetFoundDetail:
+        'हमने यह पेज लोड किया और आपका स्निपेट उस पर है। यहाँ अभी तक किसी विज़िटर ने चैटबॉट नहीं खोला है।',
+    differentChatbot: 'एक अलग चैटबॉट',
+    differentChatbotDetail:
+        'इस पेज पर OyeChats विजेट चल रहा है, पर वह किसी दूसरे चैटबॉट का है, इसका नहीं।',
+    snippetNotFound: 'स्निपेट नहीं मिला',
+    snippetNotFoundDetail: 'हमने यह पेज लोड किया और उस पर स्निपेट नहीं था।',
+    couldNotCheck: 'जाँच नहीं हो सकी',
+    couldNotCheckDetail:
+        'हम यह डोमेन लोड नहीं कर सके। अक्सर इसकी वजह लॉगिन पेज या फ़ायरवॉल होती है, टूटा हुआ इंस्टॉल नहीं।',
+    notCheckedYet: 'अभी जाँचा नहीं गया',
+    notCheckedYetDetail:
+        'आपकी अनुमति-सूची में है। यहाँ से कुछ लोड नहीं हुआ है और हमने अभी देखा भी नहीं है।',
+    noDomainsYet: 'अभी कोई डोमेन नहीं',
+    // `{live}`, `{total}` और `{problems}` को `summariseDomains` भरता है।
+    domainsNeedAttention: '{total} में से {live} काम कर रहे \u00b7 {problems} पर ध्यान चाहिए',
+    allDomainsWorking: 'सभी {total} पर काम कर रहा है',
+    someDomainsWorking: '{total} में से {live} काम कर रहे',
     livePreviewTestYourBot: 'लाइव प्रीव्यू - अपना बॉट आज़माएँ और बदलाव तुरंत होते देखें',
     loadPreview: 'प्रीव्यू लोड करें',
     loadedFrom: 'यहाँ से लोड हुआ',

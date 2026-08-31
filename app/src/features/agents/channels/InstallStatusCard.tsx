@@ -1,4 +1,4 @@
-import { CheckCircle2, ExternalLink, RefreshCw } from 'lucide-react';
+import { CheckCircle2, ExternalLink, RadarIcon, RefreshCw } from 'lucide-react';
 import {
   ABSENT,
   Alert,
@@ -9,12 +9,14 @@ import {
   CardSection,
   Progress,
   PropertyGrid,
+  SkeletonText,
   StatusDot,
   buttonClass,
   formatDateTime,
   formatRelative,
 } from '../../../ui';
 import { INSTALL_STAMP_CAPTION, type InstallStatus, type WidgetHeartbeat } from './deployModel';
+import { describeDomain, summariseDomains, type DomainInstall } from './installDomainsModel';
 import { useTranslation } from '../../../i18n/useTranslation';
 
 export interface InstallStatusCardProps {
@@ -28,6 +30,13 @@ export interface InstallStatusCardProps {
   /** The origins allowed to embed this chatbot. Empty means any. */
   domains: readonly string[];
   /**
+   * The inventory: where the chatbot has been SEEN, which is a different
+   * question from where it is permitted. A domain can be live and not allowed
+   * (works today, blocked the moment enforcement is switched on), or allowed
+   * and empty (configured, never installed) — and the two lists are kept apart
+   * here precisely so the card can say which.
+   */
+  /**
    * Where the allow-list is edited. It is a fragment on this same page rather
    * than a route, so this is a plain anchor: a router `Link` to `#access` would
    * be resolved as a path and match nothing.
@@ -40,6 +49,14 @@ export interface InstallStatusCardProps {
   onStopVerifying: () => void;
   /** Open the troubleshooting tab on the help card below. */
   onTroubleshoot: () => void;
+
+  /** Every domain this chatbot is on, has been on, or is allowed on. */
+  installs: readonly DomainInstall[];
+  domainsLoading: boolean;
+  domainsChecking: boolean;
+  domainsCheckedAt: string | null;
+  onCheckDomains: () => void;
+  domainsCheckError: string | null;
 }
 
 /**
@@ -77,6 +94,12 @@ export function InstallStatusCard({
   onStartVerifying,
   onStopVerifying,
   onTroubleshoot,
+  installs,
+  domainsLoading,
+  domainsChecking,
+  domainsCheckedAt,
+  onCheckDomains,
+  domainsCheckError,
 }: InstallStatusCardProps) {
   const { t } = useTranslation();
   const websiteHref = website
@@ -154,15 +177,6 @@ export function InstallStatusCard({
                 ),
               },
               {
-                label: t('agents.loadedFrom') || 'Loaded from',
-                value: heartbeat.origin ? (
-                  <span className="figure break-all">{heartbeat.origin}</span>
-                ) : (
-                  ABSENT
-                ),
-                note: t('agents.reportedByTheBrowserSo') || 'Reported by the browser, so useful for support and never proof of anything.',
-              },
-              {
                 label: t('agents.allowedDomains') || 'Allowed domains',
                 value: (
                   <a
@@ -187,6 +201,98 @@ export function InstallStatusCard({
           <p className="mt-2 text-xs text-text-tertiary">{heartbeat.detail}</p>
         </CardSection>
       ) : null}
+
+      {/* The inventory.
+          This is what turns the card from "has anything ever loaded this
+          chatbot" into "where is it, and where is it not". Two signals feed it
+          and they are not equivalent: an observation is a real browser loading
+          the widget, a probe is our own fetch of served HTML. The row wording
+          in `describeDomain` keeps them distinguishable, because a probe that
+          finds nothing on a site whose snippet is injected by a tag manager is
+          our blind spot, not the customer's bug. */}
+      <CardSection>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold text-text-primary">
+              {t('agents.yourDomains') || 'Your domains'}
+            </h3>
+            <p className="text-xs text-text-secondary">
+              {domainsLoading ? '\u00a0' : summariseDomains(installs)}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {domainsCheckedAt && !domainsChecking ? (
+              <span className="text-xs text-text-tertiary">
+                {t('agents.checked') || 'Checked'} {formatRelative(domainsCheckedAt)}
+              </span>
+            ) : null}
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={onCheckDomains}
+              disabled={domainsChecking}
+              loading={domainsChecking}
+              iconLeft={<RadarIcon aria-hidden />}
+            >
+              {domainsChecking
+                ? t('agents.checkingDomains') || 'Checking'
+                : t('agents.checkMyDomains') || 'Check my domains'}
+            </Button>
+          </div>
+        </div>
+
+        {domainsCheckError ? (
+          <Alert tone="danger" live className="mt-3">
+            {domainsCheckError}
+          </Alert>
+        ) : null}
+
+        {domainsLoading ? (
+          <div className="mt-3">
+            <SkeletonText lines={2} />
+          </div>
+        ) : installs.length === 0 ? (
+          /* No allow-list, nothing observed. Not a fault: a chatbot restricted
+             to no domains runs everywhere, which is the default. */
+          <p className="mt-3 text-xs text-text-tertiary">
+            {t('agents.noDomainsRecordedYet') ||
+              'No domains recorded yet. Add the snippet to your site, or list your domains under Access below, and check again.'}
+          </p>
+        ) : (
+          <ul className="mt-3 divide-y divide-border-subtle">
+            {installs.map((domain) => {
+              const presentation = describeDomain(domain);
+              return (
+                <li key={domain.hostname} className="flex items-start gap-3 py-2.5 first:pt-0 last:pb-0">
+                  <span className="mt-1 shrink-0">
+                    <StatusDot tone={presentation.tone} label={presentation.label} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                      <span className="figure break-all text-sm text-text-primary">{domain.hostname}</span>
+                      {/* The word, never only the dot. */}
+                      <span className="text-xs font-medium text-text-secondary">{presentation.label}</span>
+                    </div>
+                    <p className="text-xs text-text-tertiary">{presentation.detail}</p>
+                    {domain.other_chatbot ? (
+                      <p className="mt-0.5 text-xs text-text-tertiary">
+                        {t('agents.foundInstead') || 'Found instead'}:{' '}
+                        <span className="figure break-all">{domain.other_chatbot}</span>
+                      </p>
+                    ) : null}
+                    {domain.observed_last_at ? (
+                      <p className="mt-0.5 text-xs text-text-tertiary">
+                        {t('agents.lastVisitorHere') || 'Last visitor here'}{' '}
+                        {formatRelative(domain.observed_last_at)}
+                      </p>
+                    ) : null}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </CardSection>
 
       {checking ? (
         <CardFooter className="justify-between">

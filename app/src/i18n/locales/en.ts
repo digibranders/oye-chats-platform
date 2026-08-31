@@ -1893,6 +1893,38 @@ const en = {
     liveChatCopyIsAvailable: 'Live-chat copy is available on Starter and up.',
     liveOnYourSite: 'Live on your site',
     liveOnYourWebsite: 'Live on your website',
+    // ── Per-domain install inventory (Deploy ▸ install card) ──
+    yourDomains: 'Your domains',
+    checked: 'Checked',
+    checkMyDomains: 'Check my domains',
+    checkingDomains: 'Checking',
+    noDomainsRecordedYet:
+        'No domains recorded yet. Add the snippet to your site, or list your domains under Access below, and check again.',
+    foundInstead: 'Found instead',
+    lastVisitorHere: 'Last visitor here',
+    liveDomainDetail: 'Real visitors have loaded your chatbot on this domain.',
+    liveButNotAllowed: 'Live, but not on your allow-list',
+    liveButNotAllowedDetail:
+        'Visitors are using it here now. Turning on domain restriction would block this site until you add it.',
+    snippetFound: 'Snippet found',
+    snippetFoundDetail:
+        'We fetched this page and your snippet is on it. No visitor has opened the chatbot here yet.',
+    differentChatbot: 'A different chatbot',
+    differentChatbotDetail:
+        'This page is running an OyeChats widget for another chatbot, not this one.',
+    snippetNotFound: 'Snippet not found',
+    snippetNotFoundDetail: 'We fetched this page and the snippet was not in it.',
+    couldNotCheck: 'Could not check',
+    couldNotCheckDetail:
+        'We could not load this domain. That is often a login wall or a firewall, not a broken install.',
+    notCheckedYet: 'Not checked yet',
+    notCheckedYetDetail:
+        'On your allow-list. Nothing has loaded from here and we have not looked yet.',
+    noDomainsYet: 'No domains yet',
+    // `{live}`, `{total}` and `{problems}` are substituted by `summariseDomains`.
+    domainsNeedAttention: '{live} of {total} working \u00b7 {problems} need attention',
+    allDomainsWorking: 'Working on all {total}',
+    someDomainsWorking: '{live} of {total} working',
     livePreviewTestYourBot: 'Live preview - test your bot & watch edits update in real time',
     loadPreview: 'Load preview',
     loadedFrom: 'Loaded from',
