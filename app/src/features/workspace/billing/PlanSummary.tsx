@@ -15,7 +15,6 @@ import {
 import {
   CHARGE_CURRENCY,
   chargeDisclosure,
-  formatAgentAllowance,
   formatCredits,
   formatMoneyMinor,
   formatOverageRate,
@@ -38,6 +37,8 @@ export interface PlanSummaryProps {
   geo: BillingGeoView | null;
   /** Chatbots currently active in the workspace, from the entitlements usage map. */
   agentsUsed: number;
+  /** The chatbot this subscription funds, when the page is scoped to one. */
+  scopedBotName?: string | null;
   /** Operator seats currently filled. */
   seatsUsed: number;
   /**
@@ -76,6 +77,7 @@ export function PlanSummary({
   plan,
   geo,
   agentsUsed,
+  scopedBotName = null,
   seatsUsed,
   grossSeatPriceMinor,
   onChangePlan,
@@ -117,7 +119,22 @@ export function PlanSummary({
           </span>
         }
         titleAs="h2"
-        description={plan ? undefined : 'This workspace has no paid subscription.'}
+        // Say WHOSE plan this is. The same card shows a chatbot's own
+        // subscription when the page is scoped to one, and the account-level
+        // subscription when it is not — and the account-level one may be a
+        // different plan from anything a chatbot is visibly on. Unlabelled, a
+        // customer cannot tell which of the two they are reading.
+        //
+        // `bot_id IS NULL` on a subscription is not a gap. It funds whichever
+        // chatbots have no plan of their own, which is why it needs saying
+        // rather than hiding: otherwise it reads as a charge for nothing.
+        description={
+          plan
+            ? scopedBotName
+              ? `Funding ${scopedBotName}.`
+              : 'Your account-level subscription. It funds any chatbot that has no plan of its own.'
+            : 'This workspace has no paid subscription.'
+        }
         actions={
           <>
             {subscription.cancelAtPeriodEnd ? (
@@ -188,12 +205,26 @@ export function PlanSummary({
       ) : null}
 
       <CardBody flush>
+        {/* NOT a meter, and this row used to be one.
+            It rendered `used` = every chatbot in the workspace against `limit` =
+            this plan's `limits.bots`, so two chatbots on a plan whose quota is 1
+            painted "2 / 1" in red — an over-quota reading for an account that
+            was over nothing. `limits.bots` is not an account allowance; it is
+            how many chatbots THIS subscription funds, which is 1 on every plan
+            below Enterprise. The description beside it always said so ("Each
+            extra chatbot has its own subscription"), so the control and its own
+            caption disagreed.
+            Nothing is being consumed, so there is no ratio to draw. */}
         <SettingRow
           label="Chatbots"
           description={
             agentQuota === undefined
               ? 'This plan declares no chatbot allowance — ask support before adding another.'
-              : `${formatAgentAllowance(plan)}. Each extra chatbot has its own subscription.`
+              : agentQuota === UNLIMITED_LIMIT
+                ? 'This plan covers as many chatbots as you need.'
+                : scopedBotName
+                  ? `This plan funds ${scopedBotName}. Each chatbot has its own subscription.`
+                  : 'Each chatbot has its own subscription and its own credits.'
           }
           controlWidth="auto"
         >
@@ -203,18 +234,14 @@ export function PlanSummary({
                 {formatNumber(agentsUsed)} <span className="text-text-tertiary">of unlimited</span>
               </span>
             ) : (
-              /* `hideLabel` now keeps the figure and drops only the name, so
-                 the meter no longer has to print "In use" beside a row already
-                 labelled "Chatbots". The name stays in the accessibility tree,
-                 where a bare "3 / 5" needs it. */
-              <Meter
-                className="w-40"
-                label="Chatbots in use"
-                hideLabel
-                size="sm"
-                used={agentsUsed}
-                limit={agentQuota}
-              />
+              // The workspace count, stated plainly. A count is a fact; a ratio
+              // against this plan's quota would be the old lie in a new shape.
+              <span className="figure text-sm font-medium text-text-primary">
+                {formatNumber(agentsUsed)}{' '}
+                <span className="text-text-tertiary">
+                  {agentsUsed === 1 ? 'chatbot' : 'chatbots'}
+                </span>
+              </span>
             )}
             <Button size="sm" variant="secondary" onClick={onAddChatbot}>
               Add

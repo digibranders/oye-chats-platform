@@ -208,10 +208,17 @@ export function InvoicesSection({
   loading,
   error,
   onRetry,
+  showChatbot = false,
 }: {
   invoices: InvoiceView[];
   loading: boolean;
   error: string | null;
+  /**
+   * Name the chatbot on every row. Only worth the width when the account has
+   * more than one and the history is not already narrowed to a single one —
+   * otherwise every row repeats the same value.
+   */
+  showChatbot?: boolean;
   onRetry: () => void;
 }) {
   const [open, setOpen] = useState<InvoiceView | null>(null);
@@ -234,6 +241,30 @@ export function InvoicesSection({
         </span>
       ),
     },
+    // Which chatbot this document was raised for. Billing is per chatbot, so an
+    // account with two paid chatbots gets two interleaved streams of tax
+    // documents — and these are reconciled against a bank statement, so a row
+    // nobody can attribute is worse here than anywhere else in the product.
+    //
+    // "Account" for `botId === null`: that is the account-level subscription
+    // funding chatbots without a plan of their own. Naming it beats a blank
+    // cell, which reads as missing data rather than as a different kind of row.
+    ...(showChatbot
+      ? [
+          {
+            key: 'chatbot',
+            header: 'Chatbot',
+            width: '9rem',
+            sortable: (a: InvoiceView, b: InvoiceView) =>
+              (a.botName ?? '').localeCompare(b.botName ?? ''),
+            render: (row: InvoiceView) => (
+              <Badge tone="neutral">
+                {row.botName ?? (row.botId === null ? 'Account' : `Chatbot ${row.botId}`)}
+              </Badge>
+            ),
+          } satisfies Column<InvoiceView>,
+        ]
+      : []),
     {
       key: 'date',
       header: 'Issued',

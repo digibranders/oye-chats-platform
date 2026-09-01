@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, Coins } from 'lucide-react';
 import {
@@ -20,7 +20,6 @@ import {
   NavTabs,
   Page,
   PageHeader,
-  Select,
   Stack,
   StatRow,
   buttonClass,
@@ -28,6 +27,7 @@ import {
 } from '../../ui';
 import { cancelScheduledChange, resumeSubscription } from '../../services/api';
 import { useEntitlements } from '../../hooks/useEntitlements';
+import { useBotContext } from '../../context/BotContext';
 import { keys } from '../../query/keys';
 import { BILLING_SECTIONS } from './billing/sections';
 import { DunningBanner, ReauthBanner } from './billing/DunningBanner';
@@ -66,13 +66,24 @@ import { formatPeriod, resolveScopedPool } from './usage-model';
  * named on screen and addressable by link.
  */
 export function BillingPage() {
-  const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const client = useQueryClient();
   const { entitlements } = useEntitlements();
 
-  const scopeParam = params.get('chatbot');
-  const botId = scopeParam && /^\d+$/.test(scopeParam) ? Number(scopeParam) : null;
+  /**
+   * Which chatbot this page is reporting on.
+   *
+   * Read from the SHELL scope, not from a `?chatbot=` param of this page's own.
+   * Billing used to carry a second selector labelled "Billing scope", so once
+   * the rail gained a chatbot switcher there were two controls for one concept
+   * on screen together — with different state, and the rail one having no
+   * effect here. One control now drives every workspace surface.
+   *
+   * Null means the account-level view: shared credits, and the subscription
+   * that funds chatbots with no plan of their own.
+   */
+  const { selectedBot } = useBotContext();
+  const botId = selectedBot?.id ?? null;
 
   const billing = useBillingData(botId);
   const [picking, setPicking] = useState(false);
@@ -139,22 +150,6 @@ export function BillingPage() {
           <NavTabs
             label="Billing sections"
             items={BILLING_SECTIONS}
-            trailing={
-              scopeOptions.length > 1 ? (
-                <Select
-                  label="Billing scope"
-                  size="sm"
-                  options={scopeOptions}
-                  value={scopeParam ?? ''}
-                  onValueChange={(value) => {
-                    const next = new URLSearchParams(params);
-                    if (value) next.set('chatbot', value);
-                    else next.delete('chatbot');
-                    setParams(next, { replace: true });
-                  }}
-                />
-              ) : undefined
-            }
           />
         }
       />
@@ -247,6 +242,11 @@ export function BillingPage() {
                 plan={plan}
                 geo={billing.geo.data ?? null}
                 agentsUsed={entitlements.usage?.bots ?? 0}
+                // Only when a chatbot is actually scoped. `pool.name` is the
+                // CREDIT POOL's name, and the unscoped pool is called "Shared
+                // credits" — passing it through unguarded rendered "Funding
+                // Shared credits", which names no chatbot at all.
+                scopedBotName={botId != null ? (pool?.name ?? null) : null}
                 seatsUsed={entitlements.usage?.operators ?? 0}
                 grossSeatPriceMinor={core?.grossExtraSeatPriceMinor ?? null}
                 onChangePlan={() => setPicking(true)}
@@ -409,6 +409,9 @@ export function BillingPage() {
           ) : null}
 
           <InvoicesSection
+            // Only when there is something to disambiguate: more than one
+            // chatbot, and the history not already narrowed to one.
+            showChatbot={scopeOptions.length > 2 && botId === null}
             invoices={billing.invoices.data ?? []}
             loading={billing.invoices.isPending}
             error={

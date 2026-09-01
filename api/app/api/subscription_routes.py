@@ -852,9 +852,31 @@ def list_invoices(client: Client = Depends(get_current_client), bot_id: int | No
         )
         invoices = session.execute(stmt).scalars().all()
 
+        # Which chatbot each invoice was raised for. Billing is per chatbot, so
+        # an account with two paid chatbots receives two interleaved streams of
+        # documents -- and these are tax documents someone reconciles against a
+        # bank statement, so an unattributable row is worse here than anywhere
+        # else in the product.
+        #
+        # Names resolved in ONE query rather than per row. `bot_id IS NULL` is a
+        # real state, not a gap: it is the account-level subscription that funds
+        # chatbots without one of their own, and it must report no chatbot
+        # rather than borrow another's name.
+        bot_names: dict[int, str | None] = {}
+        wanted = {inv.bot_id for inv in invoices if inv.bot_id is not None}
+        if wanted:
+            bot_names = {
+                row_id: row_name
+                for row_id, row_name in session.execute(
+                    select(Bot.id, Bot.name).where(Bot.client_id == client.id, Bot.id.in_(wanted))
+                ).all()
+            }
+
         return [
             {
                 "id": inv.id,
+                "bot_id": inv.bot_id,
+                "bot_name": bot_names.get(inv.bot_id) if inv.bot_id is not None else None,
                 "amount_cents": inv.amount_cents,
                 "currency": inv.currency,
                 "status": inv.status,
