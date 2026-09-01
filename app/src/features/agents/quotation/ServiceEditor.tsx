@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { ChevronDown, Plus, Trash2, X } from 'lucide-react';
 import {
   Button,
@@ -53,18 +53,21 @@ function money(currency: string, majorUnits: number): string {
  * ceiling is the only figure that is true for every visitor. Quoting a floor
  * next to a service the visitor will price higher reads as a bait.
  */
+function lineCeiling(requirement: Requirement): number {
+  if (requirement.type === 'choice') {
+    return requirement.options.reduce(
+      (max, option) => Math.max(max, option.price * option.quantity),
+      0,
+    );
+  }
+  const quantity = requirement.quantity_mode === 'none' ? 1 : requirement.quantity;
+  return requirement.price * quantity;
+}
+
 function ceilingFor(service: Service): number {
-  return service.requirements.reduce((total, requirement) => {
-    if (requirement.type === 'choice') {
-      const dearest = requirement.options.reduce(
-        (max, option) => Math.max(max, option.price * option.quantity),
-        0,
-      );
-      return total + dearest;
-    }
-    const quantity = requirement.quantity_mode === 'none' ? 1 : requirement.quantity;
-    return total + requirement.price * quantity;
-  }, 0);
+  // Sums the same per-line figure a collapsed line shows, so a line's summary
+  // and the service total can never disagree about what that line costs.
+  return service.requirements.reduce((total, requirement) => total + lineCeiling(requirement), 0);
 }
 
 /**
@@ -107,6 +110,34 @@ function ServiceEditorInner({
       ),
     });
 
+  /**
+   * Which LINES are collapsed, by id.
+   *
+   * A line's editor is a question, a type, a price, a quantity mode and up to
+   * twelve priced options — some thirty rows each, and twenty lines are allowed
+   * per requirement. Expanded by default that is a wall you scroll past rather
+   * than read, which is the same reason the requirement above it collapses.
+   *
+   * Local, not lifted to the catalog: "collapse all" here means this
+   * requirement's lines. A catalog-level control reaching inside every
+   * requirement would fold up work the reader is in the middle of.
+   */
+  const [collapsedLineIds, setCollapsedLineIds] = useState<ReadonlySet<string>>(
+    // Existing lines start collapsed, so opening a saved requirement gives you
+    // something scannable. A line added below opens expanded — you added it to
+    // fill it in.
+    () => new Set(service.requirements.map((requirement) => requirement.id)),
+  );
+  const toggleLine = (id: string) =>
+    setCollapsedLineIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const allLinesCollapsed =
+    requirements.length > 0 && requirements.every((r) => collapsedLineIds.has(r.id));
+
   return (
     <Card>
       <CardHeader
@@ -144,42 +175,84 @@ function ServiceEditorInner({
       />
       {!collapsed && (
       <CardBody className="space-y-4">
-        <Field label={t('agents.name') || 'Name'} required hint={t('agents.whatTheVisitorPicksFrom') || 'What the visitor picks from.'}>
-          <Input
-            value={service.name}
-            onChange={(event) => onChange({ name: event.target.value })}
-            placeholder={t('agents.landingPageDesign') || 'Landing page design'}
-            disabled={disabled}
-          />
-        </Field>
+        {/* Paired, not stacked. Both hold one short line, and full-width each
+            spent a whole row per requirement on two values that fit side by
+            side — with the hint under Name repeating what the card already
+            says. The placeholders carry the example; the hints carry only what
+            is NOT inferable, which for Description is where it shows up. */}
+        <Grid cols={2}>
+          <Field label={t('agents.name') || 'Name'} required>
+            <Input
+              value={service.name}
+              onChange={(event) => onChange({ name: event.target.value })}
+              placeholder={t('agents.landingPageDesign') || 'Landing page design'}
+              disabled={disabled}
+            />
+          </Field>
 
-        <Field label={t('agents.description') || 'Description'} optional hint={t('agents.oneLineShownUnderThe') || 'One line, shown under the name while quoting.'}>
-          <Input
-            value={service.description}
-            onChange={(event) => onChange({ description: event.target.value })}
-            placeholder={t('agents.includesThreeConceptsAndTwo') || 'Includes three concepts and two revision rounds.'}
-            disabled={disabled}
-          />
-        </Field>
+          <Field
+            label={t('agents.description') || 'Description'}
+            optional
+            hint={t('agents.shownWhileQuoting') || 'Shown under the name while quoting.'}
+          >
+            <Input
+              value={service.description}
+              onChange={(event) => onChange({ description: event.target.value })}
+              placeholder={t('agents.includesThreeConceptsAndTwo') || 'Includes three concepts and two revision rounds.'}
+              disabled={disabled}
+            />
+          </Field>
+        </Grid>
 
         <section className="border-t border-border pt-4">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <h4 className="text-base font-semibold text-text-primary">{t('agents.lines') || 'Lines'}</h4>
-            <span className="figure text-xs text-text-tertiary">
-              {formatNumber(requirements.length)} of {formatNumber(MAX_REQUIREMENTS_PER_SERVICE)}
-            </span>
+            <div className="flex items-center gap-3">
+              {requirements.length > 1 ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={disabled}
+                  onClick={() =>
+                    setCollapsedLineIds(
+                      allLinesCollapsed ? new Set() : new Set(requirements.map((r) => r.id)),
+                    )
+                  }
+                >
+                  {allLinesCollapsed
+                    ? t('agents.expandAll') || 'Expand all'
+                    : t('agents.collapseAll') || 'Collapse all'}
+                </Button>
+              ) : null}
+              <span className="figure text-xs text-text-tertiary">
+                {formatNumber(requirements.length)} of {formatNumber(MAX_REQUIREMENTS_PER_SERVICE)}
+              </span>
+            </div>
           </div>
           <p className="mt-1 text-sm text-text-secondary">
-            Every line the visitor can take, and what each one costs. A line item is ticked on or
-            off; a priced choice asks them to pick one of several answers, each with its own price.
+            Every line the visitor can take, and what each one costs.
           </p>
 
           {requirements.length === 0 ? null : (
             <ul className="mt-3 space-y-3">
-              {requirements.map((requirement, requirementIndex) => (
+              {requirements.map((requirement, requirementIndex) => {
+                  const lineCollapsed = collapsedLineIds.has(requirement.id);
+                  return (
                 <li key={requirement.id} className="rounded-md border border-border p-3">
                   <div className="flex items-start justify-between gap-2">
-                    <Field label={`Line ${requirementIndex + 1}`} required className="min-w-0 flex-1">
+                    {/* The name stays editable while collapsed: it is how you
+                        tell one line from another, so folding it away would
+                        make the collapsed list unreadable — the very thing
+                        collapsing is for. The ceiling joins it as a hint, so a
+                        closed line still answers "what does this cost?". */}
+                    <Field
+                      label={`Line ${requirementIndex + 1}`}
+                      required
+                      className="min-w-0 flex-1"
+                      hint={
+                        lineCollapsed ? `Up to ${money(currency, lineCeiling(requirement))}` : undefined
+                      }
+                    >
                       <Input
                         value={requirement.label}
                         onChange={(event) =>
@@ -189,6 +262,23 @@ function ServiceEditorInner({
                         disabled={disabled}
                       />
                     </Field>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      className="mt-6"
+                      aria-expanded={!lineCollapsed}
+                      aria-label={
+                        lineCollapsed
+                          ? `${t('agents.expand') || 'Expand'} line ${requirementIndex + 1}`
+                          : `${t('agents.collapse') || 'Collapse'} line ${requirementIndex + 1}`
+                      }
+                      onClick={() => toggleLine(requirement.id)}
+                    >
+                      <ChevronDown
+                        aria-hidden
+                        className={`transition-transform ${lineCollapsed ? '' : 'rotate-180'}`}
+                      />
+                    </Button>
                     <Button
                       variant="danger"
                       size="sm"
@@ -203,6 +293,9 @@ function ServiceEditorInner({
                       iconLeft={<Trash2 aria-hidden />}
                     />
                   </div>
+
+                  {!lineCollapsed && (
+                  <>
 
                   <Field
                     label={t('agents.question') || 'Question'}
@@ -221,7 +314,18 @@ function ServiceEditorInner({
                   </Field>
 
                   <Grid cols={2} className="mt-3">
-                    <Field label={t('agents.type') || 'Type'}>
+                    {/* The item-vs-choice distinction used to sit in the Lines
+                        intro, two lines of prose above every requirement,
+                        explaining a decision made here. It reads once, where
+                        the decision is. */}
+                    <Field
+                      label={t('agents.type') || 'Type'}
+                      hint={
+                        requirement.type === 'choice'
+                          ? t('agents.visitorPicksOneOption') || 'The visitor picks one option, each with its own price.'
+                          : t('agents.visitorTicksItOnOrOff') || 'The visitor ticks it on or off.'
+                      }
+                    >
                       <Select
                         label={t('agents.type') || 'Type'}
                         value={requirement.type}
@@ -269,7 +373,7 @@ function ServiceEditorInner({
                           })
                         }
                       />
-                      <Field label={t('agents.unit') || 'Unit'} hint={t('agents.whatOneOfItIs') || 'What one of it is counted in.'}>
+                      <Field label={t('agents.unit') || 'Unit'}>
                         <Input
                           value={requirement.unit_label}
                           onChange={(event) =>
@@ -294,17 +398,21 @@ function ServiceEditorInner({
                           patchRequirement(requirementIndex, { price: Math.max(0, Number(raw) || 0) })
                         }
                       />
-                      <Field label={t('agents.addsToTheQuote') || 'Adds to the quote'} hint={t('agents.whatTheVisitorWouldSee') || 'What the visitor would see.'}>
-                        {/* Not an `Input`: it is derived, and a disabled field
-                            that looks editable invites the reader to try. */}
-                        <p className="figure pt-1.5 text-base text-text-primary">
+                      {/* Derived, so not an `Input` — a disabled field that
+                          looks editable invites the reader to try it. It also
+                          does not need a Field's label-plus-hint stack: it is
+                          one figure, and naming it inline costs a line rather
+                          than a row. */}
+                      <p className="self-end pb-2 text-sm text-text-secondary">
+                        {t('agents.addsToTheQuote') || 'Adds to the quote'}{' '}
+                        <span className="figure text-base font-medium text-text-primary">
                           {money(
                             currency,
                             requirement.price *
                               (requirement.quantity_mode === 'none' ? 1 : requirement.quantity),
                           )}
-                        </p>
-                      </Field>
+                        </span>
+                      </p>
                     </Grid>
                   ) : (
                     <div className="mt-3 border-t border-border pt-3">
@@ -394,8 +502,11 @@ function ServiceEditorInner({
                       </Button>
                     </div>
                   )}
+                  </>
+                  )}
                 </li>
-              ))}
+                  );
+                })}
             </ul>
           )}
 
