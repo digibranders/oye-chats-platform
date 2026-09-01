@@ -98,8 +98,8 @@ export function SetupJourney({ workspaceId = null }: SetupJourneyProps) {
                   )}
                   <span className={cn('truncate', step.done && 'line-through')}>{step.label}</span>
                   {/* Leading space on purpose: without it the accessible name
-                      concatenates to "Make it yours(done)" and is read as one
-                      word. */}
+                      concatenates to "Customise your chatbot(done)" and is read
+                      as one word. */}
                   <span className="sr-only">
                     {step.done
                       ? ` ${t('onboarding.stepDone') || '(done)'}`

@@ -65,7 +65,7 @@ export function useSetupChecklist() {
 
   const indexedChunks = Number(primary?.indexed_chunk_count ?? 0);
   const capturedLeads = Number(leads.data?.total ?? 0);
-  // "Make it yours" ticked on every chatbot ever created, because
+  // The branding step ticked on every chatbot ever created, because
   // `avatar_type` is a STYLE SELECTOR with a default of `'upload'`, not a
   // record of anyone having chosen anything. `Boolean(bot_logo || avatar_type)`
   // was therefore true from the moment the row existed, and the checklist
@@ -103,7 +103,14 @@ export function useSetupChecklist() {
     },
     {
       id: 'brand',
-      label: translateNow('onboarding.makeItYours') || 'Make it yours',
+      // Named for what it does, not for how it feels. The compact strip renders
+      // the LABEL alone -- `SetupJourney` never draws `description` -- so "Make
+      // it yours" reached the reader with nothing to say which of five steps it
+      // was, while the clause that carried its meaning ("Your colours, your
+      // avatar, your greeting") only appeared in the expanded card. It also
+      // mirrors "Create your chatbot", which is the same object at the other
+      // end of the list.
+      label: translateNow('onboarding.customiseYourChatbot') || 'Customise your chatbot',
       description: translateNow('onboarding.yourColoursYourAvatarYour') || 'Your colours, your avatar, your greeting',
       done: branded,
       to: primary ? agentPath(primary.id, 'experience') : '/chatbots',

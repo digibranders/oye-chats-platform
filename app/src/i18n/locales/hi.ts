@@ -3356,7 +3356,7 @@ const hi = {
     goToHome: 'होम पर जाएँ',
     happensOnItsOwn: 'अपने आप होता है',
     letsGiveYourChatbotSomething: 'आइए अपने चैटबॉट को जानने के लिए कुछ दें',
-    makeItYours: 'इसे अपना बनाएँ',
+    customiseYourChatbot: 'अपना चैटबॉट कस्टमाइज़ करें',
     myChatbot: 'मेरा चैटबॉट',
     nameItPointItAt: 'इसे नाम दें, अपनी साइट पर लगाएँ',
     oneScriptTag: 'एक स्क्रिप्ट टैग',

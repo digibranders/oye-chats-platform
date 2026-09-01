@@ -3360,7 +3360,7 @@ const en = {
     goToHome: 'Go to Home',
     happensOnItsOwn: 'Happens on its own',
     letsGiveYourChatbotSomething: 'Let’s give your chatbot something to know',
-    makeItYours: 'Make it yours',
+    customiseYourChatbot: 'Customise your chatbot',
     myChatbot: 'My chatbot',
     nameItPointItAt: 'Name it, point it at your site',
     oneScriptTag: 'One script tag',

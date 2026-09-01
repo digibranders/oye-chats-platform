@@ -22,7 +22,7 @@ vi.mock('./useSetupChecklist', () => ({ useSetupChecklist: vi.fn() }));
 const STEPS = [
   { id: 'create', label: 'Create your chatbot', description: '', done: true, to: '/welcome' },
   { id: 'train', label: 'Give it something to know', description: '', done: false, to: '/chatbots/7/knowledge' },
-  { id: 'brand', label: 'Make it yours', description: '', done: false, to: '/chatbots/7/experience' },
+  { id: 'brand', label: 'Customise your chatbot', description: '', done: false, to: '/chatbots/7/experience' },
   { id: 'install', label: 'Put it on your website', description: '', done: false, to: '/chatbots/7/deploy' },
 ];
 

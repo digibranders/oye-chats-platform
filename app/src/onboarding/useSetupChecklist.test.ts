@@ -6,7 +6,7 @@ import type { Bot } from '../types/domain';
 /**
  * The two steps that lied.
  *
- * "Make it yours" was struck through on every chatbot ever created, because it
+ * The branding step was struck through on every chatbot ever created, because it
  * asked `Boolean(bot_logo || avatar_type)` and `avatar_type` is a style selector
  * seeded to `'upload'` — true from the moment the row exists. A customer looking
  * at their default colour and empty avatar slot was told they had already done
@@ -40,7 +40,7 @@ function withBot(over: Partial<Bot> = {}) {
 
 const brandStep = (r: ReturnType<typeof withBot>) => r.steps.find((s) => s.id === 'brand')!;
 
-describe('the "make it yours" step', () => {
+describe('the branding step', () => {
   it('is not done on a chatbot nobody has touched', () => {
     expect(brandStep(withBot()).done).toBe(false);
   });
@@ -84,5 +84,19 @@ describe('the steps themselves', () => {
     const ids = withBot().steps.map((s) => s.id);
     expect(ids).not.toContain('test');
     expect(ids).toEqual(['create', 'train', 'brand', 'install', 'lead']);
+  });
+
+  it('names each step by what it does, because the strip shows nothing else', () => {
+    // `SetupJourney` renders `label` alone and never `description`, so every
+    // label has to identify its step unaided. The branding one used to read
+    // "Make it yours", which says nothing about which of five steps it is --
+    // its meaning lived entirely in a clause the strip does not draw.
+    expect(withBot().steps.map((s) => s.label)).toEqual([
+      'Create your chatbot',
+      'Give it something to know',
+      'Customise your chatbot',
+      'Put it on your website',
+      'Capture your first lead',
+    ]);
   });
 });
