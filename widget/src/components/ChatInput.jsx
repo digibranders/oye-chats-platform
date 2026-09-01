@@ -736,7 +736,24 @@ const ChatInput = ({
                             </button>
                         )}
                     </div>
-                    <p className="col-start-2 text-[10px] text-gray-400 leading-snug text-center justify-self-center hidden md:block">
+                    {/* The privacy notice, and the one thing it must not do: vanish
+                        before the visitor has decided anything.
+
+                        It collapses on a phone only AFTER the conversation has
+                        started, so the tiny mobile viewport reclaims the space
+                        above the input once it is no longer earning it. Before
+                        the first message it stays up on every viewport, because
+                        that is the moment it does its work — when someone is
+                        deciding whether to type personal details into a chat
+                        box. This is the only privacy link in the widget, so a
+                        bare `hidden md:block` here removes the disclosure from
+                        every phone visitor outright. That shipped once.
+
+                        Derived from `userMessageCount` rather than carrying its
+                        own `userHasSent` prop: both would be computed from the
+                        same `messages` array by the same parent, and one fact
+                        with two sources is how they drift apart. */}
+                    <p className={`col-start-2 text-[10px] text-gray-400 leading-snug text-center justify-self-center ${userMessageCount > 0 ? 'hidden md:block' : ''}`}>
                         <a
                             href="https://www.oyechats.com/legal/privacy"
                             target="_blank"

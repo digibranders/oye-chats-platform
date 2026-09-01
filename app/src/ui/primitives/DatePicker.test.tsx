@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { DatePicker } from './DatePicker';
 
 /**
@@ -45,9 +45,35 @@ async function openOn(user: ReturnType<typeof userEvent.setup>, nameMatch: strin
   return screen.findByRole('grid');
 }
 
+/**
+ * The clock is pinned for the whole file.
+ *
+ * A picker with no value opens on the CURRENT month, so the one test that
+ * starts empty was clicking a day that only existed while the machine's date
+ * was in August 2026. It passed for a month and then failed on 1 September on
+ * a commit that touched nothing in `app/` — a red build that names a date
+ * component and blames whoever pushed that morning.
+ *
+ * Every other test here escapes it by passing `initial`, which forces the month
+ * open. That is not available to this one: what it asserts is the EMPTY state,
+ * so giving it a value would delete the thing under test. Pinning the clock is
+ * what makes "opens on today" testable at all.
+ */
+const TODAY = new Date('2026-08-15T12:00:00.000Z');
+
+beforeAll(() => {
+  // `shouldAdvanceTime` so `userEvent`'s internal delays still resolve; without
+  // it every `await user.click()` in this file hangs on a frozen clock.
+  vi.useFakeTimers({ shouldAdvanceTime: true, now: TODAY });
+});
+
+afterAll(() => {
+  vi.useRealTimers();
+});
+
 describe('DatePicker', () => {
   it('shows a placeholder until a date is picked, and folds the picked date into its own name after', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     render(<Controlled />);
     expect(trigger()).toHaveTextContent('Select a date');
 
