@@ -1250,6 +1250,9 @@ class CouponCreate(BaseModel):
     max_redemptions: int | None = Field(default=None, ge=1, le=1_000_000)
     expires_at: datetime | None = None
     applies_to_plan_ids: Annotated[list[RowId], bounded_list(_MAX_COUPON_PLANS)] | None = None
+    # How many billing months the discount covers. NULL = for the life of the
+    # subscription. Capped at five years: past that it is a price, not an offer.
+    duration_months: int | None = Field(default=None, ge=1, le=60)
 
 
 class CouponPatch(BaseModel):
@@ -1259,7 +1262,38 @@ class CouponPatch(BaseModel):
     max_redemptions: int | None = Field(default=None, ge=1, le=1_000_000)
     expires_at: datetime | None = None
     applies_to_plan_ids: Annotated[list[RowId], bounded_list(_MAX_COUPON_PLANS)] | None = None
+    duration_months: int | None = Field(default=None, ge=1, le=60)
     is_active: bool | None = None
+
+
+def _assert_redeemable_shape(percent_off: int | None, duration_months: int | None) -> None:
+    """Refuse the one coupon shape that cannot be honoured without a re-auth.
+
+    A duration means the discount has to STOP, and stopping a partial discount
+    means moving the subscription off its discounted plan onto the full-price
+    one. A plan change on this gateway is a cancel, a recreate and a customer
+    re-authorising their mandate, so every discounted customer would get a
+    "re-authorise your payment" email in the month their discount ended, and
+    everyone who ignored it would lapse.
+
+    The two shapes that survive both avoid that entirely: 100% off for N months
+    is a deferred ``start_at`` on a mandate already authorised at the full
+    amount, and a partial discount for life is a lower-amount plan that simply
+    recurs. Mirrored by ``ck_coupons_duration_requires_full_discount``.
+    """
+    if duration_months is None:
+        return
+    if percent_off != 100:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "A coupon with a duration must be 100% off. A partial discount that "
+                "expires would force every customer to re-authorise their mandate on "
+                "the month it ended. Use 100% off for a free period, or leave the "
+                "duration empty for a discount that lasts for the life of the "
+                "subscription."
+            ),
+        )
 
 
 @router.get("/coupons")
@@ -1278,6 +1312,7 @@ def create_coupon(
     _require_write(admin)
     if body.percent_off is None and body.amount_off_cents is None:
         raise HTTPException(status_code=400, detail="Either percent_off or amount_off_cents must be set.")
+    _assert_redeemable_shape(body.percent_off, body.duration_months)
     with get_session() as session:
         coupon = Coupon(
             code=body.code,
@@ -1286,6 +1321,7 @@ def create_coupon(
             max_redemptions=body.max_redemptions,
             expires_at=body.expires_at,
             applies_to_plan_ids=body.applies_to_plan_ids,
+            duration_months=body.duration_months,
         )
         session.add(coupon)
         session.flush()
@@ -1327,6 +1363,10 @@ def update_coupon(
         amount_off_cents = update_data.get("amount_off_cents", coupon.amount_off_cents)
         if percent_off is None and amount_off_cents is None:
             raise HTTPException(status_code=400, detail="Either percent_off or amount_off_cents must be set.")
+        _assert_redeemable_shape(
+            percent_off,
+            update_data.get("duration_months", coupon.duration_months),
+        )
 
         before = _coupon_dict(coupon)
         for field, value in update_data.items():
@@ -2014,6 +2054,7 @@ def _coupon_dict(c: Coupon) -> dict[str, Any]:
         "redemptions": c.redemptions,
         "expires_at": c.expires_at.isoformat() if c.expires_at else None,
         "applies_to_plan_ids": c.applies_to_plan_ids,
+        "duration_months": c.duration_months,
         "is_active": c.is_active,
         "created_at": c.created_at.isoformat() if c.created_at else "",
     }

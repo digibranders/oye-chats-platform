@@ -30,6 +30,7 @@ import {
   type PlanView,
   type PromotionView,
 } from '../billingModel';
+import { DiscountCodeField, type AppliedCode } from './DiscountCodeField';
 import { TaxNote } from './TaxNote';
 import { usePlanCheckout } from './usePlanCheckout';
 import { usePlanActivation } from './usePlanActivation';
@@ -218,6 +219,11 @@ export function PlanPickerDialog({
     onSettled: () => onActivated?.(),
   });
 
+  // Held here rather than inside the field: the code has to survive that
+  // component's own state and reach `checkout.submit` on whichever plan card
+  // the buyer eventually presses.
+  const [appliedCode, setAppliedCode] = useState<AppliedCode | null>(null);
+
   const checkout = usePlanCheckout({
     hasActiveSubscription,
     promotion,
@@ -384,6 +390,22 @@ export function PlanPickerDialog({
           </Alert>
         ) : null}
 
+        {/* Above the grid, because the code changes every price under it.
+            Hidden while a downgrade to Free is the only thing on offer: there
+            is nothing for a discount to apply to. */}
+        {plans.some((plan) => plan.isPaid) ? (
+          <DiscountCodeField
+            planId={null}
+            billingCycle={cycle}
+            applied={appliedCode}
+            // The cards below show list prices and this dialog has no per-plan
+            // quote to refetch, so the field states the discount itself rather
+            // than leaving the buyer to infer it from a number that did not move.
+            onApplied={setAppliedCode}
+            disabled={locked}
+          />
+        ) : null}
+
         {/* Not `Grid`: `cols={3}` reaches three at `@5xl/page` (1024) and the
             widest dialog body in the system is 856px, so three plans would
             render as two and a widow. See the round-two report. */}
@@ -405,7 +427,7 @@ export function PlanPickerDialog({
                       ? 'Switch to this plan'
                       : 'Subscribe'
                 }
-                onSelect={() => void checkout.submit(plan, cycle)}
+                onSelect={() => void checkout.submit(plan, cycle, appliedCode?.couponCode ?? null)}
               />
             );
           })}

@@ -1,8 +1,10 @@
 """Provider-agnostic discount resolution.
 
 Resolves a client's effective customer discount to basis points by reading
-the referral code attached at signup. The result is then realised by the
-provider layer:
+the referral code attached at signup, or the coupon attached at checkout. A
+referral wins where both somehow exist; checkout refuses to attach the second
+of the two, so that is a tiebreak rather than a real case. The result is then
+realised by the provider layer:
 
   Razorpay → razorpay_service.resolve_discounted_plan()
              (creates / reuses a lower-amount Razorpay plan)
@@ -33,7 +35,13 @@ def resolve_customer_discount_bps(session: Session, client: Client) -> tuple[int
     """
     code_id = getattr(client, "referral_code_id", None)
     if not code_id:
-        return 0, None
+        # No referral, but the account may still be standing on a coupon. The
+        # discount lives in the Razorpay plan the subscription runs on, so a
+        # plan change that did not look here would re-mint at full price and
+        # quietly cancel a discount the customer was promised for life.
+        from app.services import coupon_service
+
+        return coupon_service.standing_discount_bps(session, client)
 
     code = session.get(ReferralCode, code_id)
     if code is None or not code.active or not code.customer_discount_bps:

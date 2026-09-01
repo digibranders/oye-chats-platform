@@ -109,7 +109,8 @@ export interface PlanCheckoutResult {
    */
   activationPending: boolean;
   /** Run the checkout money-path for `plan` at `billingCycle`. */
-  submit: (plan: PlanView, billingCycle: BillingCycle) => Promise<void>;
+  /** `couponCode` is spent on this checkout; a referral rides on the account. */
+  submit: (plan: PlanView, billingCycle: BillingCycle, couponCode?: string | null) => Promise<void>;
   /** Clear transient error/notice state (call on drawer open). */
   reset: () => void;
 }
@@ -155,7 +156,11 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
   }, []);
 
   const submit = useCallback(
-    async (plan: PlanView, billingCycle: BillingCycle): Promise<void> => {
+    async (
+      plan: PlanView,
+      billingCycle: BillingCycle,
+      couponCode: string | null = null,
+    ): Promise<void> => {
       // One attempt at a time - a second click must not open a second checkout.
       if (inFlight.current) return;
       /**
@@ -234,7 +239,12 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
         const chargeGradeCountry = countrySource === 'detected' ? undefined : (acctCountry ?? undefined);
         const res = ((botId != null || hasActiveSubscription) && !promoApplies
           ? await changePlan(plan.id, billingCycle, botId)
-          : await createCheckoutSession(plan.id, billingCycle, chargeGradeCountry)) as Record<string, unknown>;
+          : await createCheckoutSession(
+              plan.id,
+              billingCycle,
+              chargeGradeCountry,
+              couponCode,
+            )) as Record<string, unknown>;
 
         const provider = String(res?.provider || '').toLowerCase();
         const status = String(res?.status || '').toLowerCase();
