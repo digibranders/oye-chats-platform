@@ -168,6 +168,40 @@ jobs:
               echo "::error::Deploy aborted — required secrets missing:$MISSING"
               exit 1
             fi
+
+            # The key ID and the key secret are a PAIR configured in two
+            # different places: the ID is a repository VARIABLE (it is public,
+            # it ships to the browser at checkout) and the secret is a
+            # repository SECRET. Updating one without the other pairs, say, a
+            # test ID with a live secret, and Razorpay then rejects every single
+            # call. The missing-secrets check above cannot see it, because both
+            # values ARE present; the failure surfaces when a real customer
+            # tries to pay.
+            #
+            # The prefixes cannot be compared, because only the ID carries one.
+            # So the pair is checked the only way that actually proves anything:
+            # by authenticating with it.
+            case "$RAZORPAY_KEY_ID" in
+              rzp_live_*) RZP_MODE="live" ;;
+              rzp_test_*) RZP_MODE="test" ;;
+              *) echo "::error::RAZORPAY_KEY_ID is neither rzp_live_ nor rzp_test_"; exit 1 ;;
+            esac
+            echo "Razorpay mode: $RZP_MODE"
+
+            RZP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 \
+              -u "$RAZORPAY_KEY_ID:$RAZORPAY_KEY_SECRET" \
+              "https://api.razorpay.com/v1/plans?count=1" || echo "000")
+            case "$RZP_CODE" in
+              200)  echo "Razorpay credentials authenticate ($RZP_MODE)." ;;
+              401)  echo "::error::Razorpay rejected the key pair (401). The ID is a repository VARIABLE and the secret is a repository SECRET; updating one without the other leaves them mismatched."
+                    exit 1 ;;
+              000)  echo "::warning::Could not reach Razorpay to verify the key pair. Deploy continues." ;;
+              *)    echo "::warning::Razorpay key check returned HTTP $RZP_CODE. Deploy continues." ;;
+            esac
+
+            if [ "$RZP_MODE" = "test" ]; then
+              echo "::warning::Deploying with Razorpay TEST keys — no customer can actually be charged."
+            fi
             for v in VAPID_PUBLIC_KEY VAPID_PRIVATE_KEY BREVO_API_KEY REDIS_URL \
                      SENTRY_DSN_BACKEND LANGFUSE_SECRET_KEY LANGFUSE_PUBLIC_KEY \
                      STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET REOON_API_KEY IPAPI_IS_KEY \

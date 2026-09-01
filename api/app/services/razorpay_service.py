@@ -3119,6 +3119,7 @@ def _grant_subscription_period(
     subscription: Subscription,
     period_end: datetime | None,
     invoice_id: int | None = None,
+    preserve_prior_credits: bool = False,
 ) -> bool:
     """Reset + grant the plan's monthly credits for ``period_end``, once.
 
@@ -3129,7 +3130,13 @@ def _grant_subscription_period(
     scoped to ``subscription.bot_id``, marker advanced only when ``period_end``
     is present.
     """
-    return credit_service.grant_subscription_period_once(session, subscription, period_end, invoice_id=invoice_id)
+    return credit_service.grant_subscription_period_once(
+        session,
+        subscription,
+        period_end,
+        invoice_id=invoice_id,
+        preserve_prior_credits=preserve_prior_credits,
+    )
 
 
 def _entity_future_start(sub_entity: dict[str, Any]) -> datetime | None:
@@ -3869,7 +3876,11 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
                 started = _entity_future_start(sub_entity) or datetime.now(UTC)
                 markers[TRIAL_CONVERSION_GRANT_MARKER] = started.isoformat()
                 local.trial_emails_sent = markers
-            _grant_subscription_period(session, local, grant_period_end)
+            # The customer is PAYING mid-trial, so what is left of the trial
+            # carries over instead of being zeroed. It expires at the trial's
+            # own end and sorts ahead of the paid grant, so it is spent first
+            # and cannot outlive its window.
+            _grant_subscription_period(session, local, grant_period_end, preserve_prior_credits=is_trial_conversion)
 
         # Apply any pending upgrade proration as a top-up credit. Idempotent,
         # the old sub's column is zeroed the first time this runs, so webhook

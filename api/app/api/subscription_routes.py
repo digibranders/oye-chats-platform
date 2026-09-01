@@ -1382,6 +1382,52 @@ def _tax_block(amount_minor: int, *, currency: str, is_domestic: bool, rate_bps:
     }
 
 
+@router.get("/coupon/preview")
+def preview_coupon(
+    code: str,
+    plan_id: int | None = None,
+    client: Client = Depends(get_current_client),
+):
+    """What a coupon would grant, without spending it.
+
+    The checkout body carries ``coupon_code``, so without this the first time a
+    buyer learns their code is wrong is the moment they press pay. It resolves
+    through exactly the same path redemption does, so a preview that says "3
+    months free" cannot disagree with what checkout goes on to apply.
+
+    Deliberately does NOT consume a redemption or attach anything. A capped
+    coupon previewed by ten people who never buy still has ten slots left.
+    """
+    from app.services import coupon_service
+
+    with get_session() as session:
+        if getattr(client, "referral_code_id", None):
+            # Stacking is refused at checkout, so saying so here saves the buyer
+            # from applying a code that would be rejected at the last step.
+            raise HTTPException(
+                status_code=400,
+                detail="A referral code is already active on your account.",
+            )
+        try:
+            grant = coupon_service.resolve(session, code, plan_id=plan_id)
+        except coupon_service.CouponError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        if grant is None:
+            raise HTTPException(status_code=400, detail="Enter a code.")
+
+        return {
+            "code": grant.code,
+            "kind": "free_months" if grant.is_free_period else "discount",
+            "free_months": grant.free_months,
+            "discount_pct": grant.discount_bps // 100,
+            # Monthly-only for a free period, for the same reason the launch
+            # promotion is: deferring the first charge on an ANNUAL cycle bills
+            # the whole year at once when the window ends.
+            "monthly_only": grant.is_free_period,
+        }
+
+
 @router.get("/checkout/quote")
 def checkout_quote(
     request: Request,
@@ -1964,8 +2010,10 @@ def create_checkout(
         if plan.monthly_price_cents == 0:
             raise HTTPException(status_code=400, detail="Cannot checkout for a free plan.")
 
-        # Never charge full price behind a believed discount (Wave 4a).
-        _validate_coupon_or_400(session, request.coupon_code)
+        # Never charge full price behind a believed discount (Wave 4a). Resolved
+        # here so an unusable code fails before any gateway object is minted;
+        # it is not SPENT until the subscription actually exists, below.
+        coupon_grant = _resolve_coupon_or_400(session, request.coupon_code, plan_id=plan.id)
 
         # Already-subscribed guard (BL-4). ``/checkout`` is strictly for a
         # FIRST purchase. A subscribed customer hitting it again would mint a
@@ -2067,7 +2115,43 @@ def create_checkout(
         # charge 3 months and then bill the ENTIRE year at once, a nasty surprise
         # that does not match the offer. Annual checkouts are charged normally
         # (no promo). The frontend also hides the offer on the annual cycle.
-        if provider == "razorpay" and request.billing_cycle == "monthly":
+        # A coupon the buyer typed beats a campaign they merely qualified for.
+        # Checked first so an automatic promotion cannot consume its slot and
+        # then be overridden, which would burn a redemption nobody received.
+        coupon_consumed = False
+        if coupon_grant is not None:
+            from app.services import coupon_service
+
+            if coupon_grant.is_free_period:
+                # Monthly only, for the same reason the promotion path is: N
+                # months free on an ANNUAL cycle defers the first charge N
+                # months and then bills the whole year at once, which is not
+                # the offer anyone bought.
+                if request.billing_cycle != "monthly":
+                    raise HTTPException(
+                        status_code=400,
+                        detail="This code applies to monthly billing only.",
+                    )
+                if not coupon_service.consume(session, coupon_grant):
+                    raise HTTPException(status_code=400, detail="That code has been fully redeemed.")
+                coupon_consumed = True
+                free_until = coupon_grant.free_period_end(datetime.now(UTC))
+                promo_start_at = int(free_until.timestamp())
+                discount_bps = 0
+            else:
+                if not coupon_service.consume(session, coupon_grant):
+                    raise HTTPException(status_code=400, detail="That code has been fully redeemed.")
+                coupon_consumed = True
+                discount_bps = coupon_grant.discount_bps
+            # Standing attribution, so a later plan change re-mints at the
+            # discounted amount instead of quietly reverting to full price.
+            coupon_service.attach(session, client.id, coupon_grant)
+            promo_extra_notes = {
+                "oyechats_coupon_id": str(coupon_grant.coupon_id),
+                "oyechats_coupon_code": coupon_grant.code,
+            }
+
+        if not coupon_consumed and provider == "razorpay" and request.billing_cycle == "monthly":
             from app.services import promotion_service
 
             promo = promotion_service.resolve_active_promotion(session, client, plan)
@@ -3855,39 +3939,22 @@ def _match_topup_pack(packs: list[dict], requested_amount: int) -> dict | None:
     return None
 
 
-def _validate_coupon_or_400(session, coupon_code: str | None) -> None:
-    """Refuse any coupon we cannot actually honour (Wave 4a).
+def _resolve_coupon_or_400(session, coupon_code: str | None, *, plan_id: int | None = None):
+    """Resolve a coupon into what it grants, or 400 with the reason.
 
-    ``coupon_code`` used to be accepted and silently IGNORED, the customer
-    believed a discount applied and was charged full price. There is a
-    ``coupons`` table (superadmin CRUD) but no online redemption realiser, so
-    the honest behaviour is: unknown/inactive/expired → "invalid"; a genuinely
-    valid code → an explicit "not redeemable online" refusal, never a silent
-    full-price charge. (Product default: kill the field; wire redemption only
-    if product asks for it.)
+    This used to refuse every code it was given, valid ones included: there was
+    a ``coupons`` table and a superadmin CRUD but no redemption realiser, so the
+    honest behaviour at the time was an explicit refusal rather than a silent
+    full-price charge behind a believed discount. ``coupon_service`` is that
+    realiser, so a refusal now means the code genuinely cannot be honoured, and
+    it says which of the reasons applies.
     """
-    code = (coupon_code or "").strip()
-    if not code:
-        return
-    from app.db.models import Coupon
+    from app.services import coupon_service
 
-    coupon = session.execute(select(Coupon).where(func.lower(Coupon.code) == code.lower())).scalar_one_or_none()
-    now = datetime.now(UTC)
-    valid = (
-        coupon is not None
-        and coupon.is_active
-        and (coupon.expires_at is None or coupon.expires_at > now)
-        and (coupon.max_redemptions is None or (coupon.redemptions or 0) < coupon.max_redemptions)
-    )
-    if not valid:
-        raise HTTPException(status_code=400, detail="Invalid or expired coupon code.")
-    raise HTTPException(
-        status_code=400,
-        detail=(
-            "Coupon codes can't be redeemed online yet. Contact developer@oyechats.com "
-            "and we'll apply it to your account."
-        ),
-    )
+    try:
+        return coupon_service.resolve(session, coupon_code, plan_id=plan_id)
+    except coupon_service.CouponError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _assert_no_stacking(client, coupon_code: str | None) -> None:

@@ -3123,6 +3123,19 @@ const hi = {
     youveUsedAllTheDocuments: 'आपने अपने प्लान में शामिल सभी दस्तावेज़ उपयोग कर लिए हैं। और जोड़ने के लिए अपग्रेड करें।',
     youveUsedAllTheWebsite: 'आपने अपने प्लान में शामिल सभी वेबसाइट पेज उपयोग कर लिए हैं। और पेज प्रशिक्षित करने के लिए अपग्रेड करें।',
   },
+  billing: {
+    haveACode: 'कोई कोड है?',
+    apply: 'लागू करें',
+    checking: 'जाँच हो रही है…',
+    egFriend20: 'जैसे FRIEND20',
+    applied: 'लागू',
+    codeApplied: 'कोड {code} लागू हुआ',
+    oneMonthFree: '1 महीना मुफ़्त',
+    nMonthsFree: '{count} महीने मुफ़्त',
+    nPercentOff: '{pct}% छूट',
+    thisCodeIsMonthlyOnly: 'यह कोड केवल मासिक बिलिंग पर लागू होता है।',
+    thatCodeCouldNotBeApplied: 'यह कोड लागू नहीं किया जा सका।',
+  },
   ds: {
     // ── इमेज क्रॉपिंग (ui/overlays/ImageCropDialog) ──
     cropImage: 'इमेज क्रॉप करें',

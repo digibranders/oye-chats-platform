@@ -1011,6 +1011,7 @@ export const registerClient = async (
     website: string | null = null,
     billingCountry: string | null = null,
     promoCode: string | null = null,
+    referralCode: string | null = null,
 ): Promise<RegisterResult> => {
     try {
         const payload: Record<string, unknown> = { name, email, password, company_name: companyName, website };
@@ -1018,6 +1019,11 @@ export const registerClient = async (
         // Launch-promo code from the campaign link (?code=). Makes the offer
         // link-exclusive. Silently ignored server-side when unknown.
         if (promoCode) payload.promo_code = promoCode;
+        // Affiliate attribution from `?ref=`. `/auth/register` has always
+        // accepted this and no frontend had ever sent it, so every affiliate
+        // link created an unattributed account: no discount for the customer,
+        // no commission for the partner. Also best-effort server-side.
+        if (referralCode) payload.referral_code = referralCode;
         const response = await api.post('/auth/register', payload);
         return response.data;
     } catch (error) {
@@ -3621,15 +3627,47 @@ export const recordBillingEvent = (
     }
 };
 
+/** What a coupon grants, resolved server-side without spending a redemption. */
+export interface CouponPreview {
+    code: string;
+    kind: 'free_months' | 'discount';
+    free_months: number;
+    discount_pct: number;
+    /** A free period defers the first charge, which only makes sense monthly. */
+    monthly_only: boolean;
+}
+
+/**
+ * Check a coupon before charging for it.
+ *
+ * The checkout body carries the code, so without this the first time a buyer
+ * learns it is wrong is the moment they press pay. Resolves through the same
+ * path redemption does, so the preview cannot disagree with what is applied.
+ */
+export const previewCoupon = async (code: string, planId?: number): Promise<CouponPreview> => {
+    try {
+        const response = await api.get('/subscriptions/coupon/preview', {
+            params: { code, ...(planId ? { plan_id: planId } : {}) },
+        });
+        return response.data as CouponPreview;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to check that code');
+    }
+};
+
 export const createCheckoutSession = async (
     planId: number,
     billingCycle: 'monthly' | 'annual' = 'monthly',
     billingCountry: string | null = null,
+    couponCode: string | null = null,
 ): Promise<Record<string, unknown>> => {
     try {
         const response = await api.post('/subscriptions/checkout', {
             plan_id: planId,
             billing_cycle: billingCycle,
+            // A referral is attached to the ACCOUNT and needs nothing here; a
+            // coupon is spent on this one checkout and travels with it.
+            ...(couponCode ? { coupon_code: couponCode } : {}),
             // Confirmed billing country routes currency/plan/invoice. Omitted
             // (null) → the backend falls back to the client's stored country,
             // else domestic (IN).
