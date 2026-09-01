@@ -303,7 +303,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
           <Field
             label={t('agents.chatbotName') || 'Chatbot name'}
             error={nameError}
-            hint={t('agents.internalOnlyVisitorsSeeThe') || 'Internal only — visitors see the display name in Experience.'}
+            hint={t('agents.internalOnlyVisitorsSeeThe') || 'Internal only. Visitors see the display name in Experience.'}
             required
           >
             <Input

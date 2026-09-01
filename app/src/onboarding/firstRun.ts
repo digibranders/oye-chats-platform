@@ -49,7 +49,7 @@ export function suggestName(website: string, fallback: string): string {
 export function validateFirstRun(draft: FirstRunDraft): FirstRunErrors {
   const errors: FirstRunErrors = {};
   if (!draft.name.trim()) {
-    errors.name = translateNow('onboarding.giveYourChatbotAName') || 'Give your chatbot a name — you can change it later.';
+    errors.name = translateNow('onboarding.giveYourChatbotAName') || 'Give your chatbot a name. You can change it later.';
   } else if (draft.name.trim().length > 60) {
     errors.name = translateNow('onboarding.thatIsLongerThan60') || 'That is longer than 60 characters. Something short works better in the widget.';
   }

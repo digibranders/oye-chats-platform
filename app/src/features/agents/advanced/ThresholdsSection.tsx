@@ -34,7 +34,7 @@ function ThresholdsSectionInner({
 
   return (
     <Card>
-      <CardHeader title="Tier thresholds" titleAs="h2" description="The score to reach. Always 0–100." />
+      <CardHeader title="Tier thresholds" titleAs="h2" description="The score to reach. Always 0 to 100." />
       <CardBody>
         <Grid cols={3}>
           {TIERS.map((tier) => (

@@ -49,6 +49,26 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Whether a rejection is a plan boundary rather than a fault.
+ *
+ * 403 is "your seat or plan does not include this"; 402 is the platform's
+ * insufficient-credits / needs-its-own-subscription status. Both mean the
+ * request was understood and refused on purpose, which needs a different
+ * screen from "this broke" — the fourth of the four states.
+ *
+ * It lives here because three features had each written their own copy and
+ * they did not agree: analytics counted 402, knowledge and experience did not,
+ * so the same status read as a plan boundary on one page and an unexplained
+ * error on another.
+ */
+export function isPlanBoundary(cause: unknown): boolean {
+  const status = cause instanceof ApiError
+    ? cause.status
+    : (cause as { status?: number } | null)?.status;
+  return status === 402 || status === 403;
+}
+
 /** Narrowing helper for `catch` blocks, which bind `unknown` under strict. */
 export function isApiError(error: unknown): error is ApiError {
   return error instanceof ApiError;

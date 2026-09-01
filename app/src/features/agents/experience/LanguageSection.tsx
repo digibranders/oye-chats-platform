@@ -144,7 +144,7 @@ export function LanguageSection({
         <Field
           label={t('agents.supportedLanguages') || 'Supported languages'}
           disabled={disabled}
-          hint={t('agents.onlyLanguagesTheChatWidget') || 'Only languages the chat widget itself is translated into can be added — the interface and the answers have to match.'}
+          hint={t('agents.onlyLanguagesTheChatWidget') || 'Only languages the chat widget itself is translated into can be added: the interface and the answers have to match.'}
         >
           <ul className="flex flex-wrap gap-2">
             {draft.supportedLocales.map((code) => (

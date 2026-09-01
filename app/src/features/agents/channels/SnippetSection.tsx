@@ -187,8 +187,8 @@ export function SnippetSection({
             label={t('agents.embedSnippet') || 'embed snippet'}
             caption={
               attribution
-                ? t('agents.pasteBeforeBodyBothLines') || 'Paste before </body> — both lines, the script and the credit link'
-                : t('agents.pasteBeforeBodyYourPlan') || 'Paste before </body> — your plan removes the credit link'
+                ? t('agents.pasteBeforeBodyBothLines') || 'Paste before </body>: both lines, the script and the credit link'
+                : t('agents.pasteBeforeBodyYourPlan') || 'Paste before </body>. Your plan removes the credit link'
             }
           />
         )}

@@ -83,7 +83,7 @@ export function InviteAirlock() {
     return (
       <AuthShell
         title={`Welcome to ${accepted.workspace_name || 'the workspace'}`}
-        description="Taking you to the inbox — that is where your conversations arrive."
+        description="Taking you to the inbox, which is where your conversations arrive."
       >
         <p className="flex items-center gap-2 text-prose text-text-secondary">
           <Spinner />
@@ -172,7 +172,7 @@ export function InviteAirlock() {
               {inviteRoleSentence(meta.role, workspace)}
             </>
           }
-          footer="Use the invited address — the invitation only works for that one."
+          footer="Use the invited address. The invitation only works for that one."
         >
           <div className="space-y-2">
             <Link

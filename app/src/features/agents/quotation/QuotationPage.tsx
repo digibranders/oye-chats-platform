@@ -161,31 +161,42 @@ function QuotationContent({ agentId }: { agentId: number }) {
           asideLabel="When a quote is offered"
           main={
             <Stack>
-              <Card>
-                <CardHeader
-                  title={t('agents.services') || 'Requirements'}
-                  titleAs="h2"
-                  description={t('agents.theLineItemsThisChatbot') || 'The line items this chatbot can price. Visitors pick from these.'}
-                  actions={
-                    <div className="flex items-center gap-3">
-                      {catalog.services.length > 1 ? (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setAllCollapsed(!allCollapsed)}
-                        >
-                          {allCollapsed
-                            ? t('agents.expandAll') || 'Expand all'
-                            : t('agents.collapseAll') || 'Collapse all'}
-                        </Button>
-                      ) : null}
-                      <span className="figure text-xs text-text-tertiary">
-                        {catalog.services.length} of {MAX_SERVICES}
-                      </span>
-                    </div>
-                  }
-                />
-                <CardBody className="space-y-4">
+              {/* A SECTION, not a Card.
+                  It wrapped a heading and a list of cards: a border drawn
+                  around borders, saying "this is a group" where the heading
+                  already said it. Three concentric rounded boxes (catalog then
+                  requirement then line) repeats containment at every level
+                  instead of expressing hierarchy once. The requirement card is
+                  the only one that earns a border, because it is the discrete
+                  thing you can collapse and remove. */}
+              <section aria-labelledby="requirements-heading">
+                <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+                  <div className="min-w-0">
+                    <h2 id="requirements-heading" className="text-lg font-semibold text-text-primary">
+                      {t('agents.services') || 'Requirements'}
+                    </h2>
+                    <p className="mt-0.5 text-sm text-text-secondary">
+                      {t('agents.theLineItemsThisChatbot') || 'The line items this chatbot can price. Visitors pick from these.'}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {catalog.services.length > 1 ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setAllCollapsed(!allCollapsed)}
+                      >
+                        {allCollapsed
+                          ? t('agents.expandAll') || 'Expand all'
+                          : t('agents.collapseAll') || 'Collapse all'}
+                      </Button>
+                    ) : null}
+                    <span className="figure text-xs text-text-tertiary">
+                      {catalog.services.length} of {MAX_SERVICES}
+                    </span>
+                  </div>
+                </div>
+                <div className="mt-4 space-y-4">
                   {catalog.services.length === 0 ? (
                     <EmptyState
                       size="panel"
@@ -236,8 +247,8 @@ function QuotationContent({ agentId }: { agentId: number }) {
                   >
                     {t('agents.addService') || 'Add requirement'}
                   </Button>
-                </CardBody>
-              </Card>
+                </div>
+              </section>
             </Stack>
           }
           aside={

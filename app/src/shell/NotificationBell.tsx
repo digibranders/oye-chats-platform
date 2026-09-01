@@ -110,7 +110,7 @@ export function NotificationBell() {
                 ? t('shell.everythingInTheLatestThirty') || 'Everything in the latest thirty has been read.'
                 : connected
                   ? t('shell.handoffsOfflineMessagesAndBilling') || 'Handoffs, offline messages and billing events land here.'
-                  : t('shell.reconnectingAnythingThatArrivesWill') || 'Reconnecting — anything that arrives will appear here.'
+                  : t('shell.reconnectingAnythingThatArrivesWill') || 'Reconnecting. Anything that arrives will appear here.'
             }
           />
         ) : (

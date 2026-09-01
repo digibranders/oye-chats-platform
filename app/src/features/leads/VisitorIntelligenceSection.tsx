@@ -73,7 +73,7 @@ function FollowUp({ sessionId, isValidEmail, email }: {
   const caveat = blocked
     ? t('leads.failedValidation') || 'Failed validation'
     : isValidEmail !== true
-      ? t('leads.notValidatedYouWillConfirm') || 'Not validated — you will confirm'
+      ? t('leads.notValidatedYouWillConfirm') || 'Not validated, you will confirm'
       : null;
 
   return (

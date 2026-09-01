@@ -219,23 +219,29 @@ export function HomePage() {
                 items={[
                   {
                     label: t('home.conversations') || 'Conversations',
-                    value: formatNumber(home.conversations),
+                    // No value at all when the read failed. `StatRow` draws that
+                    // as an em dash; a fabricated 0 would say the workspace went
+                    // quiet, which is the one thing it must not say by accident.
+                    value: home.conversations === null ? undefined : formatNumber(home.conversations),
                     delta: home.conversationsDelta ?? undefined,
                     size: 'lg',
                     loading: home.conversationsLoading,
                   },
                   {
                     label: t('home.qualifiedLeads') || 'Qualified leads',
-                    value: home.leadsLocked ? undefined : formatNumber(home.qualifiedLeads),
+                    value:
+                      home.leadsLocked || home.qualifiedLeads === null
+                        ? undefined
+                        : formatNumber(home.qualifiedLeads),
                     period: t('home.allTime') || 'All time',
                     hint: home.leadsLocked ? t('home.onStarterAndAbove') || 'On Starter and above' : undefined,
                     loading: home.leadsLoading,
                   },
                   {
                     label: t('home.unreadMessages') || 'Unread messages',
-                    value: formatNumber(home.unreadMessages),
+                    value: home.unreadMessages === null ? undefined : formatNumber(home.unreadMessages),
                     period: t('home.rightNow') || 'Right now',
-                    tone: home.unreadMessages > 0 ? 'warning' : 'neutral',
+                    tone: (home.unreadMessages ?? 0) > 0 ? 'warning' : 'neutral',
                     loading: home.unreadLoading,
                   },
                   {
@@ -249,7 +255,7 @@ export function HomePage() {
             </CardBody>
             {home.statsIncomplete ? (
               <CardSection className="text-xs text-text-secondary">
-                {t('home.someChatbotsDidNotReport') || 'Some chatbots did not report — totals are low.'}
+                {t('home.someChatbotsDidNotReport') || 'Some chatbots did not report, so these totals are incomplete.'}
               </CardSection>
             ) : null}
           </Card>

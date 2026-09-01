@@ -96,7 +96,7 @@ export function IngestionProgress({
   if (phase.phase === 'done') {
     return (
       <Alert tone="success" live>
-        {t('agents.doneThisChatbotCanAnswer') || 'Done — this chatbot can answer from it now.'}
+        {t('agents.doneThisChatbotCanAnswer') || 'Done. This chatbot can answer from it now.'}
       </Alert>
     );
   }
@@ -128,7 +128,7 @@ export function IngestionProgress({
       </div>
       {phase.phase === 'unknown' && done === undefined ? (
         <p className="mt-2 text-xs text-text-secondary">
-          {t('agents.thisUsuallyTakesAMinute') || 'This usually takes a minute. You can leave this page — it carries on in the background.'}
+          {t('agents.thisUsuallyTakesAMinute') || 'This usually takes a minute. You can leave this page; it carries on in the background.'}
         </p>
       ) : null}
     </Well>

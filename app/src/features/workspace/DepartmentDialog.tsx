@@ -74,7 +74,7 @@ export function DepartmentDialog({
 
   function submit() {
     if (!name.trim()) {
-      setNameError('Give the department a name — operators pick it from a list.');
+      setNameError('Give the department a name. Operators pick it from a list.');
       return;
     }
     setNameError(null);

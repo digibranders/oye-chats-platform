@@ -200,7 +200,7 @@ export function MessagesSection({
             hint={
               launcherTextOn
                 ? t('agents.besideTheClosedLauncher') || 'Beside the closed launcher.'
-                : t('agents.theLauncherShowsJustThe') || 'The launcher shows just the icon — no text beside it.'
+                : t('agents.theLauncherShowsJustThe') || 'The launcher shows just the icon, with no text beside it.'
             }
             trailing={
               <Switch

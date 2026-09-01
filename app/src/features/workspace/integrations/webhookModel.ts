@@ -18,7 +18,7 @@ export const WEBHOOK_EVENTS: readonly WebhookEventDefinition[] = [
   {
     value: 'tier_transition',
     label: 'Lead qualified',
-    description: 'A visitor moved up a qualification tier — the one most CRMs listen for.',
+    description: 'A visitor moved up a qualification tier. This is the one most CRMs listen for.',
   },
   {
     value: 'lead_captured',
@@ -51,7 +51,7 @@ export function eventLabel(value: string): string {
 
 /** What a webhook subscribes to, in a sentence a table cell can hold. */
 export function describeEvents(events: readonly string[]): string {
-  if (events.length === 0) return 'No events — nothing will be sent';
+  if (events.length === 0) return 'No events, so nothing will be sent';
   if (events.length === WEBHOOK_EVENTS.length) return 'Every event';
   return events.map(eventLabel).join(', ');
 }
@@ -72,7 +72,7 @@ export function validateWebhookUrl(raw: string): string | null {
     return 'That is not a valid URL. It should start with https://';
   }
   if (url.protocol !== 'https:') {
-    return 'Use https:// — we will not send your customers’ details over an unencrypted connection.';
+    return 'Use https://. We will not send your customers’ details over an unencrypted connection.';
   }
   if (url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname.endsWith('.local')) {
     return 'This address only exists on your own machine, so our servers cannot reach it. Use a tunnel such as ngrok while you are testing.';

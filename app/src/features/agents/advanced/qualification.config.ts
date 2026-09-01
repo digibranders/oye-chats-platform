@@ -61,16 +61,16 @@ export function frameworkLabel(key: string): string {
  */
 export const DIMENSION_LISTENS_FOR: Readonly<Record<string, string>> = {
   // BANT
-  need: 'How sharp the problem is — whether the visitor describes a live pain, a project underway, or idle curiosity.',
-  timeline: 'When they intend to act — named dates, quarters, renewal deadlines, or "sometime".',
-  authority: 'Their part in the decision — whether they buy, recommend, or are researching for someone else.',
-  budget: 'Whether money exists and roughly how much — a stated range, an approved budget, or nothing yet.',
+  need: 'How sharp the problem is: whether the visitor describes a live pain, a project underway, or idle curiosity.',
+  timeline: 'When they intend to act: named dates, quarters, renewal deadlines, or "sometime".',
+  authority: 'Their part in the decision: whether they buy, recommend, or are researching for someone else.',
+  budget: 'Whether money exists and roughly how much: a stated range, an approved budget, or nothing yet.',
   // MEDDIC
-  metrics: 'The numbers they want to move — revenue, cost, headcount, response time — and how specific they are.',
+  metrics: 'The numbers they want to move (revenue, cost, headcount, response time), and how specific they are.',
   economic_buyer: 'Whether the person who releases the money has been named, met, or not yet identified.',
-  decision_criteria: 'What they say they will judge vendors on — features, security review, price, references.',
-  decision_process: 'How the purchase actually happens — steps, approvals, procurement, legal, and who signs.',
-  identify_pain: 'The cost of doing nothing — what breaks today and what it is costing them.',
+  decision_criteria: 'What they say they will judge vendors on: features, security review, price, references.',
+  decision_process: 'How the purchase actually happens: steps, approvals, procurement, legal, and who signs.',
+  identify_pain: 'The cost of doing nothing: what breaks today and what it is costing them.',
   champion: 'Whether someone inside the account is advocating for a change, and how much sway they have.',
 };
 

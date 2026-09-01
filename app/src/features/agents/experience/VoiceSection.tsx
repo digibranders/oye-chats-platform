@@ -182,7 +182,7 @@ export function VoiceSection({
               content={
                 meta.trained
                   ? t('agents.readYourWebsiteAndInfer') || 'Read your website and infer a tone from it'
-                  : t('agents.trainThisChatbotOnYour') || 'Train this chatbot on your website first — detection reads what it has crawled'
+                  : t('agents.trainThisChatbotOnYour') || 'Train this chatbot on your website first. Detection reads what it has crawled'
               }
             >
               <Button
@@ -234,7 +234,7 @@ export function VoiceSection({
               value={draft.brandTone}
               maxLength={LIMITS.brandTone}
               disabled={readOnly}
-              placeholder={t('agents.warmAndDirectWithNo') || 'Warm and direct, with no jargon. Never oversell — say when you do not know.'}
+              placeholder={t('agents.warmAndDirectWithNo') || 'Warm and direct, with no jargon. Never oversell, and say when you do not know.'}
               onChange={(event) => onToneText(event.target.value)}
             />
           </Field>

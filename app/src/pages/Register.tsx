@@ -27,7 +27,7 @@ import { Trans } from '../i18n/Trans';
 const PROMO_STORAGE_KEY = 'oyechats_promo_code';
 
 const schema = z.object({
-  name: z.string().trim().min(2, 'Enter your name — at least two characters.'),
+  name: z.string().trim().min(2, 'Enter your name, at least two characters.'),
   email: z
     .string()
     .trim()

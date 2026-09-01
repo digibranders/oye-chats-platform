@@ -67,7 +67,7 @@ export function BootCrashScreen() {
   return (
     <AppCrashScreen
       title="Something went wrong"
-      description="An unexpected error interrupted the console. Reloading usually fixes it. Your data is safe — your chatbots keep answering visitors while this screen is up."
+      description="An unexpected error interrupted the console. Reloading usually fixes it. Your data is safe. Your chatbots keep answering visitors while this screen is up."
       actions={
         <>
           <button

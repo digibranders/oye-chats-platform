@@ -138,7 +138,7 @@ export function InstallStatusCard({
           ) : null}
           {status.state === 'waiting' ? (
             <Button size="sm" variant="accent" onClick={onStartVerifying}>
-              {t('agents.iHaveAddedItCheck') || 'I have added it — check now'}
+              {t('agents.iHaveAddedItCheck') || 'I have added it, check now'}
             </Button>
           ) : null}
           {status.state === 'not-detected' ? (
@@ -303,7 +303,7 @@ export function InstallStatusCard({
                 carries the sentence. */}
             <Progress value={null} label={t('agents.lookingForYourWidget') || 'Looking for your widget'} hideLabel />
             <p className="mt-2 text-xs text-text-secondary">
-              {t('agents.openYourSiteInAnother') || 'Open your site in another tab — this updates on its own.'}
+              {t('agents.openYourSiteInAnother') || 'Open your site in another tab. This updates on its own.'}
             </p>
           </div>
           <Button size="sm" variant="ghost" onClick={onStopVerifying}>

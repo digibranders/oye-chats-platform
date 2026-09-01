@@ -1,5 +1,28 @@
 import { QueryClient } from '@tanstack/react-query';
 
+import { ApiError } from '../services/apiTypes';
+
+/**
+ * The HTTP status behind a rejection, whatever shape it arrives in.
+ *
+ * Nearly every read in `services/api.ts` funnels its rejection through
+ * `buildApiError`, which returns an `ApiError` carrying `status` directly and
+ * NO `response` object. The retry predicate below used to read
+ * `error.response.status` only, so for the app's own errors the status was
+ * always `undefined` and its "never retry a client error" rule never once
+ * fired: every 401, 403, 404 and 422 was re-sent twice, on a 1s then 2s
+ * backoff. That put three seconds of skeletons in front of every forbidden and
+ * not-found state, and tripled the traffic to endpoints a workspace is not
+ * entitled to.
+ *
+ * The axios shape stays as a fallback for any rejection that reaches the cache
+ * without passing through `buildApiError`.
+ */
+function statusOf(error: unknown): number | undefined {
+  if (error instanceof ApiError) return error.status;
+  return (error as { response?: { status?: number } })?.response?.status;
+}
+
 /**
  * The console's query client.
  *
@@ -43,7 +66,7 @@ export const queryClient = new QueryClient({
        * an endpoint the workspace is not entitled to.
        */
       retry: (failureCount, error) => {
-        const status = (error as { response?: { status?: number } })?.response?.status;
+        const status = statusOf(error);
         if (status && status >= 400 && status < 500) return false;
         return failureCount < 2;
       },

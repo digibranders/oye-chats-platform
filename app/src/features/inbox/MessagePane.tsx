@@ -236,7 +236,7 @@ export function MessagePane({
                   {t('inbox.openInYourEmailApp') || 'Open in your email app'}
                 </a>
                 <p className="text-2xs text-text-tertiary">
-                  {t('inbox.oyechatsDoesNotSendThis') || 'OyeChats does not send this for you — it goes from your own mailbox.'}
+                  {t('inbox.oyechatsDoesNotSendThis') || 'OyeChats does not send this for you. It goes from your own mailbox.'}
                 </p>
               </div>
             ) : (

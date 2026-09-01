@@ -296,6 +296,8 @@ export interface DataTableProps<T> {
   className?: string;
 }
 
+const EMPTY_ROWS: readonly never[] = [];
+
 /**
  * How many rows the table will render before it caps its own height.
  *
@@ -467,24 +469,42 @@ export function DataTable<T>({
   // it must not offer the affordance: the arrow used to flip and nothing moved.
   const sortingOffered = !(serverPaged && !isControlled);
 
+  /**
+   * A `rows` prop that is not an array.
+   *
+   * Every list endpoint this console reads is typed as an array and none of
+   * them is validated at the boundary, so a server, proxy or error page that
+   * answers with an object hands one straight to this component. Until now
+   * that threw `visibleRows.map is not a function` during render, which the
+   * page's error boundary turned into "Something went wrong" for the WHOLE
+   * page — the table, and everything around it.
+   *
+   * It resolves to the error state rather than the empty one on purpose. A
+   * table that quietly says "no documents yet" when the server sent something
+   * unreadable tells the customer their chatbot lost its training, which is a
+   * worse lie than admitting the load failed. `onRetry` still applies.
+   */
+  const rowsAreReadable = Array.isArray(rows);
+  const safeRows = rowsAreReadable ? rows : EMPTY_ROWS;
+
   const sortedRows = useMemo(() => {
-    if (!sort) return rows;
+    if (!sort) return safeRows;
     // Sorting one page of a server-paged set client-side would order fifty rows
     // out of nine thousand and present the result as the sort the user asked
     // for. A server-paged table sorts on the server or not at all.
-    if (serverPaged && !isControlled) return rows;
+    if (serverPaged && !isControlled) return safeRows;
     const column = columns.find((candidate) => candidate.key === sort.key);
     // `sortable: true` means the server ordered these; re-sorting here would
     // fight it.
-    if (typeof column?.sortable !== 'function') return rows;
+    if (typeof column?.sortable !== 'function') return safeRows;
     const comparator = column.sortable;
     // Negating the comparator rather than reversing the array: `.reverse()`
     // also flips the order of tied rows, so a descending sort is not the mirror
     // of the ascending one and rows appear to shuffle.
-    return [...rows].sort(
+    return [...safeRows].sort(
       sort.direction === 'desc' ? (a, b) => -comparator(a, b) : comparator,
     );
-  }, [rows, sort, columns, serverPaged, isControlled]);
+  }, [safeRows, sort, columns, serverPaged, isControlled]);
 
   const totalRows = serverPaged ? (rowCount ?? sortedRows.length) : sortedRows.length;
   const pageCount = pageSize ? Math.max(1, Math.ceil(totalRows / pageSize)) : 1;
@@ -569,7 +589,7 @@ export function DataTable<T>({
   const colSpan = columns.length + (selectable ? 1 : 0);
   const state = loading
     ? 'loading'
-    : error
+    : error || !rowsAreReadable
       ? 'error'
       : forbidden
         ? 'forbidden'
@@ -732,7 +752,18 @@ export function DataTable<T>({
                     cell — unlike an ordinary data cell — carried none, so the
                     state's copy sat flush against the table's own edge. */}
                 <td colSpan={colSpan} className="px-[var(--cell-x)]" style={{ boxShadow: 'none' }}>
-                  <ErrorState flush size="inline" description={error ?? undefined} onRetry={onRetry} />
+                  <ErrorState
+                    flush
+                    size="inline"
+                    description={
+                      error ??
+                      (rowsAreReadable
+                        ? undefined
+                        : t('ds.weCouldNotReadThis') ||
+                          'We could not read this list. The server sent something unexpected.')
+                    }
+                    onRetry={onRetry}
+                  />
                 </td>
               </tr>
             ) : state === 'forbidden' && forbidden ? (

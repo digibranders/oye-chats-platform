@@ -137,7 +137,7 @@ export function BrandingSection({
       setCropSrc(url);
     } catch (cause) {
       setUploadError(
-        errorMessage(cause, t('agents.couldntGetYourWebsitesIcon') || "Couldn't get your website's icon — upload one instead."),
+        errorMessage(cause, t('agents.couldntGetYourWebsitesIcon') || "Couldn't get your website's icon. Upload one instead."),
       );
     } finally {
       setFetchingIcon(false);
@@ -181,7 +181,7 @@ export function BrandingSection({
               {
                 foreground: WIDGET_ON_PRIMARY,
                 background: draft.primaryColor,
-                label: t('agents.whiteIconsOnItLauncher') || 'White icons on it — launcher, send button',
+                label: t('agents.whiteIconsOnItLauncher') || 'White icons on it: launcher, send button',
                 min: NON_TEXT_CONTRAST_MIN,
               },
               {

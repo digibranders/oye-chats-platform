@@ -47,7 +47,7 @@ export const VIEW_META: Record<InboxView, InboxViewMeta> = {
     blurb: 'Visitors who have asked for a person and nobody has taken yet.',
     emptyTitle: 'Nobody is waiting',
     emptyBody:
-      'When a visitor asks for a human — or the AI hands one over — they appear here with how long they have been waiting.',
+      'When a visitor asks for a human, or the AI hands one over, they appear here with how long they have been waiting.',
   },
   yours: {
     value: 'yours',

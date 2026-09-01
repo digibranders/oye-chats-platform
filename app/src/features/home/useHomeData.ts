@@ -1,6 +1,7 @@
 import { t as translateNow } from '../../i18n/i18n';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { getDashboardStats, getLeadStats, getLeads, getOfflineMessages } from '../../services/api';
+import { isPlanBoundary } from '../../services/apiTypes';
 import { useBotContext } from '../../context/BotContext';
 import { keys } from '../../query/keys';
 import { agentHealth, type AgentHealth } from './agentHealth';
@@ -10,7 +11,8 @@ import type { Bot, Lead } from '../../types/domain';
 export interface HomeAgent {
   bot: Bot;
   health: AgentHealth;
-  conversations: number;
+  /** Null when this chatbot's figure failed to load. Never a stand-in zero. */
+  conversations: number | null;
   /** This row's figure is still in flight. The page does not wait for it. */
   conversationsLoading: boolean;
 }
@@ -137,7 +139,9 @@ export function useHomeData() {
   const agents: HomeAgent[] = bots.map((bot, index) => ({
     bot,
     health: agentHealth(bot),
-    conversations: Number(statQueries[index]?.data?.total_conversations ?? 0),
+    conversations: statQueries[index]?.isError
+      ? null
+      : Number(statQueries[index]?.data?.total_conversations ?? 0),
     conversationsLoading: statQueries[index]?.isPending ?? false,
   }));
 
@@ -145,8 +149,21 @@ export function useHomeData() {
   // totals is what let a broken chatbot read as a quiet one.
   const statsIncomplete = statQueries.some((query) => query.isError);
 
-  const conversations = conversationsIn(currentWindow.data);
-  const previousConversations = Math.max(conversationsIn(priorWindow.data) - conversations, 0);
+  /**
+   * A figure whose read failed is UNKNOWN, not zero.
+   *
+   * Every tile here rendered `?? 0`, so a workspace whose stats endpoint was
+   * down read "Conversations 0 / Unread messages 0" as though it had gone
+   * quiet. That is the most alarming thing this page can say, and it was
+   * saying it about a network failure. `null` reaches `StatRow` as no value at
+   * all, which it already draws as an em dash — the same way a locked figure
+   * is drawn.
+   */
+  const conversations = currentWindow.isError ? null : conversationsIn(currentWindow.data);
+  const previousConversations = Math.max(
+    conversationsIn(priorWindow.data) - (conversations ?? 0),
+    0,
+  );
   const live = agents.filter((agent) => agent.health.state === 'live').length;
 
   return {
@@ -159,11 +176,18 @@ export function useHomeData() {
     conversations,
     conversationsLoading: currentWindow.isPending,
     conversationsDelta:
-      currentWindow.isPending || priorWindow.isPending ? null : delta(conversations, previousConversations),
-    qualifiedLeads: Number(leadStats.data?.qualified ?? leadStats.data?.total ?? 0),
-    leadsLocked: leadStats.isError,
+      currentWindow.isPending || priorWindow.isPending || conversations === null
+        ? null
+        : delta(conversations, previousConversations),
+    qualifiedLeads: leadStats.isError
+      ? null
+      : Number(leadStats.data?.qualified ?? leadStats.data?.total ?? 0),
+    // A plan boundary, NOT "anything went wrong". This read `isError`, so a 500
+    // on the lead-stats endpoint told the customer their plan did not include
+    // leads and pointed them at an upgrade they did not need.
+    leadsLocked: isPlanBoundary(leadStats.error),
     leadsLoading: leadStats.isPending,
-    unreadMessages: Number(offline.data?.total ?? 0),
+    unreadMessages: offline.isError ? null : Number(offline.data?.total ?? 0),
     unreadLoading: offline.isPending,
     live,
     needsAttention: agents.filter((agent) => agent.health.needsAttention),

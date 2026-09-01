@@ -194,7 +194,7 @@ export function EmailPanel({ bot, access, onSaved }: EmailPanelProps) {
           — the "arranged vertically line by line" complaint exactly. */}
       <SettingGroup
         title="What we email about"
-        description="Off means no email — the event still fires webhooks."
+        description="Off means no email. The event still fires webhooks."
       >
         <SettingRow label="A lead qualifies" controlWidth="auto">
           <Switch

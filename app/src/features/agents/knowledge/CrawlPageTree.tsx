@@ -409,7 +409,7 @@ export function CrawlPageTree({
         onOpenChange={setMaximized}
         size="xl"
         title={translateNow('agents.pagesFoundOnThisWebsite') || 'Pages found on this website'}
-        description={translateNow('agents.youAreChargedPerPage') || 'You are charged per page — leave out what visitors never ask about.'}
+        description={translateNow('agents.youAreChargedPerPage') || 'You are charged per page, so leave out what visitors never ask about.'}
       >
         {body('max-h-[60vh]', false)}
       </Dialog>

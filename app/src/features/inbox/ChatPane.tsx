@@ -259,7 +259,7 @@ export function ChatPane({
 
   const send = (text: string): void => {
     if (!socket.sendMessage(sessionId, text)) {
-      setError(t('inbox.thatMessageDidNotSend') || 'That message did not send — you are not connected right now.');
+      setError(t('inbox.thatMessageDidNotSend') || 'That message did not send. You are not connected right now.');
       return;
     }
     onDraftChange('');
@@ -269,7 +269,7 @@ export function ChatPane({
     try {
       const uploaded = await uploadOperatorChatFile(file, sessionId);
       if (!socket.sendFile(sessionId, uploaded)) {
-        setError(t('inbox.theFileUploadedButCould') || 'The file uploaded but could not be sent — you are not connected right now.');
+        setError(t('inbox.theFileUploadedButCould') || 'The file uploaded but could not be sent. You are not connected right now.');
       }
     } catch (err) {
       setError(err instanceof Error ? `Could not upload that file: ${err.message}` : t('inbox.couldNotUploadThatFile2') || 'Could not upload that file.');
@@ -277,7 +277,7 @@ export function ChatPane({
   };
 
   const composerBlock = !connected
-    ? t('inbox.reconnectingYourReplyWillNot') || 'Reconnecting — your reply will not send until the connection is back.'
+    ? t('inbox.reconnectingYourReplyWillNot') || 'Reconnecting. Your reply will not send until the connection is back.'
     : !online
       ? t('inbox.theVisitorHasLeftThe') || 'The visitor has left the page. They will see your reply when they return.'
       : ended
@@ -359,7 +359,7 @@ export function ChatPane({
 
       {item.kind === 'waiting' ? (
         <p className="border-b border-border bg-surface-sunken px-cell py-2 text-xs text-text-secondary">
-          {t('inbox.readWhatTheyHaveAlready') || 'Read what they have already said before you take the conversation — they are still with the AI until you accept.'}
+          {t('inbox.readWhatTheyHaveAlready') || 'Read what they have already said before you take the conversation. They are still with the AI until you accept.'}
         </p>
       ) : null}
 

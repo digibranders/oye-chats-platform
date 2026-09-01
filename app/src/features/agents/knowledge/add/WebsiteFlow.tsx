@@ -157,7 +157,7 @@ export function WebsiteFlow({
         ? {
             tone: 'danger' as const,
             title: t('agents.thatWebsiteCouldNotBe') || 'That website could not be read',
-            body: t('agents.weReachedTheSiteBut') || 'We reached the site but found no readable text. If it is built with React or Next.js, turn on the JavaScript option above and try again — or upload a document instead.',
+            body: t('agents.weReachedTheSiteBut') || 'We reached the site but found no readable text. If it is built with React or Next.js, turn on the JavaScript option above and try again, or upload a document instead.',
           }
         : crawl.status === 'failed'
           ? {
@@ -209,7 +209,7 @@ export function WebsiteFlow({
           </Alert>
         ) : null}
 
-        <Field label={t('agents.websiteAddress') || 'Website address'} hint={t('agents.aPublicPageIsEnough') || 'A public page is enough — no login.'}>
+        <Field label={t('agents.websiteAddress') || 'Website address'} hint={t('agents.aPublicPageIsEnough') || 'A public page is enough, with no login.'}>
           <Input
             value={url}
             inputMode="url"
