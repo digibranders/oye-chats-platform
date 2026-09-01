@@ -159,3 +159,81 @@ def test_empty_string_state_clears_to_null(db, monkeypatch):
     assert res.status_code == 200, res.text
     assert res.json()["billing_state_code"] is None
     assert client.billing_state_code is None  # NULL, not ""
+
+
+class TestCompanyName:
+    """``company_name`` is the account's DISPLAY name, and nothing could set it.
+
+    It is read in four places -- most visibly ``invite_routes._workspace_label``,
+    which resolves ``company_name or name or email``. With nothing able to write
+    it, that fell through to the owner's personal name, or to their email
+    address, so a teammate was invited to "gaurav@example.com" rather than to
+    "Acme Pvt Ltd". The only writer left was ``register()``, and the signup form
+    stopped sending the field.
+
+    Deliberately NOT merged into ``legal_name``. That one is the registered
+    business name printed on a tax invoice and reconciled against the buyer's
+    GST certificate; this one is what a colleague sees in an invite. A trading
+    name and a registered name are frequently different, and a customer who
+    corrects the label on an invite email must not silently restate their GST
+    identity.
+    """
+
+    def test_it_can_be_set(self, db, monkeypatch):
+        c, client = _mk(db, monkeypatch)
+        res = c.put("/subscriptions/billing-details", json={"company_name": "Acme Trading Co"})
+        assert res.status_code == 200, res.text
+        assert res.json()["company_name"] == "Acme Trading Co"
+        assert client.company_name == "Acme Trading Co"
+
+    def test_it_survives_a_reread(self, db, monkeypatch):
+        c, _ = _mk(db, monkeypatch)
+        c.put("/subscriptions/billing-details", json={"company_name": "Acme Trading Co"})
+        assert c.get("/subscriptions/billing-details").json()["company_name"] == "Acme Trading Co"
+
+    def test_an_empty_string_clears_it(self, db, monkeypatch):
+        # Same convention as `legal_name`: "" means clear, so the column goes
+        # back to NULL and the invite label falls through to the next source
+        # rather than showing a blank workspace name.
+        c, client = _mk(db, monkeypatch)
+        c.put("/subscriptions/billing-details", json={"company_name": "Acme"})
+        res = c.put("/subscriptions/billing-details", json={"company_name": "   "})
+        assert res.status_code == 200, res.text
+        assert res.json()["company_name"] is None
+        assert client.company_name is None
+
+    def test_omitting_it_leaves_it_alone(self, db, monkeypatch):
+        # PATCH semantics via `exclude_unset`. Editing a GSTIN must not wipe
+        # the display name.
+        c, client = _mk(db, monkeypatch)
+        c.put("/subscriptions/billing-details", json={"company_name": "Acme Trading Co"})
+        res = c.put("/subscriptions/billing-details", json={"billing_email": "ap@acme.example"})
+        assert res.status_code == 200, res.text
+        assert res.json()["company_name"] == "Acme Trading Co"
+        assert client.company_name == "Acme Trading Co"
+
+    def test_it_is_independent_of_legal_name(self, db, monkeypatch):
+        # The whole reason it is a second field: a trading name and a registered
+        # name differ, and neither may overwrite the other.
+        c, client = _mk(db, monkeypatch)
+        res = c.put(
+            "/subscriptions/billing-details",
+            json={"company_name": "Acme", "legal_name": "Acme Private Limited"},
+        )
+        assert res.status_code == 200, res.text
+        assert res.json() == {**res.json(), "company_name": "Acme", "legal_name": "Acme Private Limited"}
+        assert client.company_name == "Acme"
+        assert client.legal_name == "Acme Private Limited"
+
+    def test_setting_only_the_display_name_does_not_satisfy_the_gstin_name_rule(self, db, monkeypatch):
+        # A GSTIN requires `legal_name`, because that is what the buyer's
+        # GSTR-2B reconciles against. A display name must never stand in for it.
+        c, client = _mk(db, monkeypatch)
+        client.legal_name = None
+        db.flush()
+        res = c.put(
+            "/subscriptions/billing-details",
+            json={"company_name": "Acme", "gstin": "27AAICD9268J1Z0"},
+        )
+        assert res.status_code == 422
+        assert "legal_name" in res.json()["detail"]

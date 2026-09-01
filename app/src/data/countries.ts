@@ -1,7 +1,7 @@
-import type { ComboboxOption } from '../../../ui';
+import type { ComboboxOption } from '../ui';
 
 /**
- * Country picker options for billing forms. Codes are ISO-3166 alpha-2 (what
+ * Country picker options. Codes are ISO-3166 alpha-2 (what
  * the backend stores and classifies tax from); display names come from the
  * browser's own `Intl.DisplayNames` so we ship a code list, not a copy of the
  * world's country names. India is pinned first, it is the primary market and

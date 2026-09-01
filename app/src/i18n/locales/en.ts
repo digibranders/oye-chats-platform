@@ -1423,6 +1423,8 @@ const en = {
     website: 'Website',
     welcomeBack: 'Welcome back',
     workEmail: 'Work email',
+    country: 'Country',
+    thisSetsYourCurrency: 'This sets your currency and tax. You can change it later in Billing.',
     wrongAccountPrompt: 'Wrong account? {signOut}',
     yourName: 'Your name',
     yourPassword: 'Your password',

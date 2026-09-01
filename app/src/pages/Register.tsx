@@ -5,8 +5,9 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation } from '@tanstack/react-query';
 import { z } from 'zod';
 import { Eye, EyeOff } from 'lucide-react';
-import { Alert, Button, Field, Input, buttonClass, validateEmail } from '../ui';
-import { registerClient } from '../services/api';
+import { Alert, Button, Combobox, Field, Input, buttonClass, validateEmail } from '../ui';
+import { detectCountry, registerClient } from '../services/api';
+import { COUNTRY_OPTIONS } from '../data/countries';
 import { getAuthItem, isSessionExpired, setAuthBundle } from '../utils/authStorage';
 import { GoogleAuthButton } from './auth/GoogleAuthButton';
 import { AuthDivider, AuthShell } from './auth/AuthShell';
@@ -35,6 +36,22 @@ const schema = z.object({
   password: z
     .string()
     .refine(passwordMeetsRules, 'Your password needs 8 characters, a letter and a number.'),
+  /**
+   * Required, and asked here rather than inferred later.
+   *
+   * It sets the account's tax rail: IN bills in INR with GST, everywhere else
+   * is an export in USD. The charge gate refuses to resolve that from an IP
+   * signal alone -- it 409s `billing_country_required` -- because a VPN or a
+   * corporate egress choosing the wrong rail is a money bug, not a display
+   * one. Detection prefills this field, but what makes the value usable is
+   * that a person saw it and submitted it. A confirmed country here is also
+   * what stops a customer meeting that 409 mid-checkout, on the one screen
+   * where an interruption costs the most.
+   */
+  billing_country: z
+    .string()
+    .trim()
+    .length(2, 'Choose the country you are billed in.'),
 });
 
 type RegisterValues = z.infer<typeof schema>;
@@ -102,12 +119,49 @@ export default function Register() {
   const form = useForm<RegisterValues>({
     resolver: zodResolver(schema),
     mode: 'onTouched',
-    defaultValues: { name: '', email: invitedEmail, password: '' },
+    // `billing_country: ''` rather than left undefined: the schema's own
+    // message ("Choose the country you are billed in.") only fires on a string,
+    // and an undefined value reports a type error instead, which is the wrong
+    // sentence for someone who simply has not picked yet.
+    defaultValues: { name: '', email: invitedEmail, password: '', billing_country: '' },
   });
 
   // `useWatch` rather than `form.watch`: it subscribes to one field instead of
   // re-rendering the form on every keystroke in any of them.
   const password = useWatch({ control: form.control, name: 'password' });
+  const billingCountry = useWatch({ control: form.control, name: 'billing_country' });
+
+  /**
+   * Prefill the country from the edge headers, once, and never over a choice.
+   *
+   * `detectCountry` returns null on a direct origin hit (local dev, no CDN in
+   * front), which is why the field falls back to an unselected placeholder
+   * rather than defaulting to India: silently pre-picking the primary market
+   * for someone the edge could not place is how a US customer ends up on the
+   * INR rail without ever having been asked.
+   *
+   * `getValues` rather than the watched value, and no dependency on it: this
+   * must not re-run and overwrite a country the person has already chosen if
+   * the request resolves late.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    void detectCountry()
+      .then((code) => {
+        if (cancelled || !code) return;
+        if (form.getValues('billing_country')) return;
+        form.setValue('billing_country', code, { shouldValidate: true });
+      })
+      // A convenience that failed is still a convenience. The field is
+      // required, so an unreachable detect leaves the person choosing from
+      // the picker -- which is the same thing they do when the edge cannot
+      // place them. Swallowing beats an unhandled rejection on the one screen
+      // where an error boundary would cost a signup.
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [form]);
 
   const signUp = useMutation({
     mutationFn: (values: RegisterValues) =>
@@ -117,7 +171,7 @@ export default function Register() {
         values.password,
         null,
         null,
-        null,
+        values.billing_country,
         promoCode || null,
       ),
     onSuccess: (data, values) => {
@@ -240,6 +294,22 @@ export default function Register() {
             autoComplete="email"
             placeholder="you@company.com"
             {...form.register('email')}
+          />
+        </Field>
+
+        <Field
+          label={t('auth.country') || 'Country'}
+          error={form.formState.errors.billing_country?.message}
+          hint={t('auth.thisSetsYourCurrency') || 'This sets your currency and tax. You can change it later in Billing.'}
+          required
+        >
+          <Combobox
+            label={t('auth.country') || 'Country'}
+            options={COUNTRY_OPTIONS}
+            value={billingCountry || null}
+            onValueChange={(next) =>
+              form.setValue('billing_country', next ?? '', { shouldValidate: true })
+            }
           />
         </Field>
 

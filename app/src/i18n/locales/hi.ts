@@ -1843,6 +1843,8 @@ const hi = {
     website: 'वेबसाइट',
     welcomeBack: 'वापसी पर स्वागत है',
     workEmail: 'कार्य ईमेल',
+    country: 'देश',
+    thisSetsYourCurrency: 'इससे आपकी मुद्रा और टैक्स तय होते हैं। इसे बाद में Billing में बदल सकते हैं।',
     wrongAccountPrompt: 'गलत खाता? {signOut}',
     yourName: 'आपका नाम',
     yourPassword: 'आपका पासवर्ड',

@@ -29,7 +29,7 @@ import {
   type BillingDetailsRaw,
 } from './billingDetailsForm';
 import { GST_STATE_OPTIONS, gstStateFromPin, gstStateName, normalizeGstin } from './gstin';
-import { COUNTRY_OPTIONS } from './countries';
+import { COUNTRY_OPTIONS } from '../../../data/countries';
 
 /**
  * The buyer identity printed on every tax invoice.
@@ -213,6 +213,22 @@ export function BillingIdentitySection({
             <Input
               value={form.legal_name}
               onChange={(event) => setForm({ ...form, legal_name: event.target.value })}
+              autoComplete="organization"
+            />
+          </Field>
+
+          {/* Optional, and separate from Legal name on purpose: this is the
+              name teammates see on an invite, which is often the trading name
+              rather than the registered one. Left blank, invites fall back to
+              the owner's own name and then to their email address. */}
+          <Field
+            label="Company name"
+            optional
+            hint="Shown to teammates you invite. Leave blank to use your own name."
+          >
+            <Input
+              value={form.company_name}
+              onChange={(event) => setForm({ ...form, company_name: event.target.value })}
               autoComplete="organization"
             />
           </Field>
