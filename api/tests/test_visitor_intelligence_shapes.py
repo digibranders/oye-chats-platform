@@ -432,54 +432,16 @@ class TestIpCompanyNameFilterHardening:
         assert result["company_name"] is None
 
 
-class TestLegacyMigrationAppliesTheSameGates:
-    """The migration that namespaces legacy `ip_intel` is the SECOND writer of
-    that key, and it copied the vendor's company name straight through.
-
-    The Leads panel dropped its own defensive disclaimer once the service began
-    filtering, on the premise that every writer filters. A migration that
-    writes a carrier name into the same field falsifies that premise on any
-    database it runs against.
-    """
-
-    @staticmethod
-    def _flatten(legacy):
-        # `alembic/versions` is a script directory, not an importable package,
-        # so the module is loaded by path.
-        import importlib.util
-        from pathlib import Path
-
-        path = (
-            Path(__file__).resolve().parents[1] / "alembic" / "versions" / "b7c31f0a49de_namespace_legacy_ip_intel.py"
-        )
-        spec = importlib.util.spec_from_file_location("_legacy_ip_intel_migration", path)
-        assert spec and spec.loader
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module._flatten(legacy)
-
-    def test_a_legacy_isp_row_is_not_migrated_into_a_company(self):
-        result = self._flatten(
-            {
-                "company": {"name": "Bharti Airtel Limited", "domain": "airtel.in", "type": "isp"},
-                "asn": {"asn": 24560, "org": "Bharti Airtel"},
-                "is_vpn": False,
-            }
-        )
-        assert result["company_name"] is None
-        assert result["company_domain"] is None
-        assert result["asn_org"] == "Bharti Airtel"
-
-    def test_a_legacy_subnet_label_is_not_migrated_into_a_company(self):
-        result = self._flatten({"company": {"name": "TSBB pool2", "type": "business"}, "asn": {}})
-        assert result["company_name"] is None
-
-    def test_a_legacy_corporate_row_survives_the_migration(self):
-        result = self._flatten(
-            {
-                "company": {"name": "Infosys Limited", "domain": "infosys.com", "type": "business"},
-                "asn": {"asn": 4755, "org": "Infosys"},
-            }
-        )
-        assert result["company_name"] == "Infosys Limited"
-        assert result["company_domain"] == "infosys.com"
+# The class that stood here exercised `_flatten` inside
+# `b7c31f0a49de_namespace_legacy_ip_intel.py`, the migration that namespaced the
+# legacy `ip_intel` key. It was the SECOND writer of that key and had to apply
+# the same "an ISP is not an employer" gates the service applies, or the Leads
+# panel would show a carrier name as a company.
+#
+# The squash to a single production baseline removed that migration, and the
+# backfill it performed is history: it has run everywhere it was ever going to.
+# The gates themselves are not untested by its removal. They live in
+# `ip_intel_service` and are covered above by `TestFetchIpIntelFlattening`
+# (including `test_a_hosting_range_is_not_presented_as_an_employer`) and by
+# `TestIpCompanyNameSanityFilter`, against the live code path rather than a
+# copy of it inside a one-off script.

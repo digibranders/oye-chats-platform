@@ -121,7 +121,7 @@ _PLANS: list[dict] = [
             # anything past it is the customer's own decision to spend
             # credits on. Enforced per account by knowledge_quota_service.
             "knowledge_characters": 100_000,
-            "chat_history_days": 90,
+            "chat_history_days": -1,  # UNLIMITED. Retention is not a plan lever.
             "max_crawl_depth": 4,
             "max_crawl_pages": 100,
             # Pages the account may crawl at zero credits. Not a free
@@ -146,7 +146,12 @@ _PLANS: list[dict] = [
             "api_access": True,
             "online_support": True,
             "topup_allowed": False,
-            "auto_recrawl": True,
+            # OFF on the trial, deliberately. A weekly re-crawl that starts
+            # during a 14-day trial spends credits on a schedule the customer
+            # did not set and cannot pay for, and it would keep firing right up
+            # to the day the trial lapsed. It is a paid-plan feature, so it
+            # starts when the plan does.
+            "auto_recrawl": False,
             "integrations": "all",
             "first_training_free": True,  # kept: surfaced in entitlements/UI copy
         },
@@ -172,11 +177,18 @@ _PLANS: list[dict] = [
             "credits": 100,
             "bots": 1,
             "operators": 0,
-            "leads": 15,
+            # Everything a visitor says is recorded and kept, on every plan.
+            # The Leads DASHBOARD is open to Free too (conversation view:
+            # contact + transcript); the intelligence layer (score, tier, BANT,
+            # location/device, CSV export) is what Free does not get, and that
+            # is gated by ``is_lead_intelligence_enabled``, not by a number
+            # here. A quota would instead stop RECORDING once it was hit,
+            # losing conversations the customer is entitled to read back.
+            "leads": -1,
             "page_scraping": 20,
             "documents": 3,
             "knowledge_characters": 2_500,  # ~500 words. Tiny KB, real product try
-            "chat_history_days": 7,
+            "chat_history_days": -1,  # UNLIMITED. Retention is not a plan lever.
             "max_crawl_depth": 2,
             "max_crawl_pages": 20,
             "max_crawl_js_pages": 10,
@@ -219,7 +231,7 @@ _PLANS: list[dict] = [
             "page_scraping": 500,
             "documents": 20,
             "knowledge_characters": 50_000,  # ~10k words. Small help center
-            "chat_history_days": 30,
+            "chat_history_days": -1,  # UNLIMITED. Retention is not a plan lever.
             "max_crawl_depth": 3,
             "max_crawl_pages": -1,
             "max_crawl_js_pages": 60,
@@ -262,7 +274,7 @@ _PLANS: list[dict] = [
             "page_scraping": 2000,
             "documents": -1,  # unlimited. Standard trusts the char cap + credit gate
             "knowledge_characters": 500_000,  # ~100k words. Full product docs
-            "chat_history_days": 90,
+            "chat_history_days": -1,  # UNLIMITED. Retention is not a plan lever.
             "max_crawl_depth": 4,
             "max_crawl_pages": -1,
             "max_crawl_js_pages": 150,
@@ -308,7 +320,7 @@ _PLANS: list[dict] = [
             "page_scraping": 5000,
             "documents": -1,  # unlimited (Professional)
             "knowledge_characters": -1,  # unlimited (Professional)
-            "chat_history_days": 365,
+            "chat_history_days": -1,  # UNLIMITED. Retention is not a plan lever.
             "max_crawl_depth": 5,
             "max_crawl_pages": -1,
             "max_crawl_js_pages": 300,
@@ -360,7 +372,7 @@ _PLANS: list[dict] = [
             "page_scraping": -1,
             "documents": -1,
             "knowledge_characters": -1,
-            "chat_history_days": 365,
+            "chat_history_days": -1,  # UNLIMITED. Retention is not a plan lever.
             "max_crawl_depth": 5,
             "max_crawl_pages": -1,
             "max_crawl_js_pages": -1,
