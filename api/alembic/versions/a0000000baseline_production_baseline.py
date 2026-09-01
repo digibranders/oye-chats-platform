@@ -21,9 +21,12 @@ extension needs superuser regardless, so both are provisioned with the database
 rather than by this revision; the `CREATE EXTENSION IF NOT EXISTS` lines are
 kept so a superuser-run bootstrap still works from nothing.
 
-An existing database is moved onto this revision with a stamp, never a run:
+An existing database is moved onto this revision with a stamp, never a run.
+``--purge`` is required: a plain stamp still resolves the revision the database
+is currently on, which is one this file replaced and alembic can no longer
+locate, so it fails with the very error it is meant to clear.
 
-    alembic stamp a0000000baseline
+    alembic stamp --purge a0000000baseline
 
 Revision ID: a0000000baseline
 Revises:

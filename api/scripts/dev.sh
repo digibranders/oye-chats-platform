@@ -25,8 +25,51 @@ if [ ! -x "$PY" ]; then
   exit 1
 fi
 
+# The 61 incremental revisions up to 9c4d31e07b52 were squashed into the single
+# baseline a0000000baseline. A database stamped at that old head cannot find it
+# any more, so `upgrade head` fails with "Can't locate revision" and every dev
+# server refuses to start after pulling the squash.
+#
+# The schema is already correct: the baseline IS a dump of the schema that
+# revision produced. So the marker is moved with a stamp, never a run, and ONLY
+# from that exact revision. Any other unknown marker means a database that is
+# genuinely behind, where stamping would claim columns that are not there, so
+# that case stops and asks for a human.
+SQUASHED_HEAD="9c4d31e07b52"
+BASELINE="a0000000baseline"
+# Read the marker from the table, not from `alembic current`: that command
+# FAILS with the same "Can't locate revision" error in exactly the case this
+# guard exists to detect, so it can never report the value we need.
+CURRENT="$("$PY" - <<'PYEOF' 2>/dev/null || true
+from sqlalchemy import create_engine, text
+from app.config import DB_URL
+
+try:
+    with create_engine(DB_URL).connect() as conn:
+        row = conn.execute(text("SELECT version_num FROM alembic_version")).first()
+        print(row[0] if row else "")
+except Exception:
+    print("")
+PYEOF
+)"
+if [ "$CURRENT" = "$SQUASHED_HEAD" ]; then
+  echo "==> dev DB is stamped at the pre-squash head; re-stamping to $BASELINE"
+  # --purge, not a plain stamp. A plain stamp still resolves the CURRENT
+  # revision to work out the path from it, and that is the very revision it
+  # cannot find, so it fails with the same error it is meant to clear. --purge
+  # empties alembic_version first and writes the new marker outright.
+  "$PY" -m alembic stamp --purge "$BASELINE"
+fi
+
 echo "==> alembic upgrade head (keeps dev DB in sync. Skipping this breaks invoice writes)"
-"$PY" -m alembic upgrade head
+if ! "$PY" -m alembic upgrade head; then
+  echo "" >&2
+  echo "error: migrations failed." >&2
+  echo "  If it says \"Can't locate revision\", this DB predates the migration" >&2
+  echo "  squash and is not at $SQUASHED_HEAD. Check 'alembic current' against" >&2
+  echo "  the repo, or recreate the dev DB with scripts/reset_and_seed.sh." >&2
+  exit 1
+fi
 
 PIDS=()
 cleanup() {
