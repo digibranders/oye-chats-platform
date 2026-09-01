@@ -15,6 +15,7 @@ import {
   buttonClass,
 } from '../../ui';
 import { useBotContext } from '../../context/BotContext';
+import { resolveScopedBotId } from '../../context/botScope';
 import { ANALYTICS_BASE, ANALYTICS_TABS, DEFAULT_TAB, tabFromUrl, tabUrl } from './tabs';
 import { DEFAULT_RANGE, RANGE_OPTIONS, parseRange, resolveRange, type RangeKey } from './range';
 import { useAnalyticsRefresh, useLanguageBreakdown } from './useAnalyticsData';
@@ -68,7 +69,12 @@ export function AnalyticsPage() {
   // the same page disagree about where it starts.
   const range = useMemo(() => resolveRange(rangeKey), [rangeKey]);
 
-  const botId = selectedBot?.id ?? null;
+  // Not `selectedBot?.id ?? null`. This page cannot aggregate — its endpoints
+  // require `bot_id` — and the shell scope had no writer at all after the
+  // redesign dropped the switcher, so that expression was permanently null and
+  // every query below stayed disabled. The page rendered empty for everyone.
+  // See `resolveScopedBotId`.
+  const botId = resolveScopedBotId(selectedBot, bots);
 
   // Whether the Languages tab is worth offering. Read from the same cached
   // query the view itself uses, so showing the tab costs no extra request.
@@ -165,6 +171,29 @@ export function AnalyticsPage() {
               <Link to="/chatbots?new=1" className={buttonClass('primary', 'sm')}>
                 {t('analytics.createAChatbot') || 'Create a chatbot'}
               </Link>
+            }
+          />
+        </Card>
+      </Page>
+    );
+  }
+
+  // Several chatbots and none chosen. This page cannot aggregate, so there is
+  // no honest figure to show — and picking one silently would put a single
+  // chatbot's numbers under a control that reads "All chatbots". Ask instead.
+  // Unreachable for a single-chatbot account: `resolveScopedBotId` uses the
+  // sole chatbot, which is every plan below Enterprise.
+  if (botId == null) {
+    return (
+      <Page width="wide">
+        <PageHeader title={t('analytics.analytics') || 'Analytics'} titleVisuallyHidden />
+        <Card>
+          <EmptyState
+            icon={BarChart3}
+            title={t('analytics.chooseAChatbot') || 'Choose a chatbot'}
+            description={
+              t('analytics.thisViewShowsOneChatbot') ||
+              'This view reports on one chatbot at a time. Pick one from Showing, in the sidebar.'
             }
           />
         </Card>

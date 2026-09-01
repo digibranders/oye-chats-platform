@@ -449,6 +449,16 @@ export interface LeadQuotation {
 
 export interface Lead {
   session_id: string;
+  /**
+   * Which chatbot produced this lead.
+   *
+   * Denormalised rather than joined in the dashboard: a lead whose chatbot has
+   * since been deleted would otherwise render blank for a conversation that
+   * really did happen. `bot_name` is null when the chatbot is gone or unnamed,
+   * so the caller falls back to the id.
+   */
+  bot_id?: number | null;
+  bot_name?: string | null;
   score: number;
   bant_score?: number;
   behavioral_score?: number;

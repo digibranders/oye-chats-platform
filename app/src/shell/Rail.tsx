@@ -26,6 +26,7 @@ import {
 import { OyeChatsMark } from './OyeChatsMark';
 import { RailBrand } from './RailBrand';
 import { AgentSwitcher } from './AgentSwitcher';
+import { BotScopeSwitcher } from './BotScopeSwitcher';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 import { SetupProgress } from './SetupProgress';
 import { TrialCard } from './TrialCard';
@@ -264,6 +265,21 @@ export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 
         </>
       ) : (
         <>
+          {/* Which chatbot the workspace pages below are showing. Renders
+              nothing for a single-chatbot account, which is every plan except
+              Enterprise — so for almost everyone the rail is unchanged.
+
+              Above the nav rather than beside it because it scopes what those
+              items open, the same reason `WorkspaceSwitcher` sits above this.
+              It does NOT scope Billing or Settings further down: a plan and a
+              credit balance belong to one chatbot, and those pages carry their
+              own chatbot selection. */}
+          {!collapsed ? (
+            <li className="pb-1">
+              <BotScopeSwitcher />
+            </li>
+          ) : null}
+
           {primary.map((item) => (
             <RailItem
               key={item.to}
