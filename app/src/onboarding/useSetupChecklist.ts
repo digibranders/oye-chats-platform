@@ -63,7 +63,17 @@ export function useSetupChecklist() {
   });
 
   const indexedChunks = Number(primary?.indexed_chunk_count ?? 0);
-  const capturedLeads = Number(leads.data?.total ?? 0);
+  /**
+   * Conversations that left an email or a phone — NOT `total`.
+   *
+   * `total` counts conversations, which is right for the leads list header:
+   * `/leads` returns every session with contact details as enrichment. Reading
+   * it here ticked "Capture your first lead" the moment anyone said hello, with
+   * nothing captured. The third false tick of the same shape as the branding
+   * and avatar ones: the product does something, then congratulates the
+   * customer for it.
+   */
+  const capturedLeads = Number(leads.data?.with_contact ?? 0);
   // The branding step ticked on every chatbot ever created, because
   // `avatar_type` is a STYLE SELECTOR with a default of `'upload'`, not a
   // record of anyone having chosen anything. `Boolean(bot_logo || avatar_type)`

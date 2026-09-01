@@ -69,12 +69,22 @@ export function AnalyticsPage() {
   // the same page disagree about where it starts.
   const range = useMemo(() => resolveRange(rangeKey), [rangeKey]);
 
-  // Not `selectedBot?.id ?? null`. This page cannot aggregate — its endpoints
-  // require `bot_id` — and the shell scope had no writer at all after the
-  // redesign dropped the switcher, so that expression was permanently null and
-  // every query below stayed disabled. The page rendered empty for everyone.
-  // See `resolveScopedBotId`.
-  const botId = resolveScopedBotId(selectedBot, bots);
+  /**
+   * Which chatbot this page reports on, or null for every chatbot at once.
+   *
+   * Analytics DOES aggregate, and an earlier pass here wrongly said it did not
+   * — Journey's constraint applied to Analytics without checking. Nine of its
+   * eleven endpoints take `bot_id` as optional and answer for the whole
+   * workspace when it is omitted; only `/qualification-funnel` and
+   * `/language-breakdown` require one, and those two panels degrade on their
+   * own rather than taking the page down with them.
+   *
+   * `resolveScopedBotId` still supplies the sole chatbot when there is exactly
+   * one, so a single-chatbot account (every plan below Enterprise) never sees
+   * an "all chatbots" framing for what is really its only chatbot.
+   */
+  const scopedBotId = resolveScopedBotId(selectedBot, bots);
+  const botId = bots.length > 1 ? (selectedBot?.id ?? null) : scopedBotId;
 
   // Whether the Languages tab is worth offering. Read from the same cached
   // query the view itself uses, so showing the tab costs no extra request.
@@ -178,28 +188,6 @@ export function AnalyticsPage() {
     );
   }
 
-  // Several chatbots and none chosen. This page cannot aggregate, so there is
-  // no honest figure to show — and picking one silently would put a single
-  // chatbot's numbers under a control that reads "All chatbots". Ask instead.
-  // Unreachable for a single-chatbot account: `resolveScopedBotId` uses the
-  // sole chatbot, which is every plan below Enterprise.
-  if (botId == null) {
-    return (
-      <Page width="wide">
-        <PageHeader title={t('analytics.analytics') || 'Analytics'} titleVisuallyHidden />
-        <Card>
-          <EmptyState
-            icon={BarChart3}
-            title={t('analytics.chooseAChatbot') || 'Choose a chatbot'}
-            description={
-              t('analytics.thisViewShowsOneChatbot') ||
-              'This view reports on one chatbot at a time. Pick one from Showing, in the sidebar.'
-            }
-          />
-        </Card>
-      </Page>
-    );
-  }
 
   return (
     <Page width="wide">

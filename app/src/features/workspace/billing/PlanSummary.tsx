@@ -1,4 +1,3 @@
-import { ArrowUpRight } from 'lucide-react';
 import {
   Badge,
   Button,
@@ -35,8 +34,6 @@ export interface PlanSummaryProps {
   subscription: SubscriptionView;
   plan: PlanView | null;
   geo: BillingGeoView | null;
-  /** Chatbots currently active in the workspace, from the entitlements usage map. */
-  agentsUsed: number;
   /** The chatbot this subscription funds, when the page is scoped to one. */
   scopedBotName?: string | null;
   /** Operator seats currently filled. */
@@ -52,7 +49,6 @@ export interface PlanSummaryProps {
   onManageSeats: () => void;
   onCancel: () => void;
   onResume: () => void;
-  onAddChatbot: () => void;
 }
 
 /**
@@ -76,7 +72,6 @@ export function PlanSummary({
   subscription,
   plan,
   geo,
-  agentsUsed,
   scopedBotName = null,
   seatsUsed,
   grossSeatPriceMinor,
@@ -84,7 +79,6 @@ export function PlanSummary({
   onManageSeats,
   onCancel,
   onResume,
-  onAddChatbot,
 }: PlanSummaryProps) {
   const cycle: BillingCycleKey = subscription.billingCycle === 'annual' ? 'annual' : 'monthly';
   const price = plan ? resolvePlanPrice(plan, cycle, geo) : null;
@@ -92,7 +86,6 @@ export function PlanSummary({
   const renewal = getRenewalDisplay(subscription, subscription.cancelAtPeriodEnd);
   const overage = plan ? formatOverageRate(plan.overageRateMinor) : null;
   const trialOffer = plan ? formatTrialOffer(plan.trialDays) : null;
-  const agentQuota = plan?.limits.bots;
   const seatQuota = plan?.includedSeats ?? 0;
   // `limits.operators` is the hard cap on seats this plan can ever hold, and it
   // gates operator creation too. When it leaves no room above the included
@@ -131,8 +124,8 @@ export function PlanSummary({
         description={
           plan
             ? scopedBotName
-              ? `Funding ${scopedBotName}.`
-              : 'Your account-level subscription. It funds any chatbot that has no plan of its own.'
+              ? `Funding ${scopedBotName}. Each chatbot has its own subscription.`
+              : 'Your account-level subscription. It funds any chatbot that has no plan of its own, and each chatbot on a paid plan has its own subscription.'
             : 'This workspace has no paid subscription.'
         }
         actions={
@@ -205,50 +198,6 @@ export function PlanSummary({
       ) : null}
 
       <CardBody flush>
-        {/* NOT a meter, and this row used to be one.
-            It rendered `used` = every chatbot in the workspace against `limit` =
-            this plan's `limits.bots`, so two chatbots on a plan whose quota is 1
-            painted "2 / 1" in red — an over-quota reading for an account that
-            was over nothing. `limits.bots` is not an account allowance; it is
-            how many chatbots THIS subscription funds, which is 1 on every plan
-            below Enterprise. The description beside it always said so ("Each
-            extra chatbot has its own subscription"), so the control and its own
-            caption disagreed.
-            Nothing is being consumed, so there is no ratio to draw. */}
-        <SettingRow
-          label="Chatbots"
-          description={
-            agentQuota === undefined
-              ? 'This plan declares no chatbot allowance — ask support before adding another.'
-              : agentQuota === UNLIMITED_LIMIT
-                ? 'This plan covers as many chatbots as you need.'
-                : scopedBotName
-                  ? `This plan funds ${scopedBotName}. Each chatbot has its own subscription.`
-                  : 'Each chatbot has its own subscription and its own credits.'
-          }
-          controlWidth="auto"
-        >
-          <div className="flex w-full items-center justify-end gap-3">
-            {agentQuota === undefined ? null : agentQuota === UNLIMITED_LIMIT ? (
-              <span className="figure text-sm font-medium text-text-primary">
-                {formatNumber(agentsUsed)} <span className="text-text-tertiary">of unlimited</span>
-              </span>
-            ) : (
-              // The workspace count, stated plainly. A count is a fact; a ratio
-              // against this plan's quota would be the old lie in a new shape.
-              <span className="figure text-sm font-medium text-text-primary">
-                {formatNumber(agentsUsed)}{' '}
-                <span className="text-text-tertiary">
-                  {agentsUsed === 1 ? 'chatbot' : 'chatbots'}
-                </span>
-              </span>
-            )}
-            <Button size="sm" variant="secondary" onClick={onAddChatbot}>
-              Add
-              <ArrowUpRight aria-hidden />
-            </Button>
-          </div>
-        </SettingRow>
 
         <SettingRow
           label="Operator seats"

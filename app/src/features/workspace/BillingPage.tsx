@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, Coins } from 'lucide-react';
 import {
@@ -66,7 +66,6 @@ import { formatPeriod, resolveScopedPool } from './usage-model';
  * named on screen and addressable by link.
  */
 export function BillingPage() {
-  const navigate = useNavigate();
   const client = useQueryClient();
   const { entitlements } = useEntitlements();
 
@@ -82,7 +81,7 @@ export function BillingPage() {
    * Null means the account-level view: shared credits, and the subscription
    * that funds chatbots with no plan of their own.
    */
-  const { selectedBot } = useBotContext();
+  const { selectedBot, bots } = useBotContext();
   const botId = selectedBot?.id ?? null;
 
   const billing = useBillingData(botId);
@@ -241,19 +240,19 @@ export function BillingPage() {
                 subscription={subscription}
                 plan={plan}
                 geo={billing.geo.data ?? null}
-                agentsUsed={entitlements.usage?.bots ?? 0}
-                // Only when a chatbot is actually scoped. `pool.name` is the
-                // CREDIT POOL's name, and the unscoped pool is called "Shared
-                // credits" — passing it through unguarded rendered "Funding
-                // Shared credits", which names no chatbot at all.
-                scopedBotName={botId != null ? (pool?.name ?? null) : null}
+                // Resolved from the CHATBOT LIST, never from the credit
+                // pool. `resolveScopedPool` falls back to the account pool for
+                // a chatbot with no plan of its own, and that pool is named
+                // "Free & legacy chatbots" — so sourcing the name from it made
+                // the card read "Funding Free & legacy chatbots", which names
+                // no chatbot at all.
+                scopedBotName={bots.find((b) => b.id === botId)?.name ?? null}
                 seatsUsed={entitlements.usage?.operators ?? 0}
                 grossSeatPriceMinor={core?.grossExtraSeatPriceMinor ?? null}
                 onChangePlan={() => setPicking(true)}
                 onManageSeats={() => setManagingSeats(true)}
                 onCancel={() => setCancelling(true)}
                 onResume={() => resume.mutate()}
-                onAddChatbot={() => navigate('/chatbots?new=1')}
               />
             }
             aside={

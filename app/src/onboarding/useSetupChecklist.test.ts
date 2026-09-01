@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useSetupChecklist } from './useSetupChecklist';
 import type { Bot } from '../types/domain';
@@ -14,8 +14,10 @@ import type { Bot } from '../types/domain';
  *
  * "Ask it a question" pointed at Overview, which has no way to ask anything.
  */
+/** The `/leads/stats` payload the checklist reads. */
+const leadStats = vi.hoisted(() => ({ data: undefined as Record<string, unknown> | undefined }));
 vi.mock('@tanstack/react-query', () => ({
-  useQuery: () => ({ data: undefined }),
+  useQuery: () => ({ data: leadStats.data }),
 }));
 
 const bots: Bot[] = [];
@@ -119,5 +121,47 @@ describe('the steps themselves', () => {
       'Put it on your website',
       'Capture your first lead',
     ]);
+  });
+});
+
+describe('the "capture your first lead" step', () => {
+  /**
+   * It read `total`, which counts CONVERSATIONS.
+   *
+   * That number is correct for the leads list header — `/leads` returns every
+   * session, with contact details as enrichment — but under a step labelled
+   * "Capture your first lead" it struck itself through the moment anyone said
+   * hello, with nothing captured. The third false tick of the same shape as the
+   * avatar and colour ones: the product does something, then congratulates the
+   * customer for it.
+   *
+   * `with_contact` counts conversations that left an email or a phone.
+   */
+  const leadStep = () => withBot().steps.find((s) => s.id === 'lead')!;
+
+  afterEach(() => {
+    leadStats.data = undefined;
+  });
+
+  it('is not done when somebody chatted and left nothing', () => {
+    leadStats.data = { total: 7, with_contact: 0 };
+    expect(leadStep().done).toBe(false);
+  });
+
+  it('is done once a conversation leaves contact details', () => {
+    leadStats.data = { total: 7, with_contact: 1 };
+    expect(leadStep().done).toBe(true);
+  });
+
+  it('does not fall back to the conversation count', () => {
+    // A server that has not been updated omits the field. Treating a missing
+    // value as "use total" would restore the exact bug.
+    leadStats.data = { total: 12 };
+    expect(leadStep().done).toBe(false);
+  });
+
+  it('is not done before the stats have loaded', () => {
+    leadStats.data = undefined;
+    expect(leadStep().done).toBe(false);
   });
 });
