@@ -3349,6 +3349,7 @@ const en = {
     createYourChatbot: 'Create your chatbot',
     stepDone: '(done)',
     stepCurrent: '(next step)',
+    stepHere: '(you are here)',
     nextStep: 'Next',
     hideSetupJourney: 'Hide setup steps',
     enterTheAddressOfThe: 'Enter the address of the site it should learn from.',

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { ArrowRight, Check, X } from 'lucide-react';
 import { Button, buttonClass, cn } from '../ui';
 import { useSetupChecklist } from './useSetupChecklist';
@@ -52,6 +52,7 @@ export interface SetupJourneyProps {
 export function SetupJourney({ workspaceId = null }: SetupJourneyProps) {
   const { t } = useTranslation();
   const { steps, done, total, complete, loading } = useSetupChecklist();
+  const { pathname } = useLocation();
   const key = dismissKeyFor(workspaceId);
   const [dismissed, setDismissed] = useState(() => readDismissed(key));
 
@@ -62,6 +63,24 @@ export function SetupJourney({ workspaceId = null }: SetupJourneyProps) {
   const next = steps.find((step) => !step.done);
   if (!next) return null;
 
+  /**
+   * WHERE YOU ARE, which is not the same question as WHAT IS NEXT.
+   *
+   * The strip used to answer only the second and paint it "current", so
+   * standing on Deploy you saw "Customise your chatbot" highlighted and nothing
+   * at all marking "Put it on your website" -- the step you were literally
+   * looking at. A progress bar that cannot say which of its steps you are on is
+   * a list of links.
+   *
+   * `startsWith` rather than equality: a step points at a section root
+   * (`/chatbots/7/deploy`) and the page may add to it. Longest match wins so
+   * `/leads` cannot claim a path that a more specific step owns.
+   */
+  const here =
+    [...steps]
+      .filter((step) => pathname === step.to || pathname.startsWith(`${step.to}/`))
+      .sort((a, b) => b.to.length - a.to.length)[0] ?? null;
+
   return (
     <div className="mb-4 rounded-lg border border-border bg-surface-sunken px-cell py-2.5">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -70,19 +89,34 @@ export function SetupJourney({ workspaceId = null }: SetupJourneyProps) {
             reach is a worse version of not showing it. */}
         <ol className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1">
           {steps.map((step) => {
-            const current = step.id === next.id;
+            // Two independent states. `onThisPage` is where the reader is;
+            // `isNext` is the one action the strip is nudging toward. They
+            // coincide often enough that conflating them looked right, and
+            // diverge exactly when the customer has wandered off the happy
+            // path -- which is when a "you are here" is worth most.
+            const onThisPage = here?.id === step.id;
+            const isNext = step.id === next.id;
             return (
               <li key={step.id} className="flex items-center gap-1.5">
                 <Link
                   to={step.to}
-                  aria-current={current ? 'step' : undefined}
+                  // `step` marks the one being performed, so it follows the
+                  // page. With no step matching the route it falls back to the
+                  // next action, which is still the truest answer available.
+                  aria-current={(here ? onThisPage : isNext) ? 'step' : undefined}
                   className={cn(
                     'inline-flex items-center gap-1.5 rounded-sm px-1.5 py-0.5 text-xs transition-colors',
-                    current
+                    // The page you are on is stated with a ring, which reads
+                    // as position. The next action keeps the filled tint, which
+                    // reads as emphasis. Both at once when they coincide.
+                    onThisPage && 'ring-1 ring-inset ring-accent-600',
+                    isNext
                       ? 'bg-accent-tint font-medium text-accent-700'
-                      : step.done
-                        ? 'text-text-tertiary hover:text-text-secondary'
-                        : 'text-text-secondary hover:text-text-primary',
+                      : onThisPage
+                        ? 'font-medium text-text-primary'
+                        : step.done
+                          ? 'text-text-tertiary hover:text-text-secondary'
+                          : 'text-text-secondary hover:text-text-primary',
                   )}
                 >
                   {step.done ? (
@@ -92,7 +126,7 @@ export function SetupJourney({ workspaceId = null }: SetupJourneyProps) {
                       aria-hidden
                       className={cn(
                         'h-1.5 w-1.5 shrink-0 rounded-full',
-                        current ? 'bg-accent-600' : 'bg-border-strong',
+                        isNext || onThisPage ? 'bg-accent-600' : 'bg-border-strong',
                       )}
                     />
                   )}
@@ -101,9 +135,12 @@ export function SetupJourney({ workspaceId = null }: SetupJourneyProps) {
                       concatenates to "Customise your chatbot(done)" and is read
                       as one word. */}
                   <span className="sr-only">
+                    {/* Both facts, because a screen reader gets no ring and no
+                        tint. Order matches the visual weight. */}
+                    {onThisPage ? ` ${t('onboarding.stepHere') || '(you are here)'}` : ''}
                     {step.done
                       ? ` ${t('onboarding.stepDone') || '(done)'}`
-                      : current
+                      : isNext
                         ? ` ${t('onboarding.stepCurrent') || '(next step)'}`
                         : ''}
                   </span>

@@ -3345,6 +3345,7 @@ const hi = {
     createYourChatbot: 'अपना चैटबॉट बनाएँ',
     stepDone: '(हो गया)',
     stepCurrent: '(अगला चरण)',
+    stepHere: '(आप यहाँ हैं)',
     nextStep: 'आगे',
     hideSetupJourney: 'सेटअप चरण छिपाएँ',
     enterTheAddressOfThe: 'उस साइट का पता दर्ज करें जिससे इसे सीखना है।',
