@@ -67,18 +67,15 @@ def upgrade() -> None:
         ["id"],
         ondelete="SET NULL",
     )
-    # Partial: the column is NULL for almost every row, and the only question
-    # ever asked of it is "which accounts are on this coupon".
-    op.create_index(
-        "ix_clients_coupon_id",
-        "clients",
-        ["coupon_id"],
-        postgresql_where=sa.text("coupon_id IS NOT NULL"),
-    )
+    # Deliberately NO index. `referral_code_id`, the exact twin of this column,
+    # carries none either, and `clients` indexes only api_key, email and the
+    # gateway customer id. An index here would also have to be declared on the
+    # model or `alembic check` reports it as drift on every run forever, and the
+    # only question ever asked of the column is a rare superadmin "which accounts
+    # are on this coupon" over one row per account.
 
 
 def downgrade() -> None:
-    op.drop_index("ix_clients_coupon_id", table_name="clients")
     op.drop_constraint("clients_coupon_id_fkey", "clients", type_="foreignkey")
     op.drop_column("clients", "coupon_attributed_at")
     op.drop_column("clients", "coupon_id")
