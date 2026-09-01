@@ -5,7 +5,6 @@ import { keys } from '../query/keys';
 import { agentPath } from '../shell/nav';
 // One owner for the seeded colour: duplicating the literal here is how the two
 // drift apart and the checklist starts calling a default chatbot branded.
-import { DEFAULT_PRIMARY_COLOR } from '../features/agents/experience/widgetTheme';
 import type { Bot } from '../types/domain';
 import { t as translateNow } from '../i18n/i18n';
 
@@ -72,14 +71,24 @@ export function useSetupChecklist() {
   // struck the step through on a chatbot still carrying the seeded colour and
   // no avatar at all.
   //
+  // The colour had the SAME defect, one layer down, and it outlived the fix
+  // above. `primary_color !== default` looks like evidence of a choice, but the
+  // crawl writes that column from the extracted brand palette
+  // (`crawl_orchestrator`), so training a chatbot on its own website moved the
+  // colour off the seed and struck the step through before anyone had opened
+  // Experience. The product did the work and then congratulated the customer
+  // for it.
+  //
   // What actually answers it: the customer set or removed an avatar
   // (`bot_logo_source === 'manual'`), picked a style other than the default, or
-  // moved the brand colour off the seeded one. A crawl-DERIVED favicon is
-  // deliberately not enough — the product did that, not them.
+  // saved a colour — which the backend records in `manual_field_overrides`, the
+  // same list the crawler consults before overwriting anything. Provenance,
+  // never the value itself. A crawl-DERIVED favicon and a crawl-derived colour
+  // are both deliberately not enough.
   const branded =
     primary?.bot_logo_source === 'manual' ||
     (primary?.avatar_type ?? DEFAULT_AVATAR_TYPE) !== DEFAULT_AVATAR_TYPE ||
-    (primary?.primary_color ?? DEFAULT_PRIMARY_COLOR).toLowerCase() !== DEFAULT_PRIMARY_COLOR;
+    (primary?.manual_field_overrides ?? []).includes('primary_color');
   const installed = Boolean(primary?.widget_installed_at);
 
   // Every step carries one. Two of the six used to pass `''`, so the checklist

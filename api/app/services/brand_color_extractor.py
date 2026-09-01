@@ -143,6 +143,18 @@ _NEUTRAL_SATURATION_MAX = 0.08  # 0..1
 _NEUTRAL_LIGHTNESS_MIN = 0.10
 _NEUTRAL_LIGHTNESS_MAX = 0.92
 
+# A SURFACE: what a page is painted on, rather than what its buttons are. Only
+# the extremes qualify -- near-black and near-white -- because those are the
+# only shades that cannot be an accent. A deep brand (a 28%-lightness purple) is
+# NOT a surface and must keep its normal rank, which is why this is a narrow
+# exclusion rather than a mid-range "vivid" band: the first attempt at this used
+# a 30..70% window and demoted exactly such a purple below a decorative SVG.
+#
+# Ranking only. A surface is moved down the list, never removed, so a site whose
+# brand really is near-black still gets it back when nothing else competes.
+_SURFACE_LIGHTNESS_MAX = 0.20
+_SURFACE_LIGHTNESS_MIN = 0.85
+
 
 def _expand_short_hex(hex6_or_3: str) -> str:
     """Normalize ``abc`` → ``aabbcc`` and lowercase."""
@@ -185,6 +197,25 @@ def _is_brandable(hex6: str) -> bool:
     if s < _NEUTRAL_SATURATION_MAX:
         return False
     return _NEUTRAL_LIGHTNESS_MIN <= lightness <= _NEUTRAL_LIGHTNESS_MAX
+
+
+def _is_surface(hex6: str) -> bool:
+    """Is this what the page is painted ON, rather than what stands out on it?
+
+    The case that prompted it: a dark-themed site whose page background is
+    ``#0c1e2e`` and whose brand blue is ``#0a66c2``. Both pass ``_is_brandable``
+    and both carry white text, but the background is painted over the whole page
+    while the accent sits on a handful of buttons -- so ranking by frequency
+    handed back the chrome, and the widget came out looking like the site's
+    background instead of its brand.
+
+    Saturation cannot separate them: that near-black is 59% saturated, MORE than
+    several real accents. Only extreme lightness can, and only at the extremes:
+    a deep 28% purple is a perfectly good brand colour and is deliberately not
+    caught here.
+    """
+    _h, _s, lightness = _rgb_to_hsl(*_hex_to_rgb(hex6))
+    return lightness <= _SURFACE_LIGHTNESS_MAX or lightness >= _SURFACE_LIGHTNESS_MIN
 
 
 def _clamp_byte(value: float) -> int:
@@ -340,9 +371,23 @@ def _rank(counts: Counter, first_seen: dict, *, top_n: int) -> list[str]:
     # colours to the back pushes decoration out of the top N wherever the site
     # has enough usable colours to fill it, and leaves a light brand its own
     # palette where it does not.
+    # Contrast, then surfaces, then frequency. Frequency is a proxy for
+    # "important" that INVERTS on a dark-themed site: the page background is
+    # painted everywhere and the brand colour sits on a handful of buttons, so
+    # counting alone reliably returns the chrome.
+    #
+    # `_is_surface` is deliberately narrow -- only near-black and near-white --
+    # so it separates a background from an accent without disturbing the CSS-vs-
+    # SVG weighting already encoded in the counts. A wider "vivid" band did
+    # disturb it: it pushed a declared 28%-lightness brand token below a
+    # decorative SVG, which is the exact judgement `_CSS_COLOR_WEIGHT` exists to
+    # make.
+    #
+    # Contrast stays first: a colour that cannot carry text is unusable whatever
+    # else it is.
     ranked = sorted(
         counts.items(),
-        key=lambda kv: (not _carries_text(kv[0]), -kv[1], first_seen[kv[0]]),
+        key=lambda kv: (not _carries_text(kv[0]), _is_surface(kv[0]), -kv[1], first_seen[kv[0]]),
     )
     return [f"#{hex6}" for hex6, _ in ranked[:top_n]]
 

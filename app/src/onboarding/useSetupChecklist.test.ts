@@ -33,6 +33,7 @@ function withBot(over: Partial<Bot> = {}) {
     avatar_type: 'upload',
     bot_logo: null,
     bot_logo_source: null,
+    manual_field_overrides: [],
     ...over,
   } as Bot);
   return renderHook(() => useSetupChecklist()).result.current;
@@ -65,12 +66,32 @@ describe('the branding step', () => {
     expect(brandStep(withBot({ avatar_type: 'orb' })).done).toBe(true);
   });
 
-  it('is done once they move the brand colour off the seeded one', () => {
-    expect(brandStep(withBot({ primary_color: '#123456' })).done).toBe(true);
+  it('is done once they SAVE a colour', () => {
+    // The signal is provenance, not the value. Saving records the field in
+    // `manual_field_overrides`, which is the same list the crawler consults
+    // before overwriting anything.
+    expect(brandStep(withBot({ manual_field_overrides: ['primary_color'] })).done).toBe(true);
   });
 
-  it('treats the seeded colour case-insensitively', () => {
-    expect(brandStep(withBot({ primary_color: '#A21CAF' })).done).toBe(false);
+  it('is NOT done when the CRAWL picked the colour', () => {
+    // The bug this replaces. Training a chatbot on its own website extracts a
+    // brand palette and writes `primary_color`, so `primary_color !== default`
+    // was true before anyone had opened Experience — and the checklist struck
+    // the step through on work the customer had not done. Same shape as the
+    // derived-favicon case below: the product did it, not them.
+    expect(brandStep(withBot({ primary_color: '#0c1e2e' })).done).toBe(false);
+  });
+
+  it('is done even when the saved colour happens to be the seeded one', () => {
+    // Someone who opened the palette and decided the default was right has
+    // chosen. Comparing values could never see that; the override record can.
+    expect(
+      brandStep(withBot({ primary_color: '#a21caf', manual_field_overrides: ['primary_color'] })).done,
+    ).toBe(true);
+  });
+
+  it('ignores an override for some other field', () => {
+    expect(brandStep(withBot({ manual_field_overrides: ['company_name'] })).done).toBe(false);
   });
 });
 

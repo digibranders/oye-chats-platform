@@ -34,6 +34,16 @@ export interface Bot {
   website?: string;
   company_name?: string;
   primary_color?: string;
+  /**
+   * Fields the CUSTOMER has saved, so a re-crawl leaves them alone.
+   *
+   * Provenance, not value. The crawl auto-fills `company_name`,
+   * `company_description`, `brand_tone` and `primary_color`, so the stored
+   * value alone cannot say whether a person chose it or the product did — this
+   * list can. It is the same list `crawl_orchestrator` consults before
+   * overwriting anything.
+   */
+  manual_field_overrides?: string[];
   bot_logo?: string | null;
   /**
    * Who last wrote the avatar. `null` = nobody ever has; `'manual'` = the
