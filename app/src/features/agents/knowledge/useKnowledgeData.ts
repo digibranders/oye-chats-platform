@@ -95,7 +95,11 @@ export function useKnowledgeData(agentId: number | null): KnowledgeData {
   return {
     sources: toSection(
       sourcesQuery,
-      (rows) => rows ?? NO_SOURCES,
+      // `??` only catches null and undefined, so an object reached the page
+      // and `DataTable` threw during render. The API boundary rejects a
+      // non-array now, but this select must not be the one place that
+      // re-introduces the assumption.
+      (rows) => (Array.isArray(rows) ? rows : NO_SOURCES),
       NO_SOURCES,
       translateNow('agents.weCouldNotLoadWhat') || 'We could not load what this chatbot knows.',
     ),

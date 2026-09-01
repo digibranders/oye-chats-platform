@@ -3167,6 +3167,7 @@ const hi = {
     noLimit: 'कोई सीमा नहीं',
     noMatches: 'कोई मेल नहीं',
     noRowsMatched: 'कोई पंक्ति मेल नहीं खाई।',
+    weCouldNotReadThis: 'हम यह सूची नहीं पढ़ सके। सर्वर से अप्रत्याशित उत्तर आया।',
     nothingToPlotYet: 'अभी बनाने को कुछ नहीं',
     nothingToRankYet: 'अभी क्रम देने को कुछ नहीं',
     nothingToShow: 'दिखाने को कुछ नहीं',
@@ -3200,7 +3201,7 @@ const hi = {
       empty: 'अभी कोई डेटा नहीं।',
       next: 'अगला',
       previous: 'पिछला',
-      range: '{total} में से {start}–{end}',
+      range: '{total} में से {start} से {end}',
     },
     thisCouldNotBeLoaded: 'यह लोड नहीं हो सका',
     tryAgain: 'फिर प्रयास करें',
@@ -3328,7 +3329,7 @@ const hi = {
     withTheAddressInYourBrowser: 'अपने ब्राउज़र बार का पता और तकनीकी विवरण में दिखी जानकारी के साथ।',
     yesterday: 'कल',
     youDontHavePermissionTo: 'आपके पास यह पेज देखने की अनुमति नहीं है।',
-    yourDataIsSafe: 'आपका डेटा सुरक्षित है — यह स्क्रीन दिखते हुए भी आपके चैटबॉट आगंतुकों को जवाब देते रहते हैं।',
+    yourDataIsSafe: 'आपका डेटा सुरक्षित है। यह स्क्रीन दिखते हुए भी आपके चैटबॉट आगंतुकों को जवाब देते रहते हैं।',
   },
   affiliate: {
 

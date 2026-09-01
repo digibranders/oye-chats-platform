@@ -176,7 +176,7 @@ export function useCrawlDiscovery({
       setError(
         errorMessage(
           cause,
-          translateNow('agents.weCouldNotCountThe') || 'We could not count the pages on that site. You can still train on it — we will follow links from the homepage.',
+          translateNow('agents.weCouldNotCountThe') || 'We could not count the pages on that site. You can still train on it, and we will follow links from the homepage.',
         ),
       );
     } finally {

@@ -185,7 +185,7 @@ export function PlanSummary({
                 ? formatMoneyMinor(plan?.overageRateMinor ?? 0, CHARGE_CURRENCY)
                 : undefined,
               size: 'lg',
-              period: overage ? undefined : 'No overage — buy a top-up',
+              period: overage ? undefined : 'No overage, buy a top-up',
             },
           ]}
         />
@@ -247,7 +247,7 @@ export function PlanSummary({
               with the real date in it. Repeating it here put the same sentence
               beside the button that opens the dialog that says it. */}
           <p className="text-xs text-text-secondary">
-            {trialOffer && subscription.status === 'trialing' ? 'Trial — no card charged yet.' : ''}
+            {trialOffer && subscription.status === 'trialing' ? 'Trial, no card charged yet.' : ''}
           </p>
           <Button size="sm" variant="danger" onClick={onCancel}>
             Cancel subscription

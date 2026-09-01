@@ -320,7 +320,7 @@ export function recrawlCost(diff: RecrawlDiff): { pages: number; credits: number
 export function recrawlBlockedReason(diff: RecrawlDiff, previewFailed: boolean): string | null {
   if (previewFailed) return null;
   if (diff.mode === 'full' && diff.sitemapTotal === 0) {
-    return translateNow('agents.weCouldNotSeeAny') || 'We could not see any pages on that site just now — its sitemap may be temporarily unavailable. Nothing has been charged. Try again in a few minutes.';
+    return translateNow('agents.weCouldNotSeeAny') || 'We could not see any pages on that site just now. Its sitemap may be temporarily unavailable. Nothing has been charged. Try again in a few minutes.';
   }
   return null;
 }
@@ -503,15 +503,15 @@ export function uploadSkipReason(reason: string | undefined): string | null {
   if (!reason) return null;
   switch (reason) {
     case 'unsupported_type':
-      return translateNow('agents.notAFileTypeWe') || 'Not a file type we can read — skipped, no charge';
+      return translateNow('agents.notAFileTypeWe') || 'Not a file type we can read. Skipped, no charge';
     case 'oversize_file':
-      return translateNow('agents.over10MbSkippedNo') || 'Over 10 MB — skipped, no charge';
+      return translateNow('agents.over10MbSkippedNo') || 'Over 10 MB. Skipped, no charge';
     case 'batch_oversize':
-      return translateNow('agents.thisBatchIsOver60') || 'This batch is over 60 MB — skipped, no charge';
+      return translateNow('agents.thisBatchIsOver60') || 'This batch is over 60 MB. Skipped, no charge';
     case 'extraction_failed':
-      return translateNow('agents.noReadableTextMostLikely') || 'No readable text, most likely a scanned PDF — skipped, no charge';
+      return translateNow('agents.noReadableTextMostLikely') || 'No readable text, most likely a scanned PDF. Skipped, no charge';
     case 'extraction_error':
-      return translateNow('agents.weCouldNotExtractText') || 'We could not extract text — skipped, no charge';
+      return translateNow('agents.weCouldNotExtractText') || 'We could not extract text. Skipped, no charge';
     default:
       return reason;
   }

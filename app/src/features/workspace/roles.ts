@@ -45,7 +45,7 @@ export const ROLES: readonly RoleDefinition[] = [
     summary: 'Everything an operator can do, plus managing the team and the chatbots.',
     can: [
       'Everything an operator can do',
-      'Invite, edit and remove teammates — but cannot make anyone an owner',
+      'Invite, edit and remove teammates, but cannot make anyone an owner',
       'Change chatbot settings, knowledge and deployment',
     ],
     // Ink, not neutral. Admin and Operator both rendered `neutral`, so the Role

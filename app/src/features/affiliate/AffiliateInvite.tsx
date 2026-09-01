@@ -37,7 +37,7 @@ import { errorMessage, passwordMeetsRules } from '../../pages/auth/authFlow';
  */
 
 const schema = z.object({
-  name: z.string().trim().min(2, 'Enter your name — at least two characters.'),
+  name: z.string().trim().min(2, 'Enter your name, at least two characters.'),
   password: z
     .string()
     .refine(passwordMeetsRules, 'Your password needs 8 characters, a letter and a number.'),

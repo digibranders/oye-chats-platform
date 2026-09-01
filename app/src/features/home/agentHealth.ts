@@ -66,7 +66,7 @@ export function agentHealth(bot: Bot): AgentHealth {
     return {
       state: 'training',
       label: translateNow('home.training') || 'Training',
-      detail: translateNow('home.readingYourSiteAFew') || 'Reading your site — a few minutes.',
+      detail: translateNow('home.readingYourSiteAFew') || 'Reading your site. This takes a few minutes.',
       tone: 'neutral',
       needsAttention: false,
     };

@@ -200,7 +200,7 @@ export function RecrawlDialog({
                     value={formatNumber(diff.removedPages)}
                     hint={
                       diff.headPartial
-                        ? t('agents.atLeastThisManyWe') || 'At least this many — we could not check every stored page in time, and nothing is deleted by this preview'
+                        ? t('agents.atLeastThisManyWe') || 'At least this many. We could not check every stored page in time, and nothing is deleted by this preview'
                         : t('agents.noLongerOnTheSite') || 'No longer on the site'
                     }
                   />

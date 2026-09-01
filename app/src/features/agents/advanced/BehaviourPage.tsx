@@ -170,7 +170,7 @@ function BehaviourContent({
             title="What the widget offers"
             description={
               isFree
-                ? 'These are switched off for visitors on the Free plan — saved, but ignored by the widget until you upgrade.'
+                ? 'These are switched off for visitors on the Free plan. They are saved, but ignored by the widget until you upgrade.'
                 : undefined
             }
             actions={

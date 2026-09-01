@@ -440,7 +440,7 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
           <LockedState
             className="max-w-md"
             title={t('inbox.liveChatIsAPaid') || 'Live chat is a paid feature'}
-            description={t('inbox.yourVisitorsCanStillLeave') || 'Your visitors can still leave you messages — those are in the Messages scope. Upgrade to answer them in real time, take conversations over from the AI, and route them to your team.'}
+            description={t('inbox.yourVisitorsCanStillLeave') || 'Your visitors can still leave you messages, and those are in the Messages scope. Upgrade to answer them in real time, take conversations over from the AI, and route them to your team.'}
             action={
               <Link to="/billing" className={buttonClass('primary')}>
                 {t('inbox.seePlans') || 'See plans'}

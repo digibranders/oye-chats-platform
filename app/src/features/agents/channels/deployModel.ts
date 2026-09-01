@@ -70,7 +70,7 @@ export function installStatus({ installedAt, claimed, checking }: InstallStatusI
       state: 'checking',
       label: translateNow('agents.lookingForYourWidget') || 'Looking for your widget',
       tone: 'neutral',
-      detail: translateNow('agents.openAPageOfYour') || 'Open a page of your site in another tab — we check every few seconds.',
+      detail: translateNow('agents.openAPageOfYour') || 'Open a page of your site in another tab. We check every few seconds.',
     };
   }
   if (claimed) {
@@ -147,7 +147,7 @@ export function widgetHeartbeat({
       seenAt: null,
       origin,
       detail: installedAt
-        ? translateNow('agents.weHaveNotRecordedA') || 'We have not recorded a load since this check was added. It appears the next time somebody opens a page with your chatbot on it — an empty reading here does not mean the chatbot is down.'
+        ? translateNow('agents.weHaveNotRecordedA') || 'We have not recorded a load since this check was added. It appears the next time somebody opens a page with your chatbot on it. An empty reading here does not mean the chatbot is down.'
         : translateNow('agents.nothingHasLoadedYourChatbot') || 'Nothing has loaded your chatbot yet.',
     };
   }
@@ -298,7 +298,7 @@ export function domainNotice({
       id: 'off',
       tone: 'warning',
       title: translateNow('agents.anyWebsiteCanEmbedThis') || 'Any website can embed this chatbot',
-      body: translateNow('agents.yourEmbedKeyIsVisible') || 'Your embed key is visible in your page source, so anyone who copies it can run your chatbot — and spend your credits — on their own site.',
+      body: translateNow('agents.yourEmbedKeyIsVisible') || 'Your embed key is visible in your page source, so anyone who copies it can run your chatbot, and spend your credits, on their own site.',
     };
   }
   if (domains.length === 0) {
@@ -419,7 +419,7 @@ export function troubleshootItems(input: TroubleshootInput): TroubleshootItem[] 
     items.push({
       id: 'allow-list-subdomain',
       title: translateNow('agents.checkTheExactAddressThe') || 'Check the exact address the page is served from',
-      body: translateNow('agents.allowedDomainsIsOnAn') || 'Allowed domains is on. An entry for acme.com does not cover www.acme.com or shop.acme.com — only *.acme.com does. Compare the address bar on the page you installed to your allowed domains, character for character.',
+      body: translateNow('agents.allowedDomainsIsOnAn') || 'Allowed domains is on. An entry for acme.com does not cover www.acme.com or shop.acme.com; only *.acme.com does. Compare the address bar on the page you installed to your allowed domains, character for character.',
     });
   }
 
@@ -427,7 +427,7 @@ export function troubleshootItems(input: TroubleshootInput): TroubleshootItem[] 
     {
       id: 'external',
       title: translateNow('agents.weOnlyCountAReal') || 'We only count a real page on your own domain',
-      body: translateNow('agents.aLoadFromLocalhostFrom') || 'A load from localhost, from a file:// page, or from the preview on this dashboard never counts as installed — that is deliberate, so a preview cannot mark you live. Open the page on the domain your visitors use.',
+      body: translateNow('agents.aLoadFromLocalhostFrom') || 'A load from localhost, from a file:// page, or from the preview on this dashboard never counts as installed. That is deliberate, so a preview cannot mark you live. Open the page on the domain your visitors use.',
     },
     {
       id: 'body',
@@ -506,7 +506,7 @@ export function developerEmail({
       ? [
           ``,
           `The second line is a small visible "Powered by OyeChats" credit link.`,
-          `Please keep it in the served HTML and do not hide it with CSS — a hidden`,
+          `Please keep it in the served HTML and do not hide it with CSS. A hidden`,
           `link is a Google policy violation against our own domain.`,
         ]
       : []),

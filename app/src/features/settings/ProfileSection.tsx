@@ -129,7 +129,7 @@ export function ProfileSection({ user, onSaved }: ProfileSectionProps) {
   function submit() {
     const errors: Record<string, string> = {};
     if (!draft.values.name.trim()) {
-      errors.name = t('settings.enterYourNameVisitorsSee') || 'Enter your name — visitors see it beside every message you send.';
+      errors.name = t('settings.enterYourNameVisitorsSee') || 'Enter your name. Visitors see it beside every message you send.';
     }
     if (isOperator) {
       const email = draft.values.email.trim();

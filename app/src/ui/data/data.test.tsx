@@ -115,6 +115,36 @@ describe('DataTable count, states and structure', () => {
     expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
   });
 
+  it('shows the error state, not a crash, when the server sends a non-array', () => {
+    // `/documents` answered with an object and `visibleRows.map is not a
+    // function` took the WHOLE Knowledge page down through its error boundary,
+    // table and all. A list this component cannot read is a failed load.
+    render(
+      <DataTable
+        caption="Invoices"
+        columns={columns}
+        rows={{} as never}
+        rowKey={(row) => row.id}
+      />,
+    );
+    expect(screen.getByText(/could not read this list/i)).toBeInTheDocument();
+  });
+
+  it('does not call an unreadable list empty', () => {
+    // The empty state is a CLAIM: "there are none". Saying it about a list that
+    // failed to load tells the customer their data is gone.
+    render(
+      <DataTable
+        caption="Invoices"
+        columns={columns}
+        rows={{} as never}
+        rowKey={(row) => row.id}
+        empty={<span>No invoices yet</span>}
+      />,
+    );
+    expect(screen.queryByText('No invoices yet')).not.toBeInTheDocument();
+  });
+
   it('renders the fourth state itself instead of leaving it to a feature wrapper', async () => {
     const onUpgrade = vi.fn();
     const user = userEvent.setup();

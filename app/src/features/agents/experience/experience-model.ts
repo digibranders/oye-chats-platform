@@ -836,7 +836,7 @@ export function validateDraft(draft: ExperienceDraft): DraftErrors {
   const errors: DraftErrors = {};
 
   if (draft.displayName.trim().length === 0) {
-    errors.displayName = 'Give your chatbot a name — visitors see it in the widget header.';
+    errors.displayName = 'Give your chatbot a name. Visitors see it in the widget header.';
   }
   if (!isHexColor(draft.primaryColor)) {
     errors.primaryColor = translateNow('agents.enterAHexColourFor') || 'Enter a hex colour, for example #2B66BC.';
@@ -890,7 +890,7 @@ export function validateDraft(draft: ExperienceDraft): DraftErrors {
         errors[`businessHours:${key}`] = translateNow('agents.enterBothTimesAsHh') || 'Enter both times as HH:MM.';
       } else if (day.start === day.end) {
         errors[`businessHours:${key}`] =
-          translateNow('agents.openingAndClosingTimesAre') || 'Opening and closing times are the same — that day would never be open.';
+          translateNow('agents.openingAndClosingTimesAre') || 'Opening and closing times are the same, so that day would never be open.';
       }
     }
     if (DAY_KEYS.every((key) => hours.days[key] === null)) {

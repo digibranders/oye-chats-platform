@@ -95,7 +95,7 @@ function PrivateNotes({ sessionId }: { sessionId: string }) {
         <Textarea
           rows={3}
           aria-label={t('inbox.privateNoteAboutThisVisitor') || 'Private note about this visitor'}
-          placeholder={t('inbox.contextForLaterWhatThey') || 'Context for later — what they need, who to loop in…'}
+          placeholder={t('inbox.contextForLaterWhatThey') || 'Context for later: what they need, who to loop in…'}
           value={note}
           onChange={(event) => setNote(event.target.value)}
           // Saved on blur rather than by a button: this console has a `SaveBar`

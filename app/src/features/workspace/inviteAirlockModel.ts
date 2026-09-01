@@ -106,6 +106,6 @@ export const RESOLVED_COPY: Record<
   expired: {
     title: 'This invitation has expired',
     description:
-      'Invitations are short-lived on purpose. Ask whoever invited you to send a fresh one — it takes them a moment.',
+      'Invitations are short-lived on purpose. Ask whoever invited you to send a fresh one. It takes them a moment.',
   },
 };

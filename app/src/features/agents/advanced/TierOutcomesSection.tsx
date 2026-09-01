@@ -121,7 +121,7 @@ function TierOutcomesSectionInner({ state, agentId, webhooksAllowed }: TierOutco
                       ) : webhooksAllowed ? (
                         <>
                           No webhook subscribes to <span className="figure">{TIER_EVENT}</span>
-                          {facts.silentWebhooks > 0 ? ' — add this event to one of them.' : '.'}
+                          {facts.silentWebhooks > 0 ? '. Add this event to one of them.' : '.'}
                         </>
                       ) : (
                         'Webhooks are not on this plan.'

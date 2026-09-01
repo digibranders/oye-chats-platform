@@ -562,10 +562,39 @@ const api = axios.create({
  */
 export const httpClient: AxiosInstance = api;
 
+/**
+ * Assert that a list endpoint actually returned a list.
+ *
+ * Twelve functions in this file are typed `Promise<T[]>` and most of them
+ * returned `response.data` unexamined, so the array was an assertion the
+ * runtime never checked. Anything that answers with a JSON object instead —
+ * a proxy error page, a gateway challenge, a route that lost its
+ * `response_model` — travelled all the way to `DataTable`, where the render
+ * threw and the page's error boundary replaced the ENTIRE page with
+ * "Something went wrong".
+ *
+ * It throws rather than falling back to `[]` because empty is a claim, not a
+ * neutral default: an empty knowledge table reads as "this chatbot lost its
+ * training", and an empty operator list reads as "your team is gone". A
+ * thrown `ApiError` lands in the caller's existing error state, which says the
+ * load failed and offers a retry. Where empty genuinely IS safe — seed
+ * questions, a suggestion list — the caller keeps its own `?? []`.
+ */
+const expectArray = <T,>(value: unknown, fallbackMessage: string): T[] => {
+    if (Array.isArray(value)) return value as T[];
+    throw new ApiError(fallbackMessage, { detail: null, data: value });
+};
+
 const buildApiError = (
     error: unknown,
     fallbackMessage: string = translateNow('app.requestFailed') || 'Request failed',
 ): ApiError => {
+    // Already ours: pass it through rather than rebuilding it. `expectArray`
+    // throws an ApiError from INSIDE the caller's `try`, so without this the
+    // catch would wrap it a second time and drop the offending payload it
+    // attached — the one thing that says what the server actually sent.
+    if (error instanceof ApiError) return error;
+
     // Every caller passes an axios rejection, but `catch` binds `unknown` and a
     // non-axios throw (a bug in a then-handler) must not crash the builder.
     const axiosError = error as ApiAxiosError;
@@ -1372,7 +1401,7 @@ export const getDocuments = async (botId?: number): Promise<KnowledgeSource[]> =
     try {
         const url = botId ? `/documents?bot_id=${botId}` : '/documents';
         const response = await api.get(url);
-        return response.data;
+        return expectArray(response.data, 'Failed to load documents');
     } catch (error) {
         console.error('API Error fetching documents:', error);
         throw buildApiError(error, 'Failed to load documents');
@@ -1928,7 +1957,7 @@ export const getFeedbackData = async (botId?: number): Promise<FeedbackItem[]> =
     try {
         const url = botId ? `/analytics/feedback?bot_id=${botId}` : '/analytics/feedback';
         const response = await api.get(url);
-        return response.data;
+        return expectArray(response.data, 'Failed to load feedback');
     } catch (error) {
         console.error('API Error fetching feedback data:', error);
         throw buildApiError(error, 'Failed to load feedback');
@@ -1943,7 +1972,7 @@ export const getTopQuestions = async (botId?: number): Promise<TopQuestion[]> =>
     try {
         const url = botId ? `/analytics/top-questions?bot_id=${botId}` : '/analytics/top-questions';
         const response = await api.get(url);
-        return response.data;
+        return expectArray(response.data, 'Failed to load top questions');
     } catch (error) {
         console.error('API Error fetching top questions:', error);
         throw buildApiError(error, 'Failed to load top questions');
@@ -2222,7 +2251,7 @@ export const uploadFeedbackAttachment = async (file: File): Promise<{ url: strin
 export const getMyFeedback = async (): Promise<PlatformFeedbackItem[]> => {
     try {
         const response = await api.get('/client/feedback');
-        return response.data;
+        return expectArray(response.data, 'Failed to load your feedback');
     } catch (error) {
         console.error('API Error fetching my feedback:', error);
         throw buildApiError(error, 'Failed to load your feedback');
@@ -2238,7 +2267,7 @@ export const getMyFeedback = async (): Promise<PlatformFeedbackItem[]> => {
 export const getBots = async (): Promise<Bot[]> => {
     try {
         const response = await api.get('/bots');
-        return response.data;
+        return expectArray(response.data, 'Failed to load bots');
     } catch (error) {
         console.error('API Error fetching bots:', error);
         throw buildApiError(error, 'Failed to load bots');
@@ -2839,7 +2868,7 @@ export const overrideLeadQualification = async (
 export const getWebhooks = async (botId?: number): Promise<Webhook[]> => {
     try {
         const response = await api.get(`/webhooks?bot_id=${botId}`);
-        return response.data;
+        return expectArray(response.data, 'Failed to load webhooks');
     } catch (error) {
         console.error('API Error fetching webhooks:', error);
         throw buildApiError(error, 'Failed to load webhooks');
@@ -3148,7 +3177,7 @@ export const operatorChangePassword = async (
 export const getOperators = async (): Promise<Operator[]> => {
     try {
         const response = await api.get('/operators');
-        return response.data;
+        return expectArray(response.data, 'Failed to load operators');
     } catch (error) {
         console.error('API Error fetching operators:', error);
         throw buildApiError(error, 'Failed to load operators');
@@ -3193,7 +3222,7 @@ export const deleteOperator = async (operatorId: number): Promise<Record<string,
 export const getDepartments = async (): Promise<Department[]> => {
     try {
         const response = await api.get('/operators/departments');
-        return response.data;
+        return expectArray(response.data, 'Failed to load departments');
     } catch (error) {
         console.error('API Error fetching departments:', error);
         throw buildApiError(error, 'Failed to load departments');
@@ -3716,7 +3745,7 @@ export const getCreditDaily = async (
 export const getTopupPacks = async (): Promise<TopupPackResponse[]> => {
     try {
         const response = await api.get('/credits/packs');
-        return response.data;
+        return expectArray(response.data, 'Failed to load top-up packs');
     } catch (error) {
         throw buildApiError(error, 'Failed to load top-up packs');
     }
@@ -4389,7 +4418,7 @@ export const listOperatorInvites = async (statusFilter: string | null = null): P
     try {
         const params = statusFilter ? { status_filter: statusFilter } : {};
         const response = await api.get('/invites', { params });
-        return response.data;
+        return expectArray(response.data, 'Failed to load invites');
     } catch (error) {
         throw buildApiError(error, 'Failed to load invites');
     }

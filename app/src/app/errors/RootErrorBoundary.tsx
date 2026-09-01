@@ -37,7 +37,7 @@ export function RootErrorBoundary() {
       title={title}
       description={`${description} ${
         t('app.yourDataIsSafe') ||
-        'Your data is safe — your chatbots keep answering visitors while this screen is up.'
+        'Your data is safe. Your chatbots keep answering visitors while this screen is up.'
       }`}
       detail={detail}
       actions={

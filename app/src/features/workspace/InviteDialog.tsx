@@ -164,7 +164,7 @@ export function InviteDialog({
             <Field
               label="Email address"
               required
-              hint="They get a sign-in link — no account needed first."
+              hint="They get a sign-in link, with no account needed first."
               error={emailError}
             >
               <Input

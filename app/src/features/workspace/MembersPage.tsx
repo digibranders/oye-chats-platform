@@ -819,7 +819,7 @@ export function MembersPage() {
           if (!open) setDeactivating(null);
         }}
         title={`Deactivate ${deactivating ? deactivating.name || deactivating.email : 'this person'}?`}
-        description="They cannot sign in, their seat is freed, and live conversations go back to the queue. Nothing is deleted — you can reactivate them when a seat is free."
+        description="They cannot sign in, their seat is freed, and live conversations go back to the queue. Nothing is deleted, and you can reactivate them when a seat is free."
         confirmLabel="Deactivate"
         destructive
         onConfirm={async () => {

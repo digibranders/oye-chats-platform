@@ -29,7 +29,7 @@ export const PUSH_EVENTS: readonly PushEventDefinition[] = [
     key: 'handoff_request',
     label: 'A visitor asks for a person',
     description:
-      'The one that is genuinely urgent — somebody is waiting, and every second of silence is a second they might leave.',
+      'The one that is genuinely urgent. Somebody is waiting, and every second of silence is a second they might leave.',
   },
   {
     key: 'chat_transferred',

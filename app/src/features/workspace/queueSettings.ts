@@ -61,7 +61,7 @@ export const QUEUE_BOUNDS: Record<keyof QueueSettings, Bound> = {
   acceptSeconds: {
     min: 5,
     max: 3600,
-    tooSmall: 'Give them at least 5 seconds — anything less and nobody can answer in time.',
+    tooSmall: 'Give them at least 5 seconds. Anything less and nobody can answer in time.',
     tooLarge: 'Keep it under an hour. A visitor will not wait that long in silence.',
   },
   waitSeconds: {
@@ -82,7 +82,7 @@ export const QUEUE_BOUNDS: Record<keyof QueueSettings, Bound> = {
   visitorDropSeconds: {
     min: 5,
     max: 3600,
-    tooSmall: 'At least 5 seconds — below that a tab switch or a tunnel ends the conversation.',
+    tooSmall: 'At least 5 seconds. Below that a tab switch or a tunnel ends the conversation.',
     tooLarge: 'An hour is the ceiling, and it is already indistinguishable from never closing.',
   },
 };

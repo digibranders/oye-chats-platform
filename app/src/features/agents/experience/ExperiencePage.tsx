@@ -348,7 +348,7 @@ export function ExperiencePage(): ReactElement {
                 <Badge tone="neutral">{SECTION_LABELS[section]}</Badge>
               </span>
             ))}
-            {t('agents.leavingNowDiscardsThemThe') || '. Leaving now discards them — the widget on your site keeps the settings it already has.'}
+            {t('agents.leavingNowDiscardsThemThe') || '. Leaving now discards them. The widget on your site keeps the settings it already has.'}
           </>
         }
         confirmLabel="Discard and leave"

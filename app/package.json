@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "lint": "eslint . && node scripts/assert-no-legacy-js.mjs",
+    "lint": "eslint . && node scripts/assert-no-legacy-js.mjs && node scripts/assert-no-em-dashes.mjs",
     "guard:no-legacy-js": "node scripts/assert-no-legacy-js.mjs",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",

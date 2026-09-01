@@ -125,7 +125,7 @@ function leadProperties(lead: Lead): PropertyItem[] {
   if (referrer) items.push({ label: translateNow('leads.referrer') || 'Referrer', value: truncate(referrer) });
   if (landing) items.push({ label: translateNow('leads.landedOn') || 'Landed on', value: truncate(landing) });
   if (Object.keys(source).length > 0 && !utmSource && !campaign && !medium && !referrer) {
-    items.push({ label: translateNow('leads.source') || 'Source', value: translateNow('leads.directNoCampaignOrReferrer') || 'Direct — no campaign or referrer' });
+    items.push({ label: translateNow('leads.source') || 'Source', value: translateNow('leads.directNoCampaignOrReferrer') || 'Direct, no campaign or referrer' });
   }
 
   if (engagement > 0) items.push({ label: translateNow('leads.engagement') || 'Engagement', value: engagementBand(engagement) });
@@ -297,7 +297,7 @@ function Annotations({ controller }: { controller: LeadAnnotationController }) {
   return (
     <LeadSection title={t('leads.yourNotes') || 'Your notes'}>
       <p className="text-xs text-text-secondary">
-        {t('leads.savedInThisBrowserOnly') || 'Saved in this browser only — teammates cannot see these.'}
+        {t('leads.savedInThisBrowserOnly') || 'Saved in this browser only. Teammates cannot see these.'}
       </p>
 
       <div className="mt-3 space-y-4">
@@ -305,7 +305,7 @@ function Annotations({ controller }: { controller: LeadAnnotationController }) {
           <Textarea
             rows={3}
             value={noteDraft}
-            placeholder={t('leads.contextForYourselfNextSteps') || 'Context for yourself — next steps, who to loop in…'}
+            placeholder={t('leads.contextForYourselfNextSteps') || 'Context for yourself: next steps, who to loop in…'}
             onChange={(event) => {
               setNoteDraft(event.target.value);
               setSaved(false);
