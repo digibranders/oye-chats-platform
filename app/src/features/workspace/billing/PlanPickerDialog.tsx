@@ -30,6 +30,7 @@ import {
   type PlanView,
   type PromotionView,
 } from '../billingModel';
+import { storedPromoCode } from '../../../lib/attributionCodes';
 import { DiscountCodeField, type AppliedCode } from './DiscountCodeField';
 import { TaxNote } from './TaxNote';
 import { usePlanCheckout } from './usePlanCheckout';
@@ -395,6 +396,10 @@ export function PlanPickerDialog({
             is nothing for a discount to apply to. */}
         {plans.some((plan) => plan.isPaid) ? (
           <DiscountCodeField
+            // A `?code=` that turned out not to be a promotion is still worth
+            // trying as a coupon, so a campaign link works whichever kind of
+            // offer it was pointing at.
+            initialCode={storedPromoCode()}
             planId={null}
             billingCycle={cycle}
             applied={appliedCode}

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check } from 'lucide-react';
 
 import { Button, Field, Input } from '../../../ui';
@@ -35,6 +35,15 @@ export interface AppliedCode {
 }
 
 interface DiscountCodeFieldProps {
+  /**
+   * A code the visitor arrived with, tried once on mount.
+   *
+   * Silently, and this is the point: the same `?code=` may be a launch
+   * PROMOTION, which was already attributed at signup and applies on its own.
+   * Surfacing "that code is not recognised" for a code that is working
+   * perfectly, on a screen the buyer did not type into, would be a lie.
+   */
+  initialCode?: string;
   planId: number | null;
   /** Free-period coupons are monthly-only; on annual the field says so. */
   billingCycle: 'monthly' | 'annual';
@@ -56,6 +65,7 @@ function describe(
 }
 
 export function DiscountCodeField({
+  initialCode,
   planId,
   billingCycle,
   applied,
@@ -66,9 +76,11 @@ export function DiscountCodeField({
   const [value, setValue] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // One attempt per mount, whatever re-renders happen in between.
+  const autoTried = useRef(false);
 
-  async function apply(): Promise<void> {
-    const code = value.trim();
+  async function apply(silent = false): Promise<void> {
+    const code = (silent ? initialCode ?? '' : value).trim();
     if (!code || busy) return;
     setBusy(true);
     setError('');
@@ -96,6 +108,7 @@ export function DiscountCodeField({
       }
       onApplied({ code: preview.code, couponCode: preview.code, description: describe(preview, t) });
     } catch (cause) {
+      if (silent) return;
       setError(
         cause instanceof Error && cause.message
           ? cause.message
@@ -105,6 +118,15 @@ export function DiscountCodeField({
       setBusy(false);
     }
   }
+
+  useEffect(() => {
+    if (autoTried.current || applied || !initialCode) return;
+    autoTried.current = true;
+    void apply(true);
+    // `apply` closes over state that changes on every keystroke; the ref above
+    // is what actually bounds this to one attempt.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialCode, applied]);
 
   if (applied) {
     return (

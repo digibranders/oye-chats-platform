@@ -1011,6 +1011,7 @@ export const registerClient = async (
     website: string | null = null,
     billingCountry: string | null = null,
     promoCode: string | null = null,
+    referralCode: string | null = null,
 ): Promise<RegisterResult> => {
     try {
         const payload: Record<string, unknown> = { name, email, password, company_name: companyName, website };
@@ -1018,6 +1019,11 @@ export const registerClient = async (
         // Launch-promo code from the campaign link (?code=). Makes the offer
         // link-exclusive. Silently ignored server-side when unknown.
         if (promoCode) payload.promo_code = promoCode;
+        // Affiliate attribution from `?ref=`. `/auth/register` has always
+        // accepted this and no frontend had ever sent it, so every affiliate
+        // link created an unattributed account: no discount for the customer,
+        // no commission for the partner. Also best-effort server-side.
+        if (referralCode) payload.referral_code = referralCode;
         const response = await api.post('/auth/register', payload);
         return response.data;
     } catch (error) {

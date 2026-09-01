@@ -124,6 +124,56 @@ describe('Register', () => {
     expect(await screen.findByText('SIGN IN')).toBeInTheDocument();
   });
 
+  it('sends an affiliate code from the URL, which nothing ever did before', async () => {
+    // `/auth/register` had always accepted `referral_code` and no frontend had
+    // ever sent it, so every affiliate link produced an unattributed account:
+    // no discount for the customer, no commission for the partner.
+    registerClient.mockResolvedValue({ access_token: 'k', name: 'Priya', client_id: 12 });
+
+    renderRegister('/register?ref=LAUNCH25');
+    await fillForm();
+    fireEvent.click(screen.getByRole('button', { name: /create account/i }));
+
+    await waitFor(() =>
+      expect(registerClient).toHaveBeenCalledWith(
+        'Priya Sharma',
+        'priya@acme.test',
+        'lantern42',
+        null,
+        null,
+        'IN',
+        null,
+        'LAUNCH25',
+      ),
+    );
+  });
+
+  it('reads the affiliate code the marketing site left in a cookie', async () => {
+    // `?ref=` lands on www.oyechats.com, not here, so by the time signup
+    // renders the query string is several navigations in the past. The site
+    // parks it in a cookie and this is the half that reads it back.
+    document.cookie = 'oyechats_ref=COOKIECODE; path=/';
+    registerClient.mockResolvedValue({ access_token: 'k', name: 'Priya', client_id: 12 });
+
+    renderRegister();
+    await fillForm();
+    fireEvent.click(screen.getByRole('button', { name: /create account/i }));
+
+    await waitFor(() =>
+      expect(registerClient).toHaveBeenCalledWith(
+        'Priya Sharma',
+        'priya@acme.test',
+        'lantern42',
+        null,
+        null,
+        'IN',
+        null,
+        'COOKIECODE',
+      ),
+    );
+    document.cookie = 'oyechats_ref=; path=/; max-age=0';
+  });
+
   it('keeps a campaign code without writing storage during render', async () => {
     registerClient.mockResolvedValue({ access_token: 'k', name: 'Priya', client_id: 12 });
 
@@ -142,6 +192,7 @@ describe('Register', () => {
         null,
         'IN',
         'LAUNCH50',
+        null,
       ),
     );
   });
@@ -173,6 +224,7 @@ describe('Register', () => {
         null,
         null,
         'US',
+        null,
         null,
       ),
     );
