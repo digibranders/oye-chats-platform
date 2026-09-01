@@ -55,3 +55,35 @@ describe('resolveScopedBotId', () => {
     expect(resolveScopedBotId(bot(99), [bot(7)])).toBe(7);
   });
 });
+
+/**
+ * The consumers, and why each one uses this rather than `?? bots[0]`.
+ *
+ * `selectedBot ?? bots[0]` was live in three places. `GeneralPage` records it
+ * as ledger B1: the business-hours editor wrote `bots[0]` unconditionally, so
+ * "in a workspace with two chatbots the second could never be given hours and
+ * the first was silently edited instead". That editor was removed; the pattern
+ * survived in two pages that WRITE.
+ *
+ *   IntegrationsPage  → webhooks configured against the wrong chatbot
+ *   MembersPage       → seats, invites and queue settings against the wrong one
+ *   Analytics/Journey → read-only, but permanently empty (no writer at all)
+ *
+ * The distinction this function draws is the whole point: with one chatbot
+ * there is nothing to disambiguate, so use it. With several, guessing is how
+ * you edit an object the reader never chose and the page never named.
+ */
+describe('why it is not `selectedBot ?? bots[0]`', () => {
+  const bot = (id: number) => ({ id, name: `Bot ${id}` }) as Bot;
+
+  it('refuses to guess between several chatbots', () => {
+    const several = [bot(7), bot(8), bot(9)];
+    expect(resolveScopedBotId(null, several)).toBeNull();
+    // The rejected alternative, stated so the diff is obvious to a reader.
+    expect(several[0].id).toBe(7);
+  });
+
+  it('does not need to guess when there is only one', () => {
+    expect(resolveScopedBotId(null, [bot(7)])).toBe(7);
+  });
+});

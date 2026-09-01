@@ -14,6 +14,7 @@ import {
 } from '../../ui';
 import { useBotContext } from '../../context/BotContext';
 import { useEntitlements } from '../../hooks/useEntitlements';
+import { resolveScopedBotId } from '../../context/botScope';
 import { WebhooksPanel } from './integrations/WebhooksPanel';
 import { EmailPanel } from './integrations/EmailPanel';
 import { MeetingsPanel } from './integrations/MeetingsPanel';
@@ -49,7 +50,21 @@ export function IntegrationsPage() {
   const { selectedBot, bots, loading, error, refreshBots } = useBotContext();
   const { hasFeature, entitlements, isFree } = useEntitlements();
 
-  const bot = selectedBot ?? bots[0] ?? null;
+  /**
+   * Which chatbot these integrations belong to.
+   *
+   * NOT `selectedBot ?? bots[0]`. That silently targeted the FIRST chatbot
+   * whenever nothing was scoped, so in a two-chatbot workspace a webhook could
+   * be configured against a chatbot the reader never chose and the page never
+   * named. It is the same defect logged as ledger B1 against the business-hours
+   * editor on `GeneralPage`, which wrote `bots[0]` unconditionally.
+   *
+   * `resolveScopedBotId` uses the sole chatbot when there is exactly one — the
+   * state almost every account is in — and null with several, where the page
+   * asks rather than guesses.
+   */
+  const scopedBotId = resolveScopedBotId(selectedBot, bots);
+  const bot = bots.find((candidate) => candidate.id === scopedBotId) ?? null;
   const webhooksUnlocked = hasFeature('webhooks');
   const emailAccess = entitlements.features.integrations === 'all' ? 'all' : 'reply_to_only';
   // Email and meeting booking are whole-feature paid: the Free plan sees the
@@ -90,8 +105,12 @@ export function IntegrationsPage() {
       <Card>
         <EmptyState
           icon={Plug}
-          title="No chatbot yet"
-          description="Every integration belongs to a chatbot."
+          title={bots.length > 1 ? 'Choose a chatbot' : 'No chatbot yet'}
+          description={
+            bots.length > 1
+              ? 'Every integration belongs to one chatbot. Pick one from Showing, in the sidebar.'
+              : 'Every integration belongs to a chatbot.'
+          }
           action={
             <Link to="/welcome" className={buttonClass('primary', 'sm')}>
               Create a chatbot

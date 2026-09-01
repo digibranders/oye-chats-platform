@@ -55,6 +55,7 @@ import {
 import { useBotContext } from '../../context/BotContext';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { useEntitlements } from '../../hooks/useEntitlements';
+import { resolveScopedBotId } from '../../context/botScope';
 import type { Department, Operator, OperatorInvite } from '../../types/domain';
 import { canManageTeam, roleLabel, roleTone } from './roles';
 import {
@@ -112,7 +113,13 @@ export function MembersPage() {
 
   // One resolution of "which chatbot is this page about", so the seat meter,
   // the invite dialog and the queue settings can never disagree about it.
-  const routedBot = selectedBot ?? bots[0] ?? null;
+  // NOT `selectedBot ?? bots[0]`: that silently pointed the seat meter, the
+  // invite dialog and the queue settings at the FIRST chatbot whenever nothing
+  // was scoped, so seats could be bought against a chatbot nobody chose. Same
+  // defect as ledger B1 on `GeneralPage`. The null case was already handled
+  // ("Pick a chatbot first"), it just could never be reached.
+  const scopedBotId = resolveScopedBotId(selectedBot, bots);
+  const routedBot = bots.find((candidate) => candidate.id === scopedBotId) ?? null;
   const botId = routedBot?.id ?? null;
   const botName = routedBot?.name ?? null;
   const canManage = canManageTeam(currentRole);
