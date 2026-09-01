@@ -2579,6 +2579,7 @@ const hi = {
     promptShownInThePost: 'चैट के बाद दिखने वाले रेटिंग कार्ड में दिखाया गया संकेत।',
     publicAndSafeToCommit: 'सार्वजनिक और कमिट करने के लिए सुरक्षित।',
     quantity: 'मात्रा',
+    howTheQuantityIsSet: 'मात्रा कैसे तय होती है',
     question: 'सवाल',
     questions: 'सवाल',
     questionsAVisitorCanTap: 'वे सवाल जिन्हें आगंतुक टैप कर सकता है',

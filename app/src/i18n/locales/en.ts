@@ -2158,6 +2158,7 @@ const en = {
     promptShownInThePost: 'Prompt shown in the post-chat rating card.',
     publicAndSafeToCommit: 'Public and safe to commit.',
     quantity: 'Quantity',
+    howTheQuantityIsSet: 'How the quantity is set',
     question: 'Question',
     questions: 'Questions',
     questionsAVisitorCanTap: 'Questions a visitor can tap',

@@ -234,11 +234,16 @@ function ServiceEditorInner({
           </p>
 
           {requirements.length === 0 ? null : (
-            <ul className="mt-3 space-y-3">
+            <ul className="mt-2 divide-y divide-border border-t border-border">
               {requirements.map((requirement, requirementIndex) => {
-                  const lineCollapsed = collapsedLineIds.has(requirement.id);
-                  return (
-                <li key={requirement.id} className="rounded-md border border-border p-3">
+                const lineCollapsed = collapsedLineIds.has(requirement.id);
+                // A ROW, not a box. A rounded border per line made each look
+                // like an independent object of the same RANK as the
+                // requirement containing it, which is a lie about hierarchy:
+                // a line belongs to its requirement. A hairline and padding
+                // read as a list, which is what this is.
+                return (
+                <li key={requirement.id} className="py-3">
                   <div className="flex items-start justify-between gap-2">
                     {/* The name stays editable while collapsed: it is how you
                         tell one line from another, so folding it away would
@@ -346,9 +351,19 @@ function ServiceEditorInner({
                         }}
                       />
                     </Field>
-                    <Field label={t('agents.quantity') || 'Quantity'} hint={QUANTITY_MODES.find((mode) => mode.value === requirement.quantity_mode)?.help}>
+                    {/* "How the quantity is set", not "Quantity".
+                        This selector and the number field beside it were both
+                        labelled "Quantity", adjacent, in the same editor: one
+                        decides HOW the quantity is arrived at, the other IS the
+                        quantity. Two controls under one name is a naming
+                        collision, and the reader has to click one to find out
+                        which is which. */}
+                    <Field
+                      label={t('agents.howTheQuantityIsSet') || 'How the quantity is set'}
+                      hint={QUANTITY_MODES.find((mode) => mode.value === requirement.quantity_mode)?.help}
+                    >
                       <Select
-                        label={t('agents.quantity') || 'Quantity'}
+                        label={t('agents.howTheQuantityIsSet') || 'How the quantity is set'}
                         value={requirement.quantity_mode}
                         options={QUANTITY_MODES}
                         disabled={disabled}
@@ -359,62 +374,69 @@ function ServiceEditorInner({
                     </Field>
                   </Grid>
 
-                  {requirement.quantity_mode === 'none' ? null : (
+                  {/* Price, quantity and unit are ONE row.
+                      They were three cells across two grids: quantity and unit
+                      on a row of their own, then Price alone on the next beside
+                      a derived figure sitting on a different baseline. They
+                      answer the same question, what this line costs, so they
+                      read as one row; the ramp folds them to a single column
+                      when the card is narrow. Each cell keeps its own
+                      condition. */}
+                  {requirement.type === 'item' || requirement.quantity_mode !== 'none' ? (
                     <Grid cols={2} className="mt-3">
-                      <NumberField
-                        label={requirement.quantity_mode === 'ask' ? t('agents.defaultQuantity') || 'Default quantity' : t('agents.quantity') || 'Quantity'}
-                        value={requirement.quantity}
-                        step={1}
-                        min={1}
-                        disabled={disabled}
-                        onChange={(raw) =>
-                          patchRequirement(requirementIndex, {
-                            quantity: Math.max(1, Math.floor(Number(raw) || 1)),
-                          })
-                        }
-                      />
-                      <Field label={t('agents.unit') || 'Unit'}>
-                        <Input
-                          value={requirement.unit_label}
-                          onChange={(event) =>
-                            patchRequirement(requirementIndex, { unit_label: event.target.value })
-                          }
-                          placeholder={t('agents.hourPageSeat') || 'hour, page, seat'}
+                      {requirement.type !== 'item' ? null : (
+                        <NumberField
+                          label={t('agents.price') || 'Price'}
+                          value={requirement.price}
+                          step={0.01}
+                          min={0}
                           disabled={disabled}
-                        />
-                      </Field>
-                    </Grid>
-                  )}
-
-                  {requirement.type === 'item' ? (
-                    <Grid cols={2} className="mt-3">
-                      <NumberField
-                        label={t('agents.price') || 'Price'}
-                        value={requirement.price}
-                        step={0.01}
-                        min={0}
-                        disabled={disabled}
-                        onChange={(raw) =>
-                          patchRequirement(requirementIndex, { price: Math.max(0, Number(raw) || 0) })
-                        }
-                      />
-                      {/* Derived, so not an `Input` — a disabled field that
-                          looks editable invites the reader to try it. It also
-                          does not need a Field's label-plus-hint stack: it is
-                          one figure, and naming it inline costs a line rather
-                          than a row. */}
-                      <p className="self-end pb-2 text-sm text-text-secondary">
-                        {t('agents.addsToTheQuote') || 'Adds to the quote'}{' '}
-                        <span className="figure text-base font-medium text-text-primary">
-                          {money(
+                          // The running total, as this field's own hint. It was
+                          // a second grid cell carrying a label of its own,
+                          // which is what left Price stranded on a half-row. It
+                          // is DERIVED from the number directly above it, so it
+                          // belongs under it.
+                          hint={`${t('agents.addsToTheQuote') || 'Adds to the quote'} ${money(
                             currency,
                             requirement.price *
                               (requirement.quantity_mode === 'none' ? 1 : requirement.quantity),
-                          )}
-                        </span>
-                      </p>
+                          )}`}
+                          onChange={(raw) =>
+                            patchRequirement(requirementIndex, { price: Math.max(0, Number(raw) || 0) })
+                          }
+                        />
+                      )}
+                      {requirement.quantity_mode === 'none' ? null : (
+                        <div className="flex items-start gap-3">
+                          <NumberField
+                            className="w-28 shrink-0"
+                            label={requirement.quantity_mode === 'ask' ? t('agents.defaultQuantity') || 'Default quantity' : t('agents.quantity') || 'Quantity'}
+                            value={requirement.quantity}
+                            step={1}
+                            min={1}
+                            disabled={disabled}
+                            onChange={(raw) =>
+                              patchRequirement(requirementIndex, {
+                                quantity: Math.max(1, Math.floor(Number(raw) || 1)),
+                              })
+                            }
+                          />
+                          <Field label={t('agents.unit') || 'Unit'} className="min-w-0 flex-1">
+                            <Input
+                              value={requirement.unit_label}
+                              onChange={(event) =>
+                                patchRequirement(requirementIndex, { unit_label: event.target.value })
+                              }
+                              placeholder={t('agents.hourPageSeat') || 'hour, page, seat'}
+                              disabled={disabled}
+                            />
+                          </Field>
+                        </div>
+                      )}
                     </Grid>
-                  ) : (
+                  ) : null}
+
+                  {requirement.type === 'item' ? null : (
                     <div className="mt-3 border-t border-border pt-3">
                       <div className="flex flex-wrap items-baseline justify-between gap-2">
                         <p className="text-sm font-medium text-text-primary">{t('agents.options') || 'Options'}</p>
