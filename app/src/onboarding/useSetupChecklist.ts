@@ -5,7 +5,6 @@ import { keys } from '../query/keys';
 import { agentPath } from '../shell/nav';
 // One owner for the seeded colour: duplicating the literal here is how the two
 // drift apart and the checklist starts calling a default chatbot branded.
-import { DEFAULT_PRIMARY_COLOR } from '../features/agents/experience/widgetTheme';
 import type { Bot } from '../types/domain';
 import { t as translateNow } from '../i18n/i18n';
 
@@ -64,22 +63,42 @@ export function useSetupChecklist() {
   });
 
   const indexedChunks = Number(primary?.indexed_chunk_count ?? 0);
-  const capturedLeads = Number(leads.data?.total ?? 0);
-  // "Make it yours" ticked on every chatbot ever created, because
+  /**
+   * Conversations that left an email or a phone — NOT `total`.
+   *
+   * `total` counts conversations, which is right for the leads list header:
+   * `/leads` returns every session with contact details as enrichment. Reading
+   * it here ticked "Capture your first lead" the moment anyone said hello, with
+   * nothing captured. The third false tick of the same shape as the branding
+   * and avatar ones: the product does something, then congratulates the
+   * customer for it.
+   */
+  const capturedLeads = Number(leads.data?.with_contact ?? 0);
+  // The branding step ticked on every chatbot ever created, because
   // `avatar_type` is a STYLE SELECTOR with a default of `'upload'`, not a
   // record of anyone having chosen anything. `Boolean(bot_logo || avatar_type)`
   // was therefore true from the moment the row existed, and the checklist
   // struck the step through on a chatbot still carrying the seeded colour and
   // no avatar at all.
   //
+  // The colour had the SAME defect, one layer down, and it outlived the fix
+  // above. `primary_color !== default` looks like evidence of a choice, but the
+  // crawl writes that column from the extracted brand palette
+  // (`crawl_orchestrator`), so training a chatbot on its own website moved the
+  // colour off the seed and struck the step through before anyone had opened
+  // Experience. The product did the work and then congratulated the customer
+  // for it.
+  //
   // What actually answers it: the customer set or removed an avatar
   // (`bot_logo_source === 'manual'`), picked a style other than the default, or
-  // moved the brand colour off the seeded one. A crawl-DERIVED favicon is
-  // deliberately not enough — the product did that, not them.
+  // saved a colour — which the backend records in `manual_field_overrides`, the
+  // same list the crawler consults before overwriting anything. Provenance,
+  // never the value itself. A crawl-DERIVED favicon and a crawl-derived colour
+  // are both deliberately not enough.
   const branded =
     primary?.bot_logo_source === 'manual' ||
     (primary?.avatar_type ?? DEFAULT_AVATAR_TYPE) !== DEFAULT_AVATAR_TYPE ||
-    (primary?.primary_color ?? DEFAULT_PRIMARY_COLOR).toLowerCase() !== DEFAULT_PRIMARY_COLOR;
+    (primary?.manual_field_overrides ?? []).includes('primary_color');
   const installed = Boolean(primary?.widget_installed_at);
 
   // Every step carries one. Two of the six used to pass `''`, so the checklist
@@ -103,7 +122,14 @@ export function useSetupChecklist() {
     },
     {
       id: 'brand',
-      label: translateNow('onboarding.makeItYours') || 'Make it yours',
+      // Named for what it does, not for how it feels. The compact strip renders
+      // the LABEL alone -- `SetupJourney` never draws `description` -- so "Make
+      // it yours" reached the reader with nothing to say which of five steps it
+      // was, while the clause that carried its meaning ("Your colours, your
+      // avatar, your greeting") only appeared in the expanded card. It also
+      // mirrors "Create your chatbot", which is the same object at the other
+      // end of the list.
+      label: translateNow('onboarding.customiseYourChatbot') || 'Customise your chatbot',
       description: translateNow('onboarding.yourColoursYourAvatarYour') || 'Your colours, your avatar, your greeting',
       done: branded,
       to: primary ? agentPath(primary.id, 'experience') : '/chatbots',

@@ -3293,7 +3293,12 @@ def get_bot(bot_id: int, request: Request, auth=Depends(get_current_client_or_op
 # Auto-fillable fields the website crawl may populate. Edits to these are
 # tracked in ``Bot.manual_field_overrides`` so a re-crawl leaves a hand-edited
 # value alone while still refreshing untouched ones.
-_AUTO_FILL_FIELDS = ("company_name", "company_description", "brand_tone")
+# ``primary_color`` belongs here even though it is not company INFO: the crawl
+# auto-fills it from the extracted brand palette exactly like the others, so it
+# needs the same "a human chose this" record. Without it the crawler's own
+# ``"primary_color" not in overrides`` guard could never fire, and nothing could
+# distinguish a colour the customer picked from one the product picked for them.
+_AUTO_FILL_FIELDS = ("company_name", "company_description", "brand_tone", "primary_color")
 
 
 def _reconcile_manual_overrides(bot: Bot, update_data: dict) -> None:

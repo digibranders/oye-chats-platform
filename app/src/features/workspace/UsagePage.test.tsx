@@ -4,7 +4,6 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { UsagePage } from './UsagePage';
-import { pickOption } from '../../test/select';
 
 /**
  * jsdom has no ResizeObserver, and Recharts' ResponsiveContainer constructs one
@@ -48,12 +47,22 @@ vi.mock('../../services/api', () => api);
 vi.mock('../../lib/razorpay', () => ({ openRazorpayCheckout: vi.fn() }));
 
 const state = vi.hoisted(() => ({
+  /** The shell chatbot scope. Usage reads this, not a `?chatbot=` param. */
+  selectedBot: null as { id: number; name: string } | null,
   entitlements: {
     plan_slug: 'standard',
     limits: {} as Record<string, number>,
     features: { topup_allowed: true } as Record<string, unknown>,
     usage: {} as Record<string, number>,
   },
+}));
+vi.mock('../../context/BotContext', () => ({
+  useBotContext: () => ({
+    bots: state.selectedBot ? [state.selectedBot] : [],
+    selectedBot: state.selectedBot,
+    selectBot: vi.fn(),
+    loading: false,
+  }),
 }));
 vi.mock('../../hooks/useEntitlements', () => ({
   useEntitlements: () => ({
@@ -121,6 +130,7 @@ function renderPage(entry = '/billing/usage') {
 }
 
 beforeEach(() => {
+  state.selectedBot = null;
   state.entitlements = {
     plan_slug: 'standard',
     limits: {},
@@ -222,8 +232,13 @@ describe('scope', () => {
     );
   });
 
-  it('scopes the ledger and the trend to one chatbot when the URL names one', async () => {
-    renderPage('/billing/usage?chatbot=7');
+  it('scopes the ledger and the trend to the chatbot the shell has selected', async () => {
+    // Scope comes from the rail switcher, not a `?chatbot=` param of this
+    // page's own. Usage carried a second selector until the rail gained one,
+    // and two controls for one concept — with different state — is what that
+    // removal fixed. What is asserted here is unchanged.
+    state.selectedBot = { id: 7, name: 'Acme Support' };
+    renderPage();
     await screen.findAllByText('Acme Support');
     await waitFor(() =>
       expect(api.getCreditHistory).toHaveBeenCalledWith(expect.objectContaining({ botId: 7 })),
@@ -231,17 +246,17 @@ describe('scope', () => {
     expect(api.getCreditDaily).toHaveBeenCalledWith(expect.objectContaining({ botId: 7 }));
   });
 
-  it('switching scope moves it into the URL so the view can be linked', async () => {
-    renderPage();
-    await screen.findAllByText('Left to spend');
-    await pickOption(userEvent.setup(), screen.getByRole('combobox', { name: 'Usage scope' }), 'Acme Support');
-    await waitFor(() =>
-      expect(api.getCreditHistory).toHaveBeenCalledWith(expect.objectContaining({ botId: 7 })),
-    );
-  });
+  // REMOVED: 'switching scope moves it into the URL so the view can be linked'.
+  //
+  // Scope is no longer a query parameter, so a scoped Usage view is no longer
+  // linkable — it lives in the shell and persists per browser instead. That is
+  // a real capability given up to remove the second selector; if linkable
+  // scope is wanted back, the rail switcher would have to write the URL, and
+  // that is a deliberate decision rather than something to restore by accident.
 
   it('shows that chatbot`s plan ceilings, with the unlimited sentinel as a word', async () => {
-    renderPage('/billing/usage?chatbot=7');
+    state.selectedBot = { id: 7, name: 'Acme Support' };
+    renderPage();
     await screen.findByText('Acme Support allowances');
     expect(screen.getByText('Operator seats')).toBeInTheDocument();
     expect(screen.getByText(/of unlimited/i)).toBeInTheDocument();
@@ -306,7 +321,8 @@ describe('a paused chatbot', () => {
 
   it('says the subscription and the expiry carry on, so pause is not read as cancelled', async () => {
     api.getCreditBalance.mockResolvedValue({ ...BALANCE, bots: [PAUSED] });
-    renderPage('/billing/usage?chatbot=7');
+    state.selectedBot = { id: 7, name: 'Acme Support' };
+    renderPage();
 
     expect(await screen.findByText('This chatbot is paused')).toBeInTheDocument();
     const notice = screen.getByText('This chatbot is paused').closest('div');
@@ -316,17 +332,18 @@ describe('a paused chatbot', () => {
     expect(notice?.textContent).not.toMatch(/cancel|expired|broken/i);
   });
 
-  it('keeps a paused agent selectable, labelled for what it is', async () => {
+  it('names a paused chatbot in the per-chatbot table, not only in a dropdown', async () => {
+    // This used to assert an "Acme Support (paused)" OPTION in the page's own
+    // scope selector, which no longer exists. The fact was never only there:
+    // the per-chatbot table carries an explicit Active/Paused badge, and a
+    // scoped view states it again in an alert. Losing the third copy loses
+    // nothing — a paused chatbot that merely looked quieter would read as one
+    // that had stopped being billed, and it still does not.
     api.getCreditBalance.mockResolvedValue({ ...BALANCE, bots: [PAUSED] });
     renderPage();
     await screen.findAllByText('Left to spend');
 
-    // Options live in the portalled popup, not inside the closed trigger, so
-    // the list has to actually be open before it can be queried.
-    await userEvent.setup().click(screen.getByRole('combobox', { name: 'Usage scope' }));
-    expect(
-      await screen.findByRole('option', { name: 'Acme Support (paused)' }),
-    ).toBeInTheDocument();
+    expect(await screen.findByText('Paused')).toBeInTheDocument();
   });
 
   it('does not blame an empty balance on the pause, or the pause on the balance', async () => {
@@ -334,7 +351,8 @@ describe('a paused chatbot', () => {
       ...BALANCE,
       bots: [{ ...PAUSED, plan: 0, topup: 0, total: 0 }],
     });
-    renderPage('/billing/usage?chatbot=7');
+    state.selectedBot = { id: 7, name: 'Acme Support' };
+    renderPage();
 
     expect(await screen.findByText('This chatbot is paused')).toBeInTheDocument();
     // Two separate facts, said separately: it is switched off, and it is also
@@ -347,7 +365,8 @@ describe('a paused chatbot', () => {
       ...BALANCE,
       bots: [{ ...AGENT_POOL, plan: 0, topup: 0, total: 0 }],
     });
-    renderPage('/billing/usage?chatbot=7');
+    state.selectedBot = { id: 7, name: 'Acme Support' };
+    renderPage();
 
     expect(await screen.findByText('This chatbot has stopped answering')).toBeInTheDocument();
   });

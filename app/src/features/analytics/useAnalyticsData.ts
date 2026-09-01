@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useBotContext } from '../../context/BotContext';
 import { useCallback } from 'react';
 import {
   getActivityStats,
@@ -60,19 +61,38 @@ const scope = (botId: number | null): number | undefined => botId ?? undefined;
  * from the outer one leaves exactly the period before this one. It is one extra
  * request, and it is the only reason this page can answer "compared to what?".
  */
+/**
+ * Whether a workspace-wide read is ready to fire.
+ *
+ * `botId === null` no longer means "not ready". Nine of the analytics endpoints
+ * take `bot_id` as optional and answer for the whole workspace when it is
+ * omitted, so null is a legitimate scope — every chatbot at once. What these
+ * queries must still not do is fire before the chatbot list has arrived, when
+ * null means "we do not know yet" rather than "all of them".
+ *
+ * `/qualification-funnel` and `/language-breakdown` are the two exceptions:
+ * they REQUIRE a `bot_id` and keep gating on it.
+ */
+function useScopeReady(botId: number | null): boolean {
+  const { bots, loading } = useBotContext();
+  if (loading) return false;
+  return botId != null || bots.length > 0;
+}
+
 export function useHeadlineTotals(botId: number | null, range: ResolvedRange) {
+  const ready = useScopeReady(botId);
   const current = useQuery({
     queryKey: keys.analytics.dashboard(botId, range.days),
     queryFn: () => getDashboardStats(scope(botId), range.days),
     select: parseWorkspaceTotals,
-    enabled: botId != null,
+    enabled: ready,
   });
 
   const extended = useQuery({
     queryKey: keys.analytics.dashboard(botId, range.extendedDays),
     queryFn: () => getDashboardStats(scope(botId), range.extendedDays),
     select: parseWorkspaceTotals,
-    enabled: botId != null && range.extendedDays != null,
+    enabled: ready && range.extendedDays != null,
   });
 
   const previousConversations =
@@ -103,11 +123,12 @@ export function useHeadlineTotals(botId: number | null, range: ResolvedRange) {
  * first five and a half hours to the previous day.
  */
 export function useMessageSeries(botId: number | null, fetchDays: number | null) {
+  const ready = useScopeReady(botId);
   const query = useQuery({
     queryKey: keys.analytics.activity(botId, fetchDays),
     queryFn: () => getActivityStats(scope(botId), { days: fetchDays }),
     select: (activity) => buildDailySeries(activity),
-    enabled: botId != null,
+    enabled: ready,
   });
   return {
     series: query.data ?? [],
@@ -118,10 +139,11 @@ export function useMessageSeries(botId: number | null, fetchDays: number | null)
 }
 
 export function useTopQuestions(botId: number | null) {
+  const ready = useScopeReady(botId);
   const query = useQuery({
     queryKey: keys.analytics.topQuestions(botId),
     queryFn: () => getTopQuestions(scope(botId)),
-    enabled: botId != null,
+    enabled: ready,
   });
   return {
     questions: query.data ?? [],
@@ -135,6 +157,7 @@ export function useTopQuestions(botId: number | null) {
 const UNANSWERED_LIMIT = 100;
 
 export function useUnansweredQuestions(botId: number | null, days: number | null) {
+  const ready = useScopeReady(botId);
   const query = useQuery({
     queryKey: keys.analytics.unanswered(botId, days),
     queryFn: () =>
@@ -142,7 +165,7 @@ export function useUnansweredQuestions(botId: number | null, days: number | null
         limit: UNANSWERED_LIMIT,
         days: days ?? undefined,
       }),
-    enabled: botId != null,
+    enabled: ready,
   });
   return {
     questions: query.data ?? [],
@@ -153,11 +176,12 @@ export function useUnansweredQuestions(botId: number | null, days: number | null
 }
 
 export function useRatings(botId: number | null) {
+  const ready = useScopeReady(botId);
   const query = useQuery({
     queryKey: keys.analytics.ratings(botId),
     queryFn: () => getRatingsSummary(scope(botId)),
     select: parseRatingsSummary,
-    enabled: botId != null,
+    enabled: ready,
   });
   return {
     ratings: query.data ?? null,
@@ -168,11 +192,12 @@ export function useRatings(botId: number | null) {
 }
 
 export function useLeadStats(botId: number | null) {
+  const ready = useScopeReady(botId);
   const query = useQuery({
     queryKey: keys.leads.stats(botId, null),
     queryFn: () => getLeadStats(scope(botId)),
     select: parseLeadFunnelStats,
-    enabled: botId != null,
+    enabled: ready,
   });
   return {
     leads: query.data ?? null,
@@ -233,11 +258,12 @@ export function useLanguageBreakdown(botId: number | null, period: RangeKey) {
 }
 
 export function useVisitors(botId: number | null) {
+  const ready = useScopeReady(botId);
   const query = useQuery({
     queryKey: keys.analytics.visitors(botId),
     queryFn: () => getVisitorsData(scope(botId)),
     select: parseVisitors,
-    enabled: botId != null,
+    enabled: ready,
   });
   return {
     visitors: query.data ?? [],

@@ -214,6 +214,61 @@ def _usable_by_the_avatar_pipeline(data: bytes) -> bool:
         return False
 
 
+# Beyond this, re-encoding costs more than a favicon is worth, and doing it
+# BEFORE the pipeline's own `MAX_DECODED_PIXELS` guard would make this the hole
+# that guard exists to close. A real icon is measured in tens of pixels.
+_MAX_NORMALISE_PIXELS = 4096 * 4096
+
+
+def _normalise_for_pipeline(data: bytes) -> bytes | None:
+    """Return bytes the avatar pipeline will accept, converting if it must.
+
+    The pipeline stores ``{PNG, JPEG, WEBP, GIF, BMP}``. ICO is not on that
+    list and is the single most common favicon declaration on the web, so
+    "reject what the pipeline cannot store" silently produced no avatar for most
+    sites: Pillow opened the file, the usability gate correctly said the
+    pipeline could not take it, and the candidate loop moved on to a fallback
+    that usually 404s.
+
+    Pillow decodes ICO perfectly well, so the answer is to convert rather than
+    refuse. Anything already in an accepted format is returned UNCHANGED -- no
+    needless decode-and-rebuild, which would cost quality for nothing.
+
+    Returns ``None`` for bytes that are not a decodable image, or that are too
+    large to re-encode safely.
+    """
+    import io
+
+    from PIL import Image
+
+    from app.services.r2_service import ALLOWED_IMAGE_FORMATS
+
+    try:
+        with Image.open(io.BytesIO(data)) as probe:
+            fmt = probe.format
+            width, height = probe.size
+    except Exception:
+        return None
+
+    if fmt in ALLOWED_IMAGE_FORMATS:
+        return data
+    if width * height > _MAX_NORMALISE_PIXELS:
+        logger.debug("icon too large to re-encode: %sx%s", width, height)
+        return None
+
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            # RGBA so a transparent favicon does not gain a black square, which
+            # is what a flatten to RGB would give it on a light launcher.
+            converted = image.convert("RGBA")
+            out = io.BytesIO()
+            converted.save(out, format="PNG")
+            return out.getvalue()
+    except Exception:
+        logger.debug("icon decoded but could not be re-encoded to PNG", exc_info=True)
+        return None
+
+
 async def _download_icon(session, url: str) -> bytes | None:
     """Download and validate one icon URL, or return ``None``.
 
@@ -232,10 +287,25 @@ async def _download_icon(session, url: str) -> bytes | None:
         return None
     if not _decode_is_valid_image(data):
         return None
-    if not _usable_by_the_avatar_pipeline(data):
+
+    # Convert BEFORE the usability check, and check what we will actually hand
+    # back rather than what arrived. ICO is the most common favicon declaration
+    # on the web and is not a format the pipeline stores, so testing the raw
+    # bytes rejected most sites outright -- the loop fell through to
+    # `/apple-touch-icon.png`, which usually 404s, and no avatar appeared.
+    #
+    # The order matters for the property these two functions are held to: the
+    # predicate answers for the bytes it is GIVEN, so normalising inside it
+    # would make it disagree with the pipeline about the same input. Normalising
+    # here keeps the predicate honest and still lets an ICO through.
+    normalised = _normalise_for_pipeline(data)
+    if normalised is None:
+        logger.debug("favicon candidate could not be normalised for the avatar pipeline: %s", url)
+        return None
+    if not _usable_by_the_avatar_pipeline(normalised):
         logger.debug("favicon candidate decodes but the avatar pipeline cannot use it: %s", url)
         return None
-    return data
+    return normalised
 
 
 async def fetch_favicon_image(url: str) -> bytes | None:

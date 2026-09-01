@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -22,7 +22,7 @@ vi.mock('./useSetupChecklist', () => ({ useSetupChecklist: vi.fn() }));
 const STEPS = [
   { id: 'create', label: 'Create your chatbot', description: '', done: true, to: '/welcome' },
   { id: 'train', label: 'Give it something to know', description: '', done: false, to: '/chatbots/7/knowledge' },
-  { id: 'brand', label: 'Make it yours', description: '', done: false, to: '/chatbots/7/experience' },
+  { id: 'brand', label: 'Customise your chatbot', description: '', done: false, to: '/chatbots/7/experience' },
   { id: 'install', label: 'Put it on your website', description: '', done: false, to: '/chatbots/7/deploy' },
 ];
 
@@ -37,9 +37,9 @@ function mountChecklist(over: Partial<ReturnType<typeof useSetupChecklist>> = {}
   } as unknown as ReturnType<typeof useSetupChecklist>);
 }
 
-function renderStrip() {
+function renderStrip(at = '/') {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[at]}>
       <SetupJourney workspaceId="ws-1" />
     </MemoryRouter>,
   );
@@ -115,5 +115,81 @@ describe('the setup journey strip', () => {
     window.localStorage.setItem('oyechats_journey_dismissed_ws-other', 'true');
     renderStrip();
     expect(screen.getByText('1/4')).toBeInTheDocument();
+  });
+});
+
+describe('where you are, versus what is next', () => {
+  /** The step list only. The "Next: …" button is a link with the same name. */
+  function stepLink(name: RegExp) {
+    return within(screen.getByRole('list')).getByRole('link', { name });
+  }
+
+  /**
+   * Two different questions the strip has to answer at once.
+   *
+   * It used to answer only the second and call it "current", so standing on
+   * Deploy you saw "Customise your chatbot" highlighted and NOTHING marking
+   * "Put it on your website" -- the step you were looking at. A progress bar
+   * that cannot say which of its steps you are on is a list of links.
+   */
+  it('marks the step whose page you are on', () => {
+    renderStrip('/chatbots/7/deploy');
+    expect(stepLink(/put it on your website/i)).toHaveAttribute(
+      'aria-current',
+      'step',
+    );
+  });
+
+  it('does not mark the next step when you are standing somewhere else', () => {
+    // The regression, stated directly: `train` is the next incomplete step, but
+    // the reader is on Deploy, so `train` is not where they are.
+    renderStrip('/chatbots/7/deploy');
+    expect(stepLink(/give it something to know/i)).not.toHaveAttribute(
+      'aria-current',
+    );
+  });
+
+  it('says "you are here" for a reader who gets no ring and no tint', () => {
+    renderStrip('/chatbots/7/deploy');
+    expect(stepLink(/put it on your website.*you are here/i)).toBeInTheDocument();
+  });
+
+  it('still names the next step separately, so both facts survive', () => {
+    renderStrip('/chatbots/7/deploy');
+    expect(stepLink(/give it something to know.*next step/i)).toBeInTheDocument();
+  });
+
+  it('carries both when here and next are the same step', () => {
+    renderStrip('/chatbots/7/knowledge');
+    const link = stepLink(/give it something to know/i);
+    expect(link).toHaveAttribute('aria-current', 'step');
+    expect(link.textContent).toMatch(/you are here/i);
+    expect(link.textContent).toMatch(/next step/i);
+  });
+
+  it('falls back to the next step on a page no step owns', () => {
+    // Billing, say. Marking nothing would be worse than marking the truest
+    // answer still available.
+    renderStrip('/billing');
+    expect(stepLink(/give it something to know/i)).toHaveAttribute(
+      'aria-current',
+      'step',
+    );
+  });
+
+  it('gives a nested route to the step that owns its section', () => {
+    renderStrip('/chatbots/7/knowledge/add');
+    expect(stepLink(/give it something to know/i)).toHaveAttribute(
+      'aria-current',
+      'step',
+    );
+  });
+
+  it('marks exactly one step, never two', () => {
+    renderStrip('/chatbots/7/deploy');
+    const marked = within(screen.getByRole('list'))
+      .getAllByRole('link')
+      .filter((el) => el.getAttribute('aria-current') === 'step');
+    expect(marked).toHaveLength(1);
   });
 });

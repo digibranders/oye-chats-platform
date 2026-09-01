@@ -15,6 +15,7 @@ import {
   buttonClass,
 } from '../../ui';
 import { useBotContext } from '../../context/BotContext';
+import { resolveScopedBotId } from '../../context/botScope';
 import { ANALYTICS_BASE, ANALYTICS_TABS, DEFAULT_TAB, tabFromUrl, tabUrl } from './tabs';
 import { DEFAULT_RANGE, RANGE_OPTIONS, parseRange, resolveRange, type RangeKey } from './range';
 import { useAnalyticsRefresh, useLanguageBreakdown } from './useAnalyticsData';
@@ -68,7 +69,22 @@ export function AnalyticsPage() {
   // the same page disagree about where it starts.
   const range = useMemo(() => resolveRange(rangeKey), [rangeKey]);
 
-  const botId = selectedBot?.id ?? null;
+  /**
+   * Which chatbot this page reports on, or null for every chatbot at once.
+   *
+   * Analytics DOES aggregate, and an earlier pass here wrongly said it did not
+   * — Journey's constraint applied to Analytics without checking. Nine of its
+   * eleven endpoints take `bot_id` as optional and answer for the whole
+   * workspace when it is omitted; only `/qualification-funnel` and
+   * `/language-breakdown` require one, and those two panels degrade on their
+   * own rather than taking the page down with them.
+   *
+   * `resolveScopedBotId` still supplies the sole chatbot when there is exactly
+   * one, so a single-chatbot account (every plan below Enterprise) never sees
+   * an "all chatbots" framing for what is really its only chatbot.
+   */
+  const scopedBotId = resolveScopedBotId(selectedBot, bots);
+  const botId = bots.length > 1 ? (selectedBot?.id ?? null) : scopedBotId;
 
   // Whether the Languages tab is worth offering. Read from the same cached
   // query the view itself uses, so showing the tab costs no extra request.
@@ -171,6 +187,7 @@ export function AnalyticsPage() {
       </Page>
     );
   }
+
 
   return (
     <Page width="wide">

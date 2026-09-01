@@ -600,14 +600,23 @@ class TestFreePlanIntelligenceStripping:
         self._as_free(monkeypatch)
         session = MagicMock()
         # execute() order in the free branch of lead_stats:
-        # client_bot_ids → total count scalar → unread count scalar
-        _install_scalars_chain(session, [1], 5, 3)
+        # client_bot_ids → total count → unread count → with_contact count
+        _install_scalars_chain(session, [1], 5, 3, 2)
         monkeypatch.setattr(lead_routes, "get_session", lambda: _session_context(session))
 
         response = TestClient(_build_app(auth_override=_client_auth())).get("/leads/stats")
 
         assert response.status_code == 200
-        assert response.json() == {"total": 5, "unread": 3}
+        # `with_contact` is NOT intelligence and is not stripped. Qualification
+        # scores, tiers and dimensions are what the Free plan does not get;
+        # whether a conversation left an email is plain fact, the leads list
+        # already shows it, and the setup checklist needs it precisely on the
+        # free and trial plans where onboarding happens.
+        assert response.json() == {"total": 5, "unread": 3, "with_contact": 2}
+        # The property this test exists for, stated so it cannot be lost in a
+        # future edit to the dict above.
+        for stripped in ("cold", "warm", "hot", "qualified", "avg_score", "mql", "sal", "sql"):
+            assert stripped not in response.json()
 
     def test_export_is_403_for_free(self, monkeypatch):
         from app.api import lead_routes

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Coins } from 'lucide-react';
 import {
@@ -23,7 +23,6 @@ import {
   PageHeader,
   Section,
   SegmentedControl,
-  Select,
   Stack,
   StatRow,
   buttonClass,
@@ -34,6 +33,7 @@ import {
   type Column,
 } from '../../ui';
 import { useEntitlements } from '../../hooks/useEntitlements';
+import { useBotContext } from '../../context/BotContext';
 import { BILLING_SECTIONS } from './billing/sections';
 import { ConsumptionTrend } from './usage/ConsumptionTrend';
 import { CreditCosts } from './usage/CreditCosts';
@@ -121,8 +121,20 @@ export function UsagePage() {
   const navigate = useNavigate();
   const { entitlements } = useEntitlements();
 
-  const scopeParam = params.get('chatbot');
-  const botId = scopeParam && /^\d+$/.test(scopeParam) ? Number(scopeParam) : null;
+  /**
+   * Which chatbot this page is reporting on, read from the SHELL scope.
+   *
+   * Usage carried its own "Usage scope" selector on a `?chatbot=` param, the
+   * same duplication Billing had: once the rail gained a chatbot switcher there
+   * were two controls for one concept, with different state, and the rail one
+   * having no effect here. One control drives every workspace surface, and
+   * Billing and Usage no longer disagree about what is in scope while sitting
+   * one tab apart.
+   *
+   * Null is the account-level view: credits pooled across every chatbot.
+   */
+  const { selectedBot } = useBotContext();
+  const botId = selectedBot?.id ?? null;
   const days = parseWindow(params.get('window'));
   const page = Math.max(Number(params.get('page')) || 1, 1);
 
@@ -145,21 +157,6 @@ export function UsagePage() {
   const pool = balance ? resolveScopedPool(balance, botId) : null;
   const scopeLabel = botId === null ? 'this workspace' : (pool?.name ?? 'this chatbot');
 
-  const scopeOptions = useMemo(
-    () => [
-      { value: '', label: 'Whole workspace' },
-      ...(balance?.botCredits ?? [])
-        .filter((entry) => entry.botId !== null)
-        // A paused agent stays in the picker and says so in its own label: it
-        // still holds credits that still expire, so it is exactly the scope
-        // somebody needs to be able to open.
-        .map((entry) => ({
-          value: String(entry.botId),
-          label: entry.isActive ? entry.name : `${entry.name} (paused)`,
-        })),
-    ],
-    [balance],
-  );
 
   function setParam(key: string, value: string | null) {
     const next = new URLSearchParams(params);
@@ -252,17 +249,6 @@ export function UsagePage() {
           <NavTabs
             label="Billing sections"
             items={BILLING_SECTIONS}
-            trailing={
-              scopeOptions.length > 1 ? (
-                <Select
-                  label="Usage scope"
-                  size="sm"
-                  options={scopeOptions}
-                  value={scopeParam ?? ''}
-                  onValueChange={(value) => setParam('chatbot', value || null)}
-                />
-              ) : undefined
-            }
           />
         }
       />

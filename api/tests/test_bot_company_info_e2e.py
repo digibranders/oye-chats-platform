@@ -139,5 +139,12 @@ def test_unrelated_save_does_not_lock_auto_value(db, monkeypatch):
     assert resp.status_code == 200
     db.expire_all()
     bot = db.get(Bot, bot_id)
-    assert bot.manual_field_overrides == []  # NOT locked
+    # `company_name` came back verbatim, so it stays unlocked and future crawls
+    # keep refreshing it -- which is what this test is about.
+    assert "company_name" not in bot.manual_field_overrides
+    # `primary_color` DID change, and it is now a tracked auto-fill field, so it
+    # locks. It used to stand in here as the "unrelated" field precisely because
+    # nothing tracked it, which is the gap that let the crawl repaint a chosen
+    # colour and let the setup checklist tick a step the customer never did.
+    assert bot.manual_field_overrides == ["primary_color"]
     assert bot.primary_color == "#000000"

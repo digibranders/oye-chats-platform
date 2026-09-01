@@ -9,6 +9,17 @@ import { GST_STATE_CODES, isValidGstin } from './gstin';
 
 export interface BillingDetailsForm {
   legal_name: string;
+  /**
+   * The workspace's display name, and NOT a second copy of `legal_name`.
+   *
+   * `legal_name` is the registered business name printed on a tax invoice and
+   * reconciled against the buyer's GST certificate. This one is what a
+   * colleague sees in an invite (`invite_routes._workspace_label` resolves
+   * `company_name or name or email`). A trading name and a registered name are
+   * frequently different, so correcting the label on an invite email must not
+   * silently restate a GST identity.
+   */
+  company_name: string;
   gstin: string;
   line1: string;
   line2: string;
@@ -59,6 +70,7 @@ export function detailsToForm(
   const address = details?.billing_address || {};
   return {
     legal_name: details?.legal_name || details?.company_name || '',
+    company_name: details?.company_name || '',
     gstin: details?.gstin || '',
     line1: address.line1 || '',
     line2: address.line2 || '',
@@ -152,6 +164,7 @@ export function formToPatch(
 
   const stored = {
     legal_name: details?.legal_name || '',
+    company_name: details?.company_name || '',
     gstin: details?.gstin || '',
     billing_country: details?.billing_country || '',
     billing_state_code: details?.billing_state_code || '',
@@ -160,6 +173,10 @@ export function formToPatch(
 
   if (trim(form.legal_name) !== stored.legal_name) {
     patch.legal_name = trim(form.legal_name) || null;
+  }
+
+  if (trim(form.company_name) !== stored.company_name) {
+    patch.company_name = trim(form.company_name) || null;
   }
 
   const foreign = isForeignCountry(form.billing_country);

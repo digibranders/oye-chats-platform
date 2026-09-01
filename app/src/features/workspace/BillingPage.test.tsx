@@ -50,12 +50,26 @@ vi.mock('../../context/CurrencyContext', () => ({
 }));
 
 const state = vi.hoisted(() => ({
+  /**
+   * The shell chatbot scope. Billing reads this rather than a `?chatbot=` param
+   * of its own, so one control drives every workspace surface. `null` is the
+   * account-level view.
+   */
+  selectedBot: null as { id: number; name: string } | null,
   entitlements: {
     plan_slug: 'standard',
     limits: { bots: 1, operators: 2, credits: 3000 } as Record<string, number>,
     features: { topup_allowed: true } as Record<string, unknown>,
     usage: { bots: 1, operators: 1 } as Record<string, number>,
   },
+}));
+vi.mock('../../context/BotContext', () => ({
+  useBotContext: () => ({
+    bots: state.selectedBot ? [state.selectedBot] : [],
+    selectedBot: state.selectedBot,
+    selectBot: vi.fn(),
+    loading: false,
+  }),
 }));
 vi.mock('../../hooks/useEntitlements', () => ({
   useEntitlements: () => ({
@@ -141,6 +155,8 @@ function renderPage(entry = '/billing') {
 }
 
 beforeEach(() => {
+  // Account-level by default; the scoped case sets this explicitly.
+  state.selectedBot = null;
   state.entitlements = {
     plan_slug: 'standard',
     limits: { bots: 1, operators: 2, credits: 3000 },
@@ -314,9 +330,59 @@ describe('the plan summary', () => {
     });
     state.entitlements = { ...state.entitlements, usage: { bots: 4, operators: 3 } };
     renderPage();
-    expect(await screen.findByText('Unlimited chatbots', { exact: false })).toBeInTheDocument();
+    // Seats still meter — those ARE a per-subscription allowance — so the
+    // sentinel still has to be worded rather than printed.
+    expect(await screen.findAllByText(/of unlimited/i)).not.toHaveLength(0);
     expect(screen.queryByText('-1')).toBeNull();
-    expect(screen.getAllByText(/of unlimited/i).length).toBeGreaterThan(0);
+  });
+
+  it('does not carry a chatbots row at all', async () => {
+    /**
+     * It was a `Meter` of workspace chatbots against this plan's `limits.bots`,
+     * so two chatbots on a plan whose quota is 1 painted "2 / 1" in red for an
+     * account that was over nothing. Restating it as a plain count fixed the
+     * lie but left a row that says what the sidebar already says, next to an
+     * "Add" that belongs on the Chatbots page — and a description that read
+     * "This plan funds Free & legacy chatbots", because the name came from the
+     * CREDIT POOL rather than from a chatbot.
+     *
+     * The one fact worth keeping — each chatbot has its own subscription — now
+     * sits with the plan, where someone weighing a second chatbot is looking.
+     */
+    state.entitlements = { ...state.entitlements, usage: { bots: 2, operators: 1 } };
+    renderPage();
+    await screen.findByText('Standard');
+
+    expect(screen.queryByText('Chatbots')).toBeNull();
+    expect(screen.queryByText('2 / 1')).toBeNull();
+    expect(screen.queryByRole('meter', { name: /chatbots in use/i })).toBeNull();
+    // The fact, not one phrasing of it: the scoped and account-level branches
+    // word it differently.
+    expect(screen.getByText(/its own subscription/i)).toBeInTheDocument();
+  });
+
+  it('never names a credit pool where a chatbot belongs', async () => {
+    // The account pool is called "Free & legacy chatbots". Sourcing the scoped
+    // name from `resolveScopedPool` made the card read "Funding Free & legacy
+    // chatbots" for a chatbot with no plan of its own.
+    state.selectedBot = { id: 7, name: 'Acme Support' };
+    renderPage();
+    await screen.findByText('Standard');
+    expect(screen.queryByText(/free & legacy/i)).toBeNull();
+    expect(screen.getByText(/funding acme support/i)).toBeInTheDocument();
+  });
+
+  it('says whose plan it is showing', async () => {
+    // The same card shows a chatbot's own subscription when the page is scoped
+    // to one, and the ACCOUNT-LEVEL subscription when it is not — and those can
+    // be different plans. On the account this was found on, the unscoped view
+    // showed Professional while neither visible chatbot was on it. Unlabelled,
+    // a customer cannot tell which of the two they are reading, or that the
+    // account-level one funds chatbots with no plan of their own.
+    renderPage();
+    expect(
+      await screen.findByText(/account-level subscription/i),
+    ).toBeInTheDocument();
   });
 
   it('states the renewal date rather than a bare "renews"', async () => {
@@ -349,7 +415,12 @@ describe('scheduled changes', () => {
     api.getCurrentSubscription.mockResolvedValue(
       subscriptionPayload({ cancel_at_period_end: true }),
     );
-    renderPage('/billing?chatbot=7');
+    // Scope comes from the SHELL now, not a `?chatbot=` param of this page's
+    // own — that second selector was removed once the rail gained one, so there
+    // is a single control across every workspace surface. What this test is
+    // about is unchanged.
+    state.selectedBot = { id: 7, name: 'Support' };
+    renderPage();
     await screen.findByText('Your subscription is set to end');
 
     await userEvent.click(screen.getAllByRole('button', { name: /keep my plan/i })[0]);

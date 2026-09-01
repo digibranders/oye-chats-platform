@@ -852,9 +852,31 @@ def list_invoices(client: Client = Depends(get_current_client), bot_id: int | No
         )
         invoices = session.execute(stmt).scalars().all()
 
+        # Which chatbot each invoice was raised for. Billing is per chatbot, so
+        # an account with two paid chatbots receives two interleaved streams of
+        # documents -- and these are tax documents someone reconciles against a
+        # bank statement, so an unattributable row is worse here than anywhere
+        # else in the product.
+        #
+        # Names resolved in ONE query rather than per row. `bot_id IS NULL` is a
+        # real state, not a gap: it is the account-level subscription that funds
+        # chatbots without one of their own, and it must report no chatbot
+        # rather than borrow another's name.
+        bot_names: dict[int, str | None] = {}
+        wanted = {inv.bot_id for inv in invoices if inv.bot_id is not None}
+        if wanted:
+            bot_names = {
+                row_id: row_name
+                for row_id, row_name in session.execute(
+                    select(Bot.id, Bot.name).where(Bot.client_id == client.id, Bot.id.in_(wanted))
+                ).all()
+            }
+
         return [
             {
                 "id": inv.id,
+                "bot_id": inv.bot_id,
+                "bot_name": bot_names.get(inv.bot_id) if inv.bot_id is not None else None,
                 "amount_cents": inv.amount_cents,
                 "currency": inv.currency,
                 "status": inv.status,
@@ -919,6 +941,19 @@ class BillingDetailsBody(BaseModel):
     # All optional. PATCH semantics via exclude_unset: omitted fields keep
     # their stored value; an explicit null clears the field.
     legal_name: Name | None = None
+    # The account's DISPLAY name, and deliberately not the same field as
+    # ``legal_name``. That one is the registered business name printed on a tax
+    # invoice and reconciled against the buyer's GST certificate; this one is
+    # what a colleague sees in an invite (``invite_routes._workspace_label``
+    # resolves ``company_name or name or email``). A trading name and a
+    # registered name are frequently different, so someone correcting the label
+    # on an invite email must not silently restate their GST identity.
+    #
+    # Writable here because nothing else could set it: the only writer was
+    # ``register()``, and the signup form stopped sending the field, so every
+    # new account had a NULL display name and invites fell through to the
+    # owner's personal email address.
+    company_name: Name | None = None
     # Indian GSTIN. Format AND mod-36 checksum are verified in the handler by
     # ``is_valid_gstin`` (which also has to distinguish "" (clear the field)
     # from an invalid value), so this only bounds the length: 15 characters
@@ -1190,6 +1225,10 @@ def update_billing_details(
 
         if "legal_name" in fields:
             row.legal_name = (fields["legal_name"] or "").strip() or None
+        if "company_name" in fields:
+            # "" clears, same convention as `legal_name`, so the invite label
+            # falls through to the next source instead of rendering blank.
+            row.company_name = (fields["company_name"] or "").strip() or None
         if gstin_provided:
             row.gstin = new_gstin
         if "billing_address" in fields:
@@ -1221,6 +1260,7 @@ def update_billing_details(
         # Keep the dependency-injected object in sync for the response.
         for attr in (
             "legal_name",
+            "company_name",
             "gstin",
             "billing_address",
             "billing_country",

@@ -392,6 +392,28 @@ export function LeadsPage() {
         sortable: sortable ? compareLeads.name : undefined,
         render: (lead) => <LeadCell lead={lead} />,
       },
+      // Which chatbot produced the lead. Only when the account HAS more than
+      // one and is not already narrowed to a single chatbot — otherwise every
+      // row carries the same value, which is a column that costs width and
+      // says nothing. Every plan below Enterprise caps at one chatbot, so for
+      // almost every account this never renders.
+      ...(bots.length > 1 && botId == null
+        ? [
+            {
+              key: 'chatbot',
+              header: t('leads.chatbot') || 'Chatbot',
+              width: '8rem',
+              sortable: sortable
+                ? (a: Lead, b: Lead) => (a.bot_name ?? '').localeCompare(b.bot_name ?? '')
+                : undefined,
+              render: (lead: Lead) => (
+                <Badge tone="neutral">
+                  {lead.bot_name ?? `${t('shell.chatbot') || 'Chatbot'} ${lead.bot_id ?? '?'}`}
+                </Badge>
+              ),
+            } satisfies Column<Lead>,
+          ]
+        : []),
       {
         key: 'tags',
         header: t('leads.tags') || 'Tags',
@@ -504,7 +526,7 @@ export function LeadsPage() {
   // `t` changes identity with the locale: the column headers built above are
   // resolved at call time, so without it the table would keep whatever
   // language it first mounted in.
-  }, [annotations, intelligenceLocked, sortable, t]);
+  }, [annotations, botId, bots.length, intelligenceLocked, sortable, t]);
 
   // ── Guards ────────────────────────────────────────────────────────────────
 

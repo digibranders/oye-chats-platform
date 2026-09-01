@@ -21,6 +21,7 @@ import {
   formatNumber,
 } from '../../ui';
 import { useBotContext } from '../../context/BotContext';
+import { resolveScopedBotId } from '../../context/botScope';
 import { monthLabel, monthOptions, parseMonth } from './month';
 import { isFilterableOutcome, type FilterableOutcome } from './journeyModel';
 import { errorMessage, isPlanGate } from './useAnalyticsData';
@@ -57,7 +58,12 @@ export function JourneyPage() {
   const { t } = useTranslation();
   const { bots, selectedBot, loading: botsLoading, error: botsError, refreshBots } = useBotContext();
   const [params, setParams] = useSearchParams();
-  const botId = selectedBot?.id ?? null;
+  // Not `selectedBot?.id ?? null`. This page cannot aggregate — its endpoints
+  // require `bot_id` — and the shell scope had no writer at all after the
+  // redesign dropped the switcher, so that expression was permanently null and
+  // every query below stayed disabled. The page rendered empty for everyone.
+  // See `resolveScopedBotId`.
+  const botId = resolveScopedBotId(selectedBot, bots);
 
   const month = parseMonth(params.get('month'));
   const months = useMemo(() => monthOptions(), []);
@@ -165,6 +171,29 @@ export function JourneyPage() {
               <Link to="/chatbots?new=1" className={buttonClass('primary', 'sm')}>
                 {t('analytics.createAChatbot') || 'Create a chatbot'}
               </Link>
+            }
+          />
+        </Card>
+      </Page>
+    );
+  }
+
+  // Several chatbots and none chosen. This page cannot aggregate, so there is
+  // no honest figure to show — and picking one silently would put a single
+  // chatbot's numbers under a control that reads "All chatbots". Ask instead.
+  // Unreachable for a single-chatbot account: `resolveScopedBotId` uses the
+  // sole chatbot, which is every plan below Enterprise.
+  if (botId == null) {
+    return (
+      <Page width="wide">
+        <PageHeader title={t('analytics.journey') || 'Journey'} description={t('analytics.visitorJourneyFlow') || 'Visitor journey flow.'} titleVisuallyHidden />
+        <Card>
+          <EmptyState
+            icon={BarChart3}
+            title={t('analytics.chooseAChatbot') || 'Choose a chatbot'}
+            description={
+              t('analytics.thisViewShowsOneChatbot') ||
+              'This view reports on one chatbot at a time. Pick one from Showing, in the sidebar.'
             }
           />
         </Card>

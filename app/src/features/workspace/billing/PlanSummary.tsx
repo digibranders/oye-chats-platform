@@ -1,4 +1,3 @@
-import { ArrowUpRight } from 'lucide-react';
 import {
   Badge,
   Button,
@@ -15,7 +14,6 @@ import {
 import {
   CHARGE_CURRENCY,
   chargeDisclosure,
-  formatAgentAllowance,
   formatCredits,
   formatMoneyMinor,
   formatOverageRate,
@@ -36,8 +34,8 @@ export interface PlanSummaryProps {
   subscription: SubscriptionView;
   plan: PlanView | null;
   geo: BillingGeoView | null;
-  /** Chatbots currently active in the workspace, from the entitlements usage map. */
-  agentsUsed: number;
+  /** The chatbot this subscription funds, when the page is scoped to one. */
+  scopedBotName?: string | null;
   /** Operator seats currently filled. */
   seatsUsed: number;
   /**
@@ -51,7 +49,6 @@ export interface PlanSummaryProps {
   onManageSeats: () => void;
   onCancel: () => void;
   onResume: () => void;
-  onAddChatbot: () => void;
 }
 
 /**
@@ -75,14 +72,13 @@ export function PlanSummary({
   subscription,
   plan,
   geo,
-  agentsUsed,
+  scopedBotName = null,
   seatsUsed,
   grossSeatPriceMinor,
   onChangePlan,
   onManageSeats,
   onCancel,
   onResume,
-  onAddChatbot,
 }: PlanSummaryProps) {
   const cycle: BillingCycleKey = subscription.billingCycle === 'annual' ? 'annual' : 'monthly';
   const price = plan ? resolvePlanPrice(plan, cycle, geo) : null;
@@ -90,7 +86,6 @@ export function PlanSummary({
   const renewal = getRenewalDisplay(subscription, subscription.cancelAtPeriodEnd);
   const overage = plan ? formatOverageRate(plan.overageRateMinor) : null;
   const trialOffer = plan ? formatTrialOffer(plan.trialDays) : null;
-  const agentQuota = plan?.limits.bots;
   const seatQuota = plan?.includedSeats ?? 0;
   // `limits.operators` is the hard cap on seats this plan can ever hold, and it
   // gates operator creation too. When it leaves no room above the included
@@ -117,7 +112,22 @@ export function PlanSummary({
           </span>
         }
         titleAs="h2"
-        description={plan ? undefined : 'This workspace has no paid subscription.'}
+        // Say WHOSE plan this is. The same card shows a chatbot's own
+        // subscription when the page is scoped to one, and the account-level
+        // subscription when it is not — and the account-level one may be a
+        // different plan from anything a chatbot is visibly on. Unlabelled, a
+        // customer cannot tell which of the two they are reading.
+        //
+        // `bot_id IS NULL` on a subscription is not a gap. It funds whichever
+        // chatbots have no plan of their own, which is why it needs saying
+        // rather than hiding: otherwise it reads as a charge for nothing.
+        description={
+          plan
+            ? scopedBotName
+              ? `Funding ${scopedBotName}. Each chatbot has its own subscription.`
+              : 'Your account-level subscription. It funds any chatbot that has no plan of its own, and each chatbot on a paid plan has its own subscription.'
+            : 'This workspace has no paid subscription.'
+        }
         actions={
           <>
             {subscription.cancelAtPeriodEnd ? (
@@ -188,40 +198,6 @@ export function PlanSummary({
       ) : null}
 
       <CardBody flush>
-        <SettingRow
-          label="Chatbots"
-          description={
-            agentQuota === undefined
-              ? 'This plan declares no chatbot allowance — ask support before adding another.'
-              : `${formatAgentAllowance(plan)}. Each extra chatbot has its own subscription.`
-          }
-          controlWidth="auto"
-        >
-          <div className="flex w-full items-center justify-end gap-3">
-            {agentQuota === undefined ? null : agentQuota === UNLIMITED_LIMIT ? (
-              <span className="figure text-sm font-medium text-text-primary">
-                {formatNumber(agentsUsed)} <span className="text-text-tertiary">of unlimited</span>
-              </span>
-            ) : (
-              /* `hideLabel` now keeps the figure and drops only the name, so
-                 the meter no longer has to print "In use" beside a row already
-                 labelled "Chatbots". The name stays in the accessibility tree,
-                 where a bare "3 / 5" needs it. */
-              <Meter
-                className="w-40"
-                label="Chatbots in use"
-                hideLabel
-                size="sm"
-                used={agentsUsed}
-                limit={agentQuota}
-              />
-            )}
-            <Button size="sm" variant="secondary" onClick={onAddChatbot}>
-              Add
-              <ArrowUpRight aria-hidden />
-            </Button>
-          </div>
-        </SettingRow>
 
         <SettingRow
           label="Operator seats"

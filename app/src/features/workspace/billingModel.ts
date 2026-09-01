@@ -242,6 +242,16 @@ export interface InvoiceView {
   pdfUrl: string | null;
   invoiceUrl: string | null;
   description: string | null;
+  /**
+   * The chatbot this document was raised for, and its name at read time.
+   *
+   * Billing is per chatbot, so an account with two paid chatbots receives two
+   * interleaved streams of invoices. `botId` is null for the account-level
+   * subscription — a real state, not a gap: it funds whichever chatbots have no
+   * plan of their own.
+   */
+  botId: number | null;
+  botName: string | null;
   /** GST breakdown, or `null` on a row that carries no tax fields (legacy / shadow mode). */
   tax: InvoiceTaxView | null;
   document: InvoiceDocumentState;
@@ -507,6 +517,8 @@ export function buildInvoice(raw: unknown, index: number, now: number = Date.now
   return {
     id,
     number: toOptionalText(record.invoice_number),
+    botId: typeof record.bot_id === 'number' ? record.bot_id : null,
+    botName: toOptionalText(record.bot_name),
     kind,
     amountMinor: kind === 'credit_note' ? -amountMagnitude : amountMagnitude,
     currency: (toText(record.currency) || 'INR').toUpperCase(),

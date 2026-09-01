@@ -83,12 +83,79 @@ def test_all_three_fields_tracked_independently():
 def test_fields_absent_from_patch_are_untouched():
     """A patch that omits an auto-fill field must not change its lock state."""
     bot = _bot(brand_tone="custom", overrides=["brand_tone"])
-    _reconcile_manual_overrides(bot, {"primary_color": "#000000"})
+    # `system_prompt`, not `primary_color`: the colour used to be the example of
+    # an untracked field here, and it is now tracked, so it no longer tests what
+    # this is about.
+    _reconcile_manual_overrides(bot, {"system_prompt": "You are helpful."})
     assert bot.manual_field_overrides == ["brand_tone"]
 
 
 def test_non_tracked_field_never_locked():
-    """Only company_name/description/brand_tone are tracked."""
+    """Only the crawl-auto-filled fields are tracked.
+
+    `bot_logo` is the notable exclusion (see `config.py`): the avatar records
+    provenance in its own `bot_logo_source` column instead.
+    """
     bot = _bot()
     _reconcile_manual_overrides(bot, {"system_prompt": "You are helpful."})
     assert bot.manual_field_overrides == []
+
+
+class TestPrimaryColourIsTracked:
+    """The brand colour is auto-filled by the crawl, so it needs the same lock.
+
+    It was missing from ``_AUTO_FILL_FIELDS`` while the crawl wrote it anyway
+    (``crawl_orchestrator`` sets ``primary_color`` from the extracted palette),
+    which broke two things at once:
+
+    * The crawler's own first guard, ``"primary_color" not in overrides``, could
+      never fire. A customer's chosen colour survived a re-crawl only because of
+      the SECOND guard -- "still the seeded default" -- which has a hole: pick
+      the default hex deliberately and the next crawl repaints over you.
+    * Nothing recorded that a human had chosen a colour, so the setup
+      checklist's "Customise your chatbot" step read `primary_color != default`
+      and struck itself through on a chatbot whose colour the CRAWL had set. The
+      product did the work and then congratulated the customer for it -- the
+      same defect that ``bot_logo_source`` was added to fix for the avatar.
+    """
+
+    def _bot(self, colour=None, overrides=None):
+        return SimpleNamespace(
+            company_name=None,
+            company_description=None,
+            brand_tone=None,
+            primary_color=colour,
+            manual_field_overrides=list(overrides or []),
+        )
+
+    def test_choosing_a_colour_locks_it(self):
+        bot = self._bot(colour="#0c1e2e")  # crawl-derived, unlocked
+        _reconcile_manual_overrides(bot, {"primary_color": "#ff6600"})
+        assert bot.manual_field_overrides == ["primary_color"]
+
+    def test_resubmitting_the_same_colour_locks_nothing(self):
+        # Saving an unrelated field on the Experience page posts the whole form.
+        # An unchanged colour is not a choice and must not lock.
+        bot = self._bot(colour="#0c1e2e")
+        _reconcile_manual_overrides(bot, {"primary_color": "#0c1e2e"})
+        assert bot.manual_field_overrides == []
+
+    def test_a_patch_without_the_colour_leaves_the_lock_alone(self):
+        bot = self._bot(colour="#ff6600", overrides=["primary_color"])
+        _reconcile_manual_overrides(bot, {"company_name": "Acme"})
+        assert "primary_color" in bot.manual_field_overrides
+
+    def test_clearing_the_colour_unlocks_it(self):
+        # Same convention as the other tracked fields: emptying hands the field
+        # back to the crawl.
+        bot = self._bot(colour="#ff6600", overrides=["primary_color"])
+        _reconcile_manual_overrides(bot, {"primary_color": ""})
+        assert bot.manual_field_overrides == []
+
+    def test_deliberately_picking_the_seeded_colour_still_locks(self):
+        # The hole in the "still default" heuristic. Someone who looks at the
+        # palette and decides the default violet is right has chosen, and a
+        # re-crawl must not overrule them.
+        bot = self._bot(colour="#0c1e2e", overrides=[])
+        _reconcile_manual_overrides(bot, {"primary_color": "#a21caf"})
+        assert bot.manual_field_overrides == ["primary_color"]

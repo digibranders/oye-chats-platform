@@ -196,15 +196,33 @@ def _apply_model_family_kwargs(kwargs: dict, model: str) -> None:
       ``reasoning_effort="minimal"`` (``"none"`` is not supported there;
       valid values are ``minimal|low|medium|high``).
 
+    * gemini-2.5 family: ``reasoning_effort="disable"``, which LiteLLM maps to
+      Gemini's ``thinkingBudget: 0``. Gemini 2.5 reasons by default and has
+      exactly the same failure: measured live at ``max_tokens=10``, the model
+      spent 7 tokens thinking, hit ``finishReason: MAX_TOKENS`` and returned
+      ``''`` -- for an answer that is one token long. That is what broke
+      "Detect from my site": ``classify_brand_tone`` caps at 10, saw the empty
+      string, and the route reported "Couldn't detect a tone" while the key,
+      the credits and the content were all fine.
+
+      The sentinel differs per family and they reject each other's values, so
+      this cannot be one shared constant. ``"disable"`` is Gemini's;
+      ``thinking={"type": "disabled"}`` is NOT honoured on this path (verified
+      against litellm 1.89.4 -- it still returns '').
+
+      Older Gemini (2.0, 1.5) does not reason and is deliberately left alone.
+
     ``litellm.drop_params=True`` (set in ``app/main.py`` and
-    ``app/worker/settings.py``) silently strips this for non-OpenAI providers
-    if the LiteLLM fallback path retries with Gemini.
+    ``app/worker/settings.py``) silently strips this for providers that do not
+    understand it if the LiteLLM fallback path retries elsewhere.
     """
     bare = _bare_model(model)
     if bare.startswith("gpt-5.4"):
         kwargs.setdefault("reasoning_effort", "none")
     elif bare.startswith("gpt-5"):
         kwargs.setdefault("reasoning_effort", "minimal")
+    elif bare.startswith("gemini-2.5"):
+        kwargs.setdefault("reasoning_effort", "disable")
 
 
 def _generate_response(

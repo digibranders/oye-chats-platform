@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { GST_STATE_OPTIONS, gstStateFromPin } from './gstin';
-import { COUNTRY_OPTIONS } from './countries';
+import { COUNTRY_OPTIONS } from '../../../data/countries';
 
 describe('gstStateFromPin', () => {
   it('maps major-metro PINs to their GST state', () => {

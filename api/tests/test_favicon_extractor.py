@@ -298,15 +298,53 @@ class TestDownloadIconAppliesThePipelineCheck:
     """
 
     @pytest.mark.asyncio
-    async def test_an_ico_is_refused_so_the_loop_can_try_the_next_candidate(self):
+    async def test_an_ico_is_converted_rather_than_refused(self):
+        """This used to assert `is None`, so the loop could skip ICO.
+
+        Skipping was the wrong answer to "the pipeline cannot store ICO": it is
+        the most common favicon declaration on the web, and the fallback the
+        loop moved on to (`/apple-touch-icon.png`) usually 404s -- so most sites
+        got no avatar at all. Now the bytes are re-encoded to PNG and returned.
+
+        What has NOT changed is the property underneath: `_download_icon` still
+        only ever returns bytes the pipeline accepts. It is the RETURNED bytes
+        that must satisfy it, which is what the next test states directly.
+        """
         from app.services import favicon_extractor
+        from app.services.r2_service import process_image_for_logo
 
         with patch.object(
             favicon_extractor,
             "fetch_bytes_safely",
             new=AsyncMock(return_value=(200, _image_bytes("ICO"))),
         ):
-            assert await favicon_extractor._download_icon(object(), "https://acme.com/favicon.ico") is None
+            out = await favicon_extractor._download_icon(object(), "https://acme.com/favicon.ico")
+        assert out is not None
+        assert process_image_for_logo(out)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("fmt", ["ICO", "PNG", "BMP", "GIF"])
+    async def test_whatever_it_returns_the_pipeline_accepts(self, fmt):
+        """The real invariant, stated on the returned value.
+
+        The old proxy compared the predicate against the pipeline on the SAME
+        raw bytes, which stopped being the right question once the downloader
+        was allowed to convert. What actually matters is that nothing the loop
+        accepts can be rejected later by the upload -- because that is what
+        strands a site with no avatar while a good lower-ranked candidate goes
+        untried.
+        """
+        from app.services import favicon_extractor
+        from app.services.r2_service import process_image_for_logo
+
+        with patch.object(
+            favicon_extractor,
+            "fetch_bytes_safely",
+            new=AsyncMock(return_value=(200, _image_bytes(fmt))),
+        ):
+            out = await favicon_extractor._download_icon(object(), f"https://acme.com/icon.{fmt.lower()}")
+        if out is not None:
+            assert process_image_for_logo(out), f"{fmt}: accepted by the loop, rejected by the pipeline"
 
     @pytest.mark.asyncio
     async def test_a_png_is_returned(self):
@@ -833,3 +871,84 @@ class TestProvenanceDecidesWhetherToDerive:
             await orch._maybe_apply_favicon_avatar(bot.id, bot.client_id, "https://acme.com")
 
         assert _reread(db, 8203).bot_logo == _UPLOADED_KEY
+
+
+class TestIcoIsConvertedRatherThanRejected:
+    """ICO is the most common favicon declaration on the web, and it was dropped.
+
+    Found on a real crawl of fynix.digital: the site declares
+    ``<link rel="icon" href="/favicon.ico" sizes="48x48">``, that URL serves a
+    perfectly good 48x48 RGBA icon, and no avatar ever appeared. Pillow opens it
+    (`_decode_is_valid_image` passed), but the avatar pipeline's
+    ``ALLOWED_IMAGE_FORMATS`` is ``{PNG, JPEG, WEBP, GIF, BMP}`` -- no ICO -- so
+    ``_usable_by_the_avatar_pipeline`` correctly said no, the candidate loop
+    moved on, and the fallback ``/apple-touch-icon.png`` 404'd.
+
+    Refusing the format the web actually uses is the wrong answer to "the
+    pipeline cannot store ICO". Pillow decodes it, so the bytes are re-encoded
+    to PNG and the pipeline gets something it accepts. This fixes BOTH callers:
+    the crawl's automatic avatar and the "Use my website's icon" button, which
+    runs the same extractor.
+    """
+
+    def _ico(self, size=(48, 48), colour=(10, 102, 194, 255)) -> bytes:
+        import io
+
+        from PIL import Image
+
+        buf = io.BytesIO()
+        Image.new("RGBA", size, colour).save(buf, format="ICO")
+        return buf.getvalue()
+
+    def test_an_ico_becomes_something_the_pipeline_accepts(self):
+        from app.services.favicon_extractor import _normalise_for_pipeline
+        from app.services.r2_service import process_image_for_logo
+
+        normalised = _normalise_for_pipeline(self._ico())
+        assert normalised is not None
+        # The real gate, run for real rather than modelled.
+        assert process_image_for_logo(normalised)
+
+    def test_a_png_is_passed_through_untouched(self):
+        # No needless re-encode: a format the pipeline already takes must not be
+        # decoded and rebuilt, which would cost quality for nothing.
+        import io
+
+        from PIL import Image
+
+        from app.services.favicon_extractor import _normalise_for_pipeline
+
+        buf = io.BytesIO()
+        Image.new("RGBA", (64, 64), (10, 102, 194, 255)).save(buf, format="PNG")
+        original = buf.getvalue()
+        assert _normalise_for_pipeline(original) is original
+
+    def test_rubbish_is_still_rejected(self):
+        from app.services.favicon_extractor import _normalise_for_pipeline
+
+        assert _normalise_for_pipeline(b"not an image at all") is None
+
+    def test_a_decompression_bomb_is_not_re_encoded(self):
+        # Re-encoding happens BEFORE the pipeline's own `MAX_DECODED_PIXELS`
+        # guard, so the normaliser needs its own bound or it becomes the hole
+        # that guard exists to close.
+        import io
+
+        from PIL import Image
+
+        from app.services.favicon_extractor import _normalise_for_pipeline
+
+        buf = io.BytesIO()
+        Image.new("RGB", (9000, 9000), (255, 0, 0)).save(buf, format="PNG")
+        # A PNG is passed through, so use a format that WOULD be re-encoded.
+        big = io.BytesIO()
+        Image.new("RGB", (9000, 9000), (255, 0, 0)).save(big, format="TIFF")
+        assert _normalise_for_pipeline(big.getvalue()) is None
+
+    def test_the_predicate_still_answers_for_the_bytes_it_is_given(self):
+        # Conversion lives in `_download_icon`, NOT in here. Moving it into the
+        # predicate would make it disagree with the pipeline about the same
+        # input, which is the property the agreement tests above protect.
+        from app.services.favicon_extractor import _usable_by_the_avatar_pipeline
+
+        assert _usable_by_the_avatar_pipeline(self._ico()) is False

@@ -360,3 +360,63 @@ def test_contrast_helper_matches_the_wcag_figures():
     assert round(contrast_on_white("#a21caf"), 2) == 6.32
     assert round(contrast_on_white("#ba68c8"), 2) == 3.56  # the old default
     assert round(contrast_on_white("#febc2e"), 2) == 1.69
+
+
+class TestASurfaceIsNotABrandColour:
+    """Frequency inverts on a dark-themed site.
+
+    Reported from a real crawl: fynix.digital paints its page ``#0c1e2e`` and
+    its buttons ``#0a66c2``. Both are brandable, both carry white text, and the
+    background appears far more often -- so ranking by count handed back the
+    chrome and the widget came out looking like the site's dark furniture rather
+    than its brand.
+
+    Saturation cannot separate them: ``#0c1e2e`` is 59% saturated, MORE than
+    plenty of real accents. Only extreme lightness can.
+    """
+
+    def test_the_accent_beats_the_background_it_sits_on(self):
+        html = """
+          <style>
+            body{background:#0c1e2e}
+            .a{color:#0c1e2e}.b{border:1px solid #0c1e2e}.c{fill:#0c1e2e}
+            .btn{background:#0a66c2}
+          </style>
+        """
+        # #0c1e2e appears four times to #0a66c2's one and still loses.
+        assert extract_colors_from_html(html)[0] == "#0a66c2"
+
+    def test_a_near_white_surface_loses_the_same_way(self):
+        html = """
+          <style>
+            body{background:#fbfbfd}.a{color:#fbfbfd}.b{fill:#fbfbfd}
+            .btn{background:#0a66c2}
+          </style>
+        """
+        assert extract_colors_from_html(html)[0] == "#0a66c2"
+
+    def test_a_deep_brand_is_not_treated_as_a_surface(self):
+        # 28% lightness. The first attempt at this used a 30..70% "vivid" band
+        # and demoted exactly this colour below a decorative SVG, which is the
+        # judgement `_CSS_COLOR_WEIGHT` exists to make. The exclusion is narrow
+        # on purpose.
+        html = """
+          <style>:root{--brand:#701a75}</style>
+          <svg><path fill="#7c3aed"/><path fill="#7c3aed"/><path fill="#7c3aed"/></svg>
+        """
+        assert extract_colors_from_html(html)[0] == "#701a75"
+
+    def test_a_genuinely_near_black_brand_still_comes_back(self):
+        # Demotion, not deletion. A site with nothing else to offer keeps its
+        # own colour rather than being told we could not read it.
+        html = "<style>.a{color:#0c1e2e}.b{fill:#0c1e2e}</style>"
+        assert extract_colors_from_html(html) == ["#0c1e2e"]
+
+    def test_surfaces_still_appear_further_down(self):
+        html = """
+          <style>
+            body{background:#0c1e2e}.a{color:#0c1e2e}.b{fill:#0c1e2e}
+            .btn{background:#0a66c2}
+          </style>
+        """
+        assert extract_colors_from_html(html) == ["#0a66c2", "#0c1e2e"]

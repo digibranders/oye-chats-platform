@@ -9,7 +9,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import desc, func, select, update
+from sqlalchemy import desc, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.api.auth import get_current_client_or_operator
@@ -256,6 +256,39 @@ def list_leads(
         return {"leads": paginated, "total": total, "page": page, "limit": limit}
 
 
+def _with_contact_count(session, bot_ids: list[int], since, until) -> int:
+    """Conversations that produced something you can follow up on.
+
+    Distinct from ``total``, which counts CONVERSATIONS and is right for the
+    leads list header — `/leads` returns every session, with contact details as
+    enrichment. The onboarding checklist read that same number under a step
+    called "Capture your first lead", so the step ticked the moment anyone said
+    hello. Two numbers, because there are two questions.
+
+    ``email OR phone``, never ``name``: a visitor who types "I'm Sam" has left
+    nothing reachable. Empty strings are excluded because the capture form
+    persists "" for a field the visitor skipped.
+    """
+    # Joined to ChatSession so `_windowed` filters on the CONVERSATION's date,
+    # the same column `total` uses. Windowing on `LeadInfo.created_at` instead
+    # would let the two figures describe different periods for the same request.
+    stmt = _windowed(
+        select(func.count(func.distinct(LeadInfo.session_id)))
+        .select_from(LeadInfo)
+        .join(ChatSession, ChatSession.id == LeadInfo.session_id)
+        .where(
+            LeadInfo.bot_id.in_(bot_ids),
+            or_(
+                func.trim(func.coalesce(LeadInfo.email, "")) != "",
+                func.trim(func.coalesce(LeadInfo.phone, "")) != "",
+            ),
+        ),
+        since,
+        until,
+    )
+    return session.execute(stmt).scalar() or 0
+
+
 @router.get("/stats")
 def lead_stats(
     bot_id: RowId | None = Query(None),
@@ -292,7 +325,11 @@ def lead_stats(
                 )
                 total = session.execute(total_stmt).scalar() or 0
                 unread = session.execute(unread_stmt).scalar() or 0
-            return {"total": total, "unread": unread}
+            return {
+                "total": total,
+                "unread": unread,
+                "with_contact": _with_contact_count(session, bot_ids, since, until) if bot_ids else 0,
+            }
 
         sessions_stmt = _windowed(select(ChatSession).where(ChatSession.bot_id.in_(bot_ids)), since, until)
         sessions = session.execute(sessions_stmt).scalars().all()
@@ -325,6 +362,10 @@ def lead_stats(
         return {
             "total": total,
             "unread": unread,
+            # Conversations that left an email or a phone. `total` counts
+            # conversations; these are two different questions and the setup
+            # checklist was asking the second one with the first one's answer.
+            "with_contact": _with_contact_count(session, bot_ids, since, until) if bot_ids else 0,
             **counts,
             # backward-compat aliases for frontend expecting old status names
             "cold": counts["unqualified"],

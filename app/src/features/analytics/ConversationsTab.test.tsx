@@ -14,6 +14,12 @@ const api = vi.hoisted(() => ({
   getUnansweredQuestions: vi.fn(),
 }));
 
+vi.mock('../../context/BotContext', () => ({
+  // The analytics hooks ask the chatbot list one question: has it resolved?
+  // `botId === null` is a legitimate scope (every chatbot) once it has, so
+  // readiness cannot be inferred from the id alone.
+  useBotContext: () => ({ bots: [{ id: 1, name: 'Acme' }], selectedBot: null, loading: false }),
+}));
 vi.mock('../../services/api', () => api);
 
 function renderTab(botId = 1, days = 30) {

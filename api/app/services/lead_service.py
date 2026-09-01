@@ -318,6 +318,19 @@ def build_lead_response(
 
     payload: dict = {
         "session_id": session.id,
+        # Which chatbot produced this lead. Leads, Inbox and Journey show every
+        # chatbot's data together, so without this a row is unattributable in
+        # any account that has more than one -- you can neither filter to a
+        # chatbot nor tell, looking at the row, where it came from.
+        #
+        # The id comes off the SESSION, which is the record of what actually
+        # happened; a mismatched `bot` argument is a caller bug and must not
+        # silently relabel a lead. The name is denormalised alongside it rather
+        # than left for the dashboard to join, because a lead whose chatbot has
+        # since been deleted would otherwise render blank for a conversation
+        # that really did occur.
+        "bot_id": getattr(session, "bot_id", None),
+        "bot_name": (getattr(bot, "name", None) or None) if bot is not None else None,
         "score": score,
         "bant_score": bant_score,
         "behavioral_score": behavioral,

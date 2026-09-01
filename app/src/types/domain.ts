@@ -34,6 +34,16 @@ export interface Bot {
   website?: string;
   company_name?: string;
   primary_color?: string;
+  /**
+   * Fields the CUSTOMER has saved, so a re-crawl leaves them alone.
+   *
+   * Provenance, not value. The crawl auto-fills `company_name`,
+   * `company_description`, `brand_tone` and `primary_color`, so the stored
+   * value alone cannot say whether a person chose it or the product did — this
+   * list can. It is the same list `crawl_orchestrator` consults before
+   * overwriting anything.
+   */
+  manual_field_overrides?: string[];
   bot_logo?: string | null;
   /**
    * Who last wrote the avatar. `null` = nobody ever has; `'manual'` = the
@@ -439,6 +449,16 @@ export interface LeadQuotation {
 
 export interface Lead {
   session_id: string;
+  /**
+   * Which chatbot produced this lead.
+   *
+   * Denormalised rather than joined in the dashboard: a lead whose chatbot has
+   * since been deleted would otherwise render blank for a conversation that
+   * really did happen. `bot_name` is null when the chatbot is gone or unnamed,
+   * so the caller falls back to the id.
+   */
+  bot_id?: number | null;
+  bot_name?: string | null;
   score: number;
   bant_score?: number;
   behavioral_score?: number;
