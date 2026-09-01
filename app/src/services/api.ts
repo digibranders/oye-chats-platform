@@ -1003,9 +1003,28 @@ export const registerClient = async (
  * Returns `null` when no edge signal is present (e.g. local dev) - never throws.
  * @returns {Promise<string|null>} 2-letter country code, or null.
  */
-export const detectCountry = async (): Promise<string | null> => {
+/**
+ * Best-guess country for prefilling the signup form.
+ *
+ * `override` forwards a `?country=XX` from the page URL. The backend's
+ * `resolve_country` has always honoured that parameter; it exists so a surface
+ * can offer a manual toggle without every header-aware caller changing. Here it
+ * is what makes the prefill exercisable off the edge network -- on localhost
+ * there is no Cloudflare to inject `CF-IPCountry`, so detection correctly
+ * returns null and the field can never be seen doing its job.
+ *
+ * It grants nothing a person could not do with the picker: the value lands in a
+ * visible, editable field that still has to be submitted. Sanitised to two
+ * letters before it is sent so a junk parameter is dropped here rather than
+ * round-tripped.
+ */
+export const detectCountry = async (override?: string | null): Promise<string | null> => {
     try {
-        const response = await api.get('/auth/detect-country');
+        const code = (override || '').trim().toUpperCase();
+        const path = /^[A-Z]{2}$/.test(code)
+            ? `/auth/detect-country?country=${code}`
+            : '/auth/detect-country';
+        const response = await api.get(path);
         const country = response.data?.country;
         return typeof country === 'string' && country.length === 2 ? country.toUpperCase() : null;
     } catch (error) {

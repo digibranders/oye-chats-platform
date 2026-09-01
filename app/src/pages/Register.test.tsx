@@ -8,7 +8,7 @@ const registerClient = vi.fn();
 const detectCountry = vi.fn();
 vi.mock('../services/api', () => ({
   registerClient: (...args: unknown[]) => registerClient(...args),
-  detectCountry: () => detectCountry(),
+  detectCountry: (...args: unknown[]) => detectCountry(...args),
 }));
 vi.mock('./auth/GoogleAuthButton', () => ({ GoogleAuthButton: () => null }));
 
@@ -201,6 +201,22 @@ describe('Register', () => {
 
     expect(await screen.findByLabelText(/^country/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /create account/i })).toBeInTheDocument();
+  });
+
+  it('forwards a ?country= override to the detector', async () => {
+    // The reason this exists: localhost sits behind no edge network, so
+    // detection correctly returns null and the prefill can never be seen
+    // working. The parameter makes it exercisable.
+    detectCountry.mockResolvedValue('IN');
+    renderRegister('/register?country=IN');
+    await waitFor(() => expect(detectCountry).toHaveBeenCalledWith('IN'));
+    await waitFor(() => expect(screen.getByLabelText(/^country/i)).toHaveTextContent(/india/i));
+  });
+
+  it('passes nothing when there is no override', async () => {
+    detectCountry.mockResolvedValue('IN');
+    renderRegister();
+    await waitFor(() => expect(detectCountry).toHaveBeenCalledWith(null));
   });
 
   it('refuses a password the server would reject, before asking it', async () => {

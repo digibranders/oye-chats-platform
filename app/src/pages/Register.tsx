@@ -93,6 +93,10 @@ export default function Register() {
 
   const next = safeRelativePath(searchParams.get('next'));
   const affiliateToken = searchParams.get('affiliate_token') ?? '';
+  // `?country=XX` forwards to the detect endpoint, which has always honoured
+  // the parameter. Its purpose here is testability: localhost sits behind no
+  // edge network, so without it the prefill can never be seen working.
+  const countryOverride = searchParams.get('country');
   const invitedEmail = (searchParams.get('email') ?? '').trim();
   const urlPromoCode = searchParams.get('code') ?? '';
   const promoCode = readPromoCode(urlPromoCode);
@@ -146,7 +150,7 @@ export default function Register() {
    */
   useEffect(() => {
     let cancelled = false;
-    void detectCountry()
+    void detectCountry(countryOverride)
       .then((code) => {
         if (cancelled || !code) return;
         if (form.getValues('billing_country')) return;
@@ -161,7 +165,7 @@ export default function Register() {
     return () => {
       cancelled = true;
     };
-  }, [form]);
+  }, [form, countryOverride]);
 
   const signUp = useMutation({
     mutationFn: (values: RegisterValues) =>
