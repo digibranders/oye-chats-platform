@@ -208,8 +208,12 @@ def test_conversion_marked_auth_grants_once_and_the_existing_sweep_retires_the_t
     assert old.status == "canceled", "the existing sweep must retire the trial row"
     assert bought.status == "active", "entitlements are instant, that is what paying early buys"
     assert bought.plan_id == paid.id
-    # The purchased plan's credits, not the trial's leftovers carried forward.
-    assert credit_service.get_balance(db, client.id) == 2500
+    # The purchased plan's credits ON TOP of the trial's unspent remainder.
+    # Converting used to zero the trial grant, so a customer three days into a
+    # 14-day trial lost what was left of it on the day they paid. The remainder
+    # expires at the trial's own end and is ordered ahead of the paid grant, so
+    # it is spent first and cannot outlive its window.
+    assert credit_service.get_balance(db, client.id) == 2500 + 500
     assert bought.last_granted_period_end is not None, "the grant-once marker must be set"
 
 
@@ -281,7 +285,9 @@ def test_cancel_before_the_first_charge_forfeits_and_converts_to_free(db):
         _activation_payload(client=client, plan=paid, start_at=old.trial_end, conversion=True, sub_id="sub_conv_3"),
     )
     db.flush()
-    assert credit_service.get_balance(db, client.id) == 2500
+    # Trial remainder survives a PAID conversion, so the activation balance is
+    # the plan's credits plus what the trial had left.
+    assert credit_service.get_balance(db, client.id) == 2500 + 500
 
     rzp._handle_subscription_cancelled(db, {"subscription": {"entity": {"id": "sub_conv_3", "notes": {}}}})
     db.flush()

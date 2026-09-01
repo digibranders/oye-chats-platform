@@ -78,7 +78,9 @@ def _convert(db, client: Client, plan: Plan) -> Subscription:
     )
     db.add(sub)
     db.flush()
-    cs.grant_subscription_period_once(db, sub, datetime.now(UTC) + timedelta(days=30))
+    # `preserve_prior_credits` is what the trial-conversion path passes; a
+    # renewal and a lapse to Free both leave it False.
+    cs.grant_subscription_period_once(db, sub, datetime.now(UTC) + timedelta(days=30), preserve_prior_credits=True)
     db.flush()
     return sub
 

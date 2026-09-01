@@ -1206,8 +1206,12 @@ def test_widget_heartbeat_migration_creates_both_columns(monkeypatch):
         # stop above it and leave them in place, making the assertion vacuous.
         command.downgrade(cfg, "base")
         eng = create_engine(tmp_url)
-        after_down = {c["name"] for c in inspect(eng).get_columns("bots")}
-        assert not ({"widget_last_seen_at", "widget_last_origin"} & after_down)
+        # Before the squash this unwound one migration and left `bots` standing
+        # without its two columns. The baseline creates the whole schema, so
+        # unwinding it takes the table with it: absence of the TABLE is the
+        # stronger form of the same assertion, and asking for its columns now
+        # raises instead of returning a set.
+        assert not inspect(eng).has_table("bots")
         eng.dispose()
 
         command.upgrade(cfg, "head")

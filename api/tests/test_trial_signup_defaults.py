@@ -74,10 +74,14 @@ def test_seed_matrix_defaults_the_trial_and_not_free():
     assert trial["features"]["topup_allowed"] is False
     assert trial["features"]["first_training_free"] is True
     # every Professional feature except volume/topup is open
+    # Every Professional feature except volume/top-up and auto-recrawl. A weekly
+    # re-crawl starting inside a 14-day trial spends credits on a schedule the
+    # customer did not set and cannot pay for, so it begins when the plan does.
     pro = by_slug["professional"]["features"]
     for key, val in pro.items():
-        if key != "topup_allowed":
+        if key not in ("topup_allowed", "auto_recrawl"):
             assert trial["features"][key] == val, key
+    assert trial["features"]["auto_recrawl"] is False
 
     # Priced at nothing, on purpose and in every column. The row is
     # ``is_default``, so ``assign_default_plan_to_client`` opens a subscription
@@ -101,7 +105,8 @@ def test_seed_matrix_defaults_the_trial_and_not_free():
     assert trial["limits"]["leads"] == -1
     assert trial["limits"]["documents"] == -1
     assert trial["limits"]["page_scraping"] == 100
-    assert trial["limits"]["chat_history_days"] == 90
+    # Retention is no longer a plan lever: every tier keeps everything.
+    assert trial["limits"]["chat_history_days"] == -1
     assert trial["limits"]["max_crawl_depth"] == 4
     assert trial["limits"]["max_crawl_js_pages"] == 50
     assert trial["limits"]["max_crawl_concurrency"] == 4
