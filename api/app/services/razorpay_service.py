@@ -3880,9 +3880,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
             # carries over instead of being zeroed. It expires at the trial's
             # own end and sorts ahead of the paid grant, so it is spent first
             # and cannot outlive its window.
-            _grant_subscription_period(
-                session, local, grant_period_end, preserve_prior_credits=is_trial_conversion
-            )
+            _grant_subscription_period(session, local, grant_period_end, preserve_prior_credits=is_trial_conversion)
 
         # Apply any pending upgrade proration as a top-up credit. Idempotent,
         # the old sub's column is zeroed the first time this runs, so webhook
