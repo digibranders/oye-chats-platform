@@ -47,6 +47,19 @@ from app.services.seller_profile_service import charge_tax_rate_bps  # noqa: E40
 
 CYCLES = (("monthly", "monthly"), ("annual", "yearly"))
 
+#: The two rails, which are separate Razorpay objects because a plan's currency
+#: is fixed at creation. An INR plan id can never serve a USD charge.
+#:
+#: The tax treatment differs and that is the point: a domestic supply is
+#: uplifted by GST at charge time, while a sale to an international customer is
+#: an export of services and is zero-rated, so the published USD price IS the
+#: charge. Passing ``kind="intra"`` for USD would add 18% Indian GST to a
+#: foreign customer's card.
+RAILS = (
+    ("INR", "monthly_price_cents", "annual_price_cents", "intra", ""),
+    ("USD", "monthly_price_usd_cents", "annual_price_usd_cents", "export", "_usd"),
+)
+
 
 def _client():
     import razorpay
@@ -90,6 +103,12 @@ def _find(existing: list[dict], slug: str, cycle: str, amount: int, currency: st
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="Mint and write (default: dry run).")
+    parser.add_argument(
+        "--currency",
+        choices=("INR", "USD", "both"),
+        default="both",
+        help="Which rail to mint. USD needs international payments enabled on the account.",
+    )
     args = parser.parse_args()
 
     client, key_id = _client()
@@ -104,50 +123,66 @@ def main() -> None:
         print(f"GST added at charge time: {rate} bps\n")
         plans = session.execute(select(Plan).order_by(Plan.id)).scalars().all()
 
-        written: list[tuple[str, str, str, int]] = []
-        for plan in plans:
-            for cycle, period in CYCLES:
-                base = int((plan.annual_price_cents if cycle == "annual" else plan.monthly_price_cents) or 0)
-                if base <= 0:
-                    continue  # Free and the trial plan are never charged.
-                amount = gross_charge_minor(base, rate_bps=rate, kind="intra")
-                found = _find(existing, plan.slug, cycle, amount, "INR")
-                if found:
-                    print(f"  reuse  {plan.slug:<13} {cycle:<8} ₹{amount / 100:>10,.2f}  {found}")
-                    written.append((plan.slug, cycle, found, amount))
-                    continue
-                if not args.apply:
-                    print(f"  MINT   {plan.slug:<13} {cycle:<8} ₹{amount / 100:>10,.2f}  (dry run)")
-                    continue
-                created = client.plan.create(
-                    data={
-                        "period": period,
-                        "interval": 1,
-                        "item": {
-                            "name": f"OyeChats {plan.name} {cycle.capitalize()}",
-                            "amount": amount,
-                            "currency": "INR",
-                        },
-                        "notes": {
-                            "oyechats_plan_slug": plan.slug,
-                            "oyechats_cycle": cycle,
-                            # The base is recorded so the GST component of the
-                            # charged amount stays legible on the gateway side.
-                            "oyechats_base_minor": str(base),
-                        },
-                    }
-                )
-                print(f"  MINTED {plan.slug:<13} {cycle:<8} ₹{amount / 100:>10,.2f}  {created['id']}")
-                written.append((plan.slug, cycle, created["id"], amount))
+        written: list[tuple[str, str, str]] = []
+        for currency, monthly_col, annual_col, tax_kind, suffix in RAILS:
+            if args.currency not in (currency, "both"):
+                continue
+            symbol = "₹" if currency == "INR" else "$"
+            print(f"── {currency} rail ({'GST added' if tax_kind == 'intra' else 'zero-rated export'})")
+            for plan in plans:
+                for cycle, period in CYCLES:
+                    base = int(getattr(plan, annual_col if cycle == "annual" else monthly_col) or 0)
+                    if base <= 0:
+                        continue  # Free and the trial plan are never charged.
+                    amount = gross_charge_minor(base, rate_bps=rate, kind=tax_kind)
+                    field = f"razorpay_plan_id_{cycle}{suffix}"
+                    found = _find(existing, plan.slug, cycle, amount, currency)
+                    if found:
+                        print(f"  reuse  {plan.slug:<13} {cycle:<8} {symbol}{amount / 100:>10,.2f}  {found}")
+                        written.append((plan.slug, field, found))
+                        continue
+                    if not args.apply:
+                        print(f"  MINT   {plan.slug:<13} {cycle:<8} {symbol}{amount / 100:>10,.2f}  (dry run)")
+                        continue
+                    try:
+                        created = client.plan.create(
+                            data={
+                                "period": period,
+                                "interval": 1,
+                                "item": {
+                                    "name": f"OyeChats {plan.name} {cycle.capitalize()} {currency}",
+                                    "amount": amount,
+                                    "currency": currency,
+                                },
+                                "notes": {
+                                    "oyechats_plan_slug": plan.slug,
+                                    "oyechats_cycle": cycle,
+                                    "oyechats_currency": currency,
+                                    # The base is recorded so the GST component
+                                    # of the charge stays legible on the gateway
+                                    # side. Equal to the amount on the USD rail,
+                                    # which carries no Indian tax.
+                                    "oyechats_base_minor": str(base),
+                                },
+                            }
+                        )
+                    except Exception as exc:
+                        # A USD plan on an account without international
+                        # payments enabled fails here. Report it and keep the
+                        # INR rail, rather than losing minted work to a raise.
+                        print(f"  FAILED {plan.slug:<13} {cycle:<8} {currency}: {str(exc)[:90]}")
+                        continue
+                    print(f"  MINTED {plan.slug:<13} {cycle:<8} {symbol}{amount / 100:>10,.2f}  {created['id']}")
+                    written.append((plan.slug, field, created["id"]))
+            print()
 
         if not args.apply:
             print("\nDry run. Re-run with --apply to mint and write.")
             return
 
         by_slug = {p.slug: p for p in plans}
-        for slug, cycle, plan_id, _amount in written:
-            row = by_slug[slug]
-            setattr(row, f"razorpay_plan_id_{cycle}", plan_id)
+        for slug, field, plan_id in written:
+            setattr(by_slug[slug], field, plan_id)
         session.commit()
         print(f"\nWrote {len(written)} plan ids onto the plan rows.")
 
