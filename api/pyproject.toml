@@ -58,6 +58,7 @@ dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "pytest-cov>=4.0.0",
+    "pytest-timeout>=2.4.0",
     "ruff>=0.6.0",
 ]
 
@@ -77,6 +78,17 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
 addopts = "--cov=app --cov-report=term-missing --cov-fail-under=15"
+# A hung test fails in two minutes and is named, instead of stalling the whole
+# job. On 2026-09-02 a CI run sat at 65% of the suite with no output for over
+# half an hour before it was cancelled by hand; the same commit had passed the
+# same suite minutes earlier. The slowest legitimate test takes a few seconds.
+# `signal`, verified against a hung asyncio test: it raises inside the test, so
+# the report carries a FAILED line naming it and the run continues. `thread`
+# cannot interrupt the test; it dumps every stack and kills the process, with
+# no summary and nothing naming the test. Both CI (Linux) and macOS have
+# SIGALRM.
+timeout = 120
+timeout_method = "signal"
 
 # Pyrefly (type checker) — pin to the project's 3.11 venv so it stops
 # scanning /opt/anaconda3/lib/python3.13 for our imports and reporting

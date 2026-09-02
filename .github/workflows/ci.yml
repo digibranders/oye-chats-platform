@@ -87,7 +87,9 @@ jobs:
           # tests run instead of tripping the "not configured" guard.
           RAZORPAY_SEAT_PLAN_ID: plan_test_seat
         run: |
-          ~/.local/bin/uv run pytest -x -q --cov=app --cov-report=term-missing
+          # -ra: every non-passing outcome is listed by name at the end. With
+          # -q alone a hung or failed test printed nothing attributable.
+          ~/.local/bin/uv run pytest -x -q -ra --cov=app --cov-report=term-missing
 
   # ── Widget (React) ──
   widget:

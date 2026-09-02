@@ -7,8 +7,9 @@ worker), preventing thread explosion under burst traffic.
 """
 
 import logging
+import threading
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from typing import Any
 
 import sentry_sdk
@@ -16,6 +17,14 @@ import sentry_sdk
 logger = logging.getLogger(__name__)
 
 _pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="oyechats-bg")
+
+# Every task in flight, by future, with the name of what it runs. Kept so the
+# pool can be DRAINED: the test harness truncates every table between tests,
+# and a task from an earlier test still holding a transaction turned that
+# truncate into an indefinite, silent wait. Production never drains (tasks are
+# fire-and-forget by contract); it only pays a dict insert and a callback.
+_inflight: dict[Future[None], str] = {}
+_inflight_lock = threading.Lock()
 
 
 def submit_background(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> None:
@@ -50,7 +59,38 @@ def submit_background(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> None
             except Exception as exc:
                 logger.warning(f"Background task {fn.__name__} failed: {exc}")
 
-    _pool.submit(_wrapper)
+    future = _pool.submit(_wrapper)
+    name = getattr(fn, "__name__", repr(fn))
+    with _inflight_lock:
+        _inflight[future] = name
+
+    def _forget(done: Future[None]) -> None:
+        with _inflight_lock:
+            _inflight.pop(done, None)
+
+    future.add_done_callback(_forget)
+
+
+def pending_background() -> list[str]:
+    """Names of the tasks submitted and not yet finished, oldest first."""
+    with _inflight_lock:
+        return list(_inflight.values())
+
+
+def drain_background(timeout: float) -> bool:
+    """Wait up to ``timeout`` seconds for every submitted task to finish.
+
+    Returns ``True`` when the pool is idle, ``False`` when something is still
+    running when the time is up. It never raises and never cancels: the caller
+    decides what an undrained pool means (the test harness fails the test and
+    names the task; see :func:`pending_background`).
+    """
+    with _inflight_lock:
+        futures = list(_inflight)
+    if not futures:
+        return True
+    wait(futures, timeout=timeout)
+    return all(f.done() for f in futures)
 
 
 def shutdown_pool() -> None:

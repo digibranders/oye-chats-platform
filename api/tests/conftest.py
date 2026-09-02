@@ -61,7 +61,19 @@ def pg_engine():
         conn.exec_driver_sql(f'CREATE DATABASE "{test_db}"')
     admin.dispose()
 
-    engine = create_engine(base.set(database=test_db))
+    # A lock is waited on for 30s at most, a statement runs for 60s at most.
+    # The per-test teardown below TRUNCATEs every table, which needs an
+    # exclusive lock on each; Postgres waits for one indefinitely by default,
+    # so a connection something left holding a transaction made that teardown
+    # a silent hang (2026-09-02: a CI job at 65% of the suite, no output for
+    # half an hour, cancelled by hand). With the timeout it fails in 30s, on
+    # the test whose teardown could not proceed, saying "lock timeout". Both
+    # sit below pytest-timeout's 120s so the report names the statement, not
+    # merely the test.
+    engine = create_engine(
+        base.set(database=test_db),
+        connect_args={"options": "-c lock_timeout=30s -c statement_timeout=60s"},
+    )
     with engine.connect() as conn:
         conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS citext")
         conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS vector")
@@ -89,11 +101,43 @@ def _reset_pricing_cache():
     invalidate_pricing_cache()
 
 
+_BACKGROUND_DRAIN_SECONDS = 30.0
+
+
+def _drain_background_pool() -> None:
+    """Wait for the shared background pool, and fail the test if it will not drain.
+
+    Geolocation lookups, lead enrichment, webhook deliveries and groundedness
+    checks all run on ``app.core.thread_pool`` after a request has returned. A
+    task still running when the test ends may hold a transaction on a table
+    the teardown is about to TRUNCATE, and the truncate then waits for it. An
+    undrained pool is therefore reported here, by task name, on the test that
+    left it, instead of surfacing as a stall on whichever test comes next.
+    """
+    from app.core.thread_pool import drain_background, pending_background
+
+    if not drain_background(timeout=_BACKGROUND_DRAIN_SECONDS):
+        pytest.fail(
+            f"background work still running {_BACKGROUND_DRAIN_SECONDS:.0f}s after the test ended: "
+            f"{pending_background()}. Stub it, or wait for it, in the test.",
+            pytrace=False,
+        )
+
+
+@pytest.fixture(autouse=True)
+def _no_background_work_outlives_a_test():
+    """Catch-all for tests that use no ``db`` fixture but still submit work."""
+    yield
+    _drain_background_pool()
+
+
 @pytest.fixture()
 def db(pg_engine):
     session = _Session(pg_engine)
     yield session
     session.rollback()
+    # Before the truncate, never after: see ``_drain_background_pool``.
+    _drain_background_pool()
     names = ", ".join(f'"{t.name}"' for t in _Base.metadata.sorted_tables)
     session.execute(_sa_text(f"TRUNCATE {names} RESTART IDENTITY CASCADE"))
     session.commit()
