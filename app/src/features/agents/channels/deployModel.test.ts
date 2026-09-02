@@ -277,7 +277,14 @@ describe('isOriginAllowed', () => {
 
 describe('entriesForWebsite', () => {
   it('always offers both the apex and the wildcard, because www is a subdomain', () => {
-    expect(entriesForWebsite('https://www.acme.com')).toEqual(['acme.com', '*.acme.com']);
+    // `localhost` rides along so a customer can try the widget on a dev
+    // server; turning the allow-list on is otherwise what silently breaks
+    // local testing.
+    expect(entriesForWebsite('https://www.acme.com')).toEqual([
+      'acme.com',
+      '*.acme.com',
+      'localhost',
+    ]);
   });
 
   it('offers a single entry for a local host, where a wildcard is meaningless', () => {

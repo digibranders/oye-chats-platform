@@ -283,7 +283,23 @@ export function entriesForWebsite(website: string | null | undefined): string[] 
   const apex = normalizeDomain(website ?? '');
   if (!apex) return [];
   if (apex.startsWith('*.') || LOCAL_HOSTS.has(apex)) return [apex];
-  return [apex, `*.${apex}`];
+  // `localhost` rides along so the customer can try the widget on a dev server
+  // before it is live. The backend auto-allows localhost only when APP_ENV is
+  // not production, so against the real API it is blocked the moment the
+  // allow-list stops being empty, which is exactly when the customer adds
+  // their own domains. Without this, turning the allow-list on is what breaks
+  // local testing, and the failure is silent: the launcher simply never
+  // appears.
+  //
+  // It is a suggestion, not a hidden grant: it lands as a chip the customer
+  // can see and delete before going live. The access it opens is narrow.
+  // An attacker holding the public bot key could embed the bot on their own
+  // machine, where only they can see it, while the same bot already answers
+  // anyone who visits the customer's real site. What the allow-list actually
+  // defends is a stolen key embedded on another PUBLIC site, which localhost
+  // is not, and scripted abuse was never covered here at all because a
+  // non-browser client can forge `Origin` (see api/app/core/origin_check.py).
+  return [apex, `*.${apex}`, 'localhost'];
 }
 
 export interface DomainRisk {
