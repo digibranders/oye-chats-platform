@@ -380,13 +380,19 @@ async def discover_website_urls(
                     await _parse_sitemap(loc, depth + 1)
                 else:
                     loc_netloc = _norm_netloc(urlparse(loc).netloc)
+                    # Keyed on the normalized form, as the link scan already
+                    # is: ``/pricing`` and ``/pricing/`` are one page, and a
+                    # sitemap that lists both must count it once. Keyed on
+                    # the raw string, a real site reported 339 pages found
+                    # while its page tree offered 338.
+                    key = normalize_url(loc)
                     if (
                         loc_netloc == base_netloc
                         and _is_html_url(loc)
-                        and loc not in seen_pages
+                        and key not in seen_pages
                         and robots_rules.can_fetch(_USER_AGENT, loc)
                     ):
-                        seen_pages.add(loc)
+                        seen_pages.add(key)
                         total_found += 1
                         # Past the cap we keep COUNTING but stop collecting, so
                         # the caller can tell the customer how much of their
@@ -406,8 +412,27 @@ async def discover_website_urls(
         # discoverable set. No further expansion, same-domain HTML link
         # scanning was removed so the discovery scope is exactly
         # "robots.txt-declared sitemap ∪ {seed_url}".
-        if _is_html_url(seed_url) and seed_url not in seen_pages and robots_rules.can_fetch(_USER_AGENT, seed_url):
-            seen_pages.add(seed_url)
+        #
+        # "Included" means as ONE page. The customer types ``https://www.x.com``
+        # and the sitemap lists ``https://x.com/``; those are the same page and
+        # must not be counted twice. When the sitemap already has it, the
+        # sitemap's spelling is kept and moved to the front: the crawl bills
+        # in list order, so a small budget has to reach the homepage first.
+        seed_key = normalize_url(seed_url)
+        if seed_key in seen_pages:
+            already_listed = False
+            for index, existing in enumerate(page_urls):
+                if normalize_url(existing) == seed_key:
+                    if index:
+                        page_urls.insert(0, page_urls.pop(index))
+                    already_listed = True
+                    break
+            if not already_listed:
+                # Seen, but past the cap and never collected. The typed page
+                # still leads the list; it was already counted once.
+                page_urls.insert(0, seed_url)
+        elif _is_html_url(seed_url) and robots_rules.can_fetch(_USER_AGENT, seed_url):
+            seen_pages.add(seed_key)
             total_found += 1
             page_urls.insert(0, seed_url)
 
