@@ -6,8 +6,11 @@
 #   cd api && ./scripts/reset_and_seed.sh -y --no-superadmin
 #
 # What it does, in order:
-#   1. Resolve DB_URL from the app config (single source of truth) and REFUSE to
-#      run against anything but a local database. This must never touch prod.
+#   1. Resolve DB_URL and APP_ENV from the app config (single source of truth)
+#      and REFUSE to run in a production environment, on a host running the
+#      production service, or against a non-local database. Production
+#      Postgres is itself on localhost, so the host check alone never protected
+#      it; the environment and service checks are what do.
 #   2. Drop and recreate the `public` schema (wipes ALL data + tables + the
 #      alembic version stamp) and re-create the `vector`/`citext` extensions.
 #      (alembic's env.py does not create the pgvector extension, and the initial
@@ -53,22 +56,49 @@ if [ ! -x "$PY" ]; then
   exit 1
 fi
 
-# ── 1. Resolve DB_URL + host from the app config (never guess) ───────────────
-# Emits two lines: the full URL, then the host. Any config error aborts.
-read -r DB_URL DB_HOST <<EOF
+# ── 1. Resolve DB_URL + host + environment from the app config (never guess) ─
+# One line: the full URL, the host, and APP_ENV as the app itself resolves it
+# (so a production .env on the box is seen even when the shell env is bare).
+read -r DB_URL DB_HOST CFG_APP_ENV <<EOF
 $("$PY" - <<'PYEOF'
 from urllib.parse import urlparse
 
-from app.config import DB_URL
+from app.config import APP_ENV, DB_URL
 
 if not DB_URL:
     raise SystemExit("DB_URL is not configured (check api/.env)")
-print(DB_URL, urlparse(DB_URL).hostname or "")
+print(DB_URL, urlparse(DB_URL).hostname or "", APP_ENV or "")
 PYEOF
 )
 EOF
 
-# ── Safety guard: local databases only ───────────────────────────────────────
+# ── Safety guard 1: never on a production environment ───────────────────────
+# The host check below is NOT enough. Production Postgres is co-resident on
+# the droplet, so its DB_URL host is `localhost`, exactly what that check
+# allows, and this script lands on the droplet with every deploy. The only
+# thing standing between `-y` and `DROP SCHEMA public CASCADE` on production
+# was a guard that reported the box as local. Refuse on the environment the
+# app resolves AND on the shell's own, and there is no flag to override it.
+for env_value in "${CFG_APP_ENV:-}" "${APP_ENV:-}"; do
+  case "$env_value" in
+    production|prod|live)
+      echo "REFUSING to reset: APP_ENV is '$env_value'." >&2
+      echo "This script never runs against a production environment. Aborting." >&2
+      exit 1
+      ;;
+  esac
+done
+
+# ── Safety guard 2: never on the host that runs the production service ──────
+# Independent of any env var: a machine where the production API unit is
+# active is the production machine, whatever its .env says today.
+if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet oyechats-api 2>/dev/null; then
+  echo "REFUSING to reset: this host is running oyechats-api.service." >&2
+  echo "That is the production API. Aborting." >&2
+  exit 1
+fi
+
+# ── Safety guard 3: local databases only ───────────────────────────────────
 case "$DB_HOST" in
   localhost|127.0.0.1|::1|"")
     ;;

@@ -2267,6 +2267,7 @@ def _release_idempotency_key(session: Session, event_id: str | None) -> None:
 # or a redelivery) hit the same refusal.
 _POOLED_SCOPE_DEAD_LETTER_PREFIX = "pooled-plan-scope-refusal:"
 _UNKNOWN_PLAN_DEAD_LETTER_PREFIX = "unknown-plan-refusal:"
+_MISSING_NOTES_DEAD_LETTER_PREFIX = "missing-notes-refusal:"
 _ORPHANED_HANDLE_DEAD_LETTER_PREFIX = "orphaned-checkout-handle:"
 
 
@@ -2345,6 +2346,50 @@ def _dead_letter_unknown_plan_refusal(
             f"charged (payment {payment_id}). Restore or correct the plan row, then re-run "
             "reconciliation (the idempotency key was released, so the event can be "
             "reprocessed)."
+        ),
+    )
+
+
+def _dead_letter_missing_notes_refusal(
+    *,
+    razorpay_sub_id: str,
+    payment_id: str | None,
+    event_id: str | None,
+    notes: dict[str, Any],
+    sub_entity: dict[str, Any],
+) -> None:
+    """Record an activation whose notes cannot name an account or a plan.
+
+    Same contract as the two refusals beside it: the customer HAS been charged,
+    a retry cannot invent the missing notes, so the charge is ACKed into the
+    dead-letter list ops watches and the idempotency key is released for a
+    deliberate second attempt once the notes are corrected on the gateway.
+
+    This branch used to log a WARNING and return. That ACK stopped
+    redelivery, the burned key refused superadmin replay and reconciliation,
+    and the only trace of a paid, unrecorded activation was a log line below
+    the level anything alerts on. Reachable for any mandate not minted by our
+    own checkout: a dashboard-created enterprise mandate, a legacy one from
+    before the notes were stamped, or a garbled note.
+    """
+    _dead_letter_synthetic(
+        dedup_key=f"{_MISSING_NOTES_DEAD_LETTER_PREFIX}{razorpay_sub_id}",
+        event_type="subscription.activated",
+        context={
+            "razorpay_subscription_id": razorpay_sub_id,
+            "razorpay_payment_id": payment_id,
+            "provider_event_id": event_id,
+            "notes_present": sorted(str(k) for k in notes),
+        },
+        body={"subscription": sub_entity},
+        error=(
+            "MANUAL RECONCILIATION REQUIRED (replay will not help. This row has no signed "
+            f"body). Razorpay subscription {razorpay_sub_id} activated but its notes carry no "
+            "usable oyechats_client_id / oyechats_plan_id, so the handler cannot tell whose "
+            "subscription this is. No local subscription was created and no credits were "
+            f"granted. The customer HAS been charged (payment {payment_id}). Set both notes on "
+            "the gateway subscription, then re-run reconciliation (the idempotency key was "
+            "released, so the event can be reprocessed)."
         ),
     )
 
@@ -3313,11 +3358,23 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
 
     if local is None:
         if client_id is None or plan_id is None:
-            logger.warning(
-                "Razorpay subscription.activated for %s missing client/plan in notes. Cannot create local row",
+            # Not a warning-and-return. The customer has paid; see the helper.
+            logger.error(
+                "REFUSING activation of Razorpay subscription %s: notes carry no usable "
+                "oyechats_client_id / oyechats_plan_id (present: %s). The customer HAS been "
+                "charged. No local subscription was created; recorded in failed_webhooks.",
                 razorpay_sub_id,
+                sorted(str(k) for k in notes),
             )
-            return "missing notes; cannot create subscription"
+            _dead_letter_missing_notes_refusal(
+                razorpay_sub_id=razorpay_sub_id,
+                payment_id=(_extract_payment_entity(payload) or {}).get("id"),
+                event_id=event_id,
+                notes=notes,
+                sub_entity=sub_entity,
+            )
+            _release_idempotency_key(session, event_id)
+            return "missing owner in notes; subscription NOT created"
 
         # The notes named a plan; it must actually EXIST before anything else is
         # decided. Every arm below either checks this plan's shape (the pooled
