@@ -106,24 +106,31 @@ def test_unknown_coupon_code_is_a_400(db, monkeypatch):
             json={"plan_id": plan.id, "billing_cycle": "monthly", "coupon_code": "NOTREAL"},
         )
     assert res.status_code == 400, res.text
-    assert "coupon" in res.json()["detail"].lower()
+    # "code", not "coupon": one field takes both a referral code and a coupon,
+    # and the buyer holding one does not know which kind they have.
+    assert "not recognised" in res.json()["detail"].lower()
     assert not mint.called  # never charge full price behind a believed discount
 
 
-def test_valid_coupon_is_still_refused_honestly(db, monkeypatch):
-    # A code that exists but has no online redemption realiser must refuse
-    # loudly, not silently charge full price.
+def test_a_valid_coupon_now_resolves_instead_of_being_refused(db, monkeypatch):
+    """This used to refuse every code, valid ones included.
+
+    There was a coupons table and a superadmin CRUD and no redemption realiser,
+    so the honest behaviour at the time was "valid, but not redeemable online".
+    `coupon_service` is that realiser. Checked through the preview endpoint,
+    which resolves by the same path redemption does and needs no gateway.
+    """
     api, _ = _mk(db, monkeypatch)
     plan = _plan(db)
     db.add(Coupon(code="REAL10", percent_off=10, is_active=True))
     db.flush()
-    with patch("app.services.razorpay_service.create_subscription") as mint:
-        res = api.post(
-            "/subscriptions/checkout",
-            json={"plan_id": plan.id, "billing_cycle": "monthly", "coupon_code": "REAL10"},
-        )
-    assert res.status_code == 400, res.text
-    assert not mint.called
+
+    res = api.get("/subscriptions/coupon/preview", params={"code": "REAL10", "plan_id": plan.id})
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["kind"] == "discount"
+    assert body["discount_pct"] == 10
 
 
 def test_inactive_or_expired_coupon_is_a_400(db, monkeypatch):
@@ -308,10 +315,10 @@ def test_coupon_lookup_is_case_insensitive(db, monkeypatch):
     plan = _plan(db, slug="edges-coupon-case")
     db.add(Coupon(code="MixedCase10", percent_off=10, is_active=True))
     db.flush()
-    res = api.post(
-        "/subscriptions/checkout",
-        json={"plan_id": plan.id, "billing_cycle": "monthly", "coupon_code": "mixedcase10"},
+    res = api.get(
+        "/subscriptions/coupon/preview",
+        params={"code": "mixedcase10", "plan_id": plan.id},
     )
-    # Recognised as the REAL coupon (honest not-redeemable message), not as a typo.
-    assert res.status_code == 400, res.text
-    assert "redeemed online" in res.json()["detail"]
+    # Recognised as the REAL coupon, not rejected as a typo.
+    assert res.status_code == 200, res.text
+    assert res.json()["code"] == "MixedCase10"

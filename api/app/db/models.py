@@ -146,6 +146,19 @@ class Client(Base):
     )
     referral_attributed_at = Column(DateTime(timezone=True), nullable=True)
 
+    # Standing coupon attribution, the coupon twin of ``referral_code_id``.
+    # A discount has to outlive the checkout that claimed it: the amount is
+    # baked into the Razorpay plan a subscription runs on, so without a record
+    # of WHY, a later plan change would quietly re-mint at full price. Stacking
+    # with a referral is refused at checkout, so at most one of the two is ever
+    # set.
+    coupon_id = Column(
+        Integer,
+        ForeignKey("coupons.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    coupon_attributed_at = Column(DateTime(timezone=True), nullable=True)
+
     # Launch-promo attribution. Set once at signup from the campaign link's
     # ``?code=`` when it matches a known promotion. Makes the offer
     # link-exclusive: only accounts that arrived through the campaign link
@@ -2517,6 +2530,24 @@ class Coupon(Base):
     redemptions = Column(Integer, default=0, server_default="0", nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=True)
     applies_to_plan_ids = Column(JSONB, nullable=True)  # list[int] | null = all
+    # How many billing months the discount covers. NULL = for the life of the
+    # subscription.
+    #
+    # Only meaningful at ``percent_off = 100``, and the API refuses the other
+    # combination. A partial discount that EXPIRES has to move the subscription
+    # from the discounted plan to the full-price one, and a plan change on this
+    # gateway means cancel + recreate + a customer re-authorising their mandate
+    # (see ``transition_service.promote_scheduled_change``, which emails the
+    # re-auth link). That would put a "re-authorise your payment" mail in front
+    # of every discounted customer on the month their discount ended, and
+    # silently lapse everyone who ignored it.
+    #
+    # So the two shapes that survive are the two that never need a re-auth:
+    #   percent_off = 100 + duration_months = N  → N free months via a deferred
+    #       Razorpay ``start_at``, then full price. Nothing to switch.
+    #   percent_off < 100 + duration_months NULL → a lower-amount plan that
+    #       simply recurs. Nothing to switch.
+    duration_months = Column(Integer, nullable=True)
     is_active = Column(Boolean, default=True, server_default="true", nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

@@ -2702,6 +2702,20 @@ const en = {
     youveUsedAllTheDocuments: 'You\'ve used all the documents included on your plan. Upgrade to add more.',
     youveUsedAllTheWebsite: 'You\'ve used all the website pages included on your plan. Upgrade to train more pages.',
   },
+  /** Plan, credits and invoices. The discount-code field lives here. */
+  billing: {
+    haveACode: 'Have a code?',
+    apply: 'Apply',
+    checking: 'Checking…',
+    egFriend20: 'e.g. FRIEND20',
+    applied: 'applied',
+    codeApplied: 'Code {code} applied',
+    oneMonthFree: '1 month free',
+    nMonthsFree: '{count} months free',
+    nPercentOff: '{pct}% off',
+    thisCodeIsMonthlyOnly: 'This code applies to monthly billing only.',
+    thatCodeCouldNotBeApplied: 'That code could not be applied.',
+  },
   ds: {
     // ── Image cropping (ui/overlays/ImageCropDialog) ──
     cropImage: 'Crop image',

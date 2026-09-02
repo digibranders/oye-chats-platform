@@ -127,6 +127,7 @@ const BALANCE = {
   topup: 500,
   total: 2900,
   monthly_grant: 3000,
+  plan_granted: 3000,
   period_start: '2026-08-01T00:00:00Z',
   resets_at: '2026-09-01T00:00:00Z',
   costs: {
@@ -489,6 +490,7 @@ describe('credits at a glance', () => {
   });
 
   it('warns before the balance runs out, and differently once it has', async () => {
+    state.selectedBot = { id: 7, name: 'Acme Support' };
     api.getCreditBalance.mockResolvedValue({ ...BALANCE, plan: 100, topup: 0, total: 100 });
     renderPage();
     expect(await screen.findByText(/nearly out/i)).toBeInTheDocument();
@@ -496,5 +498,46 @@ describe('credits at a glance', () => {
     api.getCreditBalance.mockResolvedValue({ ...BALANCE, plan: 0, topup: 0, total: 0 });
     renderPage();
     expect(await screen.findByText(/stopped answering/i)).toBeInTheDocument();
+  });
+
+  it('does not blame chatbots for a zero balance when there are none', async () => {
+    state.selectedBot = null;
+    api.getCreditBalance.mockResolvedValue({ ...BALANCE, plan: 0, topup: 0, total: 0 });
+    renderPage();
+
+    expect(await screen.findByText(/out of credits/i)).toBeInTheDocument();
+    expect(screen.queryByText(/stopped answering/i)).not.toBeInTheDocument();
+  });
+
+  it('reports an allowance that was never issued as absent, not as spent', async () => {
+    /* The state the superadmin account was in: a plan promising 3,000 credits,
+       an empty ledger, and nothing spent. The card used to render a full red
+       meter reading "3,000 / 3,000" beside "Spent this period 0". */
+    api.getCreditBalance.mockResolvedValue({
+      ...BALANCE,
+      plan: 0,
+      plan_granted: 0,
+      topup: 0,
+      total: 0,
+      usage: {},
+    });
+    renderPage();
+
+    expect(await screen.findByText(/no allowance is running/i)).toBeInTheDocument();
+    expect(screen.queryByText(/out of credits/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/stopped answering/i)).not.toBeInTheDocument();
+  });
+
+  it('sends a plan with no top-up entitlement to the plan picker, not to a refusal', async () => {
+    /* `POST /credits/topup` answers 403 for Trial and Free, and the Usage page
+       it used to link to says exactly that and nothing else. */
+    state.selectedBot = { id: 7, name: 'Acme Support' };
+    state.entitlements = { ...state.entitlements, features: { topup_allowed: false } };
+    api.getCreditBalance.mockResolvedValue({ ...BALANCE, plan: 0, topup: 0, total: 0 });
+    renderPage();
+
+    expect(await screen.findByText(/stopped answering/i)).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /buy credits/i })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /choose a plan/i }).length).toBeGreaterThan(0);
   });
 });

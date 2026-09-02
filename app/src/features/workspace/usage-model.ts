@@ -173,6 +173,16 @@ export function formatCost(cost: number | null): string | null {
  */
 interface CreditPool {
   readonly monthlyGrant: number;
+  /**
+   * What the ledger actually ISSUED for the current period, which is not
+   * always what the plan says it includes. Zero means no allowance has landed
+   * — a lapsed trial, or a signup whose plan assignment failed (both signup
+   * paths treat `assign_default_plan_to_client` as best-effort). Consumption
+   * is this minus `planRemaining`; deriving it from `monthlyGrant` mixed a
+   * plan-catalogue constant with a ledger figure and reported a full period's
+   * spend for an account that had spent nothing.
+   */
+  readonly planGranted: number;
   readonly planRemaining: number;
   readonly topupRemaining: number;
   readonly totalRemaining: number;
@@ -191,6 +201,7 @@ interface CreditPool {
 function parsePool(record: Record<string, unknown>): CreditPool {
   return {
     monthlyGrant: toNumber(record.monthly_grant),
+    planGranted: toNumber(record.plan_granted),
     planRemaining: toNumber(record.plan),
     topupRemaining: toNumber(record.topup),
     totalRemaining: toNumber(record.total),
@@ -252,6 +263,10 @@ export interface PoolCredit {
   readonly planName: string | null;
   /** Credits granted by the plan at the start of the period. */
   readonly monthlyGrant: number;
+  /** What the ledger issued for this period. 0 = no allowance landed. */
+  readonly planGranted: number;
+  /** Plan credits actually consumed this period (`planGranted - planRemaining`). */
+  readonly planUsed: number;
   /** Plan-bucket credits still available. */
   readonly planRemaining: number;
   /** Top-up (purchased) credits still available. */
@@ -297,7 +312,8 @@ function poolCredit(
     limitUsage?: LimitUsage | null;
   },
 ): PoolCredit {
-  const planUsed = Math.max(pool.monthlyGrant - pool.planRemaining, 0);
+  // Both terms from the ledger, so the difference can only be real spend.
+  const planUsed = Math.max(pool.planGranted - pool.planRemaining, 0);
   return {
     botId: identity.botId,
     isActive: identity.isActive ?? true,
@@ -305,11 +321,13 @@ function poolCredit(
     botKey: identity.botKey,
     planName: identity.planName,
     monthlyGrant: pool.monthlyGrant,
+    planGranted: pool.planGranted,
+    planUsed,
     planRemaining: pool.planRemaining,
     topupRemaining: pool.topupRemaining,
     totalRemaining: pool.totalRemaining,
     planUsedPct:
-      pool.monthlyGrant > 0 ? Math.min(Math.round((planUsed / pool.monthlyGrant) * 100), 100) : 0,
+      pool.planGranted > 0 ? Math.min(Math.round((planUsed / pool.planGranted) * 100), 100) : 0,
     periodStart: pool.periodStart,
     resetsAt: pool.resetsAt,
     soonestExpiry: pool.soonestExpiry,
@@ -343,8 +361,10 @@ function parseLimitUsage(value: unknown): LimitUsage {
  * aggregated across the account pool and every per-bot subscription ledger.
  */
 export interface CreditBalance {
-  /** Credits granted by the plan(s) at the start of the period. */
+  /** What the plan(s) say is included each month, from the plan catalogue. */
   readonly monthlyGrant: number;
+  /** What the ledger actually issued for the period. 0 = nothing landed. */
+  readonly planGranted: number;
   /** Plan-bucket credits still available. */
   readonly planRemaining: number;
   /** Top-up (purchased) credits still available. */
@@ -353,8 +373,19 @@ export interface CreditBalance {
   readonly totalRemaining: number;
   /** Share of the monthly grant already consumed, 0 to 100. */
   readonly planUsedPct: number;
-  /** True when total remaining has fallen to ≤20% of the monthly grant. */
+  /** True when total remaining has fallen to ≤20% of the issued allowance. */
   readonly lowBalance: boolean;
+  /**
+   * The plan promises a monthly allowance but none is live in the ledger.
+   *
+   * Reachable two ways, and neither is "you spent your credits": a trial or
+   * period whose grant has expired without a new one landing, and a signup
+   * whose plan assignment failed (both signup paths log and continue). Zero
+   * remaining reads identically to a spent-out account, so without this flag
+   * the card told someone who had spent nothing that their chatbots had
+   * stopped answering, beside a meter claiming a full period of consumption.
+   */
+  readonly allowanceInactive: boolean;
   /** When the allowance period began, ISO 8601 (earliest across pools). */
   readonly periodStart: string | null;
   /** When the plan bucket refills, ISO 8601 (soonest across pools). */
@@ -455,6 +486,7 @@ export function parseCreditBalance(raw: unknown): CreditBalance {
   const aggregate = pools.reduce(
     (acc, pool) => ({
       monthlyGrant: acc.monthlyGrant + pool.monthlyGrant,
+      planGranted: acc.planGranted + pool.planGranted,
       planRemaining: acc.planRemaining + pool.planRemaining,
       topupRemaining: acc.topupRemaining + pool.topupRemaining,
       totalRemaining: acc.totalRemaining + pool.totalRemaining,
@@ -470,6 +502,7 @@ export function parseCreditBalance(raw: unknown): CreditBalance {
     }),
     {
       monthlyGrant: 0,
+      planGranted: 0,
       planRemaining: 0,
       topupRemaining: 0,
       totalRemaining: 0,
@@ -485,21 +518,26 @@ export function parseCreditBalance(raw: unknown): CreditBalance {
     },
   );
 
-  const planUsed = Math.max(aggregate.monthlyGrant - aggregate.planRemaining, 0);
+  const planUsed = Math.max(aggregate.planGranted - aggregate.planRemaining, 0);
   const planUsedPct =
-    aggregate.monthlyGrant > 0
-      ? Math.min(Math.round((planUsed / aggregate.monthlyGrant) * 100), 100)
+    aggregate.planGranted > 0
+      ? Math.min(Math.round((planUsed / aggregate.planGranted) * 100), 100)
       : 0;
 
   return {
     monthlyGrant: aggregate.monthlyGrant,
+    planGranted: aggregate.planGranted,
     planRemaining: aggregate.planRemaining,
     topupRemaining: aggregate.topupRemaining,
     totalRemaining: aggregate.totalRemaining,
     planUsedPct,
     // Watches the combined bucket so a customer who has burned their plan but
     // still holds top-ups isn't warned needlessly (Billing.jsx:381-386).
-    lowBalance: aggregate.monthlyGrant > 0 && aggregate.totalRemaining <= aggregate.monthlyGrant * 0.2,
+    // Gated on what was ISSUED, not on what the plan advertises: an account
+    // with no live grant has not run its balance down, and warning it about a
+    // balance it was never given is the bug this replaced.
+    lowBalance: aggregate.planGranted > 0 && aggregate.totalRemaining <= aggregate.planGranted * 0.2,
+    allowanceInactive: aggregate.planGranted === 0 && aggregate.monthlyGrant > 0,
     periodStart: aggregate.periodStart,
     resetsAt: aggregate.resetsAt,
     soonestExpiry: aggregate.soonestExpiry,
@@ -539,6 +577,8 @@ export function aggregatePool(balance: CreditBalance): PoolCredit {
     // the sum keeps counting whatever any one of them is doing.
     isActive: true,
     monthlyGrant: balance.monthlyGrant,
+    planGranted: balance.planGranted,
+    planUsed: Math.max(balance.planGranted - balance.planRemaining, 0),
     planRemaining: balance.planRemaining,
     topupRemaining: balance.topupRemaining,
     totalRemaining: balance.totalRemaining,

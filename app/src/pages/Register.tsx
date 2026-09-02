@@ -25,6 +25,23 @@ import { useTranslation } from '../i18n/useTranslation';
 import { Trans } from '../i18n/Trans';
 
 const PROMO_STORAGE_KEY = 'oyechats_promo_code';
+const REFERRAL_STORAGE_KEY = 'oyechats_referral_code';
+
+/**
+ * A code the marketing site parked in a cookie when the visitor arrived.
+ *
+ * `?ref=` lands on www.oyechats.com, not here, so by the time signup renders
+ * the query string is long gone. The site stores it and this reads it back;
+ * a `?ref=` straight on this URL still wins, for a link that points here.
+ */
+function readCookie(name: string): string {
+  try {
+    const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+    return match ? decodeURIComponent(match[1]) : '';
+  } catch {
+    return '';
+  }
+}
 
 const schema = z.object({
   name: z.string().trim().min(2, 'Enter your name, at least two characters.'),
@@ -73,6 +90,18 @@ function readPromoCode(fromUrl: string): string {
   }
 }
 
+/** The same rule for the affiliate code, which arrives by cookie or by URL. */
+function readReferralCode(fromUrl: string): string {
+  if (fromUrl) return fromUrl;
+  try {
+    const stored = window.sessionStorage.getItem(REFERRAL_STORAGE_KEY);
+    if (stored) return stored;
+  } catch {
+    /* private mode: fall through to the cookie */
+  }
+  return readCookie('oyechats_ref');
+}
+
 /**
  * Create an account.
  *
@@ -100,6 +129,9 @@ export default function Register() {
   const invitedEmail = (searchParams.get('email') ?? '').trim();
   const urlPromoCode = searchParams.get('code') ?? '';
   const promoCode = readPromoCode(urlPromoCode);
+  // `?code=` also reaches the marketing site, which parks it in a cookie.
+  const urlReferralCode = searchParams.get('ref') ?? '';
+  const referralCode = readReferralCode(urlReferralCode);
 
   const [arrivedSignedIn] = useState(
     () => Boolean(getAuthItem('admin_token')) && !isSessionExpired(),
@@ -119,6 +151,15 @@ export default function Register() {
       /* private mode: the URL parameter still carries the code for this visit */
     }
   }, [urlPromoCode]);
+
+  useEffect(() => {
+    if (!urlReferralCode) return;
+    try {
+      window.sessionStorage.setItem(REFERRAL_STORAGE_KEY, urlReferralCode);
+    } catch {
+      /* private mode: the URL parameter still carries the code for this visit */
+    }
+  }, [urlReferralCode]);
 
   const form = useForm<RegisterValues>({
     resolver: zodResolver(schema),
@@ -177,6 +218,7 @@ export default function Register() {
         null,
         values.billing_country,
         promoCode || null,
+        referralCode || null,
       ),
     onSuccess: (data, values) => {
       // Signup stays remembered by default — someone who has just created an

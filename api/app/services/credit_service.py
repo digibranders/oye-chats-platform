@@ -644,14 +644,35 @@ def _grants_for(
 
 
 def get_balance_breakdown(session: Session, client_id: int, bot_id: int | None = None) -> dict[str, Any]:
-    """Return ``{plan, topup, total, soonest_expiry}`` for one ledger scope."""
+    """Return ``{plan, plan_granted, topup, total, soonest_expiry}`` for one scope.
+
+    ``plan_granted`` is what the ledger ISSUED to the plan bucket for the live
+    period, as distinct from what is left of it. The Billing meter needs both
+    to state consumption without inventing it: the figure it used to subtract
+    from was ``plan.credits_per_month``, a plan-catalogue constant, so any
+    account whose grant did not match the constant rendered as fully consumed.
+    An account that never received a grant at all — both signup paths treat a
+    failed ``assign_default_plan_to_client`` as best-effort — showed a full red
+    bar and "Your chatbots have stopped answering" beside "Spent this period 0".
+
+    Accumulated BEFORE the exhausted-grant skip below, which is the whole
+    subtlety: ``_grants_for`` still returns a grant with nothing left on it, and
+    counting only what survives would report nothing issued to someone who spent
+    their entire allowance — emptying the meter at the moment it should read
+    full. Expiry is the one thing that does drop a grant from both figures, so a
+    lapsed trial stops claiming a period's consumption against a plan nobody is
+    on.
+    """
     plan_remaining = 0
+    plan_granted = 0
     topup_remaining = 0
     soonest: datetime | None = None
 
     for grant in _grants_for(session, client_id, bot_id=bot_id):
         consumed = _consumed_against(session, grant.id)
         remaining = grant.delta - consumed
+        if grant.reason == "plan_grant":
+            plan_granted += grant.delta
         if remaining <= 0:
             continue
         if grant.reason == "plan_grant":
@@ -663,6 +684,7 @@ def get_balance_breakdown(session: Session, client_id: int, bot_id: int | None =
 
     return {
         "plan": plan_remaining,
+        "plan_granted": plan_granted,
         "topup": topup_remaining,
         "total": plan_remaining + topup_remaining,
         "soonest_expiry": soonest,
@@ -1161,6 +1183,7 @@ def grant_subscription_period_once(
     period_end: datetime | None,
     *,
     invoice_id: int | None = None,
+    preserve_prior_credits: bool = False,
 ) -> bool:
     """Reset + grant a subscription's plan credits for ``period_end``, at most once.
 
@@ -1258,7 +1281,31 @@ def grant_subscription_period_once(
             _backfill_plan_grant_reference(session, subscription, invoice_id)
         return False
 
-    reset_monthly_plan_credits(session, subscription.client_id, bot_id=subscription.bot_id)
+    # The reset exists so a RENEWAL does not roll last month's unused allowance
+    # into the new one. On a subscription's FIRST grant there is no prior period
+    # of this subscription to clear, and the only positive plan_grant that can be
+    # standing in the scope is the trial's.
+    #
+    # Zeroing it made paying during a trial forfeit every unused trial credit: a
+    # customer three days into a 14-day trial with 400 of 500 left converted to
+    # Starter and landed on 1000, not 1400. They lost credits by paying, on the
+    # day they paid, which is the worst possible moment to take something away.
+    #
+    # The trial grant expires before the paid one, and `_grants_for` orders
+    # plan grants by `expires_at` ascending, so the surviving trial credits are
+    # spent FIRST and cannot outlive their own window.
+    # The reset stops a RENEWAL rolling last period's allowance into this one.
+    # A trial conversion is not a renewal: the customer is paying, and zeroing
+    # what is left of their trial on the day they pay is the worst possible
+    # moment to take something away.
+    #
+    # The caller says so explicitly rather than this inferring it. Two earlier
+    # attempts inferred it and both were wrong: "no prior period" also matches
+    # the automatic downgrade when a trial LAPSES unpaid, and "no prior period
+    # on a paid plan" also matches a per-bot subscription being resumed, which
+    # is a continuation whose prior credits should not double up.
+    if not preserve_prior_credits:
+        reset_monthly_plan_credits(session, subscription.client_id, bot_id=subscription.bot_id)
     grant_for_subscription(session, subscription, reference_id=invoice_id)
     if period_end is not None:
         subscription.last_granted_period_end = period_end

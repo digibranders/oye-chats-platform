@@ -263,49 +263,17 @@ def test_deleting_without_a_gateway_customer_is_not_a_gateway_error(db, monkeypa
         svc.delete_payment_method(db, free, "token_x")
 
 
-# ── Destructive-migration guard ──────────────────────────────────────────────
-
-
-def test_the_reshape_migration_refuses_to_run_on_a_populated_table(db):
-    """The one line standing between a deploy and irreversible loss of card
-    metadata. Without a test it is exactly the kind of guard that gets
-    'simplified away' by someone who cannot see what it protects."""
-    import importlib.util
-    from pathlib import Path
-    from unittest.mock import MagicMock, patch
-
-    path = Path(__file__).resolve().parents[1] / "alembic" / "versions" / "c96e2d24b7b4_payment_methods_rbi_columns.py"
-    spec = importlib.util.spec_from_file_location("mig_c96e2d24b7b4", path)
-    mig = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mig)
-
-    ctx = MagicMock()
-    ctx.as_sql = False
-    bind = MagicMock()
-    bind.execute.return_value.scalar_one.return_value = 3  # three rows present
-
-    with patch.object(mig.op, "get_context", return_value=ctx), patch.object(mig.op, "get_bind", return_value=bind):
-        with pytest.raises(RuntimeError, match="3 row"):
-            mig._assert_empty()
-
-        bind.execute.return_value.scalar_one.return_value = 0
-        mig._assert_empty()  # empty table: proceeds
-
-
-def test_the_reshape_migration_refuses_offline_mode(db):
-    """Offline (--sql) cannot verify the table is empty, so it must refuse
-    rather than emit DROP statements with the guard silently stripped."""
-    import importlib.util
-    from pathlib import Path
-    from unittest.mock import MagicMock, patch
-
-    path = Path(__file__).resolve().parents[1] / "alembic" / "versions" / "c96e2d24b7b4_payment_methods_rbi_columns.py"
-    spec = importlib.util.spec_from_file_location("mig_offline_c96e2d24b7b4", path)
-    mig = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mig)
-
-    ctx = MagicMock()
-    ctx.as_sql = True
-
-    with patch.object(mig.op, "get_context", return_value=ctx), pytest.raises(RuntimeError, match="offline"):
-        mig._assert_empty()
+# ── Destructive-migration guard (removed) ────────────────────────────────────
+#
+# Two tests stood here, over `_assert_empty` inside
+# `c96e2d24b7b4_payment_methods_rbi_columns.py`: the one line between a deploy
+# and irreversible loss of card metadata, which refused to reshape a populated
+# `payment_methods` table and refused to run offline where it could not check.
+#
+# The squash to a single production baseline removed that migration, and with it
+# the guard. That is not a coverage gap, it is the end of the hazard: the
+# reshape was a one-time change that has run everywhere it was ever going to,
+# and the baseline creates the reshaped table directly. There is no longer a
+# migration that can drop a populated column, so there is nothing left to
+# refuse. Resurrecting the file purely to keep its test passing would leave a
+# dead script in the chain for every future deploy to replay.

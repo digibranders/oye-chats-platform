@@ -1137,9 +1137,13 @@ class TestWidgetHeartbeatCacheRoundTrip:
 # ── Migration ────────────────────────────────────────────────────────────────
 
 
-#: The migration under test. Named so the downgrade step below can anchor to
-#: it instead of to whatever revision is currently the tip.
-_WIDGET_HEARTBEAT_REVISION = "a4d7f2c91b06"
+#: How far down to unwind to prove these columns come from the DDL.
+#:
+#: This named the widget-heartbeat revision itself and stepped to
+#: ``<revision>-1``, so that adding a migration on top of it did not silently
+#: turn the assertion into a no-op. The squash to a single production baseline
+#: folded that revision in, and there is no longer a revision below the one
+#: that creates these columns: ``base`` IS the step before it.
 
 
 @pg
@@ -1197,18 +1201,17 @@ def test_widget_heartbeat_migration_creates_both_columns(monkeypatch):
             assert columns[name]["default"] is None
         eng.dispose()
 
-        # Reversible, then re-runnable.
-        #
-        # Anchored to this migration rather than to a relative "-1" from head.
-        # "-1" only unwinds THIS revision while it happens to be the tip, so
-        # the first migration added on top of it left the columns in place and
-        # failed the assertion below, turning an unrelated author's work into a
-        # failure in this file. Naming the revision makes the step mean "unwind
-        # past the migration under test" however many land after it.
-        command.downgrade(cfg, f"{_WIDGET_HEARTBEAT_REVISION}-1")
+        # Reversible, then re-runnable. To ``base``, which is the step below
+        # the baseline that now creates these columns; anything shallower would
+        # stop above it and leave them in place, making the assertion vacuous.
+        command.downgrade(cfg, "base")
         eng = create_engine(tmp_url)
-        after_down = {c["name"] for c in inspect(eng).get_columns("bots")}
-        assert not ({"widget_last_seen_at", "widget_last_origin"} & after_down)
+        # Before the squash this unwound one migration and left `bots` standing
+        # without its two columns. The baseline creates the whole schema, so
+        # unwinding it takes the table with it: absence of the TABLE is the
+        # stronger form of the same assertion, and asking for its columns now
+        # raises instead of returning a set.
+        assert not inspect(eng).has_table("bots")
         eng.dispose()
 
         command.upgrade(cfg, "head")
