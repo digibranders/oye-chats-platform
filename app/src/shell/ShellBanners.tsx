@@ -1,3 +1,4 @@
+import { EntitlementsErrorBanner } from './EntitlementsErrorBanner';
 import { ImpersonationBanner } from './ImpersonationBanner';
 import { TrialBanner } from './TrialBanner';
 
@@ -29,6 +30,9 @@ export function ShellBanners() {
           WHO is looking, which outranks a fact about the account they are
           looking at. */}
       <TrialBanner />
+      {/* Last: it explains why the rest of the console looks locked, which only
+          matters once you have read what the account itself is doing. */}
+      <EntitlementsErrorBanner />
     </>
   );
 }
