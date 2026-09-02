@@ -45,6 +45,7 @@ function balance(overrides: Record<string, unknown> = {}) {
     topup: 500,
     total: 600,
     monthly_grant: 3000,
+    plan_granted: 3000,
     bots: [],
     ...overrides,
   });

@@ -16,6 +16,7 @@ const ENTRY = {
   bot_key: 'bot-acme',
   plan_name: 'Standard',
   monthly_grant: 3000,
+  plan_granted: 3000,
   plan: 1800,
   topup: 400,
   total: 2200,

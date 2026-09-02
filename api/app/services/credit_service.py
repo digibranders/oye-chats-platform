@@ -644,14 +644,35 @@ def _grants_for(
 
 
 def get_balance_breakdown(session: Session, client_id: int, bot_id: int | None = None) -> dict[str, Any]:
-    """Return ``{plan, topup, total, soonest_expiry}`` for one ledger scope."""
+    """Return ``{plan, plan_granted, topup, total, soonest_expiry}`` for one scope.
+
+    ``plan_granted`` is what the ledger ISSUED to the plan bucket for the live
+    period, as distinct from what is left of it. The Billing meter needs both
+    to state consumption without inventing it: the figure it used to subtract
+    from was ``plan.credits_per_month``, a plan-catalogue constant, so any
+    account whose grant did not match the constant rendered as fully consumed.
+    An account that never received a grant at all — both signup paths treat a
+    failed ``assign_default_plan_to_client`` as best-effort — showed a full red
+    bar and "Your chatbots have stopped answering" beside "Spent this period 0".
+
+    Accumulated BEFORE the exhausted-grant skip below, which is the whole
+    subtlety: ``_grants_for`` still returns a grant with nothing left on it, and
+    counting only what survives would report nothing issued to someone who spent
+    their entire allowance — emptying the meter at the moment it should read
+    full. Expiry is the one thing that does drop a grant from both figures, so a
+    lapsed trial stops claiming a period's consumption against a plan nobody is
+    on.
+    """
     plan_remaining = 0
+    plan_granted = 0
     topup_remaining = 0
     soonest: datetime | None = None
 
     for grant in _grants_for(session, client_id, bot_id=bot_id):
         consumed = _consumed_against(session, grant.id)
         remaining = grant.delta - consumed
+        if grant.reason == "plan_grant":
+            plan_granted += grant.delta
         if remaining <= 0:
             continue
         if grant.reason == "plan_grant":
@@ -663,6 +684,7 @@ def get_balance_breakdown(session: Session, client_id: int, bot_id: int | None =
 
     return {
         "plan": plan_remaining,
+        "plan_granted": plan_granted,
         "topup": topup_remaining,
         "total": plan_remaining + topup_remaining,
         "soonest_expiry": soonest,

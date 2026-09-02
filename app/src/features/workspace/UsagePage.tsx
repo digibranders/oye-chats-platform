@@ -340,11 +340,13 @@ export function UsagePage() {
                           : 'neutral',
                     hint:
                       pool.totalRemaining <= 0
-                        ? !pool.isActive
-                          ? 'This chatbot has no credits left either'
-                          : botId === null
-                            ? 'Your chatbots have stopped answering'
-                            : 'This chatbot has stopped answering'
+                        ? balance.allowanceInactive
+                          ? 'No allowance is running. Choose a plan to start one'
+                          : !pool.isActive
+                            ? 'This chatbot has no credits left either'
+                            : botId === null
+                              ? 'Your chatbots have stopped answering'
+                              : 'This chatbot has stopped answering'
                         : balance.lowBalance
                           ? `Under a fifth left${pool.resetsAt ? `, refills ${formatDate(pool.resetsAt)}` : ''}`
                           : undefined,
@@ -371,13 +373,22 @@ export function UsagePage() {
               />
             </CardBody>
             <CardSection>
-              {pool.monthlyGrant > 0 ? (
+              {/* Measured against what the ledger ISSUED, not against what the
+                  plan advertises. The two are the same for a healthy period and
+                  differ exactly when the meter used to lie: an allowance that
+                  never landed read as a full period's consumption. */}
+              {pool.planGranted > 0 ? (
                 <Meter
-                  label={`Plan allowance used (${formatCredits(pool.monthlyGrant)} a month)`}
-                  used={Math.min(pool.monthlyGrant - pool.planRemaining, pool.monthlyGrant)}
-                  limit={pool.monthlyGrant}
+                  label={`Plan allowance used (${formatCredits(pool.planGranted)} this period)`}
+                  used={pool.planUsed}
+                  limit={pool.planGranted}
                   unit="credits"
                 />
+              ) : balance.allowanceInactive ? (
+                <p className="text-xs text-text-secondary">
+                  No allowance is running right now, so there is nothing to spend against. Choosing
+                  a plan starts one.
+                </p>
               ) : (
                 <p className="text-xs text-text-secondary">
                   No monthly grant — everything this scope spends comes from purchased credits.

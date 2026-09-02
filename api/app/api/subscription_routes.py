@@ -3662,6 +3662,11 @@ def get_credit_balance(http_request: Request, client: Client = Depends(get_curre
                     "billing_cycle": bot_sub.billing_cycle if bot_sub else None,
                     "subscription_status": bot_sub.status if bot_sub else None,
                     "plan": bot_breakdown["plan"],
+                    # What the ledger ISSUED this period, not what is left of
+                    # it. The meter subtracts the two; deriving the ceiling
+                    # from ``credits_per_month`` instead let a plan constant
+                    # that outran the actual grant render as full consumption.
+                    "plan_granted": bot_breakdown["plan_granted"],
                     "topup": bot_breakdown["topup"],
                     "total": bot_breakdown["total"],
                     "soonest_expiry": bot_breakdown["soonest_expiry"].isoformat()
@@ -3705,6 +3710,7 @@ def get_credit_balance(http_request: Request, client: Client = Depends(get_curre
         next_reset = effective_resets_at(sub)
         return {
             "plan": breakdown["plan"],
+            "plan_granted": breakdown["plan_granted"],
             "topup": breakdown["topup"],
             "total": breakdown["total"],
             "soonest_expiry": breakdown["soonest_expiry"].isoformat() if breakdown["soonest_expiry"] else None,

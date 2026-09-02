@@ -83,6 +83,8 @@ export function BillingPage() {
    */
   const { selectedBot, bots } = useBotContext();
   const botId = selectedBot?.id ?? null;
+  /** A zero balance only silences chatbots that exist. */
+  const hasChatbots = bots.length > 0;
 
   const billing = useBillingData(botId);
   const [picking, setPicking] = useState(false);
@@ -333,7 +335,7 @@ export function BillingPage() {
                       />
                     </CardBody>
                     <CardSection>
-                      {pool.monthlyGrant > 0 ? (
+                      {pool.planGranted > 0 ? (
                         <>
                           {/* The eyebrow shares the figures' first baseline.
                               A vertically centred meter beside two top-aligned
@@ -344,14 +346,21 @@ export function BillingPage() {
                             className="mt-2"
                             hideLabel
                             label="Plan allowance"
-                            used={Math.min(
-                              pool.monthlyGrant - pool.planRemaining,
-                              pool.monthlyGrant,
-                            )}
-                            limit={pool.monthlyGrant}
+                            // Both terms come from the ledger. The ceiling used
+                            // to be `plan.credits_per_month`, so any account
+                            // whose grant did not match that constant — one
+                            // that never landed above all — rendered as a full
+                            // bar reading "500 / 500" beside "Spent 0".
+                            used={pool.planUsed}
+                            limit={pool.planGranted}
                             unit="credits"
                           />
                         </>
+                      ) : balance?.allowanceInactive ? (
+                        <p className="text-xs text-text-secondary">
+                          No allowance is running right now, so there is nothing to spend against.
+                          Choosing a plan starts one.
+                        </p>
                       ) : (
                         <p className="text-xs text-text-secondary">
                           No monthly grant — everything this scope spends comes from purchased
@@ -375,15 +384,31 @@ export function BillingPage() {
                             {pool.totalRemaining <= 0 ? 'Out of credits' : 'Nearly out'}
                           </Badge>
                           <span className="text-xs text-text-secondary">
-                            {pool.totalRemaining <= 0
-                              ? 'Your chatbots have stopped answering.'
-                              : `Refills ${formatDate(pool.resetsAt)}.`}
+                            {pool.totalRemaining > 0
+                              ? `Refills ${formatDate(pool.resetsAt)}.`
+                              : hasChatbots
+                                ? 'Your chatbots have stopped answering.'
+                                : 'A chatbot created now would have nothing to answer with.'}
                           </span>
                         </p>
-                        <Link to="/billing/usage" className={buttonClass('primary', 'sm')}>
-                          <Coins aria-hidden />
-                          Buy credits
-                        </Link>
+                        {/* `topup_allowed` is a plan feature, and Trial and
+                            Free do not carry it: `POST /credits/topup` answers
+                            403 for both. Offering "Buy credits" here sent the
+                            customer to a page whose only content was a notice
+                            that they cannot buy any — a round trip to a refusal
+                            at the moment they are most willing to pay. The
+                            remedy for those plans is the plan picker, so that
+                            is what the button opens. */}
+                        {entitlements.features?.topup_allowed ? (
+                          <Link to="/billing/usage" className={buttonClass('primary', 'sm')}>
+                            <Coins aria-hidden />
+                            Buy credits
+                          </Link>
+                        ) : (
+                          <Button size="sm" onClick={() => setPicking(true)}>
+                            Choose a plan
+                          </Button>
+                        )}
                       </CardSection>
                     ) : null}
                   </>
