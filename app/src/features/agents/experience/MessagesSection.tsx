@@ -102,19 +102,32 @@ export function MessagesSection({
   // empty string (see `widget/src/components/Launcher.jsx`). The ref remembers
   // the last real text so toggling off and back on restores it instead of
   // making the customer retype it.
-  const launcherTextOn = draft.launcherName.trim() !== '';
+  //
+  // The switch is NOT simply "is the text non-empty". It was, and selecting the
+  // text to replace it flipped the switch off, disabled the input under the
+  // cursor and swapped in a "Hidden" placeholder before the replacement was
+  // typed. An empty field the customer is still editing stays on; only the
+  // switch turns the text off. What is saved does not change: empty is hidden,
+  // and the hint says so while the field is empty.
+  const [clearedByTyping, setClearedByTyping] = useState(false);
+  const launcherTextOn = draft.launcherName.trim() !== '' || clearedByTyping;
   const launcherTextStash = useRef(draft.launcherName.trim() || 'Have Questions?');
   const setLauncherName = useCallback(
     (value: string) => {
       if (value.trim()) launcherTextStash.current = value;
+      setClearedByTyping(value.trim() === '');
       onChange({ launcherName: value });
     },
     [onChange],
   );
   const toggleLauncherText = useCallback(
-    (on: boolean) => onChange({ launcherName: on ? launcherTextStash.current || 'Have Questions?' : '' }),
+    (on: boolean) => {
+      setClearedByTyping(false);
+      onChange({ launcherName: on ? launcherTextStash.current || 'Have Questions?' : '' });
+    },
     [onChange],
   );
+  const launcherTextEmpty = launcherTextOn && draft.launcherName.trim() === '';
 
   const [suggestions, setSuggestions] = useState<string[] | null>(null);
   const [suggesting, setSuggesting] = useState(false);
@@ -198,9 +211,12 @@ export function MessagesSection({
             label={t('agents.launcherText') || 'Launcher text'}
             trailingAlign="edge"
             hint={
-              launcherTextOn
-                ? t('agents.besideTheClosedLauncher') || 'Beside the closed launcher.'
-                : t('agents.theLauncherShowsJustThe') || 'The launcher shows just the icon, with no text beside it.'
+              launcherTextEmpty
+                ? t('agents.launcherTextEmpty') ||
+                  'Type the text visitors see beside the launcher, or turn this off.'
+                : launcherTextOn
+                  ? t('agents.besideTheClosedLauncher') || 'Beside the closed launcher.'
+                  : t('agents.theLauncherShowsJustThe') || 'The launcher shows just the icon, with no text beside it.'
             }
             trailing={
               <Switch

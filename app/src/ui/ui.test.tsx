@@ -718,6 +718,34 @@ describe('Field trailing', () => {
     // Capped like every other pair in the system.
     expect(label.parentElement?.className).toContain('max-w-pair');
   });
+
+  /**
+   * The Field hands its control an id through context. A control in the
+   * trailing slot read the same context, so a Switch beside a text input took
+   * the field's id as well: two elements with one id, and `<label for>`
+   * resolving to whichever came first in the DOM, the switch's hidden
+   * checkbox. The text input then had no accessible name at all, and clicking
+   * the field's label flipped the switch.
+   */
+  it('does not hand the field id to the trailing control', async () => {
+    render(
+      <Field
+        label="Launcher text"
+        trailing={<Switch checked onCheckedChange={() => {}} label="Show launcher text" hideLabel />}
+      >
+        <Input defaultValue="Hi" />
+      </Field>,
+    );
+    const input = screen.getByRole('textbox', { name: 'Launcher text' });
+    const toggle = screen.getByRole('switch', { name: 'Show launcher text' });
+    expect(input.id).not.toBe('');
+    expect(document.querySelectorAll(`[id="${input.id}"]`)).toHaveLength(1);
+
+    // The field's label names the input, and only the input.
+    await userEvent.click(screen.getByText('Launcher text'));
+    expect(input).toHaveFocus();
+    expect(toggle).toBeChecked();
+  });
 });
 
 describe('a Field hint can be more than a sentence', () => {

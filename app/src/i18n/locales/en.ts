@@ -1920,6 +1920,7 @@ const en = {
     theLauncherShowsJustThe: 'The launcher shows just the icon \u2014 no text beside it.',
     showLauncherText: 'Show launcher text',
     launcherTextHidden: 'Hidden',
+    launcherTextEmpty: 'Type the text visitors see beside the launcher, or turn this off.',
     widgetCopyLocked: 'Customise the widget\u2019s wording on a paid plan.',
     runHistory: 'Run history',
     viewUnansweredQuestions: 'View unanswered questions',

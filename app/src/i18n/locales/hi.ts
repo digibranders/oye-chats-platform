@@ -2341,6 +2341,7 @@ const hi = {
     theLauncherShowsJustThe: 'लॉन्चर सिर्फ़ आइकन दिखाता है \u2014 उसके साथ कोई टेक्स्ट नहीं।',
     showLauncherText: 'लॉन्चर टेक्स्ट दिखाएँ',
     launcherTextHidden: 'छिपा हुआ',
+    launcherTextEmpty: 'वह टेक्स्ट लिखें जो आगंतुक लॉन्चर के पास देखेंगे, या इसे बंद करें।',
     widgetCopyLocked: 'पेड प्लान पर विजेट के शब्द अपने हिसाब से बदलें।',
     runHistory: 'रन इतिहास',
     viewUnansweredQuestions: 'अनुत्तरित प्रश्न देखें',
