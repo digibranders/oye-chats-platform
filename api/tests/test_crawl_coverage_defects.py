@@ -99,6 +99,13 @@ async def test_discovery_reports_what_it_found_before_the_cap(monkeypatch):
 
     monkeypatch.setattr(ud, "fetch_text_safely", fake_fetch)
 
+    # Sitemaps are fetched as bytes now; serve the same fake through that seam.
+    async def fake_fetch_bytes(session=None, url=None, **kwargs):
+        result = await fake_fetch(session=session, url=url, **kwargs)
+        return None if result is None else (result[0], result[1].encode("utf-8"))
+
+    monkeypatch.setattr(ud, "fetch_bytes_safely", fake_fetch_bytes)
+
     stats: dict = {}
     urls = await ud.discover_website_urls(base, max_urls=5, stats=stats)
 

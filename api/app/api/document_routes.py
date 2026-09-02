@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import re
+import time
 from pathlib import Path
 
 import psutil
@@ -1084,6 +1085,20 @@ def crawl_cancel_endpoint(
     return {"status": "cancelling", "message": "Cancel requested. Crawl will stop within a few seconds."}
 
 
+# The preview's whole time budget, across both discovery phases. Each phase
+# used to get 20 seconds of its own, so a site with no usable sitemap could
+# take 40 against a route that promises about 20 and a browser that gives up
+# at 30. The link phase now gets what is left, never below a floor that still
+# lets it find something.
+_DISCOVERY_TOTAL_BUDGET = 25.0
+_DISCOVERY_LINK_FLOOR = 5.0
+
+
+def _link_phase_budget(elapsed: float) -> float:
+    """Seconds the link scan may take once the sitemap phase spent ``elapsed``."""
+    return max(_DISCOVERY_LINK_FLOOR, _DISCOVERY_TOTAL_BUDGET - elapsed)
+
+
 @router.post("/crawl/discover")
 @limiter.limit("120/hour", key_func=key_from_api_key)
 async def crawl_discover_endpoint(
@@ -1134,6 +1149,7 @@ async def crawl_discover_endpoint(
 
     _DISCOVERY_HARD_CAP = 1000
     discovery_cap = _DISCOVERY_HARD_CAP if plan_max == UNLIMITED else min(plan_max, _DISCOVERY_HARD_CAP)
+    started = time.monotonic()
     urls: list[str] = []
     try:
         urls = await discover_website_urls(
@@ -1149,9 +1165,15 @@ async def crawl_discover_endpoint(
     # (see crawl_provider.crawl_website). Mirror that here so the page count and
     # cost estimate the customer sees match what the crawl will actually bill,
     # instead of showing "1 page" for every sitemap-less site.
+    link_stats: dict = {}
     if len(urls) <= 1:
         try:
-            linked = await discover_via_links(discover_request.url, max_urls=discovery_cap, timeout=20.0)
+            linked = await discover_via_links(
+                discover_request.url,
+                max_urls=discovery_cap,
+                timeout=_link_phase_budget(time.monotonic() - started),
+                stats=link_stats,
+            )
             if len(linked) > len(urls):
                 urls = linked
         except Exception as exc:
@@ -1173,7 +1195,9 @@ async def crawl_discover_endpoint(
     return {
         "url": discover_request.url,
         "total_found": total,
-        "capped": total >= discovery_cap,
+        # A list cut short by the time budget is as partial as one cut by the
+        # page cap, and the UI already knows how to say "there may be more".
+        "capped": total >= discovery_cap or bool(link_stats.get("truncated")),
         "plan_max": plan_max,
         "urls": urls,
         "cost_per_page": cost_per_page,

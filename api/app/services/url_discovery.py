@@ -37,13 +37,14 @@ than relying on whether discovery happens to find them again.
 """
 
 import asyncio
+import gzip
 import logging
 import re
 import time
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 from urllib.robotparser import RobotFileParser
 
-from app.core.ssrf import fetch_text_safely, probe_url_alive
+from app.core.ssrf import fetch_bytes_safely, fetch_text_safely, probe_url_alive
 
 logger = logging.getLogger(__name__)
 
@@ -247,6 +248,11 @@ def _norm_netloc(netloc: str) -> str:
     return netloc.lower().removeprefix("www.")
 
 
+# The sitemap spec's ceiling, 50 MB uncompressed, so a large but legitimate
+# sitemap is not truncated (code-review RV7). Applied to the wire body and
+# again to a gzip body after it inflates.
+_SITEMAP_MAX_BYTES = 50 * 1024 * 1024
+
 # A sitemap location, with or without a CDATA wrapper. The spec allows
 # ``<loc><![CDATA[https://...]]></loc>`` and All in One SEO, the most installed
 # WordPress SEO plugin, emits exactly that on every entry. The previous pattern
@@ -341,10 +347,29 @@ async def discover_website_urls(
             # are attacker-controllable → SSRF-guarded fetch (audit F07). Allow
             # up to the sitemap-spec ceiling (50 MB uncompressed) so a large but
             # legitimate sitemap isn't truncated (code-review RV7).
-            result = await fetch_text_safely(url=url, session=session, max_bytes=50 * 1024 * 1024)
+            # Fetched as BYTES, because a sitemap may be served as a literal
+            # ``.xml.gz`` file. aiohttp undoes ``Content-Encoding: gzip`` on
+            # the wire on its own; this is the other case, where the body IS
+            # gzip. Decoding it as text produced replacement characters that
+            # matched no location, and the site reported zero pages. Sniffed
+            # by magic number rather than extension, so a gzip body under a
+            # ``.xml`` name is handled and a plain body under ``.gz`` is not
+            # mangled.
+            result = await fetch_bytes_safely(session, url, max_bytes=_SITEMAP_MAX_BYTES)
             if not result or result[0] != 200:
                 return
-            raw = result[1]
+            body = result[1]
+            if body[:2] == b"\x1f\x8b":
+                try:
+                    body = gzip.decompress(body)
+                except (OSError, EOFError, ValueError):
+                    return  # corrupt archive: nothing to read here
+                # The size cap applied to the wire body; re-apply it to what
+                # it inflated to, so a small archive cannot become a large
+                # allocation.
+                if len(body) > _SITEMAP_MAX_BYTES:
+                    return
+            raw = body.decode("utf-8", errors="replace")
 
             is_index = "<sitemapindex" in raw.lower()
             locs = _SITEMAP_LOC_RE.findall(raw)
@@ -432,6 +457,7 @@ async def discover_via_links(
     max_depth: int = 2,
     max_fetch: int = 25,
     timeout: float = 20.0,
+    stats: dict | None = None,
 ) -> list[str]:
     """Discover content pages by scanning same-domain ``<a href>`` links.
 
@@ -493,6 +519,11 @@ async def discover_via_links(
 
         while frontier and fetched < max_fetch and len(found) < max_urls:
             if time.monotonic() >= deadline:
+                # Say so. The preview marks a list ``capped`` when it hits the
+                # page ceiling; a list cut short by time looked complete, and
+                # the count under it was presented as the whole site.
+                if stats is not None:
+                    stats["truncated"] = True
                 break
             url, depth = frontier.pop(0)
             if depth >= max_depth:

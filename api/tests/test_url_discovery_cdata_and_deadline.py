@@ -19,6 +19,7 @@ cost box of invented zeros.
 from __future__ import annotations
 
 import asyncio
+import gzip
 import time
 
 import pytest
@@ -59,10 +60,20 @@ def _site(monkeypatch, pages: dict[str, str]):
         target = url if url is not None else kwargs.get("url")
         fetched.append(target)
         if target in pages:
-            return 200, pages[target]
+            body = pages[target]
+            return 200, (body.decode("utf-8", errors="replace") if isinstance(body, bytes) else body)
         return 404, ""
 
+    async def fake_fetch_bytes(session=None, url=None, **kwargs):
+        target = url if url is not None else kwargs.get("url")
+        fetched.append(target)
+        if target in pages:
+            body = pages[target]
+            return 200, (body if isinstance(body, bytes) else body.encode("utf-8"))
+        return 404, b""
+
     monkeypatch.setattr(ud, "fetch_text_safely", fake_fetch)
+    monkeypatch.setattr(ud, "fetch_bytes_safely", fake_fetch_bytes)
     return fetched
 
 
@@ -140,3 +151,102 @@ async def test_link_crawl_returns_within_its_time_budget(monkeypatch):
     # It stopped early, not empty: whatever it had found so far comes back.
     assert BASE in urls
     assert len(urls) > 1
+
+
+# ── Gzipped sitemap FILES ────────────────────────────────────────────────
+#
+# aiohttp undoes ``Content-Encoding: gzip`` on the wire by itself. A sitemap
+# served as a literal ``.xml.gz`` file is different: the body IS gzip, and the
+# fetcher decoded it as UTF-8 with replacement characters, so the location
+# regex saw noise and the site reported zero pages. Large sites and several
+# generators serve exactly this.
+
+
+@pytest.mark.asyncio
+async def test_a_gzipped_sitemap_index_is_read(monkeypatch):
+    fetched = _site(
+        monkeypatch,
+        {
+            f"{BASE}/robots.txt": f"Sitemap: {BASE}/sitemap.xml.gz\n",
+            f"{BASE}/sitemap.xml.gz": gzip.compress(INDEX_CDATA.encode("utf-8")),
+            f"{BASE}/post-sitemap.xml": POSTS_CDATA,
+            f"{BASE}/page-sitemap.xml": PAGES_PLAIN,
+        },
+    )
+    urls = await ud.discover_website_urls(BASE, max_urls=100, timeout=5.0)
+    assert f"{BASE}/post-sitemap.xml" in fetched
+    assert len(urls) == 6
+
+
+@pytest.mark.asyncio
+async def test_a_gzipped_child_sitemap_is_read(monkeypatch):
+    _site(
+        monkeypatch,
+        {
+            f"{BASE}/robots.txt": "",
+            f"{BASE}/sitemap.xml": INDEX_CDATA.replace("post-sitemap.xml", "post-sitemap.xml.gz"),
+            f"{BASE}/post-sitemap.xml.gz": gzip.compress(POSTS_CDATA.encode("utf-8")),
+            f"{BASE}/page-sitemap.xml": PAGES_PLAIN,
+        },
+    )
+    urls = await ud.discover_website_urls(BASE, max_urls=100, timeout=5.0)
+    assert f"{BASE}/blog/one/" in urls and f"{BASE}/about/" in urls
+
+
+@pytest.mark.asyncio
+async def test_a_corrupt_gzip_body_is_skipped_not_raised(monkeypatch):
+    _site(
+        monkeypatch,
+        {
+            f"{BASE}/robots.txt": "",
+            f"{BASE}/sitemap.xml": b"\x1f\x8b\x08not really gzip at all",
+        },
+    )
+    urls = await ud.discover_website_urls(BASE, max_urls=100, timeout=5.0)
+    assert urls == [BASE]  # just the guaranteed seed
+
+
+@pytest.mark.asyncio
+async def test_a_gzip_that_inflates_past_the_cap_is_refused(monkeypatch):
+    """A 1 KB body that decompresses to 60 MB must not be parsed or held."""
+    huge = gzip.compress(b"<urlset>" + b"<url><loc>https://a.test/x</loc></url>" * 1_500_000 + b"</urlset>")
+    _site(monkeypatch, {f"{BASE}/robots.txt": "", f"{BASE}/sitemap.xml": huge})
+    urls = await ud.discover_website_urls(BASE, max_urls=100, timeout=5.0)
+    assert urls == [BASE]
+
+
+# ── A truncated link scan says so ────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_link_crawl_reports_when_it_stopped_on_the_deadline(monkeypatch):
+    """The preview flags a partial list only if the scan tells it so.
+
+    `capped` used to mean only "hit the page cap"; a scan cut short by its
+    time budget looked complete, and the count under it was presented as the
+    whole site.
+    """
+    page = "".join(f'<a href="{BASE}/p{i}/">p{i}</a>' for i in range(30))
+
+    async def slow_fetch(session=None, url=None, **kwargs):
+        target = url if url is not None else kwargs.get("url")
+        if target.endswith("/robots.txt"):
+            return 200, ""
+        await asyncio.sleep(0.5)
+        return 200, page
+
+    monkeypatch.setattr(ud, "fetch_text_safely", slow_fetch)
+
+    stats: dict = {}
+    await ud.discover_via_links(BASE, max_urls=500, max_depth=3, max_fetch=50, timeout=1.0, stats=stats)
+    assert stats.get("truncated") is True
+
+    fast_stats: dict = {}
+
+    async def fast_fetch(session=None, url=None, **kwargs):
+        target = url if url is not None else kwargs.get("url")
+        return (200, "") if target.endswith("/robots.txt") else (200, "<a href='/only/'>x</a>")
+
+    monkeypatch.setattr(ud, "fetch_text_safely", fast_fetch)
+    await ud.discover_via_links(BASE, max_urls=500, max_depth=2, max_fetch=50, timeout=5.0, stats=fast_stats)
+    assert fast_stats.get("truncated", False) is False

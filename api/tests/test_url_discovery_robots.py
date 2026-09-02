@@ -16,6 +16,25 @@ import pytest
 import app.services.url_discovery as ud
 from app.services.url_discovery import discover_via_links, discover_website_urls
 
+
+@pytest.fixture(autouse=True)
+def _sitemaps_read_the_same_fake(monkeypatch):
+    """Sitemaps are fetched as bytes now (a ``.xml.gz`` file has to be inflated
+    before it can be parsed), so ``fetch_text_safely`` is no longer the only
+    seam. Rather than teach every test here two fakes, the bytes fetcher
+    delegates to whatever text fake the test installed, looked up at call time
+    so the per-test ``monkeypatch.setattr`` below is what it sees."""
+
+    async def bytes_via_text(session=None, url=None, **kwargs):
+        result = await ud.fetch_text_safely(session=session, url=url, **kwargs)
+        if result is None:
+            return None
+        status, body = result
+        return status, (body if isinstance(body, bytes) else body.encode("utf-8"))
+
+    monkeypatch.setattr(ud, "fetch_bytes_safely", bytes_via_text)
+
+
 BASE = "https://shop.test"
 
 ROBOTS_DISALLOW_ADMIN = "User-agent: *\nDisallow: /admin/\n"
