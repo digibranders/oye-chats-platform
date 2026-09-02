@@ -100,14 +100,30 @@ export function MessagePane({
             <span className="min-w-0">
               <span className="flex min-w-0 items-center gap-2">
                 <span className="min-w-0 truncate">{name}</span>
+                {/* "Replied" was a claim nothing here can make: the status
+                    is written when the mailto link is clicked, and whether a
+                    mail client opened, let alone whether anything was sent, is
+                    not observable from this page. */}
                 <Badge tone={STATUS_TONE[status] ?? 'neutral'}>
-                  {status === 'new' ? t('inbox.new') || 'New' : status === 'read' ? t('inbox.read') || 'Read' : t('inbox.replied') || 'Replied'}
+                  {status === 'new'
+                    ? t('inbox.new') || 'New'
+                    : status === 'read'
+                      ? t('inbox.read') || 'Read'
+                      : 'Reply opened'}
                 </Badge>
               </span>
               <span className="figure block truncate text-2xs font-normal text-text-tertiary">
                 {message.created_at ? formatDateTime(message.created_at) : t('inbox.timeUnknown') || 'Time unknown'}
                 {message.bot_name ? ` · ${message.bot_name}` : ''}
               </span>
+              {/* What the badge above actually rests on, said once, where the
+                  badge is. The reply section below already says OyeChats does
+                  not send the mail; this says what the green state means. */}
+              {status === 'replied' ? (
+                <span className="block truncate text-2xs font-normal text-text-tertiary">
+                  Marked when the mail link was opened
+                </span>
+              ) : null}
             </span>
           </span>
         }
@@ -120,7 +136,7 @@ export function MessagePane({
               onClick={() => void setStatus(status === 'new' ? 'read' : 'replied')}
             >
               <Check aria-hidden />
-              {status === 'new' ? t('inbox.markRead') || 'Mark read' : t('inbox.markReplied') || 'Mark replied'}
+              {status === 'new' ? t('inbox.markRead') || 'Mark read' : 'Mark reply opened'}
             </Button>
             {/* Destructive actions are `danger` outline. As a ghost this was
                 indistinguishable in weight from "Mark read" beside it. */}
@@ -228,7 +244,8 @@ export function MessagePane({
                   onClick={() => {
                     if (status !== 'replied') void setStatus('replied');
                     toast.info(t('inbox.openingYourEmailApp') || 'Opening your email app', {
-                      description: t('inbox.thisMessageIsMarkedReplied') || 'This message is marked replied. Send it from your mailbox.',
+                      description:
+                        'This message is marked as having its reply opened. Send it from your mailbox.',
                     });
                   }}
                 >

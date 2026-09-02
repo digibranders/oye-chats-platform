@@ -381,6 +381,27 @@ def list_offline_messages(
         }
 
 
+def _assert_message_in_scope(auth: dict, bot: Bot | None) -> None:
+    """Ownership guard shared by the two single-message mutation routes.
+
+    Two layers, mirroring the read path. The bot must belong to the caller's
+    workspace, and an operator session is then collapsed to the one bot it is
+    bound to, exactly as ``list_offline_messages`` collapses its bot list. An
+    operator bound to bot A must not be able to mark-read or delete bot B's
+    messages by putting B's message id in the URL.
+
+    Falls back to the entity attribute when the auth resolver's cached
+    ``bot_id`` field is not populated (older code path).
+    """
+    if bot is None or bot.client_id != auth["client_id"]:
+        raise HTTPException(status_code=403, detail="Access denied.")
+    if auth["type"] != "operator":
+        return
+    operator_bot_id = auth.get("bot_id") or getattr(auth.get("entity"), "bot_id", None)
+    if operator_bot_id is None or bot.id != operator_bot_id:
+        raise HTTPException(status_code=403, detail="Access denied.")
+
+
 @router.patch("/{message_id}")
 def update_offline_message(
     message_id: int,
@@ -388,16 +409,14 @@ def update_offline_message(
     auth=Depends(get_current_client_or_operator),
 ):
     """Update an offline message status (mark as read/replied)."""
-    client_id = auth["client_id"]
     with get_session() as session:
         msg = session.execute(select(OfflineMessage).where(OfflineMessage.id == message_id)).scalar_one_or_none()
         if not msg:
             raise HTTPException(status_code=404, detail="Message not found.")
 
-        # Verify ownership
+        # Verify ownership: workspace, then the operator's bound bot.
         bot = session.execute(select(Bot).where(Bot.id == msg.bot_id)).scalar_one_or_none()
-        if not bot or bot.client_id != client_id:
-            raise HTTPException(status_code=403, detail="Access denied.")
+        _assert_message_in_scope(auth, bot)
 
         if request.status == "read" and msg.status == "new":
             msg.status = "read"
@@ -415,15 +434,13 @@ def update_offline_message(
 @router.delete("/{message_id}")
 def delete_offline_message(message_id: int, auth=Depends(get_current_client_or_operator)):
     """Delete an offline message."""
-    client_id = auth["client_id"]
     with get_session() as session:
         msg = session.execute(select(OfflineMessage).where(OfflineMessage.id == message_id)).scalar_one_or_none()
         if not msg:
             raise HTTPException(status_code=404, detail="Message not found.")
 
         bot = session.execute(select(Bot).where(Bot.id == msg.bot_id)).scalar_one_or_none()
-        if not bot or bot.client_id != client_id:
-            raise HTTPException(status_code=403, detail="Access denied.")
+        _assert_message_in_scope(auth, bot)
 
         session.delete(msg)
         session.commit()

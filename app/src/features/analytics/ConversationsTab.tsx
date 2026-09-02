@@ -1,7 +1,17 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Download } from 'lucide-react';
-import { Button, Card, CardBody, CardHeader, Grid, Stack, StatRow, formatNumber } from '../../ui';
+import {
+  Button,
+  Card,
+  CardBody,
+  CardHeader,
+  ErrorState,
+  Grid,
+  Stack,
+  StatRow,
+  formatNumber,
+} from '../../ui';
 import { getQueueSummary } from '../../services/api';
 import { csvFilename, exportRows } from './exportCsv';
 import { delta, resolveRange, type ResolvedRange } from './range';
@@ -46,6 +56,28 @@ export function ConversationsTab({
     queryFn: () => getQueueSummary(botId ?? undefined, effectiveDays ?? undefined),
   });
   const queueData = queueQuery.data;
+
+  /**
+   * The window the queue card actually covers, which is not always the page's.
+   *
+   * `getQueueSummary` has no unbounded form: its `days` argument defaults to 30
+   * and `/analytics/queue-summary` clamps the parameter to 1 to 90, so "All
+   * time" can never be requested. The card used to print the range control's
+   * label anyway, so selecting "All time" stamped an all-time heading on a
+   * thirty-day answer. It states the window that was asked for instead.
+   */
+  const queuePeriod =
+    effectiveRange.days === effectiveDays ? effectiveRange.label : `Last ${effectiveDays} days`;
+
+  /**
+   * The activity read failed, so every figure cut from the series is unknown.
+   *
+   * `useMessageSeries` hands back an empty array when the request fails, and
+   * `summarize([])` is a full set of zeros: a 500 rendered "Messages 0 · Daily
+   * average 0" as confidently as a quiet week. The chart below carries the
+   * explanation and the retry; the tiles simply say they do not know.
+   */
+  const seriesFailed = messages.error != null;
 
   const windows = useMemo(
     () => splitWindows(messages.series, effectiveRange.days),
@@ -95,7 +127,7 @@ export function ConversationsTab({
             items={[
               {
                 label: t('analytics.messages') || 'Messages',
-                value: formatNumber(current.total),
+                value: formatNumber(seriesFailed ? null : current.total),
                 delta: messageDelta
                   ? {
                       value: messageDelta.value,
@@ -104,11 +136,16 @@ export function ConversationsTab({
                     }
                   : undefined,
               },
-              { label: t('analytics.dailyAverage') || 'Daily average', value: formatNumber(current.dailyAverage) },
+              {
+                label: t('analytics.dailyAverage') || 'Daily average',
+                value: formatNumber(seriesFailed ? null : current.dailyAverage),
+              },
               {
                 label: t('analytics.busiestDay') || 'Busiest day',
-                value: current.peakLabel ? formatNumber(current.peak) : undefined,
-                period: current.peakLabel ?? effectiveRange.label,
+                value: !seriesFailed && current.peakLabel ? formatNumber(current.peak) : undefined,
+                // A failed read inherits the strip's window rather than naming
+                // a peak day it never saw.
+                period: seriesFailed ? undefined : (current.peakLabel ?? effectiveRange.label),
               },
             ]}
           />
@@ -141,35 +178,62 @@ export function ConversationsTab({
           titleAs="h2"
           description={t('analytics.currentQueueDepthAndWait') || 'Current queue depth and wait times'}
         />
-        <CardBody flush>
-          <StatRow
-            label={t('analytics.liveChatQueue') || 'Live chat queue'}
-            period={effectiveRange.label}
-            columns={4}
-            loading={queueQuery.isLoading}
-            items={[
-              {
-                label: t('analytics.waitingNow') || 'Waiting now',
-                value: queueData ? formatNumber(queueData.current_depth) : '0',
-              },
-              {
-                label: t('analytics.averageWait') || 'Average wait',
-                value:
-                  queueData && queueData.avg_wait_seconds !== null
-                    ? `${queueData.avg_wait_seconds}s`
-                    : '—',
-              },
-              {
-                label: t('analytics.resolved') || 'Resolved',
-                value: queueData ? formatNumber(queueData.resolved_count) : '0',
-              },
-              {
-                label: t('analytics.leftQueue') || 'Left queue',
-                value: queueData ? formatNumber(queueData.abandoned_count) : '0',
-              },
-            ]}
-          />
-        </CardBody>
+        {/* A failed read is an error, not four zeros. `queueQuery.data` is
+            undefined on a 500 and the tiles fell back to the string "0", so an
+            outage rendered "Waiting now 0 · Resolved 0 · Left queue 0" under a
+            header promising the live queue depth. */}
+        {queueQuery.isError ? (
+          <CardBody>
+            <ErrorState
+              size="panel"
+              // One of several panels that can fail together on this page, so it
+              // announces politely rather than interrupting the reader per card.
+              polite
+              description={errorMessage(
+                queueQuery.error,
+                t('analytics.analyticsLoadFailedRetry')
+                  || 'We couldn’t load your analytics. Please try again.',
+              )}
+              onRetry={() => void queueQuery.refetch()}
+            />
+          </CardBody>
+        ) : (
+          <CardBody flush>
+            <StatRow
+              label={t('analytics.liveChatQueue') || 'Live chat queue'}
+              period={queuePeriod}
+              columns={4}
+              loading={queueQuery.isLoading}
+              items={[
+                {
+                  label: t('analytics.waitingNow') || 'Waiting now',
+                  value: formatNumber(queueData?.current_depth ?? null),
+                  // Live, whatever `days` was asked for: `current_depth` counts
+                  // sessions still waiting within the last hour. Wearing the
+                  // card's window made the one figure on the strip that is not
+                  // historical the one figure claiming to be. "Right now" is the
+                  // same words Home's live tiles use, so it is the same entry.
+                  period: t('home.rightNow') || 'Right now',
+                },
+                {
+                  label: t('analytics.averageWait') || 'Average wait',
+                  value:
+                    queueData && queueData.avg_wait_seconds !== null
+                      ? `${queueData.avg_wait_seconds}s`
+                      : undefined,
+                },
+                {
+                  label: t('analytics.resolved') || 'Resolved',
+                  value: formatNumber(queueData?.resolved_count ?? null),
+                },
+                {
+                  label: t('analytics.leftQueue') || 'Left queue',
+                  value: formatNumber(queueData?.abandoned_count ?? null),
+                },
+              ]}
+            />
+          </CardBody>
+        )}
       </Card>
 
       {/* Peers: "what they asked" and "what we could not answer" are the same

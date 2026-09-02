@@ -98,6 +98,23 @@ export function BillingPage() {
   const balance = billing.credits.data ?? null;
   const pool = balance ? resolveScopedPool(balance, botId) : null;
 
+  /**
+   * How many operator seats are filled ON THE THING THIS PAGE IS BILLING.
+   *
+   * `entitlements.usage.operators` is an ACCOUNT-WIDE count, and everything
+   * beside it here - the plan, its ceiling, the subscription - belongs to one
+   * chatbot. Mixing them put a workspace's five operators against a chatbot's
+   * two-seat plan, and then blocked a reduction from 2 seats to 1 that the
+   * server would have accepted, because the seat dialog treated that number as
+   * a floor. `resolveScopedPool` falls back to the account pool for a chatbot
+   * with no ledger of its own, so the per-chatbot count is only real when the
+   * pool that came back IS this chatbot's.
+   */
+  const scopedPool = botId !== null && pool?.botId === botId ? pool : null;
+  const seatsFilled = scopedPool?.limitUsage?.operators ?? entitlements.usage?.operators ?? 0;
+  const seatsFilledScope: 'chatbot' | 'workspace' =
+    scopedPool?.limitUsage ? 'chatbot' : 'workspace';
+
   const scopeOptions = useMemo(() => {
     const perAgent = balance?.botCredits ?? [];
     return [
@@ -249,7 +266,8 @@ export function BillingPage() {
                 // the card read "Funding Free & legacy chatbots", which names
                 // no chatbot at all.
                 scopedBotName={bots.find((b) => b.id === botId)?.name ?? null}
-                seatsUsed={entitlements.usage?.operators ?? 0}
+                seatsUsed={seatsFilled}
+                seatsUsedScope={seatsFilledScope}
                 grossSeatPriceMinor={core?.grossExtraSeatPriceMinor ?? null}
                 onChangePlan={() => setPicking(true)}
                 onManageSeats={() => setManagingSeats(true)}
@@ -502,7 +520,8 @@ export function BillingPage() {
             onOpenChange={setManagingSeats}
             plan={plan}
             currentSeats={subscription.seats}
-            seatsUsed={entitlements.usage?.operators ?? 0}
+            seatsUsed={seatsFilled}
+            seatsUsedScope={seatsFilledScope}
             grossSeatPriceMinor={core?.grossExtraSeatPriceMinor ?? null}
             taxRateBps={core?.taxRateBps ?? null}
             onUpgrade={() => setPicking(true)}

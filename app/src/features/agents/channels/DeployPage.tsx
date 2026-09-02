@@ -326,8 +326,13 @@ export function DeployPage() {
 
   // A broken install opens on the checklist; everyone else opens on the steps
   // for their own stack. The reader's own choice always wins once they make one.
+  // `stale` counts as broken: a widget that has not loaded in a week has the
+  // same causes and the same checklist as one that never loaded at all.
   const activeHelpTab: HelpTab =
-    helpTab ?? (deploy.status.state === 'not-detected' ? 'troubleshoot' : 'platform');
+    helpTab ??
+    (deploy.status.state === 'not-detected' || deploy.status.state === 'stale'
+      ? 'troubleshoot'
+      : 'platform');
 
   return (
     <Page>

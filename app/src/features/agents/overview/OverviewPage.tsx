@@ -1,6 +1,7 @@
-import { useCallback } from 'react';
+import { useCallback, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
+  ABSENT,
   Alert,
   Badge,
   Button,
@@ -102,6 +103,20 @@ function SectionError({ section, title }: { section: DataSection<unknown>; title
   );
 }
 
+/**
+ * A figure out of a section that may not have one.
+ *
+ * `useOverviewData` falls back to `EMPTY_FIGURES` whenever its dashboard query
+ * holds no data, so a request still in flight and a 500 both arrive here as a
+ * complete set of zeros, indistinguishable from a chatbot nobody has shared or
+ * chatted to. Only the section's own state separates the three, and every
+ * caller of `figures.data` has to consult it.
+ */
+function sectionFigure(section: DataSection<unknown>, formatted: string | null): ReactNode {
+  if (section.loading) return <Skeleton className="h-4 w-12" />;
+  return formatted === null ? undefined : <span className="figure">{formatted}</span>;
+}
+
 function OverviewContent({ agent }: { agent: Bot }) {
   const { t } = useTranslation();
   const [params, setParams] = useSearchParams();
@@ -174,10 +189,20 @@ function OverviewContent({ agent }: { agent: Bot }) {
           aside={
             // "Right now" belongs beside the verdict, not inside a card stamped
             // with a 30-day window.
-            <span className="text-xs text-text-secondary">
-              <span className="figure font-medium text-text-primary">
-                {formatNumber(figures.data.activeVisitors)}
-              </span>{' '}
+            //
+            // The count is guarded, because `figures.data` is a zeroed stand-in
+            // until the query answers: this line read "0 chatting right now" on
+            // every first paint and stayed there through an outage, which is the
+            // most reassuring thing a broken chatbot can say. The failure itself
+            // is explained once, by the strip's own alert below.
+            <span className="flex items-center gap-1.5 text-xs text-text-secondary">
+              {figures.loading ? (
+                <Skeleton className="h-4 w-8" />
+              ) : (
+                <span className="figure font-medium text-text-primary">
+                  {figures.error ? ABSENT : formatNumber(figures.data.activeVisitors)}
+                </span>
+              )}
               {t('agents.chattingRightNow') || 'chatting right now'}
             </span>
           }
@@ -349,31 +374,55 @@ function OverviewContent({ agent }: { agent: Bot }) {
           </Card>
 
           <Card className="flex flex-col">
-            <CardHeader size="sm" title={t('agents.demoShares') || 'Demo shares'} titleAs="h2" />
+            {/* These three are windowed by the range control exactly as the
+                strip above is: switching 30 days to 7 turns "Links shared 8"
+                into "2". The window went unstated because `CardHeader size="sm"`
+                ignores an eyebrow by design (a widget card's whole header is
+                40px), so it is stated on the header's description line instead
+               , the only figures on this row that move with the control. */}
+            <CardHeader
+              size="sm"
+              title={t('agents.demoShares') || 'Demo shares'}
+              titleAs="h2"
+              description={rangeLabel(days)}
+            />
             <CardBody>
-              <PropertyGrid
-                items={[
-                  {
-                    label: t('agents.linksShared') || 'Links shared',
-                    value: (
-                      <span className="figure">{formatNumber(figures.data.demoShares)}</span>
-                    ),
-                  },
-                  {
-                    label: t('agents.demosOpened') || 'Demos opened',
-                    value: <span className="figure">{formatNumber(figures.data.demoOpens)}</span>,
-                  },
-                  {
-                    label: t('agents.openRate') || 'Open rate',
-                    value:
-                      figures.data.demoOpenRate === null ? undefined : (
-                        <span className="figure">
-                          {formatPercent(figures.data.demoOpenRate / 100)}
-                        </span>
+              {/* A dead dashboard call left all three of these reading zero, on
+                  a card whose whole subject is whether anyone is sharing this
+                  chatbot. The strip's alert above explains the same failure for
+                  the same query; this card owns its own retry because it is a
+                  screen away from it in a three-up row. */}
+              {figures.error ? (
+                <ErrorState
+                  size="panel"
+                  polite
+                  description={figures.error}
+                  onRetry={figures.retry}
+                />
+              ) : (
+                <PropertyGrid
+                  items={[
+                    {
+                      label: t('agents.linksShared') || 'Links shared',
+                      value: sectionFigure(figures, formatNumber(figures.data.demoShares)),
+                    },
+                    {
+                      label: t('agents.demosOpened') || 'Demos opened',
+                      value: sectionFigure(figures, formatNumber(figures.data.demoOpens)),
+                    },
+                    {
+                      label: t('agents.openRate') || 'Open rate',
+                      value: sectionFigure(
+                        figures,
+                        // A rate over no shares is absent, not zero.
+                        figures.data.demoOpenRate === null
+                          ? null
+                          : formatPercent(figures.data.demoOpenRate / 100),
                       ),
-                  },
-                ]}
-              />
+                    },
+                  ]}
+                />
+              )}
             </CardBody>
           </Card>
         </Grid>

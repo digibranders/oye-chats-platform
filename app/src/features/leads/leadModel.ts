@@ -337,6 +337,11 @@ export interface LeadDimension {
   /** "Budget", "Economic buyer" — a real word, never an initial. */
   label: string;
   score: number;
+  /**
+   * This dimension's real ceiling, or `null` when the payload does not state
+   * one, which is every payload the API sends today. See {@link dimensionMax}.
+   */
+  max: number | null;
   /** What the visitor actually said, when the extractor captured something. */
   value: string | null;
   captured: boolean;
@@ -356,24 +361,37 @@ export function orderedDimensions(lead: Pick<Lead, 'bant'>): LeadDimension[] {
       key,
       label: humanizeDimension(key),
       score: dimension?.score ?? 0,
+      max: dimensionMax(dimension),
       value: dimension?.value ?? null,
       captured: (dimension?.score ?? 0) > 0,
     }));
 }
 
 /**
- * The denominator shown beside a dimension's score.
+ * The per-dimension ceiling, IF the payload carries one.
  *
- * The composite score is 100 shared equally across the framework's dimensions,
- * so the ceiling is `100 / count` — 25 for BANT, 20 for a five-dimension
- * framework like MEDDIC. It is deliberately NOT floored to the highest observed
- * score: doing that made the denominator a property of the lead rather than of
- * the bot, so two leads on the same chatbot were shown "18 / 25" and "30 / 30"
- * and neither number meant anything. An unevenly-weighted dimension that
- * exceeds the ceiling is clamped in the bar and reported honestly in the text.
+ * There used to be an arithmetic stand-in here: `round(100 / dimensionCount)`,
+ * on the reasoning that the composite score is 100 shared equally across the
+ * framework's dimensions. It is not shared equally, and the frameworks say so.
+ * MEDDIC has six dimensions weighted 17 apiece and a top option worth **21**,
+ * so the stand-in produced "21/17" beside a bar clamped at full, and the
+ * second-from-top option (17) painted as maxed out at 81% of the real ceiling.
+ * The denominator was wrong in the one direction that flatters a lead.
+ *
+ * `GET /leads` and `GET /leads/{id}` serialise `bant` as `{value, score}` per
+ * dimension and carry no framework config, no weight and no option table (see
+ * `build_lead_response` in `api/app/services/lead_service.py`), so there is
+ * nothing truthful to divide by. This reads a `max` off the dimension when a
+ * future payload starts sending one, and returns `null` otherwise, and `null`
+ * means the screen renders no denominator and no fraction-of-ceiling bar,
+ * rather than inventing a ceiling the backend never agreed to.
  */
-export function dimensionMax(dimensionCount: number): number {
-  return Math.max(1, Math.round(100 / Math.max(dimensionCount, 1)));
+// `unknown` in, deliberately: `max` is a field the wire contract does not yet
+// declare, so `LeadDimensionScore` has no property to read and a narrower
+// parameter type would only be a cast written at every call site instead.
+export function dimensionMax(dimension: unknown): number | null {
+  const raw = isRecord(dimension) ? dimension.max : undefined;
+  return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : null;
 }
 
 // ── Identity and contact ─────────────────────────────────────────────────────

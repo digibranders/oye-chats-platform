@@ -16,7 +16,7 @@
  */
 import { attributionAnchorHtml } from '../../../data/widgetEmbed';
 import { widgetScriptUrl, type PlatformEnv } from '../../../data/platformIntegrations';
-import type { Tone } from '../../../ui';
+import { formatDateTime, type Tone } from '../../../ui';
 import { t as translateNow } from '../../../i18n/i18n';
 
 /** Mirrors `_MAX_ALLOWED_DOMAINS` in `api/app/api/bot_routes.py`. */
@@ -30,14 +30,16 @@ export const VERIFY_POLL_MS = 5_000;
 /* ------------------------------------------------------------------ install */
 
 /**
- * The four ways this page can answer its one question.
+ * The five ways this page can answer its one question.
  *
  * `waiting` is deliberately **not** an error. A chatbot created two minutes ago
  * is not broken because nobody has pasted a script tag yet, and painting that
  * amber teaches people to ignore the colour. It only becomes a problem once the
  * customer has told us they installed it and we still cannot see it.
+ *
+ * `stale` is the other end of the same honesty rule. See {@link STALE_AFTER_MS}.
  */
-export type InstallState = 'installed' | 'checking' | 'not-detected' | 'waiting';
+export type InstallState = 'installed' | 'stale' | 'checking' | 'not-detected' | 'waiting';
 
 export interface InstallStatus {
   state: InstallState;
@@ -47,17 +49,57 @@ export interface InstallStatus {
   detail: string;
 }
 
+/**
+ * How quiet the heartbeat has to go before the green light is a lie.
+ *
+ * The stamp behind it (`widget_last_seen_at`) is written at most twice per bot
+ * per hour, so a live site on a slow week still reports within a day or two.
+ * Seven days is well past any plausible write cadence and short enough that a
+ * customer who removed the snippet hears about it in the same sprint.
+ */
+export const STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
+
 export interface InstallStatusInput {
   /** `Bot.widget_installed_at` — a first-seen stamp, or null. */
   installedAt: string | null | undefined;
+  /**
+   * `Bot.widget_last_seen_at`, the liveness stamp, refreshed as the widget
+   * boots. Optional: a chatbot installed before the heartbeat shipped has none,
+   * and that absence is NOT evidence of an outage. See {@link widgetHeartbeat}.
+   */
+  lastSeenAt?: string | null | undefined;
   /** The customer has pressed "I've added it". */
   claimed: boolean;
   /** A verification poll is running right now. */
   checking: boolean;
+  /** Injectable clock, so the staleness boundary is testable. */
+  now?: number;
 }
 
-export function installStatus({ installedAt, claimed, checking }: InstallStatusInput): InstallStatus {
+export function installStatus({
+  installedAt,
+  lastSeenAt,
+  claimed,
+  checking,
+  now = Date.now(),
+}: InstallStatusInput): InstallStatus {
   if (installedAt) {
+    // `installedAt` is stamped once and never refreshed, so on its own it only
+    // proves the widget loaded at least once, at some point. Reading it as
+    // "live" put a green "we have seen this load on a real page of your site"
+    // directly above a "Last seen: 7 months ago", for a customer who had
+    // removed the snippet. Where a heartbeat exists it is the newer fact and it
+    // wins; where it does not, the original reading stands, because no
+    // heartbeat is not the same as a silent one.
+    const seen = lastSeenAt ? Date.parse(lastSeenAt) : NaN;
+    if (Number.isFinite(seen) && now - seen > STALE_AFTER_MS) {
+      return {
+        state: 'stale',
+        label: 'Not seen recently',
+        tone: 'warning',
+        detail: `We last saw this chatbot load on ${formatDateTime(lastSeenAt as string)}. If it should be live, check the snippet is still on your site.`,
+      };
+    }
     return {
       state: 'installed',
       label: translateNow('agents.liveOnYourWebsite') || 'Live on your website',

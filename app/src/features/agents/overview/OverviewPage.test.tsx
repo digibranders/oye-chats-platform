@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -48,6 +48,27 @@ function overviewData(overrides: Partial<OverviewData> = {}): OverviewData {
     refreshAll: vi.fn(),
     ...overrides,
   };
+}
+
+/**
+ * The dashboard read, failed.
+ *
+ * Its data is the zeroed stand-in `useOverviewData` substitutes whenever the
+ * query holds nothing, which is exactly what made a 500 render as a quiet
+ * chatbot: every figure on this page comes off that object.
+ */
+function failedFigures(retry: () => void = vi.fn()): Section<OverviewData['figures']['data']> {
+  return section(
+    {
+      conversations: 0,
+      messages: 0,
+      activeVisitors: 0,
+      demoShares: 0,
+      demoOpens: 0,
+      demoOpenRate: null,
+    },
+    { error: 'The analytics service is unavailable.', retry },
+  );
 }
 
 function mountAgent(agent: Bot | null, rest: Partial<ReturnType<typeof useAgent>> = {}) {
@@ -191,26 +212,59 @@ describe('OverviewPage', () => {
     const user = userEvent.setup();
     const retry = vi.fn();
     mountAgent(trained);
-    vi.mocked(useOverviewData).mockReturnValue(
-      overviewData({
-        figures: section(
-          {
-            conversations: 0,
-            messages: 0,
-            activeVisitors: 0,
-            demoShares: 0,
-            demoOpens: 0,
-            demoOpenRate: null,
-          },
-          { error: 'The analytics service is unavailable.', retry },
-        ),
-      }),
-    );
+    vi.mocked(useOverviewData).mockReturnValue(overviewData({ figures: failedFigures(retry) }));
     renderPage();
 
     expect(screen.getByText('We could not load these figures')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    // Two cards read this one query, so both offer the way back. The strip's is
+    // first in the document.
+    await user.click(screen.getAllByRole('button', { name: 'Try again' })[0] as HTMLElement);
     expect(retry).toHaveBeenCalled();
+  });
+
+  /**
+   * `figures.data` is `EMPTY_FIGURES` whenever the query holds no data, so a
+   * pending request and a 500 both arrive as a complete set of zeros. Nothing
+   * on the page separated those from a chatbot nobody has shared or chatted to.
+   */
+  it('does not claim nobody is chatting when the live count failed', () => {
+    mountAgent(trained);
+    vi.mocked(useOverviewData).mockReturnValue(overviewData({ figures: failedFigures() }));
+    renderPage();
+
+    const live = screen.getByText(/chatting right now/);
+    expect(live).toHaveTextContent('—');
+    expect(live).not.toHaveTextContent('0 chatting right now');
+  });
+
+  it('does not report zero demo shares when the figures failed', async () => {
+    const user = userEvent.setup();
+    const retry = vi.fn();
+    mountAgent(trained);
+    vi.mocked(useOverviewData).mockReturnValue(overviewData({ figures: failedFigures(retry) }));
+    renderPage();
+
+    // The whole card is the failure, so there is no "0 links shared" to read as
+    // "nobody has shared this".
+    expect(screen.queryByText('Links shared')).toBeNull();
+    const buttons = screen.getAllByRole('button', { name: 'Try again' });
+    expect(buttons).toHaveLength(2);
+    await user.click(buttons[1] as HTMLElement);
+    expect(retry).toHaveBeenCalled();
+  });
+
+  /**
+   * The card is windowed by `?days=` exactly as the strip is: 30 to 7 turns
+   * "Links shared 8" into "2". It said so nowhere, and `CardHeader size="sm"`
+   * ignores an eyebrow by design, so the window is on its description line.
+   */
+  it('states the window the demo-share figures cover', () => {
+    mountAgent(trained);
+    renderPage('/chatbots/17/overview?days=7');
+
+    const heading = screen.getByRole('heading', { name: 'Demo shares' });
+    const card = heading.closest('[data-card]') as HTMLElement;
+    expect(within(card).getByText('Last 7 days')).toBeInTheDocument();
   });
 
   /** Refreshing has to reload the chatbot record, not only the metrics. */

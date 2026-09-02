@@ -210,7 +210,7 @@ describe('LeadsPage', () => {
     ]);
   });
 
-  it('confirms before clearing every unread mark', async () => {
+  it('confirms before clearing every unread mark, without quoting a windowed count', async () => {
     const user = userEvent.setup();
     renderPage();
 
@@ -220,10 +220,36 @@ describe('LeadsPage', () => {
     await user.click(await screen.findByRole('menuitem', { name: /mark all read/i }));
 
     const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveTextContent(/every unread lead for this chatbot/i);
     expect(dialog).toHaveTextContent(/every page/i);
+    // `stats.unread` is the count inside the date filter and the endpoint takes
+    // only `bot_id`, so the windowed figure is not the number affected and must
+    // not be presented as one.
+    expect(dialog).toHaveTextContent(/date filter above does not narrow it/i);
+    expect(dialog.textContent).not.toMatch(/\b4\b/);
     expect(api.markAllLeadsViewed).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole('button', { name: /^mark all read$/i }));
+    await waitFor(() => expect(api.markAllLeadsViewed).toHaveBeenCalledWith(1));
+  });
+
+  it('offers the command even when the current date window is clean', async () => {
+    // The inversion: "Last 7 days" reporting zero unread greyed the command out
+    // while every all-time unread lead stayed unread, and nothing on screen said
+    // why the menu item was dead.
+    api.getLeadStats.mockResolvedValue({ total: 128, unread: 0, avg_score: 43 });
+    const user = userEvent.setup();
+    renderPage('/leads?range=7d');
+
+    // The stats behind the greyed-out state really were windowed.
+    await waitFor(() => expect(api.getLeadStats).toHaveBeenCalledWith(1, 7, undefined, undefined));
+
+    await user.click(await screen.findByRole('button', { name: /lead actions/i }));
+    const item = await screen.findByRole('menuitem', { name: /mark all read/i });
+    expect(item).not.toHaveAttribute('aria-disabled', 'true');
+
+    await user.click(item);
+    await user.click(await screen.findByRole('button', { name: /^mark all read$/i }));
     await waitFor(() => expect(api.markAllLeadsViewed).toHaveBeenCalledWith(1));
   });
 

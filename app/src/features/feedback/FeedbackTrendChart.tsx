@@ -45,10 +45,24 @@ function TrendTooltip({ active, payload }: TooltipProps<number, string>) {
 }
 
 export interface FeedbackTrendChartProps {
+  /**
+   * The days actually plotted.
+   *
+   * `buildTrend` keeps only days that carry a rating and caps the result at the
+   * most recent fortnight, so this is very often a subset of `rangeLabel`'s
+   * window and never a day more than fourteen.
+   */
   points: readonly FeedbackTrendPoint[];
-  /** "Last 30 days". Names the window in the summary sentence. */
+  /** "Last 30 days". Names the window the ratings were drawn from. */
   rangeLabel: string;
-  /** Helpful share across the whole window, 0-100. */
+  /**
+   * Helpful share across the whole window, 0-100.
+   *
+   * Over `rangeLabel`, NOT over `points`: it counts every rating in the window,
+   * including the ones on days the cap left off the axis. That is why the dashed
+   * line it draws can sit above or below every point on the chart, and why
+   * neither the summary nor the legend calls it the average of what is plotted.
+   */
   overallRate: number;
   loading?: boolean;
 }
@@ -85,7 +99,28 @@ export function FeedbackTrendChart({
       : '';
   const trough =
     worst && points.length > 1 ? ` The lowest day was ${worst.date}, at ${worst.rate}%.` : '';
-  const summary = `The share of answers rated helpful, by day, over ${rangeLabel.toLowerCase()}: ${overallRate}% across the whole window.${movement}${trough} The dashed line marks the window's average of ${overallRate}%.`;
+  /**
+   * What is on the axis, said exactly.
+   *
+   * It used to say "by day, over last 90 days", which the chart cannot do:
+   * `buildTrend` plots only days that carry a rating and stops at the most
+   * recent fourteen of those, so a 90-day window routinely draws a fortnight.
+   * The dashed line was called "the window's average", which is a second
+   * claim the picture does not support, it is the rate over every rating in
+   * the window, so on a workspace whose last fortnight went badly it sits
+   * above every point drawn, and a reader was left to conclude the chart was
+   * broken.
+   */
+  const plotted =
+    points.length === 1
+      ? 'on the one day in it that carries a rating'
+      : `on the ${points.length} most recent days in it that carry a rating, fourteen at most`;
+  const summary =
+    `The share of answers rated helpful, drawn from ${rangeLabel.toLowerCase()}, ${plotted}.`
+    + `${movement}${trough}`
+    + ` The dashed line is the ${overallRate}% helpful share over the whole window,`
+    + ' counted across every rating in it rather than across the days plotted,'
+    + ' so it can sit outside them.';
 
   return (
     <ChartFrame
@@ -103,9 +138,14 @@ export function FeedbackTrendChart({
           <ChartLegend items={[{ label: 'Helpful share', seriesIndex: RATE_SERIES }]} />
           {/* The dashed line, named in words. `ChartLegend`'s marker is a
               filled dot on a series colour, which cannot stand for a grey
-              dashed rule — flagged for the system rather than faked here. */}
+              dashed rule, flagged for the system rather than faked here.
+
+              "Over the window", not "the average": it is the share across every
+              rating in the range, and the plotted days are a capped subset of
+              those, so calling it the average of the line was a claim the chart
+              contradicts whenever the two differ. */}
           <p className="text-xs text-text-secondary">
-            Dashed: average over the window,{' '}
+            Dashed: helpful share over {rangeLabel.toLowerCase()},{' '}
             <span className="figure font-medium text-text-primary">{overallRate}%</span>
           </p>
         </div>

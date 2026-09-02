@@ -2,7 +2,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { allowanceOf } from '../knowledge-model';
 import { WebsiteFlow } from './WebsiteFlow';
 
 const state = vi.hoisted(() => ({
@@ -14,8 +13,10 @@ const state = vi.hoisted(() => ({
     result: null as unknown,
     error: null as string | null,
     currentUrl: null,
-    discoveredTotal: null,
-    maxPages: null,
+    // The two progress denominators, in the order the UI prefers them: the page
+    // set the crawl was actually handed, then the plan's own ceiling.
+    discoveredTotal: null as number | null,
+    maxPages: null as number | null,
     cancelInFlight: false,
   },
 }));
@@ -49,7 +50,8 @@ function renderFlow() {
           agentName="Test Bot"
           agentWebsite={null}
           sources={[]}
-          pageAllowance={allowanceOf(0, 100)}
+          pagesTrainedHere={0}
+          pageLimit={100}
           planName="Starter"
           planLoading={false}
           onChanged={() => {}}
@@ -81,7 +83,46 @@ describe('WebsiteFlow — crawl cap', () => {
   });
 });
 
-describe('WebsiteFlow — what a finished crawl claims', () => {
+describe('WebsiteFlow: progress while a crawl runs', () => {
+  /**
+   * `crawl.maxPages` is the server's `effective_max_pages`, which on an
+   * unlimited plan is `balance / cost_per_page`. Re-training a 47-page site
+   * reported "3 of 9,800 pages" against it, with the bar pinned near 0%,
+   * because the re-train path never sent the `discoveredTotal` the fresh-crawl
+   * path has always sent.
+   */
+  it('counts against the pages it was actually given, not the credit ceiling', () => {
+    state.crawl = {
+      ...state.crawl,
+      status: 'running',
+      botId: 1,
+      pagesCrawled: 3,
+      discoveredTotal: 47,
+      maxPages: 9800,
+    };
+    renderFlow();
+
+    expect(screen.getByText('3 of 47 pages')).toBeInTheDocument();
+    expect(screen.queryByText(/9,800/)).not.toBeInTheDocument();
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '6');
+  });
+
+  it('falls back to the plan ceiling only when no page set was sent', () => {
+    state.crawl = {
+      ...state.crawl,
+      status: 'running',
+      botId: 1,
+      pagesCrawled: 3,
+      discoveredTotal: null,
+      maxPages: 9800,
+    };
+    renderFlow();
+
+    expect(screen.getByText('3 of 9,800 pages')).toBeInTheDocument();
+  });
+});
+
+describe('WebsiteFlow: what a finished crawl claims', () => {
   it('does not claim 400 pages were read when 25 were indexed', () => {
     // The binding cap is characters, not pages (Starter: 50,000), so a
     // 400-page crawl stops around page 25 and the run still ends `done`.

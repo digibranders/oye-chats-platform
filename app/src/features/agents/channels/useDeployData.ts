@@ -307,7 +307,14 @@ export function useDeployData(): DeployData {
     [domainsQuery.data],
   );
 
-  const status = installStatus({ installedAt, claimed, checking });
+  // `lastSeenAt` is what turns a first-seen stamp into a liveness reading. Without
+  // it the card reports "live" for a chatbot whose snippet came off months ago.
+  const status = installStatus({
+    installedAt,
+    lastSeenAt: bot?.widget_last_seen_at ?? null,
+    claimed,
+    checking,
+  });
 
   return {
     agentId,

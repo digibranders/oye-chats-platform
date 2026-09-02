@@ -121,6 +121,12 @@ export function useHeadlineTotals(botId: number | null, range: ResolvedRange) {
  * The zone goes with it. Buckets are cut server-side and read back here as
  * local dates, so a request that names no zone attributes an IST visitor's
  * first five and a half hours to the previous day.
+ *
+ * **`series` is `[]` on failure, and an empty series sums to zero.** Every
+ * figure a caller cuts from it, total, daily average, peak, is therefore an
+ * honest-looking zero after a 500, which is indistinguishable from a quiet
+ * week. A caller that renders those figures must check `error` first and draw
+ * the tile as unknown; both tabs on this surface do.
  */
 export function useMessageSeries(botId: number | null, fetchDays: number | null) {
   const ready = useScopeReady(botId);
@@ -169,6 +175,14 @@ export function useUnansweredQuestions(botId: number | null, days: number | null
   });
   return {
     questions: query.data ?? [],
+    /**
+     * The page came back full, so the count is a floor rather than a total.
+     *
+     * `questions.length` is a page size, not a measurement: a workspace with
+     * four hundred distinct gaps reports exactly `UNANSWERED_LIMIT`, every day,
+     * for ever. Anything phrasing that number as a fact has to say "at least".
+     */
+    truncated: (query.data?.length ?? 0) >= UNANSWERED_LIMIT,
     loading: query.isPending,
     error: query.error,
     refetch: query.refetch,

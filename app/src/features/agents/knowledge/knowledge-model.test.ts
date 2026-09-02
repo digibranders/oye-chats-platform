@@ -18,8 +18,10 @@ import {
   normalizeSiteUrl,
   orderedUrlsForRecrawl,
   parseGapWindow,
+  planCeiling,
   recrawlBlockedReason,
   recrawlCost,
+  recrawlStartPlan,
   rootDomainOf,
   sourceState,
   sourceUnits,
@@ -143,24 +145,40 @@ describe('sources', () => {
 describe('plan allowances', () => {
   it('treats the -1 sentinel as unlimited, never as a real ceiling', () => {
     const allowance = allowanceOf(4200, -1);
-    expect(allowance.unlimited).toBe(true);
-    expect(allowance.remaining).toBe(Infinity);
+    expect(allowance?.unlimited).toBe(true);
+    expect(allowance?.remaining).toBe(Infinity);
     // Nothing fills on an unlimited plan, so no bar can ever read "full".
-    expect(allowance.fraction).toBe(0);
-    expect(allowance.atLimit).toBe(false);
+    expect(allowance?.fraction).toBe(0);
+    expect(allowance?.atLimit).toBe(false);
   });
 
   it('escalates at four fifths and again at the ceiling', () => {
-    expect(allowanceOf(79, 100).nearLimit).toBe(false);
-    expect(allowanceOf(80, 100).nearLimit).toBe(true);
-    expect(allowanceOf(80, 100).atLimit).toBe(false);
-    expect(allowanceOf(100, 100).atLimit).toBe(true);
-    expect(allowanceOf(140, 100).remaining).toBe(0);
+    expect(allowanceOf(79, 100)?.nearLimit).toBe(false);
+    expect(allowanceOf(80, 100)?.nearLimit).toBe(true);
+    expect(allowanceOf(80, 100)?.atLimit).toBe(false);
+    expect(allowanceOf(100, 100)?.atLimit).toBe(true);
+    expect(allowanceOf(140, 100)?.remaining).toBe(0);
   });
 
-  it('treats a zero limit as nothing allowed, matching the server default', () => {
-    expect(allowanceOf(0, 0).atLimit).toBe(true);
-    expect(allowanceOf(0, 0).fraction).toBe(1);
+  /**
+   * The expensive direction of the old behaviour. `limitFor` returns 0 for a
+   * plan row that simply has no such key, and a zero ceiling used to produce
+   * `fraction: 1` and `atLimit: true`, which read as "you have spent an
+   * allowance you never had" and locked the flow that adds knowledge.
+   */
+  it('reports an absent or zero ceiling as unknown, never as spent', () => {
+    expect(allowanceOf(0, 0)).toBeNull();
+    expect(allowanceOf(12, 0)).toBeNull();
+    expect(allowanceOf(12, undefined)).toBeNull();
+    expect(allowanceOf(12, null)).toBeNull();
+    expect(allowanceOf(12, Number.NaN)).toBeNull();
+  });
+
+  it('keeps unknown and unlimited apart, because they read differently', () => {
+    expect(planCeiling(undefined)).toBeNull();
+    expect(planCeiling(0)).toBeNull();
+    expect(planCeiling(-1)).toBe(-1);
+    expect(planCeiling(500)).toBe(500);
   });
 
   it('reads a character count as words for a figure a person can judge', () => {
@@ -236,6 +254,46 @@ describe('re-crawl', () => {
         diff({ unchanged: 0, newPages: 0, unchangedUrls: [], newUrls: [] }),
       ),
     ).toBeNull();
+  });
+});
+
+describe('starting a re-train', () => {
+  const target = {
+    crawlUrl: 'https://acme.com',
+    replaceSource: 'acme.com',
+    mode: 'full' as const,
+  };
+
+  /**
+   * The progress denominator. Without it the bar falls back to the plan's
+   * `effective_max_pages`, which on an unlimited plan is `balance / cost`, so a
+   * 47-page site reported "3 of 9,800" and never visibly moved.
+   */
+  it('sizes the progress bar by the pages it is actually sending', () => {
+    const plan = recrawlStartPlan(target, diff());
+    expect(plan.orderedUrls).toHaveLength(10);
+    expect(plan.discoveredTotal).toBe(10);
+  });
+
+  it('claims no denominator when the crawler will enumerate the site itself', () => {
+    // A capped preview sends no URL list, so its size is not ours to state.
+    expect(recrawlStartPlan(target, diff({ capped: true })).discoveredTotal).toBeNull();
+    expect(recrawlStartPlan(target, null).discoveredTotal).toBeNull();
+    expect(recrawlStartPlan(target, null).orderedUrls).toBeNull();
+  });
+
+  it('carries the target through when there is no preview to derive it from', () => {
+    const plan = recrawlStartPlan({ ...target, mode: 'delta' }, null);
+    expect(plan.crawlUrl).toBe('https://acme.com');
+    expect(plan.replaceSource).toBe('acme.com');
+    expect(plan.mode).toBe('delta');
+    // Nothing is known about what changed, so nothing is asserted about it.
+    expect(plan.expectedNewPages).toBeNull();
+  });
+
+  it('passes the expected change count on a previewed delta run only', () => {
+    expect(recrawlStartPlan(target, diff({ mode: 'delta' })).expectedNewPages).toBe(4);
+    expect(recrawlStartPlan(target, diff()).expectedNewPages).toBeNull();
   });
 });
 

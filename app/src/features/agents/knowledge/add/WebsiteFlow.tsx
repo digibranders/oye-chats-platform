@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { Globe, Search, Square } from 'lucide-react';
 import {
   Alert,
@@ -11,18 +10,15 @@ import {
   FigureList,
   FigureRow,
   Input,
-  LockedState,
-  Meter,
   Switch,
   Well,
-  buttonClass,
   formatNumber,
 } from '../../../../ui';
 import type { KnowledgeSource } from '../../../../types/domain';
 import { useEntitlements } from '../../../../hooks/useEntitlements';
 import { CrawlPageTree } from '../CrawlPageTree';
 import { IngestionProgress } from '../IngestionProgress';
-import { crawlCoverageOf, crawlDoneMessage, type Allowance } from '../knowledge-model';
+import { crawlCoverageOf, crawlDoneMessage } from '../knowledge-model';
 import { useCrawlDiscovery } from './useCrawlDiscovery';
 import { useTranslation } from '../../../../i18n/useTranslation';
 
@@ -32,14 +28,27 @@ export interface WebsiteFlowProps {
   /** The chatbot's own stored website, captured when it was created. */
   agentWebsite: string | null;
   sources: readonly KnowledgeSource[];
-  /** Plan allowance for crawled pages. */
-  pageAllowance: Allowance;
+  /** Website pages THIS chatbot has stored, all time. Never the workspace's. */
+  pagesTrainedHere: number;
+  /**
+   * The plan's website-page ceiling: `-1` unlimited, `null` when the plan
+   * payload states none.
+   *
+   * Not paired with `pagesTrainedHere` in a meter, and not a gate. The server
+   * populates no `page_scraping` usage counter, so the only numerator that
+   * exists is this chatbot's own stored pages while the ceiling is the
+   * account's, over a billing period. A bar built from the two read "500 of
+   * 500" on a workspace that had spent nothing, and the lock beneath it left
+   * that customer unable to train their chatbot at all. The real ceiling is
+   * enforced server-side and reported by the `limit` crawl outcome below, in
+   * the server's own words, because only it knows which limit was reached.
+   */
+  pageLimit: number | null;
   planName: string;
   /**
    * True while entitlements are still resolving. The provider's placeholder is
-   * a Free plan, so a Standard workspace with five hundred trained pages reads
-   * as over its limit for the first frames. Nothing locks until the real plan
-   * has arrived.
+   * a Free plan, so a Standard workspace would be quoted a Free plan's ceiling
+   * for the first frames. Nothing about the plan is stated until it arrives.
    */
   planLoading: boolean;
   /** Called after anything lands, so the page can refetch its sources. */
@@ -54,19 +63,21 @@ export interface WebsiteFlowProps {
  * fields of `useCrawl()` handed down one at a time by a parent that had already
  * imported the same context.
  *
- * **The allowance is a `Meter`, not an `Alert`.** It used to be a permanent
- * brass `Alert` — the tone the system reserves for "this is a paid thing" —
- * carrying three interpolated figures in prose on every render. A quota that is
- * 60% spent is ambient state, not something the reader must act on, and painting
- * it in the reserved colour every time is how a customer learns to ignore that
- * colour. It escalates to an `Alert` only once it is nearly gone.
+ * **The plan's page ceiling is stated, not metered.** It was a `Meter` over a
+ * quota this surface cannot compute, and before that a permanent brass `Alert`
+ * carrying three interpolated figures in prose on every render. The two figures
+ * a customer needs here are what this chatbot has already read and what the
+ * plan allows; they belong to different scopes, so they are two sentences and
+ * not one bar. What is actually spent per run is in the budget well below,
+ * where the selection changes it.
  */
 export function WebsiteFlow({
   agentId,
   agentName,
   agentWebsite,
   sources,
-  pageAllowance,
+  pagesTrainedHere,
+  pageLimit,
   planName,
   planLoading,
   onChanged,
@@ -96,25 +107,6 @@ export function WebsiteFlow({
     cost,
     alreadyTrained,
   } = flow;
-
-  if (pageAllowance.atLimit && !planLoading && !crawlRunning) {
-    return (
-      <CardBody>
-        {/* `size="panel"`: this already sits inside a card, and `LockedState`'s
-            own frame put a second hairline 20px inside the first. */}
-        <LockedState
-          size="panel"
-          title={`${planName}: no website pages left`}
-          description={`This plan covers ${formatNumber(pageAllowance.limit)} pages. Remove a website below, or move up.`}
-          action={
-            <Link to="/billing" className={buttonClass('primary', 'sm')}>
-              {t('agents.seePlans') || 'See plans'}
-            </Link>
-          }
-        />
-      </CardBody>
-    );
-  }
 
   // What the chatbot can actually answer from, not what the crawler fetched.
   // `crawl.pagesCrawled` is the fetched count, and a crawl stopped by a plan
@@ -178,36 +170,20 @@ export function WebsiteFlow({
   return (
     <>
       <CardBody className="space-y-4">
-        {/* The allowance, stated before anything is spent — as one bar and one
-            figure pair rather than a sentence with three numbers in it. */}
-        {planLoading ? null : pageAllowance.unlimited ? (
+        {/* Two facts, each labelled with the thing it is about. This chatbot's
+            own page count is the one figure this surface can state exactly; the
+            plan's ceiling covers the whole workspace, and saying so is the
+            difference between a fact and a bar that quietly compares one
+            chatbot against an account. */}
+        {planLoading ? null : (
           <p className="text-xs text-text-secondary">
-            No page limit on {planName} — website training is charged in credits.{' '}
-            <span className="figure">{formatNumber(pageAllowance.used)}</span> pages trained here so
-            far.
+            <span className="figure">{formatNumber(pagesTrainedHere)}</span> website page
+            {pagesTrainedHere === 1 ? '' : 's'} trained on this chatbot so far.{' '}
+            {pageLimit === null || pageLimit < 0
+              ? `Website training is charged in credits on ${planName}.`
+              : `${planName} allows ${formatNumber(pageLimit)} website pages across this workspace.`}
           </p>
-        ) : (
-          <Meter
-            label={t('agents.websitePages') || 'Website pages'}
-            used={pageAllowance.used}
-            limit={pageAllowance.limit}
-            tone="plan"
-          />
         )}
-
-        {pageAllowance.nearLimit && !pageAllowance.atLimit && !planLoading ? (
-          <Alert
-            tone="plan"
-            action={
-              <Link to="/billing" className={buttonClass('secondary', 'sm')}>
-                {t('agents.seePlans') || 'See plans'}
-              </Link>
-            }
-          >
-            <span className="figure">{formatNumber(pageAllowance.remaining)}</span> pages left on{' '}
-            {planName}.
-          </Alert>
-        ) : null}
 
         <Field label={t('agents.websiteAddress') || 'Website address'} hint={t('agents.aPublicPageIsEnough') || 'A public page is enough, with no login.'}>
           <Input

@@ -101,7 +101,14 @@ export interface InboxItem {
   unread: number;
   /** A short state word, if the row has one worth carrying. */
   state: { label: string; tone: Tone } | null;
-  /** Visitor is connected right now. Drives the presence dot. */
+  /**
+   * Visitor is connected right now. Drives the pulsing presence dot.
+   *
+   * Only ever `true` where a payload actually reports presence, which today is
+   * the live-chat socket alone. `QueueItem` carries no presence field, so a
+   * waiting row hard-coded this and a queue entry two days stale pulsed
+   * "Online now" beside "Waiting 2d".
+   */
   online: boolean;
 }
 
@@ -145,7 +152,10 @@ export function toWaitingItem(entry: QueueItem): InboxItem {
     botName: entry.bot_name,
     unread: 0,
     state: null,
-    online: true,
+    // `QueueItem` has no presence field. A visitor who asked for a person and
+    // closed the tab looks identical on the wire to one still sitting there, so
+    // the row says nothing rather than asserting the flattering half.
+    online: false,
   };
 }
 
@@ -193,7 +203,10 @@ export function toOfflineItem(message: OfflineMessage): InboxItem {
     unread: status === 'new' ? 1 : 0,
     state:
       status === 'replied'
-        ? { label: translateNow('inbox.replied') || 'Replied', tone: 'success' }
+        // Nothing verified that a mail client opened, let alone that anything
+        // was sent: the status is written when the mailto link is clicked. The
+        // weakest true claim is the one the badge makes. See `MessagePane`.
+        ? { label: 'Reply opened', tone: 'success' }
         : status === 'read'
           ? { label: translateNow('inbox.read') || 'Read', tone: 'neutral' }
           : { label: translateNow('inbox.new') || 'New', tone: 'warning' },

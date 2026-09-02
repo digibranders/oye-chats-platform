@@ -85,6 +85,25 @@ describe('OverviewTab — every tile over the window it actually covers', () => 
     expect(screen.getAllByText('All time')).toHaveLength(1);
   });
 
+  it('reports an unknown message count as unknown, never as zero', async () => {
+    // `useMessageSeries` hands back an empty series when the request fails, and
+    // `summarize([])` totals zero, so a failed activity read printed
+    // "Messages 0" beside a live "Conversations 40", a pair that cannot both be
+    // true. The dash is the affordance the Conversations tile beside it already
+    // uses for a figure it does not have.
+    api.getActivityStats.mockRejectedValue(new Error('Activity is unavailable.'));
+
+    renderTab('7d');
+
+    const tile = (await screen.findByText('Messages')).parentElement as HTMLElement;
+    // `findByText`, because the tile is a skeleton until the request settles.
+    expect(await within(tile).findByText('—')).toBeInTheDocument();
+    expect(within(tile).queryByText('0')).toBeNull();
+    // The neighbour still reports, because each read fails on its own.
+    const conversations = (screen.getByText('Conversations')).parentElement as HTMLElement;
+    expect(within(conversations).getByText('40')).toBeInTheDocument();
+  });
+
   it('asks the activity endpoint for the two windows it plots, not for all history', async () => {
     // `splitWindows` cuts the selected window AND the one before it out of this
     // one series, so a 7-day range needs 14 days fetched. Asking for nothing
@@ -94,5 +113,38 @@ describe('OverviewTab — every tile over the window it actually covers', () => 
 
     await screen.findByText('Answers rated helpful');
     expect(api.getActivityStats).toHaveBeenCalledWith(7, { days: 14 });
+  });
+});
+
+/**
+ * The knowledge-gap alert counts rows, and the rows are a page.
+ *
+ * `useUnansweredQuestions` asks for a bounded number of rows, so once a
+ * workspace has more gaps than that the count stops moving: the alert read
+ * "100 questions went unanswered" every day, for ever, on every busy account,
+ * and 100 was the page size rather than anything measured.
+ */
+describe('OverviewTab: a page size is not a total', () => {
+  const gap = (index: number) => ({
+    question: `Question ${index}`,
+    count: 100 - index,
+    last_asked: '2026-08-01T00:00:00Z',
+  });
+
+  it('states a full page of gaps as a floor', async () => {
+    api.getUnansweredQuestions.mockResolvedValue(Array.from({ length: 100 }, (_, i) => gap(i)));
+
+    renderTab('30d');
+
+    expect(await screen.findByText('At least 100 questions went unanswered')).toBeInTheDocument();
+  });
+
+  it('states a partial page exactly, because that one is a real count', async () => {
+    api.getUnansweredQuestions.mockResolvedValue([gap(0), gap(1), gap(2)]);
+
+    renderTab('30d');
+
+    expect(await screen.findByText('3 questions went unanswered')).toBeInTheDocument();
+    expect(screen.queryByText(/At least/)).toBeNull();
   });
 });

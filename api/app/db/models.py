@@ -1178,6 +1178,12 @@ class Webhook(Base):
     secret = Column(String, nullable=False)
     events = Column(JSONB, default=list, server_default="[]", nullable=False)
     is_active = Column(Boolean, default=True, server_default="true", nullable=False)
+    # Circuit breaker: why the endpoint was auto-disabled, and when. ``disabled_at``
+    # is load-bearing, not decorative: it closes the window the breaker judges,
+    # so a webhook the customer re-enables gets a fresh streak rather than being
+    # re-tripped by the failures that disabled it the first time.
+    disabled_reason = Column(Text, nullable=True)
+    disabled_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

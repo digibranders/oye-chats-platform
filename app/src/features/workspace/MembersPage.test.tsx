@@ -35,6 +35,7 @@ const api = vi.hoisted(() => ({
   updateDepartment: vi.fn(),
   deleteDepartment: vi.fn(),
   updateBot: vi.fn(),
+  getCreditBalance: vi.fn(),
 }));
 vi.mock('../../services/api', () => api);
 
@@ -82,6 +83,56 @@ function member(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * `GET /credits/balance` with a ledger of its own for chatbot 1.
+ *
+ * The per-chatbot pool is where this chatbot's own plan ceilings live. It is
+ * the only per-chatbot seat limit the console holds: `useEntitlements` reports
+ * the highest-priced plan across the whole workspace.
+ */
+function balanceWithSeatCeiling(operators: number) {
+  return {
+    plan: 0,
+    topup: 0,
+    total: 0,
+    monthly_grant: 0,
+    plan_granted: 0,
+    costs: {},
+    usage: {},
+    currency: 'INR',
+    account_pool_bot_count: 0,
+    bots: [
+      {
+        bot_id: 1,
+        bot_name: 'Acme Support',
+        plan_name: 'Starter',
+        plan: 0,
+        topup: 0,
+        total: 0,
+        monthly_grant: 0,
+        plan_granted: 0,
+        usage: {},
+        limits: { operators },
+        limit_usage: { operators: 1, documents: 0, leads: 0 },
+      },
+    ],
+  };
+}
+
+/** No chatbot carries its own ledger, so there is no per-chatbot ceiling to read. */
+const BALANCE_WITHOUT_POOLS = {
+  plan: 0,
+  topup: 0,
+  total: 0,
+  monthly_grant: 0,
+  plan_granted: 0,
+  costs: {},
+  usage: {},
+  currency: 'INR',
+  bots: [],
+  account_pool_bot_count: 1,
+};
+
 function renderPage(entry = '/settings/team') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return render(
@@ -114,6 +165,7 @@ beforeEach(() => {
   api.revokeOperatorInvite.mockResolvedValue(true);
   api.deleteDepartment.mockResolvedValue({ success: true });
   api.updateBot.mockResolvedValue({ message: 'ok' });
+  api.getCreditBalance.mockResolvedValue(BALANCE_WITHOUT_POOLS);
 });
 
 describe('MembersPage — the four states', () => {
@@ -393,14 +445,60 @@ describe('MembersPage — the owner’s own seat', () => {
     await waitFor(() => expect(api.removeSelfAsOperator).toHaveBeenCalled());
   });
 
-  it('will not offer the owner a seat there is no room for', async () => {
-    entitlements.limitFor = () => 1;
+  it('will not offer the owner a seat this chatbot has no room for', async () => {
+    // One active operator against this chatbot's own ceiling of one.
+    api.getCreditBalance.mockResolvedValue(balanceWithSeatCeiling(1));
     renderPage();
-    expect(await screen.findByRole('button', { name: /join live chat/i })).toBeDisabled();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /join live chat/i })).toBeDisabled(),
+    );
   });
 });
 
-describe('MembersPage — tabs live in the URL', () => {
+/**
+ * Which plan's seats the meter is counting against.
+ *
+ * `useEntitlements().limits.operators` is the highest-priced plan across the
+ * WORKSPACE, and the roster below it is one chatbot's. So a Starter chatbot
+ * sitting beside a Professional one read "1 of 10 seats" with Invite and Join
+ * live chat both live, and the server then refused the invite with a message
+ * this file already pins. The per-chatbot ceiling is in the balance payload.
+ */
+describe('MembersPage: whose seats the meter counts', () => {
+  it('meters this chatbot’s roster against this chatbot’s plan', async () => {
+    entitlements.limitFor = () => 10; // The workspace's best plan.
+    api.getCreditBalance.mockResolvedValue(balanceWithSeatCeiling(2));
+    renderPage();
+
+    const meter = await screen.findByRole('meter', { name: /seats on this chatbot/i });
+    await waitFor(() => expect(meter.getAttribute('aria-valuetext')).toContain('1 of 2 used'));
+    // One filled of two: there is still room, so the way in stays open.
+    expect(screen.getByRole('button', { name: /join live chat/i })).toBeEnabled();
+  });
+
+  it('says so when the only figure it has is the workspace-wide one', async () => {
+    // A chatbot with no ledger of its own has no ceiling to read here.
+    entitlements.limitFor = () => 10;
+    renderPage();
+
+    expect(
+      await screen.findByRole('meter', { name: /seats across this workspace/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Seats on this chatbot')).toBeNull();
+  });
+
+  it('never closes the door on a workspace-wide figure', async () => {
+    // The account limit is reached, but it is the wrong plan's ceiling to
+    // enforce against one chatbot: the server decides, and it may well say yes.
+    entitlements.limitFor = () => 1;
+    renderPage();
+
+    await screen.findByRole('meter', { name: /seats across this workspace/i });
+    expect(screen.getByRole('button', { name: /join live chat/i })).toBeEnabled();
+  });
+});
+
+describe('MembersPage: tabs live in the URL', () => {
   it('opens the tab the URL names, so a link can point at one', async () => {
     api.getDepartments.mockResolvedValue({
       departments: [{ id: 5, name: 'Billing', description: null, business_hours: null }],

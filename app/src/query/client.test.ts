@@ -37,3 +37,21 @@ describe('query retry policy', () => {
     expect(retry(0, new ApiError('offline'))).toBe(true);
   });
 });
+
+/**
+ * The default `networkMode` is `online`, which PAUSES a query rather than
+ * running it whenever `navigator.onLine` is false. A paused query is not an
+ * error: `isPending` stays true forever, so the surface holds its skeleton and
+ * every consumer that branches on `isError` never fires. Each page here ships
+ * an error state so a failure can be seen and retried, and `navigator.onLine`
+ * reports a captive portal, a VPN flap and a headless browser as offline.
+ */
+describe('offline behaviour', () => {
+  it('runs queries rather than pausing them', () => {
+    expect(queryClient.getDefaultOptions().queries?.networkMode).toBe('always');
+  });
+
+  it('runs mutations rather than pausing them', () => {
+    expect(queryClient.getDefaultOptions().mutations?.networkMode).toBe('always');
+  });
+});

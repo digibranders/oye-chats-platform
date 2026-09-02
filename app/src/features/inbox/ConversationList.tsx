@@ -255,9 +255,17 @@ export function ConversationList({
                 label={t('inbox.conversationScope') || 'Conversation scope'}
                 value={view}
                 onValueChange={onViewChange}
+                // A failed fetch has no count, and the zero it defaults to is a
+                // measurement, not a placeholder: "Messages (0)" sat beside the
+                // list's own "Could not load your messages" and contradicted
+                // it. Only the current scope's request failed, so only its
+                // count is dropped.
                 options={INBOX_VIEWS.map((value) => ({
                   value,
-                  label: `${VIEW_META[value].label} (${counts[value]})`,
+                  label:
+                    error && value === view
+                      ? VIEW_META[value].label
+                      : `${VIEW_META[value].label} (${counts[value]})`,
                 }))}
               />
             </div>

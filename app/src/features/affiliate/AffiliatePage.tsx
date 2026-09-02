@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { Handshake, MoreHorizontal, Pause, Pencil, Play, Plus, Users } from 'lucide-react';
 import {
+  ABSENT,
   Alert,
   Badge,
   Button,
@@ -173,8 +174,18 @@ export function AffiliatePage() {
       header: 'Conversion',
       type: 'number',
       width: '7rem',
-      sortable: (a, b) => a.conversionPct - b.conversionPct,
-      render: (row) => formatPct(row.conversionPct),
+      // Unknown sorts below every real rate rather than tying with 0%, so a
+      // batch of untouched codes does not sit among the worst performers.
+      sortable: (a, b) => (a.conversionPct ?? -1) - (b.conversionPct ?? -1),
+      render: (row) =>
+        row.conversionPct === null ? (
+          <span>
+            <span aria-hidden>{ABSENT}</span>
+            <span className="sr-only">No data yet</span>
+          </span>
+        ) : (
+          formatPct(row.conversionPct)
+        ),
     },
     {
       // The list used to be printed twice on this page: once as this table and
@@ -292,8 +303,18 @@ export function AffiliatePage() {
                 <td className="figure text-right font-semibold">
                   {formatNumber(stats?.totalSignups ?? 0)}
                 </td>
+                {/* The all-codes rate is `null` until something is clicked.
+                    `?? 0` printed "0% conversion" for an affiliate who had not
+                    started yet, which reads as a result rather than as silence. */}
                 <td className="figure text-right font-semibold">
-                  {formatPct(stats?.conversionPct ?? 0)}
+                  {stats?.conversionPct == null ? (
+                    <>
+                      <span aria-hidden>{ABSENT}</span>
+                      <span className="sr-only">No data yet</span>
+                    </>
+                  ) : (
+                    formatPct(stats.conversionPct)
+                  )}
                 </td>
                 <td />
                 <td />

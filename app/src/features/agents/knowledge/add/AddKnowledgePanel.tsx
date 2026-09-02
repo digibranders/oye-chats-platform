@@ -14,10 +14,20 @@ export interface AddKnowledgePanelProps {
   /** The chatbot's own stored website, captured when it was created. */
   agentWebsite: string | null;
   sources: readonly KnowledgeSource[];
-  /** Plan allowance for uploaded documents — workspace-wide. */
-  documentAllowance: Allowance;
-  /** Plan allowance for crawled pages. */
-  pageAllowance: Allowance;
+  /**
+   * Plan allowance for uploaded documents, workspace-wide on both sides.
+   * `null` when the plan payload states no document ceiling, which is not the
+   * same as a spent one and never locks the flow.
+   */
+  documentAllowance: Allowance | null;
+  /** Website pages this chatbot has stored. Its own count, not the workspace's. */
+  pagesTrainedHere: number;
+  /**
+   * The plan's website-page ceiling: `-1` unlimited, `null` when unstated.
+   * Deliberately not an `Allowance`: the server publishes no workspace-wide
+   * page counter, so there is no numerator that shares this ceiling's scope.
+   */
+  pageLimit: number | null;
   /**
    * Knowledge-base size allowance, in characters. `null` when the plan payload
    * does not report the limit at all — which is not the same as a full one.
@@ -49,7 +59,8 @@ export function AddKnowledgePanel({
   agentWebsite,
   sources,
   documentAllowance,
-  pageAllowance,
+  pagesTrainedHere,
+  pageLimit,
   characterAllowance,
   planName,
   planLoading,
@@ -87,7 +98,8 @@ export function AddKnowledgePanel({
           agentName={agentName}
           agentWebsite={agentWebsite}
           sources={sources}
-          pageAllowance={pageAllowance}
+          pagesTrainedHere={pagesTrainedHere}
+          pageLimit={pageLimit}
           planName={planName}
           planLoading={planLoading}
           onChanged={onChanged}

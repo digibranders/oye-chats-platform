@@ -32,7 +32,26 @@ import { useTranslation } from '../../i18n/useTranslation';
  * The endpoint has no date filter of its own, so the page's range is applied to
  * "last active". That keeps this count comparable with every other figure on
  * the surface instead of being the one panel that is always all-time.
+ *
+ * It DOES page, over sessions, and the client used to send neither `limit` nor
+ * `offset`, taking the server's default of 500 silently. A workspace with
+ * 4,000 sessions therefore read "180 visitors, last seen in last 30 days",
+ * exported only that truncated set, and was told by the empty state to "try a
+ * wider period" when widening cannot reach past the 500th most recent session.
+ * The read now asks for the maximum page, and when it comes back full the card
+ * says so rather than presenting a slice as the whole.
  */
+/**
+ * How many SESSIONS one read of `GET /analytics/visitors` covers.
+ *
+ * Mirrors the `VISITORS_PAGE_SIZE` default on `getVisitorsData` in
+ * `src/services/api.ts`, which is the value actually sent. It is restated here
+ * rather than imported because sibling suites mock the whole API module and a
+ * new named export would break their factories; `VisitorsTab.test.tsx` asserts
+ * the two agree, so a drift fails rather than quietly mislabelling the caption.
+ */
+export const VISITORS_READ_LIMIT = 1000;
+
 export function VisitorsTab({ botId, range }: { botId: number | null; range: ResolvedRange }) {
   const { t } = useTranslation();
   const { visitors, loading, locked, error, refetch } = useVisitors(botId);
@@ -41,6 +60,21 @@ export function VisitorsTab({ botId, range }: { botId: number | null; range: Res
     () => filterVisitorsToWindow(visitors, range.since),
     [visitors, range.since],
   );
+
+  /**
+   * Whether the read hit its ceiling.
+   *
+   * The response is deduped visitors with no total, so its length is not the
+   * page size. Each row carries every session it owns, and the server built the
+   * page from `limit` SESSIONS, so their sum is what to compare. `>=` rather
+   * than `===`: it cannot exceed the limit, and an equality test would go quiet
+   * if the endpoint's ceiling ever moved.
+   */
+  const sessionsRead = useMemo(
+    () => visitors.reduce((sum, row) => sum + row.conversations, 0),
+    [visitors],
+  );
+  const truncated = sessionsRead >= VISITORS_READ_LIMIT;
 
   const columns: readonly Column<VisitorRow>[] = [
     {
@@ -129,7 +163,11 @@ export function VisitorsTab({ botId, range }: { botId: number | null; range: Res
         eyebrow="Audience"
         title={t('analytics.whoVisited') || 'Who visited'}
         titleAs="h2"
-        description={`One row per visitor, last seen in ${range.label.toLowerCase()}`}
+        description={
+          truncated
+            ? `One row per visitor, last seen in ${range.label.toLowerCase()}. Showing the most recent ${formatNumber(VISITORS_READ_LIMIT)} conversations; export covers only these.`
+            : `One row per visitor, last seen in ${range.label.toLowerCase()}`
+        }
         actions={
           rows.length > 0 ? (
             <Button size="sm" variant="ghost" onClick={onExport} iconLeft={<Download aria-hidden />}>
@@ -157,9 +195,14 @@ export function VisitorsTab({ botId, range }: { botId: number | null; range: Res
               icon={Users}
               title={visitors.length > 0 ? t('analytics.nobodyInThisPeriod') || 'Nobody in this period' : t('analytics.noVisitorsYet') || 'No visitors yet'}
               description={
-                visitors.length > 0
-                  ? t('analytics.visitorsHaveUsedTheChatbot') || 'Visitors have used the chatbot, but none of them in this window. Try a wider period.'
-                  : t('analytics.nobodyHasOpenedTheChatbot') || 'Nobody has opened the chatbot yet. Once someone does, they will appear here with where they were and how much they asked.'
+                visitors.length === 0
+                  ? t('analytics.nobodyHasOpenedTheChatbot') || 'Nobody has opened the chatbot yet. Once someone does, they will appear here with where they were and how much they asked.'
+                  : truncated
+                    ? // "Try a wider period" is advice that cannot work here:
+                      // the read is capped at the most recent conversations, so
+                      // widening the window reaches nothing further back.
+                      `Visitors have used the chatbot, but none of them in this window. This list only covers the most recent ${formatNumber(VISITORS_READ_LIMIT)} conversations, so an older visitor will not appear whatever period you pick.`
+                    : t('analytics.visitorsHaveUsedTheChatbot') || 'Visitors have used the chatbot, but none of them in this window. Try a wider period.'
               }
             />
           }

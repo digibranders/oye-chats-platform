@@ -530,6 +530,21 @@ def create_operator(request: CreateOperatorRequest, auth=Depends(get_current_cli
         if bot is None:
             raise HTTPException(status_code=404, detail="Bot not found in this workspace.")
 
+        # Same workspace check for the department. Left unvalidated it binds the
+        # operator to another tenant's department row: nothing reads that row
+        # back across the boundary (department lists and queue filters are all
+        # client_id-scoped), so the damage is a queue filter that silently
+        # matches nothing rather than a leak.
+        if request.department_id is not None:
+            department = session.execute(
+                select(Department).where(
+                    Department.id == request.department_id,
+                    Department.client_id == client_id,
+                )
+            ).scalar_one_or_none()
+            if department is None:
+                raise HTTPException(status_code=404, detail="Department not found in this workspace.")
+
         # Check for duplicate email. Scoped to this workspace only
         existing = session.execute(
             select(Operator).where(Operator.email == request.email, Operator.client_id == client_id)
@@ -670,6 +685,17 @@ async def update_operator(
             )
             operator.bot_id = request.bot_id
         if request.department_id is not None:
+            # Workspace check, the same guard ``bot_id`` gets above. Without it
+            # an operator can be reassigned to another tenant's department row,
+            # which no client_id-scoped query will ever match again.
+            new_department = session.execute(
+                select(Department).where(
+                    Department.id == request.department_id,
+                    Department.client_id == auth["client_id"],
+                )
+            ).scalar_one_or_none()
+            if new_department is None:
+                raise HTTPException(status_code=404, detail="Department not found in this workspace.")
             # Track department change for dynamic WS update
             if operator.department_id != request.department_id:
                 department_changed = True

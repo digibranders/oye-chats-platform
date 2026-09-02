@@ -88,6 +88,21 @@ describe('deriveInsights. Knowledge gaps', () => {
     ).toEqual([]);
   });
 
+  it('presents a full page of gaps as a floor rather than as a measurement', () => {
+    // The count is `questions.length`, and the list is fetched with a row
+    // limit. A workspace with four hundred gaps reports exactly the limit, so
+    // the alert read the same number every day for ever and presented a page
+    // size as a fact.
+    const [gap] = deriveInsights(
+      input({
+        unansweredCount: 100,
+        unansweredTruncated: true,
+        topUnanswered: { question: 'Do you ship to Nepal?', count: 9 },
+      }),
+    );
+    expect(gap.title).toBe('At least 100 questions went unanswered');
+  });
+
   it('omits the action when no chatbot is in scope', () => {
     const [gap] = deriveInsights(
       input({ unansweredCount: 4, topUnanswered: { question: 'pricing?', count: 5 } }),

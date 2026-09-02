@@ -760,14 +760,16 @@ export function LeadsPage() {
                   >
                     {t('leads.exportAllLeads') || 'Export all leads'}
                   </MenuItem>
-                  {/* Disabled only when there is genuinely nothing unread.
-                      `stats === null` is also the state when the stats request
-                      *failed*, and disabling on that rendered a permanently dead
-                      command with no reason given — where the action is idempotent
-                      and costs nothing to offer. */}
+                  {/* Never disabled. `stats.unread` is the count inside the
+                      DATE FILTER, and `POST /leads/mark-all-viewed` takes only
+                      `bot_id`, so a clean "Last 7 days" greyed the command out
+                      while 300 leads sat unread all-time, and the reader had no
+                      way to tell why. The stats payload carries no all-time
+                      figure to gate on, the write is idempotent, and the server
+                      is the only thing that knows the real answer: offer it and
+                      let it answer. */}
                   <MenuItem
                     icon={<CheckCheck aria-hidden className="h-icon-sm w-icon-sm" />}
-                    disabled={leads.stats?.unread === 0}
                     onSelect={() => setConfirmMarkAll(true)}
                   >
                     {t('leads.markAllRead') || 'Mark all read'}
@@ -883,11 +885,14 @@ export function LeadsPage() {
         open={confirmMarkAll}
         onOpenChange={setConfirmMarkAll}
         title={t('leads.markEveryLeadAsRead') || 'Mark every lead as read?'}
+        // No figure. The only unread count this page has is the one inside the
+        // date filter, and the endpoint clears every unread lead for the
+        // chatbot regardless of it, so quoting "12" beside an action that
+        // cleared 300 was the dialog's whole failure.
         description={
           <>
-            Clears the unread mark on{' '}
-            <span className="figure">{formatNumber(leads.stats?.unread ?? 0)}</span> leads, on every
-            page. Cannot be undone.
+            Clears the unread mark on every unread lead for this chatbot, on every
+            page. The date filter above does not narrow it. Cannot be undone.
           </>
         }
         confirmLabel="Mark all read"
