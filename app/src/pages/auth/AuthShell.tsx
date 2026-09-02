@@ -3,7 +3,8 @@ import { Link } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { Card, CardBody, CardSection, cn } from '../../ui';
 import { useTranslation } from '../../i18n/useTranslation';
-// import { AuthWaveIllustration } from './AuthWaveIllustration';
+import { AuthHeroIllustration } from './AuthHeroIllustration';
+import { AuthDotGrid } from './AuthDotGrid';
 
 export interface AuthShellProps {
   title: string;
@@ -34,9 +35,10 @@ export function AuthShell({
     >
       <aside
         aria-hidden
-        className="relative hidden flex-col justify-between overflow-hidden bg-rail p-12 text-rail-text xl:flex xl:p-16"
+        className="relative hidden flex-col overflow-hidden bg-rail p-12 text-rail-text xl:flex xl:p-16"
       >
-        {/* <AuthWaveIllustration /> */}
+        {/* Subtle dot-grid texture in the lower area, glows around the pointer */}
+        <AuthDotGrid />
 
         {/* Top-left brand mark with generous breathing room */}
         <div className="relative z-10 max-w-md">
@@ -48,24 +50,25 @@ export function AuthShell({
           />
         </div>
 
-        {/* Calm content block in lower-left / lower-middle area */}
-        <div className="relative z-10 max-w-lg mb-8">
-          <p className="font-mono text-2xs uppercase tracking-eyebrow text-rail-accent font-medium">
-            {t('auth.oyechats') || 'OYECHATS'}
-          </p>
-          <h2 className="mt-4 text-2xl font-semibold leading-tight tracking-tight text-rail-text">
-            {t('auth.anAssistantThatHasRead') || (
-              <>
-                An assistant that has read<br />everything you have written.
-              </>
-            )}
-          </h2>
-          <p className="mt-4 text-prose text-rail-text-muted">
-            {t('auth.uploadWhatYouKnowPaste') || 'Upload what you know. Paste one line into your site.'}
-          </p>
+        {/* Illustration centered above the headline, sitting in the upper area */}
+        <div className="relative z-10 flex flex-1 flex-col items-center justify-start pt-10 text-center">
+          <AuthHeroIllustration className="-translate-x-12" />
+          <div className="mt-8 max-w-md text-left self-start">
+            <p className="font-mono text-2xs uppercase tracking-eyebrow text-rail-accent font-medium">
+              {t('auth.oyechats') || 'OYECHATS'}
+            </p>
+            <h2 className="mt-4 text-2xl font-semibold leading-tight tracking-tight text-rail-text">
+              {t('auth.anAssistantThatHasRead') || (
+                <>
+                  An assistant that has read<br />everything you have written.
+                </>
+              )}
+            </h2>
+            <p className="mt-4 text-prose text-rail-text-muted">
+              {t('auth.uploadWhatYouKnowPaste') || 'Upload what you know. Paste one line into your site.'}
+            </p>
+          </div>
         </div>
-
-        <div aria-hidden className="relative z-10" />
       </aside>
 
       <main className="flex min-h-screen items-center justify-center px-4 py-10 sm:py-16 xl:min-h-0 xl:py-14">

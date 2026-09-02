@@ -38,6 +38,8 @@ describe('AuthShell', () => {
     // had room — the card sat in 44px gutters and the headline wrapped to three
     // lines.
     expect(panel).toHaveClass('hidden', 'xl:flex');
+    expect(screen.getByTestId('auth-hero-illustration')).toBeInTheDocument();
+    expect(screen.getByTestId('auth-hero-illustration').querySelector('svg')).toBeInTheDocument();
   });
 
   /**
@@ -51,8 +53,8 @@ describe('AuthShell', () => {
 
   it('shows exactly one visible wordmark at a time', () => {
     const { container } = mount();
-    // Two <img> exist — one per breakpoint — but only the form's carries alt
-    // text, so assistive technology is told about the brand once.
+    // Two <img> elements exist — one mark per breakpoint — but only the form's
+    // carries alt text, so assistive technology is told about the brand once.
     const named = screen.getAllByAltText('OyeChats');
     expect(named).toHaveLength(1);
     expect(named[0]).toHaveClass('xl:hidden');
