@@ -1993,6 +1993,7 @@ const hi = {
     chatbots: 'चैटबॉट',
     chattingRightNow: 'अभी बात कर रहे हैं',
     checkAgain: 'फिर जाँचें',
+    trainAnyway: 'फिर भी ट्रेन करें',
     checkItInAClean: 'इसे साफ़ ब्राउज़र विंडो में जाँचें',
     checkPages: 'पेज जाँचें',
     checkTheExactAddressThe: 'वह सटीक पता जाँचें जहाँ से पेज परोसा जा रहा है',

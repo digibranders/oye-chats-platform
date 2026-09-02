@@ -39,6 +39,7 @@ than relying on whether discovery happens to find them again.
 import asyncio
 import logging
 import re
+import time
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 from urllib.robotparser import RobotFileParser
 
@@ -246,6 +247,17 @@ def _norm_netloc(netloc: str) -> str:
     return netloc.lower().removeprefix("www.")
 
 
+# A sitemap location, with or without a CDATA wrapper. The spec allows
+# ``<loc><![CDATA[https://...]]></loc>`` and All in One SEO, the most installed
+# WordPress SEO plugin, emits exactly that on every entry. The previous pattern
+# required the URL to begin right after ``<loc>``, so on such a site it matched
+# nothing in the index, fetched no child sitemap, and reported a single page for
+# a site with three hundred; the crawl then fell back to following links from
+# the homepage, slower and less complete, with no preview and no cost shown.
+# ``]`` is excluded from the URL so a half-closed wrapper can never leak in.
+_SITEMAP_LOC_RE = re.compile(r"<loc>\s*(?:<!\[CDATA\[)?\s*(https?://[^\s<\]]+)\s*(?:\]\]>)?\s*</loc>")
+
+
 async def discover_website_urls(
     seed_url: str,
     *,
@@ -335,7 +347,7 @@ async def discover_website_urls(
             raw = result[1]
 
             is_index = "<sitemapindex" in raw.lower()
-            locs = re.findall(r"<loc>\s*(https?://[^\s<]+)\s*</loc>", raw)
+            locs = _SITEMAP_LOC_RE.findall(raw)
 
             for loc in locs:
                 loc = loc.strip()
@@ -470,8 +482,18 @@ async def discover_via_links(
         seen: set[str] = {normalize_url(seed_url)}
         frontier: list[tuple[str, int]] = [(seed_url, 0)] if found else []
         fetched = 0
+        # ``timeout`` bounds the WHOLE crawl, not each request. It used to be
+        # only aiohttp's per-request budget, so the loop ran until ``max_fetch``
+        # pages had been fetched one after another: 33 seconds on a real site,
+        # past the 30 the browser waits for the preview and past the ~20 the
+        # route promises. Stopping at the deadline returns what was found so
+        # far, which is a preview nobody has to wait for; callers that need
+        # completeness pass a larger budget.
+        deadline = time.monotonic() + timeout
 
         while frontier and fetched < max_fetch and len(found) < max_urls:
+            if time.monotonic() >= deadline:
+                break
             url, depth = frontier.pop(0)
             if depth >= max_depth:
                 continue
