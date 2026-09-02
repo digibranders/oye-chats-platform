@@ -39,6 +39,7 @@ import {
   planCeiling,
   recrawlStartPlan,
   rootDomainOf,
+  sourceMixLabel,
   summarise,
   type SourceKind,
   type RecrawlDiff,
@@ -452,21 +453,28 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
         <Card>
           <CardHeader size="sm" title={t('agents.whatItKnows') || 'What it knows'} titleAs="h2" />
           <CardBody flush>
+            {/* Every tile states its own line, on purpose. The strip prints
+                its shared window as a caption whenever one tile inherits it,
+                and with Passages alone inheriting, the card ended in a row
+                reading only "Right now": a stray label under three tiles that
+                already say what they cover. Four self-described tiles, no
+                caption. */}
             <StatRow
-              period="Right now"
+              period={t('home.rightNow') || 'Right now'}
               label={t('agents.knowledgeHeld') || 'Knowledge held'}
               columns={4}
               items={[
                 {
                   label: t('agents.passages') || 'Passages',
                   value: indexed > 0 ? formatNumber(indexed) : undefined,
+                  period: t('agents.storedAndSearchable') || 'Stored and searchable',
                   size: 'lg',
                   empty: t('agents.nothingIndexed') || 'Nothing indexed',
                 },
                 {
                   label: t('agents.sources') || 'Sources',
                   value: summary.total > 0 ? formatNumber(summary.total) : undefined,
-                  period: `${formatNumber(summary.websites)} websites · ${formatNumber(summary.documents)} documents`,
+                  period: sourceMixLabel(summary),
                   size: 'lg',
                   loading: knowledge.sources.loading,
                 },

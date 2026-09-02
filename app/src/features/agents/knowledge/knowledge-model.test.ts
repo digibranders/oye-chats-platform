@@ -18,6 +18,7 @@ import {
   normalizeSiteUrl,
   orderedUrlsForRecrawl,
   parseGapWindow,
+  sourceMixLabel,
   planCeiling,
   recrawlBlockedReason,
   recrawlCost,
@@ -578,5 +579,22 @@ describe('the free-training allowance', () => {
     );
     expect(budget.affordablePages).toBe(25);
     expect(creditsForPages(budget, 25)).toBe(0);
+  });
+});
+
+describe('sourceMixLabel', () => {
+  /**
+   * The Sources tile read "1 websites · 0 documents" on a chatbot with one
+   * website. A count the customer reads under a big number has to agree with
+   * that number in grammar as well as arithmetic.
+   */
+  it('inflects each noun by its own count', () => {
+    expect(sourceMixLabel({ websites: 1, documents: 0 })).toBe('1 website · 0 documents');
+    expect(sourceMixLabel({ websites: 2, documents: 1 })).toBe('2 websites · 1 document');
+    expect(sourceMixLabel({ websites: 0, documents: 0 })).toBe('0 websites · 0 documents');
+  });
+
+  it('formats large counts with the locale separator', () => {
+    expect(sourceMixLabel({ websites: 1200, documents: 1 })).toBe('1,200 websites · 1 document');
   });
 });
