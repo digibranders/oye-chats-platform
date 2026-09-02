@@ -156,7 +156,18 @@ export function Field({
               )}
             >
               {labelNode}
-              <span className="flex shrink-0 items-center gap-2">{trailing}</span>
+              {/* Outside the field's context, on purpose. The trailing slot
+                  holds a control that is NOT this field's control: a reset
+                  button, a switch that gates the input below. A Switch there
+                  read the same context as the input and took the field's id,
+                  so two elements shared one id, `<label for>` resolved to the
+                  switch's hidden checkbox, the input lost its accessible name
+                  and clicking the label flipped the switch. A null context is
+                  what every control sees outside a Field, and every control
+                  already handles it. */}
+              <span className="flex shrink-0 items-center gap-2">
+                <FieldContext.Provider value={null}>{trailing}</FieldContext.Provider>
+              </span>
             </div>
           );
         })()}
