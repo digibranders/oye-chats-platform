@@ -4686,10 +4686,29 @@ def _revoke_unpaid_activation_grant(session: Session, local: Subscription) -> bo
 
     marker = local.last_granted_period_end
     start = local.current_period_start
-    # Nothing granted for the current period, no period anchor to roll back to,
-    # or already revoked (marker sits at/below the period start).
-    if marker is None or start is None or marker <= start:
-        return False
+    # A mid-trial conversion has NO ``current_period_start``: Razorpay writes
+    # that field at the first real debit, and a deferred mandate's debit has
+    # not happened yet. That is not a missing anchor to bail on, it is the one
+    # shape that ALWAYS grants ahead of its payment, so it is precisely what
+    # this function was written to reverse. Anchoring on the field alone made
+    # the guard return early on its own primary case: convert on day 3, let the
+    # day-14 debit fail, and the account kept a full paid allowance through the
+    # whole ``past_due`` grace window having paid nothing. ``past_due`` is a
+    # live status, so entitlements stayed at the purchased tier throughout, and
+    # the expiry cron that ends the window never touches the ledger.
+    #
+    # ``_was_unbilled_trial_conversion`` is the same test the cancellation path
+    # already uses for this state, and it is deliberately stricter than "no
+    # period start": the conversion marker must also be set, so an ordinary row
+    # that happens to be missing an anchor is still left alone.
+    unbilled_conversion = _was_unbilled_trial_conversion(local)
+    if marker is None:
+        return False  # nothing granted, or already revoked
+    if start is None:
+        if not unbilled_conversion:
+            return False
+    elif marker <= start:
+        return False  # already revoked; the marker sits at the period start
 
     # Any successful PLAN charge on THIS subscription writes a paid Invoice;
     # its absence means the activation grant was never paid. Scoped to this sub
@@ -4716,6 +4735,11 @@ def _revoke_unpaid_activation_grant(session: Session, local: Subscription) -> bo
         return False
 
     credit_service.reset_monthly_plan_credits(session, local.client_id, bot_id=local.bot_id)
+    # ``None`` for an unbilled conversion, which is both correct and what keeps
+    # this idempotent: the monotonic guard in ``grant_subscription_period_once``
+    # only short-circuits on a marker that is not None, so a successful retry
+    # re-grants cleanly, while a redelivered halted/pending short-circuits on
+    # the ``marker is None`` test above instead of revoking a second time.
     local.last_granted_period_end = start
     logger.info(
         "Revoked unpaid activation grant for subscription %s (client %s, bot %s). "

@@ -109,9 +109,14 @@ describe('the rail', () => {
         // The impersonation bar is paper on purpose: it is a canvas-side banner,
         // not rail chrome. The feedback dialog is the same case — it renders in
         // a `Dialog` on the paper canvas, not on the rail; it lives under
-        // `shell/` only because its launcher tab is shell chrome.
+        // `shell/` only because its launcher tab is shell chrome. The
+        // entitlements banner is a third: a flex child of the shell rendered
+        // above the top bar on the paper canvas, sharing the page gutter, and
+        // it carries a status colour because a plan that could not be read is
+        // a warning rather than a decorative accent.
         !name.includes('ImpersonationBanner') &&
         !name.includes('FeedbackModal') &&
+        !name.includes('EntitlementsErrorBanner') &&
         paperStatus.test(source),
     ).map((f) => f.name);
     expect(offenders).toEqual([]);
