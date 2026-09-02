@@ -1382,7 +1382,15 @@ def _tax_block(amount_minor: int, *, currency: str, is_domestic: bool, rate_bps:
     }
 
 
-@router.get("/coupon/preview")
+# Codes are superadmin-chosen free text, so low entropy, and a preview
+# deliberately does not consume a redemption: `max_redemptions` bounds nothing
+# here. Without a limit this is a coupon oracle any free account can enumerate
+# against, then redeem the hit at checkout. Every other money-adjacent route in
+# this module already carries one.
+@router.get(
+    "/coupon/preview",
+    dependencies=[Depends(money_route_limit("coupon-preview", "20/minute", "200/day"))],
+)
 def preview_coupon(
     code: str,
     plan_id: int | None = None,

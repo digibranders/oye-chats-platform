@@ -318,7 +318,7 @@ export function BillingPage() {
                             tone:
                               pool.totalRemaining <= 0
                                 ? 'danger'
-                                : balance?.lowBalance
+                                : pool.lowBalance
                                   ? 'warning'
                                   : 'neutral',
                             hint:
@@ -356,7 +356,7 @@ export function BillingPage() {
                             unit="credits"
                           />
                         </>
-                      ) : balance?.allowanceInactive ? (
+                      ) : pool.allowanceInactive ? (
                         <p className="text-xs text-text-secondary">
                           No allowance is running right now, so there is nothing to spend against.
                           Choosing a plan starts one.
@@ -368,7 +368,7 @@ export function BillingPage() {
                         </p>
                       )}
                     </CardSection>
-                    {balance?.lowBalance ? (
+                    {pool.lowBalance ? (
                       // A `CardSection`, and the notice rendered flat inside it.
                       // It used to be `<CardBody className="border-t">` — which
                       // is what `CardSection` is — wrapping an `Alert`, so the

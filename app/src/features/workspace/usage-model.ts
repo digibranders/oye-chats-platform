@@ -267,6 +267,10 @@ export interface PoolCredit {
   readonly planGranted: number;
   /** Plan credits actually consumed this period (`planGranted - planRemaining`). */
   readonly planUsed: number;
+  /** This pool is down to its last fifth. Its OWN allowance, not the workspace's. */
+  readonly lowBalance: boolean;
+  /** This pool's plan promises an allowance but none is live in its ledger. */
+  readonly allowanceInactive: boolean;
   /** Plan-bucket credits still available. */
   readonly planRemaining: number;
   /** Top-up (purchased) credits still available. */
@@ -323,6 +327,14 @@ function poolCredit(
     monthlyGrant: pool.monthlyGrant,
     planGranted: pool.planGranted,
     planUsed,
+    // Per-pool, because every FIGURE on a scoped card is per-pool. Reading the
+    // workspace aggregate beside them let a nearly-empty agent render its "20
+    // left" in calm grey because a sibling agent was full, and a full agent
+    // show "4,900 left" under a badge reading "Nearly out" because a sibling
+    // was empty. Same mismatch put "no monthly grant" on an agent that is on a
+    // 3,000-a-month plan.
+    lowBalance: pool.planGranted > 0 && pool.totalRemaining <= pool.planGranted * 0.2,
+    allowanceInactive: pool.planGranted === 0 && pool.monthlyGrant > 0,
     planRemaining: pool.planRemaining,
     topupRemaining: pool.topupRemaining,
     totalRemaining: pool.totalRemaining,
@@ -579,6 +591,8 @@ export function aggregatePool(balance: CreditBalance): PoolCredit {
     monthlyGrant: balance.monthlyGrant,
     planGranted: balance.planGranted,
     planUsed: Math.max(balance.planGranted - balance.planRemaining, 0),
+    lowBalance: balance.lowBalance,
+    allowanceInactive: balance.allowanceInactive,
     planRemaining: balance.planRemaining,
     topupRemaining: balance.topupRemaining,
     totalRemaining: balance.totalRemaining,
