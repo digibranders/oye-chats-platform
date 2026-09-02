@@ -158,6 +158,27 @@ export function summarise(sources: readonly KnowledgeSource[]): KnowledgeSummary
   };
 }
 
+/**
+ * "1 website · 0 documents": the mix under the Sources figure.
+ *
+ * Each noun is inflected by its own count. A template that pluralised both
+ * unconditionally read "1 websites" on the commonest case, a chatbot trained
+ * on one site, directly under a large figure reading "1".
+ */
+export function sourceMixLabel(summary: Pick<KnowledgeSummary, 'websites' | 'documents'>): string {
+  const websites =
+    summary.websites === 1
+      ? translateNow('agents.websitesCountOne', { count: formatNumber(1) }) || '1 website'
+      : translateNow('agents.websitesCountMany', { count: formatNumber(summary.websites) }) ||
+        `${formatNumber(summary.websites)} websites`;
+  const documents =
+    summary.documents === 1
+      ? translateNow('agents.documentsCountOne', { count: formatNumber(1) }) || '1 document'
+      : translateNow('agents.documentsCountMany', { count: formatNumber(summary.documents) }) ||
+        `${formatNumber(summary.documents)} documents`;
+  return `${websites} · ${documents}`;
+}
+
 // ── Plan allowances ────────────────────────────────────────────────────────
 
 /** `-1` is the plan resolver's UNLIMITED sentinel — never a real ceiling. */
