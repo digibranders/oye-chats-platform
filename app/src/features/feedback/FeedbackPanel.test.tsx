@@ -165,8 +165,14 @@ describe('FeedbackPanel — reading the numbers without the picture', () => {
     ]);
     renderPanel('30d');
 
+    // It used to claim "by day, over last 30 days", which the chart cannot do:
+    // `buildTrend` plots only the days that carry a rating and stops at the
+    // most recent fourteen. Two rated days in a thirty-day window draw two
+    // points, and the sentence beside them now says exactly that.
     expect(
-      await screen.findByText(/share of answers rated helpful, by day, over last 30 days/i),
+      await screen.findByText(
+        /share of answers rated helpful, drawn from last 30 days, on the 2 most recent days in it that carry a rating/i,
+      ),
     ).toBeInTheDocument();
   });
 

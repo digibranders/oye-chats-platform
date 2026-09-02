@@ -345,6 +345,31 @@ export function InstallStatusCard({
           </Alert>
         </CardFooter>
       ) : null}
+
+      {/* The stale reading gets the same footer, and deliberately not a "check
+          again" button: the verification poll waits for `widget_installed_at`,
+          which this chatbot already has, so it would spin for ninety seconds
+          and then report the stamp it started with. The checklist is the real
+          remedy, and the date is already on the `Last seen` row above. */}
+      {status.state === 'stale' ? (
+        <CardFooter className="justify-start">
+          <Alert
+            tone="warning"
+            live
+            title="We have not seen it recently"
+            className="w-full"
+            action={
+              <Button size="sm" variant="secondary" onClick={onTroubleshoot}>
+                {t('agents.whatToCheck') || 'What to check'}
+              </Button>
+            }
+          >
+            The widget last loaded more than a week ago. If the snippet is still
+            on your site and getting traffic, the checklist rules out every known
+            cause.
+          </Alert>
+        </CardFooter>
+      ) : null}
     </Card>
   );
 }

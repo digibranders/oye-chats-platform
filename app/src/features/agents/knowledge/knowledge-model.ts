@@ -178,17 +178,41 @@ export interface Allowance {
 }
 
 /**
- * What is left of a plan allowance.
+ * A ceiling the plan payload actually states: `UNLIMITED`, a positive number,
+ * or `null` when the plan says nothing.
+ *
+ * `useEntitlements().limitFor` collapses a missing plan key to `0`, which is
+ * the server's deny-by-default for *enforcement* and a lie when *rendered*: a
+ * plan row that never mentions `documents` arrives here indistinguishable from
+ * one that allows none. "We do not know your allowance" and "your allowance is
+ * spent" are different sentences, and only the first is defensible from a zero
+ * the client cannot tell apart from an absence. The server still enforces the
+ * real ceiling at the point of spend.
+ */
+export function planCeiling(limit: number | null | undefined): number | null {
+  if (typeof limit !== 'number' || !Number.isFinite(limit) || limit === 0) return null;
+  return limit < 0 ? UNLIMITED : limit;
+}
+
+/**
+ * What is left of a plan allowance, or `null` when the plan does not state one.
  *
  * Deliberately does not carry a *tone*. A quota that is full is not a fault —
  * it is the price of the plan the customer chose — and the surfaces that render
  * these read `plan`, not `danger`. Encoding the tone here is how "you have used
  * everything you paid for" ends up looking like "something has gone wrong".
+ *
+ * An absent ceiling returns `null` rather than a full allowance. It used to
+ * return `fraction: 1` and `atLimit: used >= 0` for any `limit <= 0`, so a plan
+ * row missing a key rendered "no documents left" and hard-locked the flow that
+ * adds knowledge: the customer could not train their chatbot at all, over a
+ * quota nobody had spent. Callers render the absent case as unknown.
  */
-export function allowanceOf(used: number, limit: number): Allowance {
-  const unlimited = limit === UNLIMITED || limit < 0;
+export function allowanceOf(used: number, limit: number | null | undefined): Allowance | null {
+  const ceiling = planCeiling(limit);
+  if (ceiling === null) return null;
   const safeUsed = Math.max(0, used);
-  if (unlimited) {
+  if (ceiling === UNLIMITED) {
     return {
       used: safeUsed,
       limit: UNLIMITED,
@@ -199,14 +223,14 @@ export function allowanceOf(used: number, limit: number): Allowance {
       nearLimit: false,
     };
   }
-  const fraction = limit <= 0 ? 1 : Math.min(1, safeUsed / limit);
+  const fraction = Math.min(1, safeUsed / ceiling);
   return {
     used: safeUsed,
-    limit,
+    limit: ceiling,
     unlimited: false,
-    remaining: Math.max(0, limit - safeUsed),
+    remaining: Math.max(0, ceiling - safeUsed),
     fraction,
-    atLimit: safeUsed >= limit,
+    atLimit: safeUsed >= ceiling,
     nearLimit: fraction >= 0.8,
   };
 }
@@ -341,6 +365,43 @@ export function orderedUrlsForRecrawl(diff: RecrawlDiff): string[] | null {
   if (diff.capped || truncated) return null;
   const urls = Array.from(new Set([...diff.newUrls, ...diff.unchangedUrls])).filter(Boolean);
   return urls.length > 0 ? urls : null;
+}
+
+/** Where a re-train points. Known from the source row, with or without a preview. */
+export interface RecrawlTarget {
+  crawlUrl: string;
+  replaceSource: string;
+  mode: RecrawlMode;
+}
+
+export interface RecrawlStartPlan extends RecrawlTarget {
+  /** The exact pages to re-read, or `null` to let the crawler enumerate. */
+  orderedUrls: string[] | null;
+  /** Denominator for the progress bar, or `null` when the size is unknown. */
+  discoveredTotal: number | null;
+  /** Delta only: how many pages the preview expects to actually change. */
+  expectedNewPages: number | null;
+}
+
+/**
+ * Everything a re-train start needs, derived from the preview when there is one.
+ *
+ * `discoveredTotal` is the point of this. Without it the progress bar falls
+ * back to `crawl.maxPages`, which is the server's `effective_max_pages`, on an
+ * unlimited plan that is `balance / cost_per_page`, so re-training a 47-page
+ * site reported "3 of 9,800 pages" with the bar pinned near zero. The fresh
+ * crawl path has always passed the field; the re-train path never did. It stays
+ * `null` when the URL list does, because a run whose page set the crawler will
+ * enumerate for itself has no denominator this side of the network.
+ */
+export function recrawlStartPlan(target: RecrawlTarget, diff: RecrawlDiff | null): RecrawlStartPlan {
+  const orderedUrls = diff === null ? null : orderedUrlsForRecrawl(diff);
+  return {
+    ...target,
+    orderedUrls,
+    discoveredTotal: orderedUrls === null ? null : orderedUrls.length,
+    expectedNewPages: diff !== null && diff.mode === 'delta' ? diff.newPages : null,
+  };
 }
 
 // ── Crawl pre-flight ───────────────────────────────────────────────────────

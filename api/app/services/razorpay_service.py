@@ -2585,6 +2585,18 @@ def _handle_branding_addon_event(
         select(Subscription).where(Subscription.branding_addon_subscription_id == addon_sub_id)
     ).first()
     if local is None:
+        if event_name == "subscription.charged":
+            # Same first-charge race as ``_handle_subscription_charged``, and the
+            # same cost: money is already captured, so ACKing loses its GST
+            # invoice permanently (Razorpay never redelivers a 2xx). Raise so the
+            # event is dead-lettered and redelivered once activation has linked
+            # the mandate. Only the charge raises. A cancelled or halted event for
+            # an unknown mandate carries no money and must not burn retries.
+            logger.warning("Branding add-on subscription.charged for unlinked add-on sub %s. Will retry", addon_sub_id)
+            raise WebhookOutOfOrder(
+                f"branding add-on subscription.charged arrived before {addon_sub_id} "
+                "was linked locally; retry after activation"
+            )
         logger.info("Branding add-on event %s for unknown add-on sub %s. Acknowledged", event_name, addon_sub_id)
         return f"Branding add-on event {event_name} (no local sub)"
 
@@ -2644,6 +2656,14 @@ def _handle_seat_addon_event(
     seat_sub_id = sub_entity.get("id")
     local = session.scalars(select(Subscription).where(Subscription.seat_addon_subscription_id == seat_sub_id)).first()
     if local is None:
+        if event_name == "subscription.charged":
+            # See the branding handler: a captured charge on an unlinked mandate
+            # must be redelivered, not ACKed, or its GST invoice is lost.
+            logger.warning("Seat add-on subscription.charged for unlinked seat sub %s. Will retry", seat_sub_id)
+            raise WebhookOutOfOrder(
+                f"seat add-on subscription.charged arrived before {seat_sub_id} "
+                "was linked locally; retry after activation"
+            )
         logger.info("Seat add-on event %s for unknown seat sub %s. Acknowledged", event_name, seat_sub_id)
         return f"Seat add-on event {event_name} (no local sub)"
 
@@ -5397,6 +5417,28 @@ def _clawback_reasons_for(inv: Invoice) -> tuple[str, ...] | None:
     return ("plan_grant",) if inv.subscription_id is not None else ("topup",)
 
 
+#: Invoice statuses that record money already returned to the customer. A
+#: dispute must not overwrite one: there is no pre-dispute status column, so the
+#: label IS the record, and losing it makes a refunded charge read as retained.
+_MONEY_RETURNED_STATUSES = ("refunded", "partially_refunded")
+
+
+def _pre_dispute_status(inv: Invoice) -> str:
+    """What ``inv.status`` said before ``dispute.created`` overwrote it.
+
+    Derived from ``refunded_minor`` rather than stored, using the same rule
+    ``refund.failed`` recomputes with, so the two paths cannot disagree. Only
+    reached for an invoice that WAS "disputed", which is a state
+    :func:`_handle_dispute_created` now refuses to enter from a refunded row, so
+    in practice this answers "paid" unless a refund landed mid-dispute.
+    """
+    refunded_minor = int(inv.refunded_minor or 0)
+    if refunded_minor <= 0:
+        return "paid"
+    charge_minor = int(inv.amount_cents or 0)
+    return "refunded" if charge_minor and refunded_minor >= charge_minor else "partially_refunded"
+
+
 def _handle_dispute_created(session: Session, payload: dict[str, Any]) -> str:
     """A dispute/chargeback was opened. Razorpay withdraws the funds only on
     ``lost``, so here we just flag the invoice; the credit clawback happens in
@@ -5409,6 +5451,19 @@ def _handle_dispute_created(session: Session, payload: dict[str, Any]) -> str:
     if inv is None:
         logger.warning("dispute.created for unknown razorpay payment %s", payment_id)
         return f"Payment {payment_id} not found locally"
+    if inv.status in _MONEY_RETURNED_STATUSES:
+        # The money is already back with the customer, so the refund label is the
+        # truthful one and the dispute changes nothing about it. Recorded in the
+        # log rather than on the row: a chargeback here withdraws nothing extra,
+        # and overwriting the status would have ``dispute.won`` hand the invoice
+        # back as "paid" for money we returned.
+        logger.warning(
+            "Dispute %s opened on already-%s invoice %s. Keeping the refund status",
+            dispute.get("id"),
+            inv.status,
+            inv.id,
+        )
+        return f"Dispute {dispute.get('id')} opened on {inv.status} invoice {inv.id}"
     inv.status = "disputed"
     session.flush()
     return f"Dispute {dispute.get('id')} opened on invoice {inv.id}"
@@ -5484,6 +5539,9 @@ def _handle_dispute_won(session: Session, payload: dict[str, Any]) -> str:
     if inv is None:
         return f"Payment {payment_id} not found locally"
     if inv.status == "disputed":
-        inv.status = "paid"
+        # Restore what the row said before the dispute, do not assume "paid": a
+        # refund can land while a dispute is open, and stamping "paid" over it
+        # would report returned money as retained.
+        inv.status = _pre_dispute_status(inv)
     session.flush()
     return f"Dispute {dispute.get('id')} won on invoice {inv.id}"

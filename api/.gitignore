@@ -1,5 +1,7 @@
 
-# Local .env backups (may contain secrets)
-.env.bak*
+# Local .env backups (may contain secrets). The glob is deliberately loose:
+# a backup named .env.bk slipped past the narrower .env.bak* pattern and was
+# left untracked but committable.
+.env.b*
 .ngrok.log
 .cloudflared.log

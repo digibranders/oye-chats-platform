@@ -42,11 +42,43 @@ export interface JourneyStep {
   last: boolean;
 }
 
-/** Each page's dwell time is the gap to the next entry's timestamp. */
-export function buildJourney(entries: readonly unknown[]): JourneyStep[] {
-  return entries.map((raw, index) => {
+export interface Journey {
+  steps: JourneyStep[];
+  /**
+   * True when at least one entry stated a `phase`, so {@link Journey.steps} is
+   * the pre-chat leg and can be labelled as such. False when the whole array
+   * arrived unphased, which is the only case where "before the chat" is a guess
+   * rather than a fact, and the caller has to say something weaker.
+   */
+  phased: boolean;
+}
+
+/**
+ * The pre-chat leg of a visitor's journey.
+ *
+ * `lead.source.journey` spans the **whole** visit: the backend writes entries
+ * with `phase` of `pre`, `chat` or `post` (see
+ * `api/app/services/journey_analytics_service.py`, which filters on exactly
+ * that field). Taking the array whole and calling it "pages before the chat"
+ * counted the post-chat browsing too, so a visitor who read 3 pages, chatted,
+ * then read 6 more rendered "9 pages before the chat" with "the chat opened on
+ * the last" pointing at a page they reached afterwards.
+ *
+ * Entries with a phase are filtered to `pre`. An array where nothing carries a
+ * phase is left whole and reported as unphased, because dropping every entry
+ * would blank the panel for older leads captured before the field existed.
+ *
+ * Each page's dwell time is the gap to the next kept entry's timestamp.
+ */
+export function buildJourney(entries: readonly unknown[]): Journey {
+  const phased = entries.some((raw) => asText(asRecord(raw).phase) !== null);
+  const kept = phased
+    ? entries.filter((raw) => asText(asRecord(raw).phase) === 'pre')
+    : [...entries];
+
+  const steps = kept.map((raw, index) => {
     const entry = asRecord(raw);
-    const next = asRecord(entries[index + 1]);
+    const next = asRecord(kept[index + 1]);
     const from = asText(entry.ts);
     const to = asText(next.ts);
     let dwell: string | null = null;
@@ -63,7 +95,9 @@ export function buildJourney(entries: readonly unknown[]): JourneyStep[] {
       path: asText(entry.path) ?? '',
       timestamp: from,
       dwell,
-      last: index === entries.length - 1,
+      last: index === kept.length - 1,
     };
   });
+
+  return { steps, phased };
 }

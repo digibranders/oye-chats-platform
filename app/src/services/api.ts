@@ -1809,13 +1809,37 @@ export const getJourneyPostChat = async (
 
 
 /**
+ * How many SESSIONS one `getVisitorsData` call reads.
+ *
+ * `GET /analytics/visitors` pages over sessions (`limit`, max 1000, default
+ * 500) and then dedupes them into visitors, so the array that comes back is
+ * shorter than the page it was built from and carries no total. Sending nothing
+ * took the server's 500 silently, which is how a workspace with 4,000 sessions
+ * read "180 visitors" and exported only those. This asks for the maximum, and
+ * the caller states the ceiling on screen when it is reached.
+ */
+export const VISITORS_PAGE_SIZE = 1000;
+
+/**
  * Fetches the list of visitors/sessions for the admin dashboard.
+ *
+ * One returned row is one visitor and carries `all_session_ids`, so the number
+ * of SESSIONS this page covers is the sum of those lengths, which is what to
+ * compare against {@link VISITORS_PAGE_SIZE} to know whether the read was
+ * truncated.
+ *
  * @returns {Promise<Array>} List of visitor session objects
  */
-export const getVisitorsData = async (botId?: number): Promise<Array<Record<string, unknown>>> => {
+export const getVisitorsData = async (
+    botId?: number,
+    { limit = VISITORS_PAGE_SIZE, offset = 0 }: { limit?: number; offset?: number } = {},
+): Promise<Array<Record<string, unknown>>> => {
     try {
-        const url = botId ? `/analytics/visitors?bot_id=${botId}` : '/analytics/visitors';
-        const response = await api.get(url);
+        const params = new URLSearchParams();
+        if (botId) params.set('bot_id', String(botId));
+        params.set('limit', String(limit));
+        if (offset > 0) params.set('offset', String(offset));
+        const response = await api.get(`/analytics/visitors?${params.toString()}`);
         return response.data;
     } catch (error) {
         console.error('API Error fetching visitors data:', error);

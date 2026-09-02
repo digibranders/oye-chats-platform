@@ -51,6 +51,16 @@ export interface InsightInput {
   previousConversations: number | null;
   /** Distinct questions the chatbots could not answer, inside the window. */
   unansweredCount: number;
+  /**
+   * `unansweredCount` is a full page of results, so it is a floor, not a total.
+   *
+   * The gaps list is fetched with a row limit. Once a workspace has more gaps
+   * than that limit the count stops moving and reads as the limit for ever,
+   * which is how "100 questions went unanswered" ended up being the same
+   * sentence every day on every busy account. When the page came back full the
+   * figure is stated as a minimum instead.
+   */
+  unansweredTruncated?: boolean;
   /** The most-asked of those, when there is one. */
   topUnanswered: { question: string; count: number } | null;
   /** Where to go and fix a knowledge gap, when an agent is in scope. */
@@ -87,12 +97,13 @@ export function deriveInsights(input: InsightInput): Insight[] {
   }
 
   if (input.topUnanswered && input.topUnanswered.count >= REPEATED_GAP_COUNT) {
+    const counted = `${input.unansweredCount.toLocaleString()} ${
+      input.unansweredCount === 1 ? 'question went' : 'questions went'
+    } unanswered`;
     insights.push({
       id: 'knowledge-gap',
       tone: 'warning',
-      title: `${input.unansweredCount.toLocaleString()} ${
-        input.unansweredCount === 1 ? 'question went' : 'questions went'
-      } unanswered`,
+      title: input.unansweredTruncated ? `At least ${counted}` : counted,
       body: `"${input.topUnanswered.question}" came up ${input.topUnanswered.count.toLocaleString()} times in ${input.rangeLabel.toLowerCase()} and the chatbot had nothing to answer from.`,
       action: input.knowledgeTo ? { label: translateNow('analytics.addKnowledge') || 'Add knowledge', to: input.knowledgeTo } : undefined,
     });

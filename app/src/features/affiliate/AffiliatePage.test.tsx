@@ -115,7 +115,42 @@ describe('AffiliatePage — the four states', () => {
   });
 });
 
-describe('AffiliatePage — codes', () => {
+describe('AffiliatePage: conversion with nothing to divide', () => {
+  /**
+   * `conversion_pct` is `null` whenever `clicks == 0`. Coercing it to `0`
+   * printed "0% conversion" on a code nobody had clicked yet: a verdict where
+   * the truth is silence. Worse, a code with signups attributed but no recorded
+   * click read "Clicks 0 · Signups 3 · Conversion 0%", which is arithmetically
+   * impossible on its own row.
+   */
+  it('reports an unmeasured code as unknown, not as zero', async () => {
+    api.getAffiliateCodes.mockResolvedValue([
+      code({ code: 'FRESH', clicks: 0, signups: 3, conversion_pct: null }),
+    ]);
+    api.getAffiliateStats.mockResolvedValue({
+      total_clicks: 0,
+      total_signups: 3,
+      active_codes: 1,
+      max_active_codes: 3,
+      conversion_pct: null,
+    });
+    renderPage();
+
+    const row = (await screen.findByText('FRESH')).closest('tr') as HTMLElement;
+    expect(within(row).queryByText('0%')).not.toBeInTheDocument();
+    expect(within(row).getAllByText('No data yet').length).toBeGreaterThan(0);
+    // The all-codes footer is the same figure and takes the same treatment.
+    expect(screen.getAllByText('No data yet')).toHaveLength(2);
+  });
+
+  it('still prints a real rate as a percentage', async () => {
+    renderPage();
+    const row = (await screen.findByText('LAUNCH25')).closest('tr') as HTMLElement;
+    expect(within(row).getByText('5%')).toBeInTheDocument();
+  });
+});
+
+describe('AffiliatePage: codes', () => {
   it('gives every code a share link built from the marketing origin', async () => {
     renderPage();
     await screen.findByRole('button', { name: /actions for launch25/i });

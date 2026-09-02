@@ -30,8 +30,17 @@ import { useTranslation } from '../../../../i18n/useTranslation';
 
 export interface DocumentsFlowProps {
   agentId: number;
-  /** Plan allowance for uploaded documents — workspace-wide. */
-  documentAllowance: Allowance;
+  /**
+   * Plan allowance for uploaded documents. Workspace-wide on both sides: the
+   * count is every uploaded file on the account and the ceiling is the
+   * account's, which is what the meter's hint says out loud.
+   *
+   * `null` when the plan payload states no document ceiling. That is not a
+   * spent allowance, so it neither fills a bar nor locks this flow, a plan row
+   * missing the key used to render "no documents left" and take the upload
+   * control off the page entirely.
+   */
+  documentAllowance: Allowance | null;
   /**
    * Knowledge-base size allowance, in characters. `null` when the plan payload
    * does not report the limit at all — which is not the same as a full one.
@@ -134,7 +143,7 @@ export function DocumentsFlow({
     }
   }
 
-  if (documentAllowance.atLimit && !planLoading) {
+  if (documentAllowance !== null && documentAllowance.atLimit && !planLoading) {
     return (
       <CardBody>
         <LockedState
@@ -184,9 +193,17 @@ export function DocumentsFlow({
   return (
     <>
       <CardBody className="space-y-4">
-        {planLoading ? null : documentAllowance.unlimited ? (
+        {planLoading ? null : documentAllowance === null ? (
+          // A ceiling the plan payload never stated. Saying nothing about it is
+          // the honest option: the alternative was a full bar and a lock over a
+          // quota that may not exist. Uploads are still priced and confirmed
+          // below, and the server enforces whatever the real ceiling is.
           <p className="text-xs text-text-secondary">
-            No document limit on {planName} — uploads are charged in credits, by length.
+            {planName} states no document limit. Uploads are charged in credits, by length.
+          </p>
+        ) : documentAllowance.unlimited ? (
+          <p className="text-xs text-text-secondary">
+            No document limit on {planName}, uploads are charged in credits, by length.
           </p>
         ) : (
           // The scope is the `Meter`'s `hint` now. It was folded into the label

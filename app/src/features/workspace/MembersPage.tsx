@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   Headphones,
   LogOut,
@@ -47,11 +47,14 @@ import {
   addSelfAsOperator,
   deleteDepartment,
   deleteOperator,
+  getCreditBalance,
   removeSelfAsOperator,
   resendOperatorInvite,
   revokeOperatorInvite,
   updateOperator,
 } from '../../services/api';
+import { keys } from '../../query/keys';
+import { parseCreditBalance } from './usage-model';
 import { useBotContext } from '../../context/BotContext';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { useEntitlements } from '../../hooks/useEntitlements';
@@ -126,6 +129,35 @@ export function MembersPage() {
 
   const team = useTeamData(!isFree);
 
+  /**
+   * This chatbot's OWN seat ceiling.
+   *
+   * `limitFor('operators')` comes from `useEntitlements`, which reports the
+   * highest-priced plan across the whole workspace. Put over a per-chatbot
+   * numerator it produced a meter that mixed two scopes: a chatbot on Starter,
+   * in a workspace whose other chatbot is on Professional, read "1 of 10 seats"
+   * with Invite and Join live chat live, and the server then refused with "this
+   * chatbot has no operator seats left on its plan".
+   *
+   * `GET /credits/balance` carries the real per-chatbot ceiling, on the same
+   * cache key `/billing` reads, so a customer arriving from there pays nothing
+   * for it. A chatbot with no ledger of its own is not in that payload, and
+   * neither is a workspace whose balance failed to load - both fall back to the
+   * account figure, which is then LABELLED as the workspace-wide number it is
+   * and never used to disable anything. Blocking on it is what this fix removes.
+   */
+  const creditBalance = useQuery({
+    queryKey: keys.billing.credits(null),
+    queryFn: async () => parseCreditBalance(await getCreditBalance()),
+    staleTime: 15_000,
+    enabled: !isFree && canManage && botId !== null,
+  });
+  const botSeatCeiling = creditBalance.data?.botCredits.find((pool) => pool.botId === botId)
+    ?.planLimits?.operators;
+  /** This chatbot's own ceiling, or null when there is no such figure to read. */
+  const perBotSeatLimit =
+    botId !== null && typeof botSeatCeiling === 'number' ? botSeatCeiling : null;
+
   const [inviting, setInviting] = useState(false);
   const [editing, setEditing] = useState<Operator | null>(null);
   const [removing, setRemoving] = useState<Operator | null>(null);
@@ -139,9 +171,15 @@ export function MembersPage() {
 
   const roster = rosterFor(team.operators, botId).sort(byPresenceThenName);
   const invites = pendingInvitesFor(team.invites, botId);
-  const used = seatsUsed(team.operators, botId);
-  const seatLimit = limitFor('operators');
-  const atSeatLimit = seatLimit >= 0 && used >= seatLimit;
+  // Numerator and denominator from the same scope, always. Counting one
+  // chatbot's operators against the workspace's best plan is the defect above;
+  // counting every chatbot's operators against it is at least one true
+  // sentence, and it is the one the label states.
+  const used = seatsUsed(team.operators, perBotSeatLimit === null ? null : botId);
+  const seatLimit = perBotSeatLimit ?? limitFor('operators');
+  // Only a real per-chatbot ceiling may close a door. `-1` is the unlimited
+  // sentinel, never a count.
+  const atSeatLimit = perBotSeatLimit !== null && seatLimit >= 0 && used >= seatLimit;
   const self = selfSeat(team.operators, team.clientId, botId);
 
   const membersIn = (department: Department): number =>
@@ -592,7 +630,12 @@ export function MembersPage() {
         <Toolbar className="justify-between gap-4 border-y border-border py-3">
           <Meter
             className="w-64"
-            label="Seats on this chatbot"
+            // Named for what is actually being counted. "Seats on this chatbot"
+            // over the workspace's ceiling was the sentence that made a Starter
+            // chatbot look like it had eight seats spare.
+            label={
+              perBotSeatLimit === null ? 'Seats across this workspace' : 'Seats on this chatbot'
+            }
             used={used}
             limit={seatLimit}
             unit="seats"

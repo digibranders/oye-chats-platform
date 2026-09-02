@@ -48,6 +48,21 @@ export const queryClient = new QueryClient({
       gcTime: 5 * 60_000,
 
       /**
+       * Always run, even when the browser says it is offline.
+       *
+       * The default is `online`, which PAUSES a query instead of running it:
+       * `isPending` stays true, `isError` never fires, and the surface renders
+       * its skeleton for as long as the tab is open. Every page in this console
+       * ships an error state precisely so a failure can be seen and retried,
+       * and a paused query hides the failure behind a permanent loading state
+       * that no consumer branching on `isError` can react to. `navigator.onLine`
+       * is also wrong far more often than it is right: it reports a captive
+       * portal, a VPN flap and a headless browser as offline. Let the request
+       * go out and let the failure be a failure.
+       */
+      networkMode: 'always',
+
+      /**
        * Refetch when the user comes back to the window, but not on every mount.
        *
        * Alt-tabbing back is a real signal that the data may have moved on;
@@ -76,6 +91,10 @@ export const queryClient = new QueryClient({
       // A mutation is a user action. Retrying it silently can double-charge a
       // card or send a second email; the user decides whether to try again.
       retry: false,
+      // Same reason as the queries above, and it matters more here: a paused
+      // mutation leaves the button spinning with no error and no way back, and
+      // the customer clicks it again.
+      networkMode: 'always',
     },
   },
 });

@@ -36,12 +36,14 @@ import {
   allowanceOf,
   canUseDeltaRecrawl,
   crawlUrlFor,
-  orderedUrlsForRecrawl,
+  planCeiling,
+  recrawlStartPlan,
   rootDomainOf,
   summarise,
   type SourceKind,
   type RecrawlDiff,
   type RecrawlMode,
+  type RecrawlTarget,
 } from './knowledge-model';
 import { useKnowledgeData } from './useKnowledgeData';
 import { useTranslation } from '../../../i18n/useTranslation';
@@ -157,7 +159,7 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
   const sourceKindParam = params.get('kind');
   const sourceKind: SourceKind =
     sourceKindParam === 'websites' || sourceKindParam === 'documents' ? sourceKindParam : 'all';
-  const { entitlements, limitFor, planSlug, planName, loading: planLoading } = useEntitlements();
+  const { entitlements, planSlug, planName, loading: planLoading } = useEntitlements();
   const { crawl, startCrawl } = useCrawl();
   const knowledge = useKnowledgeData(agent.id);
   const { refresh: refreshAgent } = useAgent();
@@ -166,16 +168,21 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
   const [actionError, setActionError] = useState<string | null>(null);
 
   // ── Re-crawl ─────────────────────────────────────────────────────────────
-  const [recrawl, setRecrawl] = useState<{
-    sourceName: string;
-    mode: RecrawlMode;
-    diff: RecrawlDiff | null;
-    loading: boolean;
-    previewError: string | null;
-    planLocked: boolean;
-    starting: boolean;
-    startError: string | null;
-  } | null>(null);
+  // The target lives on the state, not on the diff. It is known from the source
+  // row the moment the customer clicks, and a preview that never arrives must
+  // not take the URL, the replace key or the requested mode down with it.
+  const [recrawl, setRecrawl] = useState<
+    | (RecrawlTarget & {
+        sourceName: string;
+        diff: RecrawlDiff | null;
+        loading: boolean;
+        previewError: string | null;
+        planLocked: boolean;
+        starting: boolean;
+        startError: string | null;
+      })
+    | null
+  >(null);
 
   const sources = knowledge.sources.data;
   const summary = useMemo(() => summarise(sources), [sources]);
@@ -223,33 +230,46 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
   const usage = entitlements.usage as Record<string, number | undefined>;
   const limits = entitlements.limits as unknown as Record<string, number | undefined>;
 
-  const documentAllowance = allowanceOf(usage.documents ?? summary.documents, limitFor('documents'));
-  // `page_scraping` usage is never populated server-side (see `_build_usage`),
-  // so it is derived from this chatbot's own crawled pages.
-  const pageAllowance = allowanceOf(summary.websitePages, limitFor('page_scraping'));
-  // `knowledge_characters` is in the entitlements payload — both the plan limit
-  // and a real usage counter — but not in the `LimitKey` union, which lives
-  // outside this surface. Read through a widened view rather than pretending
-  // the key does not exist.
+  // Every allowance below reads the widened `limits` view rather than
+  // `limitFor`, which collapses a missing plan key to `0`. That collapse is the
+  // server's deny-by-default for enforcement and a lie when rendered: "we do
+  // not know your allowance" and "your allowance is spent" are different
+  // sentences, and only the first survives a key the plan row never carried.
+  // `allowanceOf` returns `null` for an absent ceiling, and no flow locks on it.
   //
-  // An ABSENT limit is `null`, never zero. The server treats a missing plan
-  // limit as deny-by-default, but "we do not know your allowance" and "your
-  // allowance is spent" are different sentences, and only one of them is true
-  // here — telling a customer their knowledge base is full because a plan row
-  // is missing a key is the kind of lie that gets a support ticket.
-  const characterLimit = limits.knowledge_characters;
-  const characterAllowance =
-    typeof characterLimit === 'number'
-      ? allowanceOf(usage.knowledge_characters ?? 0, characterLimit)
-      : null;
+  // Workspace-wide on BOTH sides. `usage.documents` counts every uploaded file
+  // on the account (`_build_usage`), `limits.documents` is the account's
+  // ceiling, and `DocumentsFlow` labels the meter as workspace-wide. The old
+  // `?? summary.documents` fallback swapped the numerator to THIS chatbot's own
+  // sources whenever the server omitted the counter, so the same bar compared a
+  // chatbot against a workspace without saying which it was doing.
+  const documentAllowance = allowanceOf(usage.documents ?? 0, limits.documents);
+
+  // No meter for website pages, deliberately. `usage.page_scraping` is never
+  // populated server-side (`_build_usage` leaves it to callers that need it),
+  // so the only numerator available is this chatbot's stored pages, all time,
+  // while `limits.page_scraping` is the ACCOUNT's per-period ceiling. They
+  // share neither scope nor period, and pairing them told a workspace that had
+  // spent nothing that it had nothing left. Both are passed as what they are.
+  const pageLimit = planCeiling(limits.page_scraping);
+
+  // `knowledge_characters` is in the entitlements payload, both the plan limit
+  // and a real usage counter, but not in the `LimitKey` union, which lives
+  // outside this surface. Read through the same widened view.
+  const characterAllowance = allowanceOf(usage.knowledge_characters ?? 0, limits.knowledge_characters);
 
   const requestRecrawl = useCallback(
     async (source: KnowledgeSource, mode: RecrawlMode) => {
       setActionError(null);
+      const target: RecrawlTarget = {
+        crawlUrl: crawlUrlFor(source.name),
+        replaceSource: rootDomainOf(source.name),
+        mode,
+      };
       if (mode === 'delta' && !canUseDeltaRecrawl(planSlug)) {
         setRecrawl({
+          ...target,
           sourceName: source.name,
-          mode,
           diff: null,
           loading: false,
           previewError: null,
@@ -260,11 +280,10 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
         return;
       }
 
-      const crawlUrl = crawlUrlFor(source.name);
-      const replaceSource = rootDomainOf(source.name);
+      const { crawlUrl, replaceSource } = target;
       setRecrawl({
+        ...target,
         sourceName: source.name,
-        mode,
         diff: null,
         loading: true,
         previewError: null,
@@ -292,35 +311,24 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
           return;
         }
         // The preview is a courtesy, not a gate: a network hiccup must not be
-        // the reason a customer cannot refresh their own website. We proceed
-        // with an empty, explicitly-capped diff so the backend rediscovers the
-        // site itself, and we say plainly that the counts are unknown.
+        // the reason a customer cannot refresh their own website. So the run
+        // stays available and the backend rediscovers the site itself, but the
+        // diff stays NULL.
+        //
+        // It used to be filled with a synthetic all-zero comparison, including
+        // an invented `balance: 0` that was never read from anywhere, and the
+        // dialog priced the run off it: "Cost 0 credits", "0 pages × 1 credits",
+        // and an enabled "Re-train 0 pages for 0 credits" over a
+        // `force_reingest` that re-reads and re-bills every stored page. On a
+        // 400-page site at 5 credits that button promised 0 and spent 2,000.
         setRecrawl((current) =>
           current === null
             ? current
             : {
                 ...current,
                 loading: false,
+                diff: null,
                 previewError: errorMessage(cause, t('agents.weCouldNotCompareThe') || 'We could not compare the pages.'),
-                diff: {
-                  mode,
-                  sourceName: source.name,
-                  crawlUrl,
-                  replaceSource,
-                  sitemapTotal: 0,
-                  existingTotal: 0,
-                  unchanged: 0,
-                  newPages: 0,
-                  removedPages: 0,
-                  unchangedUrls: [],
-                  newUrls: [],
-                  removedUrls: [],
-                  costPerPage: 1,
-                  balance: 0,
-                  capped: true,
-                  headPartial: false,
-                  planMax: -1,
-                },
               },
         );
       }
@@ -330,13 +338,14 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
 
   const confirmRecrawl = useCallback(async () => {
     const current = recrawl;
-    if (current?.diff == null) return;
-    const { diff } = current;
+    // A failed preview leaves no diff and the run still goes ahead, so the gate
+    // is the plan lock and the dialog's own state, never the presence of counts.
+    if (current === null || current.planLocked || current.loading) return;
     setRecrawl({ ...current, starting: true, startError: null });
     try {
-      const orderedUrls = orderedUrlsForRecrawl(diff);
+      const plan = recrawlStartPlan(current, current.diff);
       const options: StartCrawlOptions = {
-        url: diff.crawlUrl,
+        url: plan.crawlUrl,
         botId: agent.id,
         botName: agent.name ?? null,
         // A source record carries no per-source JavaScript flag, so a site
@@ -344,10 +353,15 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
         // rather than hidden: it is the difference between a full refresh and
         // an empty one on a single-page site.
         useJs: false,
-        replaceSource: diff.replaceSource,
-        mode: diff.mode,
-        orderedUrls,
-        expectedNewPages: diff.mode === 'delta' ? diff.newPages : null,
+        replaceSource: plan.replaceSource,
+        mode: plan.mode,
+        orderedUrls: plan.orderedUrls,
+        // The denominator the progress bar was missing. Without it the bar fell
+        // back to `crawl.maxPages`, the server's `effective_max_pages`, which
+        // on an unlimited plan is `balance / cost_per_page`, so re-training a
+        // 47-page site read "3 of 9,800 pages" and never appeared to move.
+        discoveredTotal: plan.discoveredTotal,
+        expectedNewPages: plan.expectedNewPages,
       };
       await startCrawl(options);
       setRecrawl(null);
@@ -521,7 +535,8 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
                 agentWebsite={agent.website ?? null}
                 sources={sources}
                 documentAllowance={documentAllowance}
-                pageAllowance={pageAllowance}
+                pagesTrainedHere={summary.websitePages}
+                pageLimit={pageLimit}
                 characterAllowance={characterAllowance}
                 planName={planName}
                 planLoading={planLoading}
@@ -568,6 +583,7 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
             if (!open) setRecrawl(null);
           }}
           sourceName={recrawl.sourceName}
+          mode={recrawl.mode}
           diff={recrawl.diff}
           loading={recrawl.loading}
           previewError={recrawl.previewError}

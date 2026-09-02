@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AgentsPage,
   DEFAULT_SORT,
@@ -15,6 +15,7 @@ import {
   type AgentListItem,
 } from './AgentsPage';
 import { agentHealth } from '../home/agentHealth';
+import { getDashboardStats } from '../../services/api';
 import { useBotContext } from '../../context/BotContext';
 import { useEntitlements } from '../../hooks/useEntitlements';
 import type { Bot } from '../../types/domain';
@@ -117,6 +118,19 @@ describe('summary', () => {
   it('reports absent conversations as absent rather than as zero', () => {
     expect(summarizeAgents([item({ id: 9 }, null)]).conversations).toBeNull();
     expect(summarizeAgents([item({ id: 9 }, null), item({ id: 10 }, 4)]).conversations).toBe(4);
+  });
+
+  it('marks a sum that dropped a chatbot as incomplete', () => {
+    // The sum above is 4 out of two chatbots, and stating it as a total would
+    // be a confident figure over a partial one. Home has always disclosed this
+    // case; the two pages state the same total, so they state it the same way.
+    expect(summarizeAgents([item({ id: 9 }, null), item({ id: 10 }, 4)]).incomplete).toBe(true);
+    expect(summarizeAgents([item({ id: 9 }, 0), item({ id: 10 }, 4)]).incomplete).toBe(false);
+  });
+
+  it('does not call a chatbot still fetching its figure a chatbot that failed', () => {
+    const pending = { ...item({ id: 11 }, null), conversationsLoading: true };
+    expect(summarizeAgents([pending, item({ id: 12 }, 4)]).incomplete).toBe(false);
   });
 });
 
@@ -390,5 +404,68 @@ describe('the table', () => {
     expect(screen.getByRole('status')).toHaveTextContent('2 chatbots');
     // The summary card restated three of the four filter segments as 28px tiles.
     expect(screen.queryByText('Needs attention', { selector: 'p' })).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The conversation total in the toolbar, and what it leaves out.
+ *
+ * `summarizeAgents` sums only the chatbots whose statistics call reported, and
+ * the toolbar then stated the result as "1,240 conversations all time" with no
+ * caveat. Home renders "Some chatbots did not report, so these totals are
+ * incomplete" for the identical case, so one total said two different things
+ * depending on which page you read it on.
+ */
+describe('the total in the toolbar', () => {
+  const rows: Bot[] = [
+    { id: 21, name: 'Acme Support', created_at: '2026-01-01T00:00:00Z' },
+    { id: 22, name: 'Beta Concierge', created_at: '2026-02-01T00:00:00Z' },
+  ];
+
+  function renderList() {
+    vi.mocked(useBotContext).mockReturnValue({
+      bots: rows,
+      selectedBot: null,
+      selectBot: vi.fn(),
+      isAllAgents: false,
+      loading: false,
+      error: null,
+      refreshBots: vi.fn().mockResolvedValue([]),
+    });
+    vi.mocked(useEntitlements).mockReturnValue({
+      limitFor: () => 5,
+      planName: 'Standard',
+    } as unknown as ReturnType<typeof useEntitlements>);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/chatbots']}>
+          <AgentsPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  const DISCLOSURE = 'Some chatbots did not report, so these totals are incomplete.';
+
+  afterEach(() => {
+    vi.mocked(getDashboardStats).mockResolvedValue({});
+  });
+
+  it('discloses a partial sum in the same words Home uses', async () => {
+    vi.mocked(getDashboardStats).mockRejectedValue(new Error('Statistics are unavailable.'));
+
+    renderList();
+
+    expect(await screen.findByText(DISCLOSURE)).toBeInTheDocument();
+  });
+
+  it('says nothing when every chatbot reported', async () => {
+    vi.mocked(getDashboardStats).mockResolvedValue({ total_conversations: 12, total_messages: 40 });
+
+    renderList();
+
+    expect(await screen.findByText(/24 conversations all time/)).toBeInTheDocument();
+    expect(screen.queryByText(DISCLOSURE)).toBeNull();
   });
 });

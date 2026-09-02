@@ -145,6 +145,38 @@ describe('InstallStatusCard', () => {
     expect(screen.getByText('Last seen')).toBeInTheDocument();
   });
 
+  it('drops the green light once the heartbeat has been quiet for a week', async () => {
+    const onTroubleshoot = vi.fn();
+    renderWithRouter(
+      <InstallStatusCard
+        {...base}
+        onTroubleshoot={onTroubleshoot}
+        installedAt="2026-01-01T09:00:00.000Z"
+        heartbeat={widgetHeartbeat({
+          installedAt: '2026-01-01T09:00:00.000Z',
+          lastSeenAt: '2026-01-14T09:00:00.000Z',
+          lastOrigin: 'www.acme.com',
+        })}
+        status={installStatus({
+          installedAt: '2026-01-01T09:00:00.000Z',
+          lastSeenAt: '2026-01-14T09:00:00.000Z',
+          claimed: false,
+          checking: false,
+          now: Date.parse('2026-08-20T09:00:00.000Z'),
+        })}
+      />,
+    );
+    expect(screen.getByRole('heading', { name: 'Not seen recently' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Live on your website' })).not.toBeInTheDocument();
+    // The date it went quiet, in the state itself, not only in a property row.
+    expect(screen.getByText(/we last saw this chatbot load on/i)).toBeInTheDocument();
+    // "Check again" would poll for `widget_installed_at`, which this chatbot
+    // already has, so the only offer is the checklist.
+    expect(screen.queryByRole('button', { name: /check again/i })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'What to check' }));
+    expect(onTroubleshoot).toHaveBeenCalledTimes(1);
+  });
+
   it('renders an empty heartbeat as "not recorded", never as an outage', () => {
     renderWithRouter(
       <InstallStatusCard

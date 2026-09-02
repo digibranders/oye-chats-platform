@@ -481,14 +481,16 @@ async def task_gateway_reconciliation(ctx: dict) -> int:
 
 
 async def task_prune_processed_webhooks(ctx: dict) -> int:
-    """Cron: prune processed_webhooks rows older than 180 days.
+    """Cron: age out the webhook and billing telemetry tables.
 
-    The table exists for replay dedup; Razorpay's own retry horizon is days,
-    not months, so half-a-year-old rows dedup nothing and only grow the table
-    (and its two unique indexes) forever. Safe now that the payload-digest key
-    gives the money handlers a second layer for anything genuinely replayed
-    later. Batched DELETE so a first run over years of backlog cannot hold a
-    long transaction.
+    ``processed_webhooks`` (180d) exists for replay dedup; Razorpay's own retry
+    horizon is days, not months, so half-a-year-old rows dedup nothing and only
+    grow the table (and its two unique indexes) forever. Safe now that the
+    payload-digest key gives the money handlers a second layer for anything
+    genuinely replayed later. ``reconciliation_runs`` (180d) and
+    ``billing_funnel_events`` (90d) follow, then ``webhook_deliveries`` (90d),
+    which is the one that holds visitor PII. Every DELETE is batched so a first
+    run over years of backlog cannot hold a long transaction.
     """
     import asyncio
     from datetime import UTC, datetime, timedelta
@@ -545,12 +547,43 @@ async def task_prune_processed_webhooks(ctx: dict) -> int:
                 session.execute(delete(BillingFunnelEvent).where(BillingFunnelEvent.id.in_(funnel_ids)))
                 session.commit()
                 total += len(funnel_ids)
+
+            # Outbound delivery log: 90 days. This one is a retention duty, not
+            # just table hygiene. A ``lead_captured`` row stores the whole body
+            # the customer's endpoint was sent (visitor name, email, phone) plus
+            # up to 1KB of that endpoint's response, and nothing aged it out.
+            #
+            # A row that still carries ``next_retry_at`` is NEVER pruned at any
+            # age: that marker is the sole record that a redelivery is owed, so
+            # deleting it loses the customer's event silently. The ``webhooks``
+            # table itself is untouched, only the per-attempt log.
+            from app.db.models import WebhookDelivery
+
+            delivery_cutoff = datetime.now(UTC) - timedelta(days=90)
+            while True:
+                delivery_ids = (
+                    session.execute(
+                        select(WebhookDelivery.id)
+                        .where(
+                            WebhookDelivery.created_at < delivery_cutoff,
+                            WebhookDelivery.next_retry_at.is_(None),
+                        )
+                        .limit(5000)
+                    )
+                    .scalars()
+                    .all()
+                )
+                if not delivery_ids:
+                    break
+                session.execute(delete(WebhookDelivery).where(WebhookDelivery.id.in_(delivery_ids)))
+                session.commit()
+                total += len(delivery_ids)
         return total
 
     loop = asyncio.get_running_loop()
     count = await loop.run_in_executor(None, _run)
     if count:
-        logger.info("task_prune_processed_webhooks: pruned %d rows older than 180d", count)
+        logger.info("task_prune_processed_webhooks: pruned %d aged telemetry and delivery-log rows", count)
     return count
 
 

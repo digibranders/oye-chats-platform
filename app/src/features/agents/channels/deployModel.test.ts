@@ -16,6 +16,7 @@ import {
   troubleshootItems,
   widgetHeartbeat,
 } from './deployModel';
+import { formatDateTime } from '../../../ui';
 import { attributionAnchorHtml } from '../../../data/widgetEmbed';
 
 const BOT_KEY = 'bot-11a026a4b8b3';
@@ -49,6 +50,53 @@ describe('installStatus', () => {
     const status = installStatus({ installedAt: null, claimed: true, checking: true });
     expect(status.state).toBe('checking');
     expect(status.tone).toBe('neutral');
+  });
+
+  it('stays live while the heartbeat is recent', () => {
+    const now = Date.parse('2026-08-20T09:00:00Z');
+    const status = installStatus({
+      installedAt: '2026-01-01T09:00:00Z',
+      lastSeenAt: '2026-08-19T09:00:00Z',
+      claimed: false,
+      checking: false,
+      now,
+    });
+    expect(status.state).toBe('installed');
+    expect(status.tone).toBe('success');
+  });
+
+  it('stops calling a chatbot live once its heartbeat is a week old', () => {
+    // `widget_installed_at` is a first-seen stamp that nothing refreshes, so
+    // reading it alone put a green "we have seen this load on a real page of
+    // your site" above a "Last seen: 7 months ago".
+    const now = Date.parse('2026-08-20T09:00:00Z');
+    const status = installStatus({
+      installedAt: '2026-01-01T09:00:00Z',
+      lastSeenAt: '2026-01-14T09:00:00Z',
+      claimed: false,
+      checking: false,
+      now,
+    });
+    expect(status.state).toBe('stale');
+    expect(status.tone).toBe('warning');
+    expect(status.label).toBe('Not seen recently');
+    // The date it went quiet is the fact the customer needs, so it travels
+    // with the state rather than only living in a property row.
+    expect(status.detail).toContain(formatDateTime('2026-01-14T09:00:00Z'));
+  });
+
+  it('keeps a chatbot with no heartbeat at all live, never stale', () => {
+    // There is no backfill: a chatbot installed before the heartbeat shipped
+    // reads `null` until its widget next boots. Reporting that as an outage
+    // would send a customer to debug a working site.
+    const status = installStatus({
+      installedAt: '2026-01-01T09:00:00Z',
+      lastSeenAt: null,
+      claimed: false,
+      checking: false,
+      now: Date.parse('2026-08-20T09:00:00Z'),
+    });
+    expect(status.state).toBe('installed');
   });
 
   it('lets the server stamp win over any local claim', () => {

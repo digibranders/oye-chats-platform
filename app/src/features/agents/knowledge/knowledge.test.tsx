@@ -498,6 +498,7 @@ function recrawlDialog(overrides: Partial<Parameters<typeof RecrawlDialog>[0]> =
       open
       onOpenChange={vi.fn()}
       sourceName="https://acme.com"
+      mode="full"
       diff={diff()}
       loading={false}
       previewError={null}
@@ -552,6 +553,48 @@ describe('RecrawlDialog — spending credits', () => {
     });
     expect(screen.getByText(/The comparison timed out\./)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^re-train/i })).toBeEnabled();
+  });
+
+  /**
+   * The page used to answer a failed preview with a synthetic all-zero diff
+   * carrying an invented `balance: 0`, and every figure here rendered from it:
+   * "Unchanged 0 · New 0 · Gone 0 · Cost 0 credits", the hint "0 pages × 1
+   * credits · balance 0", and an enabled "Re-train 0 pages for 0 credits" over
+   * a `force_reingest` that re-reads and re-bills every stored page. A promise
+   * of nothing over a bill of 2,000 credits.
+   */
+  it('quotes no figure at all when the comparison failed', () => {
+    recrawlDialog({ previewError: 'The comparison timed out.', diff: null });
+
+    expect(screen.getByText(/could not compare the pages/i)).toBeInTheDocument();
+    expect(screen.getByText(/every page found will be read and charged/i)).toBeInTheDocument();
+    // The action stays available: a hiccup on a courtesy preview must not stop
+    // a customer refreshing their own site. It just makes no numeric promise.
+    const confirm = screen.getByRole('button', { name: /^re-train/i });
+    expect(confirm).toBeEnabled();
+    expect(confirm).toHaveAccessibleName('Re-train every page, charged');
+
+    expect(screen.queryByText(/0 credits/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/0 pages/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/balance 0/)).not.toBeInTheDocument();
+    // And no cost well to read a price out of.
+    expect(screen.queryByText(/^Cost$/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Unchanged$/)).not.toBeInTheDocument();
+  });
+
+  it('does not price a diff the customer has just been told is stale', () => {
+    // Same guard, reached from the other side: a stale diff still in state when
+    // a later preview fails must not be quoted either.
+    recrawlDialog({ previewError: 'The comparison timed out.', diff: diff() });
+    expect(screen.queryByRole('button', { name: /re-train 10 pages/i })).not.toBeInTheDocument();
+    expect(screen.queryByText('50 credits')).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Cost$/)).not.toBeInTheDocument();
+  });
+
+  it('keeps the requested mode when no preview arrived to carry it', () => {
+    recrawlDialog({ mode: 'delta', diff: null, previewError: 'The comparison timed out.' });
+    expect(screen.getByRole('button', { name: 'Re-train changed pages' })).toBeEnabled();
+    expect(screen.getByText(/unchanged pages will still be skipped/i)).toBeInTheDocument();
   });
 
   it('does not promise a delta price it cannot know', () => {
@@ -803,7 +846,8 @@ function addPanel(overrides: Partial<Parameters<typeof AddKnowledgePanel>[0]> = 
       agentWebsite="https://acme.com"
       sources={[]}
       documentAllowance={allowanceOf(1, 5)}
-      pageAllowance={allowanceOf(10, 500)}
+      pagesTrainedHere={10}
+      pageLimit={500}
       characterAllowance={allowanceOf(1_000, 50_000)}
       planName="Starter"
       planLoading={false}
@@ -835,34 +879,46 @@ const DISCOVERY = {
 
 describe('AddKnowledgePanel — the website flow', () => {
   /**
-   * As a `Meter`, not a permanent brass `Alert`. A quota 2% spent is ambient
-   * state, and painting it in the one colour the system reserves for "this is a
-   * paid thing" on every render teaches the customer to ignore that colour.
+   * Two scopes, two sentences. There is no workspace-wide page counter in the
+   * entitlements payload, so the only honest numerator is this chatbot's own
+   * stored pages, which does not belong in a bar against the account's
+   * ceiling. It used to be exactly that bar.
    */
-  it('states the plan allowance before anything is spent', () => {
+  it('states this chatbot’s pages and the plan’s ceiling as separate facts', () => {
     addPanel();
-    const meter = screen.getByRole('meter', { name: 'Website pages' });
-    expect(meter.getAttribute('aria-valuetext')).toContain('10 of 500 used');
-    expect(screen.queryByText(/Your Starter plan covers/)).not.toBeInTheDocument();
+    expect(screen.getByText(/trained on this chatbot so far/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Starter allows 500 website pages across this workspace/i),
+    ).toBeInTheDocument();
+    // No meter, because no numerator shares that ceiling's scope.
+    expect(screen.queryByRole('meter', { name: 'Website pages' })).not.toBeInTheDocument();
   });
 
-  it('escalates to the reserved tone only once the allowance is nearly gone', () => {
-    addPanel({ pageAllowance: allowanceOf(450, 500) });
-    expect(screen.getByText(/pages left on Starter/i)).toBeInTheDocument();
-  });
-
-  it('does not claim a limit is reached while the plan is still resolving', () => {
+  it('says nothing about the plan while the plan is still resolving', () => {
     // The entitlements provider serves a Free placeholder until the real plan
-    // lands, so locking on it would tell a paying customer their pages are gone.
-    addPanel({ pageAllowance: allowanceOf(20, 20), planLoading: true });
-    expect(screen.queryByText(/are all used/i)).not.toBeInTheDocument();
+    // lands, so quoting it would show a paying customer a Free plan's ceiling.
+    addPanel({ pagesTrainedHere: 20, pageLimit: 20, planLoading: true });
+    expect(screen.queryByText(/across this workspace/i)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /check pages/i })).toBeInTheDocument();
   });
 
-  it('locks with the way out once the plan really is spent', () => {
-    addPanel({ pageAllowance: allowanceOf(500, 500) });
-    expect(screen.getByText(/no website pages left/i)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /see plans/i })).toHaveAttribute('href', '/billing');
+  /**
+   * The lock this replaces. `limitFor` returns 0 for a plan row with no
+   * `page_scraping` key, `allowanceOf` read that as a spent allowance, and the
+   * whole flow was swapped for "no website pages left", a customer who had
+   * spent nothing could not train their chatbot at all.
+   */
+  it('never takes the training controls away over a ceiling it does not know', () => {
+    addPanel({ pageLimit: null });
+    expect(screen.getByRole('button', { name: /check pages/i })).toBeEnabled();
+    expect(screen.queryByText(/no website pages left/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/charged in credits on Starter/i)).toBeInTheDocument();
+  });
+
+  it('reads an unlimited ceiling as unlimited, not as a full one', () => {
+    addPanel({ pagesTrainedHere: 4_200, pageLimit: -1 });
+    expect(screen.getByRole('button', { name: /check pages/i })).toBeEnabled();
+    expect(screen.getByText(/charged in credits on Starter/i)).toBeInTheDocument();
   });
 
   it('reports the crawl budget the server sent, which nothing used to read', async () => {
@@ -927,6 +983,30 @@ describe('AddKnowledgePanel — the document flow', () => {
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     await user.upload(input, [file('handbook.txt')]);
   }
+
+  /**
+   * `limitFor('documents')` returns 0 for a plan row that never carried the
+   * key, and that zero used to render "no documents left, this plan covers 0
+   * documents across this workspace" with the file drop removed from the page.
+   */
+  it('keeps uploading available when the plan states no document ceiling', async () => {
+    const user = userEvent.setup();
+    addPanel({ documentAllowance: null });
+    await user.click(screen.getByRole('radio', { name: 'Documents' }));
+
+    expect(screen.queryByText(/no documents left/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/Starter states no document limit/i)).toBeInTheDocument();
+    expect(document.querySelector('input[type="file"]')).not.toBeNull();
+  });
+
+  it('still locks on a ceiling the plan really did state and really is spent', async () => {
+    const user = userEvent.setup();
+    addPanel({ documentAllowance: allowanceOf(5, 5) });
+    await user.click(screen.getByRole('radio', { name: 'Documents' }));
+
+    expect(screen.getByText(/no documents left/i)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /see plans/i })).toHaveAttribute('href', '/billing');
+  });
 
   it('prices an upload before it charges for it, and waits to be told to go', async () => {
     const user = userEvent.setup();

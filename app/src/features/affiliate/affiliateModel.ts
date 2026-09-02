@@ -45,6 +45,25 @@ function toBool(value: unknown): boolean {
   return value === true;
 }
 
+/**
+ * A rate the API declines to state, kept as `null` all the way to the screen.
+ *
+ * `conversion_pct` comes back `null` whenever `clicks == 0` (see
+ * `affiliate_service.py`), and coercing that to `0` made a brand-new code with
+ * no traffic report "0% conversion", a verdict on the code's performance,
+ * where the truth is that nothing has happened yet. It also produced the
+ * arithmetic impossibility "Clicks 0 · Signups 3 · Conversion 0%" on a code
+ * whose signups were attributed without a recorded click.
+ */
+function toOptionalNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 // ── View-model shapes ────────────────────────────────────────────────────────
 
 /** The affiliate's own program terms (`GET /affiliate/me`). */
@@ -68,8 +87,8 @@ export interface AffiliateCodeView {
   customerDiscountPct: number;
   clicks: number;
   signups: number;
-  /** Signups ÷ clicks, whole percent. */
-  conversionPct: number;
+  /** Signups ÷ clicks, whole percent. `null` when the API had nothing to divide. */
+  conversionPct: number | null;
   createdAt: string | null;
   deactivatedAt: string | null;
 }
@@ -80,7 +99,8 @@ export interface AffiliateStatsView {
   totalSignups: number;
   activeCodes: number;
   maxActiveCodes: number;
-  conversionPct: number;
+  /** `null` when no code has been clicked yet, never `0`. */
+  conversionPct: number | null;
 }
 
 // ── Coercion ─────────────────────────────────────────────────────────────────
@@ -107,7 +127,7 @@ export function toAffiliateCode(raw: unknown): AffiliateCodeView | null {
     customerDiscountPct: toNumber(record.customer_discount_pct),
     clicks: toNumber(record.clicks),
     signups: toNumber(record.signups),
-    conversionPct: toNumber(record.conversion_pct),
+    conversionPct: toOptionalNumber(record.conversion_pct),
     createdAt: toOptionalText(record.created_at),
     deactivatedAt: toOptionalText(record.deactivated_at),
   };
@@ -126,7 +146,7 @@ export function toAffiliateStats(raw: unknown): AffiliateStatsView {
     totalSignups: toNumber(record.total_signups),
     activeCodes: toNumber(record.active_codes),
     maxActiveCodes: toNumber(record.max_active_codes),
-    conversionPct: toNumber(record.conversion_pct),
+    conversionPct: toOptionalNumber(record.conversion_pct),
   };
 }
 

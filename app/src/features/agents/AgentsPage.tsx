@@ -122,6 +122,18 @@ export interface AgentListSummary {
   training: number;
   /** Sum across chatbots that reported. `null` when none of them did. */
   conversations: number | null;
+  /**
+   * At least one chatbot has finished trying and reported nothing, so the sum
+   * above is a partial one.
+   *
+   * Without this the toolbar stated a confident "1,240 conversations all time"
+   * over a total that had silently dropped every chatbot whose statistics call
+   * failed. Home has always disclosed the same case in the same words; a total
+   * that means one thing on one page and another on the next is worse than
+   * either. A chatbot whose call is still in flight is not counted here: it has
+   * not failed, it has not answered yet, and the row says so itself.
+   */
+  incomplete: boolean;
 }
 
 /**
@@ -172,6 +184,7 @@ export function summarizeAgents(items: readonly AgentListItem[]): AgentListSumma
     conversations: reported.length
       ? reported.reduce((total, item) => total + (item.conversations ?? 0), 0)
       : null,
+    incomplete: items.some((item) => item.conversations === null && !item.conversationsLoading),
   };
 }
 
@@ -536,18 +549,30 @@ export function AgentsPage() {
               {/* The result of a filter, announced. A count that only changes
                   visually tells a screen-reader user nothing about whether
                   their search did anything. */}
-              <p
+              <div
                 role="status"
                 aria-live="polite"
-                className="ml-auto whitespace-nowrap text-xs text-text-secondary"
+                className="ml-auto text-xs text-text-secondary sm:text-right"
               >
-                {visible.length === summary.total
-                  ? `${formatNumber(summary.total)} chatbots`
-                  : `${formatNumber(visible.length)} of ${formatNumber(summary.total)} chatbots`}
-                {summary.conversations === null
-                  ? ''
-                  : ` · ${formatNumber(summary.conversations)} conversations all time`}
-              </p>
+                <p className="whitespace-nowrap">
+                  {visible.length === summary.total
+                    ? `${formatNumber(summary.total)} chatbots`
+                    : `${formatNumber(visible.length)} of ${formatNumber(summary.total)} chatbots`}
+                  {summary.conversations === null
+                    ? ''
+                    : ` · ${formatNumber(summary.conversations)} conversations all time`}
+                </p>
+                {/* The sum drops every chatbot whose statistics call failed, so
+                    a partial total says it is partial. Deliberately the same
+                    sentence Home shows for the identical case, from the same
+                    dictionary entry: one disclosure, changed in one place. */}
+                {summary.incomplete ? (
+                  <p className="text-text-tertiary">
+                    {t('home.someChatbotsDidNotReport')
+                      || 'Some chatbots did not report, so these totals are incomplete.'}
+                  </p>
+                ) : null}
+              </div>
             </Toolbar>
           ) : undefined
         }
