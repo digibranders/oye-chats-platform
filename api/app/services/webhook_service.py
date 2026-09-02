@@ -108,6 +108,28 @@ def _ip_is_public(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     return not (ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local or ip.is_multicast)
 
 
+def _loggable_url(url: str) -> str:
+    """The part of a webhook URL that is safe to write to a log: scheme and host.
+
+    For the integrations customers actually wire up (Zapier
+    ``hooks.zapier.com/hooks/catch/<id>/<token>/``, Make, n8n) the PATH is the
+    credential: anyone holding it can post events into the customer's
+    automation. A log line carrying the full URL lands in the journal and rides
+    into Sentry as a breadcrumb on the worker's next event, and ``scrub_event``
+    strips request headers, not log arguments. The host is all triage needs.
+    """
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return "<unparseable>"
+    if not parsed.scheme or not parsed.hostname:
+        return "<unparseable>"
+    host = parsed.hostname
+    if parsed.port:
+        host = f"{host}:{parsed.port}"
+    return f"{parsed.scheme}://{host}"
+
+
 def _is_safe_webhook_url(url: str) -> bool:
     """Re-validate webhook URL at delivery time to block DNS rebinding SSRF."""
     parsed = urlparse(url)
@@ -212,7 +234,11 @@ def _deliver_webhook(webhook_id: int, event_type: str, data: dict, attempt: int 
             return
 
         if not _is_safe_webhook_url(webhook.url):
-            logger.warning("Webhook %s blocked: URL %r resolves to internal address", webhook_id, webhook.url)
+            logger.warning(
+                "Webhook %s blocked: URL at %s resolves to internal address",
+                webhook_id,
+                _loggable_url(webhook.url),
+            )
             session.add(
                 WebhookDelivery(
                     webhook_id=webhook.id,
