@@ -1573,6 +1573,7 @@ const en = {
     chatbots: 'Chatbots',
     chattingRightNow: 'chatting right now',
     checkAgain: 'Check again',
+    trainAnyway: 'Train anyway',
     checkItInAClean: 'Check it in a clean browser window',
     checkPages: 'Check pages',
     checkTheExactAddressThe: 'Check the exact address the page is served from',

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebsiteFlow } from './WebsiteFlow';
@@ -36,8 +36,10 @@ vi.mock('../../../../context/CrawlContext', () => ({
   }),
 }));
 
+const api = vi.hoisted(() => ({ discoverCrawlUrls: vi.fn() }));
 vi.mock('../../../../services/api', () => ({
   getCurrentUser: () => Promise.resolve({ id: 1, website: null }),
+  discoverCrawlUrls: api.discoverCrawlUrls,
 }));
 
 function renderFlow() {
@@ -171,5 +173,28 @@ describe('WebsiteFlow: what a finished crawl claims', () => {
     renderFlow();
 
     expect(screen.getByText('Finished — this chatbot read 7 pages.')).toBeInTheDocument();
+  });
+});
+
+describe('when the page count fails', () => {
+  it('invents no numbers and still offers to train', async () => {
+    /* The failure path used to store a synthetic `{ total_found: 0 }`, which the
+       budget model padded into "balance 0 · 1 credits a page" for an account with
+       thousands of credits, beside a disabled "Train on 0 pages". A timeout is
+       exactly when a site is large, and large is exactly when the invented
+       numbers are most wrong. */
+    api.discoverCrawlUrls.mockRejectedValue(new Error('timeout of 30000ms exceeded'));
+    renderFlow();
+
+    const address = screen.getByRole('textbox');
+    fireEvent.change(address, { target: { value: 'https://www.example.test' } });
+    fireEvent.click(screen.getByRole('button', { name: /check pages/i }));
+
+    await waitFor(() => expect(api.discoverCrawlUrls).toHaveBeenCalled());
+    const train = await screen.findByRole('button', { name: /train anyway/i });
+    expect(train).toBeEnabled();
+    expect(screen.queryByText(/balance 0/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/1 credits a page/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /train on 0 pages/i })).not.toBeInTheDocument();
   });
 });

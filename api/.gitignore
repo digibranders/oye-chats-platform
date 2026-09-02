@@ -1,7 +1,9 @@
 
-# Local .env backups (may contain secrets). The glob is deliberately loose:
-# a backup named .env.bk slipped past the narrower .env.bak* pattern and was
-# left untracked but committable.
-.env.b*
+# Every local .env variant (may contain secrets): backups, test-run copies,
+# per-machine overrides. Two different backup names slipped past narrower
+# globs in one day (.env.bk past .env.bak*, then .env.citest past .env.b*),
+# so the rule is now the whole family, with the committed example carved out.
+.env.*
+!.env.example
 .ngrok.log
 .cloudflared.log

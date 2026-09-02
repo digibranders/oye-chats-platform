@@ -101,6 +101,7 @@ export function WebsiteFlow({
     selected,
     error,
     budget,
+    discoveryFailed,
     hasPageList,
     pageCount,
     preflight,
@@ -341,6 +342,23 @@ export function WebsiteFlow({
                 onClick={() => setConfirmingStart(true)}
               >
                 Train on {formatNumber(pageCount)} page{pageCount === 1 ? '' : 's'}
+              </Button>
+              <Button variant="ghost" disabled={discovering} onClick={() => void flow.discover()}>
+                {t('agents.checkAgain') || 'Check again'}
+              </Button>
+            </>
+          ) : discoveryFailed ? (
+            <>
+              {/* The count failed, not the site. The crawl follows links from
+                  the homepage on its own, so the honest offer is to go ahead
+                  without a number: no page count, no invented cost. The confirm
+                  dialog's no-budget copy states the consequence. */}
+              <Button
+                variant="accent"
+                disabled={!url.trim() || discovering}
+                onClick={() => setConfirmingStart(true)}
+              >
+                {t('agents.trainAnyway') || 'Train anyway'}
               </Button>
               <Button variant="ghost" disabled={discovering} onClick={() => void flow.discover()}>
                 {t('agents.checkAgain') || 'Check again'}
