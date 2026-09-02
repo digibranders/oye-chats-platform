@@ -47,12 +47,32 @@ class CreateClientRequest(BaseModel):
     website: OptionalName = None
 
 
+def _require_write(superadmin: Client) -> None:
+    """Refuse a mutation from a read-only super-admin.
+
+    ``get_superadmin`` proves the caller is A super-admin, not that they may
+    WRITE: ``superadmin_role == "readonly"`` is a real tier, assignable from
+    the owner-gated client PATCH, and every other super-admin module enforces
+    it on every mutation. This one enforced it on feedback triage and nowhere
+    else, so a read-only account could mint accounts and read back their fresh
+    api_key, or hard-delete a customer and CASCADE away their bots, documents,
+    conversations and messages. Irreversibly, and from an account granted
+    precisely so it could not do that.
+    """
+    if getattr(superadmin, "superadmin_role", None) == "readonly":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Read-only super-admin: writes are not permitted.",
+        )
+
+
 @router.post("/clients")
 def create_client(request: CreateClientRequest, superadmin: Client = Depends(get_superadmin)):
     """
     Superadmin only: Create a new Client account.
     Client will create their own bots from the dashboard.
     """
+    _require_write(superadmin)
     with get_session() as session:
         # Check if email exists
         stmt = select(Client).where(Client.email == request.email).limit(1)
@@ -119,6 +139,7 @@ def delete_client(client_id: int, superadmin: Client = Depends(get_superadmin)):
     Superadmin only: Delete a client and ALL their data (bots, documents, sessions, messages).
     Cannot delete yourself (the superadmin account).
     """
+    _require_write(superadmin)
     with get_session() as session:
         stmt = select(Client).where(Client.id == client_id)
         client = session.execute(stmt).scalars().first()
@@ -481,11 +502,7 @@ def update_platform_feedback(
     state (``resolved``/``closed``) stamps ``resolved_at``/``resolved_by`` and
     enqueues an in-app notification for the owning client. Audit-logged.
     """
-    if getattr(superadmin, "superadmin_role", None) == "readonly":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Read-only super-admin: writes are not permitted.",
-        )
+    _require_write(superadmin)
     _validate_feedback_filter(body.status, FEEDBACK_STATUSES, "status")
     _validate_feedback_filter(body.type, FEEDBACK_TYPES, "type")
     _validate_feedback_filter(body.area, FEEDBACK_AREAS, "area")

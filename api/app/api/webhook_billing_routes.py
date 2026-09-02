@@ -6,9 +6,11 @@ delegating dispatch to razorpay_service.handle_webhook_event.
 
 import logging
 import threading
+from datetime import UTC, datetime
 
 import anyio
 from fastapi import APIRouter, HTTPException, Request
+from sqlalchemy import update
 
 from app.config import RAZORPAY_WEBHOOK_SECRET, WEBHOOK_RETRY_ON_ERROR
 from app.db.models import FailedWebhook
@@ -107,6 +109,50 @@ def _dead_letter(
     except Exception:
         logger.critical(
             "Failed to dead-letter %s webhook event_id=%s. Event may be lost if retries are exhausted",
+            provider,
+            event_id,
+            exc_info=True,
+        )
+
+
+def _resolve_dead_letters(*, provider: str, event_id: str) -> None:
+    """Close any dead letters this event has now been processed past.
+
+    A dead letter is a request for a retry, and Razorpay usually grants it: the
+    out-of-order case this mostly catches (``subscription.charged`` landing a
+    second before ``subscription.activated``) is resolved by the gateway's own
+    redelivery moments later. Nothing used to close the row when that happened,
+    so ``failed_webhooks`` filled with ``pending`` entries for events that had
+    already succeeded. The first live payment on this platform finished with a
+    correct ledger, a correct invoice, and a table reporting one failure, which
+    is a signal that reads identically whether or not anything is wrong.
+
+    Only ``pending`` rows move. ``ignored`` is an operator's conclusion about
+    the event and overwriting it would rewrite their own record; ``replayed``
+    keeps its first timestamp, so a third redelivery cannot restage when the
+    recovery actually happened.
+
+    Runs in its OWN session, AFTER the handler has committed, and swallows
+    everything. By this point the money has moved and the event is recorded;
+    letting a bookkeeping update raise would turn that into a 500 and invite
+    Razorpay to redeliver something already applied.
+    """
+    try:
+        with get_session() as session:
+            session.execute(
+                update(FailedWebhook)
+                .where(
+                    FailedWebhook.provider == provider,
+                    FailedWebhook.event_id == event_id,
+                    FailedWebhook.status == "pending",
+                )
+                .values(status="replayed", replayed_at=datetime.now(UTC))
+            )
+            session.commit()
+    except Exception:
+        logger.warning(
+            "Could not close the dead letter for %s event_id=%s. The event itself processed "
+            "successfully; the row is stale bookkeeping, not a lost event",
             provider,
             event_id,
             exc_info=True,
@@ -257,6 +303,10 @@ def _process_razorpay_webhook(
             result = razorpay_service.handle_webhook_event(session, event, event_id, payload_digest)
             session.commit()
             logger.info("Razorpay webhook processed: %s → %s", event_type, result)
+        # This delivery may be the retry an earlier failure asked for, so close
+        # the dead letter it left behind. Post-commit and best-effort: see
+        # `_resolve_dead_letters`.
+        _resolve_dead_letters(provider="razorpay", event_id=event_id)
         # Post-commit: nudge the PDF renderer so invoices/credit notes created
         # by this event get their Download link in seconds, not at the next
         # 5-minute sweep. No-op for events that created nothing.

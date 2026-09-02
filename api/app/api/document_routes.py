@@ -1703,17 +1703,29 @@ async def crawl_endpoint(
         from app.worker.enqueue import WORKER_ENABLED, enqueue
 
         if WORKER_ENABLED:
+            # Every argument by KEYWORD. Positionally, these nine values used
+            # to land one slot to the left of where they belong: the task grew
+            # a `free_pages` parameter between `cost_per_page` and `max_depth`,
+            # so `plan_max_depth` was received as `free_pages` and
+            # `plan_concurrency` as `max_depth`, while `concurrency` silently
+            # took its default. That charged a trial customer for the training
+            # pages their allowance had already paid for (25 free pages became
+            # 3), handed every paid account 3 free pages on every crawl, and
+            # made both crawl knobs ignore the plan tier. The inline fallback
+            # below always used keywords, so it was correct and local runs
+            # never showed it.
             job = await enqueue(
                 "task_crawl_and_ingest",
-                client_id,
-                bot_id,
-                crawl_request.url,
-                effective_max_pages,
-                crawl_request.use_js,
-                crawl_request.replace_source,
-                cost_per_page,
-                plan_max_depth,
-                plan_concurrency,
+                client_id=client_id,
+                bot_id=bot_id,
+                url=crawl_request.url,
+                max_pages=effective_max_pages,
+                use_js=crawl_request.use_js,
+                replace_source=crawl_request.replace_source,
+                cost_per_page=cost_per_page,
+                free_pages=free_pages,
+                max_depth=plan_max_depth,
+                concurrency=plan_concurrency,
                 ordered_urls=ordered_urls,
                 force_reingest=force_reingest,
                 lock_token=lock_token,

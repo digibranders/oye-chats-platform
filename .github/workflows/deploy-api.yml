@@ -202,6 +202,27 @@ jobs:
             if [ "$RZP_MODE" = "test" ]; then
               echo "::warning::Deploying with Razorpay TEST keys — no customer can actually be charged."
             fi
+
+            # The ₹1 checkout override must never ride along with live keys.
+            # `CHECKOUT_TEST_CLIENT_IDS` names `client.id` integers, and any id
+            # in it gets top-ups charged at ₹1, its plan swapped for the test
+            # plan, discounts skipped, the international kill switch bypassed,
+            # and the resulting ₹1 treated by the webhook as a legitimate paid
+            # activation worth a full month of credits.
+            #
+            # It keys on a surrogate autoincrement PK, and the launch wipe
+            # restarted `clients.id` at 1. A leftover value like "3,7" that
+            # once meant two test accounts now means whichever real customers
+            # land on those ids. The scoping comment in config.py promises real
+            # customers are never affected; renumbering is what breaks that
+            # promise, so the guard belongs here rather than in the code.
+            #
+            # Set it in the server's .env for a smoke test instead, where the
+            # next deploy expires it automatically.
+            if [ "$RZP_MODE" = "live" ] && [ -n "${CHECKOUT_TEST_CLIENT_IDS:-}" ]; then
+              echo "::error::CHECKOUT_TEST_CLIENT_IDS is set to '${CHECKOUT_TEST_CLIENT_IDS}' while Razorpay is in LIVE mode. Those ids would be charged ₹1 and granted full plan credits, and client ids were renumbered by the launch wipe, so they may now be real customers. Clear the repository variable and re-run."
+              exit 1
+            fi
             for v in VAPID_PUBLIC_KEY VAPID_PRIVATE_KEY BREVO_API_KEY REDIS_URL \
                      SENTRY_DSN_BACKEND LANGFUSE_SECRET_KEY LANGFUSE_PUBLIC_KEY \
                      STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET REOON_API_KEY IPAPI_IS_KEY \

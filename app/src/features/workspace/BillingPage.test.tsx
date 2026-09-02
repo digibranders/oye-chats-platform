@@ -541,3 +541,39 @@ describe('credits at a glance', () => {
     expect(screen.getAllByRole('button', { name: /choose a plan/i }).length).toBeGreaterThan(0);
   });
 });
+
+describe('per-agent credit scope', () => {
+  it('warns about the agent on screen, not about the workspace around it', async () => {
+    /* The figures on this card are per-pool; the warnings used to be the
+       workspace aggregate. A full agent beside a drained sibling therefore
+       rendered its healthy balance under a badge reading "Nearly out". */
+    state.selectedBot = { id: 7, name: 'Acme Support' };
+    api.getCreditBalance.mockResolvedValue({
+      ...BALANCE,
+      // Account pool is drained, so the AGGREGATE is low.
+      plan: 0,
+      plan_granted: 3000,
+      topup: 0,
+      total: 0,
+      bots: [
+        {
+          bot_id: 7,
+          bot_name: 'Acme Support',
+          plan_name: 'Professional',
+          monthly_grant: 8000,
+          plan_granted: 8000,
+          plan: 7600,
+          topup: 0,
+          total: 7600,
+          usage: {},
+        },
+      ],
+      account_pool_bot_count: 1,
+    });
+    renderPage();
+
+    await screen.findByText('Standard');
+    expect(screen.queryByText(/nearly out/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/stopped answering/i)).not.toBeInTheDocument();
+  });
+});

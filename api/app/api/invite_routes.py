@@ -26,7 +26,6 @@ from slowapi.util import get_remote_address
 from sqlalchemy import func, select
 
 from app.api.auth import (
-    get_current_client,
     get_current_client_or_operator,
     get_current_client_strict,
     require_verified_email_for_workspace,
@@ -656,8 +655,14 @@ def remove_self_as_operator(client: Client = Depends(get_current_client_strict))
             )
 
 
+# ``X-API-Key`` ONLY, matching the two sibling routes above. The non-strict
+# dependency resolves an ``X-Operator-Key`` to the workspace's OWNING client,
+# and this handler then lists every workspace that owner is a linked operator
+# in, with each one's display name and bot count. An operator of one workspace
+# could read the names and sizes of unrelated tenants their owner happens to
+# work in.
 @me_router.get("/workspaces", response_model=MeWorkspacesResponse)
-def list_my_workspaces(client: Client = Depends(get_current_client)):
+def list_my_workspaces(client: Client = Depends(get_current_client_strict)):
     """Return every workspace the caller can act in.
 
     Sorted with the caller's owned workspace first, then linked-operator
