@@ -182,6 +182,70 @@ class TestLeadCapture:
         assert mock_ensure.call_args.kwargs["client_id"] == bot.client_id
         assert mock_ensure.call_args.kwargs["bot_id"] == bot.id
 
+    def test_restored_lead_writes_row_but_fires_no_webhook(self):
+        """Re-seeding a returning visitor's name into a NEW session must not look
+        like a new lead: the row is written (that is what stops the bot asking for
+        the name again), but the customer's ``lead_captured`` webhook and the
+        email enrichment must both stay silent, or every new conversation from a
+        known visitor would emit a duplicate lead event."""
+        bot = _default_bot()
+        app = _build_app(bot_override=bot)
+        tc = TestClient(app)
+
+        with (
+            patch("app.api.chat_routes.get_session") as mock_gs,
+            patch("app.api.chat_routes.ensure_chat_session"),
+            patch("app.api.chat_routes.create_or_update_lead_info") as mock_upsert,
+            patch("app.services.webhook_service.fire_webhook") as mock_webhook,
+            patch("app.core.thread_pool.submit_background") as mock_bg,
+        ):
+            session = MagicMock()
+            mock_gs.return_value = _session_ctx(session)
+
+            response = tc.post(
+                "/chat/lead-capture",
+                json={"session_id": "session-restored", "name": "Gaurav", "restored": True},
+                headers={"X-Bot-Key": "bot-test123"},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["restored"] is True
+        # The lead row IS written — this is what suppresses the name question.
+        assert mock_upsert.called
+        assert mock_upsert.call_args.kwargs["name"] == "Gaurav"
+        # ...but nothing that signals "a new lead arrived" runs.
+        assert not mock_webhook.called
+        assert not mock_bg.called
+
+    def test_normal_lead_capture_still_fires_webhook(self):
+        """Regression guard for the flag above: a genuine submission (no
+        ``restored``) must keep firing the webhook and enrichment exactly as
+        before, so adding the flag cannot silently disable real lead events."""
+        bot = _default_bot()
+        app = _build_app(bot_override=bot)
+        tc = TestClient(app)
+
+        with (
+            patch("app.api.chat_routes.get_session") as mock_gs,
+            patch("app.api.chat_routes.ensure_chat_session"),
+            patch("app.api.chat_routes.create_or_update_lead_info"),
+            patch("app.services.webhook_service.fire_webhook") as mock_webhook,
+            patch("app.core.thread_pool.submit_background") as mock_bg,
+        ):
+            session = MagicMock()
+            mock_gs.return_value = _session_ctx(session)
+
+            response = tc.post(
+                "/chat/lead-capture",
+                json={"session_id": "session-real", "name": "John", "email": "john@example.com"},
+                headers={"X-Bot-Key": "bot-test123"},
+            )
+
+        assert response.status_code == 200
+        assert response.json().get("restored") is None
+        assert mock_webhook.called
+        assert mock_bg.called
+
     def test_invalid_email_rejected(self):
         bot = _default_bot()
         app = _build_app(bot_override=bot)

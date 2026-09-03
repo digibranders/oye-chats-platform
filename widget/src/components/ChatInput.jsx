@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Paperclip, CalendarDays } from 'lucide-react';
+import { Paperclip } from 'lucide-react';
 import SendIcon from './SendIcon';
 import {
     SLASH_COMMANDS,
@@ -62,8 +62,10 @@ const ChatInput = ({
     onSubmit,
     isTyping = false,
     locked = false,
+    // Still consumed by the slash-command palette (/human), even though the
+    // composer no longer draws its own handoff button — that moved to the
+    // header menu.
     onHandoff,
-    showProminentHandoff = false,
     // Live mode
     chatMode = 'bot',
     onLiveSend,
@@ -74,8 +76,6 @@ const ChatInput = ({
     fileSharing = false,
     isReconnecting = false,
     uploadProgress = null,
-    onBookMeeting,
-    meetingBookingEnabled = false,
     // Mobile keyboard
     onInputFocus,
     onInputBlur,
@@ -694,73 +694,40 @@ const ChatInput = ({
                 </div>
             )}
 
-            {/* Action bar. Bot mode only. 3-column grid keeps the privacy
-                link geometrically centered between the left icon cluster
-                (headphones / meeting) and the right "Powered by" credit,
-                regardless of how wide either side becomes. Hidden in
-                live/waiting modes where consent is implied by the handoff. */}
+            {/* Action bar. Bot mode only. The live-chat and book-a-meeting
+                affordances that used to sit here now live in the header menu,
+                so this row carries only the two pieces of standing text:
+                privacy on the left, the "Powered by" credit centered.
+
+                Still a 3-column grid rather than a flex row, because the credit
+                must stay geometrically centered in the composer whether or not
+                the privacy link is rendered — with flex it would drift right on
+                the phone, where privacy is absent. Column 3 is a deliberate
+                empty counterweight. Hidden in live/waiting modes where consent
+                is implied by the handoff. */}
             {!isLive && !isWaiting && !pendingConfirm && (
                 <div className="grid grid-cols-3 items-center gap-3 mt-1 pt-0 md:mt-3.5 md:pt-1 px-1">
-                    <div className="flex items-center gap-3 min-w-0 justify-self-start">
-                        {onHandoff && (
-                            <button
-                                type="button"
-                                onClick={onHandoff}
-                                title={t('input.live_chat_aria') || 'Live chat'}
-                                aria-label={t('input.live_chat_aria') || 'Live chat'}
-                                className="flex items-center gap-1 text-[11px] transition-colors cursor-pointer"
-                                style={{ color: showProminentHandoff ? (primaryColor || '#3A0CA3') : '#9ca3af' }}
-                            >
-                                <span className="relative flex-shrink-0">
-                                    <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3" />
-                                    </svg>
-                                    {showProminentHandoff && (
-                                        <span
-                                            className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full animate-pulse"
-                                            style={{ backgroundColor: primaryColor || '#3A0CA3' }}
-                                        />
-                                    )}
-                                </span>
-                            </button>
-                        )}
-                        {meetingBookingEnabled && onBookMeeting && (
-                            <button
-                                type="button"
-                                onClick={onBookMeeting}
-                                title={t('input.book_meeting') || 'Book a meeting'}
-                                aria-label={t('input.book_meeting') || 'Book a meeting'}
-                                className="flex items-center gap-1 text-[11px] transition-colors cursor-pointer text-gray-400 hover:text-gray-600"
-                            >
-                                <CalendarDays size={12} />
-                            </button>
-                        )}
-                    </div>
-                    {/* The privacy notice, and the one thing it must not do: vanish
-                        before the visitor has decided anything.
+                    {/* The privacy notice: bottom-left, and DESKTOP ONLY
+                        (`hidden md:block`) — the phone viewport is tight enough
+                        that the composer and the credit are all it can carry.
 
-                        It collapses on a phone only AFTER the conversation has
-                        started, so the tiny mobile viewport reclaims the space
-                        above the input once it is no longer earning it. Before
-                        the first message it stays up on every viewport, because
-                        that is the moment it does its work — when someone is
-                        deciding whether to type personal details into a chat
-                        box. This is the only privacy link in the widget, so a
-                        bare `hidden md:block` here removes the disclosure from
-                        every phone visitor outright. That shipped once.
+                        On desktop it stands for the whole conversation rather
+                        than only until the first message. It is the widget's
+                        only privacy disclosure, and a visitor can be asked for
+                        personal details at any point (the lead form, a handoff,
+                        leaving an offline message), not just before they open
+                        their mouth — so there is no turn after which it has
+                        stopped being relevant.
 
-                        Derived from `userMessageCount` rather than carrying its
-                        own `userHasSent` prop: both would be computed from the
-                        same `messages` array by the same parent, and one fact
-                        with two sources is how they drift apart. */}
-                    {/* On a phone the privacy link and the branding share the
-                        middle column as one centred row. The branding used to
-                        sit at the right edge, directly under the send button,
-                        and thumbs aiming for Send kept opening oyechats.com
-                        instead. From md up the wrapper dissolves (`contents`)
-                        and the two go back to their own grid cells. */}
-                    <div className="col-start-2 justify-self-center flex items-center gap-2 whitespace-nowrap md:contents">
-                    <p className={`md:col-start-2 text-[10px] text-gray-400 leading-snug text-center md:justify-self-center ${userMessageCount > 0 ? 'hidden md:block' : ''}`}>
+                        NOTE: this layout also carries the fix that previously
+                        lived in a phone-only `md:contents` wrapper here. The
+                        branding used to sit at the right edge on mobile, directly
+                        under the send button, and thumbs aiming for Send kept
+                        opening oyechats.com. It is now CENTERED on every viewport
+                        (below), which keeps it clear of the send button without
+                        needing the wrapper or its `·` separator. Do not move the
+                        credit back to the right edge on mobile. */}
+                    <p className="col-start-1 hidden md:block text-[10px] text-gray-400 leading-snug justify-self-start">
                         <a
                             href="https://www.oyechats.com/legal/privacy"
                             target="_blank"
@@ -771,27 +738,19 @@ const ChatInput = ({
                         </a>
                     </p>
                     {showBranding ? (
-                        <>
-                            <span
-                                aria-hidden="true"
-                                className={`text-[10px] text-gray-300 ${userMessageCount > 0 ? 'hidden' : 'md:hidden'}`}
-                            >
-                                ·
-                            </span>
-                            <a
-                                href={branding.href}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="md:col-start-3 whitespace-nowrap text-[10px] font-semibold text-gray-300 hover:text-gray-400 transition-colors md:justify-self-end"
-                            >
-                                {branding.lead ? `${branding.lead} ` : ''}
-                                <span style={{ color: 'rgb(49% 23% 93%)' }}>{branding.brand}</span>
-                            </a>
-                        </>
+                        <a
+                            href={branding.href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="col-start-2 whitespace-nowrap text-[10px] font-semibold text-gray-300 hover:text-gray-400 transition-colors justify-self-center"
+                        >
+                            {branding.lead ? `${branding.lead} ` : ''}
+                            <span style={{ color: 'rgb(49% 23% 93%)' }}>{branding.brand}</span>
+                        </a>
                     ) : (
-                        <span className="md:col-start-3 md:justify-self-end" />
+                        <span className="col-start-2 justify-self-center" />
                     )}
-                    </div>
+                    <span className="col-start-3 justify-self-end" />
                 </div>
             )}
         </div>

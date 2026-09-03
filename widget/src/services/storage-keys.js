@@ -7,7 +7,12 @@
 
 const FALLBACK_BOT_KEY = 'default';
 
-function currentBotKey() {
+// Exported so `session-history.js` can namespace its own keys identically
+// without duplicating the fallback chain. That module is deliberately separate:
+// this one is pulled into the EAGER app-entry chunk (via `readLocalePreference`
+// and `clearSessionId`), which every visitor downloads whether or not they ever
+// open the chat, so it must not grow with chat-only features.
+export function currentBotKey() {
     if (typeof window === 'undefined') return FALLBACK_BOT_KEY;
     return window.OYECHATS_BOT_KEY || window.OYECHATS_API_KEY || FALLBACK_BOT_KEY;
 }

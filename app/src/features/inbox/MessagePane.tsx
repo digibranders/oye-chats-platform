@@ -77,7 +77,7 @@ export function MessagePane({
     return `mailto:${message.visitor_email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(
       `${reply}${quoted}`,
     )}`;
-  }, [message.visitor_email, message.bot_name, message.message_body, reply]);
+  }, [message.visitor_email, message.bot_name, message.message_body, reply, t]);
 
   async function setStatus(next: OfflineStatus): Promise<void> {
     setBusy(true);
