@@ -119,10 +119,47 @@ class TestLocaleCatalogue:
     def test_requires_authentication(self):
         assert TestClient(_locale_app()).get("/locales").status_code in (401, 403)
 
-    def test_is_cacheable_because_it_only_changes_on_deploy(self, db):
+    def test_the_browser_must_revalidate_so_a_deploy_is_visible(self, db):
+        """The catalogue changes on a deploy, and the URL does not.
+
+        This was `max-age=86400`, reasoned as "it changes only on a deploy".
+        That is true and it is the argument AGAINST a long max-age, not for
+        one: a browser serves a still-fresh response without asking, so
+        nothing could tell it the deploy had happened. Switching the 17
+        translated languages on left every dashboard that had loaded this in
+        the previous day still offering the old four, and refreshing did not
+        help, because a refresh does not bypass max-age.
+        """
         _seed(db, language_config={"enabled": True, "supported_locales": ["en-IN"]})
         res = TestClient(_locale_app()).get("/locales", headers={"X-API-Key": "key-acme"})
-        assert "max-age" in res.headers.get("cache-control", "")
+
+        cache_control = res.headers.get("cache-control", "")
+        assert "no-cache" in cache_control, cache_control
+        # A max-age above zero is exactly what let a stale catalogue stand.
+        assert "max-age" not in cache_control, cache_control
+        assert res.headers.get("etag"), "no ETag, so revalidation cannot be cheap"
+
+    def test_an_unchanged_catalogue_answers_304(self, db):
+        """Revalidation must stay cheap, or it is a bandwidth regression."""
+        _seed(db, language_config={"enabled": True, "supported_locales": ["en-IN"]})
+        client = TestClient(_locale_app())
+        first = client.get("/locales", headers={"X-API-Key": "key-acme"})
+        etag = first.headers["etag"]
+
+        second = client.get("/locales", headers={"X-API-Key": "key-acme", "If-None-Match": etag})
+        assert second.status_code == 304
+        assert second.headers.get("etag") == etag
+
+    def test_the_etag_is_derived_from_the_body_it_serves(self, db):
+        """A tag that does not track the content cannot detect a deploy."""
+        import hashlib
+        import json
+
+        _seed(db, language_config={"enabled": True, "supported_locales": ["en-IN"]})
+        res = TestClient(_locale_app()).get("/locales", headers={"X-API-Key": "key-acme"})
+
+        expected = hashlib.sha256(json.dumps(res.json(), sort_keys=True, default=str).encode("utf-8")).hexdigest()[:32]
+        assert res.headers["etag"] == f'"{expected}"'
 
 
 # ── What the Support translation picker may offer ────────────────────────────
