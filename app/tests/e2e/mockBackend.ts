@@ -298,7 +298,9 @@ export async function mockBackend(page: Page, opts: MockOptions = {}): Promise<O
       },
     }),
   );
-  await page.route(`${API}/locales`, (route) => route.fulfill({ json: LOCALES }));
+  // Trailing `*` because the client appends a build id as a cache key
+  // (`/locales?v=<build>`), and a pattern without it stopped matching.
+  await page.route(`${API}/locales*`, (route) => route.fulfill({ json: LOCALES }));
   await page.route(`${API}/canned-responses*`, (route) => route.fulfill({ json: [] }));
   await page.route(`${API}/offline-messages*`, (route) =>
     route.fulfill({ json: { items: [], total: 0 } }),

@@ -1924,7 +1924,15 @@ export const getLocales = async (
   }>;
   languages: Record<string, string>;
 }> => {
-    const response = await api.get('/locales');
+    // The build id is the cache key, not decoration. This response is cached in
+    // the browser, and its URL is otherwise constant, so a deploy that changes
+    // the catalogue could not reach anyone already holding a copy: a browser
+    // serving a still-fresh entry never asks the server. That is exactly what
+    // happened when 17 translated languages were switched on and every open
+    // dashboard kept offering four. The server revalidates properly now; this
+    // makes the FIRST load after a deploy a new cache key regardless, so a
+    // stale entry stored under the old rules cannot outlive the deploy.
+    const response = await api.get(`/locales?v=${__BUILD_ID__}`);
     return response.data;
 };
 
