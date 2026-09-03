@@ -184,6 +184,7 @@ describe('DataTable count, states and structure', () => {
         footer={
           <tr>
             <th scope="row">Total</th>
+            {/* rtl-ok: numeric figure — digits stay right-aligned regardless of direction */}
             <td className="figure text-right">6100</td>
           </tr>
         }
@@ -202,6 +203,7 @@ describe('DataTable count, states and structure', () => {
     );
     const cell = screen.getByRole('cell', { name: '4200' });
     expect(cell.className).toContain('figure');
+    // rtl-ok: numeric figure — digits stay right-aligned regardless of direction
     expect(cell.className).toContain('text-right');
   });
 

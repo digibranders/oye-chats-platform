@@ -26,6 +26,7 @@ import QualifiedLeadCard from './QualifiedLeadCard';
 import ErrorBoundary from './ErrorBoundary';
 import ChunkLoadNotice from './ChunkLoadNotice';
 import { lazyWithRetry } from '../services/lazyWithRetry';
+import { quotationProbeSchedule } from '../lib/quotationProbe';
 import { t, getLocale, setLocale as setI18nLocale, onLocaleChange, getLanguageCode } from '../i18n/i18n.js';
 import { SEEDED, authoredCopy } from '../i18n/seededCopy.js';
 import { displayTextFor } from '../lib/liveChatTranslation.js';
@@ -476,6 +477,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
 
     // Prevent double handoff form injection
     const handoffFormInjectedRef = useRef(false);
+    // Epoch ms at which the last answer stream closed (0 until one has). BANT
+    // extraction for a turn runs on the server after this point, so it is the
+    // only moment a quote can be "not yet"; a probe with no recent stream
+    // behind it has nothing to outwait.
+    const lastStreamClosedAtRef = useRef(0);
 
     // Greeting-bubble / public-API message parked while the lead form gates.
     // Sent once the visitor submits the form, discarded otherwise.
@@ -1566,6 +1572,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                     }
                 },
                 onFinalMetadata: async (finalMeta) => {
+                    // The answer is complete; BANT extraction for this turn
+                    // starts on the server about now. maybeInjectQuotation
+                    // sizes its poll from this stamp.
+                    lastStreamClosedAtRef.current = Date.now();
                     // Flush any buffered chunks to state BEFORE processing metadata.
                     // Prevents the handoff form from appearing while text is still
                     // waiting in the rAF buffer (race condition: truncated response).
@@ -1907,27 +1917,42 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
     const maybeInjectQuotation = useCallback(async (activeSessionId) => {
         // BANT extraction is an async LLM call after the stream closes —
         // measured 2.5s-4.0s in practice (mega bot sample: 2.45/2.55/2.96/
-        // 3.04/3.61/3.87/3.99s). This poll is silent (no visible loading
-        // state), so widening it doesn't cost perceived speed — it just
-        // avoids missing the quote when it arrives at, say, 3.6s. A 2s cap
-        // was tried and reliably missed the mark; don't go back below ~4.5s
-        // total without re-measuring extraction latency first.
+        // 3.04/3.61/3.87/3.99s). The poll series is sized to outlast it (see
+        // lib/quotationProbe.js: a 2s cap was tried and reliably missed the
+        // mark; don't shrink the window without re-measuring), but it only
+        // runs while extraction can actually be in flight. On the explicit
+        // handoff path the visitor is waiting on this poll with nothing on
+        // screen, so every poll that cannot change the answer is a second of
+        // dead air: no catalog on this bot, no answer streamed yet, or the
+        // last answer long since scored.
         // Warm the lazy chunk while we poll so that, once the quote turns
         // active, the card mounts on the same frame instead of cold-importing
         // (a cold import mounts the card *after* the injection scroll fired,
         // which is what left it stranded below the fold). Fire-and-forget; the
         // dynamic import is cached, so the later Suspense import is instant.
         if (quotationPollDisabledRef.current) return false;
-        if (settings?.bant_enabled === false) {
+        // ``quotation_enabled`` is false when the server knows no quote card
+        // can ever fire for this bot (catalog off or empty, plan excludes the
+        // flow). Undefined (older config payload) stays permissive.
+        if (settings?.bant_enabled === false || settings?.quotation_enabled === false) {
             quotationPollDisabledRef.current = true;
             return false;
         }
         import('./QuotationFlow').catch(() => { /* prefetch is best-effort */ });
 
-        const POLL_DELAYS_MS = quotationProbedRef.current ? [0] : [0, 700, 1000, 1300, 1500];
+        const { delays: POLL_DELAYS_MS, deadline } = quotationProbeSchedule({
+            probedBefore: quotationProbedRef.current,
+            lastStreamClosedAt: lastStreamClosedAtRef.current,
+            now: Date.now(),
+        });
         try {
             for (const delay of POLL_DELAYS_MS) {
-                if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+                if (delay > 0) {
+                    // Extraction has had its window; a later poll cannot see
+                    // more than the previous one did.
+                    if (Date.now() >= deadline) break;
+                    await new Promise((resolve) => setTimeout(resolve, delay));
+                }
                 try {
                     const quoteState = await getQuotationState(activeSessionId);
                     if (quoteState && (quoteState.status === 'complete' || quoteState.status === 'skipped')) {
@@ -1948,7 +1973,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
             quotationProbedRef.current = true;
         }
         return false;
-    }, [injectQuotationFlow, settings?.bant_enabled]);
+    }, [injectQuotationFlow, settings?.bant_enabled, settings?.quotation_enabled]);
 
     const triggerHandoff = useCallback(async () => {
         // Hard gate: if the bot's PLAN has no human-support channel at all
@@ -1966,8 +1991,12 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
         // widget's storage in sync so the async retry loop below can re-read
         // it if state hasn't rebuilt yet.
         let activeSessionId = sessionId || readSessionId({ shareDomain });
+        // A session minted right here has no row on the server yet, so there
+        // is no quotation state to poll for: the form goes straight in.
+        let sessionMintedNow = false;
         if (!activeSessionId) {
             activeSessionId = `session_${crypto.randomUUID()}`;
+            sessionMintedNow = true;
             setSessionId(activeSessionId);
             writeSessionId(activeSessionId, { shareDomain });
         }
@@ -1980,7 +2009,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
         // with short spacing before falling through to the plain handoff.
         handoffFormInjectedRef.current = true;
         if (showWelcome) exitWelcome();
-        const injectedQuote = await maybeInjectQuotation(activeSessionId);
+        const injectedQuote = sessionMintedNow ? false : await maybeInjectQuotation(activeSessionId);
         if (injectedQuote) return;
 
         if (showWelcome) {

@@ -61,7 +61,7 @@ export function TopQuestions({ section }: { section: Section<TopQuestion[]> }) {
         display: (
           <>
             {formatNumber(item.count)}
-            <span className="ml-1 text-text-tertiary">{item.count === 1 ? 'ask' : 'asks'}</span>
+            <span className="ms-1 text-text-tertiary">{item.count === 1 ? 'ask' : 'asks'}</span>
           </>
         ),
       }))}

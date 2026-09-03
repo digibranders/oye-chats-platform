@@ -17,6 +17,7 @@ import { describe, expect, it } from 'vitest';
 
 import en from './locales/en';
 import hi from './locales/hi';
+import ar from './locales/ar';
 
 type Nested = { [key: string]: string | Nested };
 
@@ -36,8 +37,12 @@ function placeholders(template: string): string[] {
 
 const flatEn = flatten(en as unknown as Nested);
 const flatHi = flatten(hi as unknown as Nested);
+const flatAr = flatten(ar as unknown as Nested);
 
-const DICTIONARIES: [string, Record<string, string>][] = [['hi', flatHi]];
+const DICTIONARIES: [string, Record<string, string>][] = [
+  ['hi', flatHi],
+  ['ar', flatAr],
+];
 
 describe('dictionary parity', () => {
   it('English is non-empty and is the canonical source', () => {
@@ -72,6 +77,42 @@ describe('dictionary parity', () => {
   it('hi has no value left in lowercase Latin prose', () => {
     const offenders = Object.entries(flatHi)
       .filter(([, v]) => /[a-z]{3}/.test(v) && !/[\u0900-\u097F]/.test(v) && !/[A-Z0-9@.:/{]/.test(v))
+      .map(([k, v]) => `${k}: ${v}`);
+    expect(offenders).toEqual([]);
+  });
+
+  // The Arabic mirror of the Hindi check above, over the Arabic script range
+  // (\u0600-\u06FF, U+0600-U+06FF) rather than Devanagari.
+  it('ar has no value left in lowercase Latin prose', () => {
+    const offenders = Object.entries(flatAr)
+      .filter(([, v]) => /[a-z]{3}/.test(v) && !/[\u0600-\u06FF]/.test(v) && !/[A-Z0-9@.:/{]/.test(v))
+      .map(([k, v]) => `${k}: ${v}`);
+    expect(offenders).toEqual([]);
+  });
+
+  // Punctuation the Arabic rollout explicitly bans: em/en dashes (the console-
+  // wide rule `assert-no-em-dashes.mjs` already enforces for English, mirrored
+  // here for Arabic since that script only scans .tsx source, not the .ts
+  // dictionaries), and a Latin comma sitting directly against Arabic script
+  // where an Arabic comma (\u060C) belongs. A Latin comma next to Latin/digits
+  // (a number's thousands separator, a code sample) is not flagged - only one
+  // immediately followed by an Arabic letter is unambiguously a mistake.
+  it('ar uses Arabic punctuation, never an em/en dash or a stray Latin comma', () => {
+    const DASH = /[\u2013\u2014]/;
+    const LATIN_COMMA_BEFORE_ARABIC = /,\s*[\u0600-\u06FF]/;
+    const offenders = Object.entries(flatAr)
+      .filter(([, v]) => DASH.test(v) || LATIN_COMMA_BEFORE_ARABIC.test(v))
+      .map(([k, v]) => `${k}: ${v}`);
+    expect(offenders).toEqual([]);
+  });
+
+  it('ar uses Latin digits, never Arabic-Indic digits', () => {
+    // ar-AE was chosen specifically for Western digits (see formatters.test.ts);
+    // a dictionary string that hand-typed an Arabic-Indic digit would silently
+    // contradict every number the formatters render right next to it.
+    const ARABIC_INDIC_DIGIT = /[\u0660-\u0669]/;
+    const offenders = Object.entries(flatAr)
+      .filter(([, v]) => ARABIC_INDIC_DIGIT.test(v))
       .map(([k, v]) => `${k}: ${v}`);
     expect(offenders).toEqual([]);
   });

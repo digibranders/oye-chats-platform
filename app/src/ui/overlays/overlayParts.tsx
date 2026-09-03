@@ -50,8 +50,8 @@ export const OVERLAY_FOOTER = cn(
  * out of the row also lets the title block use the full width until it reaches
  * the button's own column, which is what `OVERLAY_TITLE_BLOCK` reserves.
  */
-export const OVERLAY_CLOSE = 'absolute right-4 top-4';
-export const OVERLAY_TITLE_BLOCK = 'min-w-0 pr-9';
+export const OVERLAY_CLOSE = 'absolute end-4 top-4';
+export const OVERLAY_TITLE_BLOCK = 'min-w-0 pe-9';
 export const OVERLAY_TITLE = 'text-lg font-semibold text-text-primary';
 
 /**

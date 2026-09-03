@@ -11,6 +11,7 @@ import {
   StatRow,
   formatNumber,
 } from '../../../ui';
+import { useTranslation } from '../../../i18n/useTranslation';
 import {
   CHARGE_CURRENCY,
   chargeDisclosure,
@@ -91,6 +92,7 @@ export function PlanSummary({
   onCancel,
   onResume,
 }: PlanSummaryProps) {
+  const { t } = useTranslation();
   const cycle: BillingCycleKey = subscription.billingCycle === 'annual' ? 'annual' : 'monthly';
   const price = plan ? resolvePlanPrice(plan, cycle, geo) : null;
   const disclosure = price ? chargeDisclosure(price) : null;
@@ -117,8 +119,9 @@ export function PlanSummary({
   const seatsCountedAcrossWorkspace = seatsUsedScope === 'workspace' && scopedBotName !== null;
   const seatMeterLabel =
     seatsUsedScope === 'chatbot'
-      ? 'Operator seats in use'
-      : 'Operator seats in use across this workspace';
+      ? t('billing.operatorSeatsInUse') || 'Operator seats in use'
+      : t('billing.operatorSeatsInUseAcrossWorkspace') ||
+        'Operator seats in use across this workspace';
 
   return (
     <Card>
@@ -126,7 +129,7 @@ export function PlanSummary({
         eyebrow="Your plan"
         title={
           <span className="flex flex-wrap items-center gap-2">
-            {plan?.name ?? 'No plan'}
+            {plan?.name ?? (t('billing.noPlan') || 'No plan')}
             <Badge tone={statusTone(subscription.status)} dot>
               {humanizeStatus(subscription.status)}
             </Badge>
@@ -162,7 +165,9 @@ export function PlanSummary({
               variant={subscription.cancelAtPeriodEnd ? 'secondary' : 'primary'}
               onClick={onChangePlan}
             >
-              {plan?.isPaid ? 'Change plan' : 'Choose a plan'}
+              {plan?.isPaid
+                ? t('billing.changePlan') || 'Change plan'
+                : t('billing.choosePlan') || 'Choose a plan'}
             </Button>
           </>
         }
@@ -172,14 +177,21 @@ export function PlanSummary({
         <StatRow
           label="Your plan at a glance"
           columns={4}
-          period={cycle === 'annual' ? 'Billed yearly' : 'Billed monthly'}
+          period={
+            cycle === 'annual'
+              ? t('billing.billedYearly') || 'Billed yearly'
+              : t('billing.billedMonthly') || 'Billed monthly'
+          }
           items={[
             {
-              label: 'Price',
+              label: t('billing.price') || 'Price',
               value: price
                 ? formatMoneyMinor(price.displayMinor, price.displayCurrency)
                 : undefined,
-              period: cycle === 'annual' ? 'Per year' : 'Per month',
+              period:
+                cycle === 'annual'
+                  ? t('billing.perYear') || 'Per year'
+                  : t('billing.perMonth') || 'Per month',
               size: 'lg',
               // Only when the two currencies genuinely differ. "Charged in INR"
               // under a price already printed in INR is a line of type carrying
@@ -191,18 +203,18 @@ export function PlanSummary({
               value: renewal.label,
               size: 'lg',
               period: subscription.cancelAtPeriodEnd
-                ? 'Then the workspace drops to Free'
+                ? t('billing.thenWorkspaceDropsToFree') || 'Then the workspace drops to Free'
                 : trialOffer && subscription.status === 'trialing'
                   ? trialOffer
-                  : 'Renews automatically',
+                  : t('billing.renewsAutomatically') || 'Renews automatically',
             },
             {
-              label: 'Credits included',
+              label: t('billing.creditsIncluded') || 'Credits included',
               value: plan ? formatCredits(plan.creditsPerMonth) : undefined,
               size: 'lg',
             },
             {
-              label: 'Extra credits',
+              label: t('billing.extraCredits') || 'Extra credits',
               value: overage
                 ? formatMoneyMinor(plan?.overageRateMinor ?? 0, CHARGE_CURRENCY)
                 : undefined,

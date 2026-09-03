@@ -273,7 +273,7 @@ export function JourneyPage() {
                     ].map((item) => (
                       <div
                         key={item.label}
-                        className="-ml-px -mt-px border-l border-t border-border px-cell py-2.5"
+                        className="-ms-px -mt-px border-s border-t border-border px-cell py-2.5"
                       >
                         <StatTile {...item} period={label} periodInherited />
                       </div>

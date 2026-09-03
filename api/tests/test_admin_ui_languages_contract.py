@@ -97,9 +97,25 @@ def test_every_admin_ui_translated_locale_resolves_to_a_listed_language() -> Non
 def test_locales_without_an_admin_dictionary_are_flagged_false() -> None:
     # The catalogue still lists them: the AI converses in them, and a bot that
     # already has one configured must keep rendering its name in the admin.
-    for tag in ("es-ES", "ru-RU", "ar-SA", "ur-PK"):
+    for tag in ("es-ES", "ru-RU", "ur-PK"):
         assert tag in KNOWN_LOCALES, f"{tag} should stay in the catalogue"
         assert KNOWN_LOCALES[tag].admin_ui_translated is False
+
+
+def test_ar_sa_stays_untranslated_despite_sharing_ar_aes_dictionary() -> None:
+    """A per-CODE derivation would otherwise mark ar-SA translated too.
+
+    ar-SA and ar-AE share the base language code `ar`, and the general rule
+    (`_info.admin_ui_translated = _info.code in ADMIN_UI_LANGUAGES`) is by
+    code, not by tag - the same rule that correctly marks en-IN, en-US and
+    en-GB all translated together. Arabic is deliberately different: ar-SA
+    defaults to the Islamic calendar, which was never part of what got
+    tested (`ar-AE` was chosen specifically for its Gregorian default), so
+    `language_service.py` overrides it back to `False` after the derivation.
+    """
+    assert KNOWN_LOCALES["ar-SA"].admin_ui_translated is False
+    assert KNOWN_LOCALES["ar-AE"].admin_ui_translated is True
+    assert KNOWN_LOCALES["ar-SA"].code == KNOWN_LOCALES["ar-AE"].code
 
 
 def test_admin_and_widget_capabilities_are_independent_flags() -> None:
@@ -121,15 +137,41 @@ def test_admin_and_widget_capabilities_are_independent_flags() -> None:
     assert sample.ui_translated is True, "admin_ui_translated is aliasing ui_translated"
 
 
-def test_rtl_locales_are_never_admin_ui_translated() -> None:
-    """RTL is explicitly deferred: 216 physical direction classes, 7 logical.
+def test_an_rtl_locale_is_admin_ui_translated_only_where_the_console_actually_mirrors() -> None:
+    """RTL is no longer deferred - the admin dashboard now renders `dir="rtl"`.
 
-    Offering an RTL language would mirror the layout and then render the
-    untranslated remainder into it. The flag is the enforcement point, so this
-    stays until the direction conversion is done as its own piece of work.
+    The physical-direction Tailwind classes that used to make this unsafe
+    (``ml-``, ``text-right``, ``rounded-tl-`` and friends) were converted to
+    Tailwind v4's logical equivalents (``ms-``, ``text-start``,
+    ``rounded-ss-``, ...), and `app/src/i18n/I18nProvider.tsx` resolves `dir`
+    per locale through `directionForLocale` instead of pinning it to `ltr`.
+    The guard that makes offering an RTL language safe now is
+    `app/scripts/rtl-physical-classes.mjs` plus its vitest regression test
+    `app/src/rtl.test.ts`: together they fail the admin's own `lint`/`test`
+    gate the moment a new physical-direction class ships without either being
+    converted or carrying a reviewed `rtl-ok:` exception.
+
+    So the new truth is narrower than "never": an RTL locale may be
+    ``admin_ui_translated`` exactly when BOTH the console can render its
+    direction (proven by the guard above, which this test cannot itself run
+    from the API's test suite) AND a real Arabic dictionary exists for it
+    (`app/src/i18n/locales/ar.ts`, proven by
+    `test_admin_ui_languages_matches_the_shipped_dictionaries`). `ar` is the
+    only language that currently satisfies both; the other RTL locales in the
+    catalogue (`he-IL`, `fa-IR`, `ur-PK`) have no admin dictionary at all yet
+    and must stay `False` until one ships for them too.
     """
+    # Tag-precise, not code-precise: `ar-AE` and `ar-SA` share the code `ar`
+    # but must not share this flag (see `test_ar_sa_stays_untranslated...`
+    # below), so "which RTL tags are admin-translated" cannot be answered by
+    # checking `info.code` alone.
+    rtl_tags_expected_translated = {"ar-AE"}
     for tag, info in KNOWN_LOCALES.items():
-        if info.direction == "rtl":
-            assert info.admin_ui_translated is False, (
-                f"{tag} is RTL and must not be offered as an admin UI language yet"
-            )
+        if info.direction != "rtl":
+            continue
+        expected = tag in rtl_tags_expected_translated
+        assert info.admin_ui_translated is expected, (
+            f"{tag}: admin_ui_translated={info.admin_ui_translated}, expected {expected} - "
+            "an RTL locale is admin-translated only for the specific tag whose direction "
+            "and formatting were actually verified, per the guard named above"
+        )

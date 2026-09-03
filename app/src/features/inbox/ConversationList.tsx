@@ -109,7 +109,7 @@ function Row({
       <div className="relative shrink-0">
         <Avatar size="md" name={item.name} />
         {item.online ? (
-          <span className="absolute -bottom-0.5 -right-0.5 rounded-full bg-surface p-0.5">
+          <span className="absolute -bottom-0.5 -end-0.5 rounded-full bg-surface p-0.5">
             <StatusDot tone="success" pulse label={t('inbox.onlineNow') || 'Online now'} />
           </span>
         ) : null}

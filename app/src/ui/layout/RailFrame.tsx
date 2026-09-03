@@ -183,7 +183,7 @@ export function RailItem({
   return (
     <li>
       {collapsed ? (
-        <Tooltip content={label} side="right">
+        <Tooltip content={label} side="inline-end">
           {link}
         </Tooltip>
       ) : (
@@ -250,7 +250,7 @@ export function RailBackLink({
         className={cn(RAIL_ROW, 'text-rail-text-muted hover:bg-rail-hover hover:text-rail-text')}
       >
         <span className={GLYPH_BOX}>
-          <ArrowLeft aria-hidden className="h-icon-md w-icon-md" />
+          <ArrowLeft aria-hidden className="h-icon-md w-icon-md rtl:rotate-180" />
         </span>
         <span className="min-w-0 flex-1 truncate">{children}</span>
       </NavLink>

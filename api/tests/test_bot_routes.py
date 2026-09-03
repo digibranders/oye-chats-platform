@@ -451,6 +451,87 @@ class TestBotSettingsPublic:
         assert result["branding_url"] == "https://www.oyechats.com"
         assert result["feature_flags"]["show_branding"] is True
 
+    # ── quotation_enabled ────────────────────────────────────────────────────
+    # The widget reads this to decide whether to poll GET /chat/quotation in
+    # front of the handoff form at all. A wrong True costs a visitor seconds of
+    # dead air after "Talk to a human"; a wrong False hides the quote card.
+
+    _CATALOG = {
+        "enabled": True,
+        "services": [{"id": "s1", "name": "Landing page", "price_per_unit": 100, "questions": []}],
+    }
+
+    def _settings_for(self, *, catalog, plan_slug):
+        from app.api import bot_routes as br
+        from app.services.plan_entitlements_service import PlanEntitlements
+
+        bot = self._build_bot()
+        bot.quotation_catalog = catalog
+        request = MagicMock()
+        request.base_url = "http://test/"
+        entitlements = PlanEntitlements(
+            client_id=1,
+            plan_slug=plan_slug,
+            plan_name=plan_slug.title(),
+            subscription_status="active",
+            features={},
+        )
+        with (
+            patch.object(br, "_build_public_cta_options", return_value={}),
+            patch.object(br, "bot_subscription_status", return_value="active"),
+            patch("app.db.session.get_session", lambda: _session_ctx(MagicMock())),
+            patch(
+                "app.services.plan_entitlements_service.get_bot_entitlements",
+                return_value=entitlements,
+            ),
+        ):
+            return br.get_bot_settings_public(request, bot)
+
+    def test_quotation_enabled_for_a_catalog_on_an_entitled_plan(self):
+        assert self._settings_for(catalog=self._CATALOG, plan_slug="professional")["quotation_enabled"] is True
+
+    def test_quotation_disabled_without_a_catalog(self):
+        assert self._settings_for(catalog=None, plan_slug="professional")["quotation_enabled"] is False
+
+    def test_quotation_disabled_for_a_switched_off_catalog(self):
+        assert (
+            self._settings_for(catalog={**self._CATALOG, "enabled": False}, plan_slug="professional")[
+                "quotation_enabled"
+            ]
+            is False
+        )
+
+    def test_quotation_disabled_for_an_empty_catalog(self):
+        assert (
+            self._settings_for(catalog={**self._CATALOG, "services": []}, plan_slug="professional")["quotation_enabled"]
+            is False
+        )
+
+    def test_quotation_disabled_on_a_plan_without_the_flow(self):
+        assert self._settings_for(catalog=self._CATALOG, plan_slug="starter")["quotation_enabled"] is False
+
+    def test_quotation_disabled_when_entitlements_cannot_be_resolved(self):
+        """Fail closed alongside live chat and branding: the widget then skips
+        the poll, and the runtime route (which re-checks the plan itself) is
+        the one that decides if a quote ever fires."""
+        from app.api import bot_routes as br
+
+        bot = self._build_bot()
+        bot.quotation_catalog = self._CATALOG
+        request = MagicMock()
+        request.base_url = "http://test/"
+        with (
+            patch.object(br, "_build_public_cta_options", return_value={}),
+            patch.object(br, "bot_subscription_status", return_value="active"),
+            patch("app.db.session.get_session", lambda: _session_ctx(MagicMock())),
+            patch(
+                "app.services.plan_entitlements_service.get_bot_entitlements",
+                side_effect=RuntimeError("entitlements down"),
+            ),
+        ):
+            result = br.get_bot_settings_public(request, bot)
+        assert result["quotation_enabled"] is False
+
 
 # ── Bot update ───────────────────────────────────────────────────────────────
 

@@ -5,6 +5,7 @@ import { Page, PageHeader, SidebarLayout, cn } from '../../ui';
 import { getCurrentUser } from '../../services/api';
 import { keys } from '../../query/keys';
 import { useEntitlements } from '../../hooks/useEntitlements';
+import { navLabel } from '../../shell/navCopy';
 
 /**
  * Settings — one home, with a secondary column.
@@ -105,7 +106,7 @@ export function WorkspaceLayout() {
           those same two words a second time, twenty pixels below the first.
           The `h1` still exists for heading navigation; what is gone is the
           duplicate ink and the ~60px it cost above the section nav. */}
-      <PageHeader title={active?.label ?? 'Settings'} titleVisuallyHidden />
+      <PageHeader title={navLabel(active?.label ?? 'Settings')} titleVisuallyHidden />
       <SidebarLayout
         navLabel="Settings sections"
         navWidth="sm"
@@ -139,12 +140,12 @@ export function WorkspaceLayout() {
                     isActive ? 'text-text-primary' : 'text-text-tertiary',
                   )}
                 />
-                <span className="whitespace-nowrap">{section.label}</span>
+                <span className="whitespace-nowrap">{navLabel(section.label)}</span>
                 {section.locked ? (
                   // `lg:ml-auto` only: in the horizontal scroller `ml-auto`
                   // pinned the lock to the right edge of its own item, so
                   // "Team 🔒" read as "Team … 🔒" with a variable gap.
-                  <span className="flex items-center @4xl/page:ml-auto">
+                  <span className="flex items-center @4xl/page:ms-auto">
                     <Lock aria-hidden className="h-3.5 w-3.5 text-text-tertiary" />
                     <span className="sr-only">— not included on your plan</span>
                   </span>

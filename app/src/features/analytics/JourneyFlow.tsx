@@ -79,7 +79,7 @@ function PathTrail({ pages }: { pages: readonly string[] }) {
         {pages.map((page, index) => (
           <span key={`${page}-${index}`} className="flex min-w-0 items-center gap-1">
             {index > 0 ? (
-              <ArrowRight aria-hidden className="h-3 w-3 shrink-0 text-text-tertiary" />
+              <ArrowRight aria-hidden className="h-3 w-3 shrink-0 text-text-tertiary rtl:-scale-x-100" />
             ) : null}
             <span className="figure min-w-0 truncate text-xs text-text-primary">{page}</span>
           </span>
@@ -297,13 +297,15 @@ export function JourneyFlow({
                 const selected = id === selectedOutcome;
                 const figure = (
                   <>
-                    <span className="min-w-0 flex-1 truncate text-left text-sm text-text-primary">
+                    <span className="min-w-0 flex-1 truncate text-start text-sm text-text-primary">
                       {outcome.label}
                     </span>
                     <span className="figure shrink-0 text-sm text-text-primary">
                       {formatNumber(outcome.sessions)}
                     </span>
                     {outcome.share !== null ? (
+                      // rtl-ok: numeric figure — digits stay right-aligned so
+                      // place value lines up, regardless of direction.
                       <span className="figure w-12 shrink-0 text-right text-xs text-text-tertiary">
                         {formatPercent(outcome.share)}
                       </span>

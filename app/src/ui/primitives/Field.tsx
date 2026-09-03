@@ -139,7 +139,7 @@ export function Field({
                   one. */}
               {required ? <span className="sr-only"> ({t('ds.required') || 'required'})</span> : null}
               {optional && !required ? (
-                <span className="ml-1.5 text-xs font-normal text-text-tertiary">{t('ds.optional') || 'Optional'}</span>
+                <span className="ms-1.5 text-xs font-normal text-text-tertiary">{t('ds.optional') || 'Optional'}</span>
               ) : null}
             </label>
           );

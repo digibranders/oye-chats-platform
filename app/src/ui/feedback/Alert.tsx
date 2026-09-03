@@ -32,7 +32,7 @@ import type { Tone } from '../primitives/Badge';
 const TONE_STYLE: Record<Tone, string> = {
   neutral: cn(
     'border-border bg-surface-sunken text-text-primary',
-    'before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-ink before:content-[""]',
+    'before:absolute before:inset-y-0 before:start-0 before:w-[3px] before:bg-ink before:content-[""]',
   ),
   success: 'border-transparent bg-success-tint text-success',
   warning: 'border-transparent bg-warning-tint text-warning',

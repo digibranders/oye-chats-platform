@@ -11,6 +11,8 @@ const KEYFRAMES = '@keyframes oye-dot-drift { from { background-position: 0 0; }
 
 export function AuthDotGrid() {
   return (
+    // rtl-ok: `inset-x-0` sets both sides to 0 — symmetric, so it is identical
+    // under either direction.
     <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 z-0 h-[46%]">
       <style dangerouslySetInnerHTML={{ __html: KEYFRAMES }} />
       <div

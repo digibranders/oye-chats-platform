@@ -36,13 +36,13 @@ export const MenuSub = BaseMenu.SubmenuRoot;
  * which is what a menu is. A `p-1` panel of eight items is 4 + 8 × 32 + 4 = 264.
  */
 const ITEM = cn(
-  'relative flex h-8 cursor-pointer select-none items-center gap-2 rounded-sm pl-7 pr-2 text-sm',
+  'relative flex h-8 cursor-pointer select-none items-center gap-2 rounded-sm ps-7 pe-2 text-sm',
   'text-text-primary outline-none',
   'data-[highlighted]:bg-surface-hover',
   'data-[disabled]:pointer-events-none data-[disabled]:text-text-disabled',
 );
 
-const INDICATOR = 'absolute left-2 flex items-center';
+const INDICATOR = 'absolute start-2 flex items-center';
 
 export function MenuContent({
   children,
@@ -59,7 +59,12 @@ export function MenuContent({
    * the viewport, so the default `bottom` gets collision-flipped and the panel
    * overhangs. They pass `right`.
    */
-  side?: 'top' | 'right' | 'bottom' | 'left';
+  /**
+   * `'inline-start'` / `'inline-end'` resolve against `dir`, same as Base
+   * UI's own `Side` type — prefer them over `'left'`/`'right'` for anything
+   * anchored to direction-aware chrome (the rail, a toolbar's edge).
+   */
+  side?: 'top' | 'right' | 'bottom' | 'left' | 'inline-start' | 'inline-end';
   className?: string;
 }) {
   return (
@@ -212,7 +217,10 @@ export function MenuSubTrigger({ children, icon }: { children: ReactNode; icon?:
     <BaseMenu.SubmenuTrigger className={cn(ITEM, 'data-[popup-open]:bg-surface-hover')}>
       {icon ? <span className="shrink-0 text-text-tertiary">{icon}</span> : null}
       <span className="min-w-0 flex-1 truncate">{children}</span>
-      <ChevronRight aria-hidden className="h-icon-sm w-icon-sm shrink-0 text-text-tertiary" />
+      <ChevronRight
+        aria-hidden
+        className="h-icon-sm w-icon-sm shrink-0 text-text-tertiary rtl:-scale-x-100"
+      />
     </BaseMenu.SubmenuTrigger>
   );
 }

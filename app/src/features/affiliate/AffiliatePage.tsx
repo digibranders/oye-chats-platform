@@ -32,6 +32,7 @@ import { formatPct, referralShareUrl, type AffiliateCodeView } from './affiliate
 import { useAffiliateData } from './useAffiliateData';
 import { CodeDialog } from './CodeDialog';
 import { ReferralsDrawer } from './ReferralsDrawer';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * Settings ▸ Affiliate — the referral codes an enrolled partner shares.
@@ -45,6 +46,7 @@ const REFERRAL_BASE_URL: string =
   (import.meta.env.VITE_MARKETING_URL as string | undefined) ?? 'https://www.oyechats.com';
 
 export function AffiliatePage() {
+  const { t } = useTranslation();
   const { loading, notEnrolled, error, profile, codes, stats, reload } = useAffiliateData();
   const [editing, setEditing] = useState<AffiliateCodeView | null | 'new'>(null);
   const [inspecting, setInspecting] = useState<AffiliateCodeView | null>(null);
@@ -250,7 +252,7 @@ export function AffiliatePage() {
         <Toolbar className="justify-between gap-4 border-y border-border py-3">
           <Meter
             className="w-64"
-            label="Active codes"
+            label={t('affiliate.activeCodes') || 'Active codes'}
             used={activeCount}
             limit={profile?.maxActiveCodes ?? 0}
             unit="codes"
@@ -261,7 +263,7 @@ export function AffiliatePage() {
             disabled={atCap}
             iconLeft={<Plus aria-hidden />}
           >
-            New code
+            {t('affiliate.newCode') || 'New code'}
           </Button>
         </Toolbar>
 
@@ -297,15 +299,18 @@ export function AffiliatePage() {
                 </th>
                 <td />
                 <td />
+                {/* rtl-ok: numeric figure — digits stay right-aligned so place value lines up, regardless of direction */}
                 <td className="figure text-right font-semibold">
                   {formatNumber(stats?.totalClicks ?? 0)}
                 </td>
+                {/* rtl-ok: numeric figure — digits stay right-aligned so place value lines up, regardless of direction */}
                 <td className="figure text-right font-semibold">
                   {formatNumber(stats?.totalSignups ?? 0)}
                 </td>
                 {/* The all-codes rate is `null` until something is clicked.
                     `?? 0` printed "0% conversion" for an affiliate who had not
                     started yet, which reads as a result rather than as silence. */}
+                {/* rtl-ok: numeric figure — digits stay right-aligned so place value lines up, regardless of direction */}
                 <td className="figure text-right font-semibold">
                   {stats?.conversionPct == null ? (
                     <>
@@ -324,11 +329,14 @@ export function AffiliatePage() {
           empty={
             <EmptyState
               size="inline"
-              title="No codes yet"
-              description={`Create one and share its link. You keep up to ${formatPct(poolPct)} of what everyone who signs up through it pays.`}
+              title={t('affiliate.noCodesYet') || 'No codes yet'}
+              description={
+                t('affiliate.createOneAndShareItsLink', { pct: formatPct(poolPct) }) ||
+                `Create one and share its link. You keep up to ${formatPct(poolPct)} of what everyone who signs up through it pays.`
+              }
               action={
                 <Button size="sm" onClick={() => setEditing('new')}>
-                  Create your first code
+                  {t('affiliate.createYourFirstCode') || 'Create your first code'}
                 </Button>
               }
             />

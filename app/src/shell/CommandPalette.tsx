@@ -178,8 +178,10 @@ export function CommandPalette({
           className={cn(
             // A fixed offset, not `top-[12vh]` — that was 86px on a laptop and
             // 173px on a monitor, so the palette wandered with the window.
+            // rtl-ok: centers the panel on the viewport — the midpoint is the
+            // same regardless of reading direction.
             'motion-panel fixed left-1/2 top-24 z-[var(--z-overlay)] w-[calc(100vw-2rem)] max-w-xl',
-            '-translate-x-1/2 overflow-hidden rounded-xl border border-border bg-surface shadow-lg',
+            '-translate-x-1/2 overflow-hidden rounded-xl border border-border bg-surface shadow-lg', // rtl-ok: centering, see above
             'focus:outline-none',
           )}
         >

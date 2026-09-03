@@ -222,7 +222,7 @@ function DimensionsSectionInner({
           {/* The column head, printed once — so the input on every row needs no
               label of its own and the row keeps one centre line. */}
           <Eyebrow className="w-20 shrink-0">Weight</Eyebrow>
-          <Eyebrow className="w-9 shrink-0 text-right">On</Eyebrow>
+          <Eyebrow className="w-9 shrink-0 text-end">On</Eyebrow>
           <span aria-hidden className="w-6 shrink-0" />
         </CardSection>
       )}
@@ -241,7 +241,7 @@ function DimensionsSectionInner({
               <Button
                 variant="ghost"
                 size="icon-sm"
-                className="-ml-1"
+                className="-ms-1"
                 onClick={() => toggleExpanded(key)}
                 aria-expanded={isOpen}
                 aria-controls={isOpen ? `dimension-panel-${key}` : undefined}

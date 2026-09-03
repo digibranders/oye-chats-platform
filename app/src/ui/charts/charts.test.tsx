@@ -78,6 +78,7 @@ describe('ChartDataTable', () => {
       />,
     );
     const cell = screen.getByRole('cell', { name: '412' });
+    // rtl-ok: numeric figure — digits stay right-aligned regardless of direction
     expect(cell.className).toContain('text-right');
     expect(cell.className).toContain('figure');
   });

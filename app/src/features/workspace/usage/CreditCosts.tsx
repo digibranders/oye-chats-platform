@@ -130,6 +130,7 @@ export function CreditCosts({ costs, pool }: { costs: CreditCostsMap; pool: Pool
               </th>
               <td />
               <td />
+              {/* rtl-ok: numeric figure — digits stay right-aligned so place value lines up, regardless of direction */}
               <td className="figure text-right font-semibold">
                 {formatNumber(pool.periodCreditsUsed)}
               </td>

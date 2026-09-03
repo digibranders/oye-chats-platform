@@ -121,3 +121,45 @@ test('the quotation skip always closes the card, even if the server refuses', ()
     );
     assert.match(skip, /finally \{\s*\n\s*finish\('skipped'\);/, 'skip can strand the visitor on an error');
 });
+
+// ── W6: the handoff form is not held behind a quotation poll it cannot need ─
+
+test('the explicit handoff skips the quotation poll for a session minted on the spot', () => {
+    // "Talk to a human" from the welcome screen mints the session id right in
+    // triggerHandoff. The server has no row for it, so GET /chat/quotation can
+    // only ever answer `active: false`; polling it five times over 4.5s of
+    // spacing was the ten-second gap between the tap and the form on a phone.
+    const trigger = CHAT_WINDOW.slice(
+        CHAT_WINDOW.indexOf('const triggerHandoff = useCallback'),
+        CHAT_WINDOW.indexOf('const handleQuotationFlowComplete'),
+    );
+    assert.match(trigger, /sessionMintedNow = true;/, 'triggerHandoff no longer records that it minted the session');
+    assert.match(
+        trigger,
+        /sessionMintedNow \? false : await maybeInjectQuotation\(activeSessionId\)/,
+        'a freshly minted session must go straight to the handoff form',
+    );
+});
+
+test('the quotation poll stands down when the server says no quote card can fire', () => {
+    // `quotation_enabled: false` on the public settings payload means catalog
+    // off/empty or a plan without the flow. The widget cannot tell that apart
+    // from "BANT not extracted yet" out of an `active: false` reply, which is
+    // why it used to run the full series for every bot on the platform.
+    const probe = CHAT_WINDOW.slice(
+        CHAT_WINDOW.indexOf('const maybeInjectQuotation = useCallback'),
+        CHAT_WINDOW.indexOf('const triggerHandoff = useCallback'),
+    );
+    assert.match(probe, /settings\?\.quotation_enabled === false/, 'the settings flag is not read');
+    assert.match(probe, /quotationProbeSchedule\(\{/, 'the poll is not sized from the stream-close stamp');
+    assert.match(probe, /if \(Date\.now\(\) >= deadline\) break;/, 'the poll does not stop at the extraction deadline');
+    assert.doesNotMatch(probe, /\[0, 700, 1000, 1300, 1500\]/, 'the unconditional five-poll series is back');
+});
+
+test('the stream-close stamp is taken where the answer completes', () => {
+    const finalMeta = CHAT_WINDOW.slice(
+        CHAT_WINDOW.indexOf('onFinalMetadata: async (finalMeta) => {'),
+        CHAT_WINDOW.indexOf('onError: (err) => {'),
+    );
+    assert.match(finalMeta, /lastStreamClosedAtRef\.current = Date\.now\(\);/, 'onFinalMetadata must stamp the stream close');
+});

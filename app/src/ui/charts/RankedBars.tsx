@@ -153,6 +153,7 @@ export function RankedBars({
                   `1,234 · 45%` display these rows are routinely given — the
                   text simply ran out of its own box. The minimum still lines
                   four rows of three-digit figures up on one right edge. */}
+              {/* rtl-ok: numeric figure — digits stay right-aligned so place value lines up, regardless of direction */}
               <span className="figure min-w-16 shrink-0 whitespace-nowrap text-right text-sm font-medium text-text-primary">
                 {item.display ?? item.value}
               </span>
@@ -171,7 +172,7 @@ export function RankedBars({
                 aria-pressed={item.selected}
                 onClick={item.onSelect}
                 className={cn(
-                  'block w-full px-cell py-2.5 text-left transition-colors duration-[var(--dur-fast)]',
+                  'block w-full px-cell py-2.5 text-start transition-colors duration-[var(--dur-fast)]',
                   item.selected ? 'bg-accent-50' : 'hover:bg-surface-hover',
                 )}
               >

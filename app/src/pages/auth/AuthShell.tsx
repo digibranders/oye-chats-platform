@@ -53,8 +53,10 @@ export function AuthShell({
 
         {/* Illustration centered above the headline, sitting in the upper area */}
         <div className="relative z-10 flex flex-1 flex-col items-center justify-start pt-10 text-center">
-          <AuthHeroIllustration className="-translate-x-12" />
-          <div className="mt-8 max-w-md text-left self-start">
+          {/* rtl-ok: translate is never direction-aware, so the mirrored
+              nudge is carried explicitly by the rtl: variant. */}
+          <AuthHeroIllustration className="-translate-x-12 rtl:translate-x-12" />
+          <div className="mt-8 max-w-md text-start self-start">
             <p className="font-mono text-2xs uppercase tracking-eyebrow text-rail-accent font-medium">
               {t('auth.oyechats') || 'OYECHATS'}
             </p>
@@ -90,9 +92,9 @@ export function AuthShell({
               {back ? (
                 <Link
                   to={back.to}
-                  className="-ml-1 mb-4 inline-flex items-center gap-1.5 rounded-sm px-1 py-0.5 text-xs font-medium text-text-secondary transition-colors hover:text-text-primary"
+                  className="-ms-1 mb-4 inline-flex items-center gap-1.5 rounded-sm px-1 py-0.5 text-xs font-medium text-text-secondary transition-colors hover:text-text-primary"
                 >
-                  <ArrowLeft aria-hidden className="h-icon-sm w-icon-sm" />
+                  <ArrowLeft aria-hidden className="h-icon-sm w-icon-sm rtl:rotate-180" />
                   {back.label}
                 </Link>
               ) : null}

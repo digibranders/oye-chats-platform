@@ -195,8 +195,8 @@ function TreeRow({
           is computed from a depth, which genuinely cannot be a utility class;
           the step is a named constant so it stays on the 4-base scale. */}
       <div
-        className="flex items-center gap-1.5 rounded-sm py-1 pr-2 hover:bg-surface-hover"
-        style={{ paddingLeft: `${depth * INDENT_PX + 4}px` }}
+        className="flex items-center gap-1.5 rounded-sm py-1 pe-2 hover:bg-surface-hover"
+        style={{ paddingInlineStart: `${depth * INDENT_PX + 4}px` }}
       >
         {hasChildren ? (
           <Button
@@ -209,7 +209,7 @@ function TreeRow({
           >
             <ChevronRight
               aria-hidden
-              className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-90')}
+              className={cn('h-3.5 w-3.5 rtl:-scale-x-100 transition-transform', open && 'rotate-90')}
             />
           </Button>
         ) : (
@@ -387,7 +387,7 @@ export function CrawlPageTree({
           ) : null}
         </div>
       </div>
-      <div className={cn('overflow-y-auto py-1.5 pr-1', maxHeight)}>
+      <div className={cn('overflow-y-auto py-1.5 pe-1', maxHeight)}>
         <ul aria-label={translateNow('agents.pagesFoundOnThisWebsite') || 'Pages found on this website'}>
           <TreeRow
             node={tree}

@@ -58,7 +58,7 @@ export function FeedbackLauncher(): ReactElement {
         // `--z-topbar`, not `--z-overlay`: this button is permanent chrome, not
         // a transient surface, and it must sit under the scrim the moment any
         // dialog opens — including its own.
-        className="fixed right-0 top-1/2 z-[var(--z-topbar)] hidden w-11 -translate-y-1/2 flex-col items-center justify-center gap-3.5 rounded-l-lg bg-accent-500 py-6 text-text-inverse shadow-md transition-colors hover:bg-accent-600 focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--color-accent-700)] md:flex"
+        className="fixed end-0 top-1/2 z-[var(--z-topbar)] hidden w-11 -translate-y-1/2 flex-col items-center justify-center gap-3.5 rounded-s-lg bg-accent-500 py-6 text-text-inverse shadow-md transition-colors hover:bg-accent-600 focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--color-accent-700)] md:flex"
       >
         <MessageCircle aria-hidden className="h-icon-sm w-icon-sm" />
         <span

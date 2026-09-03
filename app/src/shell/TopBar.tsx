@@ -56,7 +56,7 @@ export function TopBar({ isMobile, onToggleRail, onOpenSearch, searchable = true
           variant="ghost"
           onClick={onToggleRail}
           aria-label={t('shell.openNavigation') || 'Open navigation'}
-          className="-ml-1.5"
+          className="-ms-1.5"
         >
           <MenuIcon aria-hidden />
         </Button>

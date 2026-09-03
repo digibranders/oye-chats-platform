@@ -307,6 +307,16 @@ export function useDeployData(): DeployData {
     [domainsQuery.data],
   );
 
+  // The one case where every stamp is empty and nothing is wrong: the snippet
+  // is on a page WE own, which the backend refuses to count as a customer
+  // install. Only consulted when there is no install stamp, because a real
+  // customer domain produces one and outranks this entirely.
+  const ownInstallDomain = useMemo(() => {
+    if (installedAt) return null;
+    const ours = domains.find((d) => d.counts_as_install === false && d.state === 'installed');
+    return ours?.hostname ?? null;
+  }, [domains, installedAt]);
+
   // `lastSeenAt` is what turns a first-seen stamp into a liveness reading. Without
   // it the card reports "live" for a chatbot whose snippet came off months ago.
   const status = installStatus({
@@ -314,6 +324,7 @@ export function useDeployData(): DeployData {
     lastSeenAt: bot?.widget_last_seen_at ?? null,
     claimed,
     checking,
+    ownInstallDomain,
   });
 
   return {

@@ -158,7 +158,7 @@ WIDGET_UI_LANGUAGES_PENDING_REVIEW: frozenset[str] = frozenset()
 # which needs no runtime dictionary because every call site carries an inline
 # English default. tests/test_admin_ui_languages_contract.py reads the admin's
 # locales directory and fails if the two drift.
-ADMIN_UI_LANGUAGES: frozenset[str] = frozenset({"en", "hi"})
+ADMIN_UI_LANGUAGES: frozenset[str] = frozenset({"en", "hi", "ar"})
 
 # Standard locale catalog with metadata
 KNOWN_LOCALES: dict[str, LocaleInfo] = {
@@ -233,6 +233,16 @@ for _info in KNOWN_LOCALES.values():
     _info.ui_translated = _info.code in WIDGET_UI_LANGUAGES
     _info.admin_ui_translated = _info.code in ADMIN_UI_LANGUAGES
 del _info
+
+# ar-SA shares Arabic's `code` with ar-AE, so the per-code derivation above
+# would mark it admin_ui_translated too - but ar-SA defaults to the Islamic
+# (Hijri) calendar, a locale variant the admin's formatters were never
+# verified against (see the Arabic rollout's "decisions already made": ar-AE
+# was chosen specifically to get the Gregorian calendar and Latin digits).
+# The dashboard's own language picker only ever offers `ar-AE` regardless of
+# this flag, but the flag itself should say what was actually tested rather
+# than overstate it for a tag nothing exercises.
+KNOWN_LOCALES["ar-SA"].admin_ui_translated = False
 
 
 def _derive_base_language_names() -> dict[str, str]:
