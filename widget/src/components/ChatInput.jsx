@@ -710,20 +710,16 @@ const ChatInput = ({
                     {/* The privacy notice, bottom-left, and the one thing it must
                         not do: vanish before the visitor has decided anything.
 
-                        On desktop it stands for the whole conversation: a visitor
-                        can be asked for personal details at any point (the lead
-                        form, a handoff, an offline message), so there is no turn
-                        after which it stops being relevant.
-
-                        On a phone it collapses only AFTER the conversation has
-                        started, so the tight viewport reclaims the row once the
-                        notice is no longer earning it. Before the first message
-                        it stays up on every viewport, because that is the moment
-                        it does its work: when someone is deciding whether to type
-                        personal details into a chat box. This is the widget's
-                        only privacy disclosure, so a bare `hidden md:block` here
-                        removes it from every phone visitor outright. That has
-                        shipped twice now; `privacy-notice.spec.js` is the guard.
+                        It shows on EVERY viewport up to and including the moment
+                        of decision, then collapses on EVERY viewport once the
+                        first message is sent. That first message is the point of
+                        no return the notice exists for: it is on screen while
+                        someone is deciding whether to type personal details into
+                        a chat box, and reclaims the row afterwards, when the
+                        decision is already made. Before that first message it
+                        must never be hidden anywhere — a bare `hidden md:block`
+                        removes it from every phone visitor outright, which has
+                        shipped twice; `privacy-notice.spec.js` is the guard.
 
                         Derived from `userMessageCount` rather than a separate
                         `userHasSent` prop: one fact, one source.
@@ -732,7 +728,7 @@ const ChatInput = ({
                         so it never sits under the send button on a phone, where
                         thumbs aiming for Send kept opening oyechats.com. Column
                         3 is the empty counterweight that keeps it centred. */}
-                    <p className={`col-start-1 text-[10px] text-gray-400 leading-snug justify-self-start ${userMessageCount > 0 ? 'hidden md:block' : ''}`}>
+                    <p className={`col-start-1 text-[10px] text-gray-400 leading-snug justify-self-start ${userMessageCount > 0 ? 'hidden' : ''}`}>
                         <a
                             href="https://www.oyechats.com/legal/privacy"
                             target="_blank"

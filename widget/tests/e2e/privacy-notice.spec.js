@@ -8,12 +8,12 @@ import { test, expect } from '@playwright/test'
  * screen, so whatever this element does on a phone is the whole of what a phone
  * visitor ever sees.
  *
- * It collapses to `hidden md:block` ONLY once the visitor has sent a message.
- * The distinction is the entire point: the notice exists to be on screen while
- * someone is deciding whether to type personal details into a chat box, and
- * that decision happens before the first message, not after it. Reclaiming the
- * vertical space afterwards costs nothing; reclaiming it from the start removes
- * the disclosure from every phone visitor.
+ * It collapses to `hidden` ONLY once the visitor has sent a message, and then
+ * on every viewport. The distinction is the entire point: the notice exists to
+ * be on screen while someone is deciding whether to type personal details into
+ * a chat box, and that decision happens before the first message, not after it.
+ * Reclaiming the vertical space afterwards costs nothing; reclaiming it from the
+ * start removes the disclosure from every visitor before they have decided.
  *
  * That is not hypothetical — it shipped. A refactor replaced the conditional
  * with a bare `hidden md:block`, which reads like a tidy-up and is a disclosure
@@ -64,20 +64,15 @@ test.describe('the privacy notice', () => {
     )
   })
 
-  test('collapses on a phone once the conversation has started', async ({ page }) => {
+  test('collapses on every viewport once the conversation has started', async ({ page }) => {
     const root = await boot(page, { history: SENT })
     const line = root.getByText('Privacy Policy')
-    // Present either way — this is a layout collapse, not a removal, so the
-    // link is still in the document for anyone reading it with assistive tech
-    // on desktop and for the desktop layout below.
+    // Present in the document either way — this is a layout collapse, not a
+    // removal, so the link stays reachable for assistive tech.
     await expect(line).toHaveCount(1)
-
-    if (test.info().project.name === 'mobile') {
-      await expect(line).not.toBeVisible()
-    } else {
-      // Desktop has the room and keeps it up throughout.
-      await expect(line).toBeVisible()
-    }
+    // Hidden on both phone and desktop once the first message is sent: the
+    // decision the notice guards is already made, so the row is reclaimed.
+    await expect(line).not.toBeVisible()
   })
 
   test('on a phone the branding sits under the middle of the composer, not under Send', async ({ page }) => {
