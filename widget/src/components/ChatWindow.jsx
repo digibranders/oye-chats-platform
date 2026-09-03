@@ -3,6 +3,12 @@ import { X, Plus, Clock, MoreHorizontal, Mail, CheckCircle2, AlertCircle, User, 
 import { isAbortError, sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, cancelHandoff, getSessionStatus, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail, getPendingConnectRequest, respondToConnectRequest, submitFeedback, markChatEvent, validateEmail as checkEmailWithServer, getQuotationState, changeSessionLanguage } from '../services/api';
 import { getController } from '../widget-controller.js';
 import { themeConfigs } from './themeConfigs';
+import {
+    PANEL_STYLE_KEYS,
+    VIEWPORT_SETTLE_DELAYS_MS,
+    isPhoneLayout,
+    panelStyleForViewport,
+} from '../lib/mobileViewport';
 import BotAvatar from './BotAvatar';
 import MessageBubble from './MessageBubble';
 import MessageStatus from './MessageStatus';
@@ -484,22 +490,21 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
     // doesn't fire a reliable visualViewport.resize on keyboard dismiss.
     const resyncViewport = useCallback(() => {
         const vv = window.visualViewport;
-        if (!vv || window.innerWidth >= 768 || !containerRef.current) return;
-        const container = containerRef.current;
-        container.style.height = `${vv.height}px`;
-        container.style.width = `${vv.width}px`;
-        container.style.top = `${vv.offsetTop}px`;
-        container.style.left = '0';
-        container.style.bottom = 'auto';
+        if (!vv || !isPhoneLayout(window.innerWidth) || !containerRef.current) return;
+        Object.assign(containerRef.current.style, panelStyleForViewport(vv));
     }, []);
 
     useEffect(() => {
         const vv = window.visualViewport;
         if (!vv) return;
 
-        const isMobile = () => window.innerWidth < 768;
+        const isMobile = () => isPhoneLayout(window.innerWidth);
         let rafId = null;
-        let settleTimer = null;
+        let settleTimers = [];
+        const clearSettleTimers = () => {
+            settleTimers.forEach(clearTimeout);
+            settleTimers = [];
+        };
 
         // Strip the JS-applied mobile inline styles so the Tailwind `md:`
         // responsive classes can resume controlling layout. Without this,
@@ -509,11 +514,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
         const clearMobileInlineStyles = () => {
             const el = containerRef.current;
             if (!el) return;
-            el.style.height = '';
-            el.style.width = '';
-            el.style.top = '';
-            el.style.left = '';
-            el.style.bottom = '';
+            PANEL_STYLE_KEYS.forEach((key) => { el.style[key] = ''; });
         };
 
         const syncViewport = () => {
@@ -524,26 +525,28 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
             }
 
             // Coalesce rapid resize events (iOS keyboard animation fires many)
-            // into a single rAF, then do a final authoritative read after the
-            // animation settles to avoid intermediate height oscillation.
+            // into a single rAF, then re-read after the animation has settled
+            // to avoid intermediate height oscillation.
             if (rafId) cancelAnimationFrame(rafId);
-            if (settleTimer) clearTimeout(settleTimer);
+            clearSettleTimers();
 
             rafId = requestAnimationFrame(() => {
                 rafId = null;
                 resyncViewport();
 
-                // Final settle pass. Re-read once iOS keyboard animation completes
-                settleTimer = setTimeout(() => {
-                    settleTimer = null;
-                    resyncViewport();
-                }, 150);
+                // Settle passes. The last one lands after both keyboard
+                // animations (iOS about 250ms, Android about 300ms) have
+                // finished; Chrome on Android can fire its only resize event
+                // early with an intermediate height.
+                settleTimers = VIEWPORT_SETTLE_DELAYS_MS.map((delay) => setTimeout(resyncViewport, delay));
             });
         };
 
+        // The visual viewport pans (both axes, when zoomed) without resizing.
         const handleScroll = () => {
             if (!isMobile() || !containerRef.current) return;
-            containerRef.current.style.top = `${vv.offsetTop}px`;
+            const { top, left } = panelStyleForViewport(vv);
+            Object.assign(containerRef.current.style, { top, left });
         };
 
         // Set initial size immediately. Covers iOS where dvh may not be supported
@@ -570,13 +573,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
             window.removeEventListener('resize', syncViewport);
             mql.removeEventListener('change', handleBreakpoint);
             if (rafId) cancelAnimationFrame(rafId);
-            if (settleTimer) clearTimeout(settleTimer);
+            clearSettleTimers();
             if (containerEl) {
-                containerEl.style.height = '';
-                containerEl.style.width = '';
-                containerEl.style.top = '';
-                containerEl.style.left = '';
-                containerEl.style.bottom = '';
+                PANEL_STYLE_KEYS.forEach((key) => { containerEl.style[key] = ''; });
             }
         };
     }, [resyncViewport]);
@@ -2753,10 +2752,26 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
     };
 
     // ── Main render ──────────────────────────────────────────────────────────────
+    const shellAnimationClass =
+        isAnimating === true ? 'widget-open'
+        : isAnimating === false ? 'widget-close'
+        : isAnimating === 'done' ? 'widget-visible'
+        : 'widget-hidden';
     return (
+        <>
+            {/* Phone only (display: none from md up, see index.css). A sheet in
+                the panel's own colour covering the whole layout viewport behind
+                the panel. The panel is sized to the visual viewport, and the
+                on-screen keyboard leaves that short of its own top edge: Safari
+                keeps a strip free for its autofill bar, and Chrome on Android
+                over-reports the keyboard inset on some builds. Whatever strip
+                the panel does not reach shows this sheet instead of the host
+                page. It animates with the panel so the two move as one. */}
+            <div aria-hidden="true" className={`oyechats-mobile-backdrop ${currentTheme.mobileBackdrop} ${shellAnimationClass}`} />
         <div
             ref={containerRef}
-            className={`${currentTheme.container} ${isAnimating === true ? 'widget-open' : isAnimating === false ? 'widget-close' : isAnimating === 'done' ? 'widget-visible' : 'widget-hidden'}`}
+            data-oyechats-panel=""
+            className={`${currentTheme.container} ${shellAnimationClass}`}
         >
             {/* ── Header ── */}
             <div className={`${currentTheme.header} oyechats-safe-top`}>
@@ -4031,6 +4046,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                 </ErrorBoundary>
             )}
         </div>
+        </>
     );
 };
 

@@ -566,7 +566,7 @@ const ChatInput = ({
                                 <div
                                     ref={mirrorRef}
                                     aria-hidden="true"
-                                    className="absolute inset-0 pointer-events-none"
+                                    className="oyechats-composer-mirror absolute inset-0 pointer-events-none"
                                     style={{
                                         // Explicit metrics so alignment survives when
                                         // the widget is mounted in a host page whose
