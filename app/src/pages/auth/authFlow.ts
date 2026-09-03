@@ -64,6 +64,8 @@ export interface PasswordRule {
  * user had started typing, so the first attempt was always a guess, and the
  * reset screen never showed them at all and failed the submit instead.
  */
+// @i18n-exempt: the labels below are FALLBACKS. Each row carries its own `key`
+// and the renderer resolves that first; the English only shows on a miss.
 export const PASSWORD_RULES: readonly PasswordRule[] = [
   // Keyed beside the English: this is a module constant evaluated at import,
   // before any locale exists, so the label resolves where it is rendered.

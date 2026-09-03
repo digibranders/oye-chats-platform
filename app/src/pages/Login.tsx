@@ -23,21 +23,40 @@ import {
 } from './auth/authFlow';
 import { useTranslation } from '../i18n/useTranslation';
 import { Trans } from '../i18n/Trans';
+import { t as translateNow } from '../i18n/i18n';
 
-const schema = z.object({
-  email: z
-    .string()
-    .trim()
-    .min(1, 'Enter your email address.')
-    .refine((value) => validateEmail(value) === null, 'That does not look like an email address.'),
-  password: z.string().min(1, 'Enter your password.'),
-});
+// Built per call, not at module scope. Zod resolves a message string when the
+// schema is CONSTRUCTED, so a module-level schema freezes whatever language
+// was loaded when this module was first imported and never moves again.
+const buildSchema = () =>
+  z.object({
+    email: z
+      .string()
+      .trim()
+      .min(1, translateNow('auth.enterYourEmailAddress') || 'Enter your email address.')
+      .refine(
+        (value) => validateEmail(value) === null,
+        translateNow('auth.thatDoesNotLookLikeAnEmail') ||
+          'That does not look like an email address.',
+      ),
+    password: z.string().min(1, translateNow('auth.enterYourPassword') || 'Enter your password.'),
+  });
 
-type LoginValues = z.infer<typeof schema>;
+type LoginValues = z.infer<ReturnType<typeof buildSchema>>;
 
 /** The HTTP status the backend uses for "wrong credentials", and only that. */
 const UNAUTHORIZED = 401;
 
+/** The other door's prompt, in the reader's language. */
+function doorPrompt(door: SignInDoor): { hint: string; action: string } {
+  const english = DOOR_PROMPT[door];
+  return {
+    hint: translateNow(`auth.doorHint.${door}`) || english.hint,
+    action: translateNow(`auth.doorAction.${door}`) || english.action,
+  };
+}
+
+// @i18n-exempt: fallbacks, read through doorPrompt above.
 const DOOR_PROMPT: Record<SignInDoor, { hint: string; action: string }> = {
   client: {
     hint: 'Invited as a team member? Your password is on the team sign-in.',
@@ -92,7 +111,7 @@ export default function Login() {
   const [rememberMe, setRememberMe] = useState(false);
 
   const form = useForm<LoginValues>({
-    resolver: zodResolver(schema),
+    resolver: zodResolver(buildSchema()),
     // Errors appear once a field has been visited and left, not while the user
     // is still typing the value that would clear them.
     mode: 'onTouched',
@@ -227,13 +246,13 @@ export default function Login() {
           action={
             failedCredentials ? (
               <Button size="sm" onClick={retryOtherDoor} loading={signIn.isPending}>
-                {DOOR_PROMPT[door].action}
+                {doorPrompt(door).action}
               </Button>
             ) : undefined
           }
         >
           {failedCredentials
-            ? DOOR_PROMPT[door].hint
+            ? doorPrompt(door).hint
             : errorMessage(signIn.error, t('auth.weCouldNotSignYou') || 'We could not sign you in. Please try again.')}
         </Alert>
       ) : null}

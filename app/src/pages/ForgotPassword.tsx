@@ -13,27 +13,31 @@ import { PasswordRules } from './auth/PasswordRules';
 import { useResendCooldown } from './auth/useResendCooldown';
 import { OTP_LENGTH, digitsOnly, errorMessage, maskEmail, passwordMeetsRules } from './auth/authFlow';
 import { useTranslation } from '../i18n/useTranslation';
+import { t as translateNow } from '../i18n/i18n';
+import { Trans } from '../i18n/Trans';
 
-const requestSchema = z.object({
+const buildRequestSchema = () =>
+  z.object({
   email: z
     .string()
     .trim()
-    .min(1, 'Enter your email address.')
-    .refine((value) => validateEmail(value) === null, 'That does not look like an email address.'),
+    .min(1, translateNow('auth.enterYourEmailAddress') || 'Enter your email address.')
+    .refine((value) => validateEmail(value) === null, translateNow('auth.thatDoesNotLookLikeAnEmail') || 'That does not look like an email address.'),
 });
 
-const resetSchema = z.object({
+const buildResetSchema = () =>
+  z.object({
   code: z
     .string()
     .trim()
-    .length(OTP_LENGTH, `The code is ${OTP_LENGTH} digits.`),
+    .length(OTP_LENGTH, translateNow('auth.theCodeIsNDigits', { n: OTP_LENGTH }) || `The code is ${OTP_LENGTH} digits.`),
   password: z
     .string()
-    .refine(passwordMeetsRules, 'Your password needs 8 characters, a letter and a number.'),
+    .refine(passwordMeetsRules, translateNow('auth.passwordNeeds8Characters') || 'Your password needs 8 characters, a letter and a number.'),
 });
 
-type RequestValues = z.infer<typeof requestSchema>;
-type ResetValues = z.infer<typeof resetSchema>;
+type RequestValues = z.infer<ReturnType<typeof buildRequestSchema>>;
+type ResetValues = z.infer<ReturnType<typeof buildResetSchema>>;
 
 type Stage = 'request' | 'reset' | 'done';
 
@@ -66,13 +70,13 @@ export default function ForgotPassword() {
   }, [stage]);
 
   const requestForm = useForm<RequestValues>({
-    resolver: zodResolver(requestSchema),
+    resolver: zodResolver(buildRequestSchema()),
     mode: 'onTouched',
     defaultValues: { email: '' },
   });
 
   const resetForm = useForm<ResetValues>({
-    resolver: zodResolver(resetSchema),
+    resolver: zodResolver(buildResetSchema()),
     mode: 'onTouched',
     defaultValues: { code: '', password: '' },
   });
@@ -126,10 +130,11 @@ export default function ForgotPassword() {
       <AuthShell
         title={t('auth.chooseANewPassword') || 'Choose a new password'}
         description={
-          <>
-            We sent a six-digit code to{' '}
-            <span className="figure text-text-primary">{maskEmail(email)}</span>.
-          </>
+          <Trans
+            k="auth.weSentASixDigitCodeTo"
+            fallback="We sent a six-digit code to {email}."
+            values={{ email: <span className="figure text-text-primary">{maskEmail(email)}</span> }}
+          />
         }
         back={{ to: '/login', label: t('auth.backToSignIn') || 'Back to sign in' }}
         secondary={
@@ -141,12 +146,15 @@ export default function ForgotPassword() {
             disabled={cooldown.active}
             iconLeft={<RotateCcw aria-hidden />}
           >
-            {cooldown.active ? `Resend in ${cooldown.remaining}s` : t('auth.resendCode') || 'Resend code'}
+            {cooldown.active
+              ? t('auth.resendInSeconds', { seconds: cooldown.remaining }) ||
+                `Resend in ${cooldown.remaining}s`
+              : t('auth.resendCode') || 'Resend code'}
           </Button>
         }
         footer={
           <>
-            Wrong address?{' '}
+            {t('auth.wrongAddress') || 'Wrong address?'}{' '}
             <button
               type="button"
               onClick={() => {
@@ -239,7 +247,7 @@ export default function ForgotPassword() {
       back={{ to: '/login', label: t('auth.backToSignIn') || 'Back to sign in' }}
       footer={
         <>
-          Remembered it?{' '}
+          {t('auth.rememberedIt') || 'Remembered it?'}{' '}
           <button
             type="button"
             onClick={() => navigate('/login')}

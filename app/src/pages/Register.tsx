@@ -23,6 +23,7 @@ import {
 } from './auth/authFlow';
 import { useTranslation } from '../i18n/useTranslation';
 import { Trans } from '../i18n/Trans';
+import { t as translateNow } from '../i18n/i18n';
 
 const PROMO_STORAGE_KEY = 'oyechats_promo_code';
 const REFERRAL_STORAGE_KEY = 'oyechats_referral_code';
@@ -43,16 +44,17 @@ function readCookie(name: string): string {
   }
 }
 
-const schema = z.object({
-  name: z.string().trim().min(2, 'Enter your name, at least two characters.'),
+const buildSchema = () =>
+  z.object({
+  name: z.string().trim().min(2, translateNow('auth.enterYourNameAtLeastTwo') || 'Enter your name, at least two characters.'),
   email: z
     .string()
     .trim()
-    .min(1, 'Enter your email address.')
-    .refine((value) => validateEmail(value) === null, 'That does not look like an email address.'),
+    .min(1, translateNow('auth.enterYourEmailAddress') || 'Enter your email address.')
+    .refine((value) => validateEmail(value) === null, translateNow('auth.thatDoesNotLookLikeAnEmail') || 'That does not look like an email address.'),
   password: z
     .string()
-    .refine(passwordMeetsRules, 'Your password needs 8 characters, a letter and a number.'),
+    .refine(passwordMeetsRules, translateNow('auth.passwordNeeds8Characters') || 'Your password needs 8 characters, a letter and a number.'),
   /**
    * Required, and asked here rather than inferred later.
    *
@@ -68,10 +70,10 @@ const schema = z.object({
   billing_country: z
     .string()
     .trim()
-    .length(2, 'Choose the country you are billed in.'),
+    .length(2, translateNow('auth.chooseTheCountryYouAreBilledIn') || 'Choose the country you are billed in.'),
 });
 
-type RegisterValues = z.infer<typeof schema>;
+type RegisterValues = z.infer<ReturnType<typeof buildSchema>>;
 
 /**
  * Read the campaign code, preferring a fresh one in the URL.
@@ -162,7 +164,7 @@ export default function Register() {
   }, [urlReferralCode]);
 
   const form = useForm<RegisterValues>({
-    resolver: zodResolver(schema),
+    resolver: zodResolver(buildSchema()),
     mode: 'onTouched',
     // `billing_country: ''` rather than left undefined: the schema's own
     // message ("Choose the country you are billed in.") only fires on a string,

@@ -8,6 +8,7 @@ import { clearAuthStorage, setAuthBundle, setAuthItem } from '../utils/authStora
 import { keys } from '../query/keys';
 import { safeRelativePath } from './auth/authFlow';
 import { useTranslation } from '../i18n/useTranslation';
+import { t as translateNow } from '../i18n/i18n';
 
 /**
  * The backend's machine-readable OAuth failures, in words.
@@ -16,6 +17,14 @@ import { useTranslation } from '../i18n/useTranslation';
  * code is as likely to be a probe as a real failure, and echoing it back would
  * turn this page into a reflection point.
  */
+/** The message for an OAuth error code, in the reader's language. */
+function oauthErrorMessage(code: string): string | undefined {
+  const english = ERROR_MESSAGES[code];
+  if (!english) return undefined;
+  return translateNow(`auth.oauthError.${code}`) || english;
+}
+
+// @i18n-exempt: fallbacks, read through oauthErrorMessage above.
 const ERROR_MESSAGES: Record<string, string> = {
   oauth_unavailable: 'Google sign-in is not configured. Please use your email and password.',
   oauth_cancelled: 'Sign-in was cancelled. You can try again any time.',
@@ -47,14 +56,14 @@ type Callback =
 function classifyCallback(searchParams: URLSearchParams): Callback {
   const errorCode = searchParams.get('error');
   if (errorCode) {
-    return { kind: 'error', message: ERROR_MESSAGES[errorCode] ?? GENERIC_ERROR };
+    return { kind: 'error', message: oauthErrorMessage(errorCode) ?? GENERIC_ERROR };
   }
 
   const rawHash = typeof window === 'undefined' ? '' : window.location.hash;
   const fragment = new URLSearchParams(rawHash.startsWith('#') ? rawHash.slice(1) : rawHash);
   const apiKey = fragment.get('api_key');
   if (!apiKey) {
-    return { kind: 'error', message: ERROR_MESSAGES.oauth_missing_params };
+    return { kind: 'error', message: oauthErrorMessage('oauth_missing_params') ?? GENERIC_ERROR };
   }
 
   return {
