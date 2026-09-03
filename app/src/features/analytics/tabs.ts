@@ -1,3 +1,4 @@
+import { t as translateNow } from '../../i18n/i18n';
 /**
  * The analytics views, and the address of each.
  *
@@ -50,6 +51,12 @@ export interface AnalyticsTabDef {
   conditional?: boolean;
 }
 
+/** A tab's label in the reader's language; `value` is the route identity. */
+export function analyticsTabLabel(tab: AnalyticsTabDef): string {
+  return translateNow(`analytics.tab.${tab.value}`) || tab.label;
+}
+
+// @i18n-exempt: fallbacks, read through analyticsTabLabel above.
 export const ANALYTICS_TABS: readonly AnalyticsTabDef[] = [
   { value: 'overview', label: 'Overview', path: ANALYTICS_BASE, end: true },
   { value: 'conversations', label: 'Conversations', path: `${ANALYTICS_BASE}/conversations` },

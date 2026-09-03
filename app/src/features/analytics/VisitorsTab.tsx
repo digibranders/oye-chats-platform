@@ -165,8 +165,13 @@ export function VisitorsTab({ botId, range }: { botId: number | null; range: Res
         titleAs="h2"
         description={
           truncated
-            ? `One row per visitor, last seen in ${range.label.toLowerCase()}. Showing the most recent ${formatNumber(VISITORS_READ_LIMIT)} conversations; export covers only these.`
-            : `One row per visitor, last seen in ${range.label.toLowerCase()}`
+            ? t('analytics.oneRowPerVisitorTruncated', {
+                range: range.label.toLowerCase(),
+                limit: formatNumber(VISITORS_READ_LIMIT),
+              }) ||
+              `One row per visitor, last seen in ${range.label.toLowerCase()}. Showing the most recent ${formatNumber(VISITORS_READ_LIMIT)} conversations; export covers only these.`
+            : t('analytics.oneRowPerVisitor', { range: range.label.toLowerCase() }) ||
+              `One row per visitor, last seen in ${range.label.toLowerCase()}`
         }
         actions={
           rows.length > 0 ? (
@@ -201,6 +206,9 @@ export function VisitorsTab({ botId, range }: { botId: number | null; range: Res
                     ? // "Try a wider period" is advice that cannot work here:
                       // the read is capped at the most recent conversations, so
                       // widening the window reaches nothing further back.
+                      t('analytics.visitorsButListIsCapped', {
+                        limit: formatNumber(VISITORS_READ_LIMIT),
+                      }) ||
                       `Visitors have used the chatbot, but none of them in this window. This list only covers the most recent ${formatNumber(VISITORS_READ_LIMIT)} conversations, so an older visitor will not appear whatever period you pick.`
                     : t('analytics.visitorsHaveUsedTheChatbot') || 'Visitors have used the chatbot, but none of them in this window. Try a wider period.'
               }

@@ -106,16 +106,16 @@ export function JourneyOutcomesDonut({ outcomes = [], total = 0 }: JourneyOutcom
 
       {/* The reason there is no pie here, said plainly and once. */}
       <p className="text-xs text-text-tertiary">
-        Each bar is a share of all tracked conversations. One conversation can
-        appear in more than one outcome, so these do not add up to the total.
+        {t('analytics.eachBarIsAShare') ||
+          'Each bar is a share of all tracked conversations. One conversation can appear in more than one outcome, so these do not add up to the total.'}
       </p>
 
       {/* The same facts, for a screen reader. Shares are per outcome against the
           tracked total, which is exactly what the bars draw. */}
       <table className="sr-only">
         <caption>
-          {t('analytics.journeyOutcomes') || 'Journey outcomes'}. One conversation can appear in more
-          than one outcome, so the shares do not add up to 100%.
+          {t('analytics.journeyOutcomesCaption') ||
+            'Journey outcomes. One conversation can appear in more than one outcome, so the shares do not add up to 100%.'}
         </caption>
         <thead>
           <tr>
@@ -129,7 +129,7 @@ export function JourneyOutcomesDonut({ outcomes = [], total = 0 }: JourneyOutcom
             <tr key={row.id}>
               <td>{row.label}</td>
               <td>{row.sessions}</td>
-              <td>{row.share != null ? `${Math.round(row.share * 100)}%` : 'No data'}</td>
+              <td>{row.share != null ? `${Math.round(row.share * 100)}%` : t('analytics.noData') || 'No data'}</td>
             </tr>
           ))}
         </tbody>

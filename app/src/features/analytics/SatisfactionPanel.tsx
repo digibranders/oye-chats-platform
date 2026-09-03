@@ -87,8 +87,11 @@ export function SatisfactionPanel({ botId }: { botId: number | null }) {
                 </span>
                 <span className="text-xs text-text-tertiary">{t('analytics.outOf5') || 'out of 5'}</span>
                 <span className="text-xs text-text-secondary">
-                  from <span className="figure">{formatNumber(ratings.total)}</span>{' '}
-                  {ratings.total === 1 ? 'rating' : 'ratings'}
+                  {t('analytics.from') || 'from'}{' '}
+                  <span className="figure">{formatNumber(ratings.total)}</span>{' '}
+                  {ratings.total === 1
+                    ? t('analytics.rating') || 'rating'
+                    : t('analytics.ratings') || 'ratings'}
                 </span>
               </div>
             </CardBody>
@@ -113,7 +116,11 @@ export function SatisfactionPanel({ botId }: { botId: number | null }) {
                   label: `${star} ${star === 1 ? 'star' : 'stars'}`,
                   value: count,
                   display: formatNumber(count),
-                  meta: ratings && ratings.total > 0 ? `${formatPercent(share)} of all ratings` : undefined,
+                  meta:
+                    ratings && ratings.total > 0
+                      ? t('analytics.ofAllRatings', { percent: formatPercent(share) }) ||
+                        `${formatPercent(share)} of all ratings`
+                      : undefined,
                 };
               })}
             />

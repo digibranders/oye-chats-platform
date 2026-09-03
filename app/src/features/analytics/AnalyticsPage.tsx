@@ -16,7 +16,14 @@ import {
 } from '../../ui';
 import { useBotContext } from '../../context/BotContext';
 import { resolveScopedBotId } from '../../context/botScope';
-import { ANALYTICS_BASE, ANALYTICS_TABS, DEFAULT_TAB, tabFromUrl, tabUrl } from './tabs';
+import {
+  ANALYTICS_BASE,
+  ANALYTICS_TABS,
+  analyticsTabLabel,
+  DEFAULT_TAB,
+  tabFromUrl,
+  tabUrl,
+} from './tabs';
 import { DEFAULT_RANGE, RANGE_OPTIONS, parseRange, resolveRange, type RangeKey } from './range';
 import { useAnalyticsRefresh, useLanguageBreakdown } from './useAnalyticsData';
 import { OverviewTab } from './OverviewTab';
@@ -107,7 +114,7 @@ export function AnalyticsPage() {
     () =>
       ANALYTICS_TABS.filter((entry) => !entry.conditional || multilingual).map((entry) => ({
         to: tabUrl(entry.value, params),
-        label: entry.label,
+        label: analyticsTabLabel(entry),
         end: entry.end,
       })),
     [params, multilingual],

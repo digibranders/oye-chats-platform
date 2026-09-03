@@ -92,7 +92,10 @@ export function JourneyPagesPanel({
         eyebrow="Influence"
         title={t('analytics.pagesThatLeadToA') || 'Pages that lead to a chat'}
         titleAs="h2"
-        description={`Where visitors were before they opened the chatbot · ${monthLabel}`}
+        description={
+          t('analytics.whereVisitorsWereBefore', { month: monthLabel }) ||
+          `Where visitors were before they opened the chatbot · ${monthLabel}`
+        }
         actions={
           rows.length > 0 ? (
             <Button size="sm" variant="ghost" onClick={onExport} iconLeft={<Download aria-hidden />}>

@@ -129,7 +129,10 @@ export function KnowledgeGapsPanel({
               size="inline"
               icon={HelpCircle}
               title={t('analytics.nothingWentUnanswered') || 'Nothing went unanswered'}
-              description={`Every question asked in ${range.label.toLowerCase()} was answered from what the chatbot already knows.`}
+              description={
+                t('analytics.everyQuestionWasAnswered', { range: range.label.toLowerCase() }) ||
+                `Every question asked in ${range.label.toLowerCase()} was answered from what the chatbot already knows.`
+              }
             />
           }
         />

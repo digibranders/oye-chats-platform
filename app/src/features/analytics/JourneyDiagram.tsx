@@ -36,6 +36,7 @@ import {
   type TrieVizNode,
 } from './journeyTrie';
 import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 /** Hard ceiling on visible leaves per side. Also the fetch shape's own cap
  * (`sequences` is already limited server-side) and the "All" option's value. */
@@ -43,10 +44,10 @@ const TRIE_MAX_LEAVES = 25;
 /** Default number of page flows shown before the reader asks for more. Keeping
  * it small stops the pre-chat side from overlapping on dense accounts. */
 const DEFAULT_MAX_FLOWS = 5;
-const FLOW_COUNT_OPTIONS = [
-  { value: '5', label: 'Top 5' },
-  { value: '10', label: 'Top 10' },
-  { value: String(TRIE_MAX_LEAVES), label: 'All' },
+const flowCountOptions = () => [
+  { value: '5', label: translateNow('analytics.top5') || 'Top 5' },
+  { value: '10', label: translateNow('analytics.top10') || 'Top 10' },
+  { value: String(TRIE_MAX_LEAVES), label: translateNow('analytics.all') || 'All' },
 ];
 
 const TONE: Record<ToneKey, { icon: string; tile: string; line: string }> = {
@@ -447,7 +448,7 @@ export function JourneyDiagram({
             size="sm"
             label={t('analytics.pageFlowsShown') || 'Page flows shown'}
             value={String(maxFlows)}
-            options={FLOW_COUNT_OPTIONS}
+            options={flowCountOptions()}
             onValueChange={(value) => setMaxFlows(Number(value))}
           />
         </div>
@@ -498,7 +499,10 @@ export function JourneyDiagram({
           <EmptyState
             icon={Compass}
             title={t('analytics.noJourneysMatchThisFilter') || 'No journeys match this filter'}
-            description={`No visitors starting on "${effectiveStartFilter}" were tracked in this window.`}
+            description={
+              translateNow('analytics.noVisitorsStartingOn', { page: effectiveStartFilter }) ||
+              `No visitors starting on "${effectiveStartFilter}" were tracked in this window.`
+            }
             action={
               <Button variant="secondary" size="sm" onClick={() => setStartFilter(null)}>
                 {t('analytics.clearFilter') || 'Clear filter'}
