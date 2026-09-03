@@ -89,9 +89,9 @@
       "gzip": true
     },
     {
-      "name": "Arabic dictionary (lazy, non-English only). Same 2264 live keys as Hindi; Arabic gzips smaller than Devanagari, measured at build time, with modest headroom for real translation growth.",
+      "name": "Arabic dictionary (lazy, non-English only). Same 2265 live keys as Hindi; measured at ~48.5 KB gzipped once fully translated (close to Hindi's 51.34 KB, not meaningfully smaller as first assumed before the real translation landed), with the same ~13% headroom Hindi's limit carries.",
       "path": "dist/assets/ar-*.js",
-      "limit": "46 KB",
+      "limit": "55 KB",
       "gzip": true
     }
   ]

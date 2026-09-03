@@ -45,6 +45,8 @@ const UTILITY_PREFIXES = [
   'scroll-pr',
 ];
 
+// rtl-ok: this list names the physical utilities the guard looks FOR - it is
+// pattern data, not a physical class applied to an element.
 const UTILITY_EXACT = ['text-left', 'text-right', 'origin-left', 'origin-right', 'float-left', 'float-right'];
 
 const PREFIX_RE = new RegExp(
