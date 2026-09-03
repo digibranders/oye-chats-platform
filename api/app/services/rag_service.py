@@ -7653,6 +7653,14 @@ async def rag_pipeline_stream(
         bid = None
     logger.info(f"RAG stream started | client_id={cid} | bot_id={bid}")
 
+    # Owner-preview (dashboard "Preview") carries the owner's first name so the
+    # reply addresses them by it rather than asking. See the seed below and the
+    # `_returning_by_name` guard: preview never renders the "Welcome back" opener,
+    # because the owner is not a returning visitor — they simply already have a
+    # name we know.
+    _is_preview = bool(getattr(client, "_is_preview", False))
+    _preview_name = getattr(client, "_preview_visitor_name", None) if _is_preview else None
+
     # Langfuse v4: enter chain span + attribute propagation for the full stream
     # lifetime so all nested generation spans inherit user_id / session_id.
     # We use explicit __enter__/__exit__ (rather than `with`) because Python
@@ -7767,6 +7775,20 @@ async def rag_pipeline_stream(
                 source_language=_lang_base(language),
             )
             session.commit()
+
+            # Owner-preview: seed the session's lead with the owner's first name
+            # before the name flow runs, so it resolves as already-known and the
+            # preview never spends its first turn asking "may I know your name?".
+            # Only when nothing is stored yet, so a name the owner types into the
+            # preview later still wins.
+            if _preview_name and bid is not None:
+                try:
+                    _seeded = get_lead_info_by_session(session, session_id)
+                    if not (_seeded is not None and getattr(_seeded, "name", None)):
+                        create_or_update_lead_info(session, session_id=session_id, bot_id=bid, name=_preview_name)
+                        session.commit()
+                except Exception:  # noqa: BLE001  Preview personalization is best-effort
+                    logger.warning("preview name seed failed for session %s", session_id, exc_info=True)
 
             # ── Two-step name capture (ask first, answer next turn) ──────────
             # First message → reply ONLY with a name request and defer the real
@@ -7981,7 +8003,12 @@ async def rag_pipeline_stream(
                 for m in get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
             ]
             # Streaming twin of the non-streaming welcome-back flag. See there.
-            _returning_by_name = bool(_flow_name) and not _just_named and _is_first_bot_reply(history)
+            # Never for preview: the owner isn't a returning visitor, their name
+            # is simply seeded, so the reply addresses them naturally rather than
+            # greeting them "Welcome back" on their own first test message.
+            _returning_by_name = (
+                bool(_flow_name) and not _just_named and _is_first_bot_reply(history) and not _is_preview
+            )
             # ``question`` may have been rebound above to the visitor's DEFERRED
             # original question (they declined the name ask, or changed topic).
             # Never extract a name from that deferred text: a short topic query
