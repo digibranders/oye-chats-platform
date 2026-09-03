@@ -29,8 +29,12 @@ export function LeadJourney({ lead }: { lead: Lead }) {
   return (
     <LeadSection title={t('leads.journey') || 'Journey'}>
       <Disclosure
-        summary={phased ? `${pages} before the chat` : `${pages} visited`}
-        regionLabel={phased ? 'Pages visited before the chat' : 'Pages visited'}
+        summary={
+          phased
+            ? t('leads.nBeforeTheChat', { pages }) || `${pages} before the chat`
+            : t('leads.nVisited', { pages }) || `${pages} visited`
+        }
+        regionLabel={phased ? t('leads.pagesVisitedBeforeTheChat') || 'Pages visited before the chat' : t('leads.pagesVisited') || 'Pages visited'}
       >
         <ol>
           {steps.map((step, index) => (
@@ -56,7 +60,7 @@ export function LeadJourney({ lead }: { lead: Lead }) {
         <p className="mt-2 text-xs text-text-tertiary">
           {phased
             ? t('leads.oldestFirstTheChatOpened') || 'Oldest first; the chat opened on the last.'
-            : 'Oldest first. These entries do not say which came before the chat.'}
+            : t('leads.oldestFirstTheseEntriesDo') || 'Oldest first. These entries do not say which came before the chat.'}
         </p>
       </Disclosure>
     </LeadSection>

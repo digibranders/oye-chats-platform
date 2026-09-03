@@ -104,7 +104,7 @@ export function LanguageSection({
         description={t('agents.theLanguagesThisChatbotAnswers') || 'The languages this chatbot answers in, and how it decides which to use.'}
         actions={
           <>
-            {off ? <Badge tone="neutral">Multilingual off</Badge> : null}
+            {off ? <Badge tone="neutral">{t('agents.multilingualOff') || 'Multilingual off'}</Badge> : null}
             <Switch
               checked={draft.multilingualEnabled}
               disabled={readOnly}
@@ -124,8 +124,10 @@ export function LanguageSection({
       <CardBody className="space-y-4">
         {turningOff ? (
           <Alert tone="warning" title={t('agents.thisChangesALiveWidget') || 'This changes a live widget'}>
-            Visitors already talking to this chatbot in another language will be answered in{' '}
-            {name(draft.defaultLocale)} from the next message.
+            {t('agents.visitorsAlreadyTalkingWillBeAnsweredIn', {
+              language: name(draft.defaultLocale),
+            }) ||
+              `Visitors already talking to this chatbot in another language will be answered in ${name(draft.defaultLocale)} from the next message.`}
           </Alert>
         ) : null}
 
@@ -135,9 +137,14 @@ export function LanguageSection({
             render it. */}
         {untranslated.length > 0 ? (
           <Alert live tone="warning" title={t('agents.aLanguageWithoutATranslated') || 'A language without a translated widget'}>
-            {`Visitors get answers in ${untranslated.map(name).join(', ')}, but the widget's own buttons and forms are not translated into ${untranslated
-              .map((code) => labelFor(code) ?? name(code))
-              .join(', ')} — they stay in ${name(draft.defaultLocale)}. Remove it below, or leave it and accept the mix.`}
+            {t('agents.answersTranslatedWidgetNot', {
+              answers: untranslated.map(name).join(', '),
+              widget: untranslated.map((code) => labelFor(code) ?? name(code)).join(', '),
+              fallback: name(draft.defaultLocale),
+            }) ||
+              `Visitors get answers in ${untranslated.map(name).join(', ')}, but the widget's own buttons and forms are not translated into ${untranslated
+                .map((code) => labelFor(code) ?? name(code))
+                .join(', ')}. They stay in ${name(draft.defaultLocale)}. Remove it below, or leave it and accept the mix.`}
           </Alert>
         ) : null}
 
@@ -238,7 +245,7 @@ export function LanguageSection({
           </SettingRow>
           <SettingRow
             label={t('agents.translateLiveChat') || 'Translate live chat'}
-            badge={translationLocked ? <Badge tone="plan">Starter and above</Badge> : undefined}
+            badge={translationLocked ? <Badge tone="plan">{t('agents.starterAndAbove') || 'Starter and above'}</Badge> : undefined}
             description={t('agents.visitorMessagesReachYourOperators') || 'Visitor messages reach your operators in their own language, and replies go back translated. Translation is metered in credits.'}
           >
             <Switch

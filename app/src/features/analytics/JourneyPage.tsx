@@ -320,7 +320,10 @@ export function JourneyPage() {
                     eyebrow="Outcomes"
                     title={t('analytics.journeyOutcomes') || 'Journey outcomes'}
                     titleAs="h2"
-                    description={`Where visitor journeys ended · ${label}`}
+                    description={
+                      t('analytics.whereVisitorJourneysEnded', { period: label }) ||
+                      `Where visitor journeys ended · ${label}`
+                    }
                   />
                   <CardBody>
                     <JourneyOutcomesDonut outcomes={outcomes} total={summary.sessions_with_journey} />

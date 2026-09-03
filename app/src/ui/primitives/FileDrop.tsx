@@ -7,6 +7,7 @@ import { Progress } from './Progress';
 import { formatBytes } from '../lib/formatters';
 import { Alert } from '../feedback/Alert';
 import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 export interface FileDropProps {
   onFiles: (files: File[]) => void;
@@ -93,12 +94,19 @@ export function FileDrop({
 
       for (const file of Array.from(list)) {
         if (accept && accept.length > 0 && !accept.includes(extensionOf(file.name))) {
-          problems.push(`${file.name} is not a supported file type.`);
+          problems.push(
+            translateNow('ds.fileNotSupportedType', { name: file.name }) ||
+              `${file.name} is not a supported file type.`,
+          );
           continue;
         }
         if (maxSizeBytes && file.size > maxSizeBytes) {
           problems.push(
-            `${file.name} is ${formatBytes(file.size)}, over the ${formatBytes(maxSizeBytes)} limit.`,
+            translateNow('ds.fileOverLimit', {
+              name: file.name,
+              size: formatBytes(file.size),
+              limit: formatBytes(maxSizeBytes),
+            }) || `${file.name} is ${formatBytes(file.size)}, over the ${formatBytes(maxSizeBytes)} limit.`,
           );
           continue;
         }
@@ -107,7 +115,10 @@ export function FileDrop({
 
       const withinCount = maxFiles ? accepted.slice(0, maxFiles) : accepted;
       if (maxFiles && accepted.length > maxFiles) {
-        problems.push(`Only the first ${maxFiles} files were added.`);
+        problems.push(
+          translateNow('ds.onlyFirstFilesAdded', { count: maxFiles }) ||
+            `Only the first ${maxFiles} files were added.`,
+        );
       }
 
       setRejected(problems);
@@ -180,7 +191,10 @@ export function FileDrop({
           // content, which is why this line used to re-type `Eyebrow`'s classes.
           <Eyebrow as="span" className="mt-1.5">
             {accept.join(' · ')}
-            {maxSizeBytes ? ` · up to ${formatBytes(maxSizeBytes)}` : ''}
+            {maxSizeBytes
+              ? translateNow('ds.upToSize', { size: formatBytes(maxSizeBytes) }) ||
+                ` · up to ${formatBytes(maxSizeBytes)}`
+              : ''}
           </Eyebrow>
         ) : null}
       </label>

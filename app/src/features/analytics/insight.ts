@@ -91,20 +91,46 @@ export function deriveInsights(input: InsightInput): Insight[] {
     insights.push({
       id: 'conversation-trend',
       tone: 'warning',
-      title: `Conversations are down ${Math.abs(change.percent)}% on ${input.comparisonLabel}`,
-      body: `${input.conversations.toLocaleString()} in ${input.rangeLabel.toLowerCase()}, against ${prior.toLocaleString()} before it. Check that the widget is still installed on every page it was on.`,
+      title:
+        translateNow('analytics.conversationsAreDown', {
+          percent: Math.abs(change.percent),
+          period: input.comparisonLabel,
+        }) || `Conversations are down ${Math.abs(change.percent)}% on ${input.comparisonLabel}`,
+      body:
+        translateNow('analytics.conversationsAreDownBody', {
+          count: input.conversations.toLocaleString(),
+          range: input.rangeLabel.toLowerCase(),
+          prior: prior.toLocaleString(),
+        }) ||
+        `${input.conversations.toLocaleString()} in ${input.rangeLabel.toLowerCase()}, against ${prior.toLocaleString()} before it. Check that the widget is still installed on every page it was on.`,
     });
   }
 
   if (input.topUnanswered && input.topUnanswered.count >= REPEATED_GAP_COUNT) {
-    const counted = `${input.unansweredCount.toLocaleString()} ${
-      input.unansweredCount === 1 ? 'question went' : 'questions went'
-    } unanswered`;
+    const counted =
+      (input.unansweredCount === 1
+        ? translateNow('analytics.oneQuestionUnanswered', {
+            count: input.unansweredCount.toLocaleString(),
+          })
+        : translateNow('analytics.manyQuestionsUnanswered', {
+            count: input.unansweredCount.toLocaleString(),
+          })) ||
+      `${input.unansweredCount.toLocaleString()} ${
+        input.unansweredCount === 1 ? 'question went' : 'questions went'
+      } unanswered`;
     insights.push({
       id: 'knowledge-gap',
       tone: 'warning',
-      title: input.unansweredTruncated ? `At least ${counted}` : counted,
-      body: `"${input.topUnanswered.question}" came up ${input.topUnanswered.count.toLocaleString()} times in ${input.rangeLabel.toLowerCase()} and the chatbot had nothing to answer from.`,
+      title: input.unansweredTruncated
+        ? translateNow('analytics.atLeastCounted', { counted }) || `At least ${counted}`
+        : counted,
+      body:
+        translateNow('analytics.questionCameUpNTimes', {
+          question: input.topUnanswered.question,
+          count: input.topUnanswered.count.toLocaleString(),
+          range: input.rangeLabel.toLowerCase(),
+        }) ||
+        `"${input.topUnanswered.question}" came up ${input.topUnanswered.count.toLocaleString()} times in ${input.rangeLabel.toLowerCase()} and the chatbot had nothing to answer from.`,
       action: input.knowledgeTo ? { label: translateNow('analytics.addKnowledge') || 'Add knowledge', to: input.knowledgeTo } : undefined,
     });
   }

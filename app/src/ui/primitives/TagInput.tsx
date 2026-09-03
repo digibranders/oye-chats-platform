@@ -4,6 +4,7 @@ import { cn } from '../lib/cn';
 import { CONTROL_BASE } from './Input';
 import { CONTROL_SIZE, FOCUS_RING, HIT_AREA } from './controlStyles';
 import { useFieldControlProps, useFieldNamesControl } from './fieldContext';
+import { t as translateNow } from '../../i18n/i18n';
 
 export interface TagInputProps {
   values: readonly string[];
@@ -107,11 +108,14 @@ export function TagInput({
     for (const candidate of candidates) {
       const normalized = normalize ? normalize(candidate) : candidate;
       if (next.includes(normalized)) {
-        problems.push(`${normalized} is already in the list.`);
+        problems.push(
+          translateNow('ds.alreadyInTheList', { value: normalized }) ||
+            `${normalized} is already in the list.`,
+        );
         continue;
       }
       if (maxValues && next.length >= maxValues) {
-        problems.push(`Only ${maxValues} allowed.`);
+        problems.push(translateNow('ds.onlyNAllowed', { count: maxValues }) || `Only ${maxValues} allowed.`);
         break;
       }
       const failure = validate?.(normalized);

@@ -44,6 +44,16 @@ export interface TierMeta {
  * colder tiers carry their word and nothing more. The ordering and the score
  * carry the rank.
  */
+/** A tier's word and hint in the reader's language. `code` never translates:
+ *  MQL/SAL/SQL are the industry's terms and the CSV writes them verbatim. */
+export function tierLabel(tier: TierKey): string {
+  return translateNow(`leads.tier.${tier}`) || TIER_META[tier].label;
+}
+export function tierHint(tier: TierKey): string {
+  return translateNow(`leads.tierHint.${tier}`) || TIER_META[tier].hint;
+}
+
+// @i18n-exempt: fallbacks, read through tierLabel/tierHint above.
 export const TIER_META: Record<TierKey, TierMeta> = {
   unqualified: {
     label: 'Just exploring',
@@ -191,6 +201,8 @@ interface FunnelStageDef {
   readonly sublabel: string;
 }
 
+// @i18n-exempt: fallbacks. `key` is the stored identity; the label and
+// sublabel are resolved per call where the stage is rendered.
 const FUNNEL_STAGE_DEFS: readonly FunnelStageDef[] = [
   { key: 'total_visitors', label: 'Visitors', sublabel: 'Landed on your site' },
   { key: 'engaged', label: 'Engaged', sublabel: 'Started a chat' },
@@ -443,6 +455,8 @@ export function companyDisplay(
  * spreadsheet says "no value" with an empty cell and a CRM importing the word
  * would create a country called Unknown.
  */
+// @i18n-exempt: written into the CSV as a sentinel, and the comment above says
+// why the word must not vary: a CRM importing it would create a country.
 export const UNKNOWN_LOCATION = 'Unknown';
 
 /**

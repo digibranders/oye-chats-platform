@@ -449,7 +449,7 @@ describe('crawl coverage — what the chatbot can actually answer from', () => {
     const coverage = crawlCoverageOf(payload());
     expect(crawlFellShort(coverage!)).toBe(false);
     expect(crawlDoneMessage(coverage!)).toMatchObject({ tone: 'success', title: undefined });
-    expect(crawlDoneMessage(coverage!).body).toBe('Finished — this chatbot read 400 pages.');
+    expect(crawlDoneMessage(coverage!).body).toBe('Finished. This chatbot read 400 pages.');
   });
 
   it('counts a page the content hash proved unchanged as covered', () => {

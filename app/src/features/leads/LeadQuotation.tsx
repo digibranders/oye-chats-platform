@@ -40,6 +40,7 @@ const STATUS_TONE: Record<Quotation['status'], Tone> = {
  * A module constant is evaluated at import, before any locale exists, so the
  * word cannot be translated where it is declared. Same shape `nav.ts` uses.
  */
+// @i18n-exempt: fallbacks. Each row carries its own key, resolved at render.
 const STATUS_LABEL: Record<Quotation['status'], { key: string; text: string }> = {
   complete: { key: 'leads.quoteAccepted', text: 'Quote accepted' },
   quoting: { key: 'leads.quotePending', text: 'Quote pending' },

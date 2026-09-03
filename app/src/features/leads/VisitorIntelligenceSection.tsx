@@ -9,6 +9,7 @@ import { LeadSection } from './LeadSection';
 import { NetworkSignal } from './NetworkSignal';
 import { asRecord, hasNetworkSignal } from './visitorNetwork';
 import { useTranslation } from '../../i18n/useTranslation';
+import { Trans } from '../../i18n/Trans';
 
 /**
  * The Professional-only network and email signal, plus the manual follow-up.
@@ -63,7 +64,7 @@ function FollowUp({ sessionId, isValidEmail, email }: {
   if (state === 'sent') {
     return (
       <Alert tone="success" live>
-        Follow-up sent to {email}.
+        {t('leads.followUpSentTo', { email }) || `Follow-up sent to ${email}.`}
       </Alert>
     );
   }
@@ -122,7 +123,9 @@ function FollowUp({ sessionId, isValidEmail, email }: {
       ) : null}
       {state === 'paused' && message ? (
         <Alert tone="warning" live title={t('leads.followUpsArePausedFor') || 'Follow-ups are paused for this chatbot'}>
-          {message} Turn them back on under Behaviour → Lead follow-up emails.
+          {message}{' '}
+          {t('leads.turnThemBackOnUnderBehaviour') ||
+            'Turn them back on under Behaviour, then Lead follow-up emails.'}
         </Alert>
       ) : null}
       {state === 'error' && message ? (
@@ -136,10 +139,11 @@ function FollowUp({ sessionId, isValidEmail, email }: {
         onOpenChange={setConfirming}
         title={t('leads.sendAFollowUpEmail') || 'Send a follow-up email?'}
         description={
-          <>
-            This sends a real email to <strong>{email}</strong> now. It cannot be recalled, and the
-            visitor did not ask for it.
-          </>
+          <Trans
+            k="leads.thisSendsARealEmailTo"
+            fallback="This sends a real email to {email} now. It cannot be recalled, and the visitor did not ask for it."
+            values={{ email: <strong>{email}</strong> }}
+          />
         }
         confirmLabel="Send it"
         onConfirm={() => send(false)}
@@ -195,7 +199,8 @@ export function VisitorIntelligenceSection({
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
           {isValidEmail === true ? (
             <Badge tone="success">
-              Deliverable{typeof emailScore === 'number' ? ` · ${emailScore}/100` : ''}
+              {t('leads.deliverable') || 'Deliverable'}
+              {typeof emailScore === 'number' ? ` · ${emailScore}/100` : ''}
             </Badge>
           ) : isValidEmail === false ? (
             <Badge tone="danger">{t('leads.notDeliverable') || 'Not deliverable'}</Badge>

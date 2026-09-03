@@ -22,6 +22,7 @@ import {
   type RecrawlMode,
 } from './knowledge-model';
 import { useTranslation } from '../../../i18n/useTranslation';
+import { Trans } from '../../../i18n/Trans';
 
 type Bucket = 'unchanged' | 'new' | 'removed';
 
@@ -138,7 +139,7 @@ export function RecrawlDialog({
       }
       footer={
         planLocked ? (
-          <Button onClick={() => onOpenChange(false)}>Close</Button>
+          <Button onClick={() => onOpenChange(false)}>{t('agents.close') || 'Close'}</Button>
         ) : (
           <>
             <Button variant="ghost" disabled={starting} onClick={() => onOpenChange(false)}>
@@ -158,7 +159,11 @@ export function RecrawlDialog({
                 {isDelta
                   ? t('agents.reTrainChangedPages') || 'Re-train changed pages'
                   : cost
-                    ? `Re-train ${formatNumber(cost.pages)} pages for ${formatNumber(cost.credits)} credits`
+                    ? t('agents.reTrainNPagesForNCredits', {
+                        pages: formatNumber(cost.pages),
+                        credits: formatNumber(cost.credits),
+                      }) ||
+                      `Re-train ${formatNumber(cost.pages)} pages for ${formatNumber(cost.credits)} credits`
                     : previewFailed
                       ? // No count and no price, because neither is known. The
                         // label still states the consequence in full, which is
@@ -202,7 +207,9 @@ export function RecrawlDialog({
 
           {previewError ? (
             <Alert tone="warning" title={t('agents.weCouldNotCompareThe2') || 'We could not compare the pages'}>
-              {previewError} You can still re-train — we will rediscover the site as we go, and{' '}
+              {previewError}{' '}
+              {t('agents.youCanStillReTrain') ||
+                'You can still re-train: we will rediscover the site as we go, and'}{' '}
               {isDelta
                 ? 'unchanged pages will still be skipped during reading.'
                 : 'every page found will be read and charged.'}
@@ -254,7 +261,11 @@ export function RecrawlDialog({
                       previewed.costPerPage === 0
                         ? t('agents.thisTrainingIsFree') || 'This training is free · balance unchanged'
                         : isDelta
-                          ? `The bill depends on which pages actually changed. ${formatNumber(previewed.costPerPage)} credits a page · balance ${formatNumber(previewed.balance)}`
+                          ? t('agents.billDependsOnChangedPages', {
+                              perPage: formatNumber(previewed.costPerPage),
+                              balance: formatNumber(previewed.balance),
+                            }) ||
+                            `The bill depends on which pages actually changed. ${formatNumber(previewed.costPerPage)} credits a page · balance ${formatNumber(previewed.balance)}`
                           : `${formatNumber(cost?.pages ?? 0)} pages × ${formatNumber(previewed.costPerPage)} credits · balance ${formatNumber(previewed.balance)}`
                     }
                     emphasis
@@ -265,17 +276,25 @@ export function RecrawlDialog({
 
               {shortOnCredits ? (
                 <Alert tone="plan">
-                  This needs <span className="figure">{formatNumber(cost?.credits ?? 0)}</span>{' '}
-                  credits and you have{' '}
-                  <span className="figure">{formatNumber(previewed.balance)}</span>. Nothing has been
-                  charged.
+                  <Trans
+                    k="agents.thisNeedsNCreditsYouHave"
+                    fallback="This needs {needed} credits and you have {balance}. Nothing has been charged."
+                    values={{
+                      needed: (
+                        <span className="figure">{formatNumber(cost?.credits ?? 0)}</span>
+                      ),
+                      balance: (
+                        <span className="figure">{formatNumber(previewed.balance)}</span>
+                      ),
+                    }}
+                  />
                 </Alert>
               ) : null}
 
               {rediscovers ? (
                 <Alert tone="neutral">
-                  This site has more pages than we can list here, so the re-train walks the whole
-                  site itself rather than the list below. The counts above are still exact.
+                  {t('agents.thisSiteHasMorePagesThanWeCanList') ||
+                    'This site has more pages than we can list here, so the re-train walks the whole site itself rather than the list below. The counts above are still exact.'}
                 </Alert>
               ) : null}
 
@@ -317,8 +336,14 @@ export function RecrawlDialog({
                   )}
                   {bucketCount > urls.length ? (
                     <li className="px-3 py-2 text-2xs text-text-tertiary">
-                      Showing the first <span className="figure">{formatNumber(urls.length)}</span>{' '}
-                      of <span className="figure">{formatNumber(bucketCount)}</span>.
+                      <Trans
+                        k="agents.showingTheFirstNOfN"
+                        fallback="Showing the first {shown} of {total}."
+                        values={{
+                          shown: <span className="figure">{formatNumber(urls.length)}</span>,
+                          total: <span className="figure">{formatNumber(bucketCount)}</span>,
+                        }}
+                      />
                     </li>
                   ) : null}
                 </ul>

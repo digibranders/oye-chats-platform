@@ -67,7 +67,9 @@ export function ConversationsTab({
    * thirty-day answer. It states the window that was asked for instead.
    */
   const queuePeriod =
-    effectiveRange.days === effectiveDays ? effectiveRange.label : `Last ${effectiveDays} days`;
+    effectiveRange.days === effectiveDays
+      ? effectiveRange.label
+      : t('analytics.lastNDays', { days: effectiveDays }) || `Last ${effectiveDays} days`;
 
   /**
    * The activity read failed, so every figure cut from the series is unknown.
@@ -107,7 +109,8 @@ export function ConversationsTab({
           titleAs="h2"
           description={
             effectiveRange.comparisonLabel
-              ? `Against ${effectiveRange.comparisonLabel}, day for day`
+              ? t('analytics.againstDayForDay', { period: effectiveRange.comparisonLabel }) ||
+                `Against ${effectiveRange.comparisonLabel}, day for day`
               : t('analytics.everyDaySinceTheFirst') || 'Every day since the first conversation'
           }
           actions={

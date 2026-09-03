@@ -17,6 +17,7 @@ import { OtpField } from './auth/OtpField';
 import { useResendCooldown } from './auth/useResendCooldown';
 import { OTP_LENGTH, digitsOnly, errorMessage, maskEmail, safeRelativePath } from './auth/authFlow';
 import { useTranslation } from '../i18n/useTranslation';
+import { Trans } from '../i18n/Trans';
 
 /**
  * Confirm the email address.
@@ -163,7 +164,10 @@ export default function VerifyEmail() {
               disabled={cooldown.active || !email}
               iconLeft={<RotateCcw aria-hidden />}
             >
-              {cooldown.active ? `Resend in ${cooldown.remaining}s` : t('auth.resendCode') || 'Resend code'}
+              {cooldown.active
+                ? t('auth.resendInSeconds', { seconds: cooldown.remaining }) ||
+                  `Resend in ${cooldown.remaining}s`
+                : t('auth.resendCode') || 'Resend code'}
             </Button>
             <button type="button" onClick={signOut} className={buttonClass('link')}>
               {t('auth.signInAsSomeoneElse') || 'Sign in as someone else'}
@@ -173,11 +177,11 @@ export default function VerifyEmail() {
       }
       description={
         email ? (
-          <>
-            We sent a six-digit code to{' '}
-            <span className="figure text-text-primary">{maskEmail(email)}</span>. It is good for
-            fifteen minutes.
-          </>
+          <Trans
+            k="auth.weSentACodeGoodForFifteen"
+            fallback="We sent a six-digit code to {email}. It is good for fifteen minutes."
+            values={{ email: <span className="figure text-text-primary">{maskEmail(email)}</span> }}
+          />
         ) : (
           t('auth.checkingWhichAccountThisIs') || 'Checking which account this is.'
         )

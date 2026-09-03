@@ -1,5 +1,6 @@
 import { AlertTriangle, RotateCw } from 'lucide-react';
 import { useEntitlements } from '../hooks/useEntitlements';
+import { useTranslation } from '../i18n/useTranslation';
 
 /**
  * Says so when the app could not read the customer's plan.
@@ -33,6 +34,7 @@ import { useEntitlements } from '../hooks/useEntitlements';
  * would restore the silent-downgrade state it exists to prevent.
  */
 export function EntitlementsErrorBanner() {
+  const { t } = useTranslation();
   const { error, loading, refresh } = useEntitlements();
 
   // `loading` matters: a refresh after a failure keeps the previous error until
@@ -48,8 +50,9 @@ export function EntitlementsErrorBanner() {
     >
       <AlertTriangle aria-hidden className="h-4 w-4 shrink-0 text-warning" />
       <p className="min-w-0 flex-1">
-        <strong className="font-medium">We could not read your plan.</strong> Features are shown as
-        unavailable until we can. This is not a change to your subscription.
+        <strong className="font-medium">{t('shell.weCouldNotReadYour') || 'We could not read your plan.'}</strong>{' '}
+        {t('shell.featuresAreShownAsUnavailable') ||
+          'Features are shown as unavailable until we can. This is not a change to your subscription.'}
       </p>
       <button
         type="button"
@@ -57,7 +60,7 @@ export function EntitlementsErrorBanner() {
         className="inline-flex shrink-0 items-center gap-1.5 font-medium underline-offset-2 hover:underline"
       >
         <RotateCw aria-hidden className="h-3.5 w-3.5" />
-        Try again
+        {t('shell.tryAgain') || 'Try again'}
       </button>
     </div>
   );

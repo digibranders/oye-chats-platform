@@ -30,6 +30,7 @@ import {
   type SourceKind,
 } from './knowledge-model';
 import { useTranslation } from '../../../i18n/useTranslation';
+import { Trans } from '../../../i18n/Trans';
 
 /**
  * Pages this source is made of, or `null` when nothing recorded any.
@@ -218,7 +219,7 @@ export function SourcesTable({
                   <Button
                     size="icon-sm"
                     variant="ghost"
-                    aria-label={`Actions for ${row.name}`}
+                    aria-label={t('agents.actionsFor', { name: row.name }) || `Actions for ${row.name}`}
                     loading={busySource === row.name}
                   >
                     <MoreHorizontal aria-hidden />
@@ -228,7 +229,9 @@ export function SourcesTable({
               <MenuContent>
                 {website ? (
                   <>
-                    <MenuItem onSelect={() => onViewPages(row)}>See the pages it read</MenuItem>
+                    <MenuItem onSelect={() => onViewPages(row)}>
+                      {t('agents.seeThePagesItRead') || 'See the pages it read'}
+                    </MenuItem>
                     <MenuItem
                       disabled={crawlRunning}
                       icon={<RefreshCw aria-hidden className="h-3.5 w-3.5" />}
@@ -316,7 +319,8 @@ export function SourcesTable({
             disabled={crawlRunning || removing}
             onClick={() => setConfirmingBulk(true)}
           >
-            Remove {formatNumber(chosen.length)}
+            {t('agents.removeN', { count: formatNumber(chosen.length) }) ||
+              `Remove ${formatNumber(chosen.length)}`}
           </Button>
         }
         rowKey={(row) => row.name}
@@ -354,11 +358,16 @@ export function SourcesTable({
         description={
           confirming ? (
             <>
-              {confirming.name} and its{' '}
-              <span className="figure">{formatNumber(confirming.chunk_count ?? 0)}</span> indexed
-              passage{(confirming.chunk_count ?? 0) === 1 ? '' : 's'} are deleted. This chatbot
-              stops answering from it immediately, and the credits already spent on it are not
-              returned.
+              <Trans
+                k="agents.sourceAndItsPassagesAreDeleted"
+                fallback="{name} and its {count} indexed passages are deleted. This chatbot stops answering from it immediately, and the credits already spent on it are not returned."
+                values={{
+                  name: confirming.name,
+                  count: (
+                    <span className="figure">{formatNumber(confirming.chunk_count ?? 0)}</span>
+                  ),
+                }}
+              />
             </>
           ) : null
         }
@@ -376,7 +385,10 @@ export function SourcesTable({
         {confirming ? (
           <p className="text-prose text-text-secondary">
             {isWebsiteSource(confirming.name)
-              ? `Training it again later re-reads all ${confirmingUnits?.label ?? 'its pages'} and charges for them.`
+              ? t('agents.trainingItAgainReReadsAll', {
+                  units: confirmingUnits?.label ?? t('agents.itsPages') ?? 'its pages',
+                }) ||
+                `Training it again later re-reads all ${confirmingUnits?.label ?? 'its pages'} and charges for them.`
               : t('agents.youWouldNeedTheOriginal') || 'You would need the original file to add it again.'}
           </p>
         ) : null}
@@ -392,9 +404,18 @@ export function SourcesTable({
           if (!open) setConfirmingBulk(false);
         }}
         destructive
-        title={`Remove ${formatNumber(chosen.length)} source${chosen.length === 1 ? '' : 's'}?`}
-        description={`This deletes ${formatNumber(chosenPassages)} indexed passage${chosenPassages === 1 ? '' : 's'}. The chatbot stops answering from them immediately, and the credits already spent on them are not returned.`}
-        confirmLabel={`Remove ${formatNumber(chosen.length)}`}
+        title={
+          t('agents.removeNSources', { count: formatNumber(chosen.length) }) ||
+          `Remove ${formatNumber(chosen.length)} sources?`
+        }
+        description={
+          t('agents.thisDeletesNPassages', { count: formatNumber(chosenPassages) }) ||
+          `This deletes ${formatNumber(chosenPassages)} indexed passages. The chatbot stops answering from them immediately, and the credits already spent on them are not returned.`
+        }
+        confirmLabel={
+          t('agents.removeN', { count: formatNumber(chosen.length) }) ||
+          `Remove ${formatNumber(chosen.length)}`
+        }
         onConfirm={async () => {
           setRemoving(true);
           try {

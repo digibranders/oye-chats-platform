@@ -110,7 +110,9 @@ export function ColorField({
                   {check.verdict === 'pass' ? (
                     <Badge tone="success">{t('agents.readable') || 'Readable'}</Badge>
                   ) : check.verdict === 'fail' ? (
-                    <Badge tone="danger">Below {check.min}:1</Badge>
+                    <Badge tone="danger">
+                      {t('agents.belowContrastRatio', { min: check.min }) || `Below ${check.min}:1`}
+                    </Badge>
                   ) : (
                     <Badge tone="neutral">{t('agents.notAColour') || 'Not a colour'}</Badge>
                   )}
@@ -124,13 +126,15 @@ export function ColorField({
           <p className="flex flex-wrap items-center gap-2 text-xs text-danger">
             <span className="min-w-0">
               {failing.length === 1
-                ? `${failing[0].label} is hard to read at this contrast.`
-                : `${failing.length} pairs are hard to read at this contrast.`}{' '}
+                ? t('agents.onePairHardToRead', { label: failing[0].label }) ||
+                  `${failing[0].label} is hard to read at this contrast.`
+                : t('agents.manyPairsHardToRead', { count: failing.length }) ||
+                  `${failing.length} pairs are hard to read at this contrast.`}{' '}
               {t('agents.roughlyOneVisitorInTwelve') || 'Roughly one visitor in twelve will struggle with it.'}
             </span>
             {suggestion ? (
               <Button variant="secondary" size="sm" onClick={() => onChange(suggestion)} disabled={disabled}>
-                Use <span className="figure ml-1">{suggestion}</span>
+                {t('agents.use') || 'Use'} <span className="figure ml-1">{suggestion}</span>
               </Button>
             ) : null}
           </p>

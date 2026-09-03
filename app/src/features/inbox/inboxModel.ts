@@ -40,6 +40,20 @@ export interface InboxViewMeta {
   emptyBody: string;
 }
 
+/** A view's copy in the reader's language; `value` is the stored identity. */
+export function viewMeta(view: InboxView): InboxViewMeta {
+  const english = VIEW_META[view];
+  return {
+    ...english,
+    label: translateNow(`inbox.view.${view}.label`) || english.label,
+    blurb: translateNow(`inbox.view.${view}.blurb`) || english.blurb,
+    emptyTitle: translateNow(`inbox.view.${view}.emptyTitle`) || english.emptyTitle,
+    emptyBody: translateNow(`inbox.view.${view}.emptyBody`) || english.emptyBody,
+  };
+}
+
+// @i18n-exempt: fallbacks, read through viewMeta above. A module constant is
+// evaluated before any locale exists, so it cannot resolve one itself.
 export const VIEW_META: Record<InboxView, InboxViewMeta> = {
   waiting: {
     value: 'waiting',
@@ -206,7 +220,7 @@ export function toOfflineItem(message: OfflineMessage): InboxItem {
         // Nothing verified that a mail client opened, let alone that anything
         // was sent: the status is written when the mailto link is clicked. The
         // weakest true claim is the one the badge makes. See `MessagePane`.
-        ? { label: 'Reply opened', tone: 'success' }
+        ? { label: translateNow('inbox.replyOpened') || 'Reply opened', tone: 'success' }
         : status === 'read'
           ? { label: translateNow('inbox.read') || 'Read', tone: 'neutral' }
           : { label: translateNow('inbox.new') || 'New', tone: 'warning' },

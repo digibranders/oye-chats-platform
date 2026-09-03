@@ -15,7 +15,7 @@ import {
 } from '../../ui';
 import {
   INBOX_VIEWS,
-  VIEW_META,
+  viewMeta,
   byRecency,
   matchesQuery,
   shortAgo,
@@ -25,6 +25,7 @@ import {
   type InboxView,
 } from './inboxModel';
 import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 export interface ConversationListProps {
   view: InboxView;
@@ -192,7 +193,7 @@ export function ConversationList({
 }: ConversationListProps) {
   const { t } = useTranslation();
   const listRef = useRef<HTMLDivElement | null>(null);
-  const meta = VIEW_META[view];
+  const meta = viewMeta(view);
 
   const visible = useMemo(
     () => items.filter((item) => matchesQuery(item, query)).sort(byRecency),
@@ -264,8 +265,8 @@ export function ConversationList({
                   value,
                   label:
                     error && value === view
-                      ? VIEW_META[value].label
-                      : `${VIEW_META[value].label} (${counts[value]})`,
+                      ? viewMeta(value).label
+                      : `${viewMeta(value).label} (${counts[value]})`,
                 }))}
               />
             </div>
@@ -299,7 +300,8 @@ export function ConversationList({
             title={query ? (t('inbox.nothingMatched') || 'Nothing matched') : (emptyOverride?.title ?? meta.emptyTitle)}
             description={
               query
-                ? `No conversation in ${meta.label} matches “${query}”.`
+                ? translateNow('inbox.noConversationInMatches', { view: meta.label, query }) ||
+                  `No conversation in ${meta.label} matches “${query}”.`
                 : (emptyOverride?.description ?? meta.emptyBody)
             }
             // A "nothing matched" state with no way out is a dead end.

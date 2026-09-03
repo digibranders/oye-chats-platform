@@ -146,12 +146,18 @@ export function TransferDialog({
     try {
       await transferChat(sessionId, parseTarget(target));
       toast.success(t('inbox.conversationTransferred') || 'Conversation transferred', {
-        description: `${visitorName} is now with the person you chose.`,
+        description:
+          t('inbox.isNowWithThePersonYouChose', { name: visitorName }) ||
+          `${visitorName} is now with the person you chose.`,
       });
       onTransferred();
       onOpenChange(false);
     } catch (err) {
-      setError(err instanceof Error ? `Could not transfer: ${err.message}` : t('inbox.couldNotTransferThisConversation') || 'Could not transfer this conversation.');
+      setError(
+        err instanceof Error
+          ? t('inbox.couldNotTransferReason', { reason: err.message }) ||
+            `Could not transfer: ${err.message}`
+          : t('inbox.couldNotTransferThisConversation') || 'Could not transfer this conversation.');
     } finally {
       setSubmitting(false);
     }
@@ -162,7 +168,10 @@ export function TransferDialog({
       open={open}
       onOpenChange={onOpenChange}
       title={t('inbox.transferConversation') || 'Transfer conversation'}
-      description={`${visitorName} will be told they are being connected to someone else.`}
+      description={
+        t('inbox.willBeToldTheyAreBeingConnected', { name: visitorName }) ||
+        `${visitorName} will be told they are being connected to someone else.`
+      }
       dismissible={!submitting}
       footer={
         <>
@@ -209,7 +218,10 @@ export function TransferDialog({
             <EmptyState
               size="inline"
               title={t('inbox.nothingMatched') || 'Nothing matched'}
-              description={`No person or department matches “${query}”.`}
+              description={
+                t('inbox.noPersonOrDepartmentMatches', { query }) ||
+                `No person or department matches “${query}”.`
+              }
               action={
                 <Button size="sm" variant="secondary" onClick={() => setQuery('')}>
                   {t('inbox.clearSearch') || 'Clear search'}

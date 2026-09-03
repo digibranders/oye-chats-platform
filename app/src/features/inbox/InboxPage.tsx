@@ -35,7 +35,7 @@ import { useOperatorStatus, type OperatorStatusState } from './useOperatorStatus
 import { useQualifiedSessions, useSessionDetails } from './inboxQueries';
 import {
   INBOX_VIEWS,
-  VIEW_META,
+  viewMeta,
   sessionIdFromItemId,
   toLiveItem,
   toOfflineItem,
@@ -46,10 +46,17 @@ import {
 } from './inboxModel';
 import type { ConnectionStatus } from './liveChatProtocol';
 import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 /** How often the wait timers advance. One clock for the whole surface. */
 const CLOCK_MS = 5000;
 
+/** The connection word in the reader's language. */
+function connectionLabel(status: ConnectionStatus): string {
+  return translateNow(`inbox.connection.${status}`) || CONNECTION[status].label;
+}
+
+// @i18n-exempt: fallbacks, read through connectionLabel above.
 const CONNECTION: Record<ConnectionStatus, { label: string; tone: 'neutral' | 'success' | 'warning' | 'danger' }> = {
   idle: { label: 'Not connected', tone: 'neutral' },
   connecting: { label: 'Connecting', tone: 'warning' },
@@ -352,7 +359,7 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
     );
   }
 
-  const connection = CONNECTION[socket.status];
+  const connection = { ...CONNECTION[socket.status], label: connectionLabel(socket.status) };
   const offlineLive = isLiveView(view) && !operator.isOnline;
 
   const emptyOverride =
@@ -417,7 +424,10 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
               {t('inbox.previous') || 'Previous'}
             </Button>
             <span className="figure text-2xs text-text-tertiary">
-              Page {offline.page} of {Math.max(1, Math.ceil(offline.total / offline.pageSize))}
+              {t('inbox.pageOf', {
+                page: offline.page,
+                total: Math.max(1, Math.ceil(offline.total / offline.pageSize)),
+              }) || `Page ${offline.page} of ${Math.max(1, Math.ceil(offline.total / offline.pageSize))}`}
             </span>
             <Button
               size="sm"
@@ -456,7 +466,7 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
           <EmptyState
             icon={MessageSquare}
             title={t('inbox.nothingOpen') || 'Nothing open'}
-            description={VIEW_META[view].blurb}
+            description={viewMeta(view).blurb}
           />
         </div>
       );

@@ -76,7 +76,8 @@ export function resolveAgentCreationGate(agentCount: number, agentLimit: number)
  * click later. It used to be a full sentence here AND the identical sentence as
  * that dialog's description, so the customer read it twice in two seconds.
  */
-const PER_AGENT_BILLING = 'The next one needs its own plan.';
+const perAgentBillingText = () =>
+  translateNow('agents.theNextOneNeedsItsOwnPlan') || 'The next one needs its own plan.';
 
 /**
  * One sentence explaining why the next agent is a paid one, for the notice
@@ -89,8 +90,18 @@ const PER_AGENT_BILLING = 'The next one needs its own plan.';
  */
 export function describeAgentLimit(gate: AgentCreationGate, planName: string): string | null {
   if (gate.kind !== 'requires_plan') return null;
-  if (gate.agentLimit < 1) return PER_AGENT_BILLING;
+  if (gate.agentLimit < 1) return perAgentBillingText();
   const plan = planName.trim() || translateNow('agents.yourPlan') || 'Your plan';
-  const quota = gate.agentLimit === 1 ? '1 chatbot' : `${gate.agentLimit} chatbots`;
-  return `${plan} includes ${quota}; you have ${gate.agentCount}. ${PER_AGENT_BILLING}`;
+  const quota =
+    gate.agentLimit === 1
+      ? translateNow('agents.oneChatbot') || '1 chatbot'
+      : translateNow('agents.nChatbots', { count: gate.agentLimit }) || `${gate.agentLimit} chatbots`;
+  return (
+    translateNow('agents.planIncludesQuotaYouHave', {
+      plan,
+      quota,
+      count: gate.agentCount,
+      billing: perAgentBillingText(),
+    }) || `${plan} includes ${quota}; you have ${gate.agentCount}. ${perAgentBillingText()}`
+  );
 }

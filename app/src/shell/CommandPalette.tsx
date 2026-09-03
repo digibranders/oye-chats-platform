@@ -9,6 +9,7 @@ import { useWorkspace } from '../context/WorkspaceContext';
 import { AGENT_NAV, FOOTER_NAV, WORKSPACE_NAV, agentPath, navForRole } from './nav';
 import { navHint, navLabel } from './navCopy';
 import { useTranslation } from '../i18n/useTranslation';
+import { Trans } from '../i18n/Trans';
 
 interface Command {
   id: string;
@@ -208,8 +209,15 @@ export function CommandPalette({
             <BaseCombobox.Empty>
               <div className="px-4 py-8 text-center">
                 <p className="text-sm text-text-secondary">
-                  No match for{' '}
-                  <span className="font-medium text-text-primary">“{shownQuery}”</span>
+                  <Trans
+                    k="shell.noMatchForQuery"
+                    fallback="No match for {query}"
+                    values={{
+                      query: (
+                        <span className="font-medium text-text-primary">“{shownQuery}”</span>
+                      ),
+                    }}
+                  />
                 </p>
                 <p className="mt-1 text-xs text-text-tertiary">
                   {t('shell.tryAChatbotNameA') || 'Try a chatbot name, a page, or a setting.'}
@@ -264,7 +272,7 @@ export function CommandPalette({
                 <Kbd>↵</Kbd> {t('shell.open') || 'open'}
               </span>
               <span className="flex items-center gap-1">
-                <Kbd>{t('shell.esc') || 'Esc'}</Kbd> close
+                <Kbd>{t('shell.esc') || 'Esc'}</Kbd> {t('shell.close') || 'close'}
               </span>
             </div>
           </BaseCombobox.Root>

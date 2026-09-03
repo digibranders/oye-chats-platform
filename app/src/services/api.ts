@@ -1416,10 +1416,10 @@ export const getDocuments = async (botId?: number): Promise<KnowledgeSource[]> =
     try {
         const url = botId ? `/documents?bot_id=${botId}` : '/documents';
         const response = await api.get(url);
-        return expectArray(response.data, 'Failed to load documents');
+        return expectArray(response.data, translateNow('api.failedToLoadDocuments') || 'Failed to load documents');
     } catch (error) {
         console.error('API Error fetching documents:', error);
-        throw buildApiError(error, 'Failed to load documents');
+        throw buildApiError(error, translateNow('api.failedToLoadDocuments') || 'Failed to load documents');
     }
 };
 
@@ -1996,10 +1996,10 @@ export const getFeedbackData = async (botId?: number): Promise<FeedbackItem[]> =
     try {
         const url = botId ? `/analytics/feedback?bot_id=${botId}` : '/analytics/feedback';
         const response = await api.get(url);
-        return expectArray(response.data, 'Failed to load feedback');
+        return expectArray(response.data, translateNow('api.failedToLoadFeedback') || 'Failed to load feedback');
     } catch (error) {
         console.error('API Error fetching feedback data:', error);
-        throw buildApiError(error, 'Failed to load feedback');
+        throw buildApiError(error, translateNow('api.failedToLoadFeedback') || 'Failed to load feedback');
     }
 };
 
@@ -2011,10 +2011,10 @@ export const getTopQuestions = async (botId?: number): Promise<TopQuestion[]> =>
     try {
         const url = botId ? `/analytics/top-questions?bot_id=${botId}` : '/analytics/top-questions';
         const response = await api.get(url);
-        return expectArray(response.data, 'Failed to load top questions');
+        return expectArray(response.data, translateNow('api.failedToLoadTopQuestions') || 'Failed to load top questions');
     } catch (error) {
         console.error('API Error fetching top questions:', error);
-        throw buildApiError(error, 'Failed to load top questions');
+        throw buildApiError(error, translateNow('api.failedToLoadTopQuestions') || 'Failed to load top questions');
     }
 };
 
@@ -2290,10 +2290,10 @@ export const uploadFeedbackAttachment = async (file: File): Promise<{ url: strin
 export const getMyFeedback = async (): Promise<PlatformFeedbackItem[]> => {
     try {
         const response = await api.get('/client/feedback');
-        return expectArray(response.data, 'Failed to load your feedback');
+        return expectArray(response.data, translateNow('api.failedToLoadYourFeedback') || 'Failed to load your feedback');
     } catch (error) {
         console.error('API Error fetching my feedback:', error);
-        throw buildApiError(error, 'Failed to load your feedback');
+        throw buildApiError(error, translateNow('api.failedToLoadYourFeedback') || 'Failed to load your feedback');
     }
 };
 
@@ -2306,10 +2306,10 @@ export const getMyFeedback = async (): Promise<PlatformFeedbackItem[]> => {
 export const getBots = async (): Promise<Bot[]> => {
     try {
         const response = await api.get('/bots');
-        return expectArray(response.data, 'Failed to load bots');
+        return expectArray(response.data, translateNow('api.failedToLoadBots') || 'Failed to load bots');
     } catch (error) {
         console.error('API Error fetching bots:', error);
-        throw buildApiError(error, 'Failed to load bots');
+        throw buildApiError(error, translateNow('api.failedToLoadBots') || 'Failed to load bots');
     }
 };
 
@@ -2912,10 +2912,10 @@ export const overrideLeadQualification = async (
 export const getWebhooks = async (botId?: number): Promise<Webhook[]> => {
     try {
         const response = await api.get(`/webhooks?bot_id=${botId}`);
-        return expectArray(response.data, 'Failed to load webhooks');
+        return expectArray(response.data, translateNow('api.failedToLoadWebhooks') || 'Failed to load webhooks');
     } catch (error) {
         console.error('API Error fetching webhooks:', error);
-        throw buildApiError(error, 'Failed to load webhooks');
+        throw buildApiError(error, translateNow('api.failedToLoadWebhooks') || 'Failed to load webhooks');
     }
 };
 
@@ -3221,10 +3221,10 @@ export const operatorChangePassword = async (
 export const getOperators = async (): Promise<Operator[]> => {
     try {
         const response = await api.get('/operators');
-        return expectArray(response.data, 'Failed to load operators');
+        return expectArray(response.data, translateNow('api.failedToLoadOperators') || 'Failed to load operators');
     } catch (error) {
         console.error('API Error fetching operators:', error);
-        throw buildApiError(error, 'Failed to load operators');
+        throw buildApiError(error, translateNow('api.failedToLoadOperators') || 'Failed to load operators');
     }
 };
 
@@ -3266,10 +3266,10 @@ export const deleteOperator = async (operatorId: number): Promise<Record<string,
 export const getDepartments = async (): Promise<Department[]> => {
     try {
         const response = await api.get('/operators/departments');
-        return expectArray(response.data, 'Failed to load departments');
+        return expectArray(response.data, translateNow('api.failedToLoadDepartments') || 'Failed to load departments');
     } catch (error) {
         console.error('API Error fetching departments:', error);
-        throw buildApiError(error, 'Failed to load departments');
+        throw buildApiError(error, translateNow('api.failedToLoadDepartments') || 'Failed to load departments');
     }
 };
 
@@ -3821,9 +3821,9 @@ export const getCreditDaily = async (
 export const getTopupPacks = async (): Promise<TopupPackResponse[]> => {
     try {
         const response = await api.get('/credits/packs');
-        return expectArray(response.data, 'Failed to load top-up packs');
+        return expectArray(response.data, translateNow('api.failedToLoadTopupPacks') || 'Failed to load top-up packs');
     } catch (error) {
-        throw buildApiError(error, 'Failed to load top-up packs');
+        throw buildApiError(error, translateNow('api.failedToLoadTopupPacks') || 'Failed to load top-up packs');
     }
 };
 
@@ -4494,9 +4494,9 @@ export const listOperatorInvites = async (statusFilter: string | null = null): P
     try {
         const params = statusFilter ? { status_filter: statusFilter } : {};
         const response = await api.get('/invites', { params });
-        return expectArray(response.data, 'Failed to load invites');
+        return expectArray(response.data, translateNow('api.failedToLoadInvites') || 'Failed to load invites');
     } catch (error) {
-        throw buildApiError(error, 'Failed to load invites');
+        throw buildApiError(error, translateNow('api.failedToLoadInvites') || 'Failed to load invites');
     }
 };
 

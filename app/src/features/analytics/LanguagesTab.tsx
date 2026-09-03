@@ -73,7 +73,11 @@ export function LanguagesTab({
     display: formatNumber(row.total),
     meta:
       totals.total > 0
-        ? `${formatPercent(row.total / totals.total)} of conversations · ${formatNumber(row.liveChat)} reached a person`
+        ? t('analytics.ofConversationsReachedAPerson', {
+            percent: formatPercent(row.total / totals.total),
+            count: formatNumber(row.liveChat),
+          }) ||
+          `${formatPercent(row.total / totals.total)} of conversations · ${formatNumber(row.liveChat)} reached a person`
         : undefined,
   }));
 
@@ -120,7 +124,10 @@ export function LanguagesTab({
             titleAs="h2"
             // The window is stated here, not inherited, because these counters
             // do not follow the page's range and never can.
-            description={`A rolling ${formatNumber(translation.windowHours)}-hour window. These counters expire, so this is recent health, not history.`}
+            description={
+              t('analytics.aRollingWindow', { hours: formatNumber(translation.windowHours) }) ||
+              `A rolling ${formatNumber(translation.windowHours)}-hour window. These counters expire, so this is recent health, not history.`
+            }
           />
           <CardBody>
             <Grid cols={4}>

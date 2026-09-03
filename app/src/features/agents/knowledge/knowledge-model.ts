@@ -289,7 +289,9 @@ export function gapWindowParam(window: GapWindow): string {
 }
 
 export function gapWindowLabel(window: GapWindow): string {
-  return window === null ? translateNow('agents.allTime') || 'All time' : `Last ${window} days`;
+  return window === null
+    ? translateNow('agents.allTime') || 'All time'
+    : translateNow('agents.lastNDays', { days: window }) || `Last ${window} days`;
 }
 
 // ── Re-crawl ───────────────────────────────────────────────────────────────
@@ -506,7 +508,12 @@ export function crawlPreflight(
   if (budget.perCrawlLimit !== null && selectedPages > budget.perCrawlLimit) {
     return {
       blocked: true,
-      message: `Your plan trains up to ${budget.perCrawlLimit} pages in one go. Deselect ${selectedPages - budget.perCrawlLimit} to continue, or move to a plan with no per-crawl limit.`,
+      message:
+        translateNow('agents.planTrainsUpToNPages', {
+          limit: budget.perCrawlLimit,
+          deselect: selectedPages - budget.perCrawlLimit,
+        }) ||
+        `Your plan trains up to ${budget.perCrawlLimit} pages in one go. Deselect ${selectedPages - budget.perCrawlLimit} to continue, or move to a plan with no per-crawl limit.`,
     };
   }
   // Credits first. This one is about the crawl the customer is starting right
@@ -515,7 +522,12 @@ export function crawlPreflight(
   if (selectedPages > budget.affordablePages) {
     return {
       blocked: false,
-      message: `Your credits cover ${budget.affordablePages} of these ${selectedPages} pages. We train them in order and stop when the credits run out — nothing is charged twice.`,
+      message:
+        translateNow('agents.creditsCoverNOfThese', {
+          affordable: budget.affordablePages,
+          selected: selectedPages,
+        }) ||
+        `Your credits cover ${budget.affordablePages} of these ${selectedPages} pages. We train them in order and stop when the credits run out, and nothing is charged twice.`,
     };
   }
   // The cap wall the trial actually hits. `/crawl/discover` truncates its
@@ -533,8 +545,10 @@ export function crawlPreflight(
       blocked: false,
       message:
         planSlug === 'trial'
-          ? `Your site has at least ${budget.perCrawlLimit} pages, which is what your trial trains in one go. Upgrade to train the rest.`
-          : `Your site has at least ${budget.perCrawlLimit} pages, which is what your plan trains in one go. Upgrade to train the rest.`,
+          ? translateNow('agents.siteHasAtLeastNPagesTrial', { limit: budget.perCrawlLimit }) ||
+            `Your site has at least ${budget.perCrawlLimit} pages, which is what your trial trains in one go. Upgrade to train the rest.`
+          : translateNow('agents.siteHasAtLeastNPagesPlan', { limit: budget.perCrawlLimit }) ||
+            `Your site has at least ${budget.perCrawlLimit} pages, which is what your plan trains in one go. Upgrade to train the rest.`,
     };
   }
   return { blocked: false, message: null };
@@ -709,36 +723,57 @@ export interface CrawlOutcomeMessage {
  */
 export function crawlDoneMessage(coverage: CrawlCoverage): CrawlOutcomeMessage {
   const { ingested, processed, dropped, failed, aborted, reason } = coverage;
-  const read = `${formatNumber(ingested)} page${ingested === 1 ? '' : 's'}`;
+  const read =
+    (ingested === 1
+      ? translateNow('agents.onePageRead', { count: formatNumber(ingested) })
+      : translateNow('agents.nPagesRead', { count: formatNumber(ingested) })) ||
+    `${formatNumber(ingested)} page${ingested === 1 ? '' : 's'}`;
   if (!crawlFellShort(coverage)) {
-    return { tone: 'success', title: undefined, body: `Finished — this chatbot read ${read}.` };
+    return {
+      tone: 'success',
+      title: undefined,
+      body:
+        translateNow('agents.finishedThisChatbotRead', { read }) ||
+        `Finished. This chatbot read ${read}.`,
+    };
   }
 
   // Everything found but not covered, however it was lost: pages fetched and
   // not stored, plus pages discovery found that the crawl never reached.
   const missed = processed - ingested + dropped;
   const found = ingested + missed;
-  const opening = `This chatbot read ${read} of the ${formatNumber(found)} found on that site.`;
+  const opening =
+    translateNow('agents.thisChatbotReadNOfN', { read, found: formatNumber(found) }) ||
+    `This chatbot read ${read} of the ${formatNumber(found)} found on that site.`;
 
   if (aborted && reason === 'credits') {
     return {
       tone: 'warning',
-      title: 'Finished, but your credits ran out first',
-      body: `${opening} Add credits and train it again — pages it already has are not charged twice.`,
+      title: translateNow('agents.finishedButYourCreditsRan') || 'Finished, but your credits ran out first',
+      body: `${opening} ${
+        translateNow('agents.addCreditsAndTrainAgain') ||
+        'Add credits and train it again: pages it already has are not charged twice.'
+      }`,
     };
   }
   if (aborted && reason === 'knowledge_quota') {
     return {
       tone: 'warning',
-      title: 'Finished, but this plan’s knowledge base is full',
-      body: `${opening} Move up a plan, or remove a source below, then train it again.`,
+      title: translateNow('agents.finishedButThisPlansKnowledge') || 'Finished, but this plan’s knowledge base is full',
+      body: `${opening} ${
+        translateNow('agents.moveUpAPlanOrRemoveASource') ||
+        'Move up a plan, or remove a source below, then train it again.'
+      }`,
     };
   }
   if (aborted && reason === 'kill_switch') {
     return {
       tone: 'warning',
-      title: 'Finished, but training stopped early',
-      body: `${opening} Training is paused for this workspace — try again shortly, or contact support if it keeps stopping.`,
+      title: translateNow('agents.finishedButTrainingStoppedEarly') || 'Finished, but training stopped early',
+      body: `${opening} ${
+        translateNow('agents.trainingIsPausedForThisWorkspace') ||
+        'Training is paused for this workspace. Try again shortly, or contact support if it keeps stopping.'
+      }`,
     };
   }
   if (aborted) {
@@ -747,20 +782,29 @@ export function crawlDoneMessage(coverage: CrawlCoverage): CrawlOutcomeMessage {
     // something that was never wrong.
     return {
       tone: 'warning',
-      title: 'Finished, but training stopped early',
-      body: `${opening} Training it again picks up where it stopped — pages it already has are not charged twice.`,
+      title: translateNow('agents.finishedButTrainingStoppedEarly') || 'Finished, but training stopped early',
+      body: `${opening} ${
+        translateNow('agents.trainingAgainPicksUpWhereItStopped') ||
+        'Training it again picks up where it stopped: pages it already has are not charged twice.'
+      }`,
     };
   }
   if (failed > 0 && failed >= missed) {
     return {
       tone: 'warning',
-      title: 'Finished, but some pages could not be stored',
-      body: `${opening} Training it again usually picks up the rest.`,
+      title: translateNow('agents.finishedButSomePagesCould') || 'Finished, but some pages could not be stored',
+      body: `${opening} ${
+        translateNow('agents.trainingAgainPicksUpTheRest') ||
+        'Training it again usually picks up the rest.'
+      }`,
     };
   }
   return {
     tone: 'warning',
-    title: 'Finished, but not every page was added',
-    body: `${opening} Training it again usually picks up the rest, or upload the missing pages as documents.`,
+    title: translateNow('agents.finishedButNotEveryPage') || 'Finished, but not every page was added',
+    body: `${opening} ${
+      translateNow('agents.trainingAgainOrUploadDocuments') ||
+      'Training it again usually picks up the rest, or upload the missing pages as documents.'
+    }`,
   };
 }

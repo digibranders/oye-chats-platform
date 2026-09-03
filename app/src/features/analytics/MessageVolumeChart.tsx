@@ -23,6 +23,7 @@ import {
 import { seriesColor, seriesDash } from '../../ui';
 import type { ComparisonPoint } from './series';
 import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 /**
  * Messages per day, against the same number of days before them.
@@ -72,14 +73,33 @@ function buildSummary(props: MessageVolumeChartProps): string {
   const { points, rangeLabel, comparisonLabel, total, previousTotal, dailyAverage, peak, peakLabel } =
     props;
   const span =
-    points.length > 0 ? ` from ${points[0].label} to ${points[points.length - 1].label}` : '';
+    points.length > 0
+      ? translateNow('analytics.volumeSpan', {
+          from: points[0].label,
+          to: points[points.length - 1].label,
+        }) || ` from ${points[0].label} to ${points[points.length - 1].label}`
+      : '';
   const peakSentence =
-    peak > 0 && peakLabel ? ` The busiest day was ${peakLabel}, with ${peak} messages.` : '';
+    peak > 0 && peakLabel
+      ? translateNow('analytics.volumePeak', { day: peakLabel, count: peak }) ||
+        ` The busiest day was ${peakLabel}, with ${peak} messages.`
+      : '';
   const comparison =
     comparisonLabel && previousTotal !== null
-      ? ` The same measure over ${comparisonLabel} was ${previousTotal}.`
+      ? translateNow('analytics.volumeComparison', {
+          period: comparisonLabel,
+          count: previousTotal,
+        }) || ` The same measure over ${comparisonLabel} was ${previousTotal}.`
       : '';
-  return `Messages sent per day over ${rangeLabel.toLowerCase()}${span}: ${total} in total, an average of ${dailyAverage} a day.${peakSentence}${comparison}`;
+  const head =
+    translateNow('analytics.volumeSummary', {
+      range: rangeLabel.toLowerCase(),
+      span,
+      total,
+      average: dailyAverage,
+    }) ||
+    `Messages sent per day over ${rangeLabel.toLowerCase()}${span}: ${total} in total, an average of ${dailyAverage} a day.`;
+  return `${head}${peakSentence}${comparison}`;
 }
 
 export function MessageVolumeChart(props: MessageVolumeChartProps) {

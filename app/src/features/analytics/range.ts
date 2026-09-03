@@ -22,6 +22,11 @@ import { t as translateNow } from '../../i18n/i18n';/**
 
 export type RangeKey = '7d' | '30d' | '90d' | 'all';
 
+/** The range options, built per call so they follow the language. */
+export const rangeOptions = (): readonly { value: RangeKey; label: string }[] =>
+  RANGE_OPTIONS.map((o) => ({ ...o, label: translateNow(`analytics.rangeOption.${o.value}`) || o.label }));
+
+// @i18n-exempt: fallbacks, read through rangeOptions above.
 export const RANGE_OPTIONS: readonly { value: RangeKey; label: string }[] = [
   { value: '7d', label: '7 days' },
   { value: '30d', label: '30 days' },
@@ -45,6 +50,7 @@ const TRAILING_DAYS: Record<RangeKey, number | null> = {
   all: null,
 };
 
+// @i18n-exempt: fallbacks, read through rangeLabel below.
 const RANGE_LABEL: Record<RangeKey, string> = {
   '7d': 'Last 7 days',
   '30d': 'Last 30 days',
@@ -52,6 +58,7 @@ const RANGE_LABEL: Record<RangeKey, string> = {
   all: 'All time',
 };
 
+// @i18n-exempt: fallbacks, resolved in resolveRange above.
 const COMPARISON_LABEL: Record<RangeKey, string | null> = {
   '7d': 'the previous 7 days',
   '30d': 'the previous 30 days',
@@ -92,10 +99,13 @@ export function resolveRange(key: RangeKey, now: Date = new Date()): ResolvedRan
   const days = TRAILING_DAYS[key];
   return {
     key,
-    label: RANGE_LABEL[key],
+    label: translateNow(`analytics.rangeLabel.${key}`) || RANGE_LABEL[key],
     days,
     since: days === null ? null : new Date(now.getTime() - days * 86_400_000),
-    comparisonLabel: COMPARISON_LABEL[key],
+    comparisonLabel:
+      COMPARISON_LABEL[key] === null
+        ? null
+        : translateNow(`analytics.comparisonLabel.${key}`) || COMPARISON_LABEL[key],
     extendedDays: days === null ? null : days * 2,
   };
 }

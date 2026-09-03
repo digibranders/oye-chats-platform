@@ -105,6 +105,42 @@ def is_multilingual_enabled(bot) -> bool:
 # locales directory and fails if the two drift.
 WIDGET_UI_LANGUAGES: frozenset[str] = frozenset({"en", "hi"})
 
+# Dictionaries that SHIP but are deliberately not offered yet.
+#
+# A machine translation of the widget's chrome is not fit to put in front of a
+# customer's visitors until a native speaker has read it. This set is where a
+# finished dictionary waits for that sign-off: the file is in the repo, the
+# loader imports it, the parity and placeholder guards run against it, and
+# `ui_translated` stays False so the admin's language picker does not offer it.
+#
+# Promotion is one line - move the code from here to WIDGET_UI_LANGUAGES - and
+# that line is the reviewable record that someone signed the language off.
+#
+# Without this set the contract test refuses the state entirely: it asserts the
+# shipped dictionaries and WIDGET_UI_LANGUAGES match in BOTH directions, so an
+# unreviewed translation could only be committed by also offering it.
+WIDGET_UI_LANGUAGES_PENDING_REVIEW: frozenset[str] = frozenset(
+    {
+        "es",
+        "fr",
+        "de",
+        "pt",
+        "it",
+        "nl",
+        "ja",
+        "ko",
+        "zh",
+        "ar",
+        "tr",
+        "id",
+        "vi",
+        "th",
+        "pl",
+        "ru",
+        "uk",
+    }
+)
+
 # Base languages the ADMIN DASHBOARD ships an interface for (Phase 7).
 #
 # Separate from WIDGET_UI_LANGUAGES above and never derived from it. They are

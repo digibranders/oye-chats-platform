@@ -15,7 +15,7 @@ import {
   formatDateTime,
   formatRelative,
 } from '../../../ui';
-import { INSTALL_STAMP_CAPTION, type InstallStatus, type WidgetHeartbeat } from './deployModel';
+import { installStampCaption, type InstallStatus, type WidgetHeartbeat } from './deployModel';
 import { describeDomain, summariseDomains, type DomainInstall } from './installDomainsModel';
 import { useTranslation } from '../../../i18n/useTranslation';
 
@@ -165,7 +165,7 @@ export function InstallStatusCard({
             density="compact"
             items={[
               {
-                label: INSTALL_STAMP_CAPTION,
+                label: installStampCaption(),
                 value: <span className="figure">{formatDateTime(installedAt)}</span>,
               },
               {
@@ -356,7 +356,7 @@ export function InstallStatusCard({
           <Alert
             tone="warning"
             live
-            title="We have not seen it recently"
+            title={t('agents.weHaveNotSeenIt') || 'We have not seen it recently'}
             className="w-full"
             action={
               <Button size="sm" variant="secondary" onClick={onTroubleshoot}>
@@ -364,9 +364,8 @@ export function InstallStatusCard({
               </Button>
             }
           >
-            The widget last loaded more than a week ago. If the snippet is still
-            on your site and getting traffic, the checklist rules out every known
-            cause.
+            {t('agents.theWidgetLastLoadedMoreThanAWeek') ||
+              'The widget last loaded more than a week ago. If the snippet is still on your site and getting traffic, the checklist rules out every known cause.'}
           </Alert>
         </CardFooter>
       ) : null}

@@ -31,15 +31,28 @@ export interface DemoLinkCardProps {
 function describe(state: DemoPreviewState, website: string | null): string {
   switch (state.kind) {
     case 'ready':
-      return `Opens ${website} with your chat on it. Anyone with the link can try it, no install needed.`;
+      return (
+        translateNow('agents.demoOpensReady', { website }) ||
+        `Opens ${website} with your chat on it. Anyone with the link can try it, no install needed.`
+      );
     case 'stale':
-      return `Opens a preview of ${website}, captured a while ago. Refresh it if the site has changed since.`;
+      return (
+        translateNow('agents.demoOpensStale', { website }) ||
+        `Opens a preview of ${website}, captured a while ago. Refresh it if the site has changed since.`
+      );
     case 'pending':
-      return `We are taking a picture of ${website} now. Until it is ready the link opens a stand-in page.`;
+      return (
+        translateNow('agents.demoPending', { website }) ||
+        `We are taking a picture of ${website} now. Until it is ready the link opens a stand-in page.`
+      );
     case 'no-website':
       return translateNow('agents.addThisChatbotsWebsiteAddress') || 'Add this chatbot’s website address and the link will open your own site with the chat on it.';
     case 'unavailable':
-      return `We could not capture ${website ?? 'your website'}, so the link opens a stand-in page for now.`;
+      return (
+        translateNow('agents.demoUnavailable', {
+          website: website ?? translateNow('agents.yourWebsite') ?? 'your website',
+        }) || `We could not capture ${website ?? 'your website'}, so the link opens a stand-in page for now.`
+      );
   }
 }
 

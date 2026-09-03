@@ -1,4 +1,5 @@
 import { Button, cn, useClipboard } from '../../ui';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface ErrorDetailsProps {
   /** The technical detail — message and stack. Absent for a plain 404. */
@@ -23,6 +24,7 @@ export interface ErrorDetailsProps {
  * own in-page search when collapsed.
  */
 export function ErrorDetails({ detail, className }: ErrorDetailsProps) {
+  const { t } = useTranslation();
   const { state, copy } = useClipboard();
 
   if (!detail) return null;
@@ -30,7 +32,7 @@ export function ErrorDetails({ detail, className }: ErrorDetailsProps) {
   return (
     <details className={cn('group', className)}>
       <summary className="cursor-pointer text-xs text-text-secondary hover:text-text-primary">
-        Technical details — for support, not an explanation
+        {t('app.technicalDetailsForSupportNot') || 'Technical details: for support, not an explanation'}
       </summary>
       <div className="mt-2">
         <pre className="max-h-64 overflow-auto rounded-md border border-border bg-surface-sunken p-3 font-mono text-2xs leading-relaxed text-text-secondary">
@@ -38,11 +40,11 @@ export function ErrorDetails({ detail, className }: ErrorDetailsProps) {
         </pre>
         <div className="mt-2 flex items-center gap-3">
           <Button size="sm" variant="secondary" onClick={() => void copy(detail)}>
-            {state === 'copied' ? 'Copied' : 'Copy details'}
+            {state === 'copied' ? t('app.copied') || 'Copied' : t('app.copyDetails') || 'Copy details'}
           </Button>
           <span aria-live="polite" className="text-xs text-text-secondary">
             {state === 'failed'
-              ? 'Your browser blocked the clipboard. Select the text above and copy it.'
+              ? t('app.yourBrowserBlockedTheClipboard') || 'Your browser blocked the clipboard. Select the text above and copy it.'
               : null}
           </span>
         </div>

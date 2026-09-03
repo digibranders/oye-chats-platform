@@ -438,8 +438,8 @@ function KnowledgeContent({ agent }: { agent: Bot }) {
             }
           >
             <span className="figure">{formatNumber(knowledge.state.data.inactive_count)}</span>{' '}
-            passages stopped being used when your plan moved to Free. Add one new source to
-            reactivate them, or move to a paid plan to restore everything.
+            {t('agents.passagesStoppedBeingUsed') ||
+              'passages stopped being used when your plan moved to Free. Add one new source to reactivate them, or move to a paid plan to restore everything.'}
           </Alert>
         ) : null}
         {actionError ? (

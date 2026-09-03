@@ -146,7 +146,10 @@ export function JourneyFlow({
         eyebrow="Flow"
         title={t('analytics.howVisitorsMoved') || 'How visitors moved'}
         titleAs="h2"
-        description={`Where people were before they opened the chat, and what happened afterwards · ${monthLabel}`}
+        description={
+          t('analytics.wherePeopleWereBefore', { month: monthLabel }) ||
+          `Where people were before they opened the chat, and what happened afterwards · ${monthLabel}`
+        }
       />
       {/* Three peers, on the system's ramp — not a hand-written
           `lg:grid-cols-[1.4fr_0.8fr_1fr]`, which measured the viewport and
@@ -162,12 +165,16 @@ export function JourneyFlow({
               {selectedOutcome ? (
                 <>
                   <span className="figure">{formatNumber(rows.length)}</span>{' '}
-                  {rows.length === 1 ? 'route' : 'routes'} attributed to{' '}
-                  {outcomeLabelFor(selectedOutcome).toLowerCase()}
+                  {t('analytics.routesAttributedTo', {
+                    unit: rows.length === 1 ? t('analytics.route') || 'route' : t('analytics.routes') || 'routes',
+                    outcome: outcomeLabelFor(selectedOutcome).toLowerCase(),
+                  }) ||
+                    `${rows.length === 1 ? 'route' : 'routes'} attributed to ${outcomeLabelFor(selectedOutcome).toLowerCase()}`}
                 </>
               ) : (
                 <>
-                  <span className="figure">{formatNumber(sequences.sessions_with_pre_chat)}</span> of{' '}
+                  <span className="figure">{formatNumber(sequences.sessions_with_pre_chat)}</span>{' '}
+                  {t('analytics.of') || 'of'}{' '}
                   <span className="figure">{formatNumber(sequences.total_sessions)}</span>{' '}
                   {t('analytics.conversationsWereBrowsingFirst') || 'conversations were browsing first'}
                 </>
@@ -235,9 +242,16 @@ export function JourneyFlow({
                       className="mt-3"
                       onClick={() => setVisible((count) => count + PAGE_STEP)}
                     >
-                      Show {Math.min(PAGE_STEP, rows.length - shown.length)} more{' '}
+                      {t('analytics.showNMore', {
+                        count: Math.min(PAGE_STEP, rows.length - shown.length),
+                      }) || `Show ${Math.min(PAGE_STEP, rows.length - shown.length)} more`}{' '}
                       <span className="figure text-text-tertiary">
-                        ({formatNumber(shown.length)} of {formatNumber(rows.length)})
+                        (
+                        {t('analytics.shownOfTotal', {
+                          shown: formatNumber(shown.length),
+                          total: formatNumber(rows.length),
+                        }) || `${formatNumber(shown.length)} of ${formatNumber(rows.length)}`}
+                        )
                       </span>
                     </Button>
                   ) : null}

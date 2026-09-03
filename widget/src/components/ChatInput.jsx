@@ -753,7 +753,14 @@ const ChatInput = ({
                         own `userHasSent` prop: both would be computed from the
                         same `messages` array by the same parent, and one fact
                         with two sources is how they drift apart. */}
-                    <p className={`col-start-2 text-[10px] text-gray-400 leading-snug text-center justify-self-center ${userMessageCount > 0 ? 'hidden md:block' : ''}`}>
+                    {/* On a phone the privacy link and the branding share the
+                        middle column as one centred row. The branding used to
+                        sit at the right edge, directly under the send button,
+                        and thumbs aiming for Send kept opening oyechats.com
+                        instead. From md up the wrapper dissolves (`contents`)
+                        and the two go back to their own grid cells. */}
+                    <div className="col-start-2 justify-self-center flex items-center gap-2 whitespace-nowrap md:contents">
+                    <p className={`md:col-start-2 text-[10px] text-gray-400 leading-snug text-center md:justify-self-center ${userMessageCount > 0 ? 'hidden md:block' : ''}`}>
                         <a
                             href="https://www.oyechats.com/legal/privacy"
                             target="_blank"
@@ -764,18 +771,27 @@ const ChatInput = ({
                         </a>
                     </p>
                     {showBranding ? (
-                        <a
-                            href={branding.href}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="col-start-3 whitespace-nowrap text-[10px] font-semibold text-gray-300 hover:text-gray-400 transition-colors justify-self-end"
-                        >
-                            {branding.lead ? `${branding.lead} ` : ''}
-                            <span style={{ color: 'rgb(49% 23% 93%)' }}>{branding.brand}</span>
-                        </a>
+                        <>
+                            <span
+                                aria-hidden="true"
+                                className={`text-[10px] text-gray-300 ${userMessageCount > 0 ? 'hidden' : 'md:hidden'}`}
+                            >
+                                ·
+                            </span>
+                            <a
+                                href={branding.href}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="md:col-start-3 whitespace-nowrap text-[10px] font-semibold text-gray-300 hover:text-gray-400 transition-colors md:justify-self-end"
+                            >
+                                {branding.lead ? `${branding.lead} ` : ''}
+                                <span style={{ color: 'rgb(49% 23% 93%)' }}>{branding.brand}</span>
+                            </a>
+                        </>
                     ) : (
-                        <span className="col-start-3 justify-self-end" />
+                        <span className="md:col-start-3 md:justify-self-end" />
                     )}
+                    </div>
                 </div>
             )}
         </div>

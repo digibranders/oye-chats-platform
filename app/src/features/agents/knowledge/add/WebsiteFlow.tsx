@@ -21,6 +21,7 @@ import { IngestionProgress } from '../IngestionProgress';
 import { crawlCoverageOf, crawlDoneMessage } from '../knowledge-model';
 import { useCrawlDiscovery } from './useCrawlDiscovery';
 import { useTranslation } from '../../../../i18n/useTranslation';
+import { Trans } from '../../../../i18n/Trans';
 
 export interface WebsiteFlowProps {
   agentId: number;
@@ -131,7 +132,11 @@ export function WebsiteFlow({
         : {
             tone: 'success' as const,
             title: undefined,
-            body: `Finished — this chatbot read ${formatNumber(crawl.pagesCrawled)} page${crawl.pagesCrawled === 1 ? '' : 's'}.`,
+            body:
+              t('agents.finishedReadNPages', {
+                count: formatNumber(crawl.pagesCrawled),
+              }) ||
+              `Finished. This chatbot read ${formatNumber(crawl.pagesCrawled)} pages.`,
           }
       : crawl.status === 'limit'
         ? {
@@ -178,11 +183,21 @@ export function WebsiteFlow({
             chatbot against an account. */}
         {planLoading ? null : (
           <p className="text-xs text-text-secondary">
-            <span className="figure">{formatNumber(pagesTrainedHere)}</span> website page
-            {pagesTrainedHere === 1 ? '' : 's'} trained on this chatbot so far.{' '}
+            <Trans
+              k="agents.nWebsitePagesTrainedSoFar"
+              fallback="{count} website pages trained on this chatbot so far."
+              values={{
+                count: <span className="figure">{formatNumber(pagesTrainedHere)}</span>,
+              }}
+            />{' '}
             {pageLimit === null || pageLimit < 0
-              ? `Website training is charged in credits on ${planName}.`
-              : `${planName} allows ${formatNumber(pageLimit)} website pages across this workspace.`}
+              ? t('agents.websiteTrainingChargedInCredits', { plan: planName }) ||
+                `Website training is charged in credits on ${planName}.`
+              : t('agents.planAllowsNWebsitePages', {
+                  plan: planName,
+                  limit: formatNumber(pageLimit),
+                }) ||
+                `${planName} allows ${formatNumber(pageLimit)} website pages across this workspace.`}
           </p>
         )}
 
@@ -199,7 +214,8 @@ export function WebsiteFlow({
 
         {maxPages > 0 ? (
           <p className="text-xs text-text-tertiary">
-            Your plan crawls up to {maxPages} pages, {maxDepth} levels deep.
+            {t('agents.planCrawlsUpToNPages', { pages: maxPages, depth: maxDepth }) ||
+              `Your plan crawls up to ${maxPages} pages, ${maxDepth} levels deep.`}
           </p>
         ) : null}
 
@@ -207,9 +223,16 @@ export function WebsiteFlow({
             this one says the next press re-reads and re-charges every page. */}
         {alreadyTrained ? (
           <Alert tone="warning">
-            {alreadyTrained} is already trained. Training it again re-reads and re-charges every
-            page — use <strong className="font-medium">{t('agents.reTrain') || 'Re-train'}</strong> on the source below to see
-            what actually changed first.
+            <Trans
+              k="agents.siteIsAlreadyTrained"
+              fallback="{site} is already trained. Training it again re-reads and re-charges every page, so use {reTrain} on the source below to see what actually changed first."
+              values={{
+                site: alreadyTrained,
+                reTrain: (
+                  <strong className="font-medium">{t('agents.reTrain') || 'Re-train'}</strong>
+                ),
+              }}
+            />
           </Alert>
         ) : null}
 
@@ -259,8 +282,17 @@ export function WebsiteFlow({
                   budget.costPerPage === 0
                     ? t('agents.thisTrainingIsFree') || 'This training is free · balance unchanged'
                     : budget.freePages > 0
-                      ? `First ${formatNumber(budget.freePages)} free · then ${formatNumber(budget.costPerPage)} credits a page · balance ${formatNumber(budget.balance)}`
-                      : `${formatNumber(budget.costPerPage)} credits a page · balance ${formatNumber(budget.balance)}`
+                      ? t('agents.firstNFreeThenPerPage', {
+                          free: formatNumber(budget.freePages),
+                          perPage: formatNumber(budget.costPerPage),
+                          balance: formatNumber(budget.balance),
+                        }) ||
+                        `First ${formatNumber(budget.freePages)} free · then ${formatNumber(budget.costPerPage)} credits a page · balance ${formatNumber(budget.balance)}`
+                      : t('agents.creditsAPageBalance', {
+                          perPage: formatNumber(budget.costPerPage),
+                          balance: formatNumber(budget.balance),
+                        }) ||
+                        `${formatNumber(budget.costPerPage)} credits a page · balance ${formatNumber(budget.balance)}`
                 }
               />
               <FigureRow
@@ -341,7 +373,8 @@ export function WebsiteFlow({
                 disabled={!url.trim() || (preflight?.blocked ?? false)}
                 onClick={() => setConfirmingStart(true)}
               >
-                Train on {formatNumber(pageCount)} page{pageCount === 1 ? '' : 's'}
+                {t('agents.trainOnNPages', { count: formatNumber(pageCount) }) ||
+                  `Train on ${formatNumber(pageCount)} pages`}
               </Button>
               <Button variant="ghost" disabled={discovering} onClick={() => void flow.discover()}>
                 {t('agents.checkAgain') || 'Check again'}
@@ -387,11 +420,24 @@ export function WebsiteFlow({
         description={
           budget
             ? budget.costPerPage === 0
-              ? `${formatNumber(pageCount)} page${pageCount === 1 ? '' : 's'}, free. Your balance of ${formatNumber(budget.balance)} credits is not touched.`
-              : `${formatNumber(pageCount)} page${pageCount === 1 ? '' : 's'} × ${formatNumber(budget.costPerPage)} credits = ${formatNumber(cost)} credits, from a balance of ${formatNumber(budget.balance)}. Charged as they are read, so stopping early only pays for what was read.`
-            : `This reads ${url.trim() || 'this website'} and charges credits for each page it reads.`
+              ? t('agents.nPagesFreeBalanceUntouched', {
+                  count: formatNumber(pageCount),
+                  balance: formatNumber(budget.balance),
+                }) ||
+                `${formatNumber(pageCount)} pages, free. Your balance of ${formatNumber(budget.balance)} credits is not touched.`
+              : t('agents.nPagesTimesCredits', {
+                  count: formatNumber(pageCount),
+                  perPage: formatNumber(budget.costPerPage),
+                  cost: formatNumber(cost),
+                  balance: formatNumber(budget.balance),
+                }) ||
+                `${formatNumber(pageCount)} pages × ${formatNumber(budget.costPerPage)} credits = ${formatNumber(cost)} credits, from a balance of ${formatNumber(budget.balance)}. Charged as they are read, so stopping early only pays for what was read.`
+            : t('agents.thisReadsAndCharges', {
+                site: url.trim() || t('agents.thisWebsite') || 'this website',
+              }) ||
+              `This reads ${url.trim() || 'this website'} and charges credits for each page it reads.`
         }
-        confirmLabel="Start training"
+        confirmLabel={t('agents.startTraining') || 'Start training'}
         onConfirm={async () => {
           await flow.beginCrawl();
           setConfirmingStart(false);

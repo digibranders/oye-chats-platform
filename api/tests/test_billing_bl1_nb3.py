@@ -27,9 +27,10 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import Base, Bot, Client, Document, Plan, Subscription
+from app.db.models import Bot, Client, Document, Plan, Subscription
 from app.services import razorpay_service as rzp
 from app.services import transition_service
+from tests.conftest import reset_database
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("DB_URL"),
@@ -301,15 +302,7 @@ def test_promotion_is_idempotent_sequential(db, monkeypatch):
 # ── Fix A: the lock serializes a genuine webhook + cron double-fire ───────────
 
 
-def _truncate_all(session: Session) -> None:
-    names = ", ".join(f'"{t.name}"' for t in Base.metadata.sorted_tables)
-    from sqlalchemy import text as _sa_text
-
-    session.execute(_sa_text(f"TRUNCATE {names} RESTART IDENTITY CASCADE"))
-    session.commit()
-
-
-def test_lock_serializes_concurrent_webhook_and_cron(pg_engine, monkeypatch):
+def test_lock_serializes_concurrent_webhook_and_cron(pg_engine, fk_checks_switchable, monkeypatch):
     """Two independent sessions (webhook + cron) racing on the SAME cutover must
     promote exactly ONCE (one checkout, one email) not twice (Fig A).
 
@@ -370,9 +363,11 @@ def test_lock_serializes_concurrent_webhook_and_cron(pg_engine, monkeypatch):
     finally:
         session_a.rollback()
         session_b.rollback()
-        _truncate_all(session_a)
-        session_a.close()
+        # This test builds its own sessions rather than taking the ``db``
+        # fixture, so it runs that fixture's teardown by hand.
         session_b.close()
+        reset_database(session_a, fk_checks_switchable=fk_checks_switchable)
+        session_a.close()
 
 
 # ── Fix D: cron backstop drives the REAL task, not a hand-rolled query ────────

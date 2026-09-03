@@ -1,3 +1,4 @@
+import { t as translateNow } from '../../i18n/i18n';
 /**
  * Client-side validators.
  *
@@ -11,7 +12,7 @@
 export function validateEmail(value: string): string | null {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value)
     ? null
-    : `${value} is not a valid email address.`;
+    : translateNow('ds.notAValidEmail', { value }) || `${value} is not a valid email address.`;
 }
 
 /** Accepts a bare host as well as a full URL; the caller normalises the scheme. */
@@ -19,9 +20,11 @@ export function validateUrl(value: string): string | null {
   const candidate = /^https?:\/\//i.test(value) ? value : `https://${value}`;
   try {
     const url = new URL(candidate);
-    return url.hostname.includes('.') ? null : `${value} is not a valid web address.`;
+    return url.hostname.includes('.')
+      ? null
+      : translateNow('ds.notAValidWebAddress', { value }) || `${value} is not a valid web address.`;
   } catch {
-    return `${value} is not a valid web address.`;
+    return translateNow('ds.notAValidWebAddress', { value }) || `${value} is not a valid web address.`;
   }
 }
 

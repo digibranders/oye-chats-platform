@@ -27,6 +27,7 @@ import {
   type Allowance,
 } from '../knowledge-model';
 import { useTranslation } from '../../../../i18n/useTranslation';
+import { Trans } from '../../../../i18n/Trans';
 
 export interface DocumentsFlowProps {
   agentId: number;
@@ -125,9 +126,16 @@ export function DocumentsFlow({
       // progress component says plainly rather than spinning for ever.
       setJobId(typeof result?.job_id === 'string' ? result.job_id : null);
       setLanded(
-        `${files.length} document${files.length === 1 ? '' : 's'} uploaded${
+        `${
+          (files.length === 1
+            ? t('agents.oneDocumentUploaded', { count: files.length })
+            : t('agents.nDocumentsUploaded', { count: files.length })) ||
+          `${files.length} document${files.length === 1 ? '' : 's'} uploaded`
+        }${
           typeof result?.credits_charged === 'number' && result.credits_charged > 0
-            ? ` · ${formatNumber(result.credits_charged)} credits charged`
+            ? t('agents.creditsChargedSuffix', {
+                credits: formatNumber(result.credits_charged),
+              }) || ` · ${formatNumber(result.credits_charged)} credits charged`
             : ''
         }.`,
       );
@@ -148,8 +156,13 @@ export function DocumentsFlow({
       <CardBody>
         <LockedState
           size="panel"
-          title={`${planName}: no documents left`}
-          description={`This plan covers ${formatNumber(documentAllowance.limit)} documents across this workspace. Remove one below, or move up.`}
+          title={t('agents.planNoDocumentsLeft', { plan: planName }) || `${planName}: no documents left`}
+          description={
+            t('agents.thisPlanCoversNDocuments', {
+              limit: formatNumber(documentAllowance.limit),
+            }) ||
+            `This plan covers ${formatNumber(documentAllowance.limit)} documents across this workspace. Remove one below, or move up.`
+          }
           action={
             <Link to="/billing" className={buttonClass('primary', 'sm')}>
               {t('agents.seePlans') || 'See plans'}
@@ -165,8 +178,16 @@ export function DocumentsFlow({
       <CardBody>
         <LockedState
           size="panel"
-          title={`${planName}: no knowledge base left`}
-          description={`This plan holds ${formatNumber(characterAllowance.limit)} characters. Remove something below, or move up.`}
+          title={
+            t('agents.planNoKnowledgeBaseLeft', { plan: planName }) ||
+            `${planName}: no knowledge base left`
+          }
+          description={
+            t('agents.thisPlanHoldsNCharacters', {
+              limit: formatNumber(characterAllowance.limit),
+            }) ||
+            `This plan holds ${formatNumber(characterAllowance.limit)} characters. Remove something below, or move up.`
+          }
           action={
             <Link to="/billing" className={buttonClass('primary', 'sm')}>
               {t('agents.seePlans') || 'See plans'}
@@ -199,11 +220,13 @@ export function DocumentsFlow({
           // quota that may not exist. Uploads are still priced and confirmed
           // below, and the server enforces whatever the real ceiling is.
           <p className="text-xs text-text-secondary">
-            {planName} states no document limit. Uploads are charged in credits, by length.
+            {t('agents.planStatesNoDocumentLimit', { plan: planName }) ||
+              `${planName} states no document limit. Uploads are charged in credits, by length.`}
           </p>
         ) : documentAllowance.unlimited ? (
           <p className="text-xs text-text-secondary">
-            No document limit on {planName}, uploads are charged in credits, by length.
+            {t('agents.noDocumentLimitOn', { plan: planName }) ||
+              `No document limit on ${planName}, uploads are charged in credits, by length.`}
           </p>
         ) : (
           // The scope is the `Meter`'s `hint` now. It was folded into the label
@@ -222,7 +245,12 @@ export function DocumentsFlow({
         {characterAllowance && !planLoading ? (
           <Meter
             label={t('agents.knowledgeBase') || 'Knowledge base'}
-            hint={`About ${formatNumber(charactersAsWords(characterAllowance.used))} words of text stored.`}
+            hint={
+              t('agents.aboutNWordsStored', {
+                words: formatNumber(charactersAsWords(characterAllowance.used)),
+              }) ||
+              `About ${formatNumber(charactersAsWords(characterAllowance.used))} words of text stored.`
+            }
             used={characterAllowance.used}
             limit={characterAllowance.limit}
             unit="chars"
@@ -265,17 +293,19 @@ export function DocumentsFlow({
             }
           >
             {quote.total_credits === 0 ? (
-              <>
-                None of these files had readable text — most often a scanned PDF. Nothing was
-                uploaded and nothing was charged.
-              </>
+              t('agents.noneOfTheseFilesHadReadableText') ||
+              'None of these files had readable text, most often a scanned PDF. Nothing was uploaded and nothing was charged.'
             ) : (
-              <>
-                These cost <span className="figure">{formatNumber(quote.total_credits)}</span>{' '}
-                credits and you have{' '}
-                <span className="figure">{formatNumber(quote.current_balance)}</span>. Nothing has
-                been uploaded or charged.
-              </>
+              <Trans
+                k="agents.theseCostNCreditsYouHave"
+                fallback="These cost {cost} credits and you have {balance}. Nothing has been uploaded or charged."
+                values={{
+                  cost: <span className="figure">{formatNumber(quote.total_credits)}</span>,
+                  balance: (
+                    <span className="figure">{formatNumber(quote.current_balance)}</span>
+                  ),
+                }}
+              />
             )}
           </Alert>
         ) : null}
@@ -301,18 +331,29 @@ export function DocumentsFlow({
         onOpenChange={(open) => {
           if (!open) clearPending();
         }}
-        title={`Upload ${pending?.length ?? 0} document${(pending?.length ?? 0) === 1 ? '' : 's'}?`}
+        title={
+          t('agents.uploadNDocuments', { count: pending?.length ?? 0 }) ||
+          `Upload ${pending?.length ?? 0} documents?`
+        }
         description={
           quote ? (
-            <>
-              This charges <span className="figure">{formatNumber(quote.total_credits)}</span>{' '}
-              credit{quote.total_credits === 1 ? '' : 's'} from a balance of{' '}
-              <span className="figure">{formatNumber(quote.current_balance)}</span>. Documents are
-              priced by length.
-            </>
+            <Trans
+              k="agents.thisChargesNCreditsFromBalance"
+              fallback="This charges {cost} credits from a balance of {balance}. Documents are priced by length."
+              values={{
+                cost: <span className="figure">{formatNumber(quote.total_credits)}</span>,
+                balance: (
+                  <span className="figure">{formatNumber(quote.current_balance)}</span>
+                ),
+              }}
+            />
           ) : null
         }
-        confirmLabel={`Upload for ${formatNumber(quote?.total_credits ?? 0)} credits`}
+        confirmLabel={
+          t('agents.uploadForNCredits', {
+            credits: formatNumber(quote?.total_credits ?? 0),
+          }) || `Upload for ${formatNumber(quote?.total_credits ?? 0)} credits`
+        }
         onConfirm={upload}
       >
         {/* The per-file breakdown is the dialog's own block, not part of its

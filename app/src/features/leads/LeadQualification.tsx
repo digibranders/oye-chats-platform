@@ -3,6 +3,7 @@ import type { Lead, LeadSignal } from '../../types/domain';
 import { LeadSection } from './LeadSection';
 import { orderedDimensions } from './leadModel';
 import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 /**
  * What the chatbot learned. Read-only — the score is derived from what the
@@ -119,12 +120,18 @@ export function LeadQualification({ lead }: LeadQualificationProps) {
                   size="sm"
                   hideLabel
                   value={Math.min((dimension.score / max) * 100, 100)}
-                  label={`${dimension.label}: ${dimension.score} out of ${max}`}
+                  label={
+                    translateNow('leads.dimensionScoreOutOf', {
+                      dimension: dimension.label,
+                      score: dimension.score,
+                      max,
+                    }) || `${dimension.label}: ${dimension.score} out of ${max}`
+                  }
                   tone={dimension.captured ? 'success' : 'accent'}
                 />
               ) : (
                 <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
-                  {dimension.captured ? 'Captured' : 'Nothing captured for this yet'}
+                  {dimension.captured ? t('leads.captured') || 'Captured' : t('leads.nothingCapturedForThisYet') || 'Nothing captured for this yet'}
                 </span>
               )}
               <span className="figure w-12 shrink-0 text-right text-xs text-text-secondary">
@@ -144,7 +151,7 @@ export function LeadQualification({ lead }: LeadQualificationProps) {
           sums into the qualification half of the 0 to 100 score in the header. */}
       {dimensions.every((dimension) => dimension.max === null) ? (
         <p className="mt-2 text-xs text-text-tertiary">
-          Points each answer added to this lead&rsquo;s score.
+          {t('leads.pointsEachAnswerAddedTo') || 'Points each answer added to this lead’s score.'}
         </p>
       ) : null}
 
@@ -152,8 +159,11 @@ export function LeadQualification({ lead }: LeadQualificationProps) {
       {evidence.length > 0 ? (
         <Disclosure
           className="mt-2"
-          summary={`What they said (${evidence.length})`}
-          regionLabel="What the visitor said"
+          summary={
+            translateNow('leads.whatTheySaidCount', { count: evidence.length }) ||
+            `What they said (${evidence.length})`
+          }
+          regionLabel={translateNow('leads.whatTheVisitorSaid') || 'What the visitor said'}
         >
           <dl className="space-y-2">
             {evidence.map((entry) => (

@@ -119,6 +119,10 @@ const SEVERITY_LABELS: Record<string, string> = Object.fromEntries(
  * none. "In progress" is carried by the spinning `Loader2` inside the badge,
  * not by a sixth colour.
  */
+// @i18n-exempt: the labels below are FALLBACKS, not the rendered copy. Every
+// read of this table goes through `optionLabel('status', id, meta.label)`,
+// which resolves `shell.feedback.status.<id>` first. The table is a module
+// constant evaluated before any locale exists, so it cannot resolve one itself.
 const STATUS_META: Record<
   PlatformFeedbackItem['status'],
   { label: string; tone: BadgeTone; icon: LucideIcon; spin?: boolean }
@@ -128,6 +132,18 @@ const STATUS_META: Record<
   resolved: { label: 'Resolved', tone: 'success', icon: CheckCircle2 },
   closed: { label: 'Closed', tone: 'neutral', icon: Archive },
 };
+
+/**
+ * A feedback option label in the reader's language.
+ *
+ * The tables above are module constants evaluated at import, before any locale
+ * exists, so they cannot resolve a translation themselves. The `id` is the
+ * stable key - it is what the API stores and what the backend filters on - and
+ * it is never translated; only the label the reader sees is.
+ */
+function optionLabel(group: string, id: string, fallback: string): string {
+  return translateNow(`shell.feedback.${group}.${id}`) || fallback;
+}
 
 const SEVERITY_TONE: Record<FeedbackSeverityId, BadgeTone> = {
   low: 'neutral',
@@ -239,13 +255,13 @@ function MyFeedbackList({ highlightId }: MyFeedbackListProps): ReactElement {
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <Badge tone={meta.tone}>
                   <StatusIcon aria-hidden className={cn('h-icon-sm w-icon-sm', meta.spin && 'animate-spin')} />
-                  {meta.label}
+                  {optionLabel('status', item.status, meta.label)}
                 </Badge>
-                {item.type ? <MetaPill>{TYPE_LABELS[item.type] ?? item.type}</MetaPill> : null}
-                {item.area ? <MetaPill>{AREA_LABELS[item.area] ?? item.area}</MetaPill> : null}
+                {item.type ? <MetaPill>{optionLabel('type', item.type, TYPE_LABELS[item.type] ?? item.type)}</MetaPill> : null}
+                {item.area ? <MetaPill>{optionLabel('area', item.area, AREA_LABELS[item.area] ?? item.area)}</MetaPill> : null}
                 {item.severity ? (
                   <Badge tone={SEVERITY_TONE[item.severity]}>
-                    {SEVERITY_LABELS[item.severity] ?? item.severity}
+                    {optionLabel('severity', item.severity, SEVERITY_LABELS[item.severity] ?? item.severity)}
                   </Badge>
                 ) : null}
               </div>
@@ -271,7 +287,8 @@ function MyFeedbackList({ highlightId }: MyFeedbackListProps): ReactElement {
                 </p>
                 {item.resolved_at ? (
                   <p className="figure mt-2 text-2xs text-text-tertiary">
-                    Resolved {formatDate(item.resolved_at)}
+                    {translateNow('shell.resolvedOn', { date: formatDate(item.resolved_at) }) ||
+                      `Resolved ${formatDate(item.resolved_at)}`}
                   </p>
                 ) : null}
               </div>
@@ -362,7 +379,7 @@ function TypePicker({
             )}
           >
             <Icon aria-hidden className={cn('h-icon-sm w-icon-sm', selected ? 'text-accent-600' : 'text-text-tertiary')} />
-            {option.label}
+            {optionLabel('type', option.id, option.label)}
           </button>
         );
       })}
@@ -395,7 +412,7 @@ function SeverityPicker({
                 : 'border-border-strong bg-surface text-text-secondary hover:bg-surface-hover',
             )}
           >
-            {option.label}
+            {optionLabel('severity', option.id, option.label)}
           </button>
         );
       })}
