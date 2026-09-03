@@ -561,3 +561,92 @@ class TestMediaBotQaCache:
         await _drive_stream(bot, "show me the tour", "sess-media-3")
 
         assert cap["cache"].store == {}
+
+
+# ── Defect R3/R5: cancellation, and blocking calls on the event loop ─────────
+
+
+class TestStreamCancellationAndOffloading:
+    """Two async-only defects in ``rag_pipeline_stream``.
+
+    R3: Starlette cancels the streaming task when the client goes away, which
+    arrives as ``CancelledError``, not ``GeneratorExit``. Only the latter was
+    caught, so a dropped SSE connection still lost the generated answer, the
+    exact data loss ``TestDisconnectMidStream`` above was written to prevent.
+
+    R5: output-side moderation (a sync HTTP call, up to 10s) and the FlashRank
+    reranker ran inline on the event loop, stalling every other stream on the
+    worker for their duration.
+    """
+
+    @pytest.mark.asyncio
+    async def test_partial_answer_survives_task_cancellation(self, db, monkeypatch):
+        import asyncio
+
+        client = _make_client(db)
+        bot = _make_bot(db, client)
+        _make_session(db, bot, client, "sess-cancel-1")
+        _stub_pipeline(monkeypatch, retrieved=(_doc("Acme opens at 9."),))
+
+        async def stalling_stream(prompt, **kwargs):
+            yield "We open at 9"
+            await asyncio.sleep(3600)  # upstream keeps the turn open
+            yield " and close at 5."  # pragma: no cover - never reached
+
+        monkeypatch.setattr(rs, "generate_response_stream", stalling_stream)
+
+        shown = asyncio.Event()
+
+        async def consume():
+            async for frame in rs.rag_pipeline_stream(bot, "when do you open", "sess-cancel-1", bot_id=bot.id):
+                if "We open at 9" in frame:
+                    shown.set()
+
+        task = asyncio.create_task(consume())
+        await asyncio.wait_for(shown.wait(), timeout=10)
+        # Cancel while the pipeline is parked inside the LLM stream: this is
+        # what Starlette does to the response task when the client disconnects.
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        bot_msgs = _messages(db, "sess-cancel-1", role="bot")
+        assert len(bot_msgs) == 1, "text already shown to the visitor must survive cancellation"
+        assert "We open at 9" in bot_msgs[0].content
+
+    @pytest.mark.asyncio
+    async def test_rerank_and_answer_safety_run_off_the_event_loop(self, db, monkeypatch):
+        import asyncio
+
+        client = _make_client(db)
+        bot = _make_bot(db, client)
+        _make_session(db, bot, client, "sess-offload-1")
+        _stub_pipeline(monkeypatch, retrieved=(_doc("Acme opens at 9."),))
+
+        called: dict[str, bool] = {}
+
+        def _assert_off_loop(name):
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                called[name] = True
+                return
+            raise AssertionError(f"{name} ran on the event loop")
+
+        def fake_rerank(query, results, top_n=None):
+            _assert_off_loop("rerank")
+            return results
+
+        def fake_safety(*args, **kwargs):
+            _assert_off_loop("check_generated_answer_safety")
+            return True, None
+
+        monkeypatch.setattr(rs, "RERANK_ENABLED", True)
+        monkeypatch.setattr(rs, "_lang_is_non_english", lambda language: False)
+        monkeypatch.setattr(rs, "rerank", fake_rerank)
+        monkeypatch.setattr(rs, "check_generated_answer_safety", fake_safety)
+
+        await _drive_stream(bot, "when do you open", "sess-offload-1")
+
+        assert called.get("rerank"), "the reranker must be exercised by this test"
+        assert called.get("check_generated_answer_safety"), "answer moderation must be exercised by this test"

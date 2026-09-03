@@ -41,7 +41,15 @@ from app.config import (
     MARKETING_URL,
 )
 from app.config import WIDGET_SCRIPT_URL as CONFIGURED_WIDGET_SCRIPT_URL
-from app.core.cache import PREFIX, bot_config_key, cache_delete, get_redis
+from app.core.cache import (
+    PREFIX,
+    bot_config_key,
+    cache_delete,
+    cache_delete_prefix,
+    gate_prefix_for_bot,
+    get_redis,
+    qa_prefix_for_bot,
+)
 from app.core.origin_check import extract_hostname, is_origin_allowed, normalize_domain_input
 from app.core.rate_limit import limiter
 from app.core.ssrf import SSRFError, validate_public_url
@@ -68,6 +76,7 @@ from app.services.brand_tone import BRAND_TONE_PRESETS, CUSTOM_PRESET, is_valid_
 from app.services.email_service import send_install_invite_email
 from app.services.install_probe import probe_is_running
 from app.services.install_registry import list_domain_installs, record_observed_domain
+from app.services.knowledge_quota_service import release_kb_usage_for_bot
 from app.services.language_service import KNOWN_LOCALES, is_multilingual_enabled, normalize_locale
 
 # Upper bound on per-bot domain list size. 50 covers every realistic case
@@ -2969,6 +2978,7 @@ def recapture_demo_screenshot(request: Request, bot_id: int, auth=Depends(get_cu
         # Reflect the queued state immediately. The Deploy page reads this
         # field, and leaving it on its previous value would read as "nothing
         # happened" for as long as the capture takes to start.
+        previous_status = bot.demo_screenshot_status
         bot.demo_screenshot_status = "pending"
         session.commit()
         target_bot_id = bot.id
@@ -2988,12 +2998,22 @@ def recapture_demo_screenshot(request: Request, bot_id: int, auth=Depends(get_cu
         if WORKER_ENABLED:
             from app.worker.enqueue import enqueue_sync
 
-            enqueue_sync(
+            # Fixed per-bot job id: repeat clicks while one capture is queued
+            # or running collapse onto it. That only holds because the worker
+            # registers this task with ``keep_result=0`` (see worker/settings);
+            # with a stored result ARQ would refuse every enqueue for the hour
+            # the result lives, which is what the ``None`` branch below catches.
+            queued = enqueue_sync(
                 "task_capture_demo_screenshot",
                 target_bot_id,
                 True,
                 _job_id=f"demo-screenshot:{target_bot_id}",
             )
+            if queued is None:
+                # ARQ rejected the enqueue (an identical job id is still live).
+                # Nothing will run, so the row must not keep claiming a capture
+                # is under way, and the customer must be free to press again.
+                raise RuntimeError("demo capture was not queued")
         else:
             from app.core.thread_pool import submit_background
             from app.services.screenshot_service import refresh_bot_capture
@@ -3006,7 +3026,10 @@ def recapture_demo_screenshot(request: Request, bot_id: int, auth=Depends(get_cu
         with get_session() as session:
             failed = session.get(Bot, target_bot_id)
             if failed is not None:
-                failed.demo_screenshot_status = "failed"
+                # Back to whatever it said before this request, so the card
+                # falls back on the capture the customer already has instead of
+                # reporting a failure that never happened.
+                failed.demo_screenshot_status = previous_status
                 session.commit()
         raise HTTPException(status_code=503, detail="We could not start the preview. Try again in a moment.") from None
 
@@ -3072,6 +3095,7 @@ def detect_brand_tone(bot_id: int, request: Request, auth=Depends(get_current_cl
 
         session.commit()
         cache_delete(bot_config_key(bot.bot_key))
+        _flush_answer_caches(bot.id)
         return {"brand_tone": bot.brand_tone, "brand_tone_preset": key}
 
 
@@ -3771,6 +3795,12 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
             session.commit()
             # Invalidate cached bot config so widget picks up changes immediately
             cache_delete(bot_config_key(bot.bot_key))
+            # The answer cache is keyed on the question, not on the prompt that
+            # produced the answer, so an edit to the system prompt, tone,
+            # company details or smart links would otherwise keep serving
+            # pre-edit answers (and pre-edit relevance-gate verdicts) for up to
+            # an hour. Flush both alongside the config.
+            _flush_answer_caches(bot.id)
             if is_active_transition is not None:
                 # ``usage["bots"]`` and ``can_client_add_new_bot`` both count
                 # active bots, and the account entitlements are cached for 60s.
@@ -4019,11 +4049,36 @@ def delete_bot(bot_id: int, auth=Depends(get_current_client_or_operator)):
                 sub.bot_id = None  # release the (client, bot) unique-index slot
                 session.flush()
 
+        # Hand this bot's characters back to the account BEFORE the cascade
+        # delete removes the rows that carry the count. Otherwise
+        # ``kb_characters_used`` keeps every deleted bot's knowledge forever and
+        # the workspace eventually 402s on an empty knowledge base.
+        freed_chars = release_kb_usage_for_bot(session, client_id=auth["client_id"], bot_id=bot.id)
         session.delete(bot)
         session.commit()
         cache_delete(bot_config_key(bot_key_val))
-        logger.info(f"Bot {bot_id} deleted by workspace {auth['client_id']}")
+        _flush_answer_caches(bot_id)
+        logger.info(
+            "Bot %s deleted by workspace %s (%d KB chars reclaimed)",
+            bot_id,
+            auth["client_id"],
+            freed_chars,
+        )
         return {"message": "Bot deleted successfully"}
+
+
+def _flush_answer_caches(bot_id: int | None) -> None:
+    """Drop this bot's cached answers and relevance-gate verdicts.
+
+    Both caches are keyed on the visitor's question alone, so anything that
+    changes how the bot answers (prompt, tone, company context, smart links, or
+    the bot ceasing to exist) has to invalidate them explicitly or the old
+    answers keep being served for the rest of their TTL.
+    """
+    if not bot_id:
+        return
+    cache_delete_prefix(qa_prefix_for_bot(bot_id))
+    cache_delete_prefix(gate_prefix_for_bot(bot_id))
 
 
 def _domain_state(row) -> str:
@@ -4171,7 +4226,12 @@ def start_install_check(
         if WORKER_ENABLED:
             from app.worker.enqueue import enqueue_sync
 
-            enqueue_sync("task_probe_bot_installs", bot_id, _job_id=f"install-probe:{bot_id}")
+            queued = enqueue_sync("task_probe_bot_installs", bot_id, _job_id=f"install-probe:{bot_id}")
+            if queued is None:
+                # Refused because an identical job id is still live: a check for
+                # this bot was dispatched moments ago, so report that rather
+                # than promising one nobody queued.
+                return {"success": True, "checking": True, "already_running": True}
         else:
             from app.core.thread_pool import submit_background
             from app.services.install_probe import run_install_probe_sync

@@ -75,7 +75,7 @@ class _StubManager(lcs.ConnectionManager):
         await ws.accept(subprotocol=kwargs.get("subprotocol"))
         self.operator_connections[operator_id] = ws
 
-    async def disconnect_operator_and_broadcast(self, operator_id):
+    async def disconnect_operator_and_broadcast(self, operator_id, ws=None):
         self.operator_connections.pop(operator_id, None)
 
     async def route_operator_message(self, session_id, content, *a, **k):

@@ -728,6 +728,11 @@ async def _bind_notification_broadcaster_loop():
         from app.services.live_chat_service import manager as _manager
         from app.services.ws_backplane import start as _ws_backplane_start
 
+        # Same reason as the broadcaster above: background BANT extraction runs
+        # on the shared thread pool and needs to hand its operator-console
+        # broadcast back to the loop that owns the sockets and the Redis
+        # publisher, instead of running it on a throwaway loop.
+        _manager.bind_loop(_asyncio.get_running_loop())
         await _ws_backplane_start(_manager)
     except Exception:
         # Delivery degrades to local-only, which is exactly today's behaviour.

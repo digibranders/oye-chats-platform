@@ -67,6 +67,7 @@ from app.core.dates import add_months
 from app.core.pricing import charge_currency, format_amount, seat_price
 from app.core.tax import SupplyKind, gross_charge_minor, supply_kind
 from app.db.models import (
+    ADDON_INVOICE_KINDS,
     AddonPlanCache,
     Bot,
     Client,
@@ -2799,12 +2800,16 @@ def handle_webhook_event(
     handler = handlers.get(event_name)
     if handler is None:
         return f"Unhandled event type: {event_name}"
-    if handler is _handle_subscription_activated:
-        # The only handler that can refuse an ALREADY-CHARGED activation without
-        # persisting anything. It needs the event id so it can release the
-        # idempotency key it would otherwise burn on work it never did. See
-        # ``_release_idempotency_key``. Passed explicitly rather than widening
-        # every handler's signature or smuggling it through a context var.
+    if handler in (_handle_subscription_activated, _handle_subscription_authenticated):
+        # The activation handler is the only one that can refuse an
+        # ALREADY-CHARGED activation without persisting anything. It needs the
+        # event id so it can release the idempotency key it would otherwise burn
+        # on work it never did. See ``_release_idempotency_key``. Passed
+        # explicitly rather than widening every handler's signature or smuggling
+        # it through a context var. ``authenticated`` delegates straight into it
+        # (promo / deferred-start mandates), so it must carry the key too, or a
+        # refusal there burns the provider event id and the mandate can never be
+        # reprocessed.
         return handler(session, payload, event_id=event_id)
     return handler(session, payload)
 
@@ -3285,7 +3290,9 @@ def _record_referral_conversion_from_notes(session: Session, client_id: int, not
         )
 
 
-def _handle_subscription_authenticated(session: Session, payload: dict[str, Any]) -> str:
+def _handle_subscription_authenticated(
+    session: Session, payload: dict[str, Any], *, event_id: str | None = None
+) -> str:
     """Mandate authorised, billing not started, two deferred-start cases meet here.
 
     A subscription minted with a future ``start_at`` sits in ``authenticated``
@@ -3307,6 +3314,10 @@ def _handle_subscription_authenticated(session: Session, payload: dict[str, Any]
 
     An immediate-start non-promo subscription is left alone: its own
     ``activated`` event is the canonical trigger and arrives on its own.
+
+    ``event_id`` is forwarded to the activation handler for the same reason the
+    dispatcher passes it there directly: a refusal inside activation releases
+    the idempotency key instead of burning it on work it never did.
     """
     sub_entity = _extract_subscription_entity(payload)
     if not sub_entity:
@@ -3316,7 +3327,7 @@ def _handle_subscription_authenticated(session: Session, payload: dict[str, Any]
     if _promotion_id_from_notes(notes) is None and _entity_future_start(sub_entity) is None:
         return f"subscription.authenticated for {sub_entity.get('id')} ignored (immediate start. Awaiting activated)"
 
-    return _handle_subscription_activated(session, payload)
+    return _handle_subscription_activated(session, payload, event_id=event_id)
 
 
 def _handle_subscription_activated(session: Session, payload: dict[str, Any], *, event_id: str | None = None) -> str:
@@ -4679,6 +4690,18 @@ def _handle_subscription_cancelled(session: Session, payload: dict[str, Any]) ->
     # sat in limbo with no plan and no trial.
     if _was_unbilled_trial_conversion(local):
         _forfeit_and_convert_to_free(session, local)
+    else:
+        # Same leak, non-trial shape: a UPI mandate grants the first period at
+        # ``subscription.activated``, BEFORE its first debit. Cancelling in
+        # between (customer revokes the mandate in their UPI app) leaves a full
+        # unpaid period of credits standing, exactly what the halted/pending
+        # paths already reverse. The helper no-ops unless this subscription has
+        # zero paid plan invoices and its marker still sits past the period
+        # start, so an ordinary cancellation after months of billing is
+        # untouched. Not run on the branch above: the forfeit already zeroed the
+        # scope and granted the replacement Free allowance, which a second reset
+        # would wipe.
+        _revoke_unpaid_activation_grant(session, local)
 
     # Paid → Free: keep the bot's data but deactivate its knowledge so it stops
     # answering from a paid-tier KB until the customer re-adds on Free or
@@ -4888,6 +4911,38 @@ def _revoke_unpaid_activation_grant(session: Session, local: Subscription) -> bo
     return True
 
 
+def _handle_dunning_event(session: Session, local: Subscription, sub_id: str, event_label: str) -> str:
+    """Shared body of ``subscription.halted`` / ``subscription.pending``.
+
+    A row that is already terminal locally (superseded by an upgrade, expired by
+    dunning, cancelled by the customer) must NOT be dragged back into
+    ``past_due``: that resurrects a retired subscription with a fresh 7-day
+    grace window, restores paid-tier entitlements the account no longer has,
+    and, when a live sibling row exists, inserts a second non-terminal row into
+    the ``one active per scope`` index. Same reasoning, and same terminal-only
+    bookkeeping, as the cancelled/completed handlers. The revoke is skipped too:
+    it is a live-row remedy, and on a retired row it would reset the credits of
+    whatever subscription the client is on now.
+    """
+    if local.status in TERMINAL_SUBSCRIPTION_STATUSES:
+        session.flush()
+        logger.info(
+            "subscription.%s for %s (client %s) landed on an already-%s row; no dunning side effects",
+            event_label,
+            sub_id,
+            local.client_id,
+            local.status,
+        )
+        return f"Subscription {sub_id} {event_label} (already {local.status} locally)"
+
+    _enter_past_due(local)
+    # Reverse an unpaid first-period activation grant (#2) so a customer whose
+    # UPI first charge fails doesn't keep a free period of credits.
+    _revoke_unpaid_activation_grant(session, local)
+    session.flush()
+    return f"Subscription {sub_id} {event_label}"
+
+
 def _handle_subscription_halted(session: Session, payload: dict[str, Any]) -> str:
     sub_entity = _extract_subscription_entity(payload)
     if not sub_entity:
@@ -4895,12 +4950,7 @@ def _handle_subscription_halted(session: Session, payload: dict[str, Any]) -> st
     local = _resolve_local_subscription(session, sub_entity.get("id", ""))
     if not local:
         return "Subscription not found"
-    _enter_past_due(local)
-    # Reverse an unpaid first-period activation grant (#2) so a customer whose
-    # UPI first charge fails doesn't keep a free period of credits.
-    _revoke_unpaid_activation_grant(session, local)
-    session.flush()
-    return f"Subscription {sub_entity.get('id')} halted"
+    return _handle_dunning_event(session, local, sub_entity.get("id", ""), "halted")
 
 
 def _handle_subscription_pending(session: Session, payload: dict[str, Any]) -> str:
@@ -4910,10 +4960,7 @@ def _handle_subscription_pending(session: Session, payload: dict[str, Any]) -> s
     local = _resolve_local_subscription(session, sub_entity.get("id", ""))
     if not local:
         return "Subscription not found"
-    _enter_past_due(local)
-    _revoke_unpaid_activation_grant(session, local)
-    session.flush()
-    return f"Subscription {sub_entity.get('id')} pending"
+    return _handle_dunning_event(session, local, sub_entity.get("id", ""), "pending")
 
 
 def _is_subscription_payment(pay_entity: dict[str, Any] | None) -> bool:
@@ -5458,16 +5505,19 @@ def _mark_withheld_charge(session: Session, invoice: Invoice | None) -> None:
 def _clawback_reasons_for(inv: Invoice) -> tuple[str, ...] | None:
     """Which grant type a refund/chargeback of ``inv`` should reverse.
 
-    ``None`` means the charge funded NO credit grant (seat add-ons,
-    withheld-credit charges after cancellation). Claw nothing. Deriving this
-    from ``subscription_id`` presence was P0-1: seat and withheld invoices
+    ``None`` means the charge funded NO credit grant (every add-on kind in
+    ``ADDON_INVOICE_KINDS`` -- seat and branding-removal -- and withheld-credit
+    charges after cancellation). Claw nothing, and do not fall through to the
+    legacy branch, whose "review manually" fallback would log a false error on
+    every branding refund. Deriving this from ``subscription_id`` presence was
+    P0-1: add-on and withheld invoices
     carry a subscription_id, so refunding one fell through to the
     most-recent-grant fallback and wiped an unrelated plan allowance.
 
     Legacy rows (``kind`` IS NULL, pre-migration) keep the old heuristic; they
     are also the only rows allowed the unlinked-grant fallback.
     """
-    if inv.kind in ("seat", "withheld_charge"):
+    if inv.kind in (*ADDON_INVOICE_KINDS, "withheld_charge"):
         return None
     if inv.kind == "topup":
         return ("topup",)

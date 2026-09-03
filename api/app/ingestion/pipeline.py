@@ -23,6 +23,7 @@ from app.ingestion.youtube_metadata import (
 )
 from app.services.knowledge_quota_service import (
     KnowledgeQuotaExceeded,
+    chars_used_by_source,
     check_kb_quota,
     increment_kb_usage,
 )
@@ -253,52 +254,93 @@ def _ingest_document(
     # text so PDF extraction artefacts and chunk-overlap don't eat the cap.
     source_char_count = len(cleaned_full_text)
 
+    # ── Dedup check, OUTSIDE any write transaction ──────────────────────────
+    # Read-only. Chunking, enrichment and embedding all run before a single
+    # row lock is taken (see below): ``check_kb_quota`` locks the client row
+    # ``FOR UPDATE``, and embedding can block for minutes under 429 back-off,
+    # so holding that lock across it stalls every other writer of the row
+    # (login, OTP verify, profile save, checkout, a concurrent crawl wave).
+    # ``batch_web_ingestion`` has always embedded first; this mirrors it.
     with get_session() as session:
-        already_processed = is_document_processed(session, client_id, file_hash, bot_id=bot_id)
-
-        if already_processed:
+        if is_document_processed(session, client_id, file_hash, bot_id=bot_id):
             logger.info(f"Skipping {source_name} (Already processed for client {client_id}, bot {bot_id})")
             return 0
 
-        # KB char quota gate. Raises KnowledgeQuotaExceeded (mapped to 402
-        # at the route layer). Runs BEFORE chunking + embedding so we never
-        # burn embedding quota on content we can't accept. Takes a row-level
-        # lock on the client row so concurrent uploads race-safely against
-        # the same counter.
-        check_kb_quota(session, client_id, source_char_count)
+    # 2. Chunk the SAME cleaned text we hashed (Preserves metadata)
+    chunks = chunk_text(cleaned_pages_data, document_name=source_name)
 
-        # 2. Chunk the SAME cleaned text we hashed (Preserves metadata)
-        chunks = chunk_text(cleaned_pages_data, document_name=source_name)
+    # Extract content and metadata for external processing
+    chunk_contents = [c.page_content for c in chunks]
 
-        # Extract content and metadata for external processing
-        chunk_contents = [c.page_content for c in chunks]
+    # 2a. Optional: contextual enrichment (CHUNK_ENRICHMENT_ENABLED=true)
+    # Prepends a short LLM-generated context to each chunk before embedding.
+    # One-time cost at ingestion; improves retrieval accuracy significantly.
+    if CHUNK_ENRICHMENT_ENABLED and chunk_contents:
+        # Use the beginning of the full text as the document summary for context
+        document_summary = full_text[:2000] if full_text else ""
+        chunk_contents = enrich_chunks_batch(chunk_contents, document_summary)
 
-        # 2a. Optional: contextual enrichment (CHUNK_ENRICHMENT_ENABLED=true)
-        # Prepends a short LLM-generated context to each chunk before embedding.
-        # One-time cost at ingestion; improves retrieval accuracy significantly.
-        if CHUNK_ENRICHMENT_ENABLED and chunk_contents:
-            # Use the beginning of the full text as the document summary for context
-            document_summary = full_text[:2000] if full_text else ""
-            chunk_contents = enrich_chunks_batch(chunk_contents, document_summary)
+    # Enhance metadata with source info
+    current_time = datetime.now(UTC).isoformat()
+    chunk_metadatas = []
+    for c in chunks:
+        meta = c.metadata.copy()
+        meta["source"] = source_name
+        meta["ingest_date"] = current_time
+        chunk_metadatas.append(meta)
 
-        # Enhance metadata with source info
-        current_time = datetime.now(UTC).isoformat()
-        chunk_metadatas = []
-        for c in chunks:
-            meta = c.metadata.copy()
-            meta["source"] = source_name
-            meta["ingest_date"] = current_time
-            chunk_metadatas.append(meta)
+    # 3. Embed chunks
+    if not chunk_contents:
+        logger.warning(f"No content to embed for {source_name}")
+        return 0
 
-        # 3. Embed chunks
-        if not chunk_contents:
-            logger.warning(f"No content to embed for {source_name}")
-            return 0
+    embeddings = embed_chunks(chunk_content_list=chunk_contents)
 
-        embeddings = embed_chunks(chunk_content_list=chunk_contents)
-
-        # 4. Save to Database with JSONB metadata
+    # 4. Save to Database with JSONB metadata. Everything below is one short
+    #    transaction: replace → quota → re-check → insert → account.
+    with get_session() as session:
         try:
+            # 4a. Replace the previous version of THIS source. A changed
+            # ``pricing.pdf`` hashes differently, so the dedup check above
+            # passes and, without this, its old chunks stayed live next to the
+            # new ones: retrieval answered from both versions and the account
+            # counter was charged twice for one document. Same delete-then-
+            # insert discipline the crawl path applies per URL.
+            old_source_chars = chars_used_by_source(
+                session, client_id=client_id, document_name=source_name, bot_id=bot_id
+            )
+            replaced = delete_chunks_for_url(session, source_name, bot_id=bot_id, client_id=client_id)
+            if old_source_chars:
+                increment_kb_usage(session, client_id, -old_source_chars)
+            if replaced:
+                logger.info(
+                    "Replacing %d stale chunk(s) of %s for client %s, bot %s",
+                    replaced,
+                    source_name,
+                    client_id,
+                    bot_id,
+                )
+
+            # KB char quota gate. Raises KnowledgeQuotaExceeded (mapped to 402
+            # at the route layer) and takes the client row lock, so concurrent
+            # ingests for the same account serialise here rather than both
+            # reading the same pre-ingest counter.
+            check_kb_quota(session, client_id, source_char_count)
+
+            # Re-check under the lock. Two folder sweeps for the same tenant
+            # can both pass the unlocked check above; the loser would insert a
+            # second copy after the winner committed. Everything expensive is
+            # already done, so this costs one indexed lookup.
+            if is_document_processed(session, client_id, file_hash, bot_id=bot_id):
+                session.rollback()
+                logger.info(
+                    "Skipping %s (ingested concurrently for client %s, bot %s)",
+                    source_name,
+                    client_id,
+                    bot_id,
+                )
+                return 0
+
             insert_documents(
                 session,
                 client_id,
@@ -315,7 +357,7 @@ def _ingest_document(
             # so a rollback below unwinds both. Ordering (insert → increment)
             # matches the delete path (delete → decrement) exactly.
             increment_kb_usage(session, client_id, source_char_count)
-            # 4a. Structured event extraction (Tier 2). Only meaningful for
+            # 4b. Structured event extraction (Tier 2). Only meaningful for
             # crawled pages: uploaded PDFs/DOCX are almost never event
             # calendars, and the ``source_url`` we need as part of the
             # dedup key isn't available for uploads anyway. Extraction
@@ -359,6 +401,125 @@ def _ingest_document(
     return len(chunk_contents)
 
 
+# Reason codes for a quarantined upload, surfaced to the customer verbatim in
+# the in-app notification body and used as the ledger note suffix.
+_QUARANTINE_REASONS = {
+    "extraction": "we could not read any text out of it",
+    "knowledge_quota": "your plan's knowledge base size limit was reached",
+    "error": "processing failed on our side",
+}
+
+# Notification type for an upload that never made it into the knowledge base.
+# Not in ``notification_service.KNOWN_TYPES`` yet (that module is owned
+# elsewhere); it persists and renders through the generic path meanwhile.
+_UPLOAD_FAILED_NOTIFICATION = "document_ingest_failed"
+
+
+def _refund_quarantined_upload(
+    client_id: int,
+    bot_id: int | None,
+    file_name: str,
+    raw_text: str,
+    reason: str,
+) -> None:
+    """Reverse the upload charge for a file that never reached the knowledge base.
+
+    ``POST /documents/ingest`` deducts the whole batch's credits synchronously,
+    before this sweep runs. When a file is quarantined here (quota exceeded, an
+    embedding outage, a DB error) the customer has paid for content they did not
+    get, and until now nothing reversed it and nothing told them.
+
+    The amount is re-derived from the same text with the same pricing helper the
+    route used, so it matches that file's share of the charge exactly, and is
+    clamped to what was actually deducted. A file that failed extraction priced
+    at zero credits in the route, so it has nothing to refund.
+
+    Idempotent: the refund carries a note keyed on the deduction row id plus the
+    file name, and an existing row with that note short-circuits the write, so an
+    ARQ retry of the same sweep cannot pay the customer twice. (``credit_service``
+    has no ``idempotency_key`` parameter on ``refund``, and the unique index that
+    backs deductions is partial on ``delta < 0``, so the check is app-level.)
+
+    Best-effort throughout: an accounting failure must never stop the sweep from
+    quarantining the file and moving on to the next one.
+    """
+    if not raw_text:
+        return
+    try:
+        from sqlalchemy import select
+
+        from app.db.models import CreditLedger
+        from app.services import credit_service, notification_service
+
+        with get_session() as session:
+            cost = credit_service.get_document_upload_cost_for_size(session, credit_service.count_words(raw_text))
+            charge_stmt = (
+                select(CreditLedger)
+                .where(
+                    CreditLedger.client_id == client_id,
+                    CreditLedger.reason == "document_upload",
+                    CreditLedger.delta < 0,
+                    CreditLedger.reference_id == bot_id,
+                )
+                .order_by(CreditLedger.id.desc())
+                .limit(1)
+            )
+            charge = session.execute(charge_stmt).scalars().first()
+            refunded = 0
+            if charge is not None and cost > 0:
+                amount = min(int(cost), abs(int(charge.delta)))
+                note = f"Upload failed: {file_name} (charge #{charge.id})"
+                already = session.execute(
+                    select(CreditLedger.id)
+                    .where(
+                        CreditLedger.client_id == client_id,
+                        CreditLedger.reason == "refund",
+                        CreditLedger.note == note,
+                    )
+                    .limit(1)
+                ).first()
+                if already is None and amount > 0:
+                    credit_service.refund(
+                        session,
+                        client_id,
+                        amount,
+                        reference_id=bot_id or 0,
+                        note=note,
+                        bot_id=charge.bot_id,  # scope. Mirrors the deduction it reverses
+                        attributed_bot_id=charge.attributed_bot_id or bot_id,
+                    )
+                    session.commit()
+                    refunded = amount
+                    logger.info(
+                        "Refunded %d credit(s) for quarantined upload %s (client %s, bot %s)",
+                        amount,
+                        file_name,
+                        client_id,
+                        bot_id,
+                    )
+
+            why = _QUARANTINE_REASONS.get(reason, _QUARANTINE_REASONS["error"])
+            body = f"We couldn't add \u201c{file_name}\u201d to your knowledge base because {why}."
+            if refunded:
+                body += f" The {refunded} credit(s) it cost have been returned to your balance."
+            notification_service.create_notification(
+                session,
+                client_id=client_id,
+                type_=_UPLOAD_FAILED_NOTIFICATION,
+                title="A document could not be added",
+                body=body,
+                link="/knowledge",
+                data={"file_name": file_name, "bot_id": bot_id, "reason": reason, "credits_refunded": refunded},
+            )
+    except Exception:
+        logger.warning(
+            "could not settle the failed upload %s for client %s (non-fatal)",
+            file_name,
+            client_id,
+            exc_info=True,
+        )
+
+
 def run_folder_ingestion(client_id: int, folder_path: str, bot_id: int | None = None):
     """
     Scan folder and ingest all supported files.
@@ -386,6 +547,10 @@ def run_folder_ingestion(client_id: int, folder_path: str, bot_id: int | None = 
         logger.info(f"Processing {file_name} (type: {ext})")
 
         failed = False
+        # Kept across the try/finally so the quarantine path can re-derive the
+        # file's share of the upload charge (see _refund_quarantined_upload).
+        full_raw_text = ""
+        quarantine_reason = "error"
         try:
             # Step 1: Extract text and metadata based on extension
             if ext == ".pdf":
@@ -397,11 +562,13 @@ def run_folder_ingestion(client_id: int, folder_path: str, bot_id: int | None = 
             else:
                 logger.warning(f"File type {ext} unexpectedly reached folder ingestion. Quarantining.")
                 failed = True
+                quarantine_reason = "extraction"
                 continue
 
             if not pages_data:
                 logger.warning(f"No text extracted from {file_name}. Quarantining.")
                 failed = True
+                quarantine_reason = "extraction"
                 continue
 
             # combine text for hashing and cleaning
@@ -417,6 +584,11 @@ def run_folder_ingestion(client_id: int, folder_path: str, bot_id: int | None = 
             # Surfaces scanned-PDF and empty-file cases with a clear message.
             logger.warning(f"Cannot extract text from {file_name}: {e}. Quarantining.")
             failed = True
+            quarantine_reason = "extraction"
+        except KnowledgeQuotaExceeded as e:
+            logger.warning(f"Knowledge base limit reached while ingesting {file_name}: {e}. Quarantining.")
+            failed = True
+            quarantine_reason = "knowledge_quota"
         except Exception as e:
             logger.error(f"Error processing {file_name}: {e}", exc_info=True)
             failed = True
@@ -426,6 +598,9 @@ def run_folder_ingestion(client_id: int, folder_path: str, bot_id: int | None = 
             try:
                 if failed:
                     move_to_quarantine(file_path, file_name, client_id=client_id, bot_id=bot_id)
+                    # The customer already paid for this file at upload time and
+                    # is not getting it. Give the credits back and say why.
+                    _refund_quarantined_upload(client_id, bot_id, file_name, full_raw_text, quarantine_reason)
                 else:
                     move_to_archive(file_path, file_name, client_id=client_id, bot_id=bot_id)
             except Exception as mv_err:

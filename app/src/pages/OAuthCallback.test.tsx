@@ -58,6 +58,24 @@ describe('OAuthCallback', () => {
     expect(await screen.findByText('HOME')).toBeInTheDocument();
   });
 
+  it('takes the super-admin flag from the profile, never from the URL', async () => {
+    getCurrentUser.mockResolvedValue({ id: 4, name: 'Priya', is_superadmin: false });
+
+    renderCallback('/auth/callback?superadmin=1');
+
+    expect(await screen.findByText('HOME')).toBeInTheDocument();
+    expect(localStorage.getItem('is_superadmin')).toBe('false');
+  });
+
+  it('records a genuine super-admin from the profile', async () => {
+    getCurrentUser.mockResolvedValue({ id: 1, name: 'Ops', is_superadmin: true });
+
+    renderCallback('/auth/callback');
+
+    expect(await screen.findByText('HOME')).toBeInTheDocument();
+    expect(localStorage.getItem('is_superadmin')).toBe('true');
+  });
+
   it('honours a deep link', async () => {
     getCurrentUser.mockResolvedValue({ id: 4, name: 'Priya' });
 

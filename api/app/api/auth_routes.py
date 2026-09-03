@@ -1064,6 +1064,10 @@ def register(request: Request, body: RegisterRequest):
                     detail="An account with this email already exists. Please sign in instead.",
                 )
 
+            # Imported at call time (not module scope) so tests and local runs
+            # that toggle the flag see the current value.
+            from app.config import DEV_AUTO_VERIFY_EMAIL
+
             # Create the client
             new_client = Client(
                 name=body.name.strip(),
@@ -1077,6 +1081,14 @@ def register(request: Request, body: RegisterRequest):
                 # first load (editable later in Billing details).
                 billing_country=body.billing_country or resolve_country(request),
                 is_superadmin=False,
+                # Auto-verify ONLY when the double-gated DEV_AUTO_VERIFY_EMAIL
+                # flag is on (explicit opt-in AND non-production); production
+                # always leaves this False, so accounts still require a real
+                # OTP. Stamped at construction, not after the trial-grant check
+                # below, which reads ``is_verified`` to decide whether to open
+                # the trial — assigning it later left every auto-verified dev
+                # signup with no subscription at all.
+                is_verified=DEV_AUTO_VERIFY_EMAIL,
                 # New accounts start reachable but with every push event off, so
                 # a fresh owner is not paged until they opt in per event. Existing
                 # accounts (null prefs) keep meaning "fully opted in".
@@ -1147,12 +1159,8 @@ def register(request: Request, body: RegisterRequest):
             otp = str(secrets.randbelow(900000) + 100000)
             new_client.email_otp = otp
             new_client.email_otp_expires_at = datetime.now(UTC) + timedelta(minutes=15)
-            from app.config import APP_ENV, DEV_AUTO_VERIFY_EMAIL
+            from app.config import APP_ENV
 
-            # Auto-verify ONLY when the double-gated DEV_AUTO_VERIFY_EMAIL flag is
-            # on (explicit opt-in AND non-production). Production always leaves this
-            # False, so accounts still require a real OTP exactly as before.
-            new_client.is_verified = DEV_AUTO_VERIFY_EMAIL
             session.commit()
 
             if DEV_AUTO_VERIFY_EMAIL:

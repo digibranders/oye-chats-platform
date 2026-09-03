@@ -4,6 +4,8 @@ import { ApiError, type ApiAxiosError } from './apiTypes';
 import type { InstallDomains } from '../features/agents/channels/installDomainsModel';
 import { t as translateNow } from '../i18n/i18n';
 import { getAuthItem, setAuthItem, clearAuthStorage } from '../utils/authStorage';
+import { isMissingClientCredential } from '../utils/authFailure';
+import { loginUrlWithNext } from '../utils/loginRedirect';
 import {
     IMPERSONATION_FORBIDDEN_MESSAGE,
     endImpersonationSession,
@@ -869,12 +871,16 @@ api.interceptors.response.use(
 
         const authType = getAuthItem('auth_type');
         const detailRaw = error.response?.data?.detail;
-        const detail = (detailRaw || '').toString().toLowerCase();
         const detailErrorCode = (typeof detailRaw === 'object' && detailRaw?.error) || null;
         const requestUrl = (error.config?.url || '').toString();
 
         const isLoginAttempt = requestUrl.includes('/auth/login') || requestUrl.includes('/auth/operator-login');
-        const isOperatorOnClientOnlyEndpoint = authType === 'operator' && detail.includes('api key');
+        // A legacy operator hitting a strict (account-only) endpoint is told
+        // "Missing X-API-Key header ...". That is a role answer, not an expired
+        // credential, so it must not clear the session. See
+        // ``utils/authFailure`` for how the message and the structured code are
+        // both accepted.
+        const isOperatorOnClientOnlyEndpoint = authType === 'operator' && isMissingClientCredential(detailRaw);
 
         // A 403 with error code ``workspace_access_denied`` means the caller
         // still holds a valid Client identity but has lost access to the
@@ -918,7 +924,10 @@ api.interceptors.response.use(
             // auth pages (notably /register from the "Start free" CTA) a stale
             // token's 401 must not hijack the page - clear it and stay put.
             if (!isOnPublicAuthPath()) {
-                window.location.href = '/login';
+                // Carry the deep link through the sign-in, the same way the
+                // protected-route boundary does, so an expiry mid-session
+                // returns the reader to the page they were on.
+                window.location.href = loginUrlWithNext(window.location.pathname, window.location.search);
             }
         }
         return Promise.reject(error);
@@ -2702,6 +2711,9 @@ export const getLeads = async (botId?: number, params: LeadsQuery = {}): Promise
         if (params.days != null) query.set('days', String(params.days));
         if (params.from_date) query.set('from_date', params.from_date);
         if (params.to_date) query.set('to_date', params.to_date);
+        // Only meaningful alongside a custom range: it tells the server which
+        // zone those calendar days were picked in.
+        if (params.from_date || params.to_date) query.set('tz', params.tz || readerTimeZone());
         if (params.page) query.set('page', String(params.page));
         if (params.limit) query.set('limit', String(params.limit));
         const response = await api.get(`/leads?${query.toString()}`);
@@ -2734,6 +2746,8 @@ export const getLeadStats = async (
         if (days != null) query.set('days', String(days));
         if (fromDate) query.set('from_date', fromDate);
         if (toDate) query.set('to_date', toDate);
+        // Same reason as `getLeads`: the range's days are the reader's, not UTC's.
+        if (fromDate || toDate) query.set('tz', readerTimeZone());
         const suffix = query.toString();
         const response = await api.get(`/leads/stats${suffix ? `?${suffix}` : ''}`);
         return response.data;
@@ -4541,10 +4555,13 @@ export const acceptInvitePublic = async (token: string): Promise<Record<string, 
  * a switch (workspace list is orthogonal to the workspace being switched).
  */
 export const getMyWorkspaces = async (): Promise<{ workspaces: Workspace[] }> => {
+    // A dedicated controller for THIS call, never the workspace-scoped one:
+    // `signal: undefined` is indistinguishable from an absent signal to the
+    // request interceptor, which would then fill in the workspace signal and
+    // let a switch cancel the very list refresh that switch triggered.
+    const controller = new AbortController();
     try {
-        // Ignore the workspace-scoped AbortController for THIS call - otherwise
-        // a switch mid-flight would cancel the list refresh we just triggered.
-        const response = await api.get('/me/workspaces', { signal: undefined });
+        const response = await api.get('/me/workspaces', { signal: controller.signal });
         return response.data;
     } catch (error) {
         throw buildApiError(error, 'Failed to load workspaces');

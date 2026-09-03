@@ -283,7 +283,15 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     // before the list loads, fall back to the persisted role so an operator is
     // gated immediately on reload (no flash of the full owner dashboard).
     const effectiveRole = currentWorkspace ? _effectiveRole(currentWorkspace) : (currentRole || null);
-    const isOperator = effectiveRole === 'operator';
+    // A legacy operator session (``POST /auth/operator-login``) authenticates
+    // with X-Operator-Key and never loads a membership list, so it has no
+    // workspace role to derive a seat from - and without this it saw the full
+    // owner navigation with no route guard behind it. The credential type is
+    // the authority there; an impersonation tab is always a Client and must
+    // ignore whatever ``auth_type`` the super-admin's own session left in this
+    // browser's shared storage.
+    const isLegacyOperatorSession = !isImpersonating() && getAuthItem('auth_type') === 'operator';
+    const isOperator = effectiveRole === 'operator' || isLegacyOperatorSession;
 
     const value = useMemo<WorkspaceContextValue>(() => ({
         workspaces,

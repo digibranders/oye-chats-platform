@@ -295,14 +295,27 @@ class TestTaskDeleteExpiredTrialData:
 
         fake_session.execute = staged_execute
 
+        # I6: the FK cascade takes the documents down without the incremental
+        # ``kb_characters_used`` counter ever seeing them, so the purge has to
+        # hand the characters back BEFORE the delete. Spied rather than run for
+        # real: the amount is a DB aggregate this fake session cannot answer.
+        released: list[tuple[int, int]] = []
+
+        def _release(_session, *, client_id, bot_id):
+            assert len(fake_session.deleted) == len(released), "each bot's characters are released before its delete"
+            released.append((client_id, bot_id))
+            return 0
+
         with (
             patch("app.db.session.get_session", return_value=fake_session),
             patch("app.services.email_service.send_trial_data_deleted_email") as mock_email,
+            patch("app.services.knowledge_quota_service.release_kb_usage_for_bot", side_effect=_release),
         ):
             count = await cron_tasks.task_delete_expired_trial_data({})
 
         assert count == 1
         assert len(fake_session.deleted) == len(bots)
+        assert released == [(owner.id, bot.id) for bot in bots]
         assert owner.deactivated_at is not None
         mock_email.assert_called_once()
         assert sub.trial_emails_sent.get("data_deleted") is not None

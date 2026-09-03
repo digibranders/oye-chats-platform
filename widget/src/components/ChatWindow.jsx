@@ -214,7 +214,7 @@ const DateSeparator = ({ date }) => {
     );
 };
 
-const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating = true, initialMessage, initialLocaleSource = null }) => {
+const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoaded = true, isAnimating = true, initialMessage, initialLocaleSource = null }) => {
     const containerRef = useRef(null);
     const [messages, setMessages] = useState([
         {
@@ -398,6 +398,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [liveMessages, setLiveMessages] = useState([]);
     const [isOperatorTyping, setIsOperatorTyping] = useState(false);
     const [isLiveReconnecting, setIsLiveReconnecting] = useState(false);
+    // The automatic backoff has given up (15 attempts). Only the visitor can
+    // restart it now, so the composer must stop pretending a retry is pending.
+    const [isLiveDisconnected, setIsLiveDisconnected] = useState(false);
     const [showRating, setShowRating] = useState(false);
     const [ratingSubmitting, setRatingSubmitting] = useState(false);
     const [showEndConfirm, setShowEndConfirm] = useState(false);
@@ -429,9 +432,14 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const wsFilePickRef = useRef(null);
     const wsPasteRef = useRef(null);
     const wsEndChatRef = useRef(null);
+    const wsReconnectRef = useRef(null);
 
     // Prevent double handoff form injection
     const handoffFormInjectedRef = useRef(false);
+
+    // Greeting-bubble / public-API message parked while the lead form gates.
+    // Sent once the visitor submits the form, discarded otherwise.
+    const deferredInitialMessageRef = useRef(null);
 
     // Streaming chunk buffer
     const chunkBufferRef = useRef('');
@@ -706,7 +714,20 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         return () => messagesArea.removeEventListener('scroll', checkPosition);
     }, [chatMode, isInitializing, showLeadForm]);
 
+    // ── W8: settings arrive asynchronously ───────────────────────────────────────
+    // The panel can be opened before GET /bots/settings/public resolves. Mount
+    // snapshotted `initialSettings` once, so that visitor kept the placeholder
+    // bot name, an unstyled header and — worse — silently skipped a lead form
+    // the bot has enabled. Re-apply on every change instead; the initialization
+    // effect below additionally waits for `settingsLoaded` before deciding
+    // whether the lead form gates.
+    useEffect(() => {
+        if (!initialSettings) return;
+        setSettings(initialSettings);
+    }, [initialSettings]);
+
     // ── Initialization ───────────────────────────────────────────────────────────
+    const initRanRef = useRef(false);
     useEffect(() => {
         const initChat = async () => {
             if (initialSettings) {
@@ -731,6 +752,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 try { return localStorage.getItem(getLeadCapturedKey()); } catch { return null; }
             })();
             if (resolvedSettings?.lead_form_enabled && !isLeadCaptureFresh(capturedRaw)) {
+                // Hold the greeting-bubble / OyeChats.send() message across the
+                // form instead of leaving it on the shared ref, where it was
+                // both dropped now and auto-sent on some later open.
+                if (initialMessage?.current) {
+                    deferredInitialMessageRef.current = initialMessage.current;
+                    initialMessage.current = null;
+                }
                 setShowLeadForm(true);
                 setShowWelcome(false);
                 setIsInitializing(false);
@@ -813,9 +841,14 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             }
         };
 
+        // Every decision below (lead form, language menu, bot identity) reads
+        // settings, so run once they have actually resolved. `settingsLoaded`
+        // flips on failure too, so a settings outage still opens the chat.
+        if (!settingsLoaded || initRanRef.current) return;
+        initRanRef.current = true;
         initChat();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [settingsLoaded]);
 
     // ── Public-API send delivery ────────────────────────────────────────────────
     // OyeChats.send(text) queues into the controller's send channel. ChatWindow
@@ -1642,6 +1675,19 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
     // Try quotation next in the pre-handoff chain. Returns true when the
     // quotation card was injected (caller must NOT fall through to handoff).
+    // Latched off for the rest of the session once we know the quote card can
+    // never open: BANT is disabled for this bot (a hard precondition — the
+    // server activates the flow only after enough BANT dimensions are marked),
+    // or this session already reached a terminal quotation status.
+    const quotationPollDisabledRef = useRef(false);
+    // Flipped after the first full probe. Once BANT extraction for a turn has
+    // been observed at least once, later turns only need a single immediate
+    // poll: the sequence below exists purely to outwait the 2.5-4s extraction
+    // that follows a stream, and running all five on every bot reply meant
+    // five GET /chat/quotation per answer for every bot on the platform,
+    // quotation configured or not.
+    const quotationProbedRef = useRef(false);
+
     const maybeInjectQuotation = useCallback(async (activeSessionId) => {
         // BANT extraction is an async LLM call after the stream closes —
         // measured 2.5s-4.0s in practice (mega bot sample: 2.45/2.55/2.96/
@@ -1655,26 +1701,38 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         // (a cold import mounts the card *after* the injection scroll fired,
         // which is what left it stranded below the fold). Fire-and-forget; the
         // dynamic import is cached, so the later Suspense import is instant.
+        if (quotationPollDisabledRef.current) return false;
+        if (settings?.bant_enabled === false) {
+            quotationPollDisabledRef.current = true;
+            return false;
+        }
         import('./QuotationFlow').catch(() => { /* prefetch is best-effort */ });
 
-        const POLL_DELAYS_MS = [0, 700, 1000, 1300, 1500];
-        for (const delay of POLL_DELAYS_MS) {
-            if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
-            try {
-                const quoteState = await getQuotationState(activeSessionId);
-                if (quoteState && (quoteState.status === 'complete' || quoteState.status === 'skipped')) {
-                    return false;
+        const POLL_DELAYS_MS = quotationProbedRef.current ? [0] : [0, 700, 1000, 1300, 1500];
+        try {
+            for (const delay of POLL_DELAYS_MS) {
+                if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+                try {
+                    const quoteState = await getQuotationState(activeSessionId);
+                    if (quoteState && (quoteState.status === 'complete' || quoteState.status === 'skipped')) {
+                        // Terminal for this session: the server will keep
+                        // answering `active: false` forever. Stop asking.
+                        quotationPollDisabledRef.current = true;
+                        return false;
+                    }
+                    if (quoteState && quoteState.active) {
+                        injectQuotationFlow(quoteState);
+                        return true;
+                    }
+                } catch {
+                    // keep polling
                 }
-                if (quoteState && quoteState.active) {
-                    injectQuotationFlow(quoteState);
-                    return true;
-                }
-            } catch {
-                // keep polling
             }
+        } finally {
+            quotationProbedRef.current = true;
         }
         return false;
-    }, [injectQuotationFlow]);
+    }, [injectQuotationFlow, settings?.bant_enabled]);
 
     const triggerHandoff = useCallback(async () => {
         // Hard gate: if the bot's PLAN has no human-support channel at all
@@ -2174,6 +2232,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         markLeadCaptured();
         setShowLeadForm(false);
         setShowWelcome(true);
+        const deferred = deferredInitialMessageRef.current;
+        if (deferred) {
+            deferredInitialMessageRef.current = null;
+            setTimeout(() => handleSendRef.current?.(null, deferred), 150);
+        }
     };
 
     // ── Live chat send (via WS) ──────────────────────────────────────────────────
@@ -2198,9 +2261,16 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             status: 'sending',
         };
 
+        // `send` returns false when the socket is not OPEN — the frame never
+        // left the browser, so the bubble must show as failed (and offer the
+        // retry affordance) instead of sitting on "sending" forever.
+        let delivered = false;
         try {
-            wsSendRef.current(text, clientMsgId);
+            delivered = wsSendRef.current(text, clientMsgId) !== false;
         } catch {
+            delivered = false;
+        }
+        if (!delivered) {
             newMsg.failed = true;
             newMsg.status = 'failed';
         }
@@ -2230,6 +2300,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         setLiveMessages([]);
         setIsOperatorTyping(false);
         setIsLiveReconnecting(false);
+        setIsLiveDisconnected(false);
         setOfflineSubmitted(false);
         setOfflineError(false);
         setOfflineForm({ name: '', email: '', phone: '', message: '' });
@@ -2453,6 +2524,17 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     };
 
     // ── WS callbacks exposed from LiveChatMode ───────────────────────────────────
+    const handleReconnectReady = useCallback((reconnect) => {
+        wsReconnectRef.current = typeof reconnect === 'function' ? reconnect : null;
+    }, []);
+
+    const handleManualReconnect = useCallback(() => {
+        if (!wsReconnectRef.current) return;
+        setIsLiveDisconnected(false);
+        setIsLiveReconnecting(true);
+        wsReconnectRef.current();
+    }, []);
+
     const handleWsReady = useCallback(({ send, typing, triggerFilePick, handlePaste, endChat }) => {
         wsSendRef.current = send;
         wsTypingRef.current = typing;
@@ -2470,6 +2552,24 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         const fallbackPatterns = /don't have.*specific information|I'm not sure about that|couldn't find.*specific information|not contained in/i;
         return fallbackPatterns.test(botText);
     }, []);
+
+    // ── W15: Escape closes the panel ─────────────────────────────────────────────
+    // Bound on `document` rather than on the container: keyboard events are
+    // composed, so they reach the document from inside the shadow root no
+    // matter which element (or none) holds focus. A modal or an open overlay
+    // owns Escape first, so the panel only closes when nothing is stacked on it.
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if (e.key !== 'Escape') return;
+            if (showTranscriptModal || showEndConfirm || showRating || showBooking
+                || showLanguageSelector || showHeaderMenu || showLeadForm) return;
+            e.stopPropagation();
+            handleHeaderClose();
+        };
+        document.addEventListener('keydown', handleKeyDown);
+        return () => document.removeEventListener('keydown', handleKeyDown);
+    }, [showTranscriptModal, showEndConfirm, showRating, showBooking,
+        showLanguageSelector, showHeaderMenu, showLeadForm, handleHeaderClose]);
 
     // ── Header rendering ─────────────────────────────────────────────────────────
     // Waiting + live modes both keep the bot-mode date/time chrome so the
@@ -2600,8 +2700,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     if (!wsSendRef.current) return;
                                     const retryId = `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
                                     try {
-                                        if (msg.text) {
-                                            wsSendRef.current(msg.text, retryId);
+                                        if (msg.text && wsSendRef.current(msg.text, retryId) !== false) {
                                             setLiveMessages(prev => prev.map(m =>
                                                 m.id === msg.id
                                                     ? { ...m, failed: false, status: 'sending', clientMsgId: retryId }
@@ -2704,6 +2803,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 onClick={handleHeaderClose}
                                 className="w-9 h-9 md:w-7 md:h-7 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors"
                                 title={t('header.close') || 'Close'}
+                                aria-label={t('header.close') || 'Close'}
                             >
                                 <X className="w-6 h-6 md:w-5 md:h-5" />
                             </button>
@@ -3097,11 +3197,30 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     }}
                 />
 
-                {/* Reconnecting banner */}
-                {isLiveReconnecting && (
-                    <div className="mx-3 my-1 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2">
-                        <div className="w-3 h-3 border-2 border-amber-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                        <span className="text-xs text-amber-700 font-medium">{t('system.reconnecting') || 'Reconnecting...'}</span>
+                {/* Connection banner. Amber while the backoff is still retrying,
+                    red once it has given up — the terminal state needs an
+                    explicit Reconnect, since nothing else will retry. */}
+                {(isLiveReconnecting || isLiveDisconnected) && (
+                    <div className={`mx-3 my-1 px-3 py-1.5 border rounded-xl flex items-center gap-2 ${isLiveDisconnected ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'}`}>
+                        {isLiveDisconnected ? (
+                            <AlertCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
+                        ) : (
+                            <div className="w-3 h-3 border-2 border-amber-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                        )}
+                        <span className={`text-xs font-medium flex-1 ${isLiveDisconnected ? 'text-red-700' : 'text-amber-700'}`}>
+                            {isLiveDisconnected
+                                ? (t('livechat.connection_lost') || 'Connection lost. Please try again.')
+                                : (t('system.reconnecting') || 'Reconnecting...')}
+                        </span>
+                        {isLiveDisconnected && (
+                            <button
+                                type="button"
+                                onClick={handleManualReconnect}
+                                className="text-xs font-semibold text-red-700 underline cursor-pointer"
+                            >
+                                {t('system.retry') || 'Retry'}
+                            </button>
+                        )}
                     </div>
                 )}
 
@@ -3149,9 +3268,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         )}
                         <button
                             onClick={() => {
-                                // Try WS first, fall back to REST for when WS hasn't connected yet
+                                // Try WS first, fall back to REST for when WS hasn't connected yet.
+                                // `silent`: no operator ever joined, so there is
+                                // nothing to rate — the survey must not open.
                                 if (wsEndChatRef.current) {
-                                    wsEndChatRef.current();
+                                    wsEndChatRef.current({ silent: true });
                                 } else if (sessionId) {
                                     cancelHandoff(sessionId);
                                 }
@@ -3719,13 +3840,24 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         setOperatorAvatar={setOperatorAvatar}
                         onConnectionStatusChange={(status) => {
                             setLiveConnectionStatus(status);
-                            if (status === 'reconnecting') setIsLiveReconnecting(true);
-                            else if (status === 'connected') setIsLiveReconnecting(false);
+                            if (status === 'reconnecting') {
+                                setIsLiveReconnecting(true);
+                                setIsLiveDisconnected(false);
+                            } else if (status === 'disconnected') {
+                                // Terminal: the backoff gave up. Drop the
+                                // spinner and hand the visitor a Reconnect.
+                                setIsLiveReconnecting(false);
+                                setIsLiveDisconnected(true);
+                            } else if (status === 'connected' || status === 'connected_ws') {
+                                setIsLiveReconnecting(false);
+                                setIsLiveDisconnected(false);
+                            }
                         }}
                         onLiveMessagesChange={handleLiveMessagesChange}
                         onOperatorTyping={setIsOperatorTyping}
                         onReconnectingChange={setIsLiveReconnecting}
                         onWsReady={handleWsReady}
+                        onReconnectReady={handleReconnectReady}
                         onChatEnded={handleChatEnded}
                         onUploadProgressChange={setUploadProgress}
                     />

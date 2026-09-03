@@ -101,3 +101,95 @@ async def test_orphan_sweep_retains_live_pages_on_discovery_shortfall(monkeypatc
     assert set(checked["urls"]) == set(candidates)
     # Nothing is confirmed gone → no deletion runs.
     q.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_orphan_sweep_reclaims_kb_characters_before_deleting(monkeypatch):
+    """I6: the char count lives on the rows the sweep is about to delete, so it
+    has to be handed back first or ``kb_characters_used`` only ever grows."""
+    del_session = MagicMock()
+    candidates = ["https://acme.test/gone"]
+    liveness = {"https://acme.test/gone": False}
+    q, _checked = _wire_common(monkeypatch, del_session, candidates, liveness)
+
+    order: list[str] = []
+    q.delete.side_effect = lambda *a, **kw: order.append("delete") or 1
+
+    def fake_release(session, *, client_id, bot_id, document_names):
+        order.append("release")
+        assert document_names == candidates
+        return 480
+
+    monkeypatch.setattr(orch, "release_kb_usage_for_sources", fake_release)
+
+    await orch.run_full_crawl(
+        client_id=1,
+        bot_id=None,
+        url="https://acme.test",
+        max_pages=50,
+        use_js=False,
+        replace_source="acme.test",
+        cost_per_page=5,
+    )
+
+    assert order == ["release", "delete"]
+
+
+@pytest.mark.asyncio
+async def test_retry_skips_when_another_crawl_holds_the_lock(monkeypatch):
+    """I9: this function releases the crawl lock in its ``finally``, so an ARQ
+    retry re-enters holding nothing. It must not run beside a newer crawl."""
+    del_session = MagicMock()
+    _wire_common(monkeypatch, del_session, [], {})
+    monkeypatch.setattr(orch, "crawl_lock_holder", lambda cid: "interactive:someone-else")
+    monkeypatch.setattr(orch, "acquire_crawl_lock", lambda *a, **kw: None)
+
+    result = await orch.run_full_crawl(
+        client_id=1,
+        bot_id=None,
+        url="https://acme.test",
+        max_pages=50,
+        use_js=False,
+        replace_source=None,
+        cost_per_page=5,
+        lock_token="interactive:mine",
+        job_try=2,
+    )
+
+    assert result["chunks_processed"] == 0
+    assert "skipped" in result["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_retry_reacquires_a_lapsed_lock_and_runs(monkeypatch):
+    """A worker killed mid-crawl lets the lock's TTL lapse. The retry re-takes
+    it (with a fresh token) rather than crawling unprotected."""
+    del_session = MagicMock()
+    _wire_common(monkeypatch, del_session, [], {})
+    monkeypatch.setattr(orch, "crawl_lock_holder", lambda cid: None)
+    acquired = {}
+
+    def fake_acquire(client_id, *a, **kw):
+        acquired["kind"] = kw.get("kind")
+        return "interactive:fresh"
+
+    released = {}
+    monkeypatch.setattr(orch, "acquire_crawl_lock", fake_acquire)
+    monkeypatch.setattr(orch, "release_crawl_lock", lambda cid, token=None: released.update(token=token))
+
+    result = await orch.run_full_crawl(
+        client_id=1,
+        bot_id=None,
+        url="https://acme.test",
+        max_pages=50,
+        use_js=False,
+        replace_source=None,
+        cost_per_page=5,
+        lock_token="interactive:stale",
+        job_try=3,
+    )
+
+    assert acquired["kind"] == "interactive"
+    assert result["chunks_processed"] == 1
+    # The finally block releases the token this run actually owns.
+    assert released["token"] == "interactive:fresh"

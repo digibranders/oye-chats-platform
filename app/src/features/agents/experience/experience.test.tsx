@@ -277,6 +277,27 @@ describe('unsaved changes are visible and recoverable', () => {
     expect(await screen.findByText(/All changes saved/)).toBeInTheDocument();
   });
 
+  it('keeps what was typed while the save was in flight', async () => {
+    let resolveSave: (value: { message: string }) => void = () => {};
+    api.updateBot.mockReturnValue(new Promise((resolve) => { resolveSave = resolve; }));
+
+    renderPage();
+    await ready();
+    await openTab('Messages');
+    await userEvent.clear(screen.getByLabelText('Greeting'));
+    await userEvent.type(screen.getByLabelText('Greeting'), 'Hi!');
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(api.updateBot).toHaveBeenCalled());
+
+    // The PATCH is still open, and the customer carries on typing.
+    await userEvent.type(screen.getByLabelText('Greeting'), ' Welcome.');
+    resolveSave({ message: 'ok' });
+
+    await waitFor(() => expect(screen.getByLabelText('Greeting')).toHaveValue('Hi! Welcome.'));
+    // Still unsaved work, because the later keystrokes were never sent.
+    expect(await screen.findByText(/Unsaved changes to Messages/)).toBeInTheDocument();
+  });
+
   it('blocks the save on a field-level error instead of taking a 422', async () => {
     renderPage();
     await ready();

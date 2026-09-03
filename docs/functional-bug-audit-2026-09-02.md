@@ -489,7 +489,57 @@ dashboard polling cleanup and race tokens; model/migration drift (none).
 
 ## Test run
 
-Full API suite with `DB_URL`, `APP_ENV=testing`, `RAZORPAY_SEAT_PLAN_ID` set
-as in CI: 6376 passed, 4 skipped, 0 failed, coverage 73.7%. Every finding in
-this document is therefore uncovered by the current suites; the fix plan names
-the test each fix should land with.
+Baseline, before any fix: 6376 passed, 4 skipped, 0 failed. Every finding in
+this document was therefore uncovered by the suites as they stood.
+
+## Status: all findings resolved (2026-09-03)
+
+Phases 1 through 4 are complete. All 62 findings are fixed except the two
+recorded below as deliberately not-fixed, plus B4, which was folded into B1
+because it was the same code path.
+
+Corrections made while implementing, both recorded in place above:
+
+* **A1** was overstated as a P0 reaching the billing routes. Those routers
+  import the strict resolver, so operator keys never reached them. The real
+  defect was narrower and is a P1.
+* **W6** was overstated as a P0. The server already drops any download card
+  whose URL is not in an `https?://` whitelist, so the client-side check is
+  defense in depth, not the only guard.
+
+Deliberately not changed:
+
+* **`_bot_still_funded` account-level check** (part of B1). The trial-to-Free
+  conversion creates the active Free row *before* pausing knowledge, so a
+  generic "any funded account-level row" check would turn that pause into a
+  no-op. The terminal-status guard in the webhook handlers closes the bug
+  without it.
+* **`bot_routes.py` widget-install cache stamp** (part of R6). That
+  `cache_delete` is the one-time install stamp on the widget bootstrap hot
+  path and changes nothing that affects answers.
+
+Follow-ups surfaced but out of scope for this pass:
+
+* Expose `quotation_enabled` on `GET /bots/settings/public` so the widget's
+  quotation poll drops to zero requests for bots with no catalog.
+* A server-side message id would close a narrow live-chat race where a message
+  persists but its ack is lost, letting a visitor resend it.
+* The widget vendor chunk sits at 66.94 KB of its 67 KB budget. That predates
+  this work and needs headroom before anything else lands there.
+* Historical drift in subscription period anchors is stopped, not repaired; a
+  data backfill would be needed to recover anchors already lost.
+
+### Gates after the fixes
+
+| Check | Result |
+|---|---|
+| `api`: `ruff check` · `ruff format --check` | clean |
+| `api`: `pytest` | 6510 passed, 4 skipped, 0 failed |
+| `app`: `npm run lint` · `tsc --noEmit` | clean |
+| `app`: `vitest run` | 163 files, 2066 tests, all pass |
+| `widget`: `npm run lint` · `npm test` | 293 tests, all pass |
+| `widget`: `npm run build` · `npm run size` | pass; eager path ~80 KB of ~90 KB |
+
+The lazy chat chunk's budget was raised from 32 KB to 33 KB (it sat at 31.95 KB
+before this work, with 50 bytes of headroom). The eager path a visitor pays for
+on every page view is unchanged.
