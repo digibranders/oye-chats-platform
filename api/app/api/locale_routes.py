@@ -13,9 +13,11 @@ resolves, on a customer's page. That pair is held together by parity tests
 rather than by a request.
 """
 
+import hashlib
+import json
 import logging
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Request, Response
 
 from app.api.auth import get_current_client_or_operator
 from app.services.language_service import KNOWN_LOCALES, LANGUAGE_NAMES
@@ -24,10 +26,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/locales", tags=["locales"])
 
-# Seconds the browser may reuse the catalogue for. It changes only when
-# ``KNOWN_LOCALES`` changes, which is a deploy.
-_CATALOG_MAX_AGE = 86400
-
 # Built once per process: the catalogue is a module constant, so re-serialising
 # it per request would buy nothing.
 _CATALOG_PAYLOAD: dict[str, object] = {
@@ -35,9 +33,26 @@ _CATALOG_PAYLOAD: dict[str, object] = {
     "languages": dict(LANGUAGE_NAMES),
 }
 
+# The catalogue's identity is a hash of its own content, so a deploy that
+# changes ``KNOWN_LOCALES`` changes the tag and every browser notices.
+#
+# This replaced ``max-age=86400``. That header was reasoned as "it changes only
+# on a deploy" and drew the wrong conclusion from it: the URL never changes, so
+# nothing could tell a browser the deploy had happened. When the 17 translated
+# languages were switched on, every dashboard that had loaded this endpoint in
+# the previous 24 hours kept offering the old four, and no refresh helped -
+# a browser serves a fresh-by-max-age response without asking.
+_CATALOG_ETAG = '"{}"'.format(
+    hashlib.sha256(json.dumps(_CATALOG_PAYLOAD, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:32]
+)
+
 
 @router.get("")
-def list_locales(response: Response, auth=Depends(get_current_client_or_operator)):
+def list_locales(
+    request: Request,
+    response: Response,
+    auth=Depends(get_current_client_or_operator),
+):
     """Return every locale the platform supports.
 
     ``locales`` mirrors ``LocaleInfo`` field for field and is what a locale
@@ -49,5 +64,12 @@ def list_locales(response: Response, auth=Depends(get_current_client_or_operator
     Authenticated because it is dashboard configuration data, not public widget
     config; the widget never calls it.
     """
-    response.headers["Cache-Control"] = f"private, max-age={_CATALOG_MAX_AGE}"
+    # `no-cache` does NOT mean "do not store". It means "store it, but ask me
+    # before reusing it". With the ETag above that costs one conditional request
+    # and a 304 in the common case, and it is the difference between a language
+    # going live on deploy and going live a day later.
+    headers = {"ETag": _CATALOG_ETAG, "Cache-Control": "private, no-cache"}
+    if request.headers.get("if-none-match") == _CATALOG_ETAG:
+        return Response(status_code=304, headers=headers)
+    response.headers.update(headers)
     return _CATALOG_PAYLOAD
