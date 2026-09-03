@@ -176,6 +176,20 @@ describe('the top bar', () => {
     expect(screen.getByRole('button', { name: /open navigation/i })).toBeInTheDocument();
     expect(screen.queryByRole('navigation', { name: /breadcrumb/i })).toBeNull();
   });
+
+  it('carries the wordmark below 1024, where the rail is behind a drawer', () => {
+    // The brand lives at the top of the rail, so on a phone it is off screen
+    // until the drawer opens and the bar read as a menu button and a gap.
+    renderBar('/billing/usage', true);
+    const home = screen.getByRole('link', { name: 'Home' });
+    expect(home).toHaveAttribute('href', '/');
+    expect(within(home).getByRole('img', { name: 'OyeChats' })).toHaveAttribute('src', '/new_dark.png');
+  });
+
+  it('does not repeat the wordmark above 1024, where the rail already shows it', () => {
+    renderBar('/billing/usage', false);
+    expect(screen.queryByRole('img', { name: 'OyeChats' })).toBeNull();
+  });
 });
 
 /** Render the hook at a path, with a stubbed chatbot list. */
