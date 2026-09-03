@@ -77,7 +77,7 @@ export function PageErrorBoundary() {
                 href="mailto:developer@oyechats.com"
                 className="text-accent-600 underline underline-offset-2"
               >
-                developer@oyechats.com
+                {'developer@oyechats.com'}
               </a>{' '}
               {t('app.withTheAddressInYourBrowser') ||
                 'with the address in your browser bar and what is under Technical details.'}

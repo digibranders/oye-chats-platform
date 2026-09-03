@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { Card, CardBody, CardHeader, Grid, Measure, Page, PageHeader, buttonClass } from '../../ui';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { WORKSPACE_NAV, navForRole, type NavItem } from '../../shell/nav';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface NotFoundPageProps {
   /**
@@ -29,6 +30,7 @@ export interface NotFoundPageProps {
  * plain operator four destinations the router bounces them off.
  */
 export function NotFoundPage({ nav, home = '/' }: NotFoundPageProps) {
+  const { t } = useTranslation();
   const { isOperator } = useWorkspace();
   const items = nav ?? navForRole(WORKSPACE_NAV, isOperator);
 
@@ -37,17 +39,17 @@ export function NotFoundPage({ nav, home = '/' }: NotFoundPageProps) {
       <Measure width="reading">
         <PageHeader
           eyebrow="Error 404"
-          title="We could not find that page"
-          description="That address does not match anything in the console."
+          title={t('app.weCouldNotFindThat') || 'We could not find that page'}
+          description={t('app.thatAddressDoesNotMatch') || 'That address does not match anything in the console.'}
           actions={
             <Link to={home} className={buttonClass('primary', 'md')}>
-              Go to Home
+              {t('app.goToHome') || 'Go to Home'}
             </Link>
           }
         />
 
         <Card>
-          <CardHeader title="Try one of these instead" titleAs="h2" />
+          <CardHeader title={t('app.tryOneOfTheseInstead') || 'Try one of these instead'} titleAs="h2" />
           <CardBody>
             {/* `cols="pairs"`, not `sm:grid-cols-2`: this list is inside a
                 `Measure`, and `sm:` asks the window how wide it is when the
@@ -59,7 +61,7 @@ export function NotFoundPage({ nav, home = '/' }: NotFoundPageProps) {
             <Grid
               as="ul"
               cols="pairs"
-              label="Where to go instead"
+              label={t('app.whereToGoInstead') || 'Where to go instead'}
               className="-mx-2 gap-0.5"
             >
               {items.map((item) => (

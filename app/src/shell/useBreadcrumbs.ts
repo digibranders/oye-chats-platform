@@ -53,9 +53,9 @@ export function useBreadcrumbs(): Crumb[] {
   // crumb stayed on the old language until you navigated - switch to Hindi and
   // back to English on Settings and the bar still read "खाता".
   //
-  // So the locale is a real dependency of this computation and is declared as
-  // one, not merely subscribed to.
-  const { locale } = useTranslation();
+  // So the language is a real dependency of this computation and is declared as
+  // one, via `t`, not merely subscribed to.
+  const { t } = useTranslation();
 
   return useMemo(() => {
     const agentId = agentIdFromPath(pathname);
@@ -65,9 +65,9 @@ export function useBreadcrumbs(): Crumb[] {
       const segment = pathname.split('/')[3] ?? 'overview';
       const tab = AGENT_NAV.find((item) => item.segment === segment);
       return [
-        { label: label('Chatbots'), to: '/chatbots' },
+        { label: label(t('shell.chatbots') || 'Chatbots'), to: '/chatbots' },
         {
-          label: agent?.name ?? label('Chatbot'),
+          label: agent?.name ?? label((t('shell.chatbot') || 'Chatbot')),
           to: agentPath(agentId, 'overview'),
           pending: !agent,
         },
@@ -105,8 +105,8 @@ export function useBreadcrumbs(): Crumb[] {
       const section = pathname.split('/')[2];
       const sectionLabel = section ? ACCOUNT_SECTIONS[section] : undefined;
       return sectionLabel
-        ? [{ label: label('Account'), to: '/account' }, { label: label(sectionLabel) }]
-        : [{ label: label('Account') }];
+        ? [{ label: label(t('shell.account') || 'Account'), to: '/account' }, { label: label(sectionLabel) }]
+        : [{ label: label(t('shell.account') || 'Account') }];
     }
 
     const standalone = Object.entries(STANDALONE_CRUMBS).find(
@@ -114,11 +114,11 @@ export function useBreadcrumbs(): Crumb[] {
     );
     if (standalone) return [{ label: label(standalone[1]) }];
 
-    return [{ label: label('Not found') }];
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `locale` is a real
-    // dependency the rule cannot see: the labels come from `navLabel()`, which
-    // resolves against the active dictionary when it is CALLED. Nothing inside
-    // this memo mentions `locale`, so the rule reads it as unnecessary and the
-    // memo went stale on a language switch instead.
-  }, [pathname, bots, locale]);
+    return [{ label: label(t('shell.notFound') || 'Not found') }];
+    // `t` is the dependency that matters: useTranslation re-creates it whenever
+    // the store token moves, so depending on it invalidates this memo on a
+    // language switch. It shipped keyed on [pathname, bots] alone, and neither
+    // changes when only the language does - so React handed back the trail it
+    // had built in the previous language and the bar read खाता in English.
+  }, [pathname, bots, t]);
 }

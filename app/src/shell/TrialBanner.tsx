@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import { X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { isCountingDown, useSessionClientId, useTrialState } from './useTrialState';
+import { useTranslation } from '../i18n/useTranslation';
 
 /** Per-account, so a shared browser cannot leak one person's dismissal to another. */
 function dismissalKey(clientId: number | null | undefined): string {
@@ -31,6 +32,7 @@ function readDismissed(clientId: number | null | undefined): boolean {
  * bought already never sees it at all: the card tells them what they need.
  */
 export function TrialBanner() {
+  const { t } = useTranslation();
   const trial = useTrialState();
   const clientId = useSessionClientId();
   const [dismissedThisSession, setDismissedThisSession] = useState(false);
@@ -73,17 +75,19 @@ export function TrialBanner() {
     >
       <p className="min-w-0 flex-1">
         <strong className="font-medium">
-          {days} {days === 1 ? 'day' : 'days'} left
+          {days === 1
+            ? t('shell.oneDayLeft', { count: days }) || '1 day left'
+            : t('shell.daysLeft', { count: days }) || `${days} days left`}
         </strong>{' '}
-        in your trial. Add a payment method to keep your chatbot running.
+        {t('shell.inYourTrialAddA') || 'in your trial. Add a payment method to keep your chatbot running.'}
       </p>
       <Link to="/billing" className="shrink-0 font-medium underline-offset-2 hover:underline">
-        Upgrade
+        {t('shell.upgrade') || 'Upgrade'}
       </Link>
       <button
         type="button"
         onClick={dismiss}
-        aria-label="Dismiss"
+        aria-label={t('shell.dismiss') || 'Dismiss'}
         className="shrink-0 rounded-sm p-1 text-text-tertiary hover:text-text"
       >
         <X aria-hidden className="h-4 w-4" />

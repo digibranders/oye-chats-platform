@@ -2,6 +2,7 @@ import { type ReactNode } from 'react';
 import { TriangleAlert } from 'lucide-react';
 import { FullPageState, buttonClass } from '../../ui';
 import { ErrorDetails } from './ErrorDetails';
+import { useTranslation } from '../../i18n/useTranslation';
 
 export interface AppCrashScreenProps {
   title: string;
@@ -29,6 +30,7 @@ export interface AppCrashScreenProps {
  * it is material for a support email, not an explanation.
  */
 export function AppCrashScreen({ title, description, detail, actions }: AppCrashScreenProps) {
+  const { t } = useTranslation();
   return (
     <FullPageState
       icon={TriangleAlert}
@@ -39,12 +41,12 @@ export function AppCrashScreen({ title, description, detail, actions }: AppCrash
       footnote={
         <>
           <p>
-            If it keeps happening, email{' '}
+            {t('app.ifItKeepsHappeningEmail') || 'If it keeps happening, email'}{' '}
             <a
               href="mailto:developer@oyechats.com"
               className="text-accent-600 underline underline-offset-2"
             >
-              developer@oyechats.com
+              {'developer@oyechats.com'}
             </a>
             .
           </p>
@@ -64,10 +66,11 @@ export function AppCrashScreen({ title, description, detail, actions }: AppCrash
  * reload, because at this level there is no router to navigate with.
  */
 export function BootCrashScreen() {
+  const { t } = useTranslation();
   return (
     <AppCrashScreen
-      title="Something went wrong"
-      description="An unexpected error interrupted the console. Reloading usually fixes it. Your data is safe. Your chatbots keep answering visitors while this screen is up."
+      title={t('app.somethingWentWrong') || 'Something went wrong'}
+      description={t('app.anUnexpectedErrorInterruptedThe') || 'An unexpected error interrupted the console. Reloading usually fixes it. Your data is safe. Your chatbots keep answering visitors while this screen is up.'}
       actions={
         <>
           <button
@@ -75,10 +78,10 @@ export function BootCrashScreen() {
             className={buttonClass('primary', 'md')}
             onClick={() => window.location.reload()}
           >
-            Reload the page
+            {t('app.reloadThePage') || 'Reload the page'}
           </button>
           <a href="/" className={buttonClass('secondary', 'md')}>
-            Go to Home
+            {t('app.goToHome') || 'Go to Home'}
           </a>
         </>
       }
