@@ -44,7 +44,13 @@ function describeSubscribeFailure(error: unknown): string {
   // debugging a push failure without it is guesswork.
   console.warn('[OyeChats] push subscribe failed', error);
 
-  const name = error instanceof Error ? error.name : '';
+  // Read `name` off anything that carries one rather than gating on
+  // `instanceof Error`: a DOMException is an Error in browsers, but not in
+  // every runtime this hook is tested under, and the name is the whole signal.
+  const name =
+    typeof error === 'object' && error !== null && typeof (error as { name?: unknown }).name === 'string'
+      ? (error as { name: string }).name
+      : '';
 
   if (name === 'NotAllowedError') {
     return (
@@ -186,7 +192,18 @@ export function usePushSubscription(): UsePushSubscriptionResult {
         // mint one with the server VAPID key; otherwise wait for the user to
         // enable. `mintSubscription` returns `disabled` when server push is off.
         if (Notification.permission === 'granted') {
-          const next = await mintSubscription(registration);
+          // The mint is the same `pushManager.subscribe()` the Enable button
+          // runs, so its failure gets the same honest copy. This path is the
+          // one the account page lands on when a granted browser cannot
+          // register with its push service: the raw message used to go
+          // straight into the red banner through the generic catch below,
+          // which is the only thing this hook ever showed for that case.
+          let next: PushPhase;
+          try {
+            next = await mintSubscription(registration);
+          } catch (error) {
+            next = { status: 'error', message: describeSubscribeFailure(error) };
+          }
           if (active) setPhase(next);
         } else {
           setPhase({ status: 'default' });
