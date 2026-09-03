@@ -469,6 +469,7 @@ class TestBatchWebIngestion:
             "pages_changed": 2,
             "pages_unchanged": 0,
             "pages_charged": 2,
+            "pages_free": 0,
             "pages_failed": 0,
             "credits_deducted": 6,
             "aborted": False,

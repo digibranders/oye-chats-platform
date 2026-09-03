@@ -361,6 +361,10 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
             await ws.close(code=4003, reason="Invalid bot key")
             return
         bot_id = bot.id
+        # Stamped on every session row this socket creates. Analytics filter on
+        # ``client_id``, so a row created here without it is invisible to the
+        # dashboard until the startup backfill runs.
+        bot_client_id = bot.client_id
 
         # Origin whitelist (parity with HTTP ``get_current_bot``). Both
         # transports ask ``origin_check_applies`` so they cannot diverge: the
@@ -447,6 +451,7 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                         session_id,
                         role="user",
                         content=content,
+                        client_id=bot_client_id,
                         bot_id=bot_id,
                         source_language=source_language,
                     )
@@ -544,7 +549,14 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                 # Save as a message with file metadata
                 file_content = f"[File: {filename}]({file_url})"
                 with get_session() as session:
-                    persisted = add_chat_message(session, session_id, role="user", content=file_content, bot_id=bot_id)
+                    persisted = add_chat_message(
+                        session,
+                        session_id,
+                        role="user",
+                        content=file_content,
+                        client_id=bot_client_id,
+                        bot_id=bot_id,
+                    )
                     session.commit()
                     db_id = persisted.id
 

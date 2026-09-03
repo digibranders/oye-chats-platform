@@ -723,6 +723,10 @@ def batch_web_ingestion(
         # the content-dedup check no more spends the allowance than it spends
         # credits.
         free_left = max(0, int(free_pages))
+        # How many pages THIS call covered from the allowance. Reported back so
+        # a caller that ingests one site in several waves can carry the
+        # remaining allowance from wave to wave instead of restarting it.
+        pages_free = 0
         for boundary in page_boundaries:
             start = boundary["start_idx"]
             count = boundary["count"]
@@ -842,6 +846,7 @@ def batch_web_ingestion(
                     # This page was covered by the allowance and it committed,
                     # so the allowance is one page smaller for the next.
                     free_left -= 1
+                    pages_free += 1
             except credit_service.InsufficientCredits as exc:
                 session.rollback()
                 logger.warning(
@@ -908,6 +913,7 @@ def batch_web_ingestion(
         "pages_changed": pages_changed,
         "pages_unchanged": pages_unchanged,
         "pages_charged": pages_charged,
+        "pages_free": pages_free,
         "pages_failed": pages_failed,
         "credits_deducted": credits_deducted,
         "aborted": aborted,

@@ -1895,7 +1895,7 @@ def lead_capture_endpoint(body: LeadCaptureRequest, request: Request, bot: Bot =
 
     try:
         with get_session() as session:
-            chat_session = ensure_chat_session(session, body.session_id, bot_id=bot.id)
+            chat_session = ensure_chat_session(session, body.session_id, client_id=bot.client_id, bot_id=bot.id)
 
             # Snapshot UTM + visitor_journey onto the lead row only when the
             # owning client's plan includes Lead Source Attribution. Free /
@@ -1968,7 +1968,7 @@ def behavioral_signals_endpoint(body: BehavioralSignalsRequest, request: Request
 
     try:
         with get_session() as session:
-            chat_session = ensure_chat_session(session, body.session_id, bot_id=bot.id)
+            chat_session = ensure_chat_session(session, body.session_id, client_id=bot.client_id, bot_id=bot.id)
 
             # Store page context on the session (first call wins for URL/referrer)
             safe_page_url = _sanitize_url(body.page_url)
@@ -2095,7 +2095,7 @@ def meeting_booked_endpoint(body: MeetingBookedRequest, request: Request, bot: B
             )
 
         with get_session() as session:
-            ensure_chat_session(session, body.session_id, bot_id=bot.id)
+            ensure_chat_session(session, body.session_id, client_id=bot.client_id, bot_id=bot.id)
             # Already parsed and validated by the schema, an unparseable
             # timestamp is a 422 rather than a booking silently stored with
             # no time on it.

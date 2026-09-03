@@ -400,7 +400,12 @@ class TestTaskExpirePastDueSubscriptions:
         )
         fake_session = _FakeSession([sub])
 
-        with patch("app.db.session.get_session", return_value=fake_session):
+        # The fake session cannot serve the client-level knowledge pause an
+        # account-level row takes on expiry; that path has its own tests.
+        with (
+            patch("app.db.session.get_session", return_value=fake_session),
+            patch("app.services.knowledge_state_service.deactivate_client_knowledge"),
+        ):
             count = await cron_tasks.task_expire_past_due_subscriptions({})
 
         assert count == 1
@@ -423,7 +428,12 @@ class TestTaskExpirePastDueSubscriptions:
         )
         fake_session = _FakeSession([sub])
 
-        with patch("app.db.session.get_session", return_value=fake_session):
+        # The fake session cannot serve the client-level knowledge pause an
+        # account-level row takes on expiry; that path has its own tests.
+        with (
+            patch("app.db.session.get_session", return_value=fake_session),
+            patch("app.services.knowledge_state_service.deactivate_client_knowledge"),
+        ):
             await cron_tasks.task_expire_past_due_subscriptions({})
 
         assert sub.canceled_at == existing_canceled_at

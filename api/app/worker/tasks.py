@@ -1749,7 +1749,7 @@ def _expire_past_due_cycle(session) -> int:
     # would roll the whole expiry back while the suspension emails had already
     # gone out. Customers told their agents are offline while still fully
     # entitled, and re-told tomorrow.
-    from app.services.knowledge_state_service import deactivate_bot_knowledge
+    from app.services.knowledge_state_service import deactivate_bot_knowledge, deactivate_client_knowledge
 
     for sub in subs:
         sub.status = "expired"
@@ -1761,10 +1761,16 @@ def _expire_past_due_cycle(session) -> int:
             sub.canceled_at = now
         if not sub.cancel_reason:
             sub.cancel_reason = "dunning_grace_elapsed"
-        # Paid → Free: deactivate this bot's knowledge (reversible) so it stops
-        # answering from a paid-tier KB. Data is retained, not deleted. getattr:
-        # legacy account-level subs (bot_id=None) and no-op for tests' mocks.
-        deactivate_bot_knowledge(session, getattr(sub, "bot_id", None))
+        # Paid → Free: deactivate the lapsed knowledge (reversible) so it stops
+        # answering from a paid-tier KB. Data is retained, not deleted. An
+        # account-level row (bot_id=None) is the common shape and the per-bot
+        # helper is a hard no-op for it, so it takes the client-level path,
+        # exactly like the cancel handler. getattr: no-op for tests' mocks.
+        lapsed_bot_id = getattr(sub, "bot_id", None)
+        if lapsed_bot_id is None and getattr(sub, "client_id", None) is not None:
+            deactivate_client_knowledge(session, sub.client_id)
+        else:
+            deactivate_bot_knowledge(session, lapsed_bot_id)
         flipped += 1
     session.commit()
 

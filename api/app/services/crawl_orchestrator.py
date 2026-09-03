@@ -657,12 +657,26 @@ async def run_full_crawl(
     # a site we could not read. None for a cancel, which is not a limit.
     #   streamed_pages:  how many pages the provider handed to the consumer, so
     #                    the final sweep knows the waves already covered them.
+    #   free_left:       what remains of the account's free-training-page
+    #                    allowance for THIS crawl. ``free_pages`` is resolved
+    #                    once at crawl start; every wave (and the final sweep)
+    #                    must draw from one shared, shrinking counter, or each
+    #                    wave restarts the allowance and a 400-page site on a
+    #                    25-page allowance is trained for free.
     ingest_state: dict = {
         "billing_aborted": False,
         "consumer_error": None,
         "abort_reason": None,
         "streamed_pages": 0,
+        "free_left": max(0, int(free_pages)),
     }
+
+    def _spend_free_pages(ingest_result: dict) -> None:
+        """Carry the allowance consumed by one ingest call into the next."""
+        used = int(ingest_result.get("pages_free") or 0)
+        if used:
+            ingest_state["free_left"] = max(0, ingest_state["free_left"] - used)
+
     streaming = CRAWL_STREAM_INGEST_ENABLED
 
     async def _on_result(page: dict) -> None:
@@ -695,12 +709,14 @@ async def run_full_crawl(
         )
 
     def _ingest_wave(wave: list[dict], chunk_offset: int) -> dict:
-        return batch_web_ingestion(
+        # Waves run one at a time (see ``_consume_ingest_stream``), so reading
+        # and then updating the shared counter here is race-free.
+        result = batch_web_ingestion(
             client_id,
             wave,
             bot_id=bot_id,
             cost_per_page=cost_per_page,
-            free_pages=free_pages,
+            free_pages=ingest_state["free_left"],
             deduct_reason="url_scan",
             deduct_reference_id=bot_id,
             crawl_job_id=crawl_job_id,
@@ -708,6 +724,8 @@ async def run_full_crawl(
             crawl_started_at=started_at,
             force_reingest=force_reingest,
         )
+        _spend_free_pages(result)
+        return result
 
     async def _ingest_consumer() -> None:
         """Drain ``stream_queue`` into wave-sized ``batch_web_ingestion`` calls.
@@ -937,7 +955,7 @@ async def run_full_crawl(
                         valid_pages,
                         bot_id=bot_id,
                         cost_per_page=cost_per_page,
-                        free_pages=free_pages,
+                        free_pages=ingest_state["free_left"],
                         deduct_reason="url_scan",
                         deduct_reference_id=bot_id,
                         embed_progress_cb=_report_embed,
@@ -946,6 +964,7 @@ async def run_full_crawl(
                         crawl_job_id=crawl_job_id,
                     ),
                 )
+            _spend_free_pages(ingest_result)
             ingest_totals["chunks"] += ingest_result["chunks"]
             ingest_totals["pages_charged"] += ingest_result["pages_charged"]
             ingest_totals["credits_deducted"] += ingest_result["credits_deducted"]

@@ -87,6 +87,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Local statuses that mean a subscription row has already been retired by us.
+# Both spellings of cancelled, because a British-spelled terminal row exists in
+# older data (see ``/subscriptions/cancel``). A gateway event that lands on one
+# of these rows is the echo of a cancel WE issued (an upgrade's supersede, the
+# dunning expiry), never a fresh lapse, so the handlers do terminal
+# bookkeeping only and must not replay the paid→Free side effects.
+TERMINAL_SUBSCRIPTION_STATUSES = frozenset({"canceled", "cancelled", "expired"})
+
 # (connect, read) seconds for every Razorpay HTTP call. Connect is short --
 # a gateway refusing sockets will not recover in 30s. Read is generous,
 # because a spurious timeout part-way through a subscription create is far
@@ -4249,6 +4257,24 @@ def record_verified_subscription_charge(
         return None
     if str(pay.get("status") or "").lower() != "captured":
         return None  # authorised-but-not-captured → wait for the charge webhook
+    # Razorpay writes ``current_period_start`` at the first REAL debit and
+    # nowhere else (see ``_was_unbilled_trial_conversion``). A subscription
+    # with no period yet has not billed: the captured payment Checkout handed
+    # back is the mandate's authorisation transaction, the token amount that
+    # Razorpay auto-refunds, which every deferred-start mandate (mid-trial
+    # conversion, resume, launch promo) produces. Recording it as a paid
+    # ``plan_charge`` mints a numbered tax invoice for a charge that never
+    # happened, and that invoice then satisfies ``_revoke_unpaid_activation_grant``
+    # so a failed first debit no longer revokes the plan allowance. Leave the
+    # invoice to the ``subscription.charged`` webhook, which carries the real
+    # first debit.
+    if local.current_period_start is None:
+        logger.info(
+            "verify: subscription %s has no billed period yet; not recording payment %s as a plan charge",
+            local.razorpay_subscription_id,
+            razorpay_payment_id,
+        )
+        return None
     try:
         return _ensure_subscription_charge_invoice(
             session,
@@ -4596,6 +4622,28 @@ def _handle_subscription_cancelled(session: Session, payload: dict[str, Any]) ->
     if _promote_scheduled_if_pending(session, local) is not None:
         return f"Subscription {sub_entity.get('id')} cancelled → promoted scheduled change"
 
+    # A row that is already terminal locally was retired by us, not by this
+    # event: an upgrade's activation flips the superseded row to ``canceled``
+    # and then cancels its mandate at the gateway, and the dunning expiry flips
+    # to ``expired`` and does the same. Razorpay's ``cancelled`` for that mandate
+    # then arrives here. Re-running the paid→Free side effects on it is wrong:
+    # the account is on a NEW paid subscription, and ``deactivate_client_knowledge``
+    # would pause every bot the customer just upgraded, while the unbilled-trial
+    # forfeit below would zero the new plan's grant and insert a second active
+    # Free row into the ``one active per scope`` index (a 5xx retry loop).
+    # Terminal bookkeeping only.
+    if local.status in TERMINAL_SUBSCRIPTION_STATUSES:
+        if local.canceled_at is None:
+            local.canceled_at = datetime.now(UTC)
+        session.flush()
+        logger.info(
+            "subscription.cancelled for %s (client %s) landed on an already-%s row; no lapse side effects",
+            sub_entity.get("id"),
+            local.client_id,
+            local.status,
+        )
+        return f"Subscription {sub_entity.get('id')} cancelled (already {local.status} locally)"
+
     local.status = "canceled"
     local.canceled_at = datetime.now(UTC)
     # A Razorpay-originated cancellation (customer cancelled via their UPI app
@@ -4674,13 +4722,25 @@ def _handle_subscription_completed(session: Session, payload: dict[str, Any]) ->
     if _promote_scheduled_if_pending(session, local) is not None:
         return f"Subscription {sub_entity.get('id')} completed → promoted scheduled change"
 
+    # Same guard as the cancelled handler: a row we already retired (superseded
+    # by an upgrade, or expired by dunning) must not have its lapse side effects
+    # replayed on top of the customer's current subscription.
+    if local.status in TERMINAL_SUBSCRIPTION_STATUSES:
+        session.flush()
+        return f"Subscription {sub_entity.get('id')} completed (already {local.status} locally)"
+
     local.status = "expired"
-    # Paid → Free (natural end-of-life): deactivate this bot's knowledge, same
-    # as the cancel / dunning-expiry paths.
-    from app.services.knowledge_state_service import deactivate_bot_knowledge
+    # Paid → Free (natural end-of-life): deactivate the lapsed knowledge, same
+    # as the cancel / dunning-expiry paths. Account-level rows carry a NULL
+    # bot_id, where the per-bot helper is a no-op, so they take the
+    # client-level path exactly like the cancel handler.
+    from app.services.knowledge_state_service import deactivate_bot_knowledge, deactivate_client_knowledge
     from app.services.transition_service import enforce_operator_ceiling
 
-    deactivate_bot_knowledge(session, local.bot_id)
+    if local.bot_id is None:
+        deactivate_client_knowledge(session, local.client_id)
+    else:
+        deactivate_bot_knowledge(session, local.bot_id)
     # Operator seats fall under the same paid→Free rule (see the cancel path).
     enforce_operator_ceiling(session, local.client_id)
     session.flush()

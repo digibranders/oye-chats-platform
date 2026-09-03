@@ -40,28 +40,31 @@ IDs are stable so the fix plan can reference them.
 
 ## P0
 
-### A1. Any operator key is a full owner credential on every `get_current_client` route
+### A1. A deactivated operator keeps a working credential (corrected during Phase 1, downgraded from P0)
 `api/app/api/auth.py:546-570`, `api/app/api/auth_routes.py:1490-1510`
 
-The operator fallback in `get_current_client` resolves `X-Operator-Key` to the
-workspace's `Client` with no check on `operator.role` and no check on
-`operator.is_active`. The sibling resolvers (`get_current_operator`,
-`get_current_client_or_operator`) both refuse inactive operators. Twenty-seven
-routes in `subscription_routes.py` and `payment_method_routes.py` depend on the
-non-strict resolver and zero use `get_current_client_strict`. That set includes
-`/subscriptions/cancel`, `/checkout`, `/change-plan`, `/resume`, `/seats`,
-`/branding-addon` (POST and DELETE), `/credits/topup`, and payment method
-deletion. `operator_login` also filters only on email, so a deactivated
-operator can still log in and obtain a key.
+**Correction.** The first draft of this finding said the billing routes were
+reachable with an operator key. They are not: `subscription_routes.py`,
+`payment_method_routes.py` and `affiliate_routes.py` import
+`get_current_client_strict` under the name `get_current_client`, so every
+money-moving route already refuses operator keys. What remains is real but
+narrower, and is a P1:
 
-Trigger: a `role=operator` teammate, or a fired one, calls
-`POST /auth/operator-login` then `POST /subscriptions/cancel` with
-`X-Operator-Key`.
+- The operator fallback in `get_current_client` checked neither `operator.role`
+  nor `operator.is_active`, while its siblings (`get_current_operator`,
+  `get_current_client_or_operator`) refuse inactive operators. A deactivated
+  operator's key kept working on every route built on the non-strict resolver:
+  `/client/settings`, feedback, activation events, and the
+  `require_active_subscription`, `require_feature` and `enforce_limit`
+  dependencies.
+- `operator_login` matched on email and password only, so a deactivated
+  operator could sign in and be handed a fresh key, and an operator of a
+  suspended workspace could obtain a key every request would then reject.
 
-Fix: in the operator branch reject `not operator.is_active` and restrict to
-`role in {"owner", "admin"}`, or drop the fallback and move billing routes to
-the strict resolver. Add `Operator.is_active.is_(True)` to `operator_login`
-and run `_ensure_client_authenticatable` on the workspace owner there.
+**Fixed in Phase 1:** the fallback rejects inactive operators with 401,
+`operator_login` filters on `is_active` and runs
+`_ensure_client_authenticatable` on the workspace. Tests in
+`tests/test_operator_deactivation_auth.py`.
 
 ### I1. Streamed crawls re-grant the free-page allowance on every wave
 `api/app/services/crawl_orchestrator.py:697-710, 940`, `api/app/ingestion/pipeline.py:725-743, 841-844`
@@ -385,24 +388,37 @@ workspace role, and match the suppression on a structured error code.
 Ordered by risk retired per unit of work. Each phase is one PR from
 `development`, with the listed tests added in the same PR.
 
-### Phase 1: close the money and access holes (target: this week)
+### Phase 1: close the money and access holes (DONE 2026-09-03)
 
-1. **A1** operator key as owner credential. Small change in `auth.py` plus
-   `operator_login`. Test: an `is_active=False` operator and a `role=operator`
-   key each get 401/403 on `/subscriptions/cancel`.
-2. **I1** free pages re-granted per wave. Thread `free_left` through
-   `ingest_state`. Test: 3 waves of 25 pages with a 25-page allowance charge
-   50 pages.
-3. **B1** superseded cancel pauses the KB. Early return in the cancel and
-   completed handlers, plus the account-level check in `_bot_still_funded`.
-   Test: activate a new account-level sub, deliver `cancelled` for the old id,
-   assert documents stay active and no second active row is inserted.
-4. **B2** authorization payment recorded as a paid invoice. Guard on
-   `start_at`/amount. Test: a captured payment of 100 paise against a
-   future-start sub produces no `plan_charge` invoice.
-5. **A2** NULL `client_id` sessions. Four call sites plus the backfill in
-   `ensure_chat_session`. Test: lead capture before first message, then a chat
-   turn, assert `client_id` set and the session counted in dashboard stats.
+1. **A1** deactivated operator credential. `get_current_client` rejects
+   inactive operators; `operator_login` filters on `is_active` and refuses a
+   suspended workspace. Tests: `tests/test_operator_deactivation_auth.py`.
+2. **I1** free pages re-granted per wave. `batch_web_ingestion` reports
+   `pages_free`; the orchestrator keeps `free_left` in `ingest_state` and
+   passes it to every wave and the final sweep. Tests: allowance offered per
+   wave is 3, 1, 0, 0 for five pages with a 3-page allowance
+   (`test_crawl_streaming_ingestion.py`), and `pages_free` accounting
+   (`test_crawl_ingest_accounting.py`).
+3. **B1** superseded cancel pauses the KB. The `cancelled` and `completed`
+   handlers do terminal bookkeeping only when the row is already
+   `canceled`/`expired` locally (the echo of a cancel we issued). The
+   `completed` handler and the dunning expiry now use the client-level
+   knowledge helper for account-level rows (B4 folded in). The
+   `_bot_still_funded` account-level check was deliberately not added: the
+   trial-to-Free conversion creates the active Free row before pausing
+   knowledge, so a generic "any funded account-level row" check would turn that
+   pause into a no-op. Tests: `test_billing_bl1_nb3.py` (superseded cancel
+   keeps knowledge live, already-expired `completed` is bookkeeping only,
+   genuine cancel still pauses).
+4. **B2** authorization payment recorded as a paid invoice.
+   `record_verified_subscription_charge` returns without writing when the
+   subscription has no `current_period_start`, which Razorpay sets at the
+   first real debit and nowhere else. Test: `test_verify_first_charge_invoice.py`.
+5. **A2** NULL `client_id` sessions. Lead capture, behavioural signals,
+   meeting-booked and both visitor-socket persist paths pass the bot's
+   `client_id`; `ensure_chat_session` backfills a NULL owner on an existing
+   row and never overwrites a set one. Tests: `test_repository.py`,
+   `test_chat_routes.py`.
 
 ### Phase 2: live chat and streaming correctness (next week)
 

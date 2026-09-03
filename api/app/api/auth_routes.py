@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 
 from app.api.auth import (
     IMPERSONATION_REJECTED_DETAIL,
+    _ensure_client_authenticatable,
     find_active_impersonation_token,
     get_current_client_or_operator,
     get_current_client_strict,
@@ -1494,8 +1495,16 @@ def operator_login(request: Request, body: OperatorLoginRequest):
                 .all()
             )
 
+            # A deactivated operator must not be able to sign in and mint a
+            # fresh credential: deactivation is how a workspace revokes a
+            # teammate, and every key resolver already refuses an inactive
+            # operator, so the login door has to refuse them too.
             valid_operators = [
-                op for op in operators if op.hashed_password and verify_password(body.password, op.hashed_password)
+                op
+                for op in operators
+                if getattr(op, "is_active", True)
+                and op.hashed_password
+                and verify_password(body.password, op.hashed_password)
             ]
 
             if not valid_operators:
@@ -1535,6 +1544,11 @@ def operator_login(request: Request, body: OperatorLoginRequest):
             default_bot = _get_default_workspace_bot(session, operator.client_id)
 
             workspace = session.execute(select(Client).where(Client.id == operator.client_id)).scalars().first()
+            # A suspended or deactivated workspace refuses its owner's API key
+            # and its operators' keys on every request; the operator login
+            # must not hand out a credential those requests will then reject.
+            if workspace is not None:
+                _ensure_client_authenticatable(workspace)
 
             clear_failed_logins(f"operator:{email}")
             logger.info(f"Successful operator login for operator {operator.id} ({operator.name})")

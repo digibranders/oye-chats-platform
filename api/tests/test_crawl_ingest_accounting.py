@@ -162,3 +162,21 @@ def test_the_same_url_unchanged_is_still_free(db, monkeypatch):
     assert first["pages_charged"] == 1
     assert second["chunks"] == 0
     assert second["pages_charged"] == 0
+
+
+def test_pages_covered_by_the_free_allowance_are_reported(db, monkeypatch):
+    """``pages_free`` lets a caller that ingests in waves carry the remaining
+    allowance forward; without it every wave restarts the allowance."""
+    client, bot = _seed(db)
+    _use_test_session(monkeypatch, db)
+    pages = [
+        {"url": "https://acme.test/a", "content": "# A\nAlpha page with enough words to chunk."},
+        {"url": "https://acme.test/b", "content": "# B\nBravo page with enough words to chunk."},
+        {"url": "https://acme.test/c", "content": "# C\nCharlie page with enough words to chunk."},
+    ]
+
+    result = pipeline.batch_web_ingestion(client.id, pages, bot_id=bot.id, cost_per_page=5, free_pages=2)
+
+    assert result["pages_free"] == 2
+    assert result["pages_charged"] == 1
+    assert result["credits_deducted"] == 5
