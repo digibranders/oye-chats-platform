@@ -556,11 +556,17 @@ export function AgentsPage() {
               >
                 <p className="whitespace-nowrap">
                   {visible.length === summary.total
-                    ? `${formatNumber(summary.total)} chatbots`
-                    : `${formatNumber(visible.length)} of ${formatNumber(summary.total)} chatbots`}
+                    ? t('agents.nChatbots', { count: formatNumber(summary.total) }) ||
+                      `${formatNumber(summary.total)} chatbots`
+                    : t('agents.nOfTotalChatbots', {
+                        count: formatNumber(visible.length),
+                        total: formatNumber(summary.total),
+                      }) || `${formatNumber(visible.length)} of ${formatNumber(summary.total)} chatbots`}
                   {summary.conversations === null
                     ? ''
-                    : ` · ${formatNumber(summary.conversations)} conversations all time`}
+                    : t('agents.conversationsAllTime', {
+                        count: formatNumber(summary.conversations),
+                      }) || ` · ${formatNumber(summary.conversations)} conversations all time`}
                 </p>
                 {/* The sum drops every chatbot whose statistics call failed, so
                     a partial total says it is partial. Deliberately the same

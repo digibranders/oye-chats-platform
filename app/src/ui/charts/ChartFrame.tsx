@@ -5,6 +5,7 @@ import { Disclosure } from '../layout/Disclosure';
 import { Skeleton } from '../primitives/Skeleton';
 import { seriesColor } from './theme';
 import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 /** Uneven on purpose: a row of equal bars reads as a rendering fault. */
 const CHART_SKELETON_HEIGHTS = ['h-[45%]', 'h-[70%]', 'h-[35%]', 'h-[85%]', 'h-[55%]', 'h-[65%]'] as const;
@@ -118,8 +119,10 @@ export function ChartFrame({
         // browser's own triangle, on adjacent surfaces.
         <div className="mt-2 border-t border-border pt-2">
           <Disclosure
-            summary={<span className="text-xs text-text-secondary">View as table</span>}
-            regionLabel={`${summary} as a table`}
+            summary={<span className="text-xs text-text-secondary">
+                {translateNow('ds.viewAsTable') || 'View as table'}
+              </span>}
+            regionLabel={translateNow('ds.summaryAsATable', { summary }) || `${summary} as a table`}
             panelClassName="overflow-x-auto"
           >
             {dataTable}

@@ -13,10 +13,11 @@
 
 import { t as translateNow } from '../../i18n/i18n';
 
+// The KEY travels with the English, not instead of it: this table is a module
+// constant evaluated at import, before any locale exists, so the word has to be
+// resolved where it is rendered. Same reason `nav.ts` carries labels.
+// @i18n-exempt: fallbacks. Each row carries its own key, resolved at render.
 const GREETINGS = [
-  // The KEY travels with the English, not instead of it: this table is a module
-  // constant evaluated at import, before any locale exists, so the word has to
-  // be resolved where it is rendered. Same reason `nav.ts` carries labels.
   { before: 12, key: 'home.goodMorning', text: 'Good morning', emoji: '🌅' },
   { before: 18, key: 'home.goodAfternoon', text: 'Good afternoon', emoji: '☀️' },
   { before: 24, key: 'home.goodEvening', text: 'Good evening', emoji: '🌙' },

@@ -47,7 +47,7 @@ export function parseRange(raw: string | null): RangeDays {
 }
 
 export function rangeLabel(days: RangeDays): string {
-  return `Last ${days} days`;
+  return translateNow('agents.lastNDays', { days }) || `Last ${days} days`;
 }
 
 /**
@@ -272,7 +272,8 @@ export function useOverviewData(botId: number, days: RangeDays): OverviewData {
     void resolution.refetch();
   }, [dashboard, doubled, activity, questions, ratings, resolution]);
 
-  const comparedTo = `vs previous ${days} days`;
+  const comparedTo =
+    translateNow('agents.vsPreviousNDays', { days }) || `vs previous ${days} days`;
   const current = dashboard.data === undefined ? null : parseAgentFigures(dashboard.data);
   const wider = doubled.data === undefined ? null : parseAgentFigures(doubled.data);
   const activityPoints = Array.isArray(activity.data) ? activity.data : [];

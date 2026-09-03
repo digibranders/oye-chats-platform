@@ -13,6 +13,7 @@ import {
   OVERLAY_TITLE,
 } from './overlayParts';
 import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 export interface ConfirmDialogProps {
   open: boolean;
@@ -162,7 +163,11 @@ export function ConfirmDialog({
             {confirmPhrase ? (
               <Field
                 className="mt-4"
-                label={confirmPhraseLabel ?? `Type ${confirmPhrase} to confirm`}
+                label={
+                  confirmPhraseLabel ??
+                  translateNow('ds.typePhraseToConfirm', { phrase: confirmPhrase }) ??
+                  `Type ${confirmPhrase} to confirm`
+                }
               >
                 <Input
                   value={typed}

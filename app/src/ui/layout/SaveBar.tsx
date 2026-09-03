@@ -6,6 +6,7 @@ import { Button } from '../primitives/Button';
 import { CardFooter } from './Card';
 import { ConfirmDialog } from '../overlays/ConfirmDialog';
 import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 /**
  * The half of the contract that needs a data router.
@@ -42,9 +43,12 @@ function NavigationGuard({ dirty, surface }: { dirty: boolean; surface: string }
         if (!next) blocker.reset?.();
       }}
       title={t('ds.leaveWithoutSaving') || 'Leave without saving?'}
-      description={`Your changes to ${surface} have not been saved. Leaving now discards them.`}
-      confirmLabel="Discard and leave"
-      cancelLabel="Keep editing"
+      description={
+        translateNow('ds.changesToSurfaceNotSaved', { surface }) ||
+        `Your changes to ${surface} have not been saved. Leaving now discards them.`
+      }
+      confirmLabel={translateNow('ds.discardAndLeave') || 'Discard and leave'}
+      cancelLabel={translateNow('ds.keepEditing') || 'Keep editing'}
       destructive
       onConfirm={() => blocker.proceed?.()}
     />
@@ -182,7 +186,7 @@ export function SaveBar({
             // live until you save", which is true of a chatbot's greeting and
             // false of a personal notification preference — a shared primitive
             // cannot make that claim on every caller's behalf.
-            <>Unsaved changes to {summary}.</>
+            translateNow('ds.unsavedChangesTo', { summary }) || `Unsaved changes to ${summary}.`
           : t('ds.youHaveUnsavedChanges') || 'You have unsaved changes.';
   const tone = saveError || blockedReason ? 'text-danger' : 'text-text-secondary';
 

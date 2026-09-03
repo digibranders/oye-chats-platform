@@ -5,6 +5,7 @@ import { Button } from '../primitives/Button';
 import { Alert } from '../feedback/Alert';
 import { Dialog } from './Dialog';
 import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 /**
  * Crop-before-upload dialog.
@@ -71,7 +72,7 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const image = new Image();
     image.addEventListener('load', () => resolve(image));
-    image.addEventListener('error', () => reject(new Error('The image could not be read.')));
+    image.addEventListener('error', () => reject(new Error(translateNow('ds.imageCouldNotBeRead') || 'The image could not be read.')));
     image.src = src;
   });
 }
@@ -96,7 +97,7 @@ async function cropToBlob(
   ctx.drawImage(image, area.x, area.y, area.width, area.height, 0, 0, canvas.width, canvas.height);
   return await new Promise<Blob>((resolve, reject) => {
     canvas.toBlob(
-      (blob) => (blob ? resolve(blob) : reject(new Error('The cropped image could not be produced.'))),
+      (blob) => (blob ? resolve(blob) : reject(new Error(translateNow('ds.croppedImageCouldNotBeProduced') || 'The cropped image could not be produced.'))),
       outputType,
     );
   });
@@ -142,7 +143,7 @@ export function ImageCropDialog({
       const blob = await cropToBlob(src, area, outputType, outputSize);
       await onCropped(blob);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'The image could not be cropped.');
+      setError(cause instanceof Error ? cause.message : translateNow('ds.imageCouldNotBeCropped') || 'The image could not be cropped.');
     }
   }, [src, area, outputType, outputSize, onCropped]);
 

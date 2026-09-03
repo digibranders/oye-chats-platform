@@ -33,6 +33,8 @@ const UI_LOCALE: Readonly<Record<string, { locale: string; endonym: string }>> =
   // the interface language is: English stays "English" on a Hindi dashboard,
   // and हिन्दी stays हिन्दी on an English one. Translating one would defeat
   // the point of showing it.
+  // @i18n-exempt: an endonym is a language's name IN ITSELF. English stays
+  // English on a Hindi screen; translating it would defeat the point.
   en: { locale: 'en-IN', endonym: 'English' },
   hi: { locale: 'hi-IN', endonym: 'हिन्दी' },
 };

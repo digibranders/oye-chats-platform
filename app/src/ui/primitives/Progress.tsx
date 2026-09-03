@@ -4,6 +4,7 @@ import { Progress as BaseProgress } from '@base-ui/react/progress';
 import { cn } from '../lib/cn';
 import { formatNumber, formatPercent } from '../lib/formatters';
 import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 export interface ProgressProps {
   /** 0–100. Pass `null` for an indeterminate bar. */
@@ -236,7 +237,11 @@ export function Meter({
       // Spelled out, because "412 / 500" read aloud as two numbers is not the
       // fact the user needs; "82% used" is.
       getAriaValueText={(_formatted, value) =>
-        `${formatNumber(value)} of ${formatNumber(limit)} used, ${formatPercent(fraction)}`
+        translateNow('ds.ofLimitUsedPercent', {
+          used: formatNumber(value),
+          limit: formatNumber(limit),
+          percent: formatPercent(fraction),
+        }) || `${formatNumber(value)} of ${formatNumber(limit)} used, ${formatPercent(fraction)}`
       }
       className={className}
     >

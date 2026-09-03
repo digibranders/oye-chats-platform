@@ -16,6 +16,7 @@ import { Skeleton } from '../primitives/Skeleton';
 import { Tooltip } from '../overlays/Tooltip';
 import { EmptyState, ErrorState, LockedState } from './States';
 import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 export type SortDirection = 'asc' | 'desc';
 export interface SortState {
@@ -911,7 +912,8 @@ export function DataTable<T>({
       {selectable && selectedCount > 0 ? (
         <div className="absolute left-12 right-0 top-0 z-[var(--z-sticky)] flex h-[var(--row-h)] items-center gap-3 border-b border-border bg-accent-50 pl-1 pr-[var(--cell-x)]">
           <p className="shrink-0 text-sm font-medium text-accent-700">
-            <span className="figure">{selectedCount}</span> selected
+            <span className="figure">{selectedCount}</span>{' '}
+            {translateNow('ds.selected') || 'selected'}
           </p>
           <div className="flex min-w-0 flex-wrap items-center gap-2">{bulkActions}</div>
           <Button
@@ -949,7 +951,8 @@ export function DataTable<T>({
           >
             <p className="text-xs text-text-secondary">
               <span className="figure">{safePage * pageSize + 1}</span>–
-              <span className="figure">{Math.min((safePage + 1) * pageSize, totalRows)}</span> of{' '}
+              <span className="figure">{Math.min((safePage + 1) * pageSize, totalRows)}</span>{' '}
+              {translateNow('ds.of') || 'of'}{' '}
               <span className="figure">{totalRows}</span> {noun}
             </p>
             <div className="flex items-center gap-1">
@@ -966,7 +969,10 @@ export function DataTable<T>({
                   "1 slash 12" on their own. */}
               <span
                 className="px-1 text-xs text-text-secondary"
-                aria-label={`Page ${safePage + 1} of ${pageCount}`}
+                aria-label={
+                  translateNow('ds.pageOf', { page: safePage + 1, total: pageCount }) ||
+                  `Page ${safePage + 1} of ${pageCount}`
+                }
               >
                 <span aria-hidden className="figure">{safePage + 1}</span>
                 <span aria-hidden> / </span>

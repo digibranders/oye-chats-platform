@@ -34,7 +34,11 @@ export interface AgentActionsMenuProps {
 function validateAgentName(value: string, current: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) return translateNow('agents.giveTheChatbotAName') || 'Give the chatbot a name.';
-  if (trimmed.length > MAX_NAME_LENGTH) return `Keep it to ${MAX_NAME_LENGTH} characters or fewer.`;
+  if (trimmed.length > MAX_NAME_LENGTH)
+    return (
+      translateNow('agents.keepItToNCharacters', { max: MAX_NAME_LENGTH }) ||
+      `Keep it to ${MAX_NAME_LENGTH} characters or fewer.`
+    );
   if (trimmed === current) return translateNow('agents.thatIsAlreadyItsName') || 'That is already its name.';
   return null;
 }
@@ -124,7 +128,10 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
       await rename.mutateAsync(draftName.trim());
       setRenameOpen(false);
       onChanged();
-      toast.success(`Renamed to ${draftName.trim()}`);
+      toast.success(
+        translateNow('agents.renamedTo', { name: draftName.trim() }) ||
+          `Renamed to ${draftName.trim()}`,
+      );
     } catch (cause) {
       // Stays on the page, beside the control that produced it: the user has to
       // read this before they can proceed, which a toast does not guarantee.
@@ -162,7 +169,9 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
     await setActive.mutateAsync(true);
     setResumeOpen(false);
     onChanged();
-    toast.success(`${name} is answering again`);
+    toast.success(
+      translateNow('agents.isAnsweringAgain', { name }) || `${name} is answering again`,
+    );
   };
 
   /**
@@ -204,7 +213,10 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
     if (clipboard === 'copied') {
       toast.success(what === 'chatbot key' ? t('agents.chatbotKeyCopied') || 'Chatbot key copied' : t('agents.demoLinkCopied') || 'Demo link copied');
     } else if (clipboard === 'failed') {
-      toast.error(`Could not copy the ${what}. Open it and copy it by hand.`);
+      toast.error(
+        translateNow('agents.couldNotCopyOpenByHand', { what }) ||
+          `Could not copy the ${what}. Open it and copy it by hand.`,
+      );
     }
   }, [clipboard, t]);
 
@@ -212,7 +224,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps) {
     <>
       <MenuRoot>
         <MenuTrigger
-          aria-label={`Actions for ${name}`}
+          aria-label={translateNow('agents.actionsFor', { name }) || `Actions for ${name}`}
           className={buttonClass('ghost', 'icon-sm')}
         >
           <MoreHorizontal aria-hidden className="h-4 w-4" />
