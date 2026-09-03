@@ -20,7 +20,7 @@ import {
 } from '../../services/api';
 import {
   AVATAR_ACCEPT,
-  AVATAR_HINT,
+  avatarHint,
   validateAvatarFile,
 } from '../agents/experience/avatarRules';
 import { keys } from '../../query/keys';
@@ -206,7 +206,7 @@ export function ProfileSection({ user, onSaved }: ProfileSectionProps) {
           ) : null}
         </span>
       </SettingRow>
-      {isOperator ? <SettingBand>{AVATAR_HINT}</SettingBand> : null}
+      {isOperator ? <SettingBand>{avatarHint()}</SettingBand> : null}
 
       <SettingRow
         label={t('settings.name') || 'Name'}

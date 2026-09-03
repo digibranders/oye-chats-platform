@@ -16,7 +16,7 @@ import {
   toast,
 } from '../../ui';
 import { removeOperatorAvatar, updateOperator, uploadOperatorAvatar } from '../../services/api';
-import { AVATAR_ACCEPT, AVATAR_HINT, validateAvatarFile } from '../agents/experience/avatarRules';
+import { AVATAR_ACCEPT, avatarHint, validateAvatarFile } from '../agents/experience/avatarRules';
 import { keys } from '../../query/keys';
 import type { Department, Operator } from '../../types/domain';
 import {
@@ -245,7 +245,7 @@ export function MemberDialog({
           ) : null}
 
           {isSelf ? (
-            <Field label="Picture" hint={AVATAR_HINT} error={avatarError ?? undefined}>
+            <Field label="Picture" hint={avatarHint()} error={avatarError ?? undefined}>
               <span className="flex items-center gap-3">
                 <Avatar name={member.name || member.email} size="lg" src={avatarUrl} />
                 {/* A hidden input driven by real buttons: a styled `<label>`

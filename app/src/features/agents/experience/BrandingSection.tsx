@@ -20,7 +20,7 @@ import PremiumOrb from './PremiumOrb';
 import { useEntitlements } from '../../../hooks/useEntitlements';
 import { ColorField } from './ColorField';
 import { NON_TEXT_CONTRAST_MIN, TEXT_CONTRAST_MIN } from './contrast';
-import { AVATAR_ACCEPT, AVATAR_HINT, MAX_AVATAR_BYTES, validateAvatarFile } from './avatarRules';
+import { AVATAR_ACCEPT, avatarHint, MAX_AVATAR_BYTES, validateAvatarFile } from './avatarRules';
 import { errorMessage, fetchSiteIcon, uploadAvatar } from './experience-api';
 import {
   DEFAULT_PRIMARY_COLOR,
@@ -258,7 +258,7 @@ export function BrandingSection({
             <div className="flex flex-col gap-3">
               <FileDrop
                 label={t('agents.uploadAnImage') || 'Upload an image'}
-                hint={AVATAR_HINT}
+                hint={avatarHint()}
                 accept={AVATAR_ACCEPT}
                 maxSizeBytes={MAX_AVATAR_BYTES}
                 maxFiles={1}
