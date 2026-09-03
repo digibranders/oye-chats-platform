@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ChevronRight, Menu as MenuIcon, Search } from 'lucide-react';
 import { Button, Kbd, Skeleton, Tooltip, cn, modifierKey } from '../ui';
 import { useBreadcrumbs } from './useBreadcrumbs';
+import { navLabel } from './navCopy';
 import { useTranslation } from '../i18n/useTranslation';
 import { NotificationBell } from './NotificationBell';
 
@@ -38,6 +39,14 @@ export interface TopBarProps {
  * pixels underneath it, and at 375px "Chatbots › Acme Support › Knowledge"
  * truncates to "Chatbots ›…". Dropping it costs a duplicate; keeping it costs
  * the alignment the bar was rebuilt for.
+ *
+ * **Below 1024 the wordmark takes the trail's place.** With the rail behind a
+ * drawer the brand is off screen until the drawer opens, and the bar read as a
+ * menu button, a gap, and two controls: a header with nothing in it. The mark
+ * is the one thing the bar can carry there that is neither a duplicate of the
+ * drawer nor of the `h1` below it. `/new_dark.png`, the same asset at the same
+ * `h-7` `AuthShell` prints on this same paper. It links Home, as a wordmark in a
+ * header is expected to.
  */
 export function TopBar({ isMobile, onToggleRail, onOpenSearch, searchable = true }: TopBarProps) {
   const crumbs = useBreadcrumbs();
@@ -63,7 +72,20 @@ export function TopBar({ isMobile, onToggleRail, onOpenSearch, searchable = true
       ) : null}
 
       {isMobile ? (
-        <div className="flex-1" />
+        <div className="flex min-w-0 flex-1 items-center">
+          <Link
+            to="/"
+            aria-label={navLabel('Home')}
+            className="flex h-9 shrink-0 items-center rounded-md"
+          >
+            <img
+              src="/new_dark.png"
+              alt={t('shell.oyechats') || 'OyeChats'}
+              className="h-7 w-auto object-contain"
+              draggable={false}
+            />
+          </Link>
+        </div>
       ) : (
         <nav aria-label={t('shell.breadcrumbLabel') || 'Breadcrumb'} className="min-w-0 flex-1">
           <ol className="flex min-w-0 items-center gap-1.5 text-sm">

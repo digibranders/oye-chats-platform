@@ -28,6 +28,11 @@ export default defineConfig({
     // 30s timeout while Chromium passed. A literal address removes the
     // resolution step entirely.
     baseURL: 'http://127.0.0.1:4175',
+    // An environment that ships its own Chromium (a sandbox with browser
+    // downloads disabled) points here; unset, Playwright uses its own.
+    launchOptions: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+      ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+      : undefined,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },
