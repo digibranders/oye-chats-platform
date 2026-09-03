@@ -2248,13 +2248,37 @@ class TestMaybeAppendNameAsk:
         assert "Hey, happy to help." in out
         assert out.rstrip().endswith("What name should I use to address you?")
 
-    def test_skips_when_name_known(self):
+    def test_never_asks_again_when_name_known(self):
+        """A known name must never be re-requested on an early-return reply."""
         from app.services import rag_service
 
         lead = SimpleNamespace(name="Gaurav")
         with patch.object(rag_service, "get_lead_info_by_session", return_value=lead):
-            out = rag_service._maybe_append_name_ask("Hi Gaurav!", MagicMock(), "s1", 3, 9, "hi", history=[])
-        assert out == "Hi Gaurav!"
+            out = rag_service._maybe_append_name_ask("Hi there!", MagicMock(), "s1", 3, 9, "hi", history=[])
+        assert "What name should I use to address you?" not in out
+
+    def test_welcomes_back_when_name_known_on_first_reply(self):
+        """A returning visitor is greeted by name even when their opening question
+        is served from the QA cache, which short-circuits the generation path where
+        the opener is normally emitted."""
+        from app.services import rag_service
+
+        lead = SimpleNamespace(name="Gaurav")
+        with patch.object(rag_service, "get_lead_info_by_session", return_value=lead):
+            out = rag_service._maybe_append_name_ask("Our uptime is 99.95%.", MagicMock(), "s1", 3, 9, "hi", history=[])
+        assert out.startswith("Welcome back, Gaurav!")
+        assert "Our uptime is 99.95%." in out
+
+    def test_no_welcome_back_once_the_bot_has_already_spoken(self):
+        """The opener is a once-per-session greeting: mid-conversation cache hits
+        must not re-greet on every turn."""
+        from app.services import rag_service
+
+        lead = SimpleNamespace(name="Gaurav")
+        hist = [_name_msg("bot", "Hello earlier")]
+        with patch.object(rag_service, "get_lead_info_by_session", return_value=lead):
+            out = rag_service._maybe_append_name_ask("Sure thing.", MagicMock(), "s1", 3, 9, "hi", history=hist)
+        assert out == "Sure thing."
 
     def test_skips_after_first_bot_reply(self):
         from app.services import rag_service

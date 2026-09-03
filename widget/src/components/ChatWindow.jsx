@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, Suspense } from 'react';
-import { X, Plus, Clock, MoreHorizontal, Mail, CheckCircle2, AlertCircle, User, Phone, MessageSquare, LogOut, Star, XCircle, ChevronDown, Headphones, Globe } from 'lucide-react';
-import { isAbortError, sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, cancelHandoff, getSessionStatus, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail, getPendingConnectRequest, respondToConnectRequest, submitFeedback, markChatEvent, validateEmail as checkEmailWithServer, getQuotationState, changeSessionLanguage } from '../services/api';
+import { X, Plus, Clock, Mail, CheckCircle2, AlertCircle, User, Phone, MessageSquare, LogOut, Star, XCircle, ChevronDown, Headphones, Globe, History, Trash2, Check, Menu, Calendar } from 'lucide-react';
+import { isAbortError, sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, cancelHandoff, getSessionStatus, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail, getPendingConnectRequest, respondToConnectRequest, submitFeedback, markChatEvent, validateEmail as checkEmailWithServer, getQuotationState, changeSessionLanguage, restoreVisitorName } from '../services/api';
 import { getController } from '../widget-controller.js';
 import { themeConfigs } from './themeConfigs';
 import {
@@ -14,6 +14,7 @@ import MessageBubble from './MessageBubble';
 import MessageStatus from './MessageStatus';
 import { sanitizeColor, sanitizeImageUrl, sanitizeFileUrl } from '../services/sanitize';
 import { readSessionId, writeSessionId, clearSessionId, resolveShareDomain, getLeadCapturedKey, isLeadCaptureFresh, markLeadCaptured, writeLocale } from '../services/storage-keys';
+import { readSessionIndex, recordSession, removeSessionFromIndex, readVisitorName, writeVisitorName } from '../services/session-history';
 import { setSmartLinkUrls, setSmartLinkSession } from '../services/smartLinks';
 import TypingIndicator from './TypingIndicator';
 import ChatInput from './ChatInput';
@@ -30,7 +31,8 @@ import { SEEDED, authoredCopy } from '../i18n/seededCopy.js';
 import { displayTextFor } from '../lib/liveChatTranslation.js';
 import { isInvalidTransition, nextChatMode } from '../lib/chatModeMachine.js';
 import { startBoundedPoll } from '../lib/boundedPoll.js';
-import { formatHeaderDateTime } from '../i18n/formatters.js';
+// formatHeaderDateTime: header wall-clock temporarily hidden (see renderHeader).
+// import { formatHeaderDateTime } from '../i18n/formatters.js';
 
 // Lazy-loaded. Only fetched when the user actually triggers handoff, lead capture, or booking.
 // Keeps the initial chat chunk lean. lazyWithRetry + the ErrorBoundary wrapping each
@@ -52,6 +54,13 @@ const FALLBACK_PATTERNS = /don't have that specific information|I'm not sure abo
 // waiting for a chat, and an unbounded probe is just load with no reader.
 const OFFLINE_POLL_INTERVAL_MS = 15000;
 const OFFLINE_POLL_MAX_TICKS = 40;
+
+// How many turns into a conversation we keep re-reading the lead looking for a
+// name the visitor typed in reply to the bot's "what should I call you?". The
+// bot asks on its first reply, so the answer normally lands on turn 2; three
+// attempts absorbs a visitor who ignores the question once and answers later,
+// without polling forever for one who never answers at all.
+const NAME_PROBE_LIMIT = 3;
 
 // Stable identifiers for system dividers. Several effects add and later remove
 // the "connecting" divider; they used to find it by comparing `m.text` against
@@ -251,7 +260,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
     // Wall-clock tick so the header timestamp re-renders while the widget
     // stays open. Without this, `new Date()` is only evaluated on mount and
     // the clock silently freezes until the visitor refreshes the page.
-    const [now, setNow] = useState(() => new Date());
+    // Parked alongside the hidden header clock (see renderHeader); restore both
+    // together.
+    // const [now, setNow] = useState(() => new Date());
     // Track whether the messages list is anchored to the bottom so we can
     // show a "scroll to latest" affordance only when the user has scrolled
     // up. Default true matches the natural mount state (auto-scrolled).
@@ -393,6 +404,17 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
     const [showHeaderMenu, setShowHeaderMenu] = useState(false);
     const headerMenuRef = useRef(null);
 
+    // Conversation history drawer (top-left) — lists this browser's past sessions
+    // for this bot so the visitor can reopen an earlier conversation.
+    const [showSessionMenu, setShowSessionMenu] = useState(false);
+    const [sessionList, setSessionList] = useState(() => readSessionIndex());
+    // Id of the row awaiting delete confirmation. Removing a conversation is not
+    // undoable from the widget, so the trash button arms an inline confirm step
+    // rather than deleting on the first tap (easy to hit by accident on mobile,
+    // where the row and the trash target sit close together).
+    const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+    const refreshSessionList = useCallback(() => setSessionList(readSessionIndex()), []);
+
     // Transcript email modal
     const [showTranscriptModal, setShowTranscriptModal] = useState(false);
     const [transcriptEmail, setTranscriptEmail] = useState('');
@@ -463,6 +485,14 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
     // Stable handle on the latest handleSend so the controller.onSend
     // subscription can invoke it without re-subscribing on every render.
     const handleSendRef = useRef(null);
+    // Stable handle on handleNewChat, so callbacks defined before it (e.g. the
+    // history-menu delete) can start a fresh chat without a forward reference.
+    const handleNewChatRef = useRef(null);
+    // How many times we've re-read the lead this conversation looking for a name
+    // the visitor typed into the chat (the backend extracts and stores it, so the
+    // widget only learns it by asking). Bounded so a visitor who never gives a
+    // name doesn't generate a GET after every single turn.
+    const nameProbeCountRef = useRef(0);
     const prevOperatorNameRef = useRef(null);
     const pageContextRef = useRef(null);
     const behavioralSentRef = useRef(false);
@@ -725,6 +755,66 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
         setSettings(initialSettings);
     }, [initialSettings]);
 
+    // ── Session hydration ────────────────────────────────────────────────────────
+    // Load a session's transcript + lead + live-state into the view. Shared by
+    // first-mount initialization and the "reopen past conversation" menu so both
+    // paths map messages and restore chat mode identically. Returns true when the
+    // session had prior messages (a genuine returning conversation).
+    const hydrateSession = useCallback(async (sid) => {
+        if (!sid) return false;
+        let hadHistory = false;
+        try {
+            const history = await getChatHistory(sid, { limit: 50 });
+            if (history && history.length > 0) {
+                hadHistory = true;
+                const mapped = history.map(m => ({
+                    id: m.id,
+                    text: displayTextFor(m, getLocale()),
+                    sender: m.role === 'user' ? 'user' : 'bot',
+                    timestamp: m.timestamp,
+                    feedback: typeof m.feedback === 'number' ? m.feedback : null,
+                    ...(m.media_card ? { media_card: m.media_card } : {}),
+                    ...(Array.isArray(m.media_secondary) ? { media_secondary: m.media_secondary } : {}),
+                    ...(m.role === 'system' ? { type: 'system' } : {}),
+                }));
+                setMessages(mapped);
+                setIsReturningUser(true);
+                // "Welcome back" should only greet a genuine return after a break,
+                // not a mid-conversation subdomain hop. Gate on time since the last
+                // message; unknown timestamps fall back to showing it (safe default).
+                const RETURNING_GAP_MS = 30 * 60 * 1000; // 30 minutes
+                const lastTs = mapped[mapped.length - 1]?.timestamp;
+                const lastMs = lastTs ? new Date(lastTs).getTime() : NaN;
+                const isGenuineReturn =
+                    !Number.isFinite(lastMs) || (Date.now() - lastMs) > RETURNING_GAP_MS;
+                setShowWelcomeBackBanner(isGenuineReturn);
+                setHasMoreHistory(history.length >= 50);
+                setShowWelcome(false);
+            }
+        } catch {
+            console.error('[OyeChats] Failed to load history');
+        }
+
+        try {
+            const leadData = await getLeadInfo(sid);
+            if (leadData) setExistingLeadInfo(leadData);
+        } catch { /* non-critical */ }
+
+        // Restore chatMode if session was in waiting/live state (e.g., page navigation)
+        try {
+            const sessionStatus = await getSessionStatus(sid);
+            if (sessionStatus && sessionStatus.status === 'waiting') {
+                setChatModeRaw('waiting');
+            } else if (sessionStatus && sessionStatus.status === 'live') {
+                setChatModeRaw('live');
+                if (sessionStatus.operator_name) setOperatorName(sessionStatus.operator_name);
+                if (sessionStatus.operator_avatar) setOperatorAvatar(sessionStatus.operator_avatar);
+            }
+        } catch { /* non-critical */ }
+
+        return hadHistory;
+    }, []);
+
     // ── Initialization ───────────────────────────────────────────────────────────
     const initRanRef = useRef(false);
     useEffect(() => {
@@ -765,71 +855,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
             }
 
             if (sessionId) {
-                try {
-                    const history = await getChatHistory(sessionId, { limit: 50 });
-                    if (history && history.length > 0) {
-                        const mapped = history.map(m => ({
-                            id: m.id,
-                            // Prefer the persisted translation for this visitor's
-                            // language (Phase 4). An operator reply is stored in
-                            // the OPERATOR's language, so reading `content` here
-                            // put the English original in the bot-history list
-                            // while LiveChatMode restored the Hindi translation
-                            // into the live list, and the visitor saw the same
-                            // reply twice in two languages. Same helper as the
-                            // live path so both lists always agree.
-                            text: displayTextFor(m, getLocale()),
-                            sender: m.role === 'user' ? 'user' : 'bot',
-                            timestamp: m.timestamp,
-                            feedback: typeof m.feedback === 'number' ? m.feedback : null,
-                            // Hydrate the media card the same way a live stream does
-                            // (see the FINAL_METADATA branch below) so a video/document
-                            // card re-renders under the bot answer on refresh.
-                            ...(m.media_card ? { media_card: m.media_card } : {}),
-                            ...(Array.isArray(m.media_secondary) ? { media_secondary: m.media_secondary } : {}),
-                            ...(m.role === 'system' ? { type: 'system' } : {}),
-                        }));
-                        setMessages(mapped);
-                        setIsReturningUser(true);
-                        // "Welcome back" should only greet a genuine return after a
-                        // break. NOT a mid-conversation hop across subdomains, where
-                        // the shared-session cookie loads history seconds later and a
-                        // "welcome back" reads as nonsense. Gate the banner on how long
-                        // ago the last message was; unknown/unparseable timestamps fall
-                        // back to showing it (safe default).
-                        const RETURNING_GAP_MS = 30 * 60 * 1000; // 30 minutes
-                        const lastTs = mapped[mapped.length - 1]?.timestamp;
-                        const lastMs = lastTs ? new Date(lastTs).getTime() : NaN;
-                        const isGenuineReturn =
-                            !Number.isFinite(lastMs) || (Date.now() - lastMs) > RETURNING_GAP_MS;
-                        setShowWelcomeBackBanner(isGenuineReturn);
-                        setHasMoreHistory(history.length >= 50);
-                        setShowWelcome(false);
-                    }
-                } catch {
-                    console.error('[OyeChats] Failed to load history');
-                }
-
-                try {
-                    const leadData = await getLeadInfo(sessionId);
-                    if (leadData) setExistingLeadInfo(leadData);
-                } catch { /* non-critical */ }
-
-                // Restore chatMode if session was in waiting/live state (e.g., page navigation)
-                try {
-                    const sessionStatus = await getSessionStatus(sessionId);
-                    if (sessionStatus && sessionStatus.status === 'waiting') {
-                        setChatModeRaw('waiting');
-                    } else if (sessionStatus && sessionStatus.status === 'live') {
-                        setChatModeRaw('live');
-                        if (sessionStatus.operator_name) {
-                            setOperatorName(sessionStatus.operator_name);
-                        }
-                        if (sessionStatus.operator_avatar) {
-                            setOperatorAvatar(sessionStatus.operator_avatar);
-                        }
-                    }
-                } catch { /* non-critical */ }
+                await hydrateSession(sessionId);
             }
             setIsInitializing(false);
 
@@ -1024,10 +1050,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
     // Tick the header clock every 30 s so the wall-clock label stays fresh
     // while the widget stays open. 30 s cadence keeps the minute-precision
     // label at most ~half a minute stale without waking the tab too often.
-    useEffect(() => {
-        const id = setInterval(() => setNow(new Date()), 30000);
-        return () => clearInterval(id);
-    }, []);
+    // Parked with the hidden header clock (see renderHeader); restore together.
+    // useEffect(() => {
+    //     const id = setInterval(() => setNow(new Date()), 30000);
+    //     return () => clearInterval(id);
+    // }, []);
 
     // Waiting timer + auto-timeout.
     //
@@ -1146,6 +1173,116 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
         return () => document.removeEventListener('mousedown', handler);
     }, [showHeaderMenu]);
 
+    // ── Visitor name memory ──────────────────────────────────────────────────────
+    // Single choke point: every route by which the widget learns the visitor's
+    // name (initial hydration, the pre-chat lead form, the post-turn probe below,
+    // the refresh before a handoff form) lands in `existingLeadInfo`, so
+    // persisting here covers all of them without scattering writes.
+    useEffect(() => {
+        const name = existingLeadInfo?.name;
+        if (name) writeVisitorName(name);
+    }, [existingLeadInfo?.name]);
+
+    // ── Conversation history drawer (top-left) ───────────────────────────────────
+    // Dismissal is owned by the drawer's own scrim (click anywhere outside it),
+    // so no document-level outside-click listener is needed. Escape closes it too,
+    // which is what a modal overlay is expected to do.
+    useEffect(() => {
+        if (!showSessionMenu) return;
+        const handler = (e) => {
+            if (e.key === 'Escape') setShowSessionMenu(false);
+        };
+        document.addEventListener('keydown', handler);
+        return () => document.removeEventListener('keydown', handler);
+    }, [showSessionMenu]);
+
+    // Reopen a past conversation from the history menu. Mirrors handleNewChat's
+    // transient-state reset (live-chat mode, forms, CTAs) but instead of minting a
+    // fresh id it points the widget at an existing session and replays its
+    // transcript. No-op when the session is already the active one.
+    const switchToSession = useCallback(async (sid) => {
+        setShowSessionMenu(false);
+        if (!sid || sid === sessionId) return;
+
+        setIsInitializing(true);
+        streamAbortRef.current?.abort();
+        streamAbortRef.current = null;
+        // Reset per-conversation transient state so nothing bleeds across sessions.
+        handoffTriggeredRef.current = false;
+        handoffFormInjectedRef.current = false;
+        behavioralSentRef.current = false;
+        ctaShownRef.current = false;
+        ctaDimensionsShownRef.current = new Set();
+        consecutiveFallbacks.current = 0;
+        nameProbeCountRef.current = 0;
+        setShowWelcome(false);
+        setShowWelcomeBackBanner(false);
+        setIsReturningUser(false);
+        setHasMoreHistory(false);
+        setMessages([]);
+        setShowBooking(false);
+        setCalendlyUrl(null);
+        setMeetingBooked(false);
+        setMeetingProvider(null);
+        setQualifiedPopup(null);
+        setExistingLeadInfo(null);
+        setLiveMessages([]);
+        setIsOperatorTyping(false);
+        setIsLiveReconnecting(false);
+        setShowRating(false);
+        setShowEndConfirm(false);
+        setChatMode('bot');
+        setOperatorName(null);
+        setOperatorAvatar(null);
+
+        setSessionId(sid);
+        writeSessionId(sid, { shareDomain });
+
+        const hadHistory = await hydrateSession(sid);
+        if (!hadHistory) {
+            // Empty (or unreadable) transcript: fall back to a clean welcome view
+            // rather than leaving a blank message area.
+            setMessages([{
+                id: 'welcome',
+                text: t('welcome.initial_message') || 'Hi There, How can I help you today?',
+                sender: 'bot',
+                timestamp: new Date().toISOString(),
+                feedback: null,
+            }]);
+            setShowWelcome(true);
+        }
+        recordSession(sid);
+        refreshSessionList();
+        setIsInitializing(false);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [sessionId, shareDomain, hydrateSession, refreshSessionList]);
+
+    // Arm the confirm step for a row (first tap on the trash icon).
+    const armDeleteSession = useCallback((sid, e) => {
+        if (e) e.stopPropagation();
+        setConfirmDeleteId(sid);
+    }, []);
+
+    // Remove one conversation from the local history drawer, after confirmation.
+    // The server rows are untouched — this only forgets it in this browser.
+    // Deleting the ACTIVE conversation also starts a fresh one, so the visitor
+    // isn't left pointed at a session they just hid.
+    const confirmDeleteSession = useCallback((sid, e) => {
+        if (e) e.stopPropagation();
+        setConfirmDeleteId(null);
+        removeSessionFromIndex(sid);
+        refreshSessionList();
+        if (sid === sessionId) {
+            handleNewChatRef.current?.();
+        }
+    }, [sessionId, refreshSessionList]);
+
+    // Drop any armed confirmation when the drawer closes, so reopening it never
+    // shows a stale "are you sure?" row.
+    useEffect(() => {
+        if (!showSessionMenu) setConfirmDeleteId(null);
+    }, [showSessionMenu]);
+
     const handleSendTranscript = () => {
         setShowHeaderMenu(false);
         setTranscriptSent(false);
@@ -1208,6 +1345,36 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
         }
     };
 
+    // ── Book a meeting ───────────────────────────────────────────────────────────
+    // Resolve the configured scheduling link and open the booking panel. Shared
+    // by the composer's slash menu and the header menu so the provider fallback
+    // chain lives in exactly one place. No-op when booking is off for this bot,
+    // already booked this session, or no URL is configured for the chosen
+    // provider — so a caller can invoke it without re-checking any of that.
+    const handleBookMeeting = useCallback(() => {
+        if (!settings.meeting_booking_enabled || meetingBooked) return;
+        const provider = settings.meeting_provider || 'calendly';
+        const url = {
+            calendly: settings.calendly_url,
+            zcal: settings.zcal_url,
+            calcom: settings.calcom_url,
+        }[provider] || settings.calendly_url;
+        if (!url) return;
+        setCalendlyUrl(url);
+        setMeetingProvider(provider);
+        setShowBooking(true);
+    }, [settings, meetingBooked]);
+
+    // True when the header menu's "Book a meeting" entry has somewhere to go.
+    // Mirrors handleBookMeeting's own guards so the entry is never a dead click.
+    const canBookMeeting = !!settings.meeting_booking_enabled
+        && !meetingBooked
+        && !!({
+            calendly: settings.calendly_url,
+            zcal: settings.zcal_url,
+            calcom: settings.calcom_url,
+        }[settings.meeting_provider || 'calendly'] || settings.calendly_url);
+
     // ── Clear view (slash /clear) ───────────────────────────────────────────────
     // Cosmetic wipe of the on-screen transcript, the server-side ChatSession
     // and its ChatMessage rows are untouched, and the session_id stays the
@@ -1233,6 +1400,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
         const newSession = `session_${crypto.randomUUID()}`;
         setSessionId(newSession);
         writeSessionId(newSession, { shareDomain });
+        nameProbeCountRef.current = 0;
+        // Carry a previously given name into the fresh session so the bot greets
+        // the visitor instead of asking who they are for the second time. This
+        // races the visitor's first message deliberately: the ask is decided
+        // server-side on turn 1, so the seed has to be in flight before then. If
+        // it loses the race (slow network, offline), the bot simply asks as it
+        // does today, which is the correct fallback.
+        const rememberedName = readVisitorName();
+        if (rememberedName) restoreVisitorName(newSession, rememberedName);
         setShowWelcome(true);
         handoffTriggeredRef.current = false;
         handoffFormInjectedRef.current = false;
@@ -1246,7 +1422,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
         setMeetingProvider(null);
         setQualifiedPopup(null);
         consecutiveFallbacks.current = 0;
-        setExistingLeadInfo(null);
+        // Keep the remembered name (and only the name) across the reset: the rest
+        // of the lead — email, phone, company, enrichment — belongs to the session
+        // that captured it, but the name is what the handoff/offline forms
+        // pre-fill from and what the bot was just re-seeded with.
+        setExistingLeadInfo(rememberedName ? { name: rememberedName } : null);
         setLiveMessages([]);
         setIsOperatorTyping(false);
         setIsLiveReconnecting(false);
@@ -1270,6 +1450,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
             setOperatorName(null);
             setOperatorAvatar(null);
             setIsInitializing(false);
+            refreshSessionList();
         }, 600);
     };
 
@@ -1297,6 +1478,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
             // Re-focus so the mobile keyboard stays open and the user can type ahead
             inputRef.current.focus();
         }
+
+        // Remember this conversation locally so it surfaces in the history menu.
+        // The preview is only stored on first message (recordSession keeps the
+        // earliest), giving each session a stable, human-readable label.
+        const sidForIndex = sessionId || readSessionId({ shareDomain });
+        if (sidForIndex) {
+            recordSession(sidForIndex, { preview: text });
+            refreshSessionList();
+        }
         setIsTyping(true);
 
         try {
@@ -1320,6 +1510,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                     if (metadata.session_id && metadata.session_id !== sessionId) {
                         setSessionId(metadata.session_id);
                         writeSessionId(metadata.session_id, { shareDomain });
+                        // First message of a brand-new conversation: the id is
+                        // minted server-side, so index it now (with this message as
+                        // the preview) and drop the provisional null-id no-op above.
+                        recordSession(metadata.session_id, { preview: text });
+                        refreshSessionList();
                     }
                     // Send behavioral signals once per conversation
                     const resolvedSid = metadata.session_id || sessionId;
@@ -1494,6 +1689,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
             setIsTyping(false);
             setStreamingId(null);
 
+            // The visitor may have just answered the bot's "what should I call
+            // you?". The backend extracts and stores that name on the lead; the
+            // widget only finds out by re-reading it. Probe only while no name is
+            // remembered yet, so this costs nothing for a visitor we already know.
+            if (!readVisitorName() && nameProbeCountRef.current < NAME_PROBE_LIMIT) {
+                nameProbeCountRef.current += 1;
+                refreshLeadInfo();
+            }
+
             setMessages(prev => {
                 const lastBot = [...prev].reverse().find(msg => msg.sender === 'bot');
                 if (lastBot && checkBotFallback(lastBot.text)) {
@@ -1544,6 +1748,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
     // Keep the ref pointing at the latest handleSend so the controller.onSend
     // subscription (registered once) always invokes the current closure.
     handleSendRef.current = handleSend;
+    handleNewChatRef.current = handleNewChat;
 
     // Re-fetch the visitor's saved contact (name/email) from the backend. The
     // init fetch runs before the visitor has typed anything, so a name captured
@@ -2229,6 +2434,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
         await submitLeadCapture(newSessionId, formData);
         markChatEvent(newSessionId, 'lead_captured');
         markLeadCaptured();
+        // Hold on to what the visitor just gave: it pre-fills the handoff/offline
+        // forms later in this session, and the name-memory effect persists the
+        // name so their NEXT conversation doesn't ask for it again.
+        setExistingLeadInfo(prev => ({ ...(prev || {}), ...formData }));
         setShowLeadForm(false);
         setShowWelcome(true);
         const deferred = deferredInitialMessageRef.current;
@@ -2578,6 +2787,19 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
     // Duplicating it in the header was redundant. A subtle "Reconnecting..."
     // overlay still appears when the WS is dropping mid-live-chat: that's a
     // connection-health signal, not an identity swap.
+    // Compact, localized "time since" label for a session row in the history menu.
+    const sessionTimeLabel = (ts) => {
+        if (!Number.isFinite(ts) || ts <= 0) return '';
+        const diffMs = Math.max(0, Date.now() - ts);
+        const mins = Math.floor(diffMs / 60000);
+        if (mins < 1) return t('header.time_just_now') || 'Just now';
+        if (mins < 60) return t('header.time_minutes_ago', { count: mins }) || `${mins}m ago`;
+        const hours = Math.floor(mins / 60);
+        if (hours < 24) return t('header.time_hours_ago', { count: hours }) || `${hours}h ago`;
+        const days = Math.floor(hours / 24);
+        return t('header.time_days_ago', { count: days }) || `${days}d ago`;
+    };
+
     const renderHeader = () => {
         if (chatMode === 'live' && liveConnectionStatus === 'reconnecting') {
             return (
@@ -2586,11 +2808,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                 </span>
             );
         }
-        return (
-            <span className="text-[11px] text-gray-400 font-medium tracking-wide">
-                {formatHeaderDateTime(now, currentLocale)}
-            </span>
-        );
+        // Wall-clock timestamp temporarily hidden per request. The conversation
+        // history menu now owns the top-left; re-enable this span to bring the
+        // clock back.
+        // return (
+        //     <span className="text-[11px] text-gray-400 font-medium tracking-wide">
+        //         {formatHeaderDateTime(now, currentLocale)}
+        //     </span>
+        // );
+        return null;
     };
 
     // ── Floating agent badge ─────────────────────────────────────────────────────
@@ -2775,8 +3001,50 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
         >
             {/* ── Header ── */}
             <div className={`${currentTheme.header} oyechats-safe-top`}>
-                {renderHeader() || <div />}
+                {/* Left: conversation-history menu + wall clock. The menu lists the
+                    past conversations this browser has had with THIS bot, letting a
+                    returning visitor reopen an earlier thread. Hidden in live mode
+                    (an operator conversation owns the header) and while the lead form
+                    is up, and only rendered when there is history worth browsing. */}
+                <div className="flex items-center gap-2 relative">
+                    {chatMode === 'bot' && !showLeadForm && sessionList.length > 0 && (
+                        <button
+                            onClick={() => {
+                                refreshSessionList();
+                                setShowSessionMenu(prev => !prev);
+                            }}
+                            className="w-9 h-9 md:w-7 md:h-7 -ml-1.5 rounded-full hover:bg-gray-100 flex items-center justify-center transition-colors text-gray-400 hover:text-gray-600"
+                            title={t('header.conversation_history') || 'Conversation history'}
+                            aria-label={t('header.conversation_history') || 'Conversation history'}
+                            aria-haspopup="menu"
+                            aria-expanded={showSessionMenu}
+                        >
+                            <History className="w-5 h-5 md:w-4 md:h-4" />
+                        </button>
+                    )}
+                    {renderHeader() || <div />}
+                </div>
                 {(() => {
+                    // ── Header hamburger: every visitor action in one place ──
+                    // Each entry is gated by BOTH halves of its feature gate: the
+                    // plan (what the workspace pays for) and the bot's own toggle
+                    // (what this customer switched on). An entry the visitor
+                    // cannot actually use is not rendered, never rendered
+                    // disabled — a dead row in a five-item menu reads as broken.
+
+                    // Live handoff. `support_enabled` is the PLAN half (Free has
+                    // no human channel at all) and `live_chat_enabled` is the
+                    // bot's operator toggle. Only meaningful while talking to the
+                    // bot: in live/waiting mode the visitor is already in a queue.
+                    const showLiveChatOption =
+                        settings.support_enabled !== false
+                        && settings.live_chat_enabled !== false
+                        && chatMode === 'bot'
+                        && !isInitializing;
+                    // Booking. `canBookMeeting` already folds in the bot toggle,
+                    // the "already booked this session" guard and the presence of
+                    // a URL for the configured provider.
+                    const showBookMeetingOption = canBookMeeting && chatMode === 'bot' && !isInitializing;
                     const showTranscriptOption = settings.feature_flags?.email_transcript !== false && messages.length > 0;
                     // Offline "leave a message" affordance. Shown only when the
                     // plan HAS a human-support channel (support_enabled) but live
@@ -2785,6 +3053,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                     // plan has no channel at all, so this must stay hidden; the
                     // old ``!settings.live_chat_enabled`` alone wrongly showed it
                     // for Free too, since Free also reports live_chat_enabled=false.
+                    // It is the mutually exclusive twin of the live-chat entry
+                    // above, so the menu offers exactly one human path, never two.
                     const showLeaveMessageOption =
                         settings.support_enabled !== false && !settings.live_chat_enabled && chatMode === 'bot';
                     // Only worth showing when there is genuinely something to
@@ -2793,25 +3063,32 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                     const showLanguageOption = settings.language_config?.enabled === true
                         && settings.language_config?.allow_visitor_language_switch !== false
                         && (settings.language_config?.supported_locales?.length || 0) > 1;
-                    const hasMenuOptions = showTranscriptOption || showLeaveMessageOption || showLanguageOption;
+                    const hasMenuOptions = showLiveChatOption || showBookMeetingOption
+                        || showTranscriptOption || showLeaveMessageOption || showLanguageOption;
+                    const itemClass = "w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[13px] text-[#16202C] hover:bg-gray-50 transition-colors";
                     return (
                         <div className="flex items-center gap-1 relative" ref={headerMenuRef}>
-                            {chatMode === 'bot' && (isReturningUser || messages.filter(m => m.sender === 'user').length > 0) && (
-                                <button
-                                    onClick={handleNewChat}
-                                    className="w-9 h-9 md:w-7 md:h-7 rounded-full hover:bg-gray-100 flex items-center justify-center transition-colors text-gray-400 hover:text-gray-600"
-                                    title={t('header.start_new_chat') || 'Start New Chat'}
-                                >
-                                    <Plus className="w-5 h-5 md:w-4 md:h-4" />
-                                </button>
-                            )}
                             {hasMenuOptions && (
                                 <button
                                     onClick={() => setShowHeaderMenu(prev => !prev)}
-                                    className="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center transition-colors text-gray-400 hover:text-gray-600"
-                                    title={t('header.more_options') || 'More options'}
+                                    className="relative w-9 h-9 md:w-7 md:h-7 rounded-full hover:bg-gray-100 flex items-center justify-center transition-colors text-gray-400 hover:text-gray-600"
+                                    title={t('header.menu') || 'Menu'}
+                                    aria-label={t('header.menu') || 'Menu'}
+                                    aria-haspopup="menu"
+                                    aria-expanded={showHeaderMenu}
                                 >
-                                    <MoreHorizontal className="w-4 h-4" />
+                                    <Menu className="w-5 h-5 md:w-4 md:h-4" />
+                                    {/* After the bot fails to answer, the widget
+                                        nudges toward a human. That nudge used to
+                                        tint the composer's handoff button, which
+                                        has moved into this menu — so the dot moves
+                                        with it rather than being dropped. */}
+                                    {showProminentHandoff && showLiveChatOption && !showHeaderMenu && (
+                                        <span
+                                            className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full animate-pulse"
+                                            style={{ backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}
+                                        />
+                                    )}
                                 </button>
                             )}
                             <button
@@ -2824,36 +3101,67 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                             </button>
 
                             {showHeaderMenu && hasMenuOptions && (
-                                <div className="absolute top-full right-0 mt-1 bg-white rounded-xl shadow-lg border border-gray-100 py-1 z-50 min-w-[180px]" style={{ animation: 'fadeUp 0.15s ease-out' }}>
-                                    {showLanguageOption && (
+                                <div className="absolute top-full right-0 mt-1 bg-white rounded-xl shadow-lg border border-gray-100 py-1 z-50 min-w-[200px]" style={{ animation: 'fadeUp 0.15s ease-out' }} role="menu">
+                                    {showLiveChatOption && (
                                         <button
+                                            role="menuitem"
                                             onClick={() => {
                                                 setShowHeaderMenu(false);
-                                                setShowLanguageSelector(true);
+                                                if (showWelcome) exitWelcome();
+                                                triggerHandoff();
                                             }}
-                                            className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[13px] text-[#16202C] hover:bg-gray-50 transition-colors"
+                                            className={itemClass}
                                         >
-                                            <Globe className="w-4 h-4 text-gray-400" />
-                                            {t('header.change_language') || 'Language'}
+                                            <Headphones className="w-4 h-4 text-gray-400" />
+                                            {t('header.live_chat') || 'Talk to a human'}
+                                        </button>
+                                    )}
+                                    {showBookMeetingOption && (
+                                        <button
+                                            role="menuitem"
+                                            onClick={() => {
+                                                setShowHeaderMenu(false);
+                                                if (showWelcome) exitWelcome();
+                                                handleBookMeeting();
+                                            }}
+                                            className={itemClass}
+                                        >
+                                            <Calendar className="w-4 h-4 text-gray-400" />
+                                            {t('header.book_meeting') || 'Book a meeting'}
                                         </button>
                                     )}
                                     {showTranscriptOption && (
                                         <button
+                                            role="menuitem"
                                             onClick={handleSendTranscript}
-                                            className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[13px] text-[#16202C] hover:bg-gray-50 transition-colors"
+                                            className={itemClass}
                                         >
                                             <Mail className="w-4 h-4 text-gray-400" />
                                             {t('header.send_transcript') || 'Send transcript'}
                                         </button>
                                     )}
+                                    {showLanguageOption && (
+                                        <button
+                                            role="menuitem"
+                                            onClick={() => {
+                                                setShowHeaderMenu(false);
+                                                setShowLanguageSelector(true);
+                                            }}
+                                            className={itemClass}
+                                        >
+                                            <Globe className="w-4 h-4 text-gray-400" />
+                                            {t('header.change_language') || 'Language'}
+                                        </button>
+                                    )}
                                     {showLeaveMessageOption && (
                                         <button
+                                            role="menuitem"
                                             onClick={() => {
                                                 setShowHeaderMenu(false);
                                                 if (showWelcome) exitWelcome();
                                                 setChatMode('unavailable');
                                             }}
-                                            className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[13px] text-[#16202C] hover:bg-gray-50 transition-colors"
+                                            className={itemClass}
                                         >
                                             <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
                                                 <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" />
@@ -2867,6 +3175,132 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                     );
                 })()}
             </div>
+
+            {/* ── Conversation history drawer ──
+                Slides in over the panel from the left when the header's history
+                button is tapped. A drawer (rather than a dropdown) because the
+                widget panel is narrow and a visitor may have up to 20 stored
+                conversations: full height gives the list room to breathe and
+                keeps each row's preview readable. The scrim closes it, matching
+                the dismiss affordance of every other overlay in the widget. */}
+            {showSessionMenu && (
+                <>
+                    <div
+                        className="absolute inset-0 z-[60] bg-black/25"
+                        style={{ animation: 'oyechatsScrimIn 0.18s ease-out' }}
+                        onClick={() => setShowSessionMenu(false)}
+                        aria-hidden="true"
+                    />
+                    <div
+                        className="absolute inset-y-0 left-0 z-[61] w-[86%] max-w-[300px] bg-white shadow-2xl flex flex-col oyechats-safe-top"
+                        style={{ animation: 'oyechatsDrawerIn 0.22s cubic-bezier(0.32, 0.72, 0, 1)' }}
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label={t('header.conversations') || 'Conversations'}
+                    >
+                        <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-gray-100">
+                            <span className="text-[13px] font-semibold text-[#16202C]">
+                                {t('header.conversations') || 'Conversations'}
+                            </span>
+                            <button
+                                onClick={() => setShowSessionMenu(false)}
+                                className="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors"
+                                title={t('header.close') || 'Close'}
+                                aria-label={t('header.close') || 'Close'}
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
+                        </div>
+
+                        <div className="flex-1 min-h-0 overflow-y-auto py-1">
+                            {sessionList.length === 0 ? (
+                                <p className="px-4 py-4 text-[13px] text-gray-400">
+                                    {t('header.no_conversations') || 'No past conversations yet'}
+                                </p>
+                            ) : (
+                                sessionList.map((s) => {
+                                    const isActive = s.id === sessionId;
+                                    const label = s.preview || t('header.untitled_conversation') || 'New conversation';
+
+                                    // Armed for deletion: the row becomes the confirm
+                                    // prompt itself, so the question sits exactly where
+                                    // the visitor tapped and the row can't be opened by
+                                    // a stray tap while it's pending.
+                                    if (confirmDeleteId === s.id) {
+                                        return (
+                                            <div key={s.id} className="px-4 py-2.5 bg-red-50/70">
+                                                <p className="text-[12px] text-[#16202C] leading-snug mb-2">
+                                                    {t('header.delete_confirm') || 'Remove this conversation from your history?'}
+                                                </p>
+                                                <div className="flex gap-2">
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(null); }}
+                                                        className="flex-1 py-1.5 rounded-lg border border-gray-200 bg-white text-[12px] font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+                                                    >
+                                                        {t('header.delete_cancel') || 'Cancel'}
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => confirmDeleteSession(s.id, e)}
+                                                        className="flex-1 py-1.5 rounded-lg bg-red-500 text-[12px] font-medium text-white hover:bg-red-600 transition-colors"
+                                                    >
+                                                        {t('header.delete_confirm_yes') || 'Remove'}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        );
+                                    }
+
+                                    return (
+                                        <div
+                                            key={s.id}
+                                            onClick={() => switchToSession(s.id)}
+                                            role="button"
+                                            tabIndex={0}
+                                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchToSession(s.id); } }}
+                                            className={`group w-full flex items-center gap-2.5 px-4 py-2.5 cursor-pointer transition-colors ${isActive ? 'bg-gray-50' : 'hover:bg-gray-50'}`}
+                                        >
+                                            <span className="shrink-0 text-gray-400">
+                                                {isActive
+                                                    ? <Check className="w-4 h-4" style={{ color: sanitizeColor(settings.primary_color, '#3A0CA3') }} />
+                                                    : <MessageSquare className="w-4 h-4" />}
+                                            </span>
+                                            <span className="flex-1 min-w-0">
+                                                <span className="block text-[13px] text-[#16202C] truncate">{label}</span>
+                                                <span className="block text-[11px] text-gray-400">
+                                                    {sessionTimeLabel(s.updatedAt)}
+                                                    {isActive ? ` · ${t('header.current_conversation') || 'Current'}` : ''}
+                                                </span>
+                                            </span>
+                                            <button
+                                                onClick={(e) => armDeleteSession(s.id, e)}
+                                                className="shrink-0 w-7 h-7 rounded-md flex items-center justify-center text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                                                title={t('header.delete_conversation') || 'Remove from history'}
+                                                aria-label={t('header.delete_conversation') || 'Remove from history'}
+                                            >
+                                                <Trash2 className="w-3.5 h-3.5" />
+                                            </button>
+                                        </div>
+                                    );
+                                })
+                            )}
+                        </div>
+
+                        <div className="shrink-0 border-t border-gray-100 p-3">
+                            <button
+                                onClick={() => {
+                                    setShowSessionMenu(false);
+                                    handleNewChat();
+                                }}
+                                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-[13px] font-medium text-white transition-opacity hover:opacity-90"
+                                style={{ backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}
+                            >
+                                <Plus className="w-4 h-4" />
+                                {t('header.start_new_chat') || 'Start New Chat'}
+                            </button>
+                        </div>
+                    </div>
+                </>
+            )}
 
             {/* ── Floating agent badge (always on top of messages area) ──
                 Shown in both bot and live modes. Badge shows bot identity
@@ -3809,7 +4243,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                     inputRef={inputRef}
                     settings={settings}
                     onHandoff={!isInitializing && chatMode === 'bot' && settings.live_chat_enabled !== false ? triggerHandoff : undefined}
-                    showProminentHandoff={showProminentHandoff}
                     primaryColor={sanitizeColor(settings.primary_color)}
                     showBranding={settings?.feature_flags?.show_branding !== false}
                     chatMode={chatMode}
@@ -3826,18 +4259,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                     userMessageCount={messages.reduce((n, m) => (m.sender === 'user' ? n + 1 : n), 0)}
                     onNewChat={chatMode === 'bot' && !isInitializing ? handleNewChat : undefined}
                     onClearMessages={chatMode === 'bot' && !isInitializing ? handleClearMessages : undefined}
-                    meetingBookingEnabled={!!settings.meeting_booking_enabled && !meetingBooked}
-                    onBookMeeting={() => {
-                        if (settings.meeting_booking_enabled && !meetingBooked) {
-                            const p = settings.meeting_provider || 'calendly';
-                            const url = { calendly: settings.calendly_url, zcal: settings.zcal_url, calcom: settings.calcom_url }[p] || settings.calendly_url;
-                            if (url) {
-                                setCalendlyUrl(url);
-                                setMeetingProvider(p);
-                                setShowBooking(true);
-                            }
-                        }
-                    }}
                 />
             )}
 

@@ -333,6 +333,26 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* Conversation-history drawer. Declared here as plain CSS (not Tailwind
+   utilities) because the widget renders inside a Shadow DOM, where Tailwind's
+   transform custom-property composition does not resolve. */
+@keyframes oyechatsDrawerIn {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(0); }
+}
+
+@keyframes oyechatsScrimIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @keyframes oyechatsDrawerIn {
+    from { transform: translateX(0); }
+    to   { transform: translateX(0); }
+  }
+}
+
 /* Hide the native number input spin buttons (quotation quantity/number
    questions, etc.) across browsers — plain digit entry only. */
 input[type='number']::-webkit-outer-spin-button,

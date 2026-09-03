@@ -9,6 +9,7 @@ import {
   metaFromBot,
   normalizeDraft,
   patchFromDraft,
+  sectionsWithErrors,
   validateDraft,
   type ExperienceDraft,
 } from './experience-model';
@@ -327,6 +328,33 @@ describe('validateDraft', () => {
     const hours = defaultBusinessHours('UTC');
     hours.days.mon = { start: '22:00', end: '02:00' };
     expect(validateDraft({ ...load(), businessHours: hours })['businessHours:mon']).toBeUndefined();
+  });
+});
+
+describe('sectionsWithErrors', () => {
+  it('is empty when nothing is invalid', () => {
+    expect(sectionsWithErrors({})).toEqual([]);
+  });
+
+  it('maps a bare-field error to its tab', () => {
+    expect(sectionsWithErrors({ displayName: 'required' })).toEqual(['messages']);
+    expect(sectionsWithErrors({ primaryColor: 'bad hex' })).toEqual(['branding']);
+  });
+
+  it('resolves an indexed or day-suffixed key by its prefix', () => {
+    expect(sectionsWithErrors({ 'smartLinks:1': 'bad' })).toEqual(['voice']);
+    expect(sectionsWithErrors({ 'businessHours:mon': 'bad' })).toEqual(['handoff']);
+  });
+
+  it('dedupes and returns tabs in canonical order', () => {
+    expect(
+      sectionsWithErrors({
+        'businessHours:mon': 'bad',
+        primaryColor: 'bad',
+        'services:0': 'bad',
+        'services:2': 'bad',
+      }),
+    ).toEqual(['branding', 'voice', 'handoff']);
   });
 });
 
