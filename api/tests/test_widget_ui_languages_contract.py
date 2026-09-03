@@ -21,7 +21,11 @@ from pathlib import Path
 
 import pytest
 
-from app.services.language_service import KNOWN_LOCALES, WIDGET_UI_LANGUAGES
+from app.services.language_service import (
+    KNOWN_LOCALES,
+    WIDGET_UI_LANGUAGES,
+    WIDGET_UI_LANGUAGES_PENDING_REVIEW,
+)
 
 # api/tests/ -> api/ -> platform/ -> widget/src/i18n
 _WIDGET_I18N = Path(__file__).resolve().parents[2] / "widget" / "src" / "i18n"
@@ -49,10 +53,31 @@ def test_widget_ui_languages_matches_the_shipped_dictionaries() -> None:
         "dictionary for them, so its chrome would render in English"
     )
 
-    unlisted = shipped - WIDGET_UI_LANGUAGES
+    unlisted = shipped - WIDGET_UI_LANGUAGES - WIDGET_UI_LANGUAGES_PENDING_REVIEW
     assert not unlisted, (
-        f"{sorted(unlisted)} have a widget dictionary but are not in WIDGET_UI_LANGUAGES, "
-        "so no customer can select them"
+        f"{sorted(unlisted)} have a widget dictionary but appear in neither "
+        "WIDGET_UI_LANGUAGES nor WIDGET_UI_LANGUAGES_PENDING_REVIEW, so no customer "
+        "can select them and nothing records that they are waiting for review"
+    )
+
+
+def test_pending_review_languages_are_not_also_offered() -> None:
+    """A language is either awaiting sign-off or offered. Never both."""
+    both = WIDGET_UI_LANGUAGES & WIDGET_UI_LANGUAGES_PENDING_REVIEW
+    assert not both, (
+        f"{sorted(both)} are offered to customers AND listed as pending review. "
+        "Promotion means MOVING the code out of the pending set, not copying it"
+    )
+
+
+def test_pending_review_languages_ship_a_dictionary() -> None:
+    """The pending set records real, finished work - not an intention."""
+    shipped = _widget_dictionary_languages()
+    phantom = WIDGET_UI_LANGUAGES_PENDING_REVIEW - shipped
+    assert not phantom, (
+        f"{sorted(phantom)} are listed as pending review but ship no dictionary. "
+        "The set is for translations that exist and are waiting to be read, not "
+        "a wishlist of languages someone would like"
     )
 
 
@@ -73,6 +98,18 @@ def test_every_ui_translated_locale_resolves_to_a_listed_language() -> None:
 def test_locales_without_a_dictionary_are_flagged_false() -> None:
     # The catalogue still lists them: the AI converses in them, and a bot that
     # already has one configured must keep rendering its name in the admin.
+    # ur-PK ships no dictionary at all; es-ES, ru-RU and ar-SA now ship one but
+    # are awaiting native review, so both routes to False are covered here.
     for tag in ("es-ES", "ru-RU", "ar-SA", "ur-PK"):
         assert tag in KNOWN_LOCALES, f"{tag} should stay in the catalogue"
         assert KNOWN_LOCALES[tag].ui_translated is False
+
+
+def test_a_pending_language_is_never_offered_in_the_catalogue() -> None:
+    """The whole point of the pending set: the picker must not show these."""
+    for info in KNOWN_LOCALES.values():
+        if info.code in WIDGET_UI_LANGUAGES_PENDING_REVIEW:
+            assert info.ui_translated is False, (
+                f"{info.locale} is pending review but flagged ui_translated; the "
+                "admin picker would offer an unreviewed translation"
+            )

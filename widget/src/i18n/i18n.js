@@ -23,7 +23,24 @@ import {
 
 /** Dynamic loaders, keyed by base language. English needs no entry. */
 const DICTIONARY_LOADERS = {
+    ar: () => import('./locales/ar.js'),
+    de: () => import('./locales/de.js'),
+    es: () => import('./locales/es.js'),
+    fr: () => import('./locales/fr.js'),
     hi: () => import('./locales/hi.js'),
+    id: () => import('./locales/id.js'),
+    it: () => import('./locales/it.js'),
+    ja: () => import('./locales/ja.js'),
+    ko: () => import('./locales/ko.js'),
+    nl: () => import('./locales/nl.js'),
+    pl: () => import('./locales/pl.js'),
+    pt: () => import('./locales/pt.js'),
+    ru: () => import('./locales/ru.js'),
+    th: () => import('./locales/th.js'),
+    tr: () => import('./locales/tr.js'),
+    uk: () => import('./locales/uk.js'),
+    vi: () => import('./locales/vi.js'),
+    zh: () => import('./locales/zh.js'),
 };
 
 /** Dictionaries currently in memory, keyed by base language. */
