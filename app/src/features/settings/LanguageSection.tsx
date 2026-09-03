@@ -31,12 +31,16 @@ import { useTranslation } from '../../i18n/useTranslation';
 const UI_LOCALE: Readonly<Record<string, { locale: string; endonym: string }>> = {
   // An ENDONYM — a language's name in its own language — is identical whatever
   // the interface language is: English stays "English" on a Hindi dashboard,
-  // and हिन्दी stays हिन्दी on an English one. Translating one would defeat
-  // the point of showing it.
+  // हिन्दी stays हिन्दी on an English one, and العربية stays العربية on
+  // either. Translating one would defeat the point of showing it.
   // @i18n-exempt: an endonym is a language's name IN ITSELF. English stays
-  // English on a Hindi screen; translating it would defeat the point.
+  // English on a Hindi (or Arabic) screen; translating it would defeat the point.
   en: { locale: 'en-IN', endonym: 'English' },
   hi: { locale: 'hi-IN', endonym: 'हिन्दी' },
+  // `ar-AE`, not bare `ar` (Arabic-Indic digits) or `ar-SA` (Islamic
+  // calendar) — see `formatters.test.ts` for the Gregorian-calendar and
+  // Latin-digit assertions this tag depends on.
+  ar: { locale: 'ar-AE', endonym: 'العربية' },
 };
 
 export function LanguageSection() {

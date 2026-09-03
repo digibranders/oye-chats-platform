@@ -87,6 +87,12 @@
       "path": "dist/assets/hi-*.js",
       "limit": "58 KB",
       "gzip": true
+    },
+    {
+      "name": "Arabic dictionary (lazy, non-English only). Same 2264 live keys as Hindi; Arabic gzips smaller than Devanagari, measured at build time, with modest headroom for real translation growth.",
+      "path": "dist/assets/ar-*.js",
+      "limit": "46 KB",
+      "gzip": true
     }
   ]
 }
