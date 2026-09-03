@@ -13,6 +13,15 @@ const VERSION = typeof __WIDGET_VERSION__ !== 'undefined' ? __WIDGET_VERSION__ :
 const BUILD = typeof __WIDGET_BUILD__ !== 'undefined' ? __WIDGET_BUILD__ : 'dev'
 const PREFIX = '[OyeChats]'
 
+// A second execution of this loader (SPA re-mount, GTM firing on two triggers,
+// two copies of the snippet) must not replace an API object that is already
+// installed: the cached app-entry module registers its implementation exactly
+// once, into the FIRST stub, so a fresh stub's queue would never drain and
+// open() / send() / on('ready') would go silent forever. When one is already
+// there, this execution installs nothing and boots nothing.
+const _alreadyInstalled =
+  typeof window !== 'undefined' && typeof window.OyeChats?.__register === 'function'
+
 // ── Public API stub: queues calls until the real implementation registers. ──
 const _queue = []
 let _impl = null
@@ -48,7 +57,15 @@ const stub = {
     }
     try {
       const key = (typeof window !== 'undefined' && (window.OYECHATS_BOT_KEY || window.OYECHATS_API_KEY)) || 'default'
-      return (typeof localStorage !== 'undefined' && localStorage.getItem(`oyechats_locale_${key}`)) || 'en-IN'
+      const raw = typeof localStorage !== 'undefined' && localStorage.getItem(`oyechats_locale_${key}`)
+      if (!raw) return 'en-IN'
+      // The app persists `{ locale, source }` (storage-keys.writeLocale); older
+      // builds wrote the bare locale string. Handle both, never return the blob.
+      if (raw[0] === '{') {
+        const parsed = JSON.parse(raw)
+        return (parsed && typeof parsed.locale === 'string' && parsed.locale) || 'en-IN'
+      }
+      return raw
     } catch {
       return 'en-IN'
     }
@@ -98,12 +115,16 @@ const botKey = scriptTag?.getAttribute('data-bot-key') || null
 const apiKey = scriptTag?.getAttribute('data-api-key') || null
 const apiUrl = scriptTag?.getAttribute('data-api-url') || null
 
-if (botKey) {
+if (_alreadyInstalled) {
+  // Keep the first install's credentials and API object intact.
+} else if (botKey) {
   window.OYECHATS_BOT_KEY = botKey
 } else if (apiKey) {
   window.OYECHATS_API_KEY = apiKey
 }
-if (apiUrl) {
+if (_alreadyInstalled) {
+  // Same reason: the running widget already resolved its API URL.
+} else if (apiUrl) {
   window.OYECHATS_API_URL = apiUrl
 } else if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
   if (!window.OYECHATS_API_URL && scriptTag?.src?.includes('localhost')) {
@@ -211,13 +232,15 @@ stub.init = (overrides) => {
   return boot(overrides)
 }
 // Reassign for safety in case the customer cached the original reference.
-if (typeof window !== 'undefined') {
+if (typeof window !== 'undefined' && !_alreadyInstalled) {
   window.OyeChats = stub
 }
 void _stubInit  // satisfy lint about unused variable
 
 // ── Auto-init unless deferred. ─────────────────────────────────────────────
-if (typeof window !== 'undefined' && window.OYECHATS_ASYNC_INIT === true) {
+if (_alreadyInstalled) {
+  console.log(`${PREFIX} v${VERSION} loader already installed on this page. Ignoring duplicate load`)
+} else if (typeof window !== 'undefined' && window.OYECHATS_ASYNC_INIT === true) {
   console.log(`${PREFIX} v${VERSION} loader ready (deferred. Call OyeChats.init() to mount)`)
 } else {
   if (document.readyState === 'loading') {

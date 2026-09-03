@@ -553,6 +553,17 @@ def get_current_client(
                 .first()
             )
             if operator:
+                # A deactivated operator keeps its row (audit history, message
+                # attribution) but must not keep its credential. The sibling
+                # resolvers reject ``is_active=False`` and this one has to
+                # match, or deactivation revokes the operator console while
+                # leaving every client-scoped endpoint open to the same key.
+                if not getattr(operator, "is_active", True):
+                    logger.warning(f"Deactivated operator {operator.id} attempted client-scoped authentication.")
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="This operator account has been deactivated.",
+                    )
                 client = session.execute(select(Client).where(Client.id == operator.client_id)).scalars().first()
                 if client:
                     _ = (

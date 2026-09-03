@@ -316,6 +316,31 @@ async def _send_initial_waiting_queue(
     )
 
 
+def _workspace_blocked(session, client_id: int) -> bool:
+    """True when the owning workspace is suspended or deactivated.
+
+    The HTTP resolvers funnel through ``auth._ensure_client_authenticatable``,
+    which raises an ``HTTPException`` — a websocket handshake cannot answer with
+    one, so the same rule is expressed as a predicate here and the caller closes
+    the socket with 4003 instead. Superadmins are exempt, matching the HTTP
+    checkers; a missing owner row is treated as not blocked, exactly as
+    ``_ensure_bot_owner_not_suspended`` does.
+    """
+    owner = (
+        session.execute(
+            select(Client.is_superadmin, Client.suspended_at, Client.deactivated_at).where(Client.id == client_id)
+        )
+        .tuples()
+        .first()
+    )
+    if owner is None:
+        return False
+    is_superadmin, suspended_at, deactivated_at = owner
+    if is_superadmin:
+        return False
+    return suspended_at is not None or deactivated_at is not None
+
+
 @router.websocket("/ws/chat/{session_id}")
 async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None = None):
     """WebSocket for visitor (widget) side of live chat.
@@ -361,6 +386,18 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
             await ws.close(code=4003, reason="Invalid bot key")
             return
         bot_id = bot.id
+        # Stamped on every session row this socket creates. Analytics filter on
+        # ``client_id``, so a row created here without it is invisible to the
+        # dashboard until the startup backfill runs.
+        bot_client_id = bot.client_id
+
+        # Owner suspension / deactivation, the same gate ``get_current_bot``
+        # applies to widget HTTP calls. Without it a suspended workspace's
+        # widget keeps a fully working live chat over the socket.
+        if _workspace_blocked(session, bot_client_id):
+            logger.info("Widget WS rejected, workspace not authenticatable: bot_id=%s", bot_id)
+            await ws.close(code=4003, reason="account_unavailable")
+            return
 
         # Origin whitelist (parity with HTTP ``get_current_bot``). Both
         # transports ask ``origin_check_applies`` so they cannot diverge: the
@@ -447,6 +484,7 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                         session_id,
                         role="user",
                         content=content,
+                        client_id=bot_client_id,
                         bot_id=bot_id,
                         source_language=source_language,
                     )
@@ -544,7 +582,14 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                 # Save as a message with file metadata
                 file_content = f"[File: {filename}]({file_url})"
                 with get_session() as session:
-                    persisted = add_chat_message(session, session_id, role="user", content=file_content, bot_id=bot_id)
+                    persisted = add_chat_message(
+                        session,
+                        session_id,
+                        role="user",
+                        content=file_content,
+                        client_id=bot_client_id,
+                        bot_id=bot_id,
+                    )
                     session.commit()
                     db_id = persisted.id
 
@@ -710,7 +755,7 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
 
     except WebSocketDisconnect:
         heartbeat_task.cancel()
-        manager.disconnect_visitor(session_id)
+        manager.disconnect_visitor(session_id, ws)
     except Exception as e:
         heartbeat_task.cancel()
         # A visitor closing their tab reaches here as a bare RuntimeError from
@@ -724,7 +769,7 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
             logger.debug(f"Visitor WS closed by client for {session_id} ({detail})")
         else:
             logger.error(f"Visitor WS error for {session_id}: {detail}")
-        manager.disconnect_visitor(session_id)
+        manager.disconnect_visitor(session_id, ws)
 
 
 def _resolve_operator_from_key(
@@ -755,6 +800,12 @@ def _resolve_operator_from_key(
             operator = session.execute(select(Operator).where(Operator.operator_api_key == key)).scalar_one_or_none()
             if not operator or not operator.is_active:
                 return None
+            # A suspended or deactivated workspace must not keep a working
+            # console socket. Checked before ``is_online`` is set, so a refused
+            # operator never occupies a seat on the way out.
+            if _workspace_blocked(session, operator.client_id):
+                logger.info("Operator WS refused, workspace not authenticatable: client_id=%s", operator.client_id)
+                return None
             operator.is_online = True
             session.commit()
             return (
@@ -772,6 +823,11 @@ def _resolve_operator_from_key(
         # Use role='owner' to avoid matching sub-operators created for the same client.
         client = session.execute(select(Client).where(Client.api_key == key)).scalar_one_or_none()
         if not client:
+            return None
+        # Same workspace gate as the operator-key branch above: suspension has
+        # to bite on both credentials, or it bites on neither.
+        if _workspace_blocked(session, client.id):
+            logger.info("Owner WS refused, workspace not authenticatable: client_id=%s", client.id)
             return None
 
         operator = session.execute(
@@ -1237,7 +1293,7 @@ async def operator_websocket(
     except WebSocketDisconnect:
         heartbeat_task.cancel()
         await _drain_inflight_sends()
-        await manager.disconnect_operator_and_broadcast(operator_id)
+        await manager.disconnect_operator_and_broadcast(operator_id, ws)
     except Exception as e:
         heartbeat_task.cancel()
         await _drain_inflight_sends()
@@ -1248,7 +1304,7 @@ async def operator_websocket(
             logger.debug(f"Operator WS closed by client for operator {operator_id} ({detail})")
         else:
             logger.error(f"Operator WS error for operator {operator_id}: {detail}")
-        await manager.disconnect_operator_and_broadcast(operator_id)
+        await manager.disconnect_operator_and_broadcast(operator_id, ws)
 
 
 # ── Backward compat: keep /ws/agent as alias during transition ──

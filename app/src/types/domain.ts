@@ -513,6 +513,13 @@ export interface LeadsQuery {
   from_date?: string;
   /** Custom range end (`YYYY-MM-DD`), inclusive. */
   to_date?: string;
+  /**
+   * IANA zone the custom range's calendar days belong to. The picker yields a
+   * bare `YYYY-MM-DD` the reader chose in their own timezone, so without this
+   * the server cuts the day in UTC and a reader east of it loses leads at the
+   * start edge and gains the next day's at the end edge.
+   */
+  tz?: string;
   page?: number;
   limit?: number;
 }

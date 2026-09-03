@@ -41,9 +41,9 @@
       "gzip": true
     },
     {
-      "name": "Chat chunk (lazy on first widget open; +1.2 KB from quotation orchestration)",
+      "name": "Chat chunk (lazy on first widget open; +1.2 KB from quotation orchestration, +0.5 KB from live-chat reconnect recovery)",
       "path": "dist/app/oyechats-ChatWindow.*.js",
-      "limit": "32 KB",
+      "limit": "33 KB",
       "gzip": true
     },
     {

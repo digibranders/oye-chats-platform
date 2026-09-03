@@ -131,13 +131,21 @@ class TestExtractSesError:
 
 class TestSendRawEmailDispatch:
     """``_send_raw_email`` is the one seam every sender crosses (directly or via
-    ``send_email_async``); it must route on ``EMAIL_PROVIDER`` and nothing else."""
+    ``send_email_async``); it must route on ``EMAIL_PROVIDER`` and nothing else.
+
+    The dispatch itself lives in ``_send_raw_email_result`` since I12, which
+    carries the retry-safety flag the worker needs; ``_send_raw_email`` is that
+    reduced to the True/False contract every sender already uses."""
 
     def test_defaults_to_brevo(self, monkeypatch):
         monkeypatch.setattr(email_service, "EMAIL_PROVIDER", "brevo")
         with (
-            patch.object(email_service, "_send_brevo_email", MagicMock(return_value=True)) as brevo,
-            patch.object(email_service, "_send_ses_email", MagicMock(return_value=True)) as ses,
+            patch.object(
+                email_service, "_send_brevo_email_result", MagicMock(return_value=email_service.SendOutcome(True))
+            ) as brevo,
+            patch.object(
+                email_service, "_send_ses_email_result", MagicMock(return_value=email_service.SendOutcome(True))
+            ) as ses,
         ):
             result = email_service._send_raw_email(TO, "Subject", "<p>hi</p>")
 
@@ -148,8 +156,12 @@ class TestSendRawEmailDispatch:
     def test_routes_to_ses_when_selected(self, monkeypatch):
         monkeypatch.setattr(email_service, "EMAIL_PROVIDER", "ses")
         with (
-            patch.object(email_service, "_send_brevo_email", MagicMock(return_value=True)) as brevo,
-            patch.object(email_service, "_send_ses_email", MagicMock(return_value=True)) as ses,
+            patch.object(
+                email_service, "_send_brevo_email_result", MagicMock(return_value=email_service.SendOutcome(True))
+            ) as brevo,
+            patch.object(
+                email_service, "_send_ses_email_result", MagicMock(return_value=email_service.SendOutcome(True))
+            ) as ses,
         ):
             result = email_service._send_raw_email(
                 TO, "Subject", "<p>hi</p>", reply_to="support@oyechats.com", attachments=[{"content": "x", "name": "a"}]

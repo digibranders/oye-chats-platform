@@ -1434,6 +1434,20 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_bo
                     detail={"error": "billing_paused", "message": "Billing is temporarily paused for maintenance."},
                 ) from exc
 
+    refund_done = False
+
+    def _refund_once() -> None:
+        """Reverse this request's deduction exactly once.
+
+        The credit is charged before the pipeline runs, so every post-deduction
+        failure path has to give it back, and no two of them may give it back
+        twice (a preview or a shed request charged nothing at all)."""
+        nonlocal refund_done
+        if is_preview or not cost or refund_done:
+            return
+        refund_done = True
+        _refund_ai_chat_credit(bot, cost)
+
     try:
         ip_address, formatted_device = _parse_request_context(request)
         location = f"IP: {ip_address}"
@@ -1467,14 +1481,17 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_bo
         logger.info(f"Chat response generated | session={session_id} | answer_length={ans_len}")
         # Refund the credit when the pipeline only produced a canned error
         # message (both LLMs exhausted), the visitor got no real answer.
-        if result.get("generation_failed") and not is_preview:
-            _refund_ai_chat_credit(bot, cost)
+        if result.get("generation_failed"):
+            _refund_once()
         return result
     except HTTPException:
+        _refund_once()
         raise
     except SessionOwnershipError:
+        _refund_once()
         raise
     except Exception as e:
+        _refund_once()
         bot_id = getattr(bot, "id", "?")
         err_type = type(e).__name__
         logger.error(f"Chat failed for bot {bot_id}: {err_type}: {e}", exc_info=True)
@@ -1565,11 +1582,33 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
         # the thread propagate here unchanged.
         cost = await asyncio.to_thread(_deduct_ai_chat_credit_sync, bot)
 
-    ip_address, formatted_device = _parse_request_context(request)
-    location = f"IP: {ip_address}"
-    visitor_country = _visitor_country_from_request(request)
-    session_id = await asyncio.to_thread(_resolve_session_id, body.session_id, bot.id)
-    language_ctx = await asyncio.to_thread(_resolve_visitor_language_and_update_session, request, body, bot, session_id)
+    refund_done = False
+
+    def _refund_once() -> None:
+        """Reverse this request's deduction exactly once.
+
+        The credit is charged before anything else runs, so session resolution,
+        the concurrency gate and the stream itself must all give it back on
+        failure — and none of them may give it back twice."""
+        nonlocal refund_done
+        if is_preview or not cost or refund_done:
+            return
+        refund_done = True
+        _refund_ai_chat_credit(bot, cost)
+
+    try:
+        ip_address, formatted_device = _parse_request_context(request)
+        location = f"IP: {ip_address}"
+        visitor_country = _visitor_country_from_request(request)
+        session_id = await asyncio.to_thread(_resolve_session_id, body.session_id, bot.id)
+        language_ctx = await asyncio.to_thread(
+            _resolve_visitor_language_and_update_session, request, body, bot, session_id
+        )
+    except Exception:
+        # Nothing was generated (session ownership, language write, a DB blip),
+        # so the visitor is not charged for a reply they never got.
+        _refund_once()
+        raise
 
     # Fire-and-forget geolocation
     submit_background(_resolve_and_update_location, session_id, ip_address, bot.id)
@@ -1592,8 +1631,7 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
     try:
         await _slot.__aenter__()
     except HTTPException:
-        if not is_preview and cost:
-            _refund_ai_chat_credit(bot, cost)
+        _refund_once()
         raise
 
     async def _stream_with_refund():
@@ -1628,8 +1666,15 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
                 yield chunk
             # Never refund a preview (nothing was charged); otherwise refund a
             # confirmed failed generation.
-            if generation_failed and not is_preview:
-                _refund_ai_chat_credit(bot, cost)
+            if generation_failed:
+                _refund_once()
+        except Exception:
+            # The pipeline blew up mid-stream: no complete answer was billed
+            # for. GeneratorExit/CancelledError (client disconnect) are
+            # BaseExceptions and deliberately not caught here — we never
+            # confirmed a failure, and the visitor may have had the answer.
+            _refund_once()
+            raise
         finally:
             # Release the concurrency slot no matter how the stream ends.
             await _slot.__aexit__(None, None, None)
@@ -1895,7 +1940,7 @@ def lead_capture_endpoint(body: LeadCaptureRequest, request: Request, bot: Bot =
 
     try:
         with get_session() as session:
-            chat_session = ensure_chat_session(session, body.session_id, bot_id=bot.id)
+            chat_session = ensure_chat_session(session, body.session_id, client_id=bot.client_id, bot_id=bot.id)
 
             # Snapshot UTM + visitor_journey onto the lead row only when the
             # owning client's plan includes Lead Source Attribution. Free /
@@ -1968,7 +2013,7 @@ def behavioral_signals_endpoint(body: BehavioralSignalsRequest, request: Request
 
     try:
         with get_session() as session:
-            chat_session = ensure_chat_session(session, body.session_id, bot_id=bot.id)
+            chat_session = ensure_chat_session(session, body.session_id, client_id=bot.client_id, bot_id=bot.id)
 
             # Store page context on the session (first call wins for URL/referrer)
             safe_page_url = _sanitize_url(body.page_url)
@@ -2095,7 +2140,7 @@ def meeting_booked_endpoint(body: MeetingBookedRequest, request: Request, bot: B
             )
 
         with get_session() as session:
-            ensure_chat_session(session, body.session_id, bot_id=bot.id)
+            ensure_chat_session(session, body.session_id, client_id=bot.client_id, bot_id=bot.id)
             # Already parsed and validated by the schema, an unparseable
             # timestamp is a 422 rather than a booking silently stored with
             # no time on it.
@@ -2279,14 +2324,13 @@ def get_history_endpoint(
         raw_bot_key = request.headers.get("X-Bot-Key")
         if not raw_bot_key:
             raise HTTPException(status_code=401, detail="Authentication required")
-        with get_session() as db:
-            bot_obj = db.execute(
-                select(Bot).where(Bot.bot_key == raw_bot_key, Bot.is_active.is_(True))
-            ).scalar_one_or_none()
-            if not bot_obj:
-                raise HTTPException(status_code=401, detail="Invalid bot key")
-            resolved_bot_id = bot_obj.id
-            auth = {"client_id": bot_obj.client_id, "type": "bot"}
+        # Resolve through the shared widget resolver rather than a local
+        # SELECT: it is what enforces the bot's origin allowlist and the
+        # owner's suspension/deactivation state, both of which a hand-rolled
+        # lookup here silently skipped.
+        bot_obj = get_current_bot(request, bot_key=raw_bot_key, api_key=None)
+        resolved_bot_id = bot_obj.id
+        auth = {"client_id": bot_obj.client_id, "type": "bot"}
 
     try:
         from datetime import UTC, datetime, timedelta

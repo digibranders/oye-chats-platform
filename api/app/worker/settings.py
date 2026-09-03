@@ -11,7 +11,7 @@ import logging
 import os
 
 import litellm
-from arq import cron
+from arq import cron, func
 from arq.connections import RedisSettings
 
 # Import app.config eagerly so its module-level load_dotenv() runs before
@@ -54,7 +54,9 @@ from app.worker.tasks import (  # noqa: E402  (litellm config must precede)
     task_promote_scheduled_downgrades,
     task_prune_processed_webhooks,
     task_prune_stale_events,
+    task_recompute_kb_usage,
     task_reconcile_orphaned_seat_addons,
+    task_reembed_all_documents,
     task_reembed_document,
     task_refresh_promo_free_credits,
     task_render_invoice_pdfs,
@@ -153,8 +155,16 @@ class WorkerSettings:
         task_ingest_documents,
         task_ingest_web_batch,
         task_crawl_and_ingest,
-        task_capture_demo_screenshot,
-        task_probe_bot_installs,
+        # keep_result=0 (I7): both of these are enqueued under a fixed job id
+        # (``demo-screenshot:{bot_id}`` / ``install-probe:{bot_id}``) so a burst
+        # of triggers collapses into one job. ARQ also refuses an enqueue while
+        # the job's RESULT key exists, and results live for an hour by default,
+        # so a completed capture silently swallowed every re-trigger for the
+        # next hour and the Deploy card sat on "taking a picture now" forever.
+        # Keeping no result restores de-duplication to the in-flight window,
+        # which is what the fixed job id was for. Nothing reads these results.
+        func(task_capture_demo_screenshot, keep_result=0),
+        func(task_probe_bot_installs, keep_result=0),
         task_deliver_webhook,
         task_resolve_lead_company,
         task_send_email,
@@ -177,6 +187,11 @@ class WorkerSettings:
         task_send_quotation_visitor_email,
         task_send_visitor_message_email,
         task_reembed_document,
+        # One-shot backfill over EVERY document with a NULL embedding. It paces
+        # itself against the shared embed rate limiter, so on a real corpus it
+        # runs for hours, far past the 1600s worker default. Unregistered until
+        # now, which meant an operator enqueue was rejected outright (I11).
+        func(task_reembed_all_documents, timeout=86400),
         task_render_invoice_pdfs,
         task_invoice_reconciliation_alert,
         task_reconcile_orphaned_seat_addons,
@@ -261,6 +276,11 @@ class WorkerSettings:
         # no longer mentions them (customer took the event down) or whose
         # start date has aged past the retention window.
         cron(task_prune_stale_events, hour=0, minute=35),
+        # KB character-counter drift correction. Daily at 03:00 UTC, well clear
+        # of the billing train and the customer's working hours (bulk deletes
+        # cascade past the incremental counter, so without this a workspace
+        # can be refused an ingest on a knowledge base it has already emptied).
+        cron(task_recompute_kb_usage, hour=3, minute=0),
     ]
 
     # Redis connection

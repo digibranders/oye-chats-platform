@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { FileText, Play } from 'lucide-react';
 import { t } from '../i18n/i18n.js';
+import { sanitizeFileUrl } from '../services/sanitize.js';
 
 /**
  * MediaCard. Inline chat card for a single YouTube video OR a downloadable
@@ -368,7 +369,11 @@ const DownloadCard = ({ url, name }) => {
 const _SecondaryChip = ({ item }) => {
     if (!item || typeof item !== 'object') return null;
     if (item.type === 'youtube' && typeof item.video_id === 'string' && item.video_id) {
-        const href = item.url || `https://www.youtube.com/watch?v=${item.video_id}`;
+        // A server-supplied watch URL is honoured only when it is an absolute
+        // http(s) URL; anything else falls back to the canonical YouTube link
+        // built from the video id, which is always safe.
+        const href = (typeof item.url === 'string' && sanitizeFileUrl(item.url))
+            || `https://www.youtube.com/watch?v=${encodeURIComponent(item.video_id)}`;
         const label = (typeof item.title === 'string' && item.title.trim())
             || t('media.related_video') || 'Related video';
         return (
@@ -387,11 +392,13 @@ const _SecondaryChip = ({ item }) => {
         );
     }
     if (item.type === 'download' && typeof item.url === 'string' && item.url) {
+        const href = sanitizeFileUrl(item.url);
+        if (!href) return null;
         const label = (typeof item.name === 'string' && item.name.trim())
             || t('media.related_file') || 'Related file';
         return (
             <a
-                href={item.url}
+                href={href}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="oyechats-media-secondary group mt-1.5 inline-flex max-w-full items-center gap-1.5 text-xs text-gray-500 transition-colors hover:text-gray-800"
@@ -462,7 +469,12 @@ const MediaCard = ({ card, secondary }) => {
             />
         );
     } else if (card.type === 'download' && typeof card.url === 'string' && card.url) {
-        primary = <DownloadCard url={card.url} name={card.name} />;
+        // The server whitelists download URLs against the chunk metadata, but
+        // the client must not depend on that single check: anything that is not
+        // an absolute http(s) URL (javascript:, data:, a protocol-relative
+        // host) never reaches an ``href`` here.
+        const href = sanitizeFileUrl(card.url);
+        if (href) primary = <DownloadCard url={href} name={card.name} />;
     }
     if (!primary) {
         // Unknown card type. Silently render nothing so a future backend

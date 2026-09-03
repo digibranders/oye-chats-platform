@@ -54,12 +54,15 @@ from app.services.crawl_provider import crawl_website, fetch_urls
 from app.services.crawler_service import (
     CrawlCancelled,
     CrawlerError,
+    acquire_crawl_lock,
     crawl_heartbeat,
+    crawl_lock_holder,
     is_cancellation_requested,
     release_crawl_lock,
     set_crawl_progress,
 )
 from app.services.footer_harvester import harvest_footer_media
+from app.services.knowledge_quota_service import release_kb_usage_for_sources
 from app.services.llm_service import classify_brand_tone, extract_company_context
 
 logger = logging.getLogger(__name__)
@@ -563,6 +566,7 @@ async def run_full_crawl(
     force_reingest: bool = False,
     crawl_job_id: str | None = None,
     lock_token: str | None = None,
+    job_try: int = 1,
 ) -> dict:
     """Execute the full crawl pipeline end-to-end. Returns the result payload.
 
@@ -577,7 +581,36 @@ async def run_full_crawl(
     route layer applies ``min(plan_max_pages, plan_js_max_pages)`` before
     forwarding, so a single capped ``max_pages`` is all the subprocess needs.
     ``None`` means "let the crawler subprocess fall back to its env defaults".
+
+    ``job_try`` is ARQ's attempt counter (1 on the first run). A retry re-enters
+    holding NOTHING: this function releases the per-client crawl lock in its
+    ``finally``, and a worker killed mid-crawl lets the lock's TTL lapse. So on
+    every attempt after the first the lock is re-taken if it is free, and the
+    run is skipped if some other crawl now holds it, rather than running a
+    second crawl for the same workspace concurrently with the first.
     """
+    if job_try > 1 and lock_token is not None:
+        holder = crawl_lock_holder(client_id)
+        if holder != lock_token:
+            regained = acquire_crawl_lock(client_id, kind=lock_token.split(":", 1)[0]) if holder is None else None
+            if regained is None:
+                logger.warning(
+                    "Skipping crawl retry %d for client %s: the crawl lock is held elsewhere (%s)",
+                    job_try,
+                    client_id,
+                    (holder or "").split(":", 1)[0] or "unknown",
+                )
+                return {
+                    "message": "Crawl retry skipped: another crawl is already running for this workspace",
+                    "root_url": url,
+                    "pages_processed": 0,
+                    "chunks_processed": 0,
+                    "credits_deducted": 0,
+                    "pages_crawled": [],
+                }
+            logger.info("Re-acquired the crawl lock for client %s on retry %d", client_id, job_try)
+            lock_token = regained
+
     result_payload: dict | None = None
     started_at = time.time()
     # Denominator for the UI progress bar. Only ever a real, known page count
@@ -657,12 +690,26 @@ async def run_full_crawl(
     # a site we could not read. None for a cancel, which is not a limit.
     #   streamed_pages:  how many pages the provider handed to the consumer, so
     #                    the final sweep knows the waves already covered them.
+    #   free_left:       what remains of the account's free-training-page
+    #                    allowance for THIS crawl. ``free_pages`` is resolved
+    #                    once at crawl start; every wave (and the final sweep)
+    #                    must draw from one shared, shrinking counter, or each
+    #                    wave restarts the allowance and a 400-page site on a
+    #                    25-page allowance is trained for free.
     ingest_state: dict = {
         "billing_aborted": False,
         "consumer_error": None,
         "abort_reason": None,
         "streamed_pages": 0,
+        "free_left": max(0, int(free_pages)),
     }
+
+    def _spend_free_pages(ingest_result: dict) -> None:
+        """Carry the allowance consumed by one ingest call into the next."""
+        used = int(ingest_result.get("pages_free") or 0)
+        if used:
+            ingest_state["free_left"] = max(0, ingest_state["free_left"] - used)
+
     streaming = CRAWL_STREAM_INGEST_ENABLED
 
     async def _on_result(page: dict) -> None:
@@ -695,12 +742,14 @@ async def run_full_crawl(
         )
 
     def _ingest_wave(wave: list[dict], chunk_offset: int) -> dict:
-        return batch_web_ingestion(
+        # Waves run one at a time (see ``_consume_ingest_stream``), so reading
+        # and then updating the shared counter here is race-free.
+        result = batch_web_ingestion(
             client_id,
             wave,
             bot_id=bot_id,
             cost_per_page=cost_per_page,
-            free_pages=free_pages,
+            free_pages=ingest_state["free_left"],
             deduct_reason="url_scan",
             deduct_reference_id=bot_id,
             crawl_job_id=crawl_job_id,
@@ -708,6 +757,8 @@ async def run_full_crawl(
             crawl_started_at=started_at,
             force_reingest=force_reingest,
         )
+        _spend_free_pages(result)
+        return result
 
     async def _ingest_consumer() -> None:
         """Drain ``stream_queue`` into wave-sized ``batch_web_ingestion`` calls.
@@ -937,7 +988,7 @@ async def run_full_crawl(
                         valid_pages,
                         bot_id=bot_id,
                         cost_per_page=cost_per_page,
-                        free_pages=free_pages,
+                        free_pages=ingest_state["free_left"],
                         deduct_reason="url_scan",
                         deduct_reference_id=bot_id,
                         embed_progress_cb=_report_embed,
@@ -946,6 +997,7 @@ async def run_full_crawl(
                         crawl_job_id=crawl_job_id,
                     ),
                 )
+            _spend_free_pages(ingest_result)
             ingest_totals["chunks"] += ingest_result["chunks"]
             ingest_totals["pages_charged"] += ingest_result["pages_charged"]
             ingest_totals["credits_deducted"] += ingest_result["credits_deducted"]
@@ -1019,6 +1071,7 @@ async def run_full_crawl(
                 ]
 
             dead_urls: list[str] = []
+            freed = 0
             if candidate_urls:
                 from app.services.url_discovery import check_urls_alive
 
@@ -1029,6 +1082,16 @@ async def run_full_crawl(
             deleted = 0
             if dead_urls:
                 with get_session() as del_session:
+                    # Hand the account counter back BEFORE the delete: the char
+                    # count lives on the rows we are about to remove. Without
+                    # this the sweep silently ratchets ``kb_characters_used``
+                    # up forever and the account 402s on a shrinking KB.
+                    freed = release_kb_usage_for_sources(
+                        del_session,
+                        client_id=client_id,
+                        bot_id=bot_id,
+                        document_names=dead_urls,
+                    )
                     deleted = (
                         del_session.query(Document)
                         .filter(
@@ -1041,11 +1104,12 @@ async def run_full_crawl(
                     del_session.commit()
             logger.info(
                 "Orphan sweep for '%s': %d pages missing from this crawl, %d confirmed gone "
-                "(%d chunks removed), %d retained as still-live",
+                "(%d chunks removed, %d KB chars reclaimed), %d retained as still-live",
                 sweep_source,
                 len(candidate_urls),
                 len(dead_urls),
                 deleted,
+                freed,
                 len(candidate_urls) - len(dead_urls),
             )
 

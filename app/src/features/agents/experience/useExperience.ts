@@ -228,11 +228,17 @@ export function useExperience(): ExperienceState {
     try {
       await updateBot(saveAgentId, patch);
       if (agentIdRef.current !== saveAgentId) return;
-      setLoaded((prev) =>
-        prev && prev.agentId === saveAgentId
-          ? { ...prev, draft: normalized, baseline: normalized }
-          : prev,
-      );
+      setLoaded((prev) => {
+        if (!prev || prev.agentId !== saveAgentId) return prev;
+        // Only the baseline moves. A PATCH takes long enough for the customer
+        // to have carried on typing, and overwriting the draft with what was
+        // sent threw those keystrokes away in front of them. The draft is
+        // replaced only when it is still exactly what was submitted, so that
+        // the tidy-ups `normalizeDraft` made (trimmed text, clamped numbers)
+        // land and the save bar clears.
+        const draft = draftsEqual(prev.draft, current.draft) ? normalized : prev.draft;
+        return { ...prev, draft, baseline: normalized };
+      });
       setSavedAt(Date.now());
       // `PATCH /bots/{id}` answers with a status message rather than the bot, so
       // the cache is invalidated rather than written through.

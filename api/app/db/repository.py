@@ -122,6 +122,14 @@ def ensure_chat_session(
         return chat_session
 
     chat_session.last_active_at = func.now()
+    # Backfill a missing owner. The widget's pre-chat surfaces (lead form,
+    # behavioural signals, meeting booking, the live-chat socket) can create
+    # the row before the first chat turn, and some of those callers historically
+    # knew only the bot. Every analytics query filters on ``client_id``, so a
+    # row left NULL here is invisible to the dashboard until the startup
+    # backfill runs. Never overwrite a value that is already set.
+    if client_id is not None and getattr(chat_session, "client_id", None) is None:
+        chat_session.client_id = client_id
     # location/device are first-message context. Never overwrite a stored value:
     # the background geo-resolver in chat_routes upgrades the raw "IP: …" stamp
     # to "City, Country | IP" after the first turn, and subsequent chat turns

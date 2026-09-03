@@ -64,7 +64,10 @@ def _make_session(bot, chat_session):
         if model is Bot:
             query.filter.return_value.first.return_value = bot
         elif model is ChatSession:
+            # The merge row-locks the session (audit R4), so the ORM chain is
+            # ``.filter(...).with_for_update().first()``.
             query.filter.return_value.first.return_value = chat_session
+            query.filter.return_value.with_for_update.return_value.first.return_value = chat_session
         else:
             query.filter.return_value.first.return_value = None
         return query

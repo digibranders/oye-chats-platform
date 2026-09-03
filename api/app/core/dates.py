@@ -35,9 +35,14 @@ def trial_days_remaining(trial_end: datetime | None, now: datetime | None = None
     return math.ceil(seconds_left / 86400)
 
 
-def add_months(dt: datetime, months: int) -> datetime:
+def add_months(dt: datetime, months: int, *, anchor_day: int | None = None) -> datetime:
     """Add ``months`` whole calendar months to ``dt``, clamping the day on
     short months (Jan 31 + 1 month → Feb 28/29).
+
+    ``anchor_day`` overrides the day-of-month the result clamps from, so a
+    caller that knows the true billing anchor can re-expand a day an earlier
+    clamp collapsed (Feb 28 + 1 month with ``anchor_day=31`` → Mar 31). See
+    :func:`next_period_end`.
 
     Used to roll a subscription period forward without depending on the
     external ``python-dateutil`` package. Preserves the original ``tzinfo``
@@ -55,7 +60,7 @@ def add_months(dt: datetime, months: int) -> datetime:
     (Jan 31 → Feb 28 → Mar 28 …) and never recovers. ``min(dt.day, …)`` only
     clamps; it cannot re-expand a day the caller already collapsed.
     """
-    if months == 0:
+    if months == 0 and anchor_day is None:
         return dt
     new_month = dt.month - 1 + months
     new_year = dt.year + new_month // 12
@@ -66,4 +71,32 @@ def add_months(dt: datetime, months: int) -> datetime:
     else:
         first_of_next = datetime(new_year, new_month + 1, 1, tzinfo=dt.tzinfo)
     last_of_month = (first_of_next - timedelta(days=1)).day
-    return dt.replace(year=new_year, month=new_month, day=min(dt.day, last_of_month), fold=dt.fold)
+    day = anchor_day if anchor_day is not None else dt.day
+    return dt.replace(year=new_year, month=new_month, day=min(day, last_of_month), fold=dt.fold)
+
+
+def _is_month_end(dt: datetime) -> bool:
+    """True when ``dt`` falls on the last day of its own month."""
+    return (dt + timedelta(days=1)).month != dt.month
+
+
+def next_period_end(period_start: datetime, period_end: datetime | None, months: int) -> datetime:
+    """Roll a billing period forward without ratcheting a 31st anchor down (B6).
+
+    ``add_months(period_end, 1)`` alone loses the anchor the first time a short
+    month clamps it: Jan 31 → Feb 28 → Mar 28 → … and the customer is billed
+    three days early forever. The anchor is recoverable from the CURRENT period
+    whenever the clamp is still visible, ``period_end`` sits on a month end and
+    ``period_start`` names a later day, so that day is the real anchor and the
+    new end is measured from it (Feb 28 → Mar 31 → Apr 30 → May 31).
+
+    A period whose end is not a month end was not clamped (a mid-cycle upgrade,
+    a gateway-supplied period), so its own day is the anchor and nothing is
+    re-expanded.
+    """
+    if period_end is None:
+        return add_months(period_start, months)
+    anchor_day = period_end.day
+    if period_start is not None and period_start.day > period_end.day and _is_month_end(period_end):
+        anchor_day = period_start.day
+    return add_months(period_end, months, anchor_day=anchor_day)

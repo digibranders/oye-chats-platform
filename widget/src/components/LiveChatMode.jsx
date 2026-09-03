@@ -4,6 +4,7 @@ import SendIcon from './SendIcon';
 import { getChatHistory } from '../services/api';
 import { sanitizeColor } from '../services/sanitize';
 import { displayTextFor } from '../lib/liveChatTranslation';
+import { mergeRestoredLiveMessages } from '../lib/liveHistoryMerge';
 import { getLocale, t } from '../i18n/i18n';
 
 const API_URL = (typeof window !== 'undefined' && window.OYECHATS_API_URL) || import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
@@ -34,6 +35,7 @@ const LiveChatMode = ({
     onOperatorTyping,       // (bool) => void
     onLastReadAtChange,     // (isoString) => void) kept for backwards compat (file-list/legacy callers)
     onReconnectingChange,   // (bool) => void
+    onReconnectReady,       // (fn) => void — manual reconnect handle for a terminal disconnect
     onWsReady,              // ({ send, typing, triggerFilePick, endChat }) => void
     onChatEnded,            // () => void (called when chat ends (show rating or return to bot)
     onUploadProgressChange, // (number|null) => void) syncs upload progress to parent
@@ -52,6 +54,11 @@ const LiveChatMode = ({
     const pongTimeoutRef = useRef(null);
 
     const statusCheckRef = useRef(null);
+    // Live socket + the current connect(). Both are recreated on every
+    // reconnect, so the recovery handlers below read them through refs rather
+    // than through the effect closure they were mounted in.
+    const socketRef = useRef(null);
+    const connectRef = useRef(null);
 
     const [uploadProgress, setUploadProgressLocal] = useState(null);
     // Pre-send preview: { file, previewUrl, caption, isImage }
@@ -104,13 +111,20 @@ const LiveChatMode = ({
 
                 // Expose send/typing/filePick handles to ChatWindow
                 onWsReady?.({
+                    // Returns false when the frame could not be put on the
+                    // wire, so the caller can render the message as failed
+                    // instead of leaving it stuck on "sending" forever.
                     send: (text, clientMsgId) => {
-                        if (socket.readyState === WebSocket.OPEN) {
+                        if (socket.readyState !== WebSocket.OPEN) return false;
+                        try {
                             socket.send(JSON.stringify({
                                 type: 'message',
                                 content: text,
                                 client_msg_id: clientMsgId,
                             }));
+                            return true;
+                        } catch {
+                            return false;
                         }
                     },
                     typing: () => {
@@ -142,13 +156,17 @@ const LiveChatMode = ({
                             }
                         }
                     },
-                    endChat: () => {
+                    // ``silent``: the visitor backed out of the QUEUE before an
+                    // operator ever joined. There is no conversation to rate, so
+                    // the post-chat survey must not open — the caller just drops
+                    // back into bot mode.
+                    endChat: ({ silent = false } = {}) => {
                         if (socket.readyState === WebSocket.OPEN) {
                             socket.send(JSON.stringify({ type: 'visitor_end_chat' }));
                         }
                         intentionalClose.current = true;
                         socket.close();
-                        onChatEnded?.();
+                        if (!silent) onChatEnded?.();
                     },
                 });
             };
@@ -217,8 +235,10 @@ const LiveChatMode = ({
                                                 sender: isUser ? 'user' : 'operator',
                                                 operatorName: !isUser ? (data.operator_name || t('system.our_team') || 'Our team') : undefined,
                                                 timestamp: m.timestamp || m.created_at,
+                                                // Carried for BOTH senders: it is the
+                                                // dedupe key on the next reconnect.
+                                                ...(typeof m.id === 'number' ? { dbId: m.id } : {}),
                                                 ...(isUser ? {
-                                                    dbId: typeof m.id === 'number' ? m.id : undefined,
                                                     // Restored visitor messages are by definition persisted
                                                     //. Start them at "delivered". A subsequent read_receipt
                                                     // (sent by the operator when they open the chat) will
@@ -251,21 +271,11 @@ const LiveChatMode = ({
                                             // lib/liveChatTranslation.js.
                                             return { ...base, text: displayTextFor(m, sessionLanguage) };
                                         });
-                                    onLiveMessagesChange?.(prev => {
-                                        if (!Array.isArray(prev) || prev.length === 0) return restored;
-                                        // Append-by-timestamp: pick up messages that
-                                        // arrived in the DB after the last one we
-                                        // already have in memory. Preserves local
-                                        // state (failed/sent flags) on existing
-                                        // entries instead of clobbering with a full
-                                        // replace.
-                                        const latestTs = prev.reduce((max, m) => {
-                                            const ts = m.timestamp || '';
-                                            return ts > max ? ts : max;
-                                        }, '');
-                                        const toAppend = restored.filter(m => (m.timestamp || '') > latestTs);
-                                        return toAppend.length > 0 ? [...prev, ...toAppend] : prev;
-                                    });
+                                    // Dedupe by the db id the server already gave
+                                    // us (message_ack / message frames) and keep
+                                    // local flags on the rows we already render.
+                                    // See lib/liveHistoryMerge.js.
+                                    onLiveMessagesChange?.(prev => mergeRestoredLiveMessages(prev, restored));
                                 })
                                 .catch(() => { /* non-fatal */ });
                         } else if (data.status === 'closed') {
@@ -329,6 +339,12 @@ const LiveChatMode = ({
                                     ...m,
                                     status: nextStatus,
                                     dbId: dbId ?? m.dbId,
+                                    // Adopt the SERVER clock. The optimistic bubble
+                                    // was stamped with the client clock, which runs
+                                    // behind the persisted row and made every
+                                    // reconnect treat that row as "newer than
+                                    // anything local" and append it again.
+                                    timestamp: ackTs || m.timestamp,
                                     sentAt: m.sentAt || ackTs || new Date().toISOString(),
                                     deliveredAt: ackStatus === 'delivered'
                                         ? (m.deliveredAt || ackTs || new Date().toISOString())
@@ -388,6 +404,16 @@ const LiveChatMode = ({
 
             socket.onclose = () => {
                 console.log('[OyeChats] Live chat WebSocket closed');
+                // Anything still "sending" never got its ack, so it never
+                // reached the server. Surface it as failed so the visitor gets
+                // the retry affordance instead of a spinner that never resolves.
+                onLiveMessagesChange?.(prev =>
+                    (prev || []).map(m =>
+                        m.sender === 'user' && m.status === 'sending'
+                            ? { ...m, status: 'failed', failed: true }
+                            : m
+                    )
+                );
                 if (!intentionalClose.current && reconnectAttempt.current < 15) {
                     const base = Math.min(1000 * Math.pow(2, reconnectAttempt.current), 30000);
                     const delay = Math.round(base * (0.9 + Math.random() * 0.2));
@@ -405,17 +431,34 @@ const LiveChatMode = ({
                 // onclose fires after onerror. Reconnect handled there
             };
 
+            socketRef.current = socket;
             setWs(socket);
         };
 
+        connectRef.current = connect;
         intentionalClose.current = false;
         connect();
+
+        // Manual retry handle for the terminal 'disconnected' state, where the
+        // automatic backoff has given up and only the visitor can restart it.
+        onReconnectReady?.(() => {
+            const current = socketRef.current;
+            if (current && (current.readyState === WebSocket.OPEN || current.readyState === WebSocket.CONNECTING)) return;
+            if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+            reconnectAttempt.current = 0;
+            intentionalClose.current = false;
+            onReconnectingChange?.(true);
+            onConnectionStatusChange?.('reconnecting');
+            connectRef.current?.();
+        });
 
         return () => {
             intentionalClose.current = true;
             if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
             clearTimeout(typingTimeoutRef.current);
             clearTimeout(stoppedTypingTimerRef.current);
+            socketRef.current = null;
+            connectRef.current = null;
             setWs(prev => { prev?.close(); return null; });
         };
     }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -455,24 +498,32 @@ const LiveChatMode = ({
     useEffect(() => {
         if (!ws) return;
 
+        // A CLOSED socket fires no further `onclose`, so calling ws.close() on
+        // one (what this used to do) reconnected nothing: after the backoff
+        // gave up, the visitor sat on "Reconnecting…" forever. Drive connect()
+        // directly instead; a CLOSING socket still has its own onclose coming,
+        // so leave that one to the normal backoff path.
+        const recover = () => {
+            if (ws.readyState === WebSocket.CLOSING) return;
+            if (ws.readyState !== WebSocket.CLOSED) return;
+            if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+            reconnectAttempt.current = 0;
+            onReconnectingChange?.(true);
+            onConnectionStatusChange?.('reconnecting');
+            connectRef.current?.();
+        };
+
         const handleVisibilityChange = () => {
             if (document.visibilityState !== 'visible') return;
             if (ws.readyState === WebSocket.OPEN) {
                 try { ws.send(JSON.stringify({ type: 'ping' })); } catch { ws.close(); }
-            } else if (
-                (ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) &&
-                !intentionalClose.current
-            ) {
-                reconnectAttempt.current = 0;
-                ws.close();
+            } else if (!intentionalClose.current) {
+                recover();
             }
         };
 
         const handleOnline = () => {
-            if (!intentionalClose.current && ws.readyState !== WebSocket.OPEN) {
-                reconnectAttempt.current = 0;
-                ws.close();
-            }
+            if (!intentionalClose.current && ws.readyState !== WebSocket.OPEN) recover();
         };
 
         document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -481,7 +532,7 @@ const LiveChatMode = ({
             document.removeEventListener('visibilitychange', handleVisibilityChange);
             window.removeEventListener('online', handleOnline);
         };
-    }, [ws]);
+    }, [ws]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // ─── Pending message retry on reconnect ─────────────────────────────────────
 

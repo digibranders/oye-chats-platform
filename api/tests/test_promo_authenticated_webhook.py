@@ -17,7 +17,7 @@ def _payload(notes: dict) -> dict:
 
 def test_non_promo_acks_without_granting(monkeypatch):
     calls: list[int] = []
-    monkeypatch.setattr(rs, "_handle_subscription_activated", lambda s, p: calls.append(1))
+    monkeypatch.setattr(rs, "_handle_subscription_activated", lambda s, p, **kw: calls.append(1))
     out = rs._handle_subscription_authenticated(None, _payload({"oyechats_client_id": "5"}))
     # An ordinary immediate-start sub is a benign no-op, the exact wording is
     # shared with the deferred-resume path ("ignored … awaiting activated").
@@ -26,7 +26,7 @@ def test_non_promo_acks_without_granting(monkeypatch):
 
 
 def test_promo_delegates_to_activation(monkeypatch):
-    monkeypatch.setattr(rs, "_handle_subscription_activated", lambda s, p: "granted-sentinel")
+    monkeypatch.setattr(rs, "_handle_subscription_activated", lambda s, p, **kw: "granted-sentinel")
     out = rs._handle_subscription_authenticated(
         None,
         _payload({"oyechats_promotion_id": "7", "oyechats_client_id": "5", "oyechats_plan_id": "2"}),
@@ -36,7 +36,7 @@ def test_promo_delegates_to_activation(monkeypatch):
 
 def test_missing_entity_acks(monkeypatch):
     calls: list[int] = []
-    monkeypatch.setattr(rs, "_handle_subscription_activated", lambda s, p: calls.append(1))
+    monkeypatch.setattr(rs, "_handle_subscription_activated", lambda s, p, **kw: calls.append(1))
     out = rs._handle_subscription_authenticated(None, {})
     assert out == "subscription entity missing"
     assert calls == []

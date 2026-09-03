@@ -88,11 +88,37 @@ export function parseHistoryMessage(m: ChatMessage): OperatorMessage {
 }
 
 /**
+ * How far apart an optimistic echo's clock and the server's `created_at` may
+ * be and still be judged the same message. The echo is stamped in the browser
+ * the instant the frame goes out; the row is stamped when the API writes it,
+ * so the two differ by the round trip plus whatever clock skew the operator's
+ * machine carries.
+ */
+const ECHO_MATCH_WINDOW_MS = 10_000;
+
+/** True when a live entry is the operator's own optimistic echo of `persisted`. */
+function isEchoOf(echo: OperatorMessage, persisted: OperatorMessage): boolean {
+  if (echo.role !== persisted.role || echo.content !== persisted.content) return false;
+  const echoAt = echo.timestamp ? Date.parse(echo.timestamp) : NaN;
+  const persistedAt = persisted.timestamp ? Date.parse(persisted.timestamp) : NaN;
+  // An echo with no usable clock on either side still matches on role and
+  // content, which is enough: the alternative is rendering it twice.
+  if (Number.isNaN(echoAt) || Number.isNaN(persistedAt)) return true;
+  return Math.abs(echoAt - persistedAt) <= ECHO_MATCH_WINDOW_MS;
+}
+
+/**
  * Merge freshly-fetched REST history with any live WS messages already present
  * for a session. History (all DB-persisted) is the authoritative, ordered base;
  * live messages that arrived between accept and the history GET returning are
- * appended if not already represented. Persisted duplicates are deduped by
- * `dbId`; optimistic echoes (no `dbId`, e.g. the operator's own sends) are kept.
+ * appended if not already represented.
+ *
+ * Persisted duplicates are deduped by `dbId`. An optimistic echo carries no
+ * `dbId` - the backend routes operator messages to the visitor only and never
+ * echoes them back - so it is deduped by role, content and a timestamp close to
+ * the persisted row's. Without that, re-selecting a conversation (which remounts
+ * the pane and reloads history) rendered every reply the operator had sent
+ * twice, with the echo pinned below the rest of the thread.
  */
 export function mergeHistoryWithLive(
   history: OperatorMessage[],
@@ -103,7 +129,16 @@ export function mergeHistoryWithLive(
   for (const m of history) {
     if (m.dbId != null) knownDbIds.add(m.dbId);
   }
-  const extras = live.filter((m) => m.dbId == null || !knownDbIds.has(m.dbId));
+  // Each persisted row absorbs at most one echo, so two identical replies sent
+  // in quick succession still render twice once both have been persisted.
+  const claimed = new Set<OperatorMessage>();
+  const extras = live.filter((m) => {
+    if (m.dbId != null) return !knownDbIds.has(m.dbId);
+    const match = history.find((h) => !claimed.has(h) && isEchoOf(m, h));
+    if (!match) return true;
+    claimed.add(match);
+    return false;
+  });
   return extras.length === 0 ? history : [...history, ...extras];
 }
 

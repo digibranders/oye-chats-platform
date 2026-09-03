@@ -79,9 +79,10 @@ EMBED_QUERY_MAX_WAIT_S      (default 2.0)
 CRAWL_PROVIDER_PRIMARY      (default "jina" — NOT spider)
 JINA_API_KEY, JINA_FALLBACK_ENABLED, SPIDER_API_KEY, SPIDER_REQUEST_MODE
 DEMO_SCREENSHOT_ENABLED, DEMO_SCREENSHOT_PROVIDER (default jina), DEMO_SCREENSHOT_TTL_DAYS
-WS_BACKPLANE_ENABLED        (default FALSE in config.py; oyechats-ws.service pins it
+WS_BACKPLANE_ENABLED        (default TRUE in config.py; oyechats-ws.service pins it
                              true for its own process, and the deploy writes
-                             ${WS_BACKPLANE_ENABLED:-false} into the API's .env)
+                             ${WS_BACKPLANE_ENABLED:-true} into the API's .env.
+                             Inert without REDIS_URL)
 EMAIL_PROVIDER              (default "brevo"; "ses" switches to the AWS SES HTTPS API)
 REOON_API_KEY               (email verification — absent makes it a silent no-op)
 IPAPI_IS_KEY                (visitor company lookup)

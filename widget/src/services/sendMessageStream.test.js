@@ -217,3 +217,57 @@ test('a normal stream still delivers its text and final metadata', async () => {
     assert.equal(chunks.join('').trim(), 'Hello there');
     assert.deepEqual(finals, [{ message_id: 7 }]);
 });
+
+// ── W1 (2026-09 audit): terminal frame split inside the marker ───────────────
+
+test('a FINAL_METADATA frame split mid-marker still parses and never renders', async () => {
+    // The bug: the partial-flush guard only recognised a COMPLETE marker, so a
+    // read boundary inside the first 15 bytes (e.g. "FINAL_") emitted the
+    // fragment as answer text and left the JSON behind it to be parsed as an
+    // ordinary line. onFinalMetadata never fired: no message id, no feedback
+    // buttons, no CTA, and raw JSON on screen.
+    const terminal = 'FINAL_METADATA:{"message_id":7}\n';
+
+    for (let split = 1; split < terminal.length; split++) {
+        const finals = [];
+        const { chunks } = await collect(
+            async () => ({
+                ok: true,
+                body: streamOf([
+                    'METADATA:{"session_id":"s"}\n',
+                    'Hello ',
+                    'there\n',
+                    terminal.slice(0, split),
+                    terminal.slice(split),
+                ]),
+            }),
+            { onFinalMetadata: (meta) => finals.push(meta) },
+        );
+
+        const rendered = chunks.join('');
+        assert.equal(rendered.trim(), 'Hello there', `split at ${split} rendered ${JSON.stringify(rendered)}`);
+        assert.ok(!rendered.includes('FINAL'), `split at ${split} leaked the marker into the bubble`);
+        assert.ok(!rendered.includes('message_id'), `split at ${split} leaked the metadata JSON`);
+        assert.deepEqual(finals, [{ message_id: 7 }], `split at ${split} lost the final metadata`);
+    }
+});
+
+test('text that merely looks like the start of a marker is still delivered', async () => {
+    // The prefix hold must not swallow ordinary text: a stream ending on "M"
+    // (or "META", part of a real sentence) has to reach the visitor.
+    const finals = [];
+    const { chunks } = await collect(
+        async () => ({
+            ok: true,
+            body: streamOf([
+                'METADATA:{"session_id":"s"}\n',
+                'Ask about ',
+                'META',
+            ]),
+        }),
+        { onFinalMetadata: (meta) => finals.push(meta) },
+    );
+
+    assert.equal(chunks.join(''), 'Ask about META');
+    assert.deepEqual(finals, []);
+});

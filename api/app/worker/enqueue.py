@@ -12,6 +12,7 @@ import asyncio
 import logging
 import os
 import threading
+import time
 from typing import Any
 
 from arq import ArqRedis, create_pool
@@ -32,6 +33,20 @@ _pending_enqueue_tasks: set[asyncio.Task[None]] = set()
 
 # Feature flag: when False, callers fall back to their original behavior.
 WORKER_ENABLED = os.getenv("WORKER_ENABLED", "false").lower() in ("1", "true", "yes")
+
+
+# ARQ refuses an enqueue whose job id already has a stored RESULT, and results
+# are kept for an hour by default. A job id of ``{prefix}:{key}`` therefore goes
+# dead for that whole hour after the job finishes: the next enqueue silently
+# returns None and the work never runs. Folding a coarse time bucket into the id
+# keeps the burst-collapsing a fixed id exists for (two clicks seconds apart land
+# in the same bucket) without the hour-long dead window.
+JOB_ID_BUCKET_SECONDS = 60
+
+
+def bucketed_job_id(prefix: str, key: int | str, bucket_seconds: int = JOB_ID_BUCKET_SECONDS) -> str:
+    """``{prefix}:{key}:{bucket}`` - dedupes within a bucket, never beyond it."""
+    return f"{prefix}:{key}:{int(time.time()) // bucket_seconds}"
 
 
 def _get_redis_settings() -> RedisSettings:
