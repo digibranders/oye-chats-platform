@@ -79,4 +79,24 @@ test.describe('the privacy notice', () => {
       await expect(line).toBeVisible()
     }
   })
+
+  test('on a phone the branding sits under the middle of the composer, not under Send', async ({ page }) => {
+    // The "Powered by" link used to hug the right edge, directly beneath the
+    // send button, and thumbs aiming for Send kept opening oyechats.com.
+    const root = await boot(page)
+    const branding = root.getByRole('link', { name: /OyeChats/ })
+    const send = root.locator('button[type="submit"], button[aria-label*="Send" i]').first()
+    const [brandBox, sendBox] = await Promise.all([branding.boundingBox(), send.boundingBox()])
+    const viewport = page.viewportSize()
+    const brandCentre = brandBox.x + brandBox.width / 2
+    if (test.info().project.name === 'mobile') {
+      // Centred: within the middle third, and its right edge clear of Send's left edge.
+      expect(brandCentre).toBeGreaterThan(viewport.width / 3)
+      expect(brandCentre).toBeLessThan((viewport.width * 2) / 3)
+      expect(brandBox.x + brandBox.width).toBeLessThan(sendBox.x)
+    } else {
+      // Desktop keeps it at the right edge of the panel.
+      expect(brandBox.x + brandBox.width).toBeGreaterThan(sendBox.x)
+    }
+  })
 })
