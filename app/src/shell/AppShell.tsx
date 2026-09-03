@@ -133,7 +133,7 @@ export function AppShell() {
     <TooltipProvider>
       <div
         className={cn(
-          'grid h-dvh overflow-hidden bg-canvas text-text-primary',
+          'relative grid h-dvh overflow-hidden bg-canvas text-text-primary',
           !isMobile &&
             (collapsed
               ? 'grid-cols-[var(--spacing-rail-collapsed)_1fr]'
@@ -181,8 +181,20 @@ export function AppShell() {
             searchable={!isOperator}
           />
           {/* The scroll container. A routed surface that wants the viewport
-              asks for `h-full`; everything else simply scrolls in here. */}
-          <main id="main" className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+              asks for `h-full`; everything else simply scrolls in here.
+
+              `relative` (here and on the shell root) is load-bearing, not
+              decoration. `overflow` only clips descendants whose containing
+              block runs through this element. An absolutely positioned
+              descendant with no positioned ancestor, which is every `sr-only`
+              live region and caption a page renders, is positioned against
+              the initial containing block instead: it sits at its static spot
+              in the page's flow, below the fold on any tall page, and extends
+              the document's scrollable area past the viewport. The whole
+              shell, rail included, then scrolls away on the first focus or
+              trackpad flick (seen on /account, 309px). Making the scroll
+              container the containing block keeps those elements inside it. */}
+          <main id="main" className="relative min-h-0 min-w-0 flex-1 overflow-y-auto">
             <Outlet />
           </main>
         </div>
