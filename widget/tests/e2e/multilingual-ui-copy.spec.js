@@ -195,7 +195,7 @@ test.describe('Phase 5 - the widget chrome speaks Hindi', () => {
       ],
     })
 
-    await root.locator('button[title="अधिक विकल्प"]').click()
+    await root.locator('button[title="मेन्यू"]').click()
     await expect(root.getByText('ट्रांसक्रिप्ट भेजें')).toBeVisible()
     await expect(root.getByText('भाषा (Language)')).toBeVisible()
     await expectNoEnglishChrome(page, 'the header menu')
@@ -208,7 +208,7 @@ test.describe('Phase 5 - the widget chrome speaks Hindi', () => {
 
   test('the language selector is reachable and Hindi-labelled', async ({ page }) => {
     const root = await bootHindiVisitor(page)
-    await root.locator('button[title="अधिक विकल्प"]').click()
+    await root.locator('button[title="मेन्यू"]').click()
     await root.getByText('भाषा (Language)').click()
     await expect(root.getByText('भाषा चुनें')).toBeVisible({ timeout: 5000 })
     await expectNoEnglishChrome(page, 'the language selector')

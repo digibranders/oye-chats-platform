@@ -707,27 +707,32 @@ const ChatInput = ({
                 is implied by the handoff. */}
             {!isLive && !isWaiting && !pendingConfirm && (
                 <div className="grid grid-cols-3 items-center gap-3 mt-1 pt-0 md:mt-3.5 md:pt-1 px-1">
-                    {/* The privacy notice: bottom-left, and DESKTOP ONLY
-                        (`hidden md:block`) — the phone viewport is tight enough
-                        that the composer and the credit are all it can carry.
+                    {/* The privacy notice, bottom-left, and the one thing it must
+                        not do: vanish before the visitor has decided anything.
 
-                        On desktop it stands for the whole conversation rather
-                        than only until the first message. It is the widget's
-                        only privacy disclosure, and a visitor can be asked for
-                        personal details at any point (the lead form, a handoff,
-                        leaving an offline message), not just before they open
-                        their mouth — so there is no turn after which it has
-                        stopped being relevant.
+                        On desktop it stands for the whole conversation: a visitor
+                        can be asked for personal details at any point (the lead
+                        form, a handoff, an offline message), so there is no turn
+                        after which it stops being relevant.
 
-                        NOTE: this layout also carries the fix that previously
-                        lived in a phone-only `md:contents` wrapper here. The
-                        branding used to sit at the right edge on mobile, directly
-                        under the send button, and thumbs aiming for Send kept
-                        opening oyechats.com. It is now CENTERED on every viewport
-                        (below), which keeps it clear of the send button without
-                        needing the wrapper or its `·` separator. Do not move the
-                        credit back to the right edge on mobile. */}
-                    <p className="col-start-1 hidden md:block text-[10px] text-gray-400 leading-snug justify-self-start">
+                        On a phone it collapses only AFTER the conversation has
+                        started, so the tight viewport reclaims the row once the
+                        notice is no longer earning it. Before the first message
+                        it stays up on every viewport, because that is the moment
+                        it does its work: when someone is deciding whether to type
+                        personal details into a chat box. This is the widget's
+                        only privacy disclosure, so a bare `hidden md:block` here
+                        removes it from every phone visitor outright. That has
+                        shipped twice now; `privacy-notice.spec.js` is the guard.
+
+                        Derived from `userMessageCount` rather than a separate
+                        `userHasSent` prop: one fact, one source.
+
+                        The credit is centred on every viewport (column 2, below)
+                        so it never sits under the send button on a phone, where
+                        thumbs aiming for Send kept opening oyechats.com. Column
+                        3 is the empty counterweight that keeps it centred. */}
+                    <p className={`col-start-1 text-[10px] text-gray-400 leading-snug justify-self-start ${userMessageCount > 0 ? 'hidden md:block' : ''}`}>
                         <a
                             href="https://www.oyechats.com/legal/privacy"
                             target="_blank"
