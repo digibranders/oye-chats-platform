@@ -425,6 +425,25 @@ def _normalize(raw) -> QuotationCatalog:
         return QuotationCatalog()
 
 
+def quotation_available(bot: Bot, plan_slug: str | None) -> bool:
+    """True when the quote card can ever fire for this bot: an enabled catalog
+    with at least one service, on a plan that includes the flow.
+
+    Published by the public settings endpoint as ``quotation_enabled`` so the
+    widget knows whether ``GET /chat/quotation`` is worth asking at all. The
+    widget cannot tell "no catalog" from "BANT not extracted yet" out of an
+    ``active: false`` reply, so before this flag it ran its full post-stream
+    poll (five serial requests, ~4.5s of spacing) before every handoff form,
+    for every bot on the platform, and a visitor on a phone waited ten seconds
+    after tapping "Talk to a human". These are the first two gates of
+    ``get_quotation_state``; keep them in step.
+    """
+    catalog = _normalize(getattr(bot, "quotation_catalog", None))
+    if not catalog.enabled or not catalog.services:
+        return False
+    return (plan_slug or "").lower() in QUOTATION_PLAN_SLUGS
+
+
 def _bant_field_present(session: ChatSession, bant_key: str) -> bool:
     score = int(getattr(session, f"bant_{bant_key}_score", 0) or 0)
     value = getattr(session, f"bant_{bant_key}", None)
