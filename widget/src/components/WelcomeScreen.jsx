@@ -1,6 +1,7 @@
 import React from 'react';
 import { t } from '../i18n/i18n.js';
 import { SEEDED, authoredCopy, authoredList } from '../i18n/seededCopy.js';
+import { stripEmoji } from '../lib/stripEmoji.js';
 
 const WelcomeScreen = ({ settings, onSend, welcomeExiting = false, exitDuration = 350 }) => {
     const messages = settings?.widget_messages || {};
@@ -27,12 +28,6 @@ const WelcomeScreen = ({ settings, onSend, welcomeExiting = false, exitDuration 
         if (hour < 12) return t('welcome.good_morning') || 'Good morning';
         if (hour < 18) return t('welcome.good_afternoon') || 'Good afternoon';
         return t('welcome.good_evening') || 'Good evening';
-    };
-
-    const removeEmoji = (text) => {
-        if (!text) return text;
-        // Remove emoji and extra whitespace
-        return text.replace(/[\p{Emoji}]/gu, '').trim();
     };
 
     // Three distinct cases, and they are not interchangeable:
@@ -65,7 +60,7 @@ const WelcomeScreen = ({ settings, onSend, welcomeExiting = false, exitDuration 
             className="flex flex-col items-start text-left w-full"
             style={contentExitStyle || { animation: 'fadeUp 0.4s ease-out' }}
         >
-            <h2 className="text-2xl font-bold text-[#16202C]">{removeEmoji(title)}</h2>
+            <h2 className="text-2xl font-bold text-[#16202C]">{stripEmoji(title)}</h2>
             <p className={`text-[15px] text-gray-500 ${isVertical ? 'mt-1 mb-3' : 'mt-1'}`}>
                 {subtitle}
             </p>

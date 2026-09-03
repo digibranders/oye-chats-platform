@@ -1,6 +1,7 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { getAuthItem } from '../utils/authStorage';
 import { isImpersonating } from '../utils/impersonation';
+import { loginUrlWithNext } from '../utils/loginRedirect';
 import { WorkspaceProvider } from '../context/WorkspaceContext';
 import { BotProvider } from '../context/BotContext';
 import { CrawlProvider } from '../context/CrawlContext';
@@ -10,17 +11,6 @@ import { EntitlementsProvider } from '../context/EntitlementsContext';
 import { UpgradeModalProvider } from '../context/UpgradeModalContext';
 import { sessionNeedsEmailVerification, verifyUrlWithNext } from './emailVerificationGate';
 import { VerificationReconciler } from './VerificationReconciler';
-
-/**
- * Build a `/login?next=…` URL that round-trips the current deep link through
- * authentication. Only same-origin relative paths are preserved (guards against
- * open-redirect via a crafted URL).
- */
-function loginUrlWithNext(pathname: string, search: string): string {
-  const next = `${pathname}${search}`;
-  const safe = next.startsWith('/') && !next.startsWith('//') && next !== '/login';
-  return safe ? `/login?next=${encodeURIComponent(next)}` : '/login';
-}
 
 /**
  * ProtectedLayout - the authenticated boundary for the new app.

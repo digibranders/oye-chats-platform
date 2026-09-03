@@ -15,6 +15,7 @@ import contextlib
 import json
 import logging
 import re
+from dataclasses import dataclass
 from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
@@ -25,6 +26,7 @@ from urllib.request import Request, urlopen
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
+from botocore.exceptions import ConnectionError as BotoConnectionError
 
 from app.config import (
     APP_URL,
@@ -118,6 +120,55 @@ def _capture_email_failure(exc: Exception, **tags) -> None:
             sentry_sdk.capture_exception(exc)
 
 
+@dataclass(frozen=True)
+class SendOutcome:
+    """One send attempt: did it leave, and is retrying it safe? (I12)
+
+    ``sent`` is the public True/False contract every caller already relies on.
+    ``can_retry`` is True ONLY when the request never reached the provider
+    (DNS, connect, TLS or write failure), so a retry cannot duplicate a message
+    the provider already accepted. A refusal the provider ANSWERED (an HTTP
+    error, an SES ``ClientError``) and a response that timed out AFTER the body
+    was written both leave "request sent, outcome unknown", and the worker must
+    not re-send those: an OTP or invoice mail arriving twice is worse than one
+    arriving late.
+    """
+
+    sent: bool
+    can_retry: bool = False
+
+
+# HTTP statuses whose semantics are "we did NOT queue this, come back later".
+# Anything else the server answers is either a permanent rejection or ambiguous
+# about whether the message was accepted, so it is not re-sent.
+_BREVO_RETRYABLE_STATUSES = frozenset({429, 503})
+
+
+def _is_brevo_connection_phase(exc: Exception) -> bool:
+    """True when a Brevo send can be re-sent without risking a duplicate.
+
+    ``urllib`` wraps every ``OSError`` raised while connecting or writing in
+    ``URLError``; a read-phase failure (the 10s timeout expiring on
+    ``getresponse``) surfaces as the raw ``TimeoutError`` / socket error, so
+    the request was fully sent and Brevo may already hold the message.
+    ``HTTPError`` means the server answered, and only a rate-limit / explicit
+    unavailability answer states outright that nothing was queued.
+    """
+    if isinstance(exc, HTTPError):
+        return exc.code in _BREVO_RETRYABLE_STATUSES
+    return isinstance(exc, URLError)
+
+
+def _is_ses_connection_phase(exc: Exception) -> bool:
+    """True when an SES send failed before the request reached AWS.
+
+    ``botocore.exceptions.ConnectionError`` (endpoint unreachable, connect
+    timeout) is connection-phase; ``ReadTimeoutError`` is an ``HTTPClientError``
+    and ``ClientError`` means AWS answered, so neither qualifies.
+    """
+    return isinstance(exc, BotoConnectionError)
+
+
 def _extract_brevo_error(exc: Exception) -> str:
     """Extract the human-readable reason from a Brevo API failure."""
     if isinstance(exc, HTTPError):
@@ -153,7 +204,7 @@ TEMPLATE_VISITOR_CONFIRMATION = 59
 # ── Brevo transport ──────────────────────────────────────────────────────────
 
 
-def _send_brevo_email(
+def _send_brevo_email_result(
     to_email: str,
     subject: str,
     html_body: str,
@@ -161,15 +212,21 @@ def _send_brevo_email(
     reply_to: str | None = None,
     sender_name: str | None = None,
     attachments: list[dict] | None = None,
-) -> bool:
-    """Send an email via Brevo transactional API using raw HTML. Returns True on success."""
+) -> SendOutcome:
+    """Send an email via Brevo transactional API using raw HTML.
+
+    Returns a :class:`SendOutcome` so the worker can tell a connection-phase
+    failure (safe to re-send) from one where Brevo may already hold the message.
+    ``_send_brevo_email`` keeps the plain True/False contract for every other
+    caller.
+    """
     if not EMAIL_ENABLED:
         logger.warning(
             "Email skipped. EMAIL_ENABLED=False (no BREVO_API_KEY) | to=%s subject=%s",
             redact_email(to_email),
             subject,
         )
-        return False
+        return SendOutcome(False)
 
     email_payload: dict = {
         "sender": {"name": sender_name or EMAIL_FROM_NAME, "email": EMAIL_FROM_ADDRESS},
@@ -193,26 +250,42 @@ def _send_brevo_email(
     try:
         with urlopen(req, timeout=10) as resp:
             logger.info(f"Email sent to {redact_email(to_email)} | subject={subject} | status={resp.status}")
-            return True
+            return SendOutcome(True)
     except Exception as e:
         reason = _extract_brevo_error(e)
         logger.warning("Brevo email failed | to=%s subject=%s reason=%s", redact_email(to_email), subject, reason)
         _capture_email_failure(e, kind="raw", to=to_email, subject=subject, reason=reason)
-        return False
+        return SendOutcome(False, can_retry=_is_brevo_connection_phase(e))
 
 
-def _send_brevo_template(
+def _send_brevo_email(
+    to_email: str,
+    subject: str,
+    html_body: str,
+    *,
+    reply_to: str | None = None,
+    sender_name: str | None = None,
+    attachments: list[dict] | None = None,
+) -> bool:
+    """Send an email via Brevo transactional API using raw HTML. Returns True on success."""
+    return _send_brevo_email_result(
+        to_email, subject, html_body, reply_to=reply_to, sender_name=sender_name, attachments=attachments
+    ).sent
+
+
+def _send_brevo_template_result(
     to_email: str,
     template_id: int,
     params: dict,
     *,
     reply_to: str | None = None,
     sender_name: str | None = None,
-) -> bool:
-    """Send an email via a Brevo saved template with dynamic params. Returns True on success.
+) -> SendOutcome:
+    """Send an email via a Brevo saved template with dynamic params.
 
     Legacy transport. The current send path renders HTML in code and does not call this;
     it is kept for the worker's ``task_send_template_email`` and any external callers.
+    ``_send_brevo_template`` keeps the plain True/False contract.
     """
     if not EMAIL_ENABLED:
         logger.warning(
@@ -220,7 +293,7 @@ def _send_brevo_template(
             redact_email(to_email),
             template_id,
         )
-        return False
+        return SendOutcome(False)
 
     email_payload: dict = {"to": [{"email": to_email}], "templateId": template_id, "params": params}
     if reply_to:
@@ -238,14 +311,26 @@ def _send_brevo_template(
             logger.info(
                 f"Template email sent to {redact_email(to_email)} | template_id={template_id} | status={resp.status}"
             )
-            return True
+            return SendOutcome(True)
     except Exception as e:
         reason = _extract_brevo_error(e)
         logger.warning(
             "Brevo template email failed | to=%s template_id=%s reason=%s", redact_email(to_email), template_id, reason
         )
         _capture_email_failure(e, kind="template", to=to_email, template_id=template_id, reason=reason)
-        return False
+        return SendOutcome(False, can_retry=_is_brevo_connection_phase(e))
+
+
+def _send_brevo_template(
+    to_email: str,
+    template_id: int,
+    params: dict,
+    *,
+    reply_to: str | None = None,
+    sender_name: str | None = None,
+) -> bool:
+    """Send an email via a Brevo saved template with dynamic params. Returns True on success."""
+    return _send_brevo_template_result(to_email, template_id, params, reply_to=reply_to, sender_name=sender_name).sent
 
 
 # ── AWS SES transport (HTTPS API via boto3) ──────────────────────────────────
@@ -265,7 +350,7 @@ def _extract_ses_error(exc: Exception) -> str:
     return f"{type(exc).__name__}: {exc}"
 
 
-def _send_ses_email(
+def _send_ses_email_result(
     to_email: str,
     subject: str,
     html_body: str,
@@ -273,8 +358,8 @@ def _send_ses_email(
     reply_to: str | None = None,
     sender_name: str | None = None,
     attachments: list[dict] | None = None,
-) -> bool:
-    """Send an email via the AWS SES HTTPS API (``send_raw_email``). Returns True on success.
+) -> SendOutcome:
+    """Send an email via the AWS SES HTTPS API (``send_raw_email``).
 
     Same signature and return contract as ``_send_brevo_email`` so callers (and
     ``_send_raw_email`` below) don't need to know which transport is active.
@@ -291,7 +376,7 @@ def _send_ses_email(
             redact_email(to_email),
             subject,
         )
-        return False
+        return SendOutcome(False)
 
     msg = MIMEMultipart("mixed")
     msg["Subject"] = subject
@@ -317,12 +402,52 @@ def _send_ses_email(
         )
         client.send_raw_email(Source=EMAIL_FROM_ADDRESS, Destinations=[to_email], RawMessage={"Data": msg.as_bytes()})
         logger.info(f"Email sent to {redact_email(to_email)} | subject={subject} | provider=ses")
-        return True
+        return SendOutcome(True)
     except Exception as e:
         reason = _extract_ses_error(e)
         logger.warning("SES email failed | to=%s subject=%s reason=%s", redact_email(to_email), subject, reason)
         _capture_email_failure(e, kind="raw", to=to_email, subject=subject, reason=reason)
-        return False
+        return SendOutcome(False, can_retry=_is_ses_connection_phase(e))
+
+
+def _send_ses_email(
+    to_email: str,
+    subject: str,
+    html_body: str,
+    *,
+    reply_to: str | None = None,
+    sender_name: str | None = None,
+    attachments: list[dict] | None = None,
+) -> bool:
+    """Send an email via the AWS SES HTTPS API. Returns True on success."""
+    return _send_ses_email_result(
+        to_email, subject, html_body, reply_to=reply_to, sender_name=sender_name, attachments=attachments
+    ).sent
+
+
+def _send_raw_email_result(
+    to_email: str,
+    subject: str,
+    html_body: str,
+    *,
+    reply_to: str | None = None,
+    sender_name: str | None = None,
+    attachments: list[dict] | None = None,
+) -> SendOutcome:
+    """Route a raw HTML send to the transport selected by ``EMAIL_PROVIDER``.
+
+    The single call site every sender should go through indirectly (via
+    ``send_email_async``) or directly (the worker task). Keeping the branch here,
+    not duplicated at each call site, means adding a third provider later is a
+    one-function change.
+    """
+    if EMAIL_PROVIDER == "ses":
+        return _send_ses_email_result(
+            to_email, subject, html_body, reply_to=reply_to, sender_name=sender_name, attachments=attachments
+        )
+    return _send_brevo_email_result(
+        to_email, subject, html_body, reply_to=reply_to, sender_name=sender_name, attachments=attachments
+    )
 
 
 def _send_raw_email(
@@ -334,20 +459,10 @@ def _send_raw_email(
     sender_name: str | None = None,
     attachments: list[dict] | None = None,
 ) -> bool:
-    """Route a raw HTML send to the transport selected by ``EMAIL_PROVIDER``.
-
-    The single call site every sender should go through indirectly (via
-    ``send_email_async``) or directly (the worker task). Keeping the branch here,
-    not duplicated at each call site, means adding a third provider later is a
-    one-function change.
-    """
-    if EMAIL_PROVIDER == "ses":
-        return _send_ses_email(
-            to_email, subject, html_body, reply_to=reply_to, sender_name=sender_name, attachments=attachments
-        )
-    return _send_brevo_email(
+    """``_send_raw_email_result`` reduced to the True/False contract callers use."""
+    return _send_raw_email_result(
         to_email, subject, html_body, reply_to=reply_to, sender_name=sender_name, attachments=attachments
-    )
+    ).sent
 
 
 def send_email_async(

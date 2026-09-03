@@ -38,6 +38,12 @@ logger = logging.getLogger(__name__)
 # that operators see their changes propagate without a restart.
 _TTL_SECONDS = 60.0
 
+# After a failed reload every ``get()`` would otherwise re-enter ``_load_cache``
+# (the stamp is still stale), serialising the whole process behind one blocking
+# SELECT under ``_cache_lock`` for as long as the database is unreachable. On
+# failure the stamp is advanced so the next attempt happens after this window.
+_RETRY_AFTER_SECONDS = 5.0
+
 _cache: dict[str, Any] = {}
 _cache_loaded_at: float = 0.0
 _cache_lock = threading.Lock()
@@ -53,7 +59,10 @@ def _load_cache() -> None:
             _cache_loaded_at = time.time()
     except Exception:  # noqa: BLE001
         # If the DB is briefly unavailable we keep the previous cache. The
-        # caller will fall back to env defaults via the ``default`` arg.
+        # caller will fall back to env defaults via the ``default`` arg. Back
+        # off before the next attempt so a sustained outage does not turn every
+        # read into a blocking query (see ``_RETRY_AFTER_SECONDS``).
+        _cache_loaded_at = time.time() - _TTL_SECONDS + _RETRY_AFTER_SECONDS
         logger.exception("runtime_config: failed to reload cache; keeping previous values")
 
 

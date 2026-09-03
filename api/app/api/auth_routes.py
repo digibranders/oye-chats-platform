@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 
 from app.api.auth import (
     IMPERSONATION_REJECTED_DETAIL,
+    _ensure_client_authenticatable,
     find_active_impersonation_token,
     get_current_client_or_operator,
     get_current_client_strict,
@@ -1063,6 +1064,10 @@ def register(request: Request, body: RegisterRequest):
                     detail="An account with this email already exists. Please sign in instead.",
                 )
 
+            # Imported at call time (not module scope) so tests and local runs
+            # that toggle the flag see the current value.
+            from app.config import DEV_AUTO_VERIFY_EMAIL
+
             # Create the client
             new_client = Client(
                 name=body.name.strip(),
@@ -1076,6 +1081,14 @@ def register(request: Request, body: RegisterRequest):
                 # first load (editable later in Billing details).
                 billing_country=body.billing_country or resolve_country(request),
                 is_superadmin=False,
+                # Auto-verify ONLY when the double-gated DEV_AUTO_VERIFY_EMAIL
+                # flag is on (explicit opt-in AND non-production); production
+                # always leaves this False, so accounts still require a real
+                # OTP. Stamped at construction, not after the trial-grant check
+                # below, which reads ``is_verified`` to decide whether to open
+                # the trial — assigning it later left every auto-verified dev
+                # signup with no subscription at all.
+                is_verified=DEV_AUTO_VERIFY_EMAIL,
                 # New accounts start reachable but with every push event off, so
                 # a fresh owner is not paged until they opt in per event. Existing
                 # accounts (null prefs) keep meaning "fully opted in".
@@ -1146,12 +1159,8 @@ def register(request: Request, body: RegisterRequest):
             otp = str(secrets.randbelow(900000) + 100000)
             new_client.email_otp = otp
             new_client.email_otp_expires_at = datetime.now(UTC) + timedelta(minutes=15)
-            from app.config import APP_ENV, DEV_AUTO_VERIFY_EMAIL
+            from app.config import APP_ENV
 
-            # Auto-verify ONLY when the double-gated DEV_AUTO_VERIFY_EMAIL flag is
-            # on (explicit opt-in AND non-production). Production always leaves this
-            # False, so accounts still require a real OTP exactly as before.
-            new_client.is_verified = DEV_AUTO_VERIFY_EMAIL
             session.commit()
 
             if DEV_AUTO_VERIFY_EMAIL:
@@ -1494,8 +1503,16 @@ def operator_login(request: Request, body: OperatorLoginRequest):
                 .all()
             )
 
+            # A deactivated operator must not be able to sign in and mint a
+            # fresh credential: deactivation is how a workspace revokes a
+            # teammate, and every key resolver already refuses an inactive
+            # operator, so the login door has to refuse them too.
             valid_operators = [
-                op for op in operators if op.hashed_password and verify_password(body.password, op.hashed_password)
+                op
+                for op in operators
+                if getattr(op, "is_active", True)
+                and op.hashed_password
+                and verify_password(body.password, op.hashed_password)
             ]
 
             if not valid_operators:
@@ -1535,6 +1552,11 @@ def operator_login(request: Request, body: OperatorLoginRequest):
             default_bot = _get_default_workspace_bot(session, operator.client_id)
 
             workspace = session.execute(select(Client).where(Client.id == operator.client_id)).scalars().first()
+            # A suspended or deactivated workspace refuses its owner's API key
+            # and its operators' keys on every request; the operator login
+            # must not hand out a credential those requests will then reject.
+            if workspace is not None:
+                _ensure_client_authenticatable(workspace)
 
             clear_failed_logins(f"operator:{email}")
             logger.info(f"Successful operator login for operator {operator.id} ({operator.name})")

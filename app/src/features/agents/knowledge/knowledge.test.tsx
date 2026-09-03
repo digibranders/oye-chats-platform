@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactElement } from 'react';
+import { getIngestStatus } from '../../../services/api';
 import { AddKnowledgePanel } from './add/AddKnowledgePanel';
 import { AutoRetrainCard } from './AutoRetrainCard';
 import { CrawlPageTree } from './CrawlPageTree';
@@ -463,6 +464,28 @@ describe('IngestionProgress', () => {
   it('says the work continues in the background when there is no job to watch', () => {
     mount(<IngestionProgress title="Reading your documents" jobId={null} />);
     expect(screen.getByText(/carries on in the background/i)).toBeInTheDocument();
+  });
+
+  it('announces every job, not just the first one the panel watched', async () => {
+    vi.mocked(getIngestStatus).mockResolvedValue({ status: 'complete' } as never);
+    const onFinished = vi.fn();
+    // Rendered directly rather than through `mount`, because this test rerenders
+    // and the providers have to survive that.
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    const ui = (jobId: string): ReactElement => (
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <IngestionProgress title="Reading your documents" jobId={jobId} onFinished={onFinished} />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+    const { rerender } = render(ui('job-1'));
+    await waitFor(() => expect(onFinished).toHaveBeenCalledTimes(1));
+
+    // The panel stays mounted between uploads; the second document is a new
+    // job, and it has to refresh the source list too.
+    rerender(ui('job-2'));
+    await waitFor(() => expect(onFinished).toHaveBeenCalledTimes(2));
   });
 });
 

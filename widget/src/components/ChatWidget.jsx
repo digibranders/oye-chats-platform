@@ -28,6 +28,10 @@ const ChatWidget = () => {
   // persisted (the conversation itself still is, via the session id), so a
   // returning visitor never has the chat pop open on its own.
   const [isVisible, setIsVisible] = useState(false);
+  // False until GET /bots/settings/public has resolved (or failed). ChatWindow
+  // waits on it before deciding whether the lead form gates, so a panel opened
+  // during the fetch no longer locks in the placeholder defaults.
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [isAnimating, setIsAnimating] = useState(null);
   const closeTimer = useRef(null);
   const [settings, setSettings] = useState({
@@ -92,6 +96,10 @@ const ChatWidget = () => {
         }
       } catch (error) {
         console.error("Failed to load settings in widget:", error);
+      } finally {
+        // Flipped on failure too: a settings outage must not wedge the panel
+        // on its initializing state forever.
+        setSettingsLoaded(true);
       }
     };
     fetchSettings();
@@ -403,6 +411,7 @@ const ChatWidget = () => {
             <ChatWindow
               onClose={closeChat}
               initialSettings={settings}
+              settingsLoaded={settingsLoaded}
               isAnimating={isAnimating}
               initialMessage={pendingMessageRef}
               initialLocaleSource={localeResolutionRef.current?.source || null}
@@ -414,12 +423,27 @@ const ChatWidget = () => {
           Kept in DOM (not unmounted) so it can fade back in after the close animation. */}
       <div
         className="fixed bottom-6 right-6 z-[9999] flex flex-col items-end gap-4 transition-opacity duration-200"
-        style={{ opacity: isVisible ? 0 : 1, pointerEvents: isVisible ? 'none' : 'auto' }}
+        // `inert` takes the faded-out launcher out of the tab order and out of
+        // the accessibility tree while the panel is open; opacity alone left a
+        // keyboard user tabbing onto an invisible button, and a screen reader
+        // announcing a "chat" control that reported itself collapsed.
+        inert={isVisible || undefined}
+        aria-hidden={isVisible ? 'true' : undefined}
+        style={{
+          opacity: isVisible ? 0 : 1,
+          visibility: isVisible ? 'hidden' : 'visible',
+          // `visibility` flips only once the 200ms fade has finished, so the
+          // launcher still animates out instead of vanishing on the first frame.
+          transition: isVisible
+            ? 'opacity 200ms ease, visibility 0s linear 200ms'
+            : 'opacity 200ms ease, visibility 0s linear',
+          pointerEvents: isVisible ? 'none' : 'auto',
+        }}
         onMouseEnter={preloadChat}
         onTouchStart={preloadChat}
       >
         <Launcher
-          isOpen={false}
+          isOpen={isVisible}
           toggleChat={toggleChat}
           settings={settings}
           onBubbleSend={handleBubbleSend}

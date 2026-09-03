@@ -81,6 +81,32 @@ class TestEnsureChatSession:
         assert existing.location == "NYC"
         assert result is existing
 
+    def test_backfills_missing_client_id_on_existing_row(self):
+        """A row minted by a pre-chat surface (lead form, behavioural signals)
+        may carry ``client_id=NULL``. The first turn that knows the owner must
+        stamp it, or every analytics query (all filter on ``client_id``) drops
+        the session until the startup backfill runs."""
+        from app.db.repository import ensure_chat_session
+
+        existing = SimpleNamespace(bot_id=5, client_id=None, location=None, device=None, last_active_at=None)
+        session = MagicMock()
+        session.execute.return_value.scalar_one_or_none.return_value = existing
+
+        ensure_chat_session(session, "orphan-id", client_id=1, bot_id=5)
+
+        assert existing.client_id == 1
+
+    def test_never_overwrites_an_existing_client_id(self):
+        from app.db.repository import ensure_chat_session
+
+        existing = SimpleNamespace(bot_id=5, client_id=1, location=None, device=None, last_active_at=None)
+        session = MagicMock()
+        session.execute.return_value.scalar_one_or_none.return_value = existing
+
+        ensure_chat_session(session, "owned-id", client_id=2, bot_id=5)
+
+        assert existing.client_id == 1
+
     def test_rejects_orphan_legacy_session_with_null_bot_id(self):
         """Pre-multi-bot rows have bot_id=None. Runtime must NOT auto-claim them."""
         from app.db.repository import ensure_chat_session

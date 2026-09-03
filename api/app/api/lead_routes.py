@@ -5,6 +5,7 @@ import io
 import logging
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
@@ -115,8 +116,24 @@ def _resolve_client_bot_ids(session, auth: dict, bot_id: int | None) -> list[int
     return [bot_id]
 
 
+def _zone(tz: str | None) -> ZoneInfo:
+    """The IANA zone the caller's calendar days are cut in, UTC when unusable.
+
+    A bad or unknown zone must never 500 a list of leads: the window silently
+    falls back to UTC, which is exactly the behaviour every caller had before
+    ``tz`` existed.
+    """
+    if not tz:
+        return UTC
+    try:
+        return ZoneInfo(tz)
+    except (ZoneInfoNotFoundError, ValueError):
+        logger.warning("Unknown IANA zone %r on a leads window; falling back to UTC", tz[:64])
+        return UTC
+
+
 def _resolve_window(
-    days: int | None, from_date: date | None, to_date: date | None
+    days: int | None, from_date: date | None, to_date: date | None, tz: str | None = None
 ) -> tuple[datetime | None, datetime | None]:
     """The trailing-N-days preset and an explicit calendar range, as one
     ``(since, until)`` pair on ``created_at`` — never ``last_active_at``, see
@@ -129,12 +146,21 @@ def _resolve_window(
     INCLUDED day, so its bound is that day's last microsecond, not its
     midnight — a naive ``<= to_date`` compares a `date` to a `datetime` and,
     worse, would drop every lead captured after midnight on the end day.
+
+    ``tz`` is the IANA zone those calendar days belong to. The picker sends a
+    bare ``YYYY-MM-DD`` that the reader chose in their own timezone, and the
+    rows are stamped in UTC, so cutting the day in UTC put a reader in
+    Asia/Kolkata off by one at both edges: a lead captured 02:00 IST on the
+    start day fell outside the window, and one captured 04:30 IST on the day
+    after the end day fell inside it. Defaults to UTC so an older client that
+    sends no ``tz`` behaves exactly as before.
     """
     if from_date is not None or to_date is not None:
         if from_date is not None and to_date is not None and from_date > to_date:
             raise HTTPException(status_code=422, detail="from_date must not be after to_date.")
-        since = datetime.combine(from_date, time.min, tzinfo=UTC) if from_date else None
-        until = datetime.combine(to_date, time.max, tzinfo=UTC) if to_date else None
+        zone = _zone(tz)
+        since = datetime.combine(from_date, time.min, tzinfo=zone).astimezone(UTC) if from_date else None
+        until = datetime.combine(to_date, time.max, tzinfo=zone).astimezone(UTC) if to_date else None
         return since, until
     if days is not None:
         return datetime.now(UTC) - timedelta(days=days), None
@@ -144,6 +170,7 @@ def _resolve_window(
 _DAYS_DESCRIPTION = "Restrict to leads captured in the trailing N days; omitted = all time."
 _FROM_DATE_DESCRIPTION = "Custom range start (YYYY-MM-DD), inclusive. Wins over `days` when given."
 _TO_DATE_DESCRIPTION = "Custom range end (YYYY-MM-DD), inclusive."
+_TZ_DESCRIPTION = "IANA zone the custom range's calendar days are cut in (e.g. Asia/Kolkata). Defaults to UTC."
 
 
 def _windowed(stmt, since: datetime | None, until: datetime | None):
@@ -168,6 +195,7 @@ def list_leads(
     days: int | None = Query(None, ge=1, le=365, description=_DAYS_DESCRIPTION),
     from_date: date | None = Query(None, description=_FROM_DATE_DESCRIPTION),
     to_date: date | None = Query(None, description=_TO_DATE_DESCRIPTION),
+    tz: str = Query("UTC", max_length=64, description=_TZ_DESCRIPTION),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
     auth: dict = Depends(get_current_client_or_operator),
@@ -192,7 +220,7 @@ def list_leads(
         # `created_at`, not `last_active_at` — a lead captured 90 days ago
         # that a visitor reopened yesterday must not count as "captured in
         # the last 7 days" just because it is still active.
-        stmt = _windowed(stmt, *_resolve_window(days, from_date, to_date))
+        stmt = _windowed(stmt, *_resolve_window(days, from_date, to_date, tz))
 
         results = session.execute(stmt).all()
 
@@ -295,6 +323,7 @@ def lead_stats(
     days: int | None = Query(None, ge=1, le=365, description=_DAYS_DESCRIPTION),
     from_date: date | None = Query(None, description=_FROM_DATE_DESCRIPTION),
     to_date: date | None = Query(None, description=_TO_DATE_DESCRIPTION),
+    tz: str = Query("UTC", max_length=64, description=_TZ_DESCRIPTION),
     auth: dict = Depends(get_current_client_or_operator),
 ):
     """Aggregate lead stats: total, unqualified, MQL, SAL, and SQL counts."""
@@ -303,7 +332,7 @@ def lead_stats(
         # Every figure in the strip states the same window (`StatRow` requires
         # it), so the window narrows every count below it, not just the
         # headline total. See the identical `created_at` note in `list_leads`.
-        since, until = _resolve_window(days, from_date, to_date)
+        since, until = _resolve_window(days, from_date, to_date, tz)
 
         if not is_lead_intelligence_enabled(auth["client_id"], session):
             # Free plan: total + unread keep the list header and sidebar badge

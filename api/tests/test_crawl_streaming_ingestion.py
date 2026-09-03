@@ -243,3 +243,56 @@ async def test_stream_queue_is_bounded_and_provides_real_backpressure(monkeypatc
 
     # All pages still make it through correctly despite the bound.
     assert result["chunks_processed"] == 10
+
+
+@pytest.mark.asyncio
+async def test_free_page_allowance_is_shared_across_waves(monkeypatch):
+    """``free_pages`` is resolved once per crawl. Every wave (and the final
+    sweep) must draw from that one shrinking allowance. Before this each wave
+    was handed the full number again, so a 25-page allowance on a streamed
+    crawl covered the first 25 pages of EVERY wave."""
+    monkeypatch.setattr(orch, "crawl_heartbeat", _noop_heartbeat)
+    monkeypatch.setattr(orch, "release_crawl_lock", lambda *a, **k: None)
+    monkeypatch.setattr(orch, "set_crawl_progress", lambda cid, **kw: None)
+    monkeypatch.setattr(orch, "CRAWL_STREAM_INGEST_ENABLED", True)
+    monkeypatch.setattr(orch, "CRAWL_INGEST_WAVE_PAGES", 2)
+
+    ingested: set[str] = set()
+    offered_allowance: list[int] = []
+
+    def fake_ingest(client_id, pages, **kwargs):
+        allowance = int(kwargs.get("free_pages") or 0)
+        offered_allowance.append(allowance)
+        fresh = [p for p in pages if p["url"] not in ingested]
+        ingested.update(p["url"] for p in fresh)
+        free = min(allowance, len(fresh))
+        charged = len(fresh) - free
+        return {
+            "chunks": len(fresh),
+            "pages_charged": charged,
+            "pages_free": free,
+            "credits_deducted": 5 * charged,
+            "aborted": False,
+        }
+
+    monkeypatch.setattr(orch, "batch_web_ingestion", fake_ingest)
+    pages = [_page(i) for i in range(5)]
+
+    async def fake_fetch_urls(urls, *, on_page=None, on_result=None, **kw):
+        for p in pages:
+            if on_page:
+                on_page(p["url"], True)
+            if on_result:
+                await on_result(p)
+            await asyncio.sleep(0)
+        return {"results": pages, "recommended_colors": [], "discovered_total": 5, "queue_remaining": 0}
+
+    monkeypatch.setattr(orch, "fetch_urls", fake_fetch_urls)
+    result = await _run(ordered_urls=[p["url"] for p in pages], free_pages=3)
+
+    # Waves of 2, 2, 1, then the sweep. The allowance offered to each call is
+    # what the previous calls left: 3 → 1 → 0 → 0.
+    assert offered_allowance == [3, 1, 0, 0]
+    # 5 pages, 3 free: exactly 2 charged across the whole crawl, not 3 per wave.
+    assert result["pages_charged"] == 2
+    assert result["credits_deducted"] == 10

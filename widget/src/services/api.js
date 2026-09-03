@@ -68,6 +68,15 @@ const _readWithTimeout = (reader) =>
         );
     });
 
+// Terminal-frame markers the stream reader must never render as answer text.
+const _STREAM_MARKERS = ['FINAL_METADATA:', 'METADATA:'];
+
+// True when the buffered tail is a metadata line, or could still become one
+// once more bytes arrive (a strict prefix such as "FINAL_" or "META"). Same
+// prefix-hold technique the sentinel stripper uses for '[' sentinels.
+const _isMetadataTail = (buffer) =>
+    _STREAM_MARKERS.some((marker) => buffer.startsWith(marker) || marker.startsWith(buffer));
+
 // True for the DOMException an aborted fetch/read rejects with. An abort is
 // something WE asked for (the visitor closed the widget), so it is not a
 // failure to report: no console noise, no onError, no error bubble.
@@ -192,10 +201,11 @@ export const sendMessageStream = async (message, sessionId, { onMetadata, onChun
             // Flush partial content immediately. Don't wait for a newline.
             // LLM tokens arrive without \n delimiters, so without this flush the
             // entire response would accumulate in buffer and appear all at once
-            // at stream end. Guard against flushing a partial METADATA line.
-            if (metadataReceived && buffer &&
-                !buffer.startsWith('METADATA:') &&
-                !buffer.startsWith('FINAL_METADATA:')) {
+            // at stream end. Hold the tail back whenever it could still grow
+            // into a metadata line: a read boundary landing inside the marker
+            // (e.g. "FINAL_" ) would otherwise render the fragment as answer
+            // text and leave the JSON behind it unparsed.
+            if (metadataReceived && buffer && !_isMetadataTail(buffer)) {
                 emitClean(buffer);
                 buffer = '';
             }
@@ -734,13 +744,13 @@ const _appendJourneyEntry = (path, options = {}) => {
 // Throttled per-session flush of the full current journey to the
 // backend. Multiple appends in a 10-second window coalesce into one
 // POST (the pending timer sees the freshest journey since sessionStorage
-// is the source of truth). Uses sendBeacon on pagehide so the last
-// post-chat navigation still lands even if the tab is being torn down.
+// is the source of truth). Uses fetch with `keepalive` on pagehide so the
+// last post-chat navigation still lands even if the tab is being torn down.
 const _lastJourneyFlushAt = new Map(); // sessionId -> ms timestamp
 const _pendingJourneyFlush = new Map(); // sessionId -> timeout id
 let _pagehideHookInstalled = false;
 
-const _flushJourneyNow = (sessionId, { beacon = false } = {}) => {
+const _flushJourneyNow = (sessionId) => {
     if (!sessionId) return;
     _lastJourneyFlushAt.set(sessionId, Date.now());
     const pending = _pendingJourneyFlush.get(sessionId);
@@ -754,15 +764,10 @@ const _flushJourneyNow = (sessionId, { beacon = false } = {}) => {
         session_id: sessionId,
         journey,
     });
-    if (beacon && typeof navigator !== 'undefined' && navigator.sendBeacon) {
-        try {
-            const blob = new Blob([payload], { type: 'application/json' });
-            navigator.sendBeacon(`${API_URL}/chat/behavioral-signals`, blob);
-            return;
-        } catch {
-            /* fall through to fetch */
-        }
-    }
+    // Always fetch, never sendBeacon: /chat/behavioral-signals authenticates on
+    // the X-Bot-Key header and a beacon cannot carry headers, so every beacon
+    // was rejected 401. `keepalive` lets the POST outlive the unloading page,
+    // which is the only property the beacon was there for.
     fetch(`${API_URL}/chat/behavioral-signals`, {
         method: 'POST',
         headers: getHeaders(),
@@ -778,7 +783,7 @@ const _installPagehideHook = (sessionIdRef) => {
     _pagehideHookInstalled = true;
     const flush = () => {
         const id = typeof sessionIdRef === 'function' ? sessionIdRef() : sessionIdRef;
-        if (id) _flushJourneyNow(id, { beacon: true });
+        if (id) _flushJourneyNow(id);
     };
     try {
         window.addEventListener('pagehide', flush);
@@ -922,19 +927,34 @@ export const collectPageContext = () => {
         if (val) utm_params[key] = val;
     }
 
-    // Detect return visit via localStorage fingerprint
+    // Detect return visit via localStorage fingerprint. Safari with cookies
+    // blocked (and Chrome with site data blocked) throws on the accessor
+    // itself, so every touch is guarded: a storage-blocked visitor loses the
+    // return-visit signal, never the chat.
     const botKey = window.OYECHATS_BOT_KEY || window.OYECHATS_API_KEY || 'default';
     const visitorKey = `oyechats_visitor_${botKey}`;
-    const existingVisitor = localStorage.getItem(visitorKey);
-    const is_return_visit = !!existingVisitor;
-    if (!existingVisitor) {
-        localStorage.setItem(visitorKey, Date.now().toString());
+    let is_return_visit = false;
+    try {
+        const existingVisitor = localStorage.getItem(visitorKey);
+        is_return_visit = !!existingVisitor;
+        if (!existingVisitor) {
+            localStorage.setItem(visitorKey, Date.now().toString());
+        }
+    } catch {
+        /* storage blocked. Treat as a first visit */
     }
 
     // Track page view count in sessionStorage
     const pageCountKey = `oyechats_pages_${botKey}`;
-    const currentCount = parseInt(sessionStorage.getItem(pageCountKey) || '0', 10) + 1;
-    sessionStorage.setItem(pageCountKey, currentCount.toString());
+    let currentCount = 1;
+    try {
+        const stored = parseInt(sessionStorage.getItem(pageCountKey) || '0', 10);
+        currentCount = (Number.isFinite(stored) ? stored : 0) + 1;
+        sessionStorage.setItem(pageCountKey, currentCount.toString());
+    } catch {
+        /* storage blocked. Report this page as the first one seen */
+        currentCount = 1;
+    }
 
     // Record this page in the journey and wire up SPA route hooks so any
     // subsequent history.pushState / popstate before the chat opens is
@@ -982,7 +1002,7 @@ export const sendBehavioralSignals = async (sessionId, signals) => {
 };
 
 /**
- * Send time-on-page via sendBeacon on page unload. Fire-and-forget, non-blocking.
+ * Send time-on-page on page unload. Fire-and-forget, non-blocking.
  */
 export const sendTimeOnPage = (sessionId, loadTime) => {
     if (!sessionId || !loadTime) return;
@@ -991,7 +1011,13 @@ export const sendTimeOnPage = (sessionId, loadTime) => {
 
     const botKey = window.OYECHATS_BOT_KEY || window.OYECHATS_API_KEY || 'default';
     const pageCountKey = `oyechats_pages_${botKey}`;
-    const pagesViewed = parseInt(sessionStorage.getItem(pageCountKey) || '1', 10);
+    let pagesViewed = 1;
+    try {
+        const stored = parseInt(sessionStorage.getItem(pageCountKey) || '1', 10);
+        if (Number.isFinite(stored) && stored > 0) pagesViewed = stored;
+    } catch {
+        /* storage blocked. Report this page as the only one seen */
+    }
 
     const payload = JSON.stringify({
         session_id: sessionId,
@@ -999,20 +1025,20 @@ export const sendTimeOnPage = (sessionId, loadTime) => {
         pages_viewed: pagesViewed,
     });
 
-    const headers = getHeaders();
-    const blob = new Blob([payload], { type: 'application/json' });
-
-    // sendBeacon doesn't support custom headers, so fall back to fetch with keepalive
+    // Must be fetch, not sendBeacon: the endpoint authenticates on X-Bot-Key
+    // and sendBeacon cannot set request headers, so a beacon is always a 401.
+    // `keepalive` is what makes the request outlive the unloading document.
     try {
         fetch(`${API_URL}/chat/behavioral-signals`, {
             method: 'POST',
-            headers,
+            headers: getHeaders(),
             body: payload,
             keepalive: true,
+        }).catch(() => {
+            /* non-critical: a dropped unload signal only costs one data point */
         });
     } catch {
-        // Last resort: sendBeacon (no auth headers, but backend may handle gracefully)
-        navigator.sendBeacon?.(`${API_URL}/chat/behavioral-signals`, blob);
+        /* fetch unavailable or refused synchronously. Nothing else to try */
     }
 };
 

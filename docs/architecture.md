@@ -226,9 +226,12 @@ Production shape today, per `api/systemd/oyechats-api.service`:
 | `DB_POOL_SIZE` + `DB_MAX_OVERFLOW` | 3 + 5 per worker | 2 x 8 = 16 total, the two-worker line in `db/session.py` |
 | `CHAT_MAX_CONCURRENCY` | **6** | must stay under the now-8 per-worker pool ceiling, not the single-worker default of 10 |
 
-`WS_BACKPLANE_ENABLED` still defaults to **false** in code and is set on by repo variable,
-and the deploy restarts `oyechats-ws` only if it is already installed — so whether a given
-host runs the split is a per-host fact. Check `systemctl cat oyechats-ws` before assuming.
+`WS_BACKPLANE_ENABLED` defaults to **true** in code (`config.py`) and the deploy writes
+`${WS_BACKPLANE_ENABLED:-true}` into the API's `.env`, so the API and WS processes now
+agree unless the repo variable is set to false explicitly. The flag is inert without
+`REDIS_URL`. The deploy still restarts `oyechats-ws` only if it is already installed, so
+whether a given host runs the split is a per-host fact. Check `systemctl cat oyechats-ws`
+before assuming.
 See [`live-chat-process-split-rollout.md`](live-chat-process-split-rollout.md).
 
 > **A consequence worth knowing:** because the API process and the WS process are different

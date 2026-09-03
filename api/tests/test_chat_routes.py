@@ -151,7 +151,7 @@ class TestLeadCapture:
 
         with (
             patch("app.api.chat_routes.get_session") as mock_gs,
-            patch("app.api.chat_routes.ensure_chat_session"),
+            patch("app.api.chat_routes.ensure_chat_session") as mock_ensure,
             patch("app.api.chat_routes.create_or_update_lead_info"),
             patch("app.services.webhook_service.fire_webhook"),
             patch(
@@ -176,6 +176,11 @@ class TestLeadCapture:
 
         assert response.status_code == 200
         assert response.json()["success"] is True
+        # The lead form runs before the first chat turn, so this is often the
+        # call that CREATES the session row. It must stamp the owner: analytics
+        # filter on ``client_id`` and a NULL row is invisible to the dashboard.
+        assert mock_ensure.call_args.kwargs["client_id"] == bot.client_id
+        assert mock_ensure.call_args.kwargs["bot_id"] == bot.id
 
     def test_invalid_email_rejected(self):
         bot = _default_bot()

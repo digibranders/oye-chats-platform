@@ -72,7 +72,7 @@ class _StubManager:
         await ws.accept(subprotocol=subprotocol)
         self.connected.append(session_id)
 
-    def disconnect_visitor(self, session_id: str) -> None:
+    def disconnect_visitor(self, session_id: str, ws: object | None = None) -> None:
         pass
 
 

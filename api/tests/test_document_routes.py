@@ -345,3 +345,108 @@ class TestTenantDocumentsDir:
         p = document_routes._tenant_documents_dir(client_id=7, bot_id=None)
         assert p == (tmp_path / "7" / "_none").resolve()
         assert p.is_dir()
+
+
+# ── Upload: KB quota pre-flight and sweep dispatch ───────────────────────────
+
+
+class TestIngestQuotaPreflight:
+    """I5: the route deducts credits synchronously, so the quota question has to
+    be asked BEFORE the money moves. The worker's answer arrives too late: all
+    it can do is quarantine the file and refund."""
+
+    def _entitlements(self, monkeypatch):
+        from app.services import plan_entitlements_service
+
+        monkeypatch.setattr(
+            plan_entitlements_service,
+            "get_entitlements",
+            lambda *a, **kw: plan_entitlements_service.PlanEntitlements(
+                client_id=1,
+                plan_slug="free",
+                plan_name="Free",
+                subscription_status="none",
+                limits={"documents": 5, "credits": 250},
+                features={},
+                usage={"documents": 0},
+            ),
+        )
+
+    def _upload(self, monkeypatch, tmp_path, *, quota_error=None, enqueue_result="job-1"):
+        from app.api import document_routes
+        from app.services import credit_service
+
+        self._entitlements(monkeypatch)
+        monkeypatch.setattr(document_routes, "get_session", lambda: _session_ctx(MagicMock()))
+        monkeypatch.setattr(document_routes, "_tenant_documents_dir", lambda *a, **kw: tmp_path)
+        monkeypatch.setattr(credit_service, "get_document_upload_cost_for_size", lambda *a, **kw: 0)
+        deduct = MagicMock()
+        monkeypatch.setattr(credit_service, "check_and_deduct", deduct)
+        if quota_error is not None:
+            monkeypatch.setattr(
+                document_routes,
+                "check_kb_quota",
+                MagicMock(side_effect=quota_error),
+            )
+        else:
+            monkeypatch.setattr(document_routes, "check_kb_quota", MagicMock())
+
+        enqueue = MagicMock(return_value=enqueue_result)
+        background = MagicMock()
+        monkeypatch.setattr(document_routes, "_run_ingestion_background", background)
+        import app.worker.enqueue as enqueue_module
+
+        monkeypatch.setattr(enqueue_module, "WORKER_ENABLED", True)
+        monkeypatch.setattr(enqueue_module, "enqueue_sync", enqueue)
+
+        app = _build_app(auth_override=_client_auth())
+        tc = TestClient(app)
+        files = [("files", ("notes.txt", BytesIO(b"hello knowledge base"), "text/plain"))]
+        response = tc.post("/ingest?bot_id=5", files=files)
+        return response, deduct, enqueue, background
+
+    def test_over_quota_upload_is_402_and_charges_nothing(self, monkeypatch, tmp_path):
+        from app.services.knowledge_quota_service import KnowledgeQuotaExceeded
+
+        exc = KnowledgeQuotaExceeded(current=900, attempted=20, limit=1000, plan_slug="free")
+        response, deduct, _enqueue, _bg = self._upload(monkeypatch, tmp_path, quota_error=exc)
+
+        assert response.status_code == 402
+        detail = response.json()["detail"]
+        assert detail["limit"] == "knowledge_characters"
+        assert detail["attempted"] == 20
+        deduct.assert_not_called()
+        # And the file it saved is gone again, so no free ingest on the next sweep.
+        assert list(tmp_path.iterdir()) == []
+
+    def test_sweep_is_enqueued_under_a_deterministic_per_tenant_job_id(self, monkeypatch, tmp_path):
+        response, _deduct, enqueue, _bg = self._upload(monkeypatch, tmp_path)
+
+        assert response.status_code == 200
+        job_id = enqueue.call_args[1]["_job_id"]
+        assert job_id.startswith("ingest:1:5:")
+
+    def test_a_refused_enqueue_still_gets_the_files_swept(self, monkeypatch, tmp_path):
+        """ARQ returns None when the job id is already live. The files are on
+        disk either way, so something has to process them."""
+        response, _deduct, _enqueue, background = self._upload(monkeypatch, tmp_path, enqueue_result=None)
+
+        assert response.status_code == 200
+        assert "job_id" not in response.json()
+        background.assert_called_once()
+
+
+# ── Rate-limit keying (A10) ──────────────────────────────────────────────────
+
+
+class TestRateLimitKeying:
+    def test_document_and_crawl_routes_key_on_the_operator_credential(self):
+        """These routes accept an operator key, so keying on X-API-Key alone put
+        every operator behind one office NAT into a single IP bucket."""
+        import inspect
+
+        from app.api import document_routes
+
+        source = inspect.getsource(document_routes)
+        assert "key_func=key_from_api_key" not in source
+        assert source.count("key_func=key_from_operator_credential") == 6

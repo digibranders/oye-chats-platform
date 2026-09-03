@@ -6,7 +6,7 @@
 
 Visitor requests a human → session moves `bot → waiting` → operator accepts → `live` → bidirectional WebSocket messaging → the operator finishes, and which state that lands in depends on **which** action they took: `/close` returns the conversation to the bot (`status='bot'`), `/resolve` marks it done (`status='closed'`). Outside business hours or with no operators online, the path forks to an offline form.
 
-**Topology matters here.** nginx routes `/ws/` to `oyechats-ws.service`, a dedicated single-worker process on `127.0.0.1:8001`, while `oyechats-api.service` runs `WEB_CONCURRENCY=2`. So `ConnectionManager`'s in-process socket maps are **permanently empty on the API process that raises a handoff**; every fan-out has to union local sockets with Redis presence and deliver over the Redis backplane. The backplane is gated by `WS_BACKPLANE_ENABLED`, which the WS unit pins `true` but which the deploy writes as `${WS_BACKPLANE_ENABLED:-false}` into the API process's `.env` — so it is a per-environment fact, not a given.
+**Topology matters here.** nginx routes `/ws/` to `oyechats-ws.service`, a dedicated single-worker process on `127.0.0.1:8001`, while `oyechats-api.service` runs `WEB_CONCURRENCY=2`. So `ConnectionManager`'s in-process socket maps are **permanently empty on the API process that raises a handoff**; every fan-out has to union local sockets with Redis presence and deliver over the Redis backplane. The backplane is gated by `WS_BACKPLANE_ENABLED`, which the WS unit pins `true` and which the deploy writes as `${WS_BACKPLANE_ENABLED:-true}` into the API process's `.env`. It is inert without `REDIS_URL`, so whether the backplane actually carries frames is still a per-environment fact.
 
 ## Sequence
 

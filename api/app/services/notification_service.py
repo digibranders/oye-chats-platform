@@ -41,6 +41,11 @@ TYPE_HANDOFF_REQUEST = "handoff_request"
 TYPE_FEEDBACK_RESOLVED = "feedback_resolved"
 TYPE_CRAWL_COMPLETED = "crawl_completed"
 TYPE_PAYMENT_FAILED = "payment_failed"
+# An uploaded file that failed ingestion and was quarantined. The customer paid
+# a credit for it at upload time (refunded when this fires), so the failure has
+# to surface somewhere: without it the file simply vanishes behind "Documents
+# are being processed" and never appears in the knowledge base.
+TYPE_DOCUMENT_INGEST_FAILED = "document_ingest_failed"
 
 KNOWN_TYPES = frozenset(
     {
@@ -51,6 +56,7 @@ KNOWN_TYPES = frozenset(
         TYPE_FEEDBACK_RESOLVED,
         TYPE_CRAWL_COMPLETED,
         TYPE_PAYMENT_FAILED,
+        TYPE_DOCUMENT_INGEST_FAILED,
     }
 )
 

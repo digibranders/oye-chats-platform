@@ -38,7 +38,7 @@ const SLOW_AFTER_MS = 10_000;
 
 type Callback =
   | { kind: 'error'; message: string }
-  | { kind: 'working'; apiKey: string; next: string; isNew: boolean; isSuperadmin: boolean };
+  | { kind: 'working'; apiKey: string; next: string; isNew: boolean };
 
 /**
  * Classify the landing URL synchronously, so the first paint is already the
@@ -62,7 +62,6 @@ function classifyCallback(searchParams: URLSearchParams): Callback {
     apiKey,
     next: safeRelativePath(searchParams.get('next')),
     isNew: searchParams.get('new') === '1',
-    isSuperadmin: searchParams.get('superadmin') === '1',
   };
 }
 
@@ -113,7 +112,11 @@ export default function OAuthCallback() {
         admin_token: callback.apiKey,
         auth_type: 'client',
         admin_is_verified: 'true',
-        is_superadmin: callback.isSuperadmin ? 'true' : 'false',
+        // Never from `?superadmin=1`: the query string is whatever the browser
+        // was pointed at, so a crafted link would seed the flag the console
+        // reads to decide which chrome to draw. `/auth/me` answers it below,
+        // from the record behind the credential.
+        is_superadmin: 'false',
       });
       return getCurrentUser();
     },
@@ -133,6 +136,7 @@ export default function OAuthCallback() {
     if (profile.name) setAuthItem('admin_name', profile.name);
     if (typeof profile.id === 'number') setAuthItem('admin_client_id', String(profile.id));
     if (profile.company_name !== undefined) setAuthItem('company_name', profile.company_name ?? '');
+    setAuthItem('is_superadmin', profile.is_superadmin ? 'true' : 'false');
     if (profile.website !== undefined) setAuthItem('company_website', profile.website ?? '');
 
     // A partner who is not a customer has no console to land in.

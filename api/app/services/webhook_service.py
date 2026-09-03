@@ -22,8 +22,11 @@ from app.schemas.client import _is_public_hostname
 logger = logging.getLogger(__name__)
 
 SUPPORTED_EVENTS = ["tier_transition", "lead_captured", "handoff_requested", "chat_closed", "meeting_booked"]
-_MAX_RETRIES = 5
-_RETRY_DELAYS = [30, 120, 600, 3600]
+# One first attempt plus the documented 30s/2m/10m/1h/4h ladder (I8), so an
+# endpoint down for an afternoon still receives the event: ``_MAX_RETRIES`` is
+# the TOTAL number of attempts, hence len(_RETRY_DELAYS) + 1.
+_RETRY_DELAYS = [30, 120, 600, 3600, 14400]
+_MAX_RETRIES = len(_RETRY_DELAYS) + 1
 _DELIVERY_TIMEOUT = 10
 _RETRY_POLL_INTERVAL_SECONDS = 30
 

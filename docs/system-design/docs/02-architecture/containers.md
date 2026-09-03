@@ -149,7 +149,7 @@ Every `/ws/*` connection is served here, not by the API service.
 | Bind | `127.0.0.1:8001` |
 | Routed by | nginx `location /ws/ { proxy_pass http://oyechats_ws; }` with a 24h read timeout |
 | Why separate | A single-worker process keeps `ConnectionManager`'s in-memory socket maps coherent for the sockets it owns, which is what let the API service go multi-worker |
-| Cross-process delivery | Redis pub/sub on `ws:operator:{id}` / `ws:session:{id}` (`services/ws_backplane.py`), gated by `WS_BACKPLANE_ENABLED`. The unit pins it `true`; the deploy writes `${WS_BACKPLANE_ENABLED:-false}` into the API service's `.env`, so **check the repo variable before assuming the API side publishes** |
+| Cross-process delivery | Redis pub/sub on `ws:operator:{id}` / `ws:session:{id}` (`services/ws_backplane.py`), gated by `WS_BACKPLANE_ENABLED`. The unit pins it `true` and the deploy writes `${WS_BACKPLANE_ENABLED:-true}` into the API service's `.env`, so both sides publish by default. It is inert without `REDIS_URL`, so **check that Redis is reachable from both processes before assuming frames cross** |
 | Consequence | Anything on the API process that iterates a per-process socket dict reaches **nobody** — those maps are permanently empty there |
 
 The deploy restarts this unit only if it is already installed, so whether a given host runs the split is a per-host fact: `systemctl cat oyechats-ws`.

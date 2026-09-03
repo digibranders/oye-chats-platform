@@ -1272,12 +1272,23 @@ def grant_subscription_period_once(
         # the refund actually paid for. Backfill it here, the first time an
         # invoice_id becomes available for an already-granted period.
         #
-        # Only backfill on an EXACT period match. ``_backfill_plan_grant_reference``
-        # links whatever the most recent un-referenced plan_grant is. Correct when
-        # this event's period is the same one that grant belongs to, but a stale
-        # replay of an OLDER period (period_end < marker, the new ``<=`` case above)
-        # could otherwise misattribute ITS invoice onto a newer, unrelated grant.
-        if invoice_id is not None and period_end == subscription.last_granted_period_end:
+        # Backfill only for the period the marker itself describes.
+        # ``_backfill_plan_grant_reference`` links whatever the most recent
+        # un-referenced plan_grant is. Correct when this event's period is the
+        # one that grant belongs to, but a stale replay of an OLDER period
+        # (the ``<=`` case above) would misattribute ITS invoice onto a newer,
+        # unrelated grant.
+        #
+        # "Same period" is the same fuzzy match the guard above uses, not
+        # equality: the marker written by the renewal cron day-clamps month-end
+        # anchors while Razorpay's ``current_end`` re-expands them, so the two
+        # describe one cycle while differing by a few days. Requiring equality
+        # meant any such drift left the activation-time grant unlinked forever,
+        # and a later refund of that invoice fell back to "most recent grant in
+        # scope" and clawed back a different period's live credits. A real
+        # earlier period is ≥ 28 days back, far outside the tolerance, so it
+        # still cannot capture a stale replay.
+        if invoice_id is not None and period_end >= subscription.last_granted_period_end - _PERIOD_KEY_TOLERANCE:
             _backfill_plan_grant_reference(session, subscription, invoice_id)
         return False
 
