@@ -395,3 +395,28 @@ describe('the command palette', () => {
     expect(screen.getByText(/close/)).toBeInTheDocument();
   });
 });
+
+describe('the scroll container', () => {
+  // `overflow` clips only descendants whose containing block runs through
+  // the element. An `sr-only` live region is `position: absolute`; with no
+  // positioned ancestor its containing block is the initial one, so it sits
+  // at its static spot in the page flow, past the fold on a tall page, and
+  // grows the document's scrollable area beyond the viewport. The first
+  // focus or trackpad flick then scrolls the entire shell, rail included,
+  // out of view. Seen on /account in production: 309px. `relative` on the
+  // scroll container and on the shell root is what keeps such elements
+  // inside them, and jsdom does no layout, so the class itself is pinned.
+  const source = SHELL_FILES.find((f) => f.name === './AppShell.tsx')?.source ?? '';
+
+  it('is the containing block for anything absolutely positioned inside it', () => {
+    const main = source.match(/<main id="main" className="([^"]+)"/);
+    expect(main).not.toBeNull();
+    const classes = main![1].split(/\s+/);
+    expect(classes).toContain('relative');
+    expect(classes).toContain('overflow-y-auto');
+  });
+
+  it('sits in a shell root that contains what the rail and banners position', () => {
+    expect(source).toMatch(/'relative grid h-dvh overflow-hidden/);
+  });
+});
