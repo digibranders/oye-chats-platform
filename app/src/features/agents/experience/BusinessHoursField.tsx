@@ -2,7 +2,7 @@ import { type ReactElement, useMemo } from 'react';
 import { Checkbox, Field, Input, Select, Switch } from '../../../ui';
 import {
   DAY_KEYS,
-  DAY_LABELS,
+  dayLabel,
   defaultBusinessHours,
   localTimezone,
   type BusinessHours,
@@ -109,7 +109,7 @@ export function BusinessHoursField({
                     <div className="flex min-h-row-compact flex-wrap items-center gap-3">
                       <span className="w-28 shrink-0">
                         <Checkbox
-                          label={DAY_LABELS[key]}
+                          label={dayLabel(key)}
                           checked={day !== null}
                           disabled={disabled}
                           onCheckedChange={(checked) =>
@@ -122,7 +122,7 @@ export function BusinessHoursField({
                           type="time"
                           value={hours.start}
                           disabled={disabled || day === null}
-                          aria-label={`${DAY_LABELS[key]} opens at`}
+                          aria-label={t('agents.dayOpensAt', { day: dayLabel(key) }) || `${dayLabel(key)} opens at`}
                           aria-invalid={error ? true : undefined}
                           onChange={(event) => setDay(key, { ...hours, start: event.target.value })}
                           className="figure w-24"
@@ -134,7 +134,7 @@ export function BusinessHoursField({
                           type="time"
                           value={hours.end}
                           disabled={disabled || day === null}
-                          aria-label={`${DAY_LABELS[key]} closes at`}
+                          aria-label={t('agents.dayClosesAt', { day: dayLabel(key) }) || `${dayLabel(key)} closes at`}
                           aria-invalid={error ? true : undefined}
                           onChange={(event) => setDay(key, { ...hours, end: event.target.value })}
                           className="figure w-24"

@@ -21,8 +21,8 @@ export function CustomCopyNotice({ multilingual }: { multilingual: boolean }) {
   if (!multilingual) return null;
   return (
     <Alert tone="neutral" title={t('agents.customTextIsShownUnchanged') || 'Custom text is shown unchanged in every language'}>
-      Anything you write here replaces the built-in wording, which your chatbot would otherwise
-      translate for each visitor. Leave a field empty to keep the translated default.
+      {t('agents.anythingYouWriteHereReplaces') ||
+        'Anything you write here replaces the built-in wording, which your chatbot would otherwise translate for each visitor. Leave a field empty to keep the translated default.'}
     </Alert>
   );
 }

@@ -42,6 +42,11 @@ import { t as translateNow } from '../../../i18n/i18n';
 export const SECTION_KEYS = ['branding', 'messages', 'voice', 'language', 'handoff', 'leads', 'uaq'] as const;
 export type SectionKey = (typeof SECTION_KEYS)[number];
 
+/** A tab label in the reader's language. Resolved per call, not at import. */
+export function sectionLabel(key: SectionKey): string {
+  return translateNow(`agents.experienceSection.${key}`) || SECTION_LABELS[key];
+}
+
 export const SECTION_LABELS: Record<SectionKey, string> = {
   branding: 'Branding',
   messages: 'Messages',
@@ -82,6 +87,11 @@ export interface SmartLink {
 
 export const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
 export type DayKey = (typeof DAY_KEYS)[number];
+
+/** A weekday name in the reader's language. */
+export function dayLabel(key: DayKey): string {
+  return translateNow(`agents.weekday.${key}`) || DAY_LABELS[key];
+}
 
 export const DAY_LABELS: Record<DayKey, string> = {
   mon: 'Monday',
@@ -325,6 +335,11 @@ export const DEFAULT_LOCALE = 'en-IN';
 
 export const LEAD_FIELD_ORDER: readonly LeadFieldName[] = ['name', 'email', 'phone', 'company'];
 
+/** A lead-capture field name, as the CUSTOMER sees it while configuring it. */
+export function leadFieldLabel(name: LeadFieldName): string {
+  return translateNow(`agents.leadField.${name}`) || LEAD_FIELD_LABELS[name];
+}
+
 export const LEAD_FIELD_LABELS: Record<LeadFieldName, string> = {
   name: 'Name',
   email: 'Email',
@@ -339,6 +354,12 @@ export const LEAD_FIELD_LABELS: Record<LeadFieldName, string> = {
  * touched the rating prompt should keep getting the platform's wording as it
  * improves, not a copy of today's frozen into their record.
  */
+// @i18n-exempt: this is the WIDGET's copy, not the dashboard's. Every string
+// here is what a VISITOR reads, and the widget translates it into the
+// visitor's language from its own dictionary. Shown in the dashboard as the
+// placeholder of the field that overrides it, so translating it here would
+// tell a Hindi-reading customer their visitors see Hindi when the visitor's
+// own language decides that. It is also the seeded default the backend stores.
 export const PLACEHOLDERS = {
   launcherName: 'Have Questions?',
   welcomeGreeting: 'Hi there 👋',

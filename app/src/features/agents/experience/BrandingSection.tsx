@@ -45,10 +45,12 @@ import { useTranslation } from '../../../i18n/useTranslation';
  * shows it or, with the add-on, hides it. It never becomes someone else's line.
  */
 
-const AVATAR_TYPES: readonly { value: AvatarType; label: string }[] = [
-  { value: 'upload', label: 'Image' },
-  { value: 'orb', label: 'Orb' },
-  { value: 'mascot', label: 'Icon' },
+// Labels resolved per render: this is a module constant evaluated before any
+// locale exists. `value` is what gets stored and is never translated.
+const AVATAR_TYPES: readonly { value: AvatarType; labelKey: string; label: string }[] = [
+  { value: 'upload', labelKey: 'agents.avatarTypeImage', label: 'Image' },
+  { value: 'orb', labelKey: 'agents.avatarTypeOrb', label: 'Orb' },
+  { value: 'mascot', labelKey: 'agents.avatarTypeIcon', label: 'Icon' },
 ];
 
 export interface BrandingSectionProps {
@@ -239,7 +241,7 @@ export function BrandingSection({
             </span>
             <div className="min-w-0 flex-1">
               <SegmentedControl
-                items={AVATAR_TYPES}
+                items={AVATAR_TYPES.map((o) => ({ ...o, label: t(o.labelKey) || o.label }))}
                 value={draft.avatarType}
                 onChange={(avatarType) => onChange({ avatarType })}
                 label={t('agents.avatarStyle') || 'Avatar style'}
@@ -363,7 +365,8 @@ export function BrandingSection({
                 {/* An ADD-ON, not a plan inclusion. No tier grants it, so
                     "Standard and above" sent customers to compare plans for
                     something no plan on that page would give them. */}
-                Removing it is a paid add-on on any plan. It currently reads{' '}
+                {t('agents.removingItIsAPaidAddOn') ||
+                  'Removing it is a paid add-on on any plan. It currently reads'}{' '}
                 <span className="font-medium text-text-primary">
                   {meta.brandingText || t('agents.poweredByOyechats') || 'Powered by OyeChats'}
                 </span>

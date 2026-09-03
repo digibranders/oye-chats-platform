@@ -44,9 +44,10 @@ import { useTranslation } from '../../../i18n/useTranslation';
  * that fit, then edit and order them like any other line of copy.
  */
 
-const LAYOUTS: readonly { value: SuggestionsLayout; label: string }[] = [
-  { value: 'horizontal', label: 'Side by side' },
-  { value: 'vertical', label: 'Stacked' },
+// Labels resolved per render; `value` is the stored key.
+const LAYOUTS: readonly { value: SuggestionsLayout; labelKey: string; label: string }[] = [
+  { value: 'horizontal', labelKey: 'agents.layoutSideBySide', label: 'Side by side' },
+  { value: 'vertical', labelKey: 'agents.layoutStacked', label: 'Stacked' },
 ];
 
 /**
@@ -288,7 +289,7 @@ export function MessagesSection({
           description={t('agents.shownUnderTheGreeting') || 'Shown under the greeting.'}
           actions={
             <SegmentedControl
-              items={LAYOUTS}
+              items={LAYOUTS.map((o) => ({ ...o, label: t(o.labelKey) || o.label }))}
               value={draft.suggestionsLayout}
               onChange={(suggestionsLayout) => onChange({ suggestionsLayout })}
               label={t('agents.starterQuestionLayout') || 'Starter question layout'}

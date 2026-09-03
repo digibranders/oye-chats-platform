@@ -22,7 +22,7 @@ import { useEntitlements } from '../../../hooks/useEntitlements';
 import { BusinessHoursField } from './BusinessHoursField';
 import {
   HANDOFF_DELAY_OPTIONS,
-  LEAD_FIELD_LABELS,
+  leadFieldLabel,
   LEAD_FIELD_ORDER,
   LIMITS,
   MAX_QUEUE,
@@ -299,7 +299,7 @@ export function HandoffSection({
                         className="flex flex-wrap items-center justify-between gap-3 border-t border-border py-2.5 first:border-t-0"
                       >
                         <Checkbox
-                          label={LEAD_FIELD_LABELS[name]}
+                          label={leadFieldLabel(name)}
                           checked={row !== undefined}
                           disabled={readOnly}
                           onCheckedChange={(checked) => toggleLeadField(name, checked === true)}
