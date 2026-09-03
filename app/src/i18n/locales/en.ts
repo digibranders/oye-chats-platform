@@ -1891,6 +1891,21 @@ const en = {
     nPercentOff: '{pct}% off',
     thisCodeIsMonthlyOnly: 'This code applies to monthly billing only.',
     thatCodeCouldNotBeApplied: 'That code could not be applied.',
+    // ── Plan summary card (workspace/billing/PlanSummary) ──
+    operatorSeatsInUse: 'Operator seats in use',
+    operatorSeatsInUseAcrossWorkspace: 'Operator seats in use across this workspace',
+    noPlan: 'No plan',
+    changePlan: 'Change plan',
+    choosePlan: 'Choose a plan',
+    billedYearly: 'Billed yearly',
+    billedMonthly: 'Billed monthly',
+    price: 'Price',
+    perYear: 'Per year',
+    perMonth: 'Per month',
+    thenWorkspaceDropsToFree: 'Then the workspace drops to Free',
+    renewsAutomatically: 'Renews automatically',
+    creditsIncluded: 'Credits included',
+    extraCredits: 'Extra credits',
   },
   ds: {
     // ── Image cropping (ui/overlays/ImageCropDialog) ──
@@ -2279,6 +2294,7 @@ const en = {
       chatbots: 'Chatbots',
       conversations: 'Conversations',
       deploy: 'Deploy',
+      developers: 'Developers',
       experience: 'Experience',
       feedback: 'Feedback',
       general: 'General',
@@ -2297,6 +2313,7 @@ const en = {
       reports: 'Reports',
       settings: 'Settings',
       support: 'Support',
+      team: 'Team',
       usage: 'Usage',
       visitors: 'Visitors',
       workspace: 'Workspace',
@@ -2370,7 +2387,11 @@ const en = {
     yourSeatInThisWorkspace: 'Your seat in this workspace does not include it. An owner or an admin can open it for you.',
   },
   affiliate: {
-
+    activeCodes: 'Active codes',
+    newCode: 'New code',
+    noCodesYet: 'No codes yet',
+    createYourFirstCode: 'Create your first code',
+    createOneAndShareItsLink: 'Create one and share its link. You keep up to {pct} of what everyone who signs up through it pays.',
   },
   onboarding: {
     captureYourFirstLead: 'Capture your first lead',

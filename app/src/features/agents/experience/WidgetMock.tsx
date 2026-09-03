@@ -299,7 +299,16 @@ export function WidgetMock({
   const showMenu = liveChatVisible || hasConversation;
 
   return (
-    <div className="flex flex-col items-stretch gap-4" style={{ maxWidth: PANEL_MAX_WIDTH }}>
+    // LTR island: this whole panel mimics the shipped widget's own LTR-only
+    // chrome (see the rtl-ok comments below on its caret and header layout),
+    // not the console's. Its `justify-end`/`items-end` rows are direction-
+    // relative, so without this they silently mirror under the console's own
+    // `dir="rtl"` and misrepresent what visitors actually see.
+    <div
+      dir="ltr"
+      className="flex flex-col items-stretch gap-4"
+      style={{ maxWidth: PANEL_MAX_WIDTH }}
+    >
       {/* The chat window. `aria-label` rather than a heading: this is a picture
           of another product, and giving it a real heading would put a second
           document outline inside the page's own. */}

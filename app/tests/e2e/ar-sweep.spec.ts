@@ -53,28 +53,23 @@ const WIDTHS: Array<{ name: string; width: number; height: number }> = [
 const ARABIC = /[؀-ۿ]/;
 
 /**
- * Pre-existing, out-of-scope gap this sweep surfaced: the settings
- * sub-navigation (`WorkspaceLayout.tsx`) and the billing plan card
- * (`billing/PlanSummary.tsx`) hardcode their English strings with no `t()`
- * call at all, so they render in English under EVERY dashboard language, not
- * just Arabic - the same content shows English under Hindi today too. Not a
- * regression introduced by the Arabic rollout, and fixing it means adding
- * new dictionary keys across all three locales, which is out of scope for
- * this branch. Tracked as a follow-up task ("Wire up settings/billing pages
- * to the i18n dictionary"). At desktop width the nav rail and breadcrumb
- * (which ARE translated) contain enough Arabic text to satisfy the
- * body-text check below despite this gap; at phone width the rail is
- * collapsed and the gap becomes directly visible, which is what these
- * `fixme` entries pin down. Remove an entry once its page's content is
- * wired up, and rely on the ARABIC assertion to confirm the fix.
+ * Pre-existing, out-of-scope gap this sweep surfaced: several settings and
+ * billing surfaces hardcode their English strings with no `t()` call at all,
+ * so they render in English under EVERY dashboard language, not just Arabic -
+ * the same content shows English under Hindi today too. Not a regression
+ * introduced by the Arabic rollout.
+ *
+ * The settings sub-navigation (`WorkspaceLayout.tsx`), the billing plan card
+ * (`billing/PlanSummary.tsx`) and the affiliate page (`AffiliatePage.tsx`)
+ * were wired up in the settings/billing/affiliate i18n follow-up, closing
+ * `/billing`, `/settings/team` and `/settings/affiliate` at phone width. Still
+ * open: `UsagePage.tsx` and `ReportsPage.tsx` have no `t()` call at all, so
+ * `/billing/usage` and `/billing/reports` remain untranslated at phone width,
+ * where the translated nav rail that satisfies the check at desktop width is
+ * collapsed. Tracked as a follow-up task. Remove an entry once its page's
+ * content is wired up, and rely on the ARABIC assertion to confirm the fix.
  */
-const KNOWN_UNTRANSLATED_CONTENT = new Set([
-  '/billing@phone',
-  '/billing/usage@phone',
-  '/billing/reports@phone',
-  '/settings/team@phone',
-  '/settings/affiliate@phone',
-]);
+const KNOWN_UNTRANSLATED_CONTENT = new Set(['/billing/usage@phone', '/billing/reports@phone']);
 
 /** Same overflow walk as rtl-sweep.spec.ts — see that file for why scroll containers are skipped. */
 async function overflowReport(page: Page): Promise<{ offenders: string[]; pageScrolls: boolean }> {
