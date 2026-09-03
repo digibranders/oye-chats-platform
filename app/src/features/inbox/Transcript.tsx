@@ -340,7 +340,7 @@ export function Transcript({
                         // than as a nick.
                         'rounded-md px-3 py-2 text-prose',
                         mine
-                          ? cn('bg-ink text-rail-text', groupEnd && 'rounded-br-xs')
+                          ? cn('bg-ink text-rail-text', groupEnd && 'rounded-ee-xs')
                           : message.role === 'bot'
                             ? cn(
                                 // The bubble is bordered as well as filled.
@@ -353,11 +353,11 @@ export function Transcript({
                                 // pane. The hairline draws the shape; the fill
                                 // still separates it from the visitor's white.
                                 'border border-border bg-surface-sunken text-text-primary',
-                                groupEnd && 'rounded-bl-xs',
+                                groupEnd && 'rounded-es-xs',
                               )
                             : cn(
                                 'border border-border bg-surface text-text-primary',
-                                groupEnd && 'rounded-bl-xs',
+                                groupEnd && 'rounded-es-xs',
                               ),
                       )}
                     >
@@ -417,7 +417,7 @@ export function Transcript({
         <div className="mt-3 flex items-start gap-2">
           <Avatar size="xs" name={visitorName} className="shrink-0" />
           <span
-            className="flex items-center gap-1 rounded-md rounded-bl-xs border border-border bg-surface px-3 py-2.5"
+            className="flex items-center gap-1 rounded-md rounded-es-xs border border-border bg-surface px-3 py-2.5"
             role="status"
             aria-label={translateNow('inbox.isTyping', { name: visitorName }) || `${visitorName} is typing`}
           >

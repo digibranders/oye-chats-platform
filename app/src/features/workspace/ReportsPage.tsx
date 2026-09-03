@@ -251,12 +251,15 @@ export function ReportsPage() {
                     <th scope="row" className="font-semibold">
                       All chatbots
                     </th>
+                    {/* rtl-ok: numeric figure — digits stay right-aligned so place value lines up, regardless of direction */}
                     <td className="figure text-right font-semibold">
                       {formatNumber(report.totals.conversations)}
                     </td>
+                    {/* rtl-ok: numeric figure — digits stay right-aligned so place value lines up, regardless of direction */}
                     <td className="figure text-right font-semibold">
                       {formatNumber(report.totals.leads)}
                     </td>
+                    {/* rtl-ok: numeric figure — digits stay right-aligned so place value lines up, regardless of direction */}
                     <td className="figure text-right font-semibold">
                       {formatNumber(report.totals.credits_spent)}
                     </td>

@@ -275,7 +275,7 @@ export function FeedbackPanel({ botId, range }: FeedbackPanelProps) {
           <Toolbar className="border-b border-border px-cell py-2">
             <FeedbackFilterTabs stats={stats} value={filter} onChange={setFilter} />
             {selectedQuestion ? (
-              <span className="ml-auto flex min-w-0 items-center gap-1">
+              <span className="ms-auto flex min-w-0 items-center gap-1">
                 <Badge tone="ink" className="min-w-0">
                   {selectedQuestion}
                 </Badge>

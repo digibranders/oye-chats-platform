@@ -144,7 +144,7 @@ export function WorkspaceLayout() {
                   // `lg:ml-auto` only: in the horizontal scroller `ml-auto`
                   // pinned the lock to the right edge of its own item, so
                   // "Team 🔒" read as "Team … 🔒" with a variable gap.
-                  <span className="flex items-center @4xl/page:ml-auto">
+                  <span className="flex items-center @4xl/page:ms-auto">
                     <Lock aria-hidden className="h-3.5 w-3.5 text-text-tertiary" />
                     <span className="sr-only">— not included on your plan</span>
                   </span>

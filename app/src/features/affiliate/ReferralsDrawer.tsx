@@ -111,7 +111,7 @@ export function ReferralsDrawer({ code, onOpenChange }: ReferralsDrawerProps) {
             <section>
               <h3 className="mb-2 text-base font-semibold text-text-primary">
                 Monthly run rate
-                <span className="ml-1.5 text-xs font-normal text-text-tertiary">
+                <span className="ms-1.5 text-xs font-normal text-text-tertiary">
                   {formatNumber(paying)} paying {paying === 1 ? 'referral' : 'referrals'}
                 </span>
               </h3>
@@ -140,7 +140,7 @@ export function ReferralsDrawer({ code, onOpenChange }: ReferralsDrawerProps) {
           <section>
             <h3 className="mb-2 text-base font-semibold text-text-primary">
               Signed up
-              <span className="ml-1.5 text-xs font-normal text-text-tertiary">
+              <span className="ms-1.5 text-xs font-normal text-text-tertiary">
                 {formatNumber(detail.referrals.length)}
               </span>
             </h3>

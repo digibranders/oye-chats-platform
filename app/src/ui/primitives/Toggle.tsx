@@ -277,9 +277,13 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
           // The seam is elevation-adjacent; a disabled control is not lifted.
           isDisabled ? 'shadow-none' : 'shadow-xs',
           'transition-transform duration-[var(--dur-fast)] ease-[var(--ease-console)]',
+          // rtl-ok: a switch's "on" position follows reading direction: it
+          // slides toward the inline end, which `translate-x` itself never
+          // knows about (a transform offset is always physical), so the rtl
+          // variant carries the mirrored, negative offset.
           size === 'sm'
-            ? 'h-3 w-3 data-[checked]:translate-x-3'
-            : 'h-4 w-4 data-[checked]:translate-x-4',
+            ? 'h-3 w-3 data-[checked]:translate-x-3 rtl:data-[checked]:-translate-x-3' // rtl-ok: see above
+            : 'h-4 w-4 data-[checked]:translate-x-4 rtl:data-[checked]:-translate-x-4', // rtl-ok: see above
         )}
       />
     </BaseSwitch.Root>

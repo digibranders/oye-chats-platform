@@ -378,7 +378,12 @@ function renderHeader<T>(
   return <Tooltip content={column.headerHint}>{control as ReactElement}</Tooltip>;
 }
 
-const ALIGN_CLASS = { left: 'text-left', center: 'text-center', right: 'text-right' } as const;
+// rtl-ok: `right` is never a UI-direction choice — every call site sets it
+// only to trigger the `.figure` numeric treatment (see `align`'s JSDoc
+// below), so it stays physically right rather than becoming `text-end`: a
+// numeric column's digits stay right-aligned regardless of direction, so
+// place value lines up.
+const ALIGN_CLASS = { left: 'text-start', center: 'text-center', right: 'text-right' } as const;
 
 /**
  * The console's table.
@@ -617,10 +622,20 @@ export function DataTable<T>({
   // callback on mount and from a `ResizeObserver` when the column changes width.
   const syncScroll = useCallback((element: HTMLDivElement | null) => {
     if (!element) return;
-    const scrolled = element.scrollLeft > 0;
-    // 1px of slack: a fractional layout width leaves `scrollWidth` a hair above
-    // `scrollLeft + clientWidth` at the true end and the fade never turns off.
-    const atEnd = element.scrollLeft + element.clientWidth >= element.scrollWidth - 1;
+    // Every evergreen engine now implements the spec's "negative" model for
+    // `scrollLeft` under `dir="rtl"`: 0 at the reading start (the physical
+    // right) down to `-(scrollWidth - clientWidth)` at the reading end (the
+    // physical left) — the mirror image of the ltr range, not the same
+    // numbers read backwards. `data-scrolled` / `data-scroll-end` track
+    // "moved away from the start" / "reached the end" in READING order, so
+    // both directions need their own arithmetic.
+    const rtl = getComputedStyle(element).direction === 'rtl';
+    // 1px of slack: a fractional layout width leaves the true extreme a hair
+    // short of the exact bound and the fade never turns off.
+    const scrolled = rtl ? element.scrollLeft < -1 : element.scrollLeft > 0;
+    const atEnd = rtl
+      ? element.scrollLeft <= -(element.scrollWidth - element.clientWidth) + 1
+      : element.scrollLeft + element.clientWidth >= element.scrollWidth - 1;
     element.dataset.scrolled = scrolled ? 'true' : 'false';
     element.dataset.scrollEnd = atEnd ? 'true' : 'false';
   }, []);
@@ -663,7 +678,7 @@ export function DataTable<T>({
         style={scrollMax ? { maxHeight: scrollMax } : undefined}
       >
         <table
-          className={cn('console-table text-left', fixedLayout ? 'w-full table-fixed' : 'w-full min-w-max')}
+          className={cn('console-table text-start', fixedLayout ? 'w-full table-fixed' : 'w-full min-w-max')}
           aria-busy={loading || undefined}
         >
           <caption className="sr-only">{caption}</caption>
@@ -703,7 +718,7 @@ export function DataTable<T>({
                       headCellClass,
                       'px-[var(--cell-x)]',
                       ALIGN_CLASS[align],
-                      column.pinned && 'is-pinned sticky left-0 z-[var(--z-sticky)]',
+                      column.pinned && 'is-pinned sticky start-0 z-[var(--z-sticky)]',
                       column.secondary && 'hidden @3xl/page:table-cell',
                     )}
                   >
@@ -864,7 +879,7 @@ export function DataTable<T>({
                             // pinned column stays white while the row lights up.
                             column.pinned &&
                               cn(
-                                'is-pinned sticky left-0 z-1',
+                                'is-pinned sticky start-0 z-1',
                                 'bg-surface group-hover:bg-surface-hover group-data-[selected]:bg-accent-50',
                               ),
                             column.secondary && 'hidden @3xl/page:table-cell',
@@ -875,7 +890,7 @@ export function DataTable<T>({
                               type="button"
                               data-row-activator
                               onClick={() => onRowClick(row)}
-                              className="max-w-full truncate rounded-xs text-left"
+                              className="max-w-full truncate rounded-xs text-start"
                             >
                               {content}
                             </button>
@@ -896,7 +911,7 @@ export function DataTable<T>({
               className={cn(
                 'bg-surface-sunken text-sm font-medium text-text-primary',
                 '[&_td]:h-[var(--row-h)] [&_td]:px-[var(--cell-x)] [&_td]:py-[var(--cell-y)] [&_td]:align-middle',
-                '[&_th]:h-[var(--row-h)] [&_th]:px-[var(--cell-x)] [&_th]:py-[var(--cell-y)] [&_th]:text-left [&_th]:align-middle',
+                '[&_th]:h-[var(--row-h)] [&_th]:px-[var(--cell-x)] [&_th]:py-[var(--cell-y)] [&_th]:text-start [&_th]:align-middle',
               )}
             >
               {footer}
@@ -910,7 +925,7 @@ export function DataTable<T>({
           moment the pointer was on a checkbox, so the next click landed on the
           wrong row. Same height as the header row, so nothing moves at all. */}
       {selectable && selectedCount > 0 ? (
-        <div className="absolute left-12 right-0 top-0 z-[var(--z-sticky)] flex h-[var(--row-h)] items-center gap-3 border-b border-border bg-accent-50 pl-1 pr-[var(--cell-x)]">
+        <div className="absolute start-12 end-0 top-0 z-[var(--z-sticky)] flex h-[var(--row-h)] items-center gap-3 border-b border-border bg-accent-50 ps-1 pe-[var(--cell-x)]">
           <p className="shrink-0 text-sm font-medium text-accent-700">
             <span className="figure">{selectedCount}</span>{' '}
             {translateNow('ds.selected') || 'selected'}
@@ -919,7 +934,7 @@ export function DataTable<T>({
           <Button
             size="sm"
             variant="ghost"
-            className="ml-auto shrink-0"
+            className="ms-auto shrink-0"
             onClick={() => onSelectionChange?.(new Set())}
           >
             {t('ds.clear') || 'Clear'}
@@ -963,7 +978,7 @@ export function DataTable<T>({
                 disabled={safePage === 0}
                 onClick={() => goToPage(safePage - 1)}
               >
-                <ChevronLeft aria-hidden className="h-icon-md w-icon-md" />
+                <ChevronLeft aria-hidden className="h-icon-md w-icon-md rtl:-scale-x-100" />
               </Button>
               {/* One string for assistive tech: the three nodes below read as
                   "1 slash 12" on their own. */}
@@ -985,7 +1000,7 @@ export function DataTable<T>({
                 disabled={safePage >= pageCount - 1}
                 onClick={() => goToPage(safePage + 1)}
               >
-                <ChevronRight aria-hidden className="h-icon-md w-icon-md" />
+                <ChevronRight aria-hidden className="h-icon-md w-icon-md rtl:-scale-x-100" />
               </Button>
             </div>
           </nav>

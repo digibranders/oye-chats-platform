@@ -49,6 +49,7 @@ export const DEFAULT_UI_LOCALE = 'en-IN';
  */
 const DICTIONARY_LOADERS: Record<string, () => Promise<unknown>> = {
   hi: () => import('./locales/hi'),
+  ar: () => import('./locales/ar'),
 };
 
 /** Base language codes this build can present, English included. */

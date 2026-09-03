@@ -384,7 +384,7 @@ export function VisitorPanel({
         </div>
 
         {profile.handoffReason ? (
-          <div className="border-l-[3px] border-l-border-strong pl-3">
+          <div className="border-s-[3px] border-s-border-strong ps-3">
             <Eyebrow>{t('inbox.whyTheyWantedAPerson') || 'Why they wanted a person'}</Eyebrow>
             <p className="mt-0.5 text-xs text-text-primary">{profile.handoffReason}</p>
           </div>

@@ -55,8 +55,8 @@ const SHELL_PAD = { sm: 'px-1 py-0.5', md: 'px-1.5 py-1' } as const;
 
 /** The chip, sized so the row above holds. 20 in a 28 row, 24 in a 34 row. */
 const CHIP_SIZE = {
-  sm: { chip: 'h-5 gap-1 pl-1.5 pr-0.5', remove: 'h-4 w-4' },
-  md: { chip: 'h-6 gap-1 pl-2 pr-1', remove: 'h-5 w-5' },
+  sm: { chip: 'h-5 gap-1 ps-1.5 pe-0.5', remove: 'h-4 w-4' },
+  md: { chip: 'h-6 gap-1 ps-2 pe-1', remove: 'h-5 w-5' },
 } as const;
 
 /**

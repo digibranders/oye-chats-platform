@@ -200,7 +200,7 @@ export function Meter({
   const nameClass = cn('text-xs text-text-secondary', hideLabel && 'sr-only');
   // With the name out of the flow, `justify-between` has one child left and
   // would push the figure to the leading edge.
-  const figureClass = cn('text-xs font-medium text-text-primary', hideLabel && 'ml-auto');
+  const figureClass = cn('text-xs font-medium text-text-primary', hideLabel && 'ms-auto');
   const note = hint ? <p className="mt-1 text-xs text-text-tertiary">{hint}</p> : null;
 
   if (unlimited) {
@@ -215,7 +215,7 @@ export function Meter({
           <span className={nameClass}>{label}</span>
           {/* The note keeps its own element, and stays out of the `.figure`
               run: it is a sentence, and mono tabular figures are for numbers. */}
-          <span className={cn('flex items-baseline gap-1', hideLabel && 'ml-auto')}>
+          <span className={cn('flex items-baseline gap-1', hideLabel && 'ms-auto')}>
             <span className="figure text-xs font-medium text-text-primary">
               {formatNumber(used)}
             </span>

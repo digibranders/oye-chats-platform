@@ -56,12 +56,12 @@ export function Toaster() {
           warning: 'border-warning bg-warning-tint',
           title: 'text-base font-medium text-text-primary',
           description: 'mt-0.5 text-xs text-text-secondary',
-          actionButton: buttonClass('secondary', 'sm', 'ml-auto shrink-0'),
+          actionButton: buttonClass('secondary', 'sm', 'ms-auto shrink-0'),
           cancelButton: buttonClass('ghost', 'sm', 'shrink-0'),
           // `unstyled` strips sonner's own close-button box, so what was left
           // was an unsized glyph with no target and no focus ring.
           closeButton:
-            'absolute -left-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full border border-border bg-surface text-text-tertiary shadow-xs hover:text-text-primary',
+            'absolute -start-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full border border-border bg-surface text-text-tertiary shadow-xs hover:text-text-primary',
         },
       }}
       icons={{

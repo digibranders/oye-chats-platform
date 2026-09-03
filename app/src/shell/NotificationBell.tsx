@@ -61,7 +61,7 @@ export function NotificationBell() {
           {unreadCount > 0 ? (
             <span
               aria-hidden
-              className="figure absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent-500 px-1 text-2xs font-medium text-text-inverse"
+              className="figure absolute -end-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent-500 px-1 text-2xs font-medium text-text-inverse"
             >
               {formatBadgeCount(unreadCount)}
             </span>
@@ -123,7 +123,7 @@ export function NotificationBell() {
                     if (!item.is_read) void markRead(item.id);
                     setOpen(false);
                   }}
-                  className="flex w-full items-start gap-2.5 px-3 py-2 text-left transition-colors hover:bg-surface-hover"
+                  className="flex w-full items-start gap-2.5 px-3 py-2 text-start transition-colors hover:bg-surface-hover"
                 >
                   {/* A 20px box matching the title's line box, so the dot is
                       optically centred on the first line whatever rung it is. */}

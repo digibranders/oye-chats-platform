@@ -109,8 +109,11 @@ test.describe('Dashboard language selector', () => {
     await page.getByRole('radio', { name: 'हिन्दी' }).click();
 
     await expect(page.locator('html')).toHaveAttribute('lang', 'hi-IN');
-    // RTL is out of scope for Phase 7 and Hindi is LTR; a stray dir flip here
-    // would mirror ~216 physical Tailwind classes with nothing to catch it.
+    // Hindi is LTR, so this must stay ltr even though the console now
+    // supports rtl (Arabic) - a stray flip here would mirror every physical
+    // Tailwind class with nothing to catch it for a language that never
+    // needed mirroring in the first place. `rtl.test.ts` and
+    // `rtl-sweep.spec.ts` are the guards for the rtl side of that contract.
     await expect(page.locator('html')).toHaveAttribute('dir', 'ltr');
   });
 

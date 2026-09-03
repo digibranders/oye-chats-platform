@@ -1047,7 +1047,7 @@ function PrimitivesPanel() {
             <Field
               label="New password"
               hint={
-                <ul className="list-disc space-y-0.5 pl-4">
+                <ul className="list-disc space-y-0.5 ps-4">
                   <li>At least 12 characters</li>
                   <li>One number, or one symbol</li>
                   <li>Not a password you use anywhere else</li>
@@ -1848,7 +1848,7 @@ function LayoutPanel() {
                       <button
                         type="button"
                         onClick={() => setPaneSelected(true)}
-                        className="flex h-row w-full items-center gap-2 border-b border-border px-cell text-left text-sm hover:bg-surface-hover"
+                        className="flex h-row w-full items-center gap-2 border-b border-border px-cell text-start text-sm hover:bg-surface-hover"
                       >
                         <Avatar name={lead.name} size="sm" />
                         <span className="min-w-0 truncate">{lead.name}</span>
@@ -2136,6 +2136,7 @@ function DataPanel() {
                 <tr>
                   <th scope="row">Total</th>
                   <td />
+                  {/* rtl-ok: numeric figure — digits stay right-aligned so place value lines up, regardless of direction */}
                   <td className="figure text-right">₹23,000</td>
                   <td />
                 </tr>

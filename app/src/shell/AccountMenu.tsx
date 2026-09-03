@@ -60,7 +60,7 @@ export function AccountMenu({ collapsed }: { collapsed: boolean }) {
       <MenuTrigger
         aria-label={t('shell.account') || 'Account'}
         className={cn(
-          'flex h-row w-full min-w-0 items-center gap-2.5 rounded-md px-2.5 text-left',
+          'flex h-row w-full min-w-0 items-center gap-2.5 rounded-md px-2.5 text-start',
           'transition-colors duration-[var(--dur-fast)] hover:bg-rail-hover focus-visible:outline-rail-accent',
           collapsed && 'justify-center px-0',
         )}
@@ -76,7 +76,7 @@ export function AccountMenu({ collapsed }: { collapsed: boolean }) {
         ) : null}
       </MenuTrigger>
 
-      <MenuContent side="right" align="end" className="w-64">
+      <MenuContent side="inline-end" align="end" className="w-64">
         {seat ? <p className="px-2 pb-1 pt-1.5 text-2xs text-text-tertiary">{seat}</p> : null}
         <MenuItem icon={<User aria-hidden />} onSelect={() => navigate('/account')}>
           {t('shell.accountSettings') || 'Account settings'}

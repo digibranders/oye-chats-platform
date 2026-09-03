@@ -166,12 +166,17 @@ function FlowCardText({
     <div title={tooltip} className="flex h-full w-full items-center px-3">
       <div className="min-w-0 flex-1">
         {/* `pr-3` keeps a long path clear of the tone dot in the corner,
-            which is no longer a sibling element reserving its own space. */}
+            which is no longer a sibling element reserving its own space.
+            rtl-ok: the dot is drawn as a raw SVG <circle> at `node.x + node.width
+            - CARD_RADIUS` (CardChrome above) — an absolute viewBox coordinate,
+            not a logical CSS position, so it never moves off the card's
+            physical right corner even under `dir="rtl"`. This padding has to
+            track that same physical corner, not the inline-end edge. */}
         <p className="truncate pr-3 text-xs font-medium text-text-secondary">{node.label}</p>
         <p className="tabular-nums text-sm font-semibold leading-tight text-text-primary">
           {node.sessions.toLocaleString()}
           {subtitle && (
-            <span className="ml-1 text-2xs font-normal uppercase tracking-wide text-text-tertiary">
+            <span className="ms-1 text-2xs font-normal uppercase tracking-wide text-text-tertiary">
               {subtitle}
             </span>
           )}
@@ -415,7 +420,7 @@ export function JourneyDiagram({
           <foreignObject x={node.x} y={node.y} width={node.width} height={CARD_H}>
             <button
               type="button"
-              className="h-full w-full cursor-pointer border-0 bg-transparent p-0 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
+              className="h-full w-full cursor-pointer border-0 bg-transparent p-0 text-start focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
               aria-label={`${node.path}, ${node.sessions} ${node.sessions === 1 ? 'session' : 'sessions'}`}
               aria-pressed={selectedNodeId === node.id}
               onClick={() => handleNodeSelect(node)}

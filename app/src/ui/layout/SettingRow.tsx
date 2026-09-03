@@ -184,7 +184,7 @@ export function SettingRow({
               id={errorId}
               role="status"
               aria-live="polite"
-              className={cn('text-xs text-danger', stacked ? 'text-left' : 'text-right')}
+              className={cn('text-xs text-danger', stacked ? 'text-start' : 'text-end')}
             >
               {error}
             </p>

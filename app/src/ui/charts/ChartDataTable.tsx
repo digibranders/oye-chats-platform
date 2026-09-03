@@ -35,7 +35,7 @@ export interface ChartDataTableProps {
  */
 export function ChartDataTable({ caption, columns, rows, rowKey, className }: ChartDataTableProps) {
   return (
-    <table className={cn('console-table w-full text-left', className)}>
+    <table className={cn('console-table w-full text-start', className)}>
       <caption className="sr-only">{caption}</caption>
       <thead>
         <tr>
@@ -44,7 +44,8 @@ export function ChartDataTable({ caption, columns, rows, rowKey, className }: Ch
               key={column.key}
               scope="col"
               className={cn(
-                'whitespace-nowrap py-1.5 pr-4 text-xs font-medium text-text-secondary last:pr-0',
+                'whitespace-nowrap py-1.5 pe-4 text-xs font-medium text-text-secondary last:pe-0',
+                // rtl-ok: numeric column — digits stay right-aligned so place value lines up, regardless of direction
                 column.numeric && 'text-right',
               )}
             >
@@ -60,7 +61,8 @@ export function ChartDataTable({ caption, columns, rows, rowKey, className }: Ch
               <td
                 key={column.key}
                 className={cn(
-                  'py-1.5 pr-4 text-sm text-text-primary last:pr-0',
+                  'py-1.5 pe-4 text-sm text-text-primary last:pe-0',
+                  // rtl-ok: numeric figure — digits stay right-aligned so place value lines up, regardless of direction
                   column.numeric && 'figure text-right',
                 )}
               >

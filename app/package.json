@@ -87,6 +87,12 @@
       "path": "dist/assets/hi-*.js",
       "limit": "58 KB",
       "gzip": true
+    },
+    {
+      "name": "Arabic dictionary (lazy, non-English only). Same 2265 live keys as Hindi; measured at ~48.5 KB gzipped once fully translated (close to Hindi's 51.34 KB, not meaningfully smaller as first assumed before the real translation landed), with the same ~13% headroom Hindi's limit carries.",
+      "path": "dist/assets/ar-*.js",
+      "limit": "55 KB",
+      "gzip": true
     }
   ]
 }

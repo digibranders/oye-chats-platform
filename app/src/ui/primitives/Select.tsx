@@ -142,7 +142,7 @@ export function Select<T extends string = string>({
         aria-label={fieldNamesIt || id ? undefined : label}
         className={cn(
           CONTROL_BASE,
-          'flex items-center justify-between gap-2 text-left',
+          'flex items-center justify-between gap-2 text-start',
           controlClass(size),
           className,
         )}

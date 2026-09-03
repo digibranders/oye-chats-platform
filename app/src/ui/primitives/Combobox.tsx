@@ -121,7 +121,7 @@ export function Combobox<T extends string>({
         aria-label={fieldNamesIt ? undefined : label}
         className={cn(
           CONTROL_BASE,
-          'flex items-center justify-between gap-2 text-left',
+          'flex items-center justify-between gap-2 text-start',
           controlClass(size),
           className,
         )}

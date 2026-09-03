@@ -424,6 +424,29 @@
 }
 
 /* =============================================================================
+   RTL typography.
+
+   Letter-spacing breaks a connected script — Arabic glyphs are drawn joined to
+   their neighbours, and prying them apart with `tracking-*` turns words into
+   unconnected letter soup. Every `tracking-*` utility in the console (eyebrows,
+   uppercase labels, badge text — `tracking-wide`, `tracking-widest`,
+   `tracking-tight`, the custom `--tracking-eyebrow`) resolves through one of
+   these theme variables, so overriding them here — once — neutralises every
+   call site at once rather than requiring each one to carry its own `rtl:`
+   variant. `uppercase` itself is a no-op on Arabic and needs no equivalent
+   treatment.
+   ============================================================================= */
+[dir='rtl'] {
+  --tracking-tighter: 0em;
+  --tracking-tight: 0em;
+  --tracking-normal: 0em;
+  --tracking-wide: 0em;
+  --tracking-wider: 0em;
+  --tracking-widest: 0em;
+  --tracking-eyebrow: 0em;
+}
+
+/* =============================================================================
    Components — in `@layer components`, one rung above `base` and still under
    every utility, so a call site can always override one of these classes with a
    utility and see it take effect.
@@ -443,6 +466,27 @@
     font-variant-numeric: tabular-nums;
     font-feature-settings: 'ss01', 'cv11', 'tnum';
     letter-spacing: -0.01em;
+    /* An LTR island. Every value this class touches — money, a count, an API
+       key, a session id — is a technical or numeric run, never prose, and the
+       bidi algorithm must not be allowed to reorder it inside an Arabic
+       sentence. `isolate` keeps the run's own direction from leaking into, or
+       being affected by, surrounding text. */
+    direction: ltr;
+    unicode-bidi: isolate;
+  }
+
+  /**
+   * An inline LTR island for a value that sits inside otherwise-translated
+   * prose: an email address, a domain, a URL fragment, a phone number — text
+   * that is always Latin/ASCII by construction and must not be picked up by
+   * the bidi algorithm when it is surrounded by Arabic. Prefer `dir="ltr"`
+   * directly on the element when one already exists (a `<code>`, a `<span>`
+   * built for the value); reach for this utility only when adding an
+   * attribute is not practical (a value substituted into a template string).
+   */
+  .ltr-island {
+    direction: ltr;
+    unicode-bidi: isolate;
   }
 
   .console-skeleton {
@@ -476,6 +520,15 @@
       inset -1px 0 0 var(--color-border);
   }
 
+  /* Mirror of the rule above: a pinned column sticks to `start-0`, so under
+     rtl it sits on the physical right and its trailing edge — the one
+     content travels under — is the physical left, the opposite inset. */
+  [dir='rtl'] [data-scrolled='true'] .console-table .is-pinned {
+    box-shadow:
+      inset 0 -1px 0 var(--color-border),
+      inset 1px 0 0 var(--color-border);
+  }
+
   /* The other edge of the same fact.
      A table wider than its box gets a scrollbar and, at 44px rows under a 6px
      bar, nothing else: the last column is simply cut off at the card's border
@@ -490,12 +543,19 @@
     content: '';
     position: absolute;
     inset-block: 0;
-    right: 0;
+    inset-inline-end: 0;
     width: 1.5rem;
     pointer-events: none;
     opacity: 0;
     transition: opacity var(--dur-fast) var(--ease-console);
+    /* Opaque at the trailing edge, fading inward — `to left` reads correctly
+       under ltr (edge on the right); rtl needs the mirrored gradient below,
+       since a CSS gradient direction keyword is physical, not logical. */
     background: linear-gradient(to left, rgb(20 19 17 / 0.10), rgb(20 19 17 / 0));
+  }
+
+  [dir='rtl'] .console-scroll-edge::after {
+    background: linear-gradient(to right, rgb(20 19 17 / 0.10), rgb(20 19 17 / 0));
   }
 
   .console-scroll-edge:has([data-scroll-end='false'])::after {
@@ -523,10 +583,17 @@
   @keyframes overlay-out { from { opacity: 1; } to { opacity: 0; } }
   @keyframes panel-in    { from { opacity: 0; scale: 0.97; } to { opacity: 1; scale: 1; } }
   @keyframes panel-out   { from { opacity: 1; scale: 1; } to { opacity: 0; scale: 0.97; } }
-  @keyframes slide-right-in  { from { translate: 100% 0; } to { translate: 0 0; } }
-  @keyframes slide-right-out { from { translate: 0 0; } to { translate: 100% 0; } }
-  @keyframes slide-left-in   { from { translate: -100% 0; } to { translate: 0 0; } }
-  @keyframes slide-left-out  { from { translate: 0 0; } to { translate: -100% 0; } }
+  /* Named by physical offset, not by edge role: `translate` is never
+     direction-aware (a positive x always moves right, in any `dir`), so a
+     panel anchored at the inline END must run the +100% keyframes under ltr
+     but the -100% ones under rtl, and a START-anchored panel the reverse.
+     `.motion-slide-end` / `.motion-slide-start` below pick between this pair
+     via `[dir="rtl"]`, so a component only ever says which EDGE it opens
+     from, never which physical side that resolves to. */
+  @keyframes slide-x-100-in     { from { translate: 100% 0; } to { translate: 0 0; } }
+  @keyframes slide-x-100-out    { from { translate: 0 0; } to { translate: 100% 0; } }
+  @keyframes slide-x-neg100-in  { from { translate: -100% 0; } to { translate: 0 0; } }
+  @keyframes slide-x-neg100-out { from { translate: 0 0; } to { translate: -100% 0; } }
   @keyframes pop-in      { from { opacity: 0; scale: 0.96; } to { opacity: 1; scale: 1; } }
   @keyframes pop-out     { from { opacity: 1; scale: 1; } to { opacity: 0; scale: 0.96; } }
 
@@ -534,10 +601,19 @@
   .motion-overlay[data-closed] { animation: overlay-out var(--dur-fast) var(--ease-console); }
   .motion-panel[data-open]     { animation: panel-in var(--dur-slow) var(--ease-console-out); }
   .motion-panel[data-closed]   { animation: panel-out var(--dur-fast) var(--ease-console); }
-  .motion-slide-right[data-open]   { animation: slide-right-in var(--dur-slow) var(--ease-console-out); }
-  .motion-slide-right[data-closed] { animation: slide-right-out var(--dur) var(--ease-console); }
-  .motion-slide-left[data-open]   { animation: slide-left-in var(--dur-slow) var(--ease-console-out); }
-  .motion-slide-left[data-closed] { animation: slide-left-out var(--dur) var(--ease-console); }
+
+  /* Opens from the trailing edge: right in ltr, left in rtl. */
+  .motion-slide-end[data-open]   { animation: slide-x-100-in var(--dur-slow) var(--ease-console-out); }
+  .motion-slide-end[data-closed] { animation: slide-x-100-out var(--dur) var(--ease-console); }
+  [dir='rtl'] .motion-slide-end[data-open]   { animation-name: slide-x-neg100-in; }
+  [dir='rtl'] .motion-slide-end[data-closed] { animation-name: slide-x-neg100-out; }
+
+  /* Opens from the leading edge: left in ltr, right in rtl. */
+  .motion-slide-start[data-open]   { animation: slide-x-neg100-in var(--dur-slow) var(--ease-console-out); }
+  .motion-slide-start[data-closed] { animation: slide-x-neg100-out var(--dur) var(--ease-console); }
+  [dir='rtl'] .motion-slide-start[data-open]   { animation-name: slide-x-100-in; }
+  [dir='rtl'] .motion-slide-start[data-closed] { animation-name: slide-x-100-out; }
+
   .motion-pop[data-open]   { animation: pop-in var(--dur) var(--ease-console-out); }
   .motion-pop[data-closed] { animation: pop-out var(--dur-fast) var(--ease-console); }
   .motion-pop { transform-origin: var(--transform-origin, center); }
@@ -592,8 +668,8 @@
     .console-skeleton,
     .motion-overlay,
     .motion-panel,
-    .motion-slide-right,
-    .motion-slide-left,
+    .motion-slide-end,
+    .motion-slide-start,
     .motion-pop,
     .typing-dot {
       animation: none !important;

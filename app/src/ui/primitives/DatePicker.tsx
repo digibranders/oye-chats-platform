@@ -211,9 +211,15 @@ export function DatePicker({
   };
 
   const handleGridKeyDown = (event: React.KeyboardEvent) => {
+    // The week grid's columns are placed by CSS Grid, which reverses its
+    // column order under `dir="rtl"` the same way a flex row does — day 1
+    // renders in the rightmost column, not the leftmost. Left/Right have to
+    // track that same visual motion, or the physical Right key would land on
+    // yesterday instead of tomorrow once the grid is mirrored.
+    const rtl = document.documentElement.dir === 'rtl';
     const deltas: Record<string, () => Ymd> = {
-      ArrowLeft: () => addDays(activeDay, -1),
-      ArrowRight: () => addDays(activeDay, 1),
+      ArrowLeft: () => addDays(activeDay, rtl ? 1 : -1),
+      ArrowRight: () => addDays(activeDay, rtl ? -1 : 1),
       ArrowUp: () => addDays(activeDay, -WEEKDAY_COUNT),
       ArrowDown: () => addDays(activeDay, WEEKDAY_COUNT),
       Home: () => ({ ...activeDay, day: 1 }),
@@ -286,9 +292,9 @@ export function DatePicker({
           disabled={disabled || Boolean(fieldProps.disabled)}
           className={cn(
             CONTROL_BASE,
-            'flex items-center gap-2 text-left',
+            'flex items-center gap-2 text-start',
             controlClass(size),
-            clearable && selected && 'pr-9',
+            clearable && selected && 'pe-9',
           )}
           {...fieldProps}
           {...(id ? { id } : {})}
@@ -337,7 +343,7 @@ export function DatePicker({
                 onClick={() => setVisibleMonth((current) => addMonths(current, -1))}
                 className="flex h-7 w-7 items-center justify-center rounded-sm text-text-secondary hover:bg-surface-hover hover:text-text-primary"
               >
-                <ChevronLeft aria-hidden className="h-icon-sm w-icon-sm" />
+                <ChevronLeft aria-hidden className="h-icon-sm w-icon-sm rtl:-scale-x-100" />
               </button>
               <span className="text-sm font-medium text-text-primary" aria-live="polite">
                 {monthLabel}
@@ -348,7 +354,7 @@ export function DatePicker({
                 onClick={() => setVisibleMonth((current) => addMonths(current, 1))}
                 className="flex h-7 w-7 items-center justify-center rounded-sm text-text-secondary hover:bg-surface-hover hover:text-text-primary"
               >
-                <ChevronRight aria-hidden className="h-icon-sm w-icon-sm" />
+                <ChevronRight aria-hidden className="h-icon-sm w-icon-sm rtl:-scale-x-100" />
               </button>
             </div>
 

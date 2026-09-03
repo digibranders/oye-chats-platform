@@ -7,12 +7,15 @@
  * genuinely need a React lifecycle: reflecting the locale onto the document,
  * and warming the dictionary for a restored preference.
  *
- * RTL IS OUT OF SCOPE. Both launch languages are LTR, and the admin carries
- * ~216 physical direction-dependent Tailwind classes against 7 logical ones,
- * so flipping `dir` would mirror padding, borders and icon positions with no
- * automated way to verify the result. `dir` is therefore pinned to `ltr` and
- * `ADMIN_UI_LANGUAGES` must never gain an RTL locale until that conversion is
- * done as its own piece of work.
+ * RTL IS SUPPORTED. The admin converted its physical-direction Tailwind
+ * classes (`ml-`, `pr-`, `text-left`, `rounded-tl-`, ...) to logical ones
+ * (`ms-`, `pe-`, `text-start`, `rounded-ss-`, ...) so the layout mirrors
+ * correctly under `dir="rtl"`, with `scripts/rtl-physical-classes.mjs` and
+ * its vitest guard (`src/rtl.test.ts`) as the regression check: any new
+ * physical class has to become logical or carry a reviewed `rtl-ok:`
+ * exception. `dir` below is resolved per locale through
+ * `directionForLocale`, so `ADMIN_UI_LANGUAGES` gaining an RTL locale (`ar`)
+ * is exactly what turns it on — see `services/localeCatalog.ts`.
  */
 
 import { useEffect, type ReactNode } from 'react';

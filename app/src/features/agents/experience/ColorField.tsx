@@ -134,7 +134,7 @@ export function ColorField({
             </span>
             {suggestion ? (
               <Button variant="secondary" size="sm" onClick={() => onChange(suggestion)} disabled={disabled}>
-                {t('agents.use') || 'Use'} <span className="figure ml-1">{suggestion}</span>
+                {t('agents.use') || 'Use'} <span className="figure ms-1">{suggestion}</span>
               </Button>
             ) : null}
           </p>

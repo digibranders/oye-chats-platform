@@ -27,7 +27,12 @@ export interface TooltipProps {
    */
   children: ReactElement;
   content: ReactNode;
-  side?: 'top' | 'right' | 'bottom' | 'left';
+  /**
+   * `'inline-start'` / `'inline-end'` resolve against `dir`, same as Base
+   * UI's own `Side` type — prefer them over `'left'`/`'right'` for anything
+   * anchored to direction-aware chrome (the rail, a toolbar's edge).
+   */
+  side?: 'top' | 'right' | 'bottom' | 'left' | 'inline-start' | 'inline-end';
   align?: 'start' | 'center' | 'end';
   /**
    * Override the shared 400ms open delay.

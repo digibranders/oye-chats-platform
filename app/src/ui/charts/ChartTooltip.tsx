@@ -51,7 +51,7 @@ export function ChartTooltip({ label, rows, className }: ChartTooltipProps) {
               />
             )}
             <span className="min-w-0 truncate">{row.name}</span>
-            <span className="figure ml-auto font-medium text-text-primary">{row.value}</span>
+            <span className="figure ms-auto font-medium text-text-primary">{row.value}</span>
           </li>
         ))}
       </ul>

@@ -142,9 +142,16 @@ export function SplitPane({
 
   function onSeparatorKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
     const step = event.shiftKey ? 64 : 16;
+    // Arrow keys are physical (DOM UI Events never remaps them), but the pane
+    // they resize sits at the grid's inline-start track, which CSS Grid
+    // itself mirrors under `dir="rtl"`. Widening the list is "the key that
+    // points away from the separator toward the pane's outer edge" — Left in
+    // LTR, Right in RTL — so the mapping flips with direction to match what
+    // the user sees move, per the WAI-ARIA separator/slider pattern.
+    const rtl = document.documentElement.dir === 'rtl';
     let next: number;
-    if (event.key === 'ArrowLeft') next = width - step;
-    else if (event.key === 'ArrowRight') next = width + step;
+    if (event.key === 'ArrowLeft') next = rtl ? width + step : width - step;
+    else if (event.key === 'ArrowRight') next = rtl ? width - step : width + step;
     else if (event.key === 'Home') next = MIN_LIST;
     else if (event.key === 'End') next = MAX_LIST;
     else return;
@@ -167,9 +174,17 @@ export function SplitPane({
 
   function onSeparatorPointerMove(event: PointerEvent<HTMLDivElement>): void {
     if (!dragging) return;
-    const left = listRef.current?.getBoundingClientRect().left;
-    if (left === undefined) return;
-    commit(event.clientX - left);
+    const rect = listRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    // `getBoundingClientRect` is always physical, and the list pane occupies
+    // the grid's inline-start track — its physical left in LTR, its physical
+    // right in RTL (CSS Grid mirrors track order with `dir`). The pane's
+    // *outer* edge (away from the separator) sits fixed at the container's
+    // edge either way, so width is the pointer's distance from that fixed
+    // edge, not always "from the left".
+    const rtl = document.documentElement.dir === 'rtl';
+    const next = rtl ? rect.right - event.clientX : event.clientX - rect.left;
+    commit(next);
   }
 
   function onSeparatorPointerUp(event: PointerEvent<HTMLDivElement>): void {
@@ -197,7 +212,7 @@ export function SplitPane({
           ref={listRef}
           aria-label={listLabel}
           className={cn(
-            'relative flex min-h-0 min-w-0 flex-col border-border @3xl/page:flex @3xl/page:border-r',
+            'relative flex min-h-0 min-w-0 flex-col border-border @3xl/page:flex @3xl/page:border-e',
             selected && 'hidden',
           )}
         >
@@ -219,7 +234,14 @@ export function SplitPane({
               className={cn(
                 // A 1px hairline is not a 24px target, so the hit area straddles
                 // the border and the border stays where the eye expects it.
-                'absolute inset-y-0 right-0 hidden w-3 translate-x-1/2 cursor-col-resize',
+                // `translate-x-1/2` is a transform — never direction-aware — so it
+                // always shifts physically rightward; `rtl:-translate-x-1/2`
+                // reverses it under RTL to keep the handle centred on the
+                // (now logical) `end-0` boundary instead of drifting a full
+                // handle-width off it.
+                // rtl-ok: see the note above — translate-x-1/2 is paired
+                // with rtl:-translate-x-1/2 to stay centred on end-0.
+                'absolute inset-y-0 end-0 hidden w-3 translate-x-1/2 rtl:-translate-x-1/2 cursor-col-resize',
                 'touch-none select-none @3xl/page:block',
                 'focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent-500',
                 dragging && 'bg-accent-50',
@@ -241,8 +263,8 @@ export function SplitPane({
                 variant="ghost"
                 size="sm"
                 onClick={onBack}
-                iconLeft={<ArrowLeft aria-hidden />}
-                className="-ml-2"
+                iconLeft={<ArrowLeft aria-hidden className="rtl:rotate-180" />}
+                className="-ms-2"
               >
                 {backLabel}
               </Button>
@@ -254,7 +276,7 @@ export function SplitPane({
         {inspector ? (
           <section
             aria-label={inspectorLabel}
-            className="hidden min-h-0 min-w-0 flex-col border-l border-border @6xl/page:flex"
+            className="hidden min-h-0 min-w-0 flex-col border-s border-border @6xl/page:flex"
           >
             <div className="@container/page flex min-h-0 min-w-0 flex-1 flex-col">{inspector}</div>
           </section>

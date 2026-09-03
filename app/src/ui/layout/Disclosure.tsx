@@ -106,7 +106,7 @@ export function Disclosure({
       className={cn(
         // 36 (`row-compact`) rather than the old 34: a row of these is a list,
         // and a list's row height is a row token, not a control token.
-        'flex min-h-row-compact w-full items-center gap-2 py-1.5 text-left',
+        'flex min-h-row-compact w-full items-center gap-2 py-1.5 text-start',
         'text-base text-text-primary transition-colors duration-[var(--dur-fast)]',
         'hover:bg-surface-hover',
         bleed ? '-mx-cell px-cell' : 'rounded-md',
@@ -116,15 +116,15 @@ export function Disclosure({
         aria-hidden
         className={cn(
           'h-icon-md w-icon-md shrink-0 text-text-tertiary transition-transform duration-[var(--dur-fast)]',
-          'motion-reduce:transition-none',
+          'motion-reduce:transition-none rtl:-scale-x-100',
           open && 'rotate-90',
         )}
       />
       <span className="min-w-0 flex-1">{summary}</span>
-      {/* `ml-auto`, so a count sits at the row's right edge rather than
+      {/* `ms-auto`, so a count sits at the row's trailing edge rather than
           immediately after a short summary — which put the badge in a different
           place on every row of a list. */}
-      {trailing ? <span className="ml-auto shrink-0 self-center">{trailing}</span> : null}
+      {trailing ? <span className="ms-auto shrink-0 self-center">{trailing}</span> : null}
     </button>
   );
 
@@ -143,7 +143,7 @@ export function Disclosure({
           // 24, not the 28 that fell out of 4 + 16 + 8: 28 is not a step on
           // the scale the rest of the system indents on, so a panel never lined
           // up with the card content beside it.
-          className={cn('pb-1 pl-6 pt-1', panelClassName)}
+          className={cn('pb-1 ps-6 pt-1', panelClassName)}
         >
           {children}
         </div>

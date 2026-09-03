@@ -173,8 +173,10 @@ function BotRow({ draft, children }: { draft: ExperienceDraft; children: string 
   const linkColor = draft.primaryColor || DEFAULT_PRIMARY_COLOR;
   const components: Components = {
     p: ({ children: c }) => <p style={{ margin: '0 0 6px' }}>{c}</p>,
-    ul: ({ children: c }) => <ul style={{ margin: '0 0 6px', paddingLeft: 18 }}>{c}</ul>,
-    ol: ({ children: c }) => <ol style={{ margin: '0 0 6px', paddingLeft: 18 }}>{c}</ol>,
+    // rtl-ok: mimics the shipped widget's own markdown rendering (a separate,
+    // LTR-first product — see the file header), not the console's chrome.
+    ul: ({ children: c }) => <ul style={{ margin: '0 0 6px', paddingLeft: 18 }}>{c}</ul>, // rtl-ok: see above
+    ol: ({ children: c }) => <ol style={{ margin: '0 0 6px', paddingLeft: 18 }}>{c}</ol>, // rtl-ok: see above
     li: ({ children: c }) => <li style={{ margin: '2px 0' }}>{c}</li>,
     a: ({ href, children: c }) => (
       <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: linkColor, textDecoration: 'underline' }}>
@@ -372,6 +374,8 @@ export function WidgetMock({
           ) : (
             // Welcome. Left-aligned, pinned to the bottom of the messages area,
             // no avatar — the floating badge above carries identity. `WelcomeScreen`.
+            // rtl-ok: widget welcome-screen content, mimics the shipped widget's
+            // own LTR rendering, not the console's chrome.
             <div className="flex flex-1 flex-col items-start justify-end gap-0 text-left">
               <p style={{ fontSize: 24, fontWeight: 700, margin: 0, lineHeight: 1.25, color: WIDGET_TEXT }}>
                 {text(draft.welcomeGreeting, PLACEHOLDERS.welcomeGreeting)}
@@ -524,12 +528,14 @@ export function WidgetMock({
               {text(draft.launcherName, PLACEHOLDERS.launcherName)}
             </span>
             {/* The caret pointing down at the launcher. */}
+            {/* rtl-ok: positions the caret exactly as the shipped widget does;
+                this pane mimics the widget's own LTR chrome, not the console's. */}
             <span
               aria-hidden
               style={{
                 position: 'absolute',
                 bottom: -8,
-                right: 24,
+                right: 24, // rtl-ok: mimics the shipped widget's own LTR chrome, not the console's
                 width: 16,
                 height: 16,
                 backgroundColor: '#FFFFFF',

@@ -297,7 +297,7 @@ export function ApiKeysPage() {
           </Alert>
           {revealed ? <CopyField value={revealed} label="new API key" /> : null}
           <p className="text-xs leading-relaxed text-text-secondary">
-            <KeyRound aria-hidden className="mr-1 inline h-icon-sm w-icon-sm align-[-3px]" />
+            <KeyRound aria-hidden className="me-1 inline h-icon-sm w-icon-sm align-[-3px]" />
             Store it in your server's secret manager, not in source control.
           </p>
         </div>

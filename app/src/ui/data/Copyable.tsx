@@ -76,12 +76,17 @@ export function CopyField({
   return (
     <div
       className={cn(
-        'flex items-center gap-0.5 rounded-md border border-border-strong bg-surface-sunken pr-0.5',
-        compact ? 'h-control-sm pl-2' : 'h-control-md pl-2.5',
+        'flex items-center gap-0.5 rounded-md border border-border-strong bg-surface-sunken pe-0.5',
+        compact ? 'h-control-sm ps-2' : 'h-control-md ps-2.5',
         className,
       )}
     >
-      <code className="min-w-0 flex-1 truncate font-mono text-xs text-text-primary">{shown}</code>
+      {/* LTR island: every value this field ever holds — a key, a bot id, a
+          webhook URL — is a technical identifier, never prose, and reads
+          correctly only left to right regardless of the console's language. */}
+      <code dir="ltr" className="min-w-0 flex-1 truncate text-start font-mono text-xs text-text-primary">
+        {shown}
+      </code>
       {secret ? (
         <Button
           size={controlSize}
@@ -152,13 +157,13 @@ export function CodeBlock({ code, caption, label = 'code', onCopy, className }: 
 
   return (
     <div className={cn('overflow-hidden rounded-md border border-border', className)}>
-      {/* `pr-1.5`, not `pr-1`. The focus ring is 2px at a 2px offset, so a
+      {/* `pe-1.5`, not `pe-1`. The focus ring is 2px at a 2px offset, so a
           focused control needs 4px of clearance — and this bar sits inside an
           `overflow-hidden` box, which clips at the padding edge. At 4px the
           Copy button's ring fitted with nothing to spare, and it sits in the
           rounded top-right corner where the clip closes in sooner than the
           straight edge. 6px gives it room. */}
-      <div className="flex items-center justify-between gap-2 border-b border-border bg-surface-sunken py-1 pl-3 pr-1.5">
+      <div className="flex items-center justify-between gap-2 border-b border-border bg-surface-sunken py-1 ps-3 pe-1.5">
         <span className="min-w-0 truncate text-xs text-text-secondary">{caption}</span>
         <Button
           size="sm"
@@ -182,9 +187,13 @@ export function CodeBlock({ code, caption, label = 'code', onCopy, className }: 
       </div>
       {/* `tabIndex={0}` because a scrollable region must be reachable by
           keyboard, or its overflowing content is unreadable without a mouse. */}
+      {/* LTR island: `code` is always source — an install snippet, JSON, a
+          shell command — never prose, and reads correctly only left to right
+          regardless of the console's own language. */}
       <pre
+        dir="ltr"
         tabIndex={0}
-        className="overflow-x-auto bg-surface-sunken px-3 py-2.5 font-mono text-xs text-text-primary"
+        className="overflow-x-auto bg-surface-sunken px-3 py-2.5 text-start font-mono text-xs text-text-primary"
       >
         <code>{code}</code>
       </pre>

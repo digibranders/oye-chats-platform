@@ -68,11 +68,11 @@ export function ActivityChart({ section, days }: ActivityChartProps) {
         }) || `${formatNumber(total)} messages over ${points.length} days, ${rangeLabel(days).toLowerCase()}.`
       }
       dataTable={
-        <table className="w-full text-left text-xs">
+        <table className="w-full text-start text-xs">
           <caption className="sr-only">{t('agents.messagesPerDay') || 'Messages per day'}</caption>
           <thead>
             <tr className="text-text-tertiary">
-              <th scope="col" className="py-1 pr-4 font-medium">
+              <th scope="col" className="py-1 pe-4 font-medium">
                 {t('agents.day') || 'Day'}
               </th>
               <th scope="col" className="py-1 font-medium">
@@ -83,7 +83,7 @@ export function ActivityChart({ section, days }: ActivityChartProps) {
           <tbody>
             {points.map((point) => (
               <tr key={point.date} className="border-t border-border">
-                <td className="py-1 pr-4 text-text-secondary">{formatDate(toLocalDate(point.date))}</td>
+                <td className="py-1 pe-4 text-text-secondary">{formatDate(toLocalDate(point.date))}</td>
                 <td className="figure py-1 text-text-primary">{formatNumber(point.messages ?? 0)}</td>
               </tr>
             ))}

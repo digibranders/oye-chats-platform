@@ -45,7 +45,10 @@ export function Separator({
  */
 export function Kbd({ children, className }: { children: ReactNode; className?: string }) {
   return (
+    // LTR island: a key combo (⌘K, Ctrl+Shift+P) is notation, not prose, and
+    // its keys read left to right regardless of the console's language.
     <kbd
+      dir="ltr"
       className={cn(
         'inline-flex h-5 min-w-5 items-center justify-center rounded-xs border border-border',
         'bg-surface-sunken px-1 font-mono text-2xs font-medium text-text-secondary',
