@@ -1,5 +1,6 @@
 import { type CSSProperties, type ReactElement, useState } from 'react';
-import { Bot, Plus, X } from 'lucide-react';
+import Markdown, { type Components } from 'react-markdown';
+import { Bot, Menu, X } from 'lucide-react';
 import PremiumOrb from './PremiumOrb';
 import {
   DEFAULT_PRIMARY_COLOR,
@@ -39,16 +40,21 @@ import { useTranslation } from '../../../i18n/useTranslation';
  * It is drawn to the widget's real anatomy, not a simplified sketch of it,
  * because a preview that disagrees with what ships is worse than none:
  *
- * - The header carries the date and time, not the bot's name. Identity floats
- *   over the messages in a pill (`renderAgentBadge`), so the name and avatar
- *   read the same here as on the customer's site.
- * - A bot reply is an avatar and plain text, never a bubble. Only the visitor's
- *   own turns get a bubble, in their chosen colour (`MessageBubble`).
+ * - The header carries no title and no clock: the left is empty on first open
+ *   (the conversation-history icon appears only for a returning visitor), and
+ *   the right is the actions hamburger plus the close control (`renderHeader`
+ *   + the header cluster). Identity floats over the messages in a pill
+ *   (`renderAgentBadge`), so the name and avatar read the same here as on the
+ *   customer's site.
+ * - A bot reply is an avatar and rendered markdown, never a bubble — the same
+ *   ReactMarkdown the widget runs, so bold, lists and links read the same here
+ *   as on the customer's site. Only the visitor's own turns get a bubble, in
+ *   their chosen colour (`MessageBubble`).
  * - The composer is a bordered well with a bare send glyph, not a filled
- *   circle, and the footer is the three-column action bar the widget ships
- *   (`ChatInput`): the handoff control on the left, Privacy centred, and the
- *   OyeChats credit — in OyeChats' own violet, never the customer's colour — on
- *   the right.
+ *   circle. The live-chat, booking, transcript, language and leave-a-message
+ *   controls all moved into the header hamburger, so the footer is now just two
+ *   pieces of standing text (`ChatInput`): Privacy on the left and the OyeChats
+ *   credit centred — in OyeChats' own violet, never the customer's colour.
  * - The launcher is the 56px button a visitor actually sees, with the name in a
  *   tooltip above it (`Launcher`), not a pill beside it.
  *
@@ -105,15 +111,6 @@ function splitBranding(label: string): { lead: string; brand: string } {
   return { lead: cleaned.slice(0, lastSpace), brand: cleaned.slice(lastSpace + 1) };
 }
 
-/** Weekday, month and time, as `formatHeaderDateTime` renders it in the widget
- *  header ("Sat, Aug 22 · 4:30 PM"). */
-function headerDateTime(): string {
-  const now = new Date();
-  const date = now.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-  const time = now.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-  return `${date} · ${time}`;
-}
-
 function Avatar({ draft, size }: { draft: ExperienceDraft; size: number }): ReactElement {
   const primary = draft.primaryColor || DEFAULT_PRIMARY_COLOR;
   if (draft.avatarType === 'orb') {
@@ -166,27 +163,41 @@ function AgentBadge({ draft, agentName }: { draft: ExperienceDraft; agentName: s
   );
 }
 
-/** A finished bot reply: avatar plus plain text, no bubble. `MessageBubble`. */
+/** A finished bot reply: avatar plus rendered markdown, no bubble.
+ *  `MessageBubble` renders the same text through ReactMarkdown, so the mock does
+ *  too — otherwise the model's `**bold**`, lists and links show as raw syntax in
+ *  the preview while rendering cleanly on the customer's site. Block elements are
+ *  given tight, inline-styled spacing (react-markdown emits real `<p>`/`<ul>`
+ *  with browser-default margins that read as loose gaps in a chat bubble). */
 function BotRow({ draft, children }: { draft: ExperienceDraft; children: string }): ReactElement {
+  const linkColor = draft.primaryColor || DEFAULT_PRIMARY_COLOR;
+  const components: Components = {
+    p: ({ children: c }) => <p style={{ margin: '0 0 6px' }}>{c}</p>,
+    ul: ({ children: c }) => <ul style={{ margin: '0 0 6px', paddingLeft: 18 }}>{c}</ul>,
+    ol: ({ children: c }) => <ol style={{ margin: '0 0 6px', paddingLeft: 18 }}>{c}</ol>,
+    li: ({ children: c }) => <li style={{ margin: '2px 0' }}>{c}</li>,
+    a: ({ href, children: c }) => (
+      <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: linkColor, textDecoration: 'underline' }}>
+        {c}
+      </a>
+    ),
+    code: ({ children: c }) => (
+      <code style={{ backgroundColor: 'rgba(16,32,44,0.06)', borderRadius: 4, padding: '1px 4px', fontSize: 13 }}>
+        {c}
+      </code>
+    ),
+  };
   return (
     <div className="flex w-full items-start gap-2">
       <span className="mt-0.5 shrink-0">
         <Avatar draft={draft} size={20} />
       </span>
-      <p
-        className="min-w-0 flex-1"
-        style={{
-          margin: 0,
-          fontSize: 14,
-          lineHeight: 1.6,
-          fontWeight: 300,
-          color: WIDGET_TEXT,
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word',
-        }}
+      <div
+        className="min-w-0 flex-1 [&>*:last-child]:mb-0"
+        style={{ fontSize: 14, lineHeight: 1.6, fontWeight: 300, color: WIDGET_TEXT, wordBreak: 'break-word' }}
       >
-        {children}
-      </p>
+        <Markdown components={components}>{children}</Markdown>
+      </div>
     </div>
   );
 }
@@ -278,6 +289,12 @@ export function WidgetMock({
 
   const showBadge = state === 'welcome';
   const hasConversation = messages.length > 0;
+  // The header hamburger appears whenever it would have at least one entry. The
+  // mock knows two of the five gates for certain: live chat (`liveChatVisible`,
+  // already the plan+toggle result) and the transcript, which unlocks once
+  // there are messages. Booking, language and leave-a-message depend on config
+  // the mock isn't handed, so gating on these two is the faithful floor.
+  const showMenu = liveChatVisible || hasConversation;
 
   return (
     <div className="flex flex-col items-stretch gap-4" style={{ maxWidth: PANEL_MAX_WIDTH }}>
@@ -285,14 +302,14 @@ export function WidgetMock({
           of another product, and giving it a real heading would put a second
           document outline inside the page's own. */}
       <div style={panel} className="flex flex-col" role="group" aria-label={t('agents.chatWidgetPreview') || 'Chat widget preview'}>
-        {/* Header — date/time on the left, chrome controls on the right, no
-            hairline. `renderHeader` + the header control cluster. */}
+        {/* Header — empty left, chrome controls on the right, no hairline.
+            `renderHeader` + the header control cluster. The left carries the
+            conversation-history icon only for a returning visitor with past
+            threads, which a first-open preview never has, so it stays empty. */}
         <header className="flex shrink-0 items-center justify-between" style={{ padding: '8px 20px' }}>
-          <span style={{ fontSize: 11, fontWeight: 500, letterSpacing: '0.02em', color: WIDGET_TEXT_MUTED }}>
-            {headerDateTime()}
-          </span>
+          <span aria-hidden />
           <span className="flex items-center gap-1">
-            {hasConversation ? <Plus size={16} color={WIDGET_TEXT_MUTED} aria-hidden /> : null}
+            {showMenu ? <Menu size={18} color={WIDGET_TEXT_MUTED} aria-hidden /> : null}
             <X size={18} color={WIDGET_TEXT_MUTED} aria-hidden />
           </span>
         </header>
@@ -456,44 +473,33 @@ export function WidgetMock({
             </button>
           </div>
 
-          {/* Three-column action bar. Handoff on the left, Privacy centred, the
-              OyeChats credit on the right — the credit's brand word in OyeChats'
-              own violet, never the customer's colour. */}
+          {/* Two pieces of standing text on a three-column grid: Privacy on the
+              left and the OyeChats credit centred, with an empty right column as
+              the counterweight that keeps the credit centred whether or not the
+              branding renders. The handoff control that used to sit here moved
+              into the header hamburger. The credit's brand word is in OyeChats'
+              own violet, never the customer's colour. Privacy shows here in the
+              welcome state, the moment it exists for; the shipped widget hides
+              it once the first message is sent. */}
           <div className="mt-3.5 grid grid-cols-3 items-center gap-3 px-1">
-            <span className="justify-self-start">
-              {liveChatVisible ? (
-                <svg
-                  width={12}
-                  height={12}
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke={WIDGET_TEXT_MUTED}
-                  strokeWidth={2}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden
-                >
-                  <path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3" />
-                </svg>
-              ) : null}
-            </span>
             <span
-              className="justify-self-center"
+              className="justify-self-start"
               style={{ fontSize: 10, fontWeight: 600, color: WIDGET_FOOTER_TEXT }}
             >
               {t('agents.privacyPolicy') || 'Privacy Policy'}
             </span>
             {draft.showBranding ? (
               <span
-                className="justify-self-end truncate"
+                className="justify-self-center truncate"
                 style={{ fontSize: 10, fontWeight: 600, color: WIDGET_FOOTER_TEXT, whiteSpace: 'nowrap' }}
               >
                 {branding.lead ? `${branding.lead} ` : ''}
                 <span style={{ color: WIDGET_BRAND_CREDIT }}>{branding.brand}</span>
               </span>
             ) : (
-              <span className="justify-self-end" />
+              <span className="justify-self-center" />
             )}
+            <span className="justify-self-end" />
           </div>
         </div>
       </div>

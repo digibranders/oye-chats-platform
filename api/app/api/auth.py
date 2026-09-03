@@ -1400,6 +1400,14 @@ def get_bot_for_chat(
             # Owner-preview: origin check is bypassed (no _enforce_bot_origin) and
             # the reply is free.
             bot._is_preview = True
+            # The person testing is the account owner, not an anonymous visitor,
+            # so the widget's "may I know your name?" gate is noise in the
+            # dashboard preview. Carry the owner's first name through (read here,
+            # while the client is still attached) so the preview reply addresses
+            # them by it. First token of the account name; a blank name falls
+            # through to the normal unnamed flow.
+            _owner_first = (getattr(client, "name", "") or "").strip().split(" ")[0]
+            bot._preview_visitor_name = _owner_first or None
             return bot
 
     return get_current_bot(request, bot_key, api_key)
