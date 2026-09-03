@@ -83,13 +83,13 @@
       "gzip": true
     },
     {
-      "name": "Hindi dictionary (lazy, non-English only). Was raised to 88 KB when the console rebuild's surfaces were localized (3211 -> 3727 keys, most never wired to a live surface). Swept back down to 2264 live keys, ~51 KB gzipped; the limit leaves modest headroom for real translation growth.",
+      "name": "Hindi dictionary (lazy, non-English only). Was raised to 88 KB when the console rebuild's surfaces were localized (3211 -> 3727 keys, most never wired to a live surface). Swept back down to 2264 live keys, ~51 KB gzipped, then grew to 2289 with the settings/billing/affiliate i18n follow-up; the limit leaves modest headroom for real translation growth.",
       "path": "dist/assets/hi-*.js",
       "limit": "58 KB",
       "gzip": true
     },
     {
-      "name": "Arabic dictionary (lazy, non-English only). Same 2265 live keys as Hindi; measured at ~48.5 KB gzipped once fully translated (close to Hindi's 51.34 KB, not meaningfully smaller as first assumed before the real translation landed), with the same ~13% headroom Hindi's limit carries.",
+      "name": "Arabic dictionary (lazy, non-English only). Same 2289 live keys as Hindi; measured at ~49 KB gzipped once fully translated (close to Hindi's ~52 KB, not meaningfully smaller as first assumed before the real translation landed), with the same ~13% headroom Hindi's limit carries.",
       "path": "dist/assets/ar-*.js",
       "limit": "55 KB",
       "gzip": true
