@@ -87,16 +87,16 @@ test.describe('the privacy notice', () => {
     const branding = root.getByRole('link', { name: /OyeChats/ })
     const send = root.locator('button[type="submit"], button[aria-label*="Send" i]').first()
     const [brandBox, sendBox] = await Promise.all([branding.boundingBox(), send.boundingBox()])
-    const viewport = page.viewportSize()
     const brandCentre = brandBox.x + brandBox.width / 2
-    if (test.info().project.name === 'mobile') {
-      // Centred: within the middle third, and its right edge clear of Send's left edge.
-      expect(brandCentre).toBeGreaterThan(viewport.width / 3)
-      expect(brandCentre).toBeLessThan((viewport.width * 2) / 3)
-      expect(brandBox.x + brandBox.width).toBeLessThan(sendBox.x)
-    } else {
-      // Desktop keeps it at the right edge of the panel.
-      expect(brandBox.x + brandBox.width).toBeGreaterThan(sendBox.x)
-    }
+    // Centred on every viewport now, so the phone case is the general case:
+    // clear of Send's left edge, and inside the middle third of the composer.
+    // The composer is the send button's grid row, which on desktop is the
+    // 380px panel rather than the viewport, so measure against the panel.
+    const panel = root.locator('[data-oyechats-panel]')
+    const panelBox = await panel.boundingBox()
+    const third = panelBox.width / 3
+    expect(brandCentre).toBeGreaterThan(panelBox.x + third)
+    expect(brandCentre).toBeLessThan(panelBox.x + 2 * third)
+    expect(brandBox.x + brandBox.width).toBeLessThan(sendBox.x)
   })
 })
