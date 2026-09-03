@@ -1293,6 +1293,13 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         _plan_branding_removable = False
     effective_live_chat_enabled = bool(bot.live_chat_enabled) and plan_includes_live_chat
 
+    # Whether the pre-handoff quote card can fire for this bot at all. Resolved
+    # here, once per config load, so the widget does not have to discover it by
+    # polling GET /chat/quotation in front of every handoff form.
+    from app.api.quotation_routes import quotation_available
+
+    quotation_enabled = quotation_available(bot, plan_slug)
+
     # Free plan: the Widget Behavior section in Admin → Settings is fully
     # locked, so the stored feature_flags may be stale (e.g. left over from
     # a previous paid tier). Override with the Free-plan locked values so
@@ -1340,6 +1347,12 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         "recommended_colors": bot.recommended_colors or [],
         "user_bubble_color": bot.user_bubble_color or "#DBE9FF",
         "bant_enabled": bot.bant_enabled,
+        # False when no quote card can ever fire for this bot (catalog off or
+        # empty, or the plan excludes the flow). The widget skips the
+        # pre-handoff quotation poll outright in that case, which is what
+        # keeps "Talk to a human" instant on a phone. Older widget builds that
+        # do not read the key keep polling as before.
+        "quotation_enabled": quotation_enabled,
         "avatar_type": bot.avatar_type or "upload",
         "orb_color": bot.orb_color,
         "lead_form_enabled": bot.lead_form_enabled,
