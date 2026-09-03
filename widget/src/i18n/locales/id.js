@@ -389,6 +389,7 @@ export default {
             read_at: 'Dibaca · {time}',
         },
         commands: {
+            language_description: 'Baca obrolan ini dalam bahasa lain',
             new_description: 'Mulai percakapan baru',
             clear_description: 'Sembunyikan pesan di atas',
             human_description: 'Minta staf untuk obrolan langsung',

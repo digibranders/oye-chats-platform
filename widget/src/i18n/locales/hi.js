@@ -385,6 +385,7 @@ export default {
             read_at: 'पढ़ा गया · {time}',
         },
         commands: {
+            language_description: 'इस चैट को किसी दूसरी भाषा में पढ़ें',
             new_description: 'नई बातचीत शुरू करें',
             clear_description: 'ऊपर के संदेश छिपाएँ',
             human_description: 'लाइव एजेंट का अनुरोध करें',

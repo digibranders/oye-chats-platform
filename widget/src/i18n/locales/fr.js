@@ -389,6 +389,7 @@ export default {
             read_at: 'Lu · {time}',
         },
         commands: {
+            language_description: 'Lire cette conversation dans une autre langue',
             new_description: 'Démarrer une nouvelle conversation',
             clear_description: 'Masquer les messages ci-dessus',
             human_description: 'Demander un conseiller en direct',

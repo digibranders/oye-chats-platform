@@ -389,6 +389,7 @@ export default {
             read_at: 'Lida · {time}',
         },
         commands: {
+            language_description: 'Leia esta conversa em outro idioma',
             new_description: 'Começar uma nova conversa',
             clear_description: 'Ocultar as mensagens acima',
             human_description: 'Solicitar um atendente ao vivo',

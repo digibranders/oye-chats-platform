@@ -270,7 +270,11 @@ const MessageBubble = ({
                 </div>
                 <div className="min-w-0 flex-1">
                     <div className={`text-[14px] ${currentTheme.botText}`}>
-                        <div className="prose prose-sm max-w-none break-words font-light">
+                        {/* `dir="auto"`: a reply's language is the
+                            conversation's, not the interface's. A visitor
+                            reading an Arabic panel can still be shown an
+                            English answer, and vice versa. */}
+                        <div dir="auto" className="prose prose-sm max-w-none break-words font-light">
                             <ReactMarkdown
                                 components={{
                                     a: SafeLink,
@@ -353,7 +357,7 @@ const MessageBubble = ({
                     className={`max-w-[85%] px-4 py-3 text-[14px] ${currentTheme.userBubble}`}
                     style={{ backgroundColor: sanitizeColor(settings?.user_bubble_color, currentTheme.userBubbleDefaultBg || '#DBE9FF') }}
                 >
-                    <div className="prose prose-sm max-w-none break-words">
+                    <div dir="auto" className="prose prose-sm max-w-none break-words">
                         <ReactMarkdown
                             components={{
                                 a: SafeLink,

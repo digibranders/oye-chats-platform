@@ -389,6 +389,7 @@ export default {
             read_at: 'Đã xem · {time}',
         },
         commands: {
+            language_description: 'Đọc cuộc trò chuyện này bằng ngôn ngữ khác',
             new_description: 'Bắt đầu một cuộc trò chuyện mới',
             clear_description: 'Ẩn các tin nhắn phía trên',
             human_description: 'Yêu cầu nhân viên hỗ trợ trực tiếp',
