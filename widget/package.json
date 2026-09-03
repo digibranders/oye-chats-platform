@@ -37,13 +37,13 @@
     {
       "name": "Vendor chunk (React + axios + services incl. journey tracking)",
       "path": "dist/app/oyechats-vendor.*.js",
-      "limit": "67 KB",
+      "limit": "68 KB",
       "gzip": true
     },
     {
-      "name": "Chat chunk (lazy on first widget open; +1.2 KB from quotation orchestration, +0.5 KB from live-chat reconnect recovery)",
+      "name": "Chat chunk (lazy on first widget open; +1.2 KB quotation orchestration, +0.5 KB live-chat reconnect recovery, +1 KB conversation history menu)",
       "path": "dist/app/oyechats-ChatWindow.*.js",
-      "limit": "33 KB",
+      "limit": "35 KB",
       "gzip": true
     },
     {

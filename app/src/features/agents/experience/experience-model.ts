@@ -946,6 +946,25 @@ export function isSavable(errors: DraftErrors): boolean {
 }
 
 /**
+ * Which tabs hold an invalid field, in canonical tab order.
+ *
+ * The save bar's block reason and the per-tab error dot both read from this: a
+ * blocked save on a five-tab form is useless if it will not say *which* tab to
+ * open. Error keys are either a bare `DraftField` (`displayName`) or a field
+ * with an index/day suffix (`services:0`, `businessHours:mon`); the part before
+ * the colon is always a `FIELD_SECTION` key, so the prefix resolves the tab.
+ */
+export function sectionsWithErrors(errors: DraftErrors): SectionKey[] {
+  const field_section = FIELD_SECTION as Record<string, SectionKey | undefined>;
+  const hit = new Set<SectionKey>();
+  for (const key of Object.keys(errors)) {
+    const section = field_section[key.split(':', 1)[0]];
+    if (section) hit.add(section);
+  }
+  return SECTION_KEYS.filter((section) => hit.has(section));
+}
+
+/**
  * Name the tabs holding unsaved work — "Branding and Messages".
  *
  * The save bar says *what* is pending, not only *that* something is: this page

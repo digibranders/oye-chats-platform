@@ -1115,6 +1115,17 @@ def register(request: Request, body: RegisterRequest):
 
             session.refresh(new_client)
 
+            from app.config import APP_ENV, DEV_AUTO_VERIFY_EMAIL
+
+            # Auto-verify ONLY when the double-gated DEV_AUTO_VERIFY_EMAIL flag is
+            # on (explicit opt-in AND non-production). Production always leaves this
+            # False, so accounts still require a real OTP exactly as before. This must
+            # happen before the trial-grant check below: OAuth/dev-verified accounts
+            # never call /verify-email, so deferring the flag would leave them
+            # perpetually unverified and never fund a subscription.
+            new_client.is_verified = DEV_AUTO_VERIFY_EMAIL
+            session.commit()
+
             trial_payload: TrialStatePayload | None = None
             if new_client.is_verified:
                 trial_payload = grant_default_plan_and_welcome(session, new_client)
@@ -1155,12 +1166,12 @@ def register(request: Request, body: RegisterRequest):
                     )
                     session.rollback()
 
-            # Generate and persist the email OTP (15-minute window).
+            # Generate and persist the email OTP (15-minute window). Dead weight for an
+            # already-verified account (DEV_AUTO_VERIFY_EMAIL, set above), but harmless:
+            # /verify-email is simply never called for it.
             otp = str(secrets.randbelow(900000) + 100000)
             new_client.email_otp = otp
             new_client.email_otp_expires_at = datetime.now(UTC) + timedelta(minutes=15)
-            from app.config import APP_ENV
-
             session.commit()
 
             if DEV_AUTO_VERIFY_EMAIL:

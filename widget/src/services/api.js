@@ -380,6 +380,32 @@ export const submitLeadCapture = async (sessionId, formData) => {
     }
 };
 
+/**
+ * Seed a NEW session with a name the same visitor gave in an earlier
+ * conversation, so the bot greets them instead of asking again.
+ *
+ * `restored: true` tells the backend this is not a fresh submission: it writes
+ * the lead row (which is what suppresses the name question) but fires no
+ * `lead_captured` webhook and runs no email enrichment.
+ *
+ * Best-effort by design. It resolves to false on any failure rather than
+ * throwing, because the only cost of failing is that the bot asks for the name
+ * as it does today — never a broken chat.
+ */
+export const restoreVisitorName = async (sessionId, name) => {
+    if (!sessionId || !name) return false;
+    try {
+        const response = await fetch(`${API_URL}/chat/lead-capture`, {
+            method: 'POST',
+            headers: getHeaders(),
+            body: JSON.stringify({ session_id: sessionId, name, restored: true }),
+        });
+        return response.ok;
+    } catch {
+        return false;
+    }
+};
+
 export const submitMeetingBooked = async (sessionId, data = {}) => {
     try {
         const response = await fetch(`${API_URL}/chat/meeting-booked`, {

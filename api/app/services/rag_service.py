@@ -1346,6 +1346,19 @@ _CANNED_I18N: dict[str, dict[str, str]] = {
     },
 }
 
+# Warm by-name opener prepended to a CANNED reply when the visitor introduced
+# themselves on this same turn. Kept out of ``_CANNED_I18N`` because that table's
+# strings are formatted with ``{cn}`` only; these take ``{name}``.
+_NAME_ACK_PREFIX_I18N: dict[str, str] = {
+    "hi": "धन्यवाद, {name}!",
+}
+
+# Same idea for a visitor we already knew from an EARLIER conversation: the
+# opener is a welcome back, not a thank-you for an introduction just made.
+_NAME_WELCOME_BACK_I18N: dict[str, str] = {
+    "hi": "वापस आने के लिए स्वागत है, {name}!",
+}
+
 
 def _lang_base(language) -> str | None:
     """Base language code from a LanguageContext, or None when disabled."""
@@ -1374,6 +1387,43 @@ def _canned_localized(kind: str, company_name: str | None, language) -> str | No
         return None
     cn = f"**{company_name}**" if company_name else "हमारी टीम"
     return table[kind].format(cn=cn)
+
+
+def _name_ack_prefix(visitor_name: str | None, just_named: bool, language=None, returning: bool = False) -> str:
+    """A by-name opener for the LLM-BYPASSING replies. Empty string when there is
+    nothing to acknowledge.
+
+    Two shapes, because the two moments are different: ``just_named`` thanks a
+    visitor for an introduction they made THIS turn, while ``returning`` welcomes
+    back someone whose name we recovered from an earlier conversation and who is
+    seeing our first reply of a NEW session.
+
+    The generated path already gets this from the PERSONALIZATION block in
+    ``build_hybrid_prompt``, but the canned early-returns (no-info pivot,
+    off-topic refusal, browsing ack) never reach the LLM, so they shipped the
+    bare fallback with no acknowledgment.
+
+    That is not an edge case, it is the common one: a first-time visitor asks
+    something the knowledge base does not cover, the bot defers and asks for
+    their name, they give it, and the deferred question then resolves to a
+    canned pivot. The visitor introduces themselves and the bot appears to
+    ignore it, at the exact moment the introduction matters most.
+
+    Ends with a blank line so the acknowledgment stands on its own paragraph,
+    matching the shape the PERSONALIZATION block asks the model for.
+    """
+    if not visitor_name or not (just_named or returning):
+        return ""
+    safe = " ".join(str(visitor_name).split())[:40]
+    if not safe:
+        return ""
+    # A name given THIS turn wins: if both flags are set the introduction is the
+    # more immediate thing to acknowledge.
+    if just_named:
+        template = _NAME_ACK_PREFIX_I18N.get(_lang_base(language) or "") or "Thanks, {name}!"
+    else:
+        template = _NAME_WELCOME_BACK_I18N.get(_lang_base(language) or "") or "Welcome back, {name}!"
+    return f"{template.format(name=safe)}\n\n"
 
 
 def _language_directive(language) -> str:
@@ -3702,13 +3752,13 @@ def _name_request_message(language=None) -> str:
     return _canned_localized("name_request", None, language) or _NAME_REQUEST_MESSAGE
 
 
-def _should_ask_visitor_name(visitor_name: str | None, history: list) -> bool:
-    """True when the bot should append the name question THIS turn: only on its
-    first reply of the session, and only when the name isn't known yet. We append
-    it deterministically rather than instruct the LLM, because the prompt's own
-    "answer only what's asked / don't add follow-ups" rules reliably suppress it."""
-    if visitor_name:
-        return False
+def _is_first_bot_reply(history) -> bool:
+    """True when nobody on our side has spoken yet in this session, i.e. the
+    reply being composed now is the bot's FIRST of the conversation.
+
+    Used both to decide whether to ask for a name and to decide whether to
+    welcome a returning visitor back by name — each is a once-per-session
+    opener, and both hinge on this same question."""
     for message in history or []:
         role = getattr(message, "role", None)
         if role is None and isinstance(message, dict):
@@ -3716,6 +3766,16 @@ def _should_ask_visitor_name(visitor_name: str | None, history: list) -> bool:
         if role in ("bot", "assistant", "operator"):
             return False
     return True
+
+
+def _should_ask_visitor_name(visitor_name: str | None, history: list) -> bool:
+    """True when the bot should append the name question THIS turn: only on its
+    first reply of the session, and only when the name isn't known yet. We append
+    it deterministically rather than instruct the LLM, because the prompt's own
+    "answer only what's asked / don't add follow-ups" rules reliably suppress it."""
+    if visitor_name:
+        return False
+    return _is_first_bot_reply(history)
 
 
 def _maybe_append_name_ask(
@@ -3728,23 +3788,39 @@ def _maybe_append_name_ask(
     history: list | None = None,
     language=None,
 ) -> str:
-    """Append the name question to an EARLY-RETURN reply (the intent-router
-    greeting/ack handler and the QA cache), so those paths greet-and-ask too.
-    The main generation path appends inline; these short-circuit before it, so
-    without this a first message like "hi" (answered by the intent router) would
-    never get the question. First reply + unknown name only. Best-effort."""
+    """Give an EARLY-RETURN reply (the intent-router greeting/ack handler and the
+    QA cache) the same first-reply name treatment the generation path gets.
+
+    Two mutually exclusive cases, both keyed on this being the bot's first reply
+    of the session:
+
+    - name UNKNOWN  -> append the name question, so a first message like "hi"
+      (answered by the intent router) still gets asked.
+    - name KNOWN    -> prepend the welcome-back opener, so a returning visitor is
+      greeted by name even when their opening question happens to hit the QA
+      cache. Without this the greeting was silently skipped on a cache hit, which
+      is invisible in testing precisely because it only shows up the SECOND time
+      anyone asks a given question.
+
+    Best-effort: any failure returns the text unchanged."""
     try:
-        if resolve_visitor_name(session, session_id, bot_id, client_id, question, history or []):
-            return text
+        known = resolve_visitor_name(session, session_id, bot_id, client_id, question, history or [])
         hist = (
             history
             if history is not None
             else get_chat_history(session, session_id, client_id=client_id, limit=5, bot_id=bot_id)
         )
+        if known:
+            # `resolve_visitor_name` resolves a name STORED before this turn (the
+            # widget re-seeds it into each new session), so on a first reply this
+            # is by definition a returning visitor rather than one who just
+            # introduced themselves.
+            opener = _name_ack_prefix(known, False, language, returning=_is_first_bot_reply(hist))
+            return opener + text.lstrip() if opener and text else text
         if _should_ask_visitor_name(None, hist) and not _is_name_ask_message(text):
             return (text.rstrip() if text else "") + f"\n\n{_name_ask_text(language)}"
     except Exception:  # noqa: BLE001  Personalization is best-effort, never fatal
-        logger.warning("name-ask append failed for session %s", session_id, exc_info=True)
+        logger.warning("name treatment failed for session %s", session_id, exc_info=True)
     return text
 
 
@@ -4147,6 +4223,9 @@ def build_hybrid_prompt(
     quote_imminent: bool = False,
     visitor_name: str | None = None,
     visitor_just_named: bool = False,
+    # True when the name came from an EARLIER conversation and this is the bot's
+    # first reply of a NEW session, so the opener should welcome them back.
+    visitor_returning: bool = False,
     # Cloudflare CF-IPCountry for the visitor's request ("IN", "US", ...) or
     # None when unavailable. Drives the region-aware pricing directive below;
     # anything other than "IN" (including None) falls through to USD. See spec
@@ -5254,18 +5333,25 @@ MEDIA CARDS (inline cards. MANDATORY USAGE RULES):
     # Personalization: when we already know the visitor's name (resolved from the
     # lead and re-injected every turn), tell the bot to use it and never ask
     # again. Otherwise fall back to the "ask on the first reply" instructions.
-    if visitor_name and visitor_just_named:
-        # The visitor JUST told us their name this turn (right after we asked).
-        # Force a warm by-name opener on THIS reply so the introduction lands,
-        # instead of the light-touch guidance that lets the model skip it.
+    if visitor_name and (visitor_just_named or visitor_returning):
+        # The by-name opener for these two turns is NOT the model's job.
+        #
+        # Both branches used to carry a "you MUST open with ..." instruction, and
+        # the model ignored it often enough to matter: a returning visitor's first
+        # reply shipped with no greeting and no name at all. The opener is now
+        # prepended deterministically by the pipelines (``_name_ack_prefix``),
+        # exactly like the first-reply name ASK above it, so the only thing the
+        # prompt must do is stop the model from greeting a SECOND time.
         _safe_visitor_name = " ".join(str(visitor_name).split())[:40]
+        _context = (
+            "the visitor just introduced themselves" if visitor_just_named else "a returning visitor you already know"
+        )
         personalization_section = (
-            "PERSONALIZATION (the visitor just introduced themselves):\n"
-            f"- The visitor just told you their name is {_safe_visitor_name}. You MUST open THIS reply with a "
-            f'short, warm acknowledgment BY NAME on its OWN line (e.g. "Thanks, {_safe_visitor_name}!" or '
-            f'"Great to meet you, {_safe_visitor_name}!"), THEN a blank line, THEN answer their question in a new '
-            "paragraph below. Do NOT run the acknowledgment and the answer together on the same line or in the "
-            "same sentence, the greeting stands alone, the answer starts on the next line.\n"
+            f"PERSONALIZATION ({_context}):\n"
+            f"- The visitor's name is {_safe_visitor_name}. A short greeting addressing them by name is ALREADY "
+            "being placed above your reply, so do NOT open with one yourself. Start directly with the answer to "
+            "their question, or it will read as two greetings stacked on top of each other.\n"
+            "- Do NOT claim to remember specific details of past conversations, only that you recognise them.\n"
             "- Keep using their name naturally after this, but a light touch. Do NOT repeat it every line.\n"
             '- NEVER ask for their name again and never ask "What name should I use to address you?".'
         )
@@ -6630,6 +6716,12 @@ def rag_pipeline(
             _last_probed_for_cta = getattr(chat_session, "last_probed_dimension", None)
             _trusted_cta = cta_dimension if (cta_dimension and cta_dimension == _last_probed_for_cta) else None
             history = get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
+            # A visitor whose name we already had when this session opened (the
+            # widget re-seeds it from the previous conversation) gets welcomed
+            # back by name on our FIRST reply. Excludes someone who introduced
+            # themselves this very turn — that is the ``_just_named`` case, which
+            # gets a thank-you instead of a welcome-back.
+            _returning_by_name = bool(_flow_name) and not _just_named and _is_first_bot_reply(history)
             # ``question`` may have been rebound above to the visitor's DEFERRED
             # original question (they declined the name ask, or changed topic).
             # Never extract a name from that deferred text: a short topic query
@@ -6810,9 +6902,10 @@ def rag_pipeline(
                     # no human channel: it may hardcode a "connect with the team"
                     # offer the Free-plan bot can't honor. Fall to the gated
                     # default pivot, which drops the offer when support is off.
-                    _pivot = (
-                        _canned_localized("no_info_pivot", _company_name, language) if _plan_support_allowed else None
-                    ) or _no_info_pivot(_company_name, support_enabled=_plan_support_allowed)
+                    _pivot = _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + (
+                        (_canned_localized("no_info_pivot", _company_name, language) if _plan_support_allowed else None)
+                        or _no_info_pivot(_company_name, support_enabled=_plan_support_allowed)
+                    )
                     _bot_msg = add_chat_message(
                         session,
                         session_id,
@@ -6839,10 +6932,11 @@ def rag_pipeline(
                     bot_id=bid,
                 )
                 _recent_bot = [m.content for m in history if m.role == "bot"][-3:]
-                _refusal_text = _canned_localized(
-                    "off_topic_refusal", _company_name, language
-                ) or _refusal_or_browsing_ack(
-                    question, _company_name, _recent_bot, support_enabled=_plan_support_allowed
+                _refusal_text = _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + (
+                    _canned_localized("off_topic_refusal", _company_name, language)
+                    or _refusal_or_browsing_ack(
+                        question, _company_name, _recent_bot, support_enabled=_plan_support_allowed
+                    )
                 )
                 # Persist like the on-scope pivot branch above. See the streaming
                 # twin for why an unpersisted refusal is a defect (missing
@@ -6889,9 +6983,10 @@ def rag_pipeline(
                     # no human channel: it may hardcode a "connect with the team"
                     # offer the Free-plan bot can't honor. Fall to the gated
                     # default pivot, which drops the offer when support is off.
-                    _pivot = (
-                        _canned_localized("no_info_pivot", _company_name, language) if _plan_support_allowed else None
-                    ) or _no_info_pivot(_company_name, support_enabled=_plan_support_allowed)
+                    _pivot = _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + (
+                        (_canned_localized("no_info_pivot", _company_name, language) if _plan_support_allowed else None)
+                        or _no_info_pivot(_company_name, support_enabled=_plan_support_allowed)
+                    )
                     _bot_msg = add_chat_message(
                         session,
                         session_id,
@@ -6916,10 +7011,11 @@ def rag_pipeline(
                     bot_id=bid,
                 )
                 _recent_bot = [m.content for m in history if m.role == "bot"][-3:]
-                _refusal_text = _canned_localized(
-                    "off_topic_refusal", _company_name, language
-                ) or _refusal_or_browsing_ack(
-                    question, _company_name, _recent_bot, support_enabled=_plan_support_allowed
+                _refusal_text = _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + (
+                    _canned_localized("off_topic_refusal", _company_name, language)
+                    or _refusal_or_browsing_ack(
+                        question, _company_name, _recent_bot, support_enabled=_plan_support_allowed
+                    )
                 )
                 # Persist like the on-scope pivot branch above. See the streaming
                 # twin for why an unpersisted refusal is a defect (missing
@@ -7052,6 +7148,7 @@ def rag_pipeline(
                 quote_imminent=_quote_hold,
                 visitor_name=visitor_name,
                 visitor_just_named=_just_named,
+                visitor_returning=_returning_by_name,
                 visitor_country=visitor_country,
                 language=language,
             )
@@ -7257,6 +7354,15 @@ def rag_pipeline(
             # known yet so it reliably shows and is persisted.
             if _should_ask_visitor_name(visitor_name, history) and not _is_name_ask_message(answer):
                 answer = answer.rstrip() + f"\n\n{_name_ask_text(language)}"
+
+            # Deterministic by-name opener, same rationale as the ask above: the
+            # visitor either just introduced themselves or is returning from an
+            # earlier conversation, and leaving the greeting to the prompt was not
+            # reliable. The prompt now tells the model NOT to greet, so this is the
+            # only one. The canned early-returns prepend it themselves.
+            _opener = _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name)
+            if _opener:
+                answer = _opener + answer.lstrip()
 
             # Deterministic qualification follow-up on media-card turns. The media
             # template pressures the model into a bare "one sentence + card" reply,
@@ -7874,6 +7980,8 @@ async def rag_pipeline_stream(
                 SimpleNamespace(role=m.role, content=m.content)
                 for m in get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
             ]
+            # Streaming twin of the non-streaming welcome-back flag. See there.
+            _returning_by_name = bool(_flow_name) and not _just_named and _is_first_bot_reply(history)
             # ``question`` may have been rebound above to the visitor's DEFERRED
             # original question (they declined the name ask, or changed topic).
             # Never extract a name from that deferred text: a short topic query
@@ -8111,9 +8219,10 @@ async def rag_pipeline_stream(
                     # no human channel: it may hardcode a "connect with the team"
                     # offer the Free-plan bot can't honor. Fall to the gated
                     # default pivot, which drops the offer when support is off.
-                    _pivot = (
-                        _canned_localized("no_info_pivot", _company_name, language) if _plan_support_allowed else None
-                    ) or _no_info_pivot(_company_name, support_enabled=_plan_support_allowed)
+                    _pivot = _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + (
+                        (_canned_localized("no_info_pivot", _company_name, language) if _plan_support_allowed else None)
+                        or _no_info_pivot(_company_name, support_enabled=_plan_support_allowed)
+                    )
                     yield _stream_metadata(session_id, [], language)
                     yield _pivot
                     _bot_msg = add_chat_message(
@@ -8141,10 +8250,11 @@ async def rag_pipeline_stream(
                     bot_id=bid,
                 )
                 _recent_bot = [m.content for m in history if m.role == "bot"][-3:]
-                _refusal_text = _canned_localized(
-                    "off_topic_refusal", _company_name, language
-                ) or _refusal_or_browsing_ack(
-                    question, _company_name, _recent_bot, support_enabled=_plan_support_allowed
+                _refusal_text = _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + (
+                    _canned_localized("off_topic_refusal", _company_name, language)
+                    or _refusal_or_browsing_ack(
+                        question, _company_name, _recent_bot, support_enabled=_plan_support_allowed
+                    )
                 )
                 yield _stream_metadata(session_id, [], language)
                 yield _refusal_text
@@ -8187,9 +8297,10 @@ async def rag_pipeline_stream(
                     # no human channel: it may hardcode a "connect with the team"
                     # offer the Free-plan bot can't honor. Fall to the gated
                     # default pivot, which drops the offer when support is off.
-                    _pivot = (
-                        _canned_localized("no_info_pivot", _company_name, language) if _plan_support_allowed else None
-                    ) or _no_info_pivot(_company_name, support_enabled=_plan_support_allowed)
+                    _pivot = _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + (
+                        (_canned_localized("no_info_pivot", _company_name, language) if _plan_support_allowed else None)
+                        or _no_info_pivot(_company_name, support_enabled=_plan_support_allowed)
+                    )
                     yield _stream_metadata(session_id, [], language)
                     yield _pivot
                     _bot_msg = add_chat_message(
@@ -8216,10 +8327,11 @@ async def rag_pipeline_stream(
                     bot_id=bid,
                 )
                 _recent_bot = [m.content for m in history if m.role == "bot"][-3:]
-                _refusal_text = _canned_localized(
-                    "off_topic_refusal", _company_name, language
-                ) or _refusal_or_browsing_ack(
-                    question, _company_name, _recent_bot, support_enabled=_plan_support_allowed
+                _refusal_text = _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + (
+                    _canned_localized("off_topic_refusal", _company_name, language)
+                    or _refusal_or_browsing_ack(
+                        question, _company_name, _recent_bot, support_enabled=_plan_support_allowed
+                    )
                 )
                 yield _stream_metadata(session_id, [], language)
                 yield _refusal_text
@@ -8342,6 +8454,7 @@ async def rag_pipeline_stream(
                 quote_imminent=_quote_hold,
                 visitor_name=visitor_name,
                 visitor_just_named=_just_named,
+                visitor_returning=_returning_by_name,
                 visitor_country=visitor_country,
                 language=language,
             )
@@ -8389,6 +8502,19 @@ async def rag_pipeline_stream(
                 session.commit()
             except Exception:  # noqa: BLE001  Best-effort connection release
                 session.rollback()
+            # Deterministic by-name opener, emitted BEFORE the model's first token
+            # so it leads the bubble and lands in the persisted message. The
+            # prompt tells the model not to greet (see build_hybrid_prompt), so
+            # this is the only greeting. Leaving it to the prompt was not
+            # reliable: a returning visitor's first reply shipped with no greeting
+            # and no name at all. Not emitted on the buffered qualified-popup turn
+            # below, which yields the whole answer at once after the loop.
+            _opener = _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name)
+            if _opener:
+                full_answer += _opener
+                if not _show_qualified_popup:
+                    yield _opener
+
             try:
                 async for chunk in generate_response_stream(
                     prompt,
@@ -8453,7 +8579,12 @@ async def rag_pipeline_stream(
                 if chunk_count == 0:
                     logger.warning(f"LLM returned zero chunks for session {session_id}")
                     yield "I'm sorry, I couldn't generate a response. Please try again or ask something else."
-                    full_answer = "I'm sorry, I couldn't generate a response. Please try again or ask something else."
+                    # Keep the opener we already emitted: this assignment REPLACES
+                    # full_answer, so without it the visitor sees a greeting the
+                    # persisted transcript does not have.
+                    full_answer = (
+                        _opener + "I'm sorry, I couldn't generate a response. Please try again or ask something else."
+                    )
             except (GeneratorExit, asyncio.CancelledError):
                 # The visitor closed the tab (or the SSE connection dropped) while
                 # the model was still streaming. Starlette cancels the streaming

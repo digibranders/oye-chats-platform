@@ -16,6 +16,7 @@ import {
   isSectionKey,
   SECTION_KEYS,
   sectionLabel,
+  sectionsWithErrors,
   summarizeSections,
   type SectionKey,
 } from './experience-model';
@@ -56,18 +57,34 @@ const TAB_PARAM = 'tab';
  * column and the user may be four tabs away from the change they made. The dot
  * carries the same fact where the choice is: it is `warning` toned and, because
  * colour is never the only signal, its accessible name says "unsaved changes". */
-function tabItems(dirtySections: readonly SectionKey[], leadsLocked: boolean): TabItem[] {
+function tabItems(
+  dirtySections: readonly SectionKey[],
+  errorSections: readonly SectionKey[],
+  leadsLocked: boolean,
+): TabItem[] {
   return SECTION_KEYS.map((key) => ({
     value: key,
     label: sectionLabel(key),
-    // A lock on the Leads tab when the plan (Free/Starter) does not include
-    // enrichment, so it reads as gated before the tab is even opened. The
-    // unsaved-changes dot cannot also apply: a locked tab has nothing to save.
+    // Badge priority is lock → error → unsaved. A lock on the Leads tab when the
+    // plan (Free/Starter) does not include enrichment, so it reads as gated
+    // before the tab is even opened; a locked tab has nothing to save, so the
+    // lock supersedes both dots. An invalid field is what blocks the save, so a
+    // red error dot outranks the amber unsaved one — otherwise the save bar says
+    // "fix the highlighted fields" while the tab holding them shows only
+    // "unsaved", and the two never point at the same place.
     badge:
       key === 'leads' && leadsLocked ? (
         <Lock
           aria-label={translateNow('agents.availableOnStandardAndUp') || 'Available on Standard and up'}
           className="h-3 w-3 text-text-tertiary"
+        />
+      ) : errorSections.includes(key) ? (
+        <StatusDot
+          tone="danger"
+          label={
+            translateNow('agents.sectionHasFieldToFix', { section: sectionLabel(key) }) ||
+            `${sectionLabel(key)} has a field to fix`
+          }
         />
       ) : dirtySections.includes(key) ? (
         <StatusDot
@@ -188,11 +205,12 @@ export function ExperiencePage(): ReactElement {
   }
 
   const { draft, baseline, meta, errors, readOnly } = experience;
-  const blocked = Object.keys(errors).length > 0;
+  const errorSections = sectionsWithErrors(errors);
+  const blocked = errorSections.length > 0;
   // Standard and up (== the email-verification gate). Free and Starter see the
   // Leads tab locked with an upgrade nudge rather than disabled toggles.
   const leadsUnlocked = planIncludesEmailVerification(planSlug);
-  const tabs = tabItems(experience.dirtySections, !leadsUnlocked);
+  const tabs = tabItems(experience.dirtySections, errorSections, !leadsUnlocked);
 
   return (
     <Page width="wide">
@@ -341,7 +359,12 @@ export function ExperiencePage(): ReactElement {
           saving={experience.saving}
           saved={experience.savedAt !== null}
           saveError={experience.saveError}
-          blockedReason={blocked ? t('agents.fixTheHighlightedFieldsTo') || 'Fix the highlighted fields to save.' : null}
+          blockedReason={
+            blocked
+              ? t('agents.fixTheHighlightedFieldsIn', { sections: summarizeSections(errorSections) }) ||
+                `Fix the highlighted fields in ${summarizeSections(errorSections)} to save.`
+              : null
+          }
           summary={summarizeSections(experience.dirtySections)}
           onSave={() => void experience.save()}
           onDiscard={discard}

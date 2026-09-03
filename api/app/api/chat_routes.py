@@ -462,6 +462,14 @@ class LeadCaptureRequest(PydanticBaseModel):
     email: EmailAddress | None = None
     phone: Phone | None = None
     company: Name | None = None
+    # True when the widget is re-seeding a NEW session with contact details the
+    # same visitor already gave in an EARLIER conversation (see the widget's
+    # visitor-name memory). Nothing new was submitted, so this must not fire the
+    # ``lead_captured`` webhook or re-run email enrichment: the customer's
+    # integrations would otherwise receive a duplicate lead event every time a
+    # returning visitor starts another chat. The lead row is still written, which
+    # is what lets ``resolve_visitor_name`` skip re-asking for the name.
+    restored: bool = False
 
 
 class ValidateEmailRequest(PydanticBaseModel):
@@ -1949,7 +1957,15 @@ def lead_capture_endpoint(body: LeadCaptureRequest, request: Request, bot: Bot =
             # copy that Standard / Professional clients see in the Leads UI.
             utm_snapshot: dict | None = None
             journey_snapshot: list | None = None
-            if getattr(bot, "id", None) is not None and is_lead_source_attribution_enabled_for_bot(bot.id, session):
+            # A restored lead is written against a session created moments ago,
+            # before any page-view or UTM signal has been recorded, so both
+            # snapshots would be empty. Skip the entitlement lookup entirely
+            # rather than pay a plan query per new conversation.
+            if (
+                not body.restored
+                and getattr(bot, "id", None) is not None
+                and is_lead_source_attribution_enabled_for_bot(bot.id, session)
+            ):
                 utm_snapshot = chat_session.utm_params or None
                 journey_snapshot = chat_session.visitor_journey or None
 
@@ -1965,6 +1981,15 @@ def lead_capture_endpoint(body: LeadCaptureRequest, request: Request, bot: Bot =
                 visitor_journey=journey_snapshot,
             )
             session.commit()
+
+            # Re-seeding a known visitor's details into a fresh session is not a
+            # new lead: no webhook, no enrichment. Both are keyed to the visitor
+            # ACTUALLY submitting something, and the enrichment work was already
+            # done when they first did.
+            if body.restored:
+                logger.info(f"Lead restored | bot={bot.id} session={body.session_id}")
+                return {"success": True, "session_id": body.session_id, "restored": True}
+
             logger.info(f"Lead captured | bot={bot.id} session={body.session_id} email={_redact_email(body.email)}")
 
             # Fire background enrichment
