@@ -157,11 +157,27 @@ export function AppShell() {
                   to prevent. `w-rail` rather than a fixed Tailwind width like
                   `w-64`: every inset inside `Rail` is tuned against the same
                   `--spacing-rail` token, so a fixed pixel class here would
-                  drift out of sync the next time that token changes. */}
-              <BaseDialog.Popup className="motion-slide-start fixed inset-y-0 start-0 z-[var(--z-overlay)] w-rail focus:outline-none">
+                  drift out of sync the next time that token changes.
+
+                  `h-svh` from the top, not `inset-y-0`. The rail pins its
+                  footer (Billing, Settings, the account menu) to its own
+                  bottom edge, so the drawer must end where the visitor can
+                  see: a `bottom: 0` box on a phone browser with a bottom
+                  toolbar, or drawn edge-to-edge under the system bar, ran
+                  past the visible area and took the footer with it. The
+                  small viewport is the height with every piece of browser
+                  chrome showing, which on a page that never scrolls is the
+                  only state there is. `index.html` opts into
+                  `viewport-fit=cover`, so the bottom inset keeps the account
+                  row clear of the home indicator or system bar; it is 0 on
+                  every other device, and the popup carries the rail's own
+                  colour so that strip reads as the drawer rather than the
+                  scrim. */}
+              <BaseDialog.Popup className="motion-slide-start fixed start-0 top-0 z-[var(--z-overlay)] h-svh w-rail bg-rail pb-[env(safe-area-inset-bottom)] focus:outline-none">
                 <BaseDialog.Title className="sr-only">{t('shell.navigation') || 'Navigation'}</BaseDialog.Title>
                 <Rail
                   collapsed={false}
+                  inDrawer
                   onNavigate={() => setDrawerOpen(false)}
                   onClose={() => setDrawerOpen(false)}
                   inboxCount={waiting}

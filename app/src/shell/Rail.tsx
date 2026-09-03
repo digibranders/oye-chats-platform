@@ -125,11 +125,23 @@ export interface RailProps {
   onToggle?: () => void;
   /** Mobile only: dismiss the drawer without navigating. */
   onClose?: () => void;
+  /**
+   * Mobile only: the rail is the drawer, so anything it opens (the account
+   * menu) has to stay inside it rather than beside it.
+   */
+  inDrawer?: boolean;
   /** Waiting conversations, shown on the Inbox row. */
   inboxCount?: number;
 }
 
-export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 }: RailProps) {
+export function Rail({
+  collapsed,
+  onNavigate,
+  onToggle,
+  onClose,
+  inDrawer = false,
+  inboxCount = 0,
+}: RailProps) {
   // Re-render on a language switch. Every label below is resolved at call
   // time through `navLabel`, so without this subscription the rail would keep
   // whatever language it mounted in while the rest of the chrome moved.
@@ -215,7 +227,7 @@ export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 
         ))}
       </ul>
       <div className={cn(collapsed && 'flex justify-center')}>
-        <AccountMenu collapsed={collapsed} />
+        <AccountMenu collapsed={collapsed} inDrawer={inDrawer} />
       </div>
     </div>
   );

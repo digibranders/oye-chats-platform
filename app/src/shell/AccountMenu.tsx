@@ -29,11 +29,25 @@ import { useTranslation } from '../i18n/useTranslation';
  * and its panel sat flush against the rail's edge with its shadow bleeding onto
  * the canvas.
  *
+ * In the phone drawer it opens **upward, inside the drawer**, and no wider than
+ * the trigger. To the right of a 224px drawer a 256px panel needs 486px, and a
+ * phone has about 400: the panel was cut off at the screen edge, its lower
+ * items under the bottom of the viewport, and the one row a customer must be
+ * able to reach ("Account settings", "Sign out") was the one they could not.
+ * Above the trigger there is always the height of the drawer to open into.
+ *
  * The trigger is a `--spacing-row` identity row, the one deliberate exception to
  * the rail's 36px item height — but it shares the item's 10px inset, so the
  * avatar's left edge lands on the icon column rather than two pixels inside it.
  */
-export function AccountMenu({ collapsed }: { collapsed: boolean }) {
+export function AccountMenu({
+  collapsed,
+  inDrawer = false,
+}: {
+  collapsed: boolean;
+  /** Rendered in the phone drawer, where the menu must stay inside it. */
+  inDrawer?: boolean;
+}) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { currentWorkspaceName, effectiveRole } = useWorkspace();
@@ -76,7 +90,13 @@ export function AccountMenu({ collapsed }: { collapsed: boolean }) {
         ) : null}
       </MenuTrigger>
 
-      <MenuContent side="inline-end" align="end" className="w-64">
+      <MenuContent
+        side={inDrawer ? 'top' : 'inline-end'}
+        align={inDrawer ? 'start' : 'end'}
+        // Drawer: the trigger's own width, so the panel cannot leave the
+        // drawer. The rail is `--spacing-rail` wide with an 8px inset each side.
+        className={inDrawer ? 'w-[calc(var(--spacing-rail)-1rem)]' : 'w-64'}
+      >
         {seat ? <p className="px-2 pb-1 pt-1.5 text-2xs text-text-tertiary">{seat}</p> : null}
         <MenuItem icon={<User aria-hidden />} onSelect={() => navigate('/account')}>
           {t('shell.accountSettings') || 'Account settings'}
