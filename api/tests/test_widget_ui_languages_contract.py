@@ -98,11 +98,31 @@ def test_every_ui_translated_locale_resolves_to_a_listed_language() -> None:
 def test_locales_without_a_dictionary_are_flagged_false() -> None:
     # The catalogue still lists them: the AI converses in them, and a bot that
     # already has one configured must keep rendering its name in the admin.
-    # ur-PK ships no dictionary at all; es-ES, ru-RU and ar-SA now ship one but
-    # are awaiting native review, so both routes to False are covered here.
-    for tag in ("es-ES", "ru-RU", "ar-SA", "ur-PK"):
+    #
+    # This list shrank when the widget was translated into the 17 languages the
+    # AI already answered in. es-ES, ru-RU and ar-SA ship dictionaries now and
+    # are offered. What remains is the set the widget genuinely cannot render:
+    # Hebrew, Persian and Urdu, which are also the three the AI itself does not
+    # list in SUPPORTED_LANGUAGE_CODES.
+    for tag in ("he-IL", "fa-IR", "ur-PK"):
         assert tag in KNOWN_LOCALES, f"{tag} should stay in the catalogue"
         assert KNOWN_LOCALES[tag].ui_translated is False
+
+
+def test_every_language_the_ai_answers_in_has_a_widget_dictionary() -> None:
+    """The gap this whole exercise closed, held shut.
+
+    The picker offers what the WIDGET can render, and the AI's own set is the
+    ceiling on what is worth rendering. They were 19 and 2; a language drifting
+    back out of the widget set would silently narrow the picker again.
+    """
+    from app.services.language_service import SUPPORTED_LANGUAGE_CODES
+
+    missing = SUPPORTED_LANGUAGE_CODES - WIDGET_UI_LANGUAGES
+    assert not missing, (
+        f"the AI answers in {sorted(missing)} but the widget has no UI dictionary, "
+        "so the language picker cannot offer them"
+    )
 
 
 def test_a_pending_language_is_never_offered_in_the_catalogue() -> None:
