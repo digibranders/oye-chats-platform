@@ -1,5 +1,9 @@
 
-# Local .env backups (may contain secrets)
-.env.bak*
+# Every local .env variant (may contain secrets): backups, test-run copies,
+# per-machine overrides. Two different backup names slipped past narrower
+# globs in one day (.env.bk past .env.bak*, then .env.citest past .env.b*),
+# so the rule is now the whole family, with the committed example carved out.
+.env.*
+!.env.example
 .ngrok.log
 .cloudflared.log

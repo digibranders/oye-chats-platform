@@ -85,6 +85,19 @@ export function useCrawlDiscovery({
   const edited = useRef(false);
   const [useJs, setUseJs] = useState(false);
   const [discovery, setDiscovery] = useState<CrawlDiscovery | null>(null);
+  /**
+   * The last check failed to count the site at all.
+   *
+   * Kept apart from `discovery` on purpose. The failure path used to store a
+   * synthetic `{ total_found: 0 }`, and everything downstream read it as a
+   * real answer: `crawlBudgetOf` filled the missing fields with `balance ?? 0`
+   * and `cost_per_page ?? 1`, so the cost well told a customer with 8,500
+   * credits that their balance was 0 at 1 credit a page, and the footer
+   * offered a disabled "Train on 0 pages". None of those numbers had been
+   * read from anywhere. With no result stored there is no budget to render,
+   * and the footer can offer the honest action instead.
+   */
+  const [discoveryFailed, setDiscoveryFailed] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -111,6 +124,7 @@ export function useCrawlDiscovery({
     if (!crawlIsOurs || crawlStatus !== 'done') return;
     setUrl('');
     setDiscovery(null);
+    setDiscoveryFailed(false);
     setSelected([]);
     setError(null);
     onChanged();
@@ -163,6 +177,7 @@ export function useCrawlDiscovery({
     setDiscovering(true);
     setError(null);
     setDiscovery(null);
+    setDiscoveryFailed(false);
     setSelected([]);
     try {
       const result = await discoverCrawlUrls(normalizeSiteUrl(trimmed), agentId);
@@ -171,8 +186,9 @@ export function useCrawlDiscovery({
     } catch (cause) {
       // Discovery is best-effort: a site with no sitemap is still crawlable by
       // following links, so a failure explains itself and leaves the path open
-      // rather than blocking the only way to train a chatbot.
-      setDiscovery({ total_found: 0, capped: false });
+      // rather than blocking the only way to train a chatbot. It leaves NO
+      // result behind, see `discoveryFailed`.
+      setDiscoveryFailed(true);
       setError(
         errorMessage(
           cause,
@@ -224,6 +240,7 @@ export function useCrawlDiscovery({
     useJs,
     setJavaScript,
     discovery,
+    discoveryFailed,
     discovering,
     selected,
     setSelected,

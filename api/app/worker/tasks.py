@@ -118,6 +118,13 @@ async def task_crawl_and_ingest(
         # finally block releases with it so only this run can free the lock.
         # ``None`` for jobs enqueued by an older API node (rolling-deploy safe).
         lock_token=lock_token,
+        # Which attempt this is. ARQ re-queues a job cancelled mid-flight (a
+        # worker SIGTERM during a deploy), and the orchestrator's ``finally``
+        # already released the lock on the way out, so a retry would otherwise
+        # run unlocked alongside a crawl the customer started in between and
+        # both would write chunks for the same URLs. Anything above 1 makes the
+        # orchestrator re-acquire the lock or skip.
+        job_try=ctx.get("job_try", 1) or 1,
         # Stable across ARQ retries → per-page charge idempotency (finding H).
         crawl_job_id=ctx.get("job_id"),
     )
@@ -352,22 +359,44 @@ async def task_deliver_webhook(
 ) -> bool:
     """Deliver a single webhook. Returns True on success.
 
-    Retries are handled by the webhook subsystem itself, NOT by ARQ: on failure
-    ``_deliver_webhook`` records a ``WebhookDelivery`` row with ``next_retry_at``
-    and ``task_process_webhook_retries`` (30s cron) re-enqueues due attempts.
-    (ARQ would only retry on a raised ``Retry``; this task never raises.)
+    Retries of a DELIVERED-BUT-REFUSED attempt are handled by the webhook
+    subsystem itself, NOT by ARQ: ``_deliver_webhook`` records a
+    ``WebhookDelivery`` row with ``next_retry_at`` and
+    ``task_process_webhook_retries`` (30s cron) re-enqueues due attempts.
+
+    An UNEXPECTED exception is different (I10). ``process_pending_retries``
+    clears ``next_retry_at`` as soon as the enqueue returns, and that marker is
+    the only record that a redelivery is owed, so a crash before
+    ``_deliver_webhook`` writes its row (DB down, payload not serializable,
+    commit rejected) would drop the event silently. ARQ only re-runs a job that
+    raises ``Retry``, so raise one with a bounded defer and let ``max_tries``
+    cap it; the attempt number is unchanged, so no ladder rung is consumed.
     """
     import asyncio
+
+    from arq.worker import Retry
 
     from app.services.webhook_service import _deliver_webhook
 
     logger.info("task_deliver_webhook: webhook_id=%d, event=%s, attempt=%d", webhook_id, event_type, attempt)
 
     loop = asyncio.get_running_loop()
-    await loop.run_in_executor(
-        None,
-        lambda: _deliver_webhook(webhook_id, event_type, payload_data, attempt),
-    )
+    try:
+        await loop.run_in_executor(
+            None,
+            lambda: _deliver_webhook(webhook_id, event_type, payload_data, attempt),
+        )
+    except Exception:
+        job_try = ctx.get("job_try", 1)
+        logger.exception(
+            "task_deliver_webhook: unexpected failure for webhook %s event %s attempt %d (job_try %d). "
+            "Retrying so the event is not lost",
+            webhook_id,
+            event_type,
+            attempt,
+            job_try,
+        )
+        raise Retry(defer=min(30 * 2 ** (job_try - 1), 300)) from None
 
     return True
 
@@ -481,14 +510,16 @@ async def task_gateway_reconciliation(ctx: dict) -> int:
 
 
 async def task_prune_processed_webhooks(ctx: dict) -> int:
-    """Cron: prune processed_webhooks rows older than 180 days.
+    """Cron: age out the webhook and billing telemetry tables.
 
-    The table exists for replay dedup; Razorpay's own retry horizon is days,
-    not months, so half-a-year-old rows dedup nothing and only grow the table
-    (and its two unique indexes) forever. Safe now that the payload-digest key
-    gives the money handlers a second layer for anything genuinely replayed
-    later. Batched DELETE so a first run over years of backlog cannot hold a
-    long transaction.
+    ``processed_webhooks`` (180d) exists for replay dedup; Razorpay's own retry
+    horizon is days, not months, so half-a-year-old rows dedup nothing and only
+    grow the table (and its two unique indexes) forever. Safe now that the
+    payload-digest key gives the money handlers a second layer for anything
+    genuinely replayed later. ``reconciliation_runs`` (180d) and
+    ``billing_funnel_events`` (90d) follow, then ``webhook_deliveries`` (90d),
+    which is the one that holds visitor PII. Every DELETE is batched so a first
+    run over years of backlog cannot hold a long transaction.
     """
     import asyncio
     from datetime import UTC, datetime, timedelta
@@ -545,12 +576,43 @@ async def task_prune_processed_webhooks(ctx: dict) -> int:
                 session.execute(delete(BillingFunnelEvent).where(BillingFunnelEvent.id.in_(funnel_ids)))
                 session.commit()
                 total += len(funnel_ids)
+
+            # Outbound delivery log: 90 days. This one is a retention duty, not
+            # just table hygiene. A ``lead_captured`` row stores the whole body
+            # the customer's endpoint was sent (visitor name, email, phone) plus
+            # up to 1KB of that endpoint's response, and nothing aged it out.
+            #
+            # A row that still carries ``next_retry_at`` is NEVER pruned at any
+            # age: that marker is the sole record that a redelivery is owed, so
+            # deleting it loses the customer's event silently. The ``webhooks``
+            # table itself is untouched, only the per-attempt log.
+            from app.db.models import WebhookDelivery
+
+            delivery_cutoff = datetime.now(UTC) - timedelta(days=90)
+            while True:
+                delivery_ids = (
+                    session.execute(
+                        select(WebhookDelivery.id)
+                        .where(
+                            WebhookDelivery.created_at < delivery_cutoff,
+                            WebhookDelivery.next_retry_at.is_(None),
+                        )
+                        .limit(5000)
+                    )
+                    .scalars()
+                    .all()
+                )
+                if not delivery_ids:
+                    break
+                session.execute(delete(WebhookDelivery).where(WebhookDelivery.id.in_(delivery_ids)))
+                session.commit()
+                total += len(delivery_ids)
         return total
 
     loop = asyncio.get_running_loop()
     count = await loop.run_in_executor(None, _run)
     if count:
-        logger.info("task_prune_processed_webhooks: pruned %d rows older than 180d", count)
+        logger.info("task_prune_processed_webhooks: pruned %d aged telemetry and delivery-log rows", count)
     return count
 
 
@@ -575,9 +637,12 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
 
     2. **Roll forward**: after the grant we set
        ``current_period_start = old_end`` and
-       ``current_period_end = add_months(old_end, 1)``. Without this the row
-       never advances and the cron either re-fires every day (if matched on
-       date) or stops firing forever (if matched on equality).
+       ``current_period_end = next_period_end(old_start, old_end, months)``.
+       Without this the row never advances and the cron either re-fires every
+       day (if matched on date) or stops firing forever (if matched on
+       equality). The roll is ANCHORED, not ``add_months(old_end, …)``, so a
+       subscription billed on the 31st does not ratchet down to the 28th the
+       first time it crosses February (B6).
 
     Returns the number of subscriptions renewed.
     """
@@ -586,7 +651,7 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
 
     from sqlalchemy import select
 
-    from app.core.dates import add_months
+    from app.core.dates import next_period_end
     from app.db.models import Invoice, Subscription, plan_charge_only_clauses
     from app.db.session import get_session
     from app.services import credit_service
@@ -632,7 +697,13 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
                     # ``"annual"`` at sub creation; anything else falls through
                     # to monthly so legacy / manual rows don't get stuck.
                     period_months = 12 if (sub.billing_cycle or "").lower() == "annual" else 1
-                    new_period_end = add_months(sub.current_period_end, period_months)
+                    # Anchored roll (B6). Feeding the previous period END to
+                    # ``add_months`` ratchets a 31st anchor down permanently
+                    # (Jan 31 → Feb 28 → Mar 28 …), billing the customer days
+                    # early for the life of the subscription.
+                    # ``next_period_end`` recovers the anchor from the current
+                    # period before adding.
+                    new_period_end = next_period_end(sub.current_period_start, sub.current_period_end, period_months)
 
                     # Gateway-billed rows renew only against payment evidence: a
                     # captured invoice near the boundary (Razorpay may debit up
@@ -1066,6 +1137,63 @@ async def task_expire_old_topups(ctx: dict) -> int:
     return total
 
 
+async def task_recompute_kb_usage(ctx: dict) -> int:
+    """Cron: rebuild ``clients.kb_characters_used`` from the documents table.
+
+    The counter is maintained incrementally on the ingest and single-document
+    delete paths, but every BULK delete removes rows through an ``ON DELETE
+    CASCADE`` the counter never sees (bot deletion, the orphan sweep, the trial
+    purge, a manual DB fix). Drift is one-directional: the counter only grows,
+    so a workspace eventually 402s on ingest with a nearly empty knowledge base
+    (I6). This daily pass is the backstop that makes every one of those paths
+    self-correcting.
+
+    One transaction per client so a single bad row cannot abandon the sweep,
+    and only clients whose counter actually moved are logged.
+
+    Returns the number of clients whose counter was corrected.
+    """
+    import asyncio
+
+    from sqlalchemy import select
+
+    from app.db.models import Client
+    from app.db.session import get_session
+    from app.services import knowledge_quota_service
+
+    def _recompute() -> int:
+        corrected = 0
+        with get_session() as session:
+            client_ids = [int(row[0]) for row in session.execute(select(Client.id)).all()]
+
+        for client_id in client_ids:
+            try:
+                with get_session() as session:
+                    client = session.get(Client, client_id)
+                    if client is None:
+                        continue
+                    before = int(client.kb_characters_used or 0)
+                    after = knowledge_quota_service.recompute_kb_usage(session, client_id)
+                    session.commit()
+                if before != after:
+                    corrected += 1
+                    logger.info(
+                        "task_recompute_kb_usage: client %s corrected %d -> %d characters",
+                        client_id,
+                        before,
+                        after,
+                    )
+            except Exception:
+                logger.exception("task_recompute_kb_usage: recompute failed for client %s; continuing", client_id)
+        return corrected
+
+    loop = asyncio.get_running_loop()
+    corrected = await loop.run_in_executor(None, _recompute)
+    if corrected:
+        logger.info("task_recompute_kb_usage: corrected %d client counter(s)", corrected)
+    return corrected
+
+
 async def task_prune_stale_events(ctx: dict) -> int:
     """Cron task: delete Event rows whose source page hasn't mentioned them
     within the retention window, or whose start date is more than that same
@@ -1133,7 +1261,7 @@ async def task_send_email(
     """Send a raw HTML email via the configured provider (Brevo or SES). Returns True on success."""
     import asyncio
 
-    from app.services.email_service import _send_raw_email, redact_email
+    from app.services.email_service import _send_raw_email_result, redact_email
 
     # PRIVACY, the recipient can be a visitor (the chat follow-up in
     # lead_routes, the offline-message reply), and Sentry's LoggingIntegration
@@ -1143,23 +1271,37 @@ async def task_send_email(
     logger.info("task_send_email: to=%s, subject=%s", redact_email(to_email), subject[:50])
 
     loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(
+    outcome = await loop.run_in_executor(
         None,
-        lambda: _send_raw_email(
+        lambda: _send_raw_email_result(
             to_email, subject, html_body, reply_to=reply_to, sender_name=sender_name, attachments=attachments
         ),
     )
 
-    if not result:
-        # Send failed (usually transient). ARQ only retries on Retry, a plain
-        # raise is marked permanently failed, silently dropping the email
-        # (audit F13). Defer with backoff; max_tries (3) bounds the attempts.
-        from arq.worker import Retry
+    if outcome.sent:
+        return True
 
-        job_try = ctx.get("job_try", 1)
-        raise Retry(defer=min(10 * 2 ** (job_try - 1), 300))
+    if not outcome.can_retry:
+        # The provider ANSWERED (a rejection), the response timed out after the
+        # body was written, or email is disabled entirely. Re-sending would risk
+        # the customer receiving the OTP / invoice twice for a message the
+        # provider may already have accepted (I12), and a rejection will be
+        # rejected again. Fail the job loudly instead of retrying it.
+        logger.error(
+            "task_send_email: giving up on %s (subject=%s). Send failed with no evidence the "
+            "provider refused the connection, so a retry could duplicate the message",
+            redact_email(to_email),
+            subject[:50],
+        )
+        return False
 
-    return True
+    # Never reached the provider (DNS / connect / TLS / write). Safe to re-send.
+    # ARQ only retries on Retry, a plain raise is marked permanently failed and
+    # silently drops the email (audit F13). max_tries (3) bounds the attempts.
+    from arq.worker import Retry
+
+    job_try = ctx.get("job_try", 1)
+    raise Retry(defer=min(10 * 2 ** (job_try - 1), 300))
 
 
 async def task_send_template_email(
@@ -1173,25 +1315,38 @@ async def task_send_template_email(
     """Send a Brevo template email. Returns True on success."""
     import asyncio
 
-    from app.services.email_service import _send_brevo_template, redact_email
+    from app.services.email_service import _send_brevo_template_result, redact_email
 
     # PRIVACY. See ``task_send_email`` above.
     logger.info("task_send_template_email: to=%s, template=%d", redact_email(to_email), template_id)
 
     loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(
+    outcome = await loop.run_in_executor(
         None,
-        lambda: _send_brevo_template(to_email, template_id, params or {}, reply_to=reply_to, sender_name=sender_name),
+        lambda: _send_brevo_template_result(
+            to_email, template_id, params or {}, reply_to=reply_to, sender_name=sender_name
+        ),
     )
 
-    if not result:
-        # See task_send_email: ARQ retries only on Retry, not a plain raise (F13).
-        from arq.worker import Retry
+    if outcome.sent:
+        return True
 
-        job_try = ctx.get("job_try", 1)
-        raise Retry(defer=min(10 * 2 ** (job_try - 1), 300))
+    if not outcome.can_retry:
+        # See task_send_email: only a failure that never reached Brevo may be
+        # re-sent, otherwise the recipient can get the message twice (I12).
+        logger.error(
+            "task_send_template_email: giving up on %s (template=%d). Send failed after the request "
+            "left this process, so a retry could duplicate the message",
+            redact_email(to_email),
+            template_id,
+        )
+        return False
 
-    return True
+    # ARQ retries only on Retry, not a plain raise (F13).
+    from arq.worker import Retry
+
+    job_try = ctx.get("job_try", 1)
+    raise Retry(defer=min(10 * 2 ** (job_try - 1), 300))
 
 
 # ── Trial lifecycle (PR4) ───────────────────────────────────────────────────
@@ -1562,6 +1717,7 @@ async def task_delete_expired_trial_data(ctx: dict) -> int:
 
     from app.db.models import Bot, Client, Subscription
     from app.db.session import get_session
+    from app.services import knowledge_quota_service
     from app.services.email_service import send_trial_data_deleted_email
 
     def _run() -> int:
@@ -1622,6 +1778,11 @@ async def task_delete_expired_trial_data(ctx: dict) -> int:
                 # ChatSession, etc. takes care of the children.
                 bot_rows = session.execute(select(Bot).where(Bot.client_id == owner.id)).scalars().all()
                 for bot in bot_rows:
+                    # BEFORE the delete: the amount is read from the very rows
+                    # the bot's FK cascade is about to destroy. Without it the
+                    # account keeps a character balance for knowledge that no
+                    # longer exists and eventually 402s on an empty KB (I6).
+                    knowledge_quota_service.release_kb_usage_for_bot(session, client_id=owner.id, bot_id=bot.id)
                     session.delete(bot)
                 owner.deactivated_at = now
 
@@ -1716,7 +1877,7 @@ def _expire_past_due_cycle(session) -> int:
     # would roll the whole expiry back while the suspension emails had already
     # gone out. Customers told their agents are offline while still fully
     # entitled, and re-told tomorrow.
-    from app.services.knowledge_state_service import deactivate_bot_knowledge
+    from app.services.knowledge_state_service import deactivate_bot_knowledge, deactivate_client_knowledge
 
     for sub in subs:
         sub.status = "expired"
@@ -1728,10 +1889,16 @@ def _expire_past_due_cycle(session) -> int:
             sub.canceled_at = now
         if not sub.cancel_reason:
             sub.cancel_reason = "dunning_grace_elapsed"
-        # Paid → Free: deactivate this bot's knowledge (reversible) so it stops
-        # answering from a paid-tier KB. Data is retained, not deleted. getattr:
-        # legacy account-level subs (bot_id=None) and no-op for tests' mocks.
-        deactivate_bot_knowledge(session, getattr(sub, "bot_id", None))
+        # Paid → Free: deactivate the lapsed knowledge (reversible) so it stops
+        # answering from a paid-tier KB. Data is retained, not deleted. An
+        # account-level row (bot_id=None) is the common shape and the per-bot
+        # helper is a hard no-op for it, so it takes the client-level path,
+        # exactly like the cancel handler. getattr: no-op for tests' mocks.
+        lapsed_bot_id = getattr(sub, "bot_id", None)
+        if lapsed_bot_id is None and getattr(sub, "client_id", None) is not None:
+            deactivate_client_knowledge(session, sub.client_id)
+        else:
+            deactivate_bot_knowledge(session, lapsed_bot_id)
         flipped += 1
     session.commit()
 

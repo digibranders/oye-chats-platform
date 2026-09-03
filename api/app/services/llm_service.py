@@ -785,10 +785,19 @@ async def generate_response_stream(
             yield chunk
         return
     except TimeoutError as e:
-        logger.error(str(e))
-        _mark(primary_chunks_yielded == 0)
-        yield " [Response timed out. Please try again.]"
-        return
+        if primary_chunks_yielded > 0:
+            # Partial primary text already reached the visitor, so a fallback
+            # answer would be stitched onto a half-finished one (see below).
+            logger.error(str(e))
+            _mark(False)
+            yield " [Response timed out. Please try again.]"
+            return
+        # Nothing was yielded yet, so a stall is indistinguishable from any
+        # other pre-first-token failure: take the fallback model rather than
+        # handing the visitor a timeout message the fallback could have avoided.
+        logger.warning(
+            f"Primary LLM stream timed out before yielding any chunks: {e}. Attempting fallback to {_fallback_model()}"
+        )
     except Exception as primary_err:
         _classify_and_log_llm_error(primary_err, context="stream-primary")
         if primary_chunks_yielded > 0:

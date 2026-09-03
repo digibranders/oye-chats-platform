@@ -83,9 +83,9 @@
       "gzip": true
     },
     {
-      "name": "Hindi dictionary (lazy, non-English only)",
+      "name": "Hindi dictionary (lazy, non-English only). Raised from 70 KB when the console rebuild's surfaces were localized: the dictionary went from 3211 to 3714 keys. It is a lazy chunk an English user never downloads. Roughly 1400 keys in here are orphans the rebuild left behind, so this shrinks again once those are swept.",
       "path": "dist/assets/hi-*.js",
-      "limit": "70 KB",
+      "limit": "88 KB",
       "gzip": true
     }
   ]

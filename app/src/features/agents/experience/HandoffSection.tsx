@@ -22,7 +22,7 @@ import { useEntitlements } from '../../../hooks/useEntitlements';
 import { BusinessHoursField } from './BusinessHoursField';
 import {
   HANDOFF_DELAY_OPTIONS,
-  LEAD_FIELD_LABELS,
+  leadFieldLabel,
   LEAD_FIELD_ORDER,
   LIMITS,
   MAX_QUEUE,
@@ -102,7 +102,7 @@ export function HandoffSection({
         <SettingGroup title={t('agents.talkingToAPerson') || 'Talking to a person'} titleAs="h2">
           <SettingRow
             label={t('agents.letVisitorsAskForA') || 'Let visitors ask for a person'}
-            badge={<Badge tone="plan">Starter and above</Badge>}
+            badge={<Badge tone="plan">{t('agents.starterAndAbove') || 'Starter and above'}</Badge>}
             description={t('agents.visitorsCanAskForA') || 'Visitors can ask for a person and land in your inbox.'}
             controlWidth="auto"
           >
@@ -116,9 +116,15 @@ export function HandoffSection({
           <CardHeader eyebrow="Live chat" titleAs="h2" title={t('agents.talkingToAPerson') || 'Talking to a person'} />
           <CardBody className="flex flex-col gap-5">
             {chatbotOnFree ? (
-              <Alert tone="warning" title={`This chatbot is on the ${meta.planName} plan`}>
-                Your workspace includes live chat, but plans are per chatbot and this one does not
-                have it — visitors will not be offered a person until it is on a paid plan.
+              <Alert
+                tone="warning"
+                title={
+                  t('agents.thisChatbotIsOnThePlan', { plan: meta.planName }) ||
+                  `This chatbot is on the ${meta.planName} plan`
+                }
+              >
+                {t('agents.yourWorkspaceIncludesLiveChat') ||
+                  'Your workspace includes live chat, but plans are per chatbot and this one does not have it. Visitors will not be offered a person until it is on a paid plan.'}
               </Alert>
             ) : null}
             <Switch
@@ -187,7 +193,7 @@ export function HandoffSection({
                       onChange={(event) =>
                         onChange({ queueTimeoutSeconds: toInt(event.target.value) })
                       }
-                      trailing={<span className="text-xs">sec</span>}
+                      trailing={<span className="text-xs">{t('agents.secondsShort') || 'sec'}</span>}
                       className="figure"
                     />
                   </Field>
@@ -230,7 +236,7 @@ export function HandoffSection({
             // locked with the same Starter+ nudge the rest of this section uses.
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0">
-                <Badge tone="plan">Starter and above</Badge>
+                <Badge tone="plan">{t('agents.starterAndAbove') || 'Starter and above'}</Badge>
                 <p className="mt-2 text-prose text-text-secondary">
                   {t('agents.businessHoursLocked') ||
                     'Set the hours this chatbot is staffed and show an offline banner outside them.'}
@@ -262,7 +268,7 @@ export function HandoffSection({
         <SettingGroup title={t('agents.whatToAskBeforeThe') || 'What to ask before the chat starts'} titleAs="h2">
           <SettingRow
             label={t('agents.askBeforeChatting') || 'Ask before chatting'}
-            badge={<Badge tone="plan">Starter and above</Badge>}
+            badge={<Badge tone="plan">{t('agents.starterAndAbove') || 'Starter and above'}</Badge>}
             description={t('agents.everyChatArrivesWithA') || 'Every chat arrives with a name and a way to reply.'}
             controlWidth="auto"
           >
@@ -299,7 +305,7 @@ export function HandoffSection({
                         className="flex flex-wrap items-center justify-between gap-3 border-t border-border py-2.5 first:border-t-0"
                       >
                         <Checkbox
-                          label={LEAD_FIELD_LABELS[name]}
+                          label={leadFieldLabel(name)}
                           checked={row !== undefined}
                           disabled={readOnly}
                           onCheckedChange={(checked) => toggleLeadField(name, checked === true)}

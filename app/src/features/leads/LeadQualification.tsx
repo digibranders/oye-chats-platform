@@ -1,8 +1,9 @@
-import { Disclosure, Progress } from '../../ui';
+import { ABSENT, Disclosure, Progress } from '../../ui';
 import type { Lead, LeadSignal } from '../../types/domain';
 import { LeadSection } from './LeadSection';
-import { dimensionMax, orderedDimensions } from './leadModel';
+import { orderedDimensions } from './leadModel';
 import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 /**
  * What the chatbot learned. Read-only — the score is derived from what the
@@ -21,11 +22,20 @@ import { useTranslation } from '../../i18n/useTranslation';
  * 0–{max} pick — most obviously, an action that can only ever lower a score,
  * never raise one.
  *
- * The **denominator** is still derived from the framework, not from the data.
- * The version this replaced took `max(100 / dimensionCount, ...observedScores)`,
- * so a single high score raised the ceiling for that lead alone and two leads
- * on the same chatbot were shown "18 / 25" and "30 / 30" — neither of which
- * the reader could compare with anything.
+ * There is **no denominator** any more, and that is the honest reading rather
+ * than a regression. Two earlier versions both invented one: the first took
+ * `max(100 / dimensionCount, ...observedScores)`, so a single high score raised
+ * the ceiling for that lead alone; the second dropped to a flat
+ * `round(100 / dimensionCount)`, which is 17 for MEDDIC's six dimensions
+ * against a top option worth 21, so a top-scoring dimension read "21/17"
+ * beside a bar clamped at full, and the second-best option (17) painted as
+ * maxed out at 81% of the real ceiling. The lead payload carries `{value,
+ * score}` per dimension and no weight, no option table and no framework
+ * config, so a per-dimension ceiling is not a fact this screen has. A score
+ * with no ceiling is still a fact, and it is stated as one: these are the
+ * points the dimension contributed to the 0 to 100 score in the header.
+ * `orderedDimensions` carries a `max` for the day the API starts sending one,
+ * and the bar and the fraction come back with it.
  *
  * **It is four rows, not four boxes.** Each dimension used to be a bordered
  * panel holding a label, a figure, a `Progress` bar and then either a
@@ -74,8 +84,6 @@ export function LeadQualification({ lead }: LeadQualificationProps) {
   const dimensions = orderedDimensions(lead);
   if (dimensions.length === 0) return null;
 
-  const max = dimensionMax(dimensions.length);
-
   const evidence = dimensions
     .map((dimension) => ({
       label: dimension.label,
@@ -88,10 +96,7 @@ export function LeadQualification({ lead }: LeadQualificationProps) {
     <LeadSection title={t('leads.whatWeLearned') || 'What we learned'}>
       <ul>
         {dimensions.map((dimension) => {
-          // Clamped for the bar only. An unevenly-weighted dimension can exceed
-          // the equal-weight ceiling, and the figure beside it reports the truth
-          // rather than moving the goalposts.
-          const percent = Math.min((dimension.score / max) * 100, 100);
+          const max = dimension.max;
           return (
             <li
               key={dimension.key}
@@ -100,33 +105,65 @@ export function LeadQualification({ lead }: LeadQualificationProps) {
               <span className="w-28 shrink-0 truncate text-sm font-medium text-text-primary">
                 {dimension.label}
               </span>
-              {/* `hideLabel`: the row prints the dimension's name at its
+              {/* The bar exists only where a real ceiling does. A bar with an
+                  invented denominator is worse than no bar: it renders a
+                  position on a scale that does not exist, and it is the one
+                  element on the row a reader cannot check.
+
+                  `hideLabel`: the row prints the dimension's name at its
                   leading edge and the score at its trailing one, so a label row
-                  on the bar would be the same two facts a third time — and a
-                  30px labelled bar in a list of 6px bare ones would not share a
-                  baseline with its siblings. The `aria-label` still says both. */}
-              <Progress
-                className="min-w-0 flex-1"
-                size="sm"
-                hideLabel
-                value={percent}
-                label={`${dimension.label}: ${dimension.score} out of ${max}`}
-                tone={dimension.captured ? 'success' : 'accent'}
-              />
+                  on the bar would be the same two facts a third time. The
+                  `aria-label` still says both. */}
+              {max !== null ? (
+                <Progress
+                  className="min-w-0 flex-1"
+                  size="sm"
+                  hideLabel
+                  value={Math.min((dimension.score / max) * 100, 100)}
+                  label={
+                    translateNow('leads.dimensionScoreOutOf', {
+                      dimension: dimension.label,
+                      score: dimension.score,
+                      max,
+                    }) || `${dimension.label}: ${dimension.score} out of ${max}`
+                  }
+                  tone={dimension.captured ? 'success' : 'accent'}
+                />
+              ) : (
+                <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
+                  {dimension.captured ? t('leads.captured') || 'Captured' : t('leads.nothingCapturedForThisYet') || 'Nothing captured for this yet'}
+                </span>
+              )}
               <span className="figure w-12 shrink-0 text-right text-xs text-text-secondary">
-                {dimension.score}/{max}
+                {max !== null
+                  ? `${dimension.score}/${max}`
+                  : dimension.captured
+                    ? `+${dimension.score}`
+                    : ABSENT}
               </span>
             </li>
           );
         })}
       </ul>
 
-      {/* Evidence, once, below the list — not a paragraph inside every row. */}
+      {/* What the bare figure means, once, rather than a fake denominator on
+          every row. It is checkable: the dimension scores are what the backend
+          sums into the qualification half of the 0 to 100 score in the header. */}
+      {dimensions.every((dimension) => dimension.max === null) ? (
+        <p className="mt-2 text-xs text-text-tertiary">
+          {t('leads.pointsEachAnswerAddedTo') || 'Points each answer added to this lead’s score.'}
+        </p>
+      ) : null}
+
+      {/* Evidence, once, below the list, not a paragraph inside every row. */}
       {evidence.length > 0 ? (
         <Disclosure
           className="mt-2"
-          summary={`What they said (${evidence.length})`}
-          regionLabel="What the visitor said"
+          summary={
+            translateNow('leads.whatTheySaidCount', { count: evidence.length }) ||
+            `What they said (${evidence.length})`
+          }
+          regionLabel={translateNow('leads.whatTheVisitorSaid') || 'What the visitor said'}
         >
           <dl className="space-y-2">
             {evidence.map((entry) => (

@@ -38,6 +38,9 @@ import { t as translateNow } from '../i18n/i18n';
 /** Most-restrictive Free-plan defaults - matches the backend's seeded Free
  * plan (`_FREE_FALLBACK_LIMITS` / `_FREE_FALLBACK_FEATURES` in
  * `plan_entitlements_service.py`) and the legacy hook's `FREE_FALLBACK`. */
+// @i18n-exempt: this mirrors the API's own payload, field for field. plan_name
+// is data the backend sends, not chrome we author; a translated value here
+// would not match what every other surface reads from the server.
 export const FREE_FALLBACK: Entitlements = {
   plan_slug: 'free',
   plan_name: 'Free',

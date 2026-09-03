@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  INSTALL_STAMP_CAPTION,
+  installStampCaption,
   apiOrigin,
   demoPreviewState,
-  developerEmail,
   domainNotice,
   embedSnippet,
   entriesForWebsite,
@@ -16,7 +15,9 @@ import {
   troubleshootItems,
   widgetHeartbeat,
 } from './deployModel';
+import { formatDateTime } from '../../../ui';
 import { attributionAnchorHtml } from '../../../data/widgetEmbed';
+import { developerEmail } from './developerEmail';
 
 const BOT_KEY = 'bot-11a026a4b8b3';
 
@@ -51,6 +52,53 @@ describe('installStatus', () => {
     expect(status.tone).toBe('neutral');
   });
 
+  it('stays live while the heartbeat is recent', () => {
+    const now = Date.parse('2026-08-20T09:00:00Z');
+    const status = installStatus({
+      installedAt: '2026-01-01T09:00:00Z',
+      lastSeenAt: '2026-08-19T09:00:00Z',
+      claimed: false,
+      checking: false,
+      now,
+    });
+    expect(status.state).toBe('installed');
+    expect(status.tone).toBe('success');
+  });
+
+  it('stops calling a chatbot live once its heartbeat is a week old', () => {
+    // `widget_installed_at` is a first-seen stamp that nothing refreshes, so
+    // reading it alone put a green "we have seen this load on a real page of
+    // your site" above a "Last seen: 7 months ago".
+    const now = Date.parse('2026-08-20T09:00:00Z');
+    const status = installStatus({
+      installedAt: '2026-01-01T09:00:00Z',
+      lastSeenAt: '2026-01-14T09:00:00Z',
+      claimed: false,
+      checking: false,
+      now,
+    });
+    expect(status.state).toBe('stale');
+    expect(status.tone).toBe('warning');
+    expect(status.label).toBe('Not seen recently');
+    // The date it went quiet is the fact the customer needs, so it travels
+    // with the state rather than only living in a property row.
+    expect(status.detail).toContain(formatDateTime('2026-01-14T09:00:00Z'));
+  });
+
+  it('keeps a chatbot with no heartbeat at all live, never stale', () => {
+    // There is no backfill: a chatbot installed before the heartbeat shipped
+    // reads `null` until its widget next boots. Reporting that as an outage
+    // would send a customer to debug a working site.
+    const status = installStatus({
+      installedAt: '2026-01-01T09:00:00Z',
+      lastSeenAt: null,
+      claimed: false,
+      checking: false,
+      now: Date.parse('2026-08-20T09:00:00Z'),
+    });
+    expect(status.state).toBe('installed');
+  });
+
   it('lets the server stamp win over any local claim', () => {
     const status = installStatus({
       installedAt: '2026-08-01T09:00:00Z',
@@ -76,7 +124,7 @@ describe('installStatus', () => {
   });
 
   it('captions the stamp as a start date, because nothing refreshes that column', () => {
-    expect(INSTALL_STAMP_CAPTION).toBe('First seen');
+    expect(installStampCaption()).toBe('First seen');
   });
 });
 
@@ -229,7 +277,14 @@ describe('isOriginAllowed', () => {
 
 describe('entriesForWebsite', () => {
   it('always offers both the apex and the wildcard, because www is a subdomain', () => {
-    expect(entriesForWebsite('https://www.acme.com')).toEqual(['acme.com', '*.acme.com']);
+    // `localhost` rides along so a customer can try the widget on a dev
+    // server; turning the allow-list on is otherwise what silently breaks
+    // local testing.
+    expect(entriesForWebsite('https://www.acme.com')).toEqual([
+      'acme.com',
+      '*.acme.com',
+      'localhost',
+    ]);
   });
 
   it('offers a single entry for a local host, where a wildcard is meaningless', () => {

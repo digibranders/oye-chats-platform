@@ -19,29 +19,48 @@ export type PushEventKey = 'handoff_request' | 'chat_transferred' | 'offline_mes
 
 export interface PushEventDefinition {
   key: PushEventKey;
+  /** Dictionary key for the switch label. Resolved at render, never at import. */
+  labelKey: string;
+  /** Inline English default, the same `t(key) || 'English'` idiom used everywhere. */
   label: string;
-  description: string;
 }
 
-/** Mirrors `_PUSH_EVENT_KEYS` in `api/app/api/operator_routes.py`. */
+/**
+ * Mirrors `_PUSH_EVENT_KEYS` in `api/app/api/operator_routes.py`.
+ *
+ * The labels carry dictionary keys rather than being resolved here. A constant
+ * table is evaluated once at import, before any locale is known, so a
+ * `translateNow()` call in this position would freeze whatever language was
+ * active when the module first loaded and never move again. `pushEventLabel`
+ * below resolves per render instead.
+ */
 export const PUSH_EVENTS: readonly PushEventDefinition[] = [
   {
     key: 'handoff_request',
+    labelKey: 'settings.pushEventHandoffRequest',
+    // The one that is genuinely urgent: somebody is waiting, and every second
+    // of silence is a second they might leave.
     label: 'A visitor asks for a person',
-    description:
-      'The one that is genuinely urgent. Somebody is waiting, and every second of silence is a second they might leave.',
   },
   {
     key: 'chat_transferred',
+    labelKey: 'settings.pushEventChatTransferred',
+    // A teammate has handed over a conversation that is already in progress.
     label: 'A conversation is transferred to you',
-    description: 'A teammate has handed you a conversation that is already in progress.',
   },
   {
     key: 'offline_message',
+    labelKey: 'settings.pushEventOfflineMessage',
+    // Nobody is waiting on the other end, so this one can usually be read later.
     label: 'Someone leaves a message while you are away',
-    description: 'Nobody is waiting on the other end, so this one can usually be read later.',
   },
 ];
+
+/** The switch label in the reader's language, falling back to the English above. */
+export function pushEventLabel(event: PushEventDefinition): string {
+  return translateNow(event.labelKey) || event.label;
+}
+
 
 export interface QuietHours {
   start: string;
@@ -142,9 +161,15 @@ export function validateTime(value: string): string | null {
 export function describeQuietHours(quiet: QuietHours | null): string {
   if (!quiet) return translateNow('settings.alertsCanReachYouAt') || 'Alerts can reach you at any hour.';
   const wraps = quiet.start > quiet.end;
+  const params = { start: quiet.start, end: quiet.end, tz: quiet.tz };
+  // Two keys rather than one with a conditional clause: "the next morning" does
+  // not attach to the same place in every language, and a sentence assembled
+  // from fragments cannot be reordered by a translator.
   return wraps
-    ? `Silenced from ${quiet.start} until ${quiet.end} the next morning, ${quiet.tz} time.`
-    : `Silenced from ${quiet.start} until ${quiet.end}, ${quiet.tz} time.`;
+    ? translateNow('settings.quietHoursSilencedWrapping', params) ||
+        `Silenced from ${quiet.start} until ${quiet.end} the next morning, ${quiet.tz} time.`
+    : translateNow('settings.quietHoursSilenced', params) ||
+        `Silenced from ${quiet.start} until ${quiet.end}, ${quiet.tz} time.`;
 }
 
 /** True when nothing can reach the user, whatever the individual switches say. */

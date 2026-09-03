@@ -54,7 +54,11 @@ export function validateAvatarFile(file: File): string | null {
     return translateNow('agents.useAPngJpgOr') || 'Use a PNG, JPG or WebP image.';
   }
   if (file.size > MAX_AVATAR_BYTES) {
-    return `That image is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is 2 MB.`;
+    const mb = (file.size / 1024 / 1024).toFixed(1);
+    return (
+      translateNow('agents.thatImageIsTooLarge', { size: mb }) ||
+      `That image is ${mb} MB. The limit is 2 MB.`
+    );
   }
   return null;
 }
@@ -72,5 +76,9 @@ export function validateAvatarFile(file: File): string | null {
  * twice, one line apart, in two different registers. What is left is the only
  * part that is ours to say: what happens to the image after it is uploaded.
  */
-export const AVATAR_HINT =
-  'Square images work best. We size your picture to a 512×512 square.';
+export function avatarHint(): string {
+  return (
+    translateNow('agents.squareImagesWorkBest') ||
+    'Square images work best. We size your picture to a 512×512 square.'
+  );
+}

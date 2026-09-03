@@ -113,7 +113,11 @@ export function KnowledgeGapsCard({ section, window, onWindowChange }: Knowledge
             rows={section.data}
             rowKey={(row) => row.question}
             rowNoun="question"
-            caption={`Questions this chatbot could not answer, ${gapWindowLabel(window).toLowerCase()}`}
+            caption={
+              t('agents.questionsThisChatbotCouldNotAnswer', {
+                window: gapWindowLabel(window).toLowerCase(),
+              }) || `Questions this chatbot could not answer, ${gapWindowLabel(window).toLowerCase()}`
+            }
             error={section.error}
             onRetry={section.retry}
             defaultSort={{ key: 'count', direction: 'desc' }}
@@ -129,7 +133,9 @@ export function KnowledgeGapsCard({ section, window, onWindowChange }: Knowledge
                 title={
                   window === null
                     ? t('agents.noUnansweredQuestionsOnRecord') || 'No unanswered questions on record'
-                    : `Nothing went unanswered in the ${gapWindowLabel(window).toLowerCase()}`
+                    : t('agents.nothingWentUnansweredIn', {
+                        window: gapWindowLabel(window).toLowerCase(),
+                      }) || `Nothing went unanswered in the ${gapWindowLabel(window).toLowerCase()}`
                 }
                 description={
                   window === null

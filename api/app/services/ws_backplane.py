@@ -42,6 +42,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 
 from app.config import REDIS_URL, WS_BACKPLANE_ENABLED
 
@@ -55,6 +56,12 @@ _SESSION_CHANNEL = "ws:session:{}"
 # publishers.
 _pub_client = None
 _subscriber_task: asyncio.Task | None = None
+
+# Reconnect backoff for the subscriber. Small enough that a Redis blip costs at
+# most a couple of seconds of cross-process delivery, capped so a long outage
+# does not hammer the server.
+_RECONNECT_MIN_DELAY_S = 1.0
+_RECONNECT_MAX_DELAY_S = 30.0
 
 
 def _enabled() -> bool:
@@ -124,8 +131,8 @@ async def deliver_to_session(manager, session_id: str, payload: dict) -> bool:
     return await _publish(_SESSION_CHANNEL.format(session_id), payload)
 
 
-async def _listen(manager) -> None:
-    """Subscribe to this process's sockets and write inbound frames locally.
+async def _listen_once(manager) -> None:
+    """One subscription lifetime: subscribe, then read until the link breaks.
 
     Subscriptions follow the sockets: the pattern subscription is cheap and
     keeps this simple, while the local-socket check below means a process
@@ -135,10 +142,9 @@ async def _listen(manager) -> None:
 
     client = aioredis.from_url(REDIS_URL, decode_responses=True)
     pubsub = client.pubsub(ignore_subscribe_messages=True)
-    await pubsub.psubscribe("ws:operator:*", "ws:session:*")
-    logger.info("ws_backplane subscriber listening")
-
     try:
+        await pubsub.psubscribe("ws:operator:*", "ws:session:*")
+        logger.info("ws_backplane subscriber listening")
         async for message in pubsub.listen():
             if not message or message.get("type") not in ("pmessage", "message"):
                 continue
@@ -162,19 +168,48 @@ async def _listen(manager) -> None:
             except Exception:
                 # One bad frame must not kill the subscriber for every socket.
                 logger.warning("ws_backplane failed to deliver on %s", channel, exc_info=True)
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        logger.exception("ws_backplane subscriber stopped unexpectedly")
     finally:
-        with_close = getattr(pubsub, "aclose", None) or getattr(pubsub, "close", None)
-        if with_close:
+        for closable in (pubsub, client):
+            with_close = getattr(closable, "aclose", None) or getattr(closable, "close", None)
+            if not with_close:
+                continue
             try:
                 result = with_close()
                 if asyncio.iscoroutine(result):
                     await result
             except Exception:
-                logger.debug("ws_backplane pubsub close failed", exc_info=True)
+                logger.debug("ws_backplane close failed", exc_info=True)
+
+
+async def _listen(manager) -> None:
+    """Keep a subscription alive for the life of the process.
+
+    A single Redis error used to end the subscriber permanently: cross-process
+    delivery then stayed dark until the next restart, silently. Reconnect with
+    bounded exponential backoff instead, and stop cleanly on cancellation.
+    """
+    delay = _RECONNECT_MIN_DELAY_S
+    while True:
+        started_at = time.monotonic()
+        try:
+            await _listen_once(manager)
+            # A clean return means the pubsub stream ended without an error
+            # (server-side close). Reconnect, but treat it like any other drop.
+            logger.warning("ws_backplane subscriber stream ended; reconnecting in %.1fs", delay)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "ws_backplane subscriber failed; reconnecting in %.1fs",
+                delay,
+                exc_info=True,
+            )
+        if time.monotonic() - started_at >= _RECONNECT_MAX_DELAY_S:
+            # The last subscription was healthy for a while, so this is a fresh
+            # incident rather than a failing retry: start the backoff over.
+            delay = _RECONNECT_MIN_DELAY_S
+        await asyncio.sleep(delay)
+        delay = min(delay * 2, _RECONNECT_MAX_DELAY_S)
 
 
 async def start(manager) -> None:
@@ -193,6 +228,8 @@ async def stop() -> None:
     global _subscriber_task
     if _subscriber_task and not _subscriber_task.done():
         _subscriber_task.cancel()
-        with contextlib.suppress(Exception):
+        # ``CancelledError`` is a BaseException, so ``suppress(Exception)`` let
+        # the expected cancellation escape into the shutdown handler.
+        with contextlib.suppress(asyncio.CancelledError, Exception):
             await _subscriber_task
     _subscriber_task = None

@@ -1,3 +1,13 @@
+/**
+ * @i18n-exempt-file: the English here is the lookup KEY, not copy to translate.
+ * This table is a module constant evaluated at import, before any locale
+ * exists, so it cannot resolve a translation itself. `navCopy.ts` derives the
+ * dictionary key from the label (`navLabel` -> `app.crumb.*`, `navHint` ->
+ * `nav.hint.*`) and resolves it at render, and both namespaces carry Hindi.
+ * Translating these strings in place would change the key and orphan every one
+ * of those translations, silently reverting the rail and the breadcrumb to
+ * English.
+ */
 import {
   BarChart3,
   Bot,

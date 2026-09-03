@@ -21,9 +21,11 @@ import {
 import { recordActivationEvent, sendInstallInvite } from '../../../services/api';
 import { ATTRIBUTION_TEXT } from '../../../data/widgetEmbed';
 import type { Platform, PlatformEnv } from '../../../data/platformIntegrations';
-import { developerEmail, embedSnippet } from './deployModel';
+import { embedSnippet } from './deployModel';
+import { developerEmail } from './developerEmail';
 import { buildInstallPrompt } from './installPrompt';
 import { useTranslation } from '../../../i18n/useTranslation';
+import { Trans } from '../../../i18n/Trans';
 
 export interface SnippetSectionProps {
   botKey: string;
@@ -196,15 +198,23 @@ export function SnippetSection({
         {!resolving && attribution ? (
           <Alert
             tone="plan"
-            title={`The second line is your “${ATTRIBUTION_TEXT}” link`}
+            title={
+              t('agents.theSecondLineIsYourLink', { text: ATTRIBUTION_TEXT }) ||
+              `The second line is your “${ATTRIBUTION_TEXT}” link`
+            }
             action={
               <Link to="/billing" className={buttonClass('secondary', 'sm')}>
                 {t('agents.seePlans') || 'See plans'}
               </Link>
             }
           >
-            {t('agents.itIsAVisible') || 'It is a visible'} <code className="figure">nofollow</code> link and has to stay in the
-            HTML your server sends. White-label plans get a snippet without it.
+            <Trans
+              k="agents.itIsAVisibleNofollowLink"
+              fallback="It is a visible {nofollow} link and has to stay in the HTML your server sends. White-label plans get a snippet without it."
+              // @i18n-exempt: `nofollow` is the literal HTML attribute value,
+              // rendered as code. It is the same word in every language.
+              values={{ nofollow: <code className="figure">nofollow</code> }}
+            />
           </Alert>
         ) : null}
 
@@ -227,8 +237,16 @@ export function SnippetSection({
             <span className="flex flex-wrap items-center gap-2">
               <span className="inline-flex items-center gap-1.5 text-sm text-text-secondary">
                 <Check aria-hidden className="text-success" />
-                Sent to <strong className="font-medium text-text-primary">{sent.email}</strong>{' '}
-                {formatRelative(sent.at)}
+                <Trans
+                  k="agents.sentToWhen"
+                  fallback="Sent to {email} {when}"
+                  values={{
+                    email: (
+                      <strong className="font-medium text-text-primary">{sent.email}</strong>
+                    ),
+                    when: formatRelative(sent.at),
+                  }}
+                />
               </span>
               <Button variant="secondary" size="sm" onClick={reveal}>
                 {t('agents.sendAgain') || 'Send again'}
@@ -265,7 +283,10 @@ export function SnippetSection({
               : ''}
             {/* The send collapses the form and swaps in a line of text. That is
                 obvious to anyone looking at it and silent to anyone not. */}
-            {sent && !open ? `Install snippet emailed to ${sent.email}` : ''}
+            {sent && !open
+              ? t('agents.installSnippetEmailedTo', { email: sent.email }) ||
+                `Install snippet emailed to ${sent.email}`
+              : ''}
           </span>
         </div>
 
@@ -343,7 +364,12 @@ export function SnippetSection({
               <Alert
                 tone="warning"
                 live
-                title={`Already sent to ${sent.email} ${formatRelative(sent.at)}`}
+                title={
+                  t('agents.alreadySentTo', {
+                    email: sent.email,
+                    when: formatRelative(sent.at),
+                  }) || `Already sent to ${sent.email} ${formatRelative(sent.at)}`
+                }
                 action={
                   <Button variant="secondary" size="sm" onClick={() => void send(draft.trim())}>
                     {t('agents.sendItAgain') || 'Send it again'}
@@ -355,7 +381,7 @@ export function SnippetSection({
             ) : null}
 
             <p className="text-xs text-text-secondary">
-              Would rather use your own contacts?{' '}
+              {t('agents.wouldRatherUseYourOwnContacts') || 'Would rather use your own contacts?'}{' '}
               <a href={email.href} className="underline underline-offset-2 hover:text-text-primary">
                 {t('agents.openItInMyMail') || 'Open it in my mail app'}
               </a>

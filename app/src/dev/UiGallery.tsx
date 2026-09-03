@@ -1,3 +1,16 @@
+/**
+ * The design-system gallery at `/dev/ui`.
+ *
+ * @i18n-exempt-file: this is a tool for the people building the design system,
+ * not a product surface. Its audience is an engineer checking that a component
+ * renders its states correctly, and its copy is fixture data invented for that
+ * purpose - "Ana Ruiz", "Northwind", a sample question about Webflow. Running
+ * those through the dictionary would spend a translator's budget on names that
+ * are not real in any language, and would put 826 entries no customer can ever
+ * read into a chunk every Hindi user downloads.
+ *
+ * The route is gated to the team; nothing here is customer-facing.
+ */
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import {

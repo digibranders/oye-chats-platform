@@ -277,6 +277,27 @@ describe('unsaved changes are visible and recoverable', () => {
     expect(await screen.findByText(/All changes saved/)).toBeInTheDocument();
   });
 
+  it('keeps what was typed while the save was in flight', async () => {
+    let resolveSave: (value: { message: string }) => void = () => {};
+    api.updateBot.mockReturnValue(new Promise((resolve) => { resolveSave = resolve; }));
+
+    renderPage();
+    await ready();
+    await openTab('Messages');
+    await userEvent.clear(screen.getByLabelText('Greeting'));
+    await userEvent.type(screen.getByLabelText('Greeting'), 'Hi!');
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(api.updateBot).toHaveBeenCalled());
+
+    // The PATCH is still open, and the customer carries on typing.
+    await userEvent.type(screen.getByLabelText('Greeting'), ' Welcome.');
+    resolveSave({ message: 'ok' });
+
+    await waitFor(() => expect(screen.getByLabelText('Greeting')).toHaveValue('Hi! Welcome.'));
+    // Still unsaved work, because the later keystrokes were never sent.
+    expect(await screen.findByText(/Unsaved changes to Messages/)).toBeInTheDocument();
+  });
+
   it('blocks the save on a field-level error instead of taking a 422', async () => {
     renderPage();
     await ready();
@@ -526,5 +547,59 @@ describe('the brand voice can be heard before it is saved', () => {
     // The endpoint writes what it detects, so reporting it as unsaved would
     // offer a Discard that cannot undo anything.
     expect(screen.queryByText(/Unsaved changes/)).not.toBeInTheDocument();
+  });
+});
+
+// ── Launcher text: the switch is the user's, not the field's ─────────────────
+
+describe('launcher text', () => {
+  /**
+   * There is no stored "show launcher text" flag: empty text IS hidden, and
+   * the switch used to be derived from the text on every render. Selecting
+   * the text to replace it therefore flipped the switch off, disabled the
+   * input under the cursor, and swapped in a "Hidden" placeholder, all
+   * before the customer had typed the replacement.
+   */
+  it('stays on, and editable, while the customer clears the text to retype it', async () => {
+    api.getBot.mockResolvedValue({ ...BOT, launcher_name: 'Hi' });
+    renderPage();
+    await ready();
+    await openTab('Messages');
+
+    const field = screen.getByRole('textbox', { name: 'Launcher text' });
+    const toggle = screen.getByRole('switch', { name: 'Show launcher text' });
+    expect(toggle).toBeChecked();
+
+    await userEvent.clear(field);
+
+    expect(toggle).toBeChecked();
+    expect(field).toBeEnabled();
+    expect(field).toHaveValue('');
+    expect(screen.queryByPlaceholderText('Hidden')).not.toBeInTheDocument();
+    // It says what an empty field means, since the saved meaning of empty is hidden.
+    expect(screen.getByText(/Type the text visitors see beside the launcher/)).toBeInTheDocument();
+
+    await userEvent.type(field, 'Chat with us');
+    expect(field).toHaveValue('Chat with us');
+    expect(toggle).toBeChecked();
+  });
+
+  it('turning it off empties the text; turning it back on restores it', async () => {
+    api.getBot.mockResolvedValue({ ...BOT, launcher_name: 'Hi' });
+    renderPage();
+    await ready();
+    await openTab('Messages');
+
+    const field = screen.getByRole('textbox', { name: 'Launcher text' });
+    const toggle = screen.getByRole('switch', { name: 'Show launcher text' });
+
+    await userEvent.click(toggle);
+    expect(toggle).not.toBeChecked();
+    expect(field).toBeDisabled();
+    expect(field).toHaveValue('');
+
+    await userEvent.click(toggle);
+    expect(toggle).toBeChecked();
+    expect(field).toHaveValue('Hi');
   });
 });

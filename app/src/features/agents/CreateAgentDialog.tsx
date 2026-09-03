@@ -191,7 +191,8 @@ export function CreateAgentDialog({
     const nameProblem = !trimmedName
       ? t('agents.giveYourChatbotAName') || 'Give your chatbot a name.'
       : trimmedName.length > MAX_NAME_LENGTH
-        ? `Keep it to ${MAX_NAME_LENGTH} characters or fewer.`
+        ? t('agents.keepItToNCharacters', { max: MAX_NAME_LENGTH }) ||
+          `Keep it to ${MAX_NAME_LENGTH} characters or fewer.`
         : null;
     // Validated rather than merely normalised: the previous version accepted
     // anything and sent it, so a typo became a crawl that failed hours later
@@ -283,7 +284,12 @@ export function CreateAgentDialog({
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
-      title={step === 'name' ? t('agents.newChatbot') || 'New chatbot' : `Choose a plan for ${trimmedName || 'your chatbot'}`}
+      title={
+        step === 'name'
+          ? t('agents.newChatbot') || 'New chatbot'
+          : t('agents.chooseAPlanFor', { name: trimmedName || t('agents.yourChatbot') || 'your chatbot' }) ||
+            `Choose a plan for ${trimmedName || 'your chatbot'}`
+      }
       // Step one's two `Field` labels already say what step one is for, and the
       // step-two title already names the chatbot being funded.
       description={step === 'plan' ? t('agents.itsOwnCreditsItsOwn') || 'Its own credits, its own knowledge base.' : undefined}
@@ -395,8 +401,8 @@ export function CreateAgentDialog({
             <LoadingRows rows={3} />
           ) : plans.length === 0 ? (
             <p className="py-6 text-center text-xs text-text-secondary">
-              No plans are available right now. Please try again shortly, or contact us if it keeps
-              happening.
+              {t('agents.noPlansAvailableContactUs') ||
+                'No plans are available right now. Please try again shortly, or contact us if it keeps happening.'}
             </p>
           ) : (
             <RadioCards
@@ -406,7 +412,9 @@ export function CreateAgentDialog({
               items={plans.map((plan) => ({
                 value: plan.slug,
                 label: plan.name,
-                description: `${formatCredits(plan.creditsPerMonth)} credits a month`,
+                description:
+                  t('agents.creditsAMonth', { credits: formatCredits(plan.creditsPerMonth) }) ||
+                  `${formatCredits(plan.creditsPerMonth)} credits a month`,
                 badge: (
                   <span className="figure text-sm font-medium text-text-primary">
                     {formatMoneyMinor(

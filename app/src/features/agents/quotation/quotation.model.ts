@@ -75,6 +75,15 @@ export interface QuotationCatalog {
   services: Service[];
 }
 
+/** A qualification dimension, in the reader's language. */
+export function bantDimensionLabel(d: { key: string; label: string }): string {
+  return translateNow(`agents.bantDimension.${d.key}`) || d.label;
+}
+export function bantDimensionHelp(d: { key: string; help: string }): string {
+  return translateNow(`agents.bantDimensionHelp.${d.key}`) || d.help;
+}
+
+// @i18n-exempt: fallbacks, read through bantDimensionLabel/Help above.
 export const BANT_DIMENSIONS: { key: BantDimension; label: string; help: string }[] = [
   { key: 'need', label: 'Need', help: 'They described a real problem or use case.' },
   { key: 'timeline', label: 'Timeline', help: 'They said when they want to buy or start.' },
@@ -88,22 +97,41 @@ export const MAX_SERVICES = 20;
 export const MAX_REQUIREMENTS_PER_SERVICE = 20;
 export const MAX_OPTIONS_PER_REQUIREMENT = 12;
 
+/** A currency label. The CODE is never translated; the name after it is. */
+export function currencyLabel(c: { value: string; label: string }): string {
+  return translateNow(`agents.currencyName.${c.value}`) || c.label;
+}
+
+// @i18n-exempt: fallbacks, read through currencyLabel above.
 export const CURRENCIES: { value: string; label: string }[] = [
-  { value: 'INR', label: 'INR — Indian Rupee' },
-  { value: 'USD', label: 'USD — US Dollar' },
-  { value: 'EUR', label: 'EUR — Euro' },
-  { value: 'GBP', label: 'GBP — British Pound' },
-  { value: 'AUD', label: 'AUD — Australian Dollar' },
-  { value: 'CAD', label: 'CAD — Canadian Dollar' },
-  { value: 'SGD', label: 'SGD — Singapore Dollar' },
-  { value: 'AED', label: 'AED — UAE Dirham' },
+  { value: 'INR', label: 'INR (Indian Rupee)' },
+  { value: 'USD', label: 'USD (US Dollar)' },
+  { value: 'EUR', label: 'EUR (Euro)' },
+  { value: 'GBP', label: 'GBP (British Pound)' },
+  { value: 'AUD', label: 'AUD (Australian Dollar)' },
+  { value: 'CAD', label: 'CAD (Canadian Dollar)' },
+  { value: 'SGD', label: 'SGD (Singapore Dollar)' },
+  { value: 'AED', label: 'AED (UAE Dirham)' },
 ];
 
+export function requirementTypeLabel(r: { value: string; label: string }): string {
+  return translateNow(`agents.requirementType.${r.value}`) || r.label;
+}
+
+// @i18n-exempt: fallbacks, read through requirementTypeLabel above.
 export const REQUIREMENT_TYPES: { value: RequirementType; label: string }[] = [
   { value: 'item', label: 'Line item' },
   { value: 'choice', label: 'Priced choice' },
 ];
 
+export function quantityModeLabel(q: { value: string; label: string }): string {
+  return translateNow(`agents.quantityMode.${q.value}`) || q.label;
+}
+export function quantityModeHelp(q: { value: string; help: string }): string {
+  return translateNow(`agents.quantityModeHelp.${q.value}`) || q.help;
+}
+
+// @i18n-exempt: fallbacks, read through quantityModeLabel/Help above.
 export const QUANTITY_MODES: { value: QuantityMode; label: string; help: string }[] = [
   { value: 'none', label: 'No quantity', help: 'Counts once. The visitor is never asked.' },
   { value: 'fixed', label: 'Fixed', help: 'Always the quantity you set here.' },
@@ -259,14 +287,23 @@ export function blockedReason(catalog: QuotationCatalog): string | null {
   const payload = toPayload(catalog);
   for (const [index, service] of payload.services.entries()) {
     const named = service.name || `Service ${index + 1}`;
-    if (!service.name) return `Service ${index + 1} needs a name.`;
+    if (!service.name) return translateNow('agents.serviceNeedsAName', { n: index + 1 }) || `Service ${index + 1} needs a name.`;
     for (const requirement of service.requirements) {
-      if (!requirement.label) return `“${named}” has a line with no label.`;
+      if (!requirement.label)
+        return (
+          translateNow('agents.serviceHasALineWithNoLabel', { service: named }) ||
+          `“${named}” has a line with no label.`
+        );
       // Mirrors `_check_choice_has_options` server-side: a choice with no
       // options is rejected by the API, so the save is blocked here instead of
       // failing with a 422 the reader cannot place.
       if (requirement.type === 'choice' && requirement.options.length === 0) {
-        return `“${named}” → “${requirement.label}” needs at least one option.`;
+        return (
+          translateNow('agents.requirementNeedsAnOption', {
+            service: named,
+            requirement: requirement.label,
+          }) || `“${named}” → “${requirement.label}” needs at least one option.`
+        );
       }
     }
   }

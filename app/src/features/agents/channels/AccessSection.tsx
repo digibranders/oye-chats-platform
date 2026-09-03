@@ -12,6 +12,7 @@ import {
 } from '../../../ui';
 import { MAX_DOMAINS, domainNotice, entriesForWebsite, normalizeDomain } from './deployModel';
 import { sessionShareDomainError } from './accessModel';
+import { useTranslation } from '../../../i18n/useTranslation';
 
 export interface AccessSectionProps {
   /** The public address this chatbot is configured for, if any. */
@@ -72,6 +73,7 @@ function AccessSectionInner({
   onChange,
   disabled = false,
 }: AccessSectionProps) {
+  const { t } = useTranslation();
   const list = useMemo(() => [...domains], [domains]);
 
   const notice = useMemo(
@@ -106,8 +108,8 @@ function AccessSectionInner({
       ) : null}
 
       <SettingRow
-        label="Only allow the domains listed below"
-        description="An empty list allows everything."
+        label={t('agents.onlyAllowTheDomainsListed') || 'Only allow the domains listed below'}
+        description={t('agents.anEmptyListAllowsEverything') || 'An empty list allows everything.'}
         badge={
           warning ? undefined : (
             <Badge tone="success" dot>
@@ -121,20 +123,23 @@ function AccessSectionInner({
           checked={domainCheckEnabled}
           disabled={disabled}
           onCheckedChange={(next) => onChange({ domainCheckEnabled: next === true })}
-          aria-label="Only allow the domains listed below"
+          aria-label={t('agents.onlyAllowTheDomainsListed') || 'Only allow the domains listed below'}
         />
       </SettingRow>
 
       <SettingRow
-        label="Domains"
-        description={`*.acme.com covers subdomains but not acme.com — most sites want both. Up to ${MAX_DOMAINS}.`}
+        label={t('agents.domains') || 'Domains'}
+        description={
+          t('agents.wildcardCoversSubdomains', { max: MAX_DOMAINS }) ||
+          `*.acme.com covers subdomains but not acme.com, and most sites want both. Up to ${MAX_DOMAINS}.`
+        }
         stacked
       >
         <div className="flex w-full flex-col gap-2">
           <TagInput
             values={list}
             onValuesChange={(next) => onChange({ allowedDomains: next })}
-            label="Domains"
+            label={t('agents.domains') || 'Domains'}
             placeholder="acme.com"
             maxValues={MAX_DOMAINS}
             disabled={disabled}
@@ -147,7 +152,8 @@ function AccessSectionInner({
             validate={(value) =>
               normalizeDomain(value)
                 ? null
-                : `${value} is not a domain. Use a hostname like acme.com or *.acme.com.`
+                : t('agents.isNotADomain', { value }) ||
+                  `${value} is not a domain. Use a hostname like acme.com or *.acme.com.`
             }
           />
           {missing.length > 0 ? (
@@ -161,7 +167,8 @@ function AccessSectionInner({
                 }
                 iconLeft={<Plus aria-hidden />}
               >
-                Add {missing.join(' and ')}
+                {t('agents.addMissing', { domains: missing.join(' and ') }) ||
+                  `Add ${missing.join(' and ')}`}
               </Button>
             </div>
           ) : null}
@@ -169,26 +176,29 @@ function AccessSectionInner({
       </SettingRow>
 
       <SettingRow
-        label="Pin a parent domain"
+        label={t('agents.pinAParentDomain') || 'Pin a parent domain'}
         /* The state, not the value. `Badge` is capped at `max-w-40` and
            truncates inside that, so naming the domain here clipped even a short
            one ("Automatic · oyechats.c…" needed 149px against 148px). The domain
            is already on the row twice over: the placeholder below names the
            detected apex, and a pinned one is the field's own value. A badge
            repeating it bought an ellipsis and nothing else. */
-        badge={<Badge tone="neutral">{trimmed ? 'Pinned' : 'Automatic'}</Badge>}
-        description="Conversations follow visitors across your subdomains. One parent domain, no wildcard."
+        badge={<Badge tone="neutral">{trimmed ? t('agents.pinned') || 'Pinned' : t('agents.automatic') || 'Automatic'}</Badge>}
+        description={t('agents.conversationsFollowVisitorsAcrossYour') || 'Conversations follow visitors across your subdomains. One parent domain, no wildcard.'}
         stacked
         error={sessionError ?? undefined}
       >
         <Input
           value={sessionShareDomain}
           disabled={disabled}
-          aria-label="Pin a parent domain"
+          aria-label={t('agents.pinAParentDomain') || 'Pin a parent domain'}
           aria-invalid={sessionError ? true : undefined}
           onChange={(event) => onChange({ sessionShareDomain: event.target.value })}
           placeholder={
-            websiteApex ? `Detected automatically (${websiteApex})` : 'Detected automatically'
+            websiteApex
+              ? t('agents.detectedAutomaticallyWith', { apex: websiteApex }) ||
+                `Detected automatically (${websiteApex})`
+              : t('agents.detectedAutomatically2') || 'Detected automatically'
           }
           className="figure max-w-sm"
           spellCheck={false}

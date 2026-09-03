@@ -42,6 +42,14 @@ import { t as translateNow } from '../../../i18n/i18n';
 export const SECTION_KEYS = ['branding', 'messages', 'voice', 'language', 'handoff', 'leads', 'uaq'] as const;
 export type SectionKey = (typeof SECTION_KEYS)[number];
 
+/** A tab label in the reader's language. Resolved per call, not at import. */
+export function sectionLabel(key: SectionKey): string {
+  return translateNow(`agents.experienceSection.${key}`) || SECTION_LABELS[key];
+}
+
+// @i18n-exempt: FALLBACKS, not rendered copy. Every read goes through
+// sectionLabel(), which resolves the dictionary first. This table is a module
+// constant evaluated before a locale exists, so it cannot resolve one itself.
 export const SECTION_LABELS: Record<SectionKey, string> = {
   branding: 'Branding',
   messages: 'Messages',
@@ -83,6 +91,14 @@ export interface SmartLink {
 export const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
 export type DayKey = (typeof DAY_KEYS)[number];
 
+/** A weekday name in the reader's language. */
+export function dayLabel(key: DayKey): string {
+  return translateNow(`agents.weekday.${key}`) || DAY_LABELS[key];
+}
+
+// @i18n-exempt: FALLBACKS, not rendered copy. Every read goes through
+// dayLabel(), which resolves the dictionary first. This table is a module
+// constant evaluated before a locale exists, so it cannot resolve one itself.
 export const DAY_LABELS: Record<DayKey, string> = {
   mon: 'Monday',
   tue: 'Tuesday',
@@ -309,7 +325,9 @@ export const LIMITS = {
 export const QUEUE_TIMEOUT = { min: 5, max: 600, default: 20 } as const;
 export const MAX_QUEUE = { min: 1, max: 100, default: 10 } as const;
 
+// Labels resolved per render by `handoffDelayLabel`; `value` is what is stored.
 export const HANDOFF_DELAY_OPTIONS: readonly { value: string; label: string }[] = [
+  // @i18n-exempt: fallbacks, resolved through handoffDelayLabel().
   { value: '0', label: 'Immediately' },
   { value: '2', label: 'After 2 seconds' },
   { value: '5', label: 'After 5 seconds' },
@@ -325,6 +343,14 @@ export const DEFAULT_LOCALE = 'en-IN';
 
 export const LEAD_FIELD_ORDER: readonly LeadFieldName[] = ['name', 'email', 'phone', 'company'];
 
+/** A lead-capture field name, as the CUSTOMER sees it while configuring it. */
+export function leadFieldLabel(name: LeadFieldName): string {
+  return translateNow(`agents.leadField.${name}`) || LEAD_FIELD_LABELS[name];
+}
+
+// @i18n-exempt: FALLBACKS, not rendered copy. Every read goes through
+// leadFieldLabel(), which resolves the dictionary first. This table is a module
+// constant evaluated before a locale exists, so it cannot resolve one itself.
 export const LEAD_FIELD_LABELS: Record<LeadFieldName, string> = {
   name: 'Name',
   email: 'Email',
@@ -339,6 +365,12 @@ export const LEAD_FIELD_LABELS: Record<LeadFieldName, string> = {
  * touched the rating prompt should keep getting the platform's wording as it
  * improves, not a copy of today's frozen into their record.
  */
+// @i18n-exempt: this is the WIDGET's copy, not the dashboard's. Every string
+// here is what a VISITOR reads, and the widget translates it into the
+// visitor's language from its own dictionary. Shown in the dashboard as the
+// placeholder of the field that overrides it, so translating it here would
+// tell a Hindi-reading customer their visitors see Hindi when the visitor's
+// own language decides that. It is also the seeded default the backend stores.
 export const PLACEHOLDERS = {
   launcherName: 'Have Questions?',
   welcomeGreeting: 'Hi there 👋',
@@ -864,7 +896,9 @@ export function validateDraft(draft: ExperienceDraft): DraftErrors {
     if (keyword.length === 0) {
       errors[`smartLinks:${index}`] = translateNow('agents.giveThisLinkAKeyword') || 'Give this link a keyword for the chatbot to match.';
     } else if (keywords.has(keyword)) {
-      errors[`smartLinks:${index}`] = `“${link.keyword.trim()}” is already mapped above.`;
+      errors[`smartLinks:${index}`] =
+        translateNow('agents.keywordAlreadyMapped', { keyword: link.keyword.trim() }) ||
+        `“${link.keyword.trim()}” is already mapped above.`;
     } else if (!isHttpUrl(url)) {
       errors[`smartLinks:${index}`] = translateNow('agents.enterAFullLinkStarting') || 'Enter a full link starting with http:// or https://';
     }
@@ -875,10 +909,14 @@ export function validateDraft(draft: ExperienceDraft): DraftErrors {
     draft.queueTimeoutSeconds < QUEUE_TIMEOUT.min ||
     draft.queueTimeoutSeconds > QUEUE_TIMEOUT.max
   ) {
-    errors.queueTimeoutSeconds = `Choose between ${QUEUE_TIMEOUT.min} and ${QUEUE_TIMEOUT.max} seconds.`;
+    errors.queueTimeoutSeconds =
+      translateNow('agents.chooseBetweenSeconds', { min: QUEUE_TIMEOUT.min, max: QUEUE_TIMEOUT.max }) ||
+      `Choose between ${QUEUE_TIMEOUT.min} and ${QUEUE_TIMEOUT.max} seconds.`;
   }
   if (draft.maxQueueSize < MAX_QUEUE.min || draft.maxQueueSize > MAX_QUEUE.max) {
-    errors.maxQueueSize = `Choose between ${MAX_QUEUE.min} and ${MAX_QUEUE.max} visitors.`;
+    errors.maxQueueSize =
+      translateNow('agents.chooseBetweenVisitors', { min: MAX_QUEUE.min, max: MAX_QUEUE.max }) ||
+      `Choose between ${MAX_QUEUE.min} and ${MAX_QUEUE.max} visitors.`;
   }
 
   const hours = draft.businessHours;

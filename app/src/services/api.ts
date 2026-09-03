@@ -4,6 +4,8 @@ import { ApiError, type ApiAxiosError } from './apiTypes';
 import type { InstallDomains } from '../features/agents/channels/installDomainsModel';
 import { t as translateNow } from '../i18n/i18n';
 import { getAuthItem, setAuthItem, clearAuthStorage } from '../utils/authStorage';
+import { isMissingClientCredential } from '../utils/authFailure';
+import { loginUrlWithNext } from '../utils/loginRedirect';
 import {
     IMPERSONATION_FORBIDDEN_MESSAGE,
     endImpersonationSession,
@@ -869,12 +871,16 @@ api.interceptors.response.use(
 
         const authType = getAuthItem('auth_type');
         const detailRaw = error.response?.data?.detail;
-        const detail = (detailRaw || '').toString().toLowerCase();
         const detailErrorCode = (typeof detailRaw === 'object' && detailRaw?.error) || null;
         const requestUrl = (error.config?.url || '').toString();
 
         const isLoginAttempt = requestUrl.includes('/auth/login') || requestUrl.includes('/auth/operator-login');
-        const isOperatorOnClientOnlyEndpoint = authType === 'operator' && detail.includes('api key');
+        // A legacy operator hitting a strict (account-only) endpoint is told
+        // "Missing X-API-Key header ...". That is a role answer, not an expired
+        // credential, so it must not clear the session. See
+        // ``utils/authFailure`` for how the message and the structured code are
+        // both accepted.
+        const isOperatorOnClientOnlyEndpoint = authType === 'operator' && isMissingClientCredential(detailRaw);
 
         // A 403 with error code ``workspace_access_denied`` means the caller
         // still holds a valid Client identity but has lost access to the
@@ -918,7 +924,10 @@ api.interceptors.response.use(
             // auth pages (notably /register from the "Start free" CTA) a stale
             // token's 401 must not hijack the page - clear it and stay put.
             if (!isOnPublicAuthPath()) {
-                window.location.href = '/login';
+                // Carry the deep link through the sign-in, the same way the
+                // protected-route boundary does, so an expiry mid-session
+                // returns the reader to the page they were on.
+                window.location.href = loginUrlWithNext(window.location.pathname, window.location.search);
             }
         }
         return Promise.reject(error);
@@ -1407,10 +1416,10 @@ export const getDocuments = async (botId?: number): Promise<KnowledgeSource[]> =
     try {
         const url = botId ? `/documents?bot_id=${botId}` : '/documents';
         const response = await api.get(url);
-        return expectArray(response.data, 'Failed to load documents');
+        return expectArray(response.data, translateNow('api.failedToLoadDocuments') || 'Failed to load documents');
     } catch (error) {
         console.error('API Error fetching documents:', error);
-        throw buildApiError(error, 'Failed to load documents');
+        throw buildApiError(error, translateNow('api.failedToLoadDocuments') || 'Failed to load documents');
     }
 };
 
@@ -1809,13 +1818,37 @@ export const getJourneyPostChat = async (
 
 
 /**
+ * How many SESSIONS one `getVisitorsData` call reads.
+ *
+ * `GET /analytics/visitors` pages over sessions (`limit`, max 1000, default
+ * 500) and then dedupes them into visitors, so the array that comes back is
+ * shorter than the page it was built from and carries no total. Sending nothing
+ * took the server's 500 silently, which is how a workspace with 4,000 sessions
+ * read "180 visitors" and exported only those. This asks for the maximum, and
+ * the caller states the ceiling on screen when it is reached.
+ */
+export const VISITORS_PAGE_SIZE = 1000;
+
+/**
  * Fetches the list of visitors/sessions for the admin dashboard.
+ *
+ * One returned row is one visitor and carries `all_session_ids`, so the number
+ * of SESSIONS this page covers is the sum of those lengths, which is what to
+ * compare against {@link VISITORS_PAGE_SIZE} to know whether the read was
+ * truncated.
+ *
  * @returns {Promise<Array>} List of visitor session objects
  */
-export const getVisitorsData = async (botId?: number): Promise<Array<Record<string, unknown>>> => {
+export const getVisitorsData = async (
+    botId?: number,
+    { limit = VISITORS_PAGE_SIZE, offset = 0 }: { limit?: number; offset?: number } = {},
+): Promise<Array<Record<string, unknown>>> => {
     try {
-        const url = botId ? `/analytics/visitors?bot_id=${botId}` : '/analytics/visitors';
-        const response = await api.get(url);
+        const params = new URLSearchParams();
+        if (botId) params.set('bot_id', String(botId));
+        params.set('limit', String(limit));
+        if (offset > 0) params.set('offset', String(offset));
+        const response = await api.get(`/analytics/visitors?${params.toString()}`);
         return response.data;
     } catch (error) {
         console.error('API Error fetching visitors data:', error);
@@ -1963,10 +1996,10 @@ export const getFeedbackData = async (botId?: number): Promise<FeedbackItem[]> =
     try {
         const url = botId ? `/analytics/feedback?bot_id=${botId}` : '/analytics/feedback';
         const response = await api.get(url);
-        return expectArray(response.data, 'Failed to load feedback');
+        return expectArray(response.data, translateNow('api.failedToLoadFeedback') || 'Failed to load feedback');
     } catch (error) {
         console.error('API Error fetching feedback data:', error);
-        throw buildApiError(error, 'Failed to load feedback');
+        throw buildApiError(error, translateNow('api.failedToLoadFeedback') || 'Failed to load feedback');
     }
 };
 
@@ -1978,10 +2011,10 @@ export const getTopQuestions = async (botId?: number): Promise<TopQuestion[]> =>
     try {
         const url = botId ? `/analytics/top-questions?bot_id=${botId}` : '/analytics/top-questions';
         const response = await api.get(url);
-        return expectArray(response.data, 'Failed to load top questions');
+        return expectArray(response.data, translateNow('api.failedToLoadTopQuestions') || 'Failed to load top questions');
     } catch (error) {
         console.error('API Error fetching top questions:', error);
-        throw buildApiError(error, 'Failed to load top questions');
+        throw buildApiError(error, translateNow('api.failedToLoadTopQuestions') || 'Failed to load top questions');
     }
 };
 
@@ -2257,10 +2290,10 @@ export const uploadFeedbackAttachment = async (file: File): Promise<{ url: strin
 export const getMyFeedback = async (): Promise<PlatformFeedbackItem[]> => {
     try {
         const response = await api.get('/client/feedback');
-        return expectArray(response.data, 'Failed to load your feedback');
+        return expectArray(response.data, translateNow('api.failedToLoadYourFeedback') || 'Failed to load your feedback');
     } catch (error) {
         console.error('API Error fetching my feedback:', error);
-        throw buildApiError(error, 'Failed to load your feedback');
+        throw buildApiError(error, translateNow('api.failedToLoadYourFeedback') || 'Failed to load your feedback');
     }
 };
 
@@ -2273,10 +2306,10 @@ export const getMyFeedback = async (): Promise<PlatformFeedbackItem[]> => {
 export const getBots = async (): Promise<Bot[]> => {
     try {
         const response = await api.get('/bots');
-        return expectArray(response.data, 'Failed to load bots');
+        return expectArray(response.data, translateNow('api.failedToLoadBots') || 'Failed to load bots');
     } catch (error) {
         console.error('API Error fetching bots:', error);
-        throw buildApiError(error, 'Failed to load bots');
+        throw buildApiError(error, translateNow('api.failedToLoadBots') || 'Failed to load bots');
     }
 };
 
@@ -2678,6 +2711,9 @@ export const getLeads = async (botId?: number, params: LeadsQuery = {}): Promise
         if (params.days != null) query.set('days', String(params.days));
         if (params.from_date) query.set('from_date', params.from_date);
         if (params.to_date) query.set('to_date', params.to_date);
+        // Only meaningful alongside a custom range: it tells the server which
+        // zone those calendar days were picked in.
+        if (params.from_date || params.to_date) query.set('tz', params.tz || readerTimeZone());
         if (params.page) query.set('page', String(params.page));
         if (params.limit) query.set('limit', String(params.limit));
         const response = await api.get(`/leads?${query.toString()}`);
@@ -2710,6 +2746,8 @@ export const getLeadStats = async (
         if (days != null) query.set('days', String(days));
         if (fromDate) query.set('from_date', fromDate);
         if (toDate) query.set('to_date', toDate);
+        // Same reason as `getLeads`: the range's days are the reader's, not UTC's.
+        if (fromDate || toDate) query.set('tz', readerTimeZone());
         const suffix = query.toString();
         const response = await api.get(`/leads/stats${suffix ? `?${suffix}` : ''}`);
         return response.data;
@@ -2874,10 +2912,10 @@ export const overrideLeadQualification = async (
 export const getWebhooks = async (botId?: number): Promise<Webhook[]> => {
     try {
         const response = await api.get(`/webhooks?bot_id=${botId}`);
-        return expectArray(response.data, 'Failed to load webhooks');
+        return expectArray(response.data, translateNow('api.failedToLoadWebhooks') || 'Failed to load webhooks');
     } catch (error) {
         console.error('API Error fetching webhooks:', error);
-        throw buildApiError(error, 'Failed to load webhooks');
+        throw buildApiError(error, translateNow('api.failedToLoadWebhooks') || 'Failed to load webhooks');
     }
 };
 
@@ -3183,10 +3221,10 @@ export const operatorChangePassword = async (
 export const getOperators = async (): Promise<Operator[]> => {
     try {
         const response = await api.get('/operators');
-        return expectArray(response.data, 'Failed to load operators');
+        return expectArray(response.data, translateNow('api.failedToLoadOperators') || 'Failed to load operators');
     } catch (error) {
         console.error('API Error fetching operators:', error);
-        throw buildApiError(error, 'Failed to load operators');
+        throw buildApiError(error, translateNow('api.failedToLoadOperators') || 'Failed to load operators');
     }
 };
 
@@ -3228,10 +3266,10 @@ export const deleteOperator = async (operatorId: number): Promise<Record<string,
 export const getDepartments = async (): Promise<Department[]> => {
     try {
         const response = await api.get('/operators/departments');
-        return expectArray(response.data, 'Failed to load departments');
+        return expectArray(response.data, translateNow('api.failedToLoadDepartments') || 'Failed to load departments');
     } catch (error) {
         console.error('API Error fetching departments:', error);
-        throw buildApiError(error, 'Failed to load departments');
+        throw buildApiError(error, translateNow('api.failedToLoadDepartments') || 'Failed to load departments');
     }
 };
 
@@ -3783,9 +3821,9 @@ export const getCreditDaily = async (
 export const getTopupPacks = async (): Promise<TopupPackResponse[]> => {
     try {
         const response = await api.get('/credits/packs');
-        return expectArray(response.data, 'Failed to load top-up packs');
+        return expectArray(response.data, translateNow('api.failedToLoadTopupPacks') || 'Failed to load top-up packs');
     } catch (error) {
-        throw buildApiError(error, 'Failed to load top-up packs');
+        throw buildApiError(error, translateNow('api.failedToLoadTopupPacks') || 'Failed to load top-up packs');
     }
 };
 
@@ -4456,9 +4494,9 @@ export const listOperatorInvites = async (statusFilter: string | null = null): P
     try {
         const params = statusFilter ? { status_filter: statusFilter } : {};
         const response = await api.get('/invites', { params });
-        return expectArray(response.data, 'Failed to load invites');
+        return expectArray(response.data, translateNow('api.failedToLoadInvites') || 'Failed to load invites');
     } catch (error) {
-        throw buildApiError(error, 'Failed to load invites');
+        throw buildApiError(error, translateNow('api.failedToLoadInvites') || 'Failed to load invites');
     }
 };
 
@@ -4517,10 +4555,13 @@ export const acceptInvitePublic = async (token: string): Promise<Record<string, 
  * a switch (workspace list is orthogonal to the workspace being switched).
  */
 export const getMyWorkspaces = async (): Promise<{ workspaces: Workspace[] }> => {
+    // A dedicated controller for THIS call, never the workspace-scoped one:
+    // `signal: undefined` is indistinguishable from an absent signal to the
+    // request interceptor, which would then fill in the workspace signal and
+    // let a switch cancel the very list refresh that switch triggered.
+    const controller = new AbortController();
     try {
-        // Ignore the workspace-scoped AbortController for THIS call - otherwise
-        // a switch mid-flight would cancel the list refresh we just triggered.
-        const response = await api.get('/me/workspaces', { signal: undefined });
+        const response = await api.get('/me/workspaces', { signal: controller.signal });
         return response.data;
     } catch (error) {
         throw buildApiError(error, 'Failed to load workspaces');

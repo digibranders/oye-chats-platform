@@ -68,7 +68,7 @@ flowchart TB
 
 | Symptom | Handoffs raised on the API process never reach an operator. The operator sees "Waiting (0)" beside a sidebar badge of 1 |
 |---|---|
-| Why it is nasty | Backplane publishes are **best-effort and fail open by design** (a Redis outage must never turn a visitor's message into a 500), so the failure is silent. And `WS_BACKPLANE_ENABLED` defaults **false**: the WS unit pins it true for its own process, while the deploy writes `${WS_BACKPLANE_ENABLED:-false}` into the API's `.env` |
+| Why it is nasty | Backplane publishes are **best-effort and fail open by design** (a Redis outage must never turn a visitor's message into a 500), so the failure is silent. `WS_BACKPLANE_ENABLED` now defaults **true** in `config.py` and the deploy writes `${WS_BACKPLANE_ENABLED:-true}`, so the API and WS processes agree by default; the flag is still inert without `REDIS_URL`, and an explicit repo variable of false reintroduces the split |
 | Detection | Compare the queue badge against `GET /operators/queue`; check Redis reachability from both processes; confirm the repo variable is actually set |
 | Mitigation today | `cancel_handoff`, `request_handoff`, accept, transfer, the operator roster and `broadcast_qualified_bot_changed` all union local sockets with Redis presence rather than iterating a per-process dict |
 | Resolution path | Alarm on the flag's effective value per process, not just on Redis liveness |

@@ -158,7 +158,12 @@ export function VoiceSection({
         <CardBody>
           <Field
             label={t('agents.customInstructions') || 'Custom instructions'}
-            hint={`Up to ${LIMITS.systemPrompt} characters — ${draft.systemPrompt.length} used.`}
+            hint={
+              t('agents.upToCharactersUsed', {
+                limit: LIMITS.systemPrompt,
+                used: draft.systemPrompt.length,
+              }) || `Up to ${LIMITS.systemPrompt} characters, ${draft.systemPrompt.length} used.`
+            }
           >
             <Textarea
               rows={6}
@@ -330,7 +335,7 @@ export function VoiceSection({
                       value={service.name}
                       maxLength={LIMITS.serviceName}
                       disabled={readOnly}
-                      aria-label={`Service ${index + 1} name`}
+                      aria-label={t('agents.serviceNName', { n: index + 1 }) || `Service ${index + 1} name`}
                       placeholder={t('agents.seoAudit') || 'SEO audit'}
                       onChange={(event) => updateService(index, { name: event.target.value })}
                       className="flex-1"
@@ -340,7 +345,7 @@ export function VoiceSection({
                       disabled={readOnly}
                       spellCheck={false}
                       inputMode="url"
-                      aria-label={`Service ${index + 1} link`}
+                      aria-label={t('agents.serviceNLink', { n: index + 1 }) || `Service ${index + 1} link`}
                       placeholder="https://example.com/seo (optional)"
                       aria-invalid={errors[`services:${index}`] ? true : undefined}
                       onChange={(event) => updateService(index, { url: event.target.value })}
@@ -351,7 +356,7 @@ export function VoiceSection({
                         variant="ghost"
                         size="icon-md"
                         disabled={readOnly}
-                        aria-label={`Remove service ${index + 1}`}
+                        aria-label={t('agents.removeServiceN', { n: index + 1 }) || `Remove service ${index + 1}`}
                         onClick={() =>
                           onChange({ services: draft.services.filter((_, i) => i !== index) })
                         }
@@ -400,7 +405,7 @@ export function VoiceSection({
                       value={link.keyword}
                       maxLength={LIMITS.keyword}
                       disabled={readOnly}
-                      aria-label={`Link ${index + 1} keyword`}
+                      aria-label={t('agents.linkNKeyword', { n: index + 1 }) || `Link ${index + 1} keyword`}
                       placeholder={t('agents.pricing') || 'pricing'}
                       onChange={(event) => updateLink(index, { keyword: event.target.value })}
                       className="w-40 shrink-0"
@@ -410,7 +415,7 @@ export function VoiceSection({
                       disabled={readOnly}
                       spellCheck={false}
                       inputMode="url"
-                      aria-label={`Link ${index + 1} destination`}
+                      aria-label={t('agents.linkNDestination', { n: index + 1 }) || `Link ${index + 1} destination`}
                       placeholder="https://example.com/pricing"
                       aria-invalid={errors[`smartLinks:${index}`] ? true : undefined}
                       onChange={(event) => updateLink(index, { url: event.target.value })}
@@ -421,7 +426,7 @@ export function VoiceSection({
                         variant="ghost"
                         size="icon-md"
                         disabled={readOnly}
-                        aria-label={`Remove link ${index + 1}`}
+                        aria-label={t('agents.removeLinkN', { n: index + 1 }) || `Remove link ${index + 1}`}
                         onClick={() =>
                           onChange({ smartLinks: draft.smartLinks.filter((_, i) => i !== index) })
                         }

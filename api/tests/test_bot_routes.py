@@ -77,6 +77,11 @@ class _ExecuteResult:
     def scalars(self):
         return _ScalarResult(self._value)
 
+    def all(self):
+        """No rows. Aggregate reads (e.g. the KB-usage reclaim on bot delete)
+        run through ``.all()`` and must not trip over the ownership-lookup stub."""
+        return []
+
 
 def _apply_flush_defaults(obj, bot_id=42):
     """Assign a primary key + materialize a Bot's scalar column defaults.
@@ -798,3 +803,111 @@ class TestDemoPage:
         tc = TestClient(_build_app())
         response = tc.get("/demo/bot-demo?url=ftp://bad-scheme.com")
         assert response.status_code == 400
+
+
+# ── Cache invalidation + KB reclaim on bot writes ────────────────────────────
+
+
+class TestBotDeleteReclaimsKbUsage:
+    """I6/R6: a cascade delete takes the documents with it, so the account's
+    character counter has to be settled first, and the bot's cached answers
+    must not outlive the bot."""
+
+    def test_delete_frees_the_bots_characters_and_flushes_its_caches(self, monkeypatch):
+        from app.api import bot_routes
+
+        bot = SimpleNamespace(id=5, client_id=1, bot_key="bot-xyz")
+        session = MagicMock()
+        session.execute.return_value = _ExecuteResult(bot)
+        monkeypatch.setattr(bot_routes, "get_session", lambda: _session_ctx(session))
+        release = MagicMock(return_value=1234)
+        monkeypatch.setattr(bot_routes, "release_kb_usage_for_bot", release)
+
+        with (
+            patch("app.api.bot_routes.cache_delete"),
+            patch("app.api.bot_routes.cache_delete_prefix") as mock_prefix,
+        ):
+            app = _build_app(auth_override=_client_auth())
+            response = TestClient(app).delete("/bots/5")
+
+        assert response.status_code == 200
+        release.assert_called_once_with(session, client_id=1, bot_id=5)
+        # Reclaimed BEFORE the rows are gone.
+        assert release.call_args is not None
+        assert mock_prefix.call_count == 2
+
+    def test_settings_update_flushes_the_answer_and_gate_caches(self, monkeypatch):
+        """The QA cache is keyed on the question, not on the prompt that
+        produced the answer, so a prompt edit has to invalidate it explicitly."""
+        from app.api import bot_routes
+
+        bot = SimpleNamespace(
+            id=5,
+            client_id=1,
+            bot_key="bot-xyz",
+            system_prompt="Old prompt",
+            feature_flags={},
+            language_config={},
+            widget_messages={},
+            widget_config={},
+            bant_config=None,
+            manual_field_overrides=[],
+        )
+        session = MagicMock()
+        session.execute.return_value = _ExecuteResult(bot)
+        monkeypatch.setattr(bot_routes, "get_session", lambda: _session_ctx(session))
+
+        with (
+            patch("app.api.bot_routes.cache_delete"),
+            patch("app.api.bot_routes.cache_delete_prefix") as mock_prefix,
+            patch("app.api.bot_routes.qa_prefix_for_bot", return_value="qa:5:"),
+            patch("app.api.bot_routes.gate_prefix_for_bot", return_value="gate:b5:"),
+        ):
+            app = _build_app(auth_override=_client_auth())
+            response = TestClient(app).patch("/bots/5", json={"system_prompt": "Be brief."})
+
+        assert response.status_code == 200
+        assert {call.args[0] for call in mock_prefix.call_args_list} == {"qa:5:", "gate:b5:"}
+
+
+class TestDispatchJobIds:
+    """I7: ARQ refuses an enqueue while a finished job's RESULT is still stored
+    (an hour by default), so a bare per-bot job id goes dead for that hour."""
+
+    def test_job_ids_carry_a_time_bucket(self):
+        from app.worker.enqueue import bucketed_job_id
+
+        assert bucketed_job_id("demo-screenshot", 5).startswith("demo-screenshot:5:")
+        with patch("app.worker.enqueue.time.time", return_value=0):
+            zero = bucketed_job_id("demo-screenshot", 5)
+        with patch("app.worker.enqueue.time.time", return_value=3600):
+            an_hour_later = bucketed_job_id("demo-screenshot", 5)
+        # An hour later (past ARQ's default result TTL) the id is free again.
+        assert zero != an_hour_later
+
+    def test_a_refused_capture_does_not_leave_the_card_pending(self, monkeypatch):
+        from app.api import bot_routes
+
+        bot = SimpleNamespace(
+            id=5,
+            client_id=1,
+            bot_key="bot-xyz",
+            website="https://acme.test",
+            demo_screenshot_status="ready",
+        )
+        session = MagicMock()
+        session.execute.return_value = _ExecuteResult(bot)
+        session.get.return_value = bot
+        monkeypatch.setattr(bot_routes, "get_session", lambda: _session_ctx(session))
+        monkeypatch.setattr(bot_routes, "DEMO_SCREENSHOT_ENABLED", True)
+        import app.worker.enqueue as enqueue_module
+
+        monkeypatch.setattr(enqueue_module, "WORKER_ENABLED", True)
+        # ARQ refuses: an identical job id is still live.
+        monkeypatch.setattr(enqueue_module, "enqueue_sync", MagicMock(return_value=None))
+
+        app = _build_app(auth_override=_client_auth())
+        response = TestClient(app).post("/bots/5/demo-screenshot")
+
+        assert response.status_code == 503
+        assert bot.demo_screenshot_status == "ready"

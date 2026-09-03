@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { Globe, Search, Square } from 'lucide-react';
 import {
   Alert,
@@ -11,20 +10,18 @@ import {
   FigureList,
   FigureRow,
   Input,
-  LockedState,
-  Meter,
   Switch,
   Well,
-  buttonClass,
   formatNumber,
 } from '../../../../ui';
 import type { KnowledgeSource } from '../../../../types/domain';
 import { useEntitlements } from '../../../../hooks/useEntitlements';
 import { CrawlPageTree } from '../CrawlPageTree';
 import { IngestionProgress } from '../IngestionProgress';
-import { crawlCoverageOf, crawlDoneMessage, type Allowance } from '../knowledge-model';
+import { crawlCoverageOf, crawlDoneMessage } from '../knowledge-model';
 import { useCrawlDiscovery } from './useCrawlDiscovery';
 import { useTranslation } from '../../../../i18n/useTranslation';
+import { Trans } from '../../../../i18n/Trans';
 
 export interface WebsiteFlowProps {
   agentId: number;
@@ -32,14 +29,27 @@ export interface WebsiteFlowProps {
   /** The chatbot's own stored website, captured when it was created. */
   agentWebsite: string | null;
   sources: readonly KnowledgeSource[];
-  /** Plan allowance for crawled pages. */
-  pageAllowance: Allowance;
+  /** Website pages THIS chatbot has stored, all time. Never the workspace's. */
+  pagesTrainedHere: number;
+  /**
+   * The plan's website-page ceiling: `-1` unlimited, `null` when the plan
+   * payload states none.
+   *
+   * Not paired with `pagesTrainedHere` in a meter, and not a gate. The server
+   * populates no `page_scraping` usage counter, so the only numerator that
+   * exists is this chatbot's own stored pages while the ceiling is the
+   * account's, over a billing period. A bar built from the two read "500 of
+   * 500" on a workspace that had spent nothing, and the lock beneath it left
+   * that customer unable to train their chatbot at all. The real ceiling is
+   * enforced server-side and reported by the `limit` crawl outcome below, in
+   * the server's own words, because only it knows which limit was reached.
+   */
+  pageLimit: number | null;
   planName: string;
   /**
    * True while entitlements are still resolving. The provider's placeholder is
-   * a Free plan, so a Standard workspace with five hundred trained pages reads
-   * as over its limit for the first frames. Nothing locks until the real plan
-   * has arrived.
+   * a Free plan, so a Standard workspace would be quoted a Free plan's ceiling
+   * for the first frames. Nothing about the plan is stated until it arrives.
    */
   planLoading: boolean;
   /** Called after anything lands, so the page can refetch its sources. */
@@ -54,19 +64,21 @@ export interface WebsiteFlowProps {
  * fields of `useCrawl()` handed down one at a time by a parent that had already
  * imported the same context.
  *
- * **The allowance is a `Meter`, not an `Alert`.** It used to be a permanent
- * brass `Alert` — the tone the system reserves for "this is a paid thing" —
- * carrying three interpolated figures in prose on every render. A quota that is
- * 60% spent is ambient state, not something the reader must act on, and painting
- * it in the reserved colour every time is how a customer learns to ignore that
- * colour. It escalates to an `Alert` only once it is nearly gone.
+ * **The plan's page ceiling is stated, not metered.** It was a `Meter` over a
+ * quota this surface cannot compute, and before that a permanent brass `Alert`
+ * carrying three interpolated figures in prose on every render. The two figures
+ * a customer needs here are what this chatbot has already read and what the
+ * plan allows; they belong to different scopes, so they are two sentences and
+ * not one bar. What is actually spent per run is in the budget well below,
+ * where the selection changes it.
  */
 export function WebsiteFlow({
   agentId,
   agentName,
   agentWebsite,
   sources,
-  pageAllowance,
+  pagesTrainedHere,
+  pageLimit,
   planName,
   planLoading,
   onChanged,
@@ -90,31 +102,13 @@ export function WebsiteFlow({
     selected,
     error,
     budget,
+    discoveryFailed,
     hasPageList,
     pageCount,
     preflight,
     cost,
     alreadyTrained,
   } = flow;
-
-  if (pageAllowance.atLimit && !planLoading && !crawlRunning) {
-    return (
-      <CardBody>
-        {/* `size="panel"`: this already sits inside a card, and `LockedState`'s
-            own frame put a second hairline 20px inside the first. */}
-        <LockedState
-          size="panel"
-          title={`${planName}: no website pages left`}
-          description={`This plan covers ${formatNumber(pageAllowance.limit)} pages. Remove a website below, or move up.`}
-          action={
-            <Link to="/billing" className={buttonClass('primary', 'sm')}>
-              {t('agents.seePlans') || 'See plans'}
-            </Link>
-          }
-        />
-      </CardBody>
-    );
-  }
 
   // What the chatbot can actually answer from, not what the crawler fetched.
   // `crawl.pagesCrawled` is the fetched count, and a crawl stopped by a plan
@@ -138,7 +132,11 @@ export function WebsiteFlow({
         : {
             tone: 'success' as const,
             title: undefined,
-            body: `Finished — this chatbot read ${formatNumber(crawl.pagesCrawled)} page${crawl.pagesCrawled === 1 ? '' : 's'}.`,
+            body:
+              t('agents.finishedReadNPages', {
+                count: formatNumber(crawl.pagesCrawled),
+              }) ||
+              `Finished. This chatbot read ${formatNumber(crawl.pagesCrawled)} pages.`,
           }
       : crawl.status === 'limit'
         ? {
@@ -178,36 +176,30 @@ export function WebsiteFlow({
   return (
     <>
       <CardBody className="space-y-4">
-        {/* The allowance, stated before anything is spent — as one bar and one
-            figure pair rather than a sentence with three numbers in it. */}
-        {planLoading ? null : pageAllowance.unlimited ? (
+        {/* Two facts, each labelled with the thing it is about. This chatbot's
+            own page count is the one figure this surface can state exactly; the
+            plan's ceiling covers the whole workspace, and saying so is the
+            difference between a fact and a bar that quietly compares one
+            chatbot against an account. */}
+        {planLoading ? null : (
           <p className="text-xs text-text-secondary">
-            No page limit on {planName} — website training is charged in credits.{' '}
-            <span className="figure">{formatNumber(pageAllowance.used)}</span> pages trained here so
-            far.
+            <Trans
+              k="agents.nWebsitePagesTrainedSoFar"
+              fallback="{count} website pages trained on this chatbot so far."
+              values={{
+                count: <span className="figure">{formatNumber(pagesTrainedHere)}</span>,
+              }}
+            />{' '}
+            {pageLimit === null || pageLimit < 0
+              ? t('agents.websiteTrainingChargedInCredits', { plan: planName }) ||
+                `Website training is charged in credits on ${planName}.`
+              : t('agents.planAllowsNWebsitePages', {
+                  plan: planName,
+                  limit: formatNumber(pageLimit),
+                }) ||
+                `${planName} allows ${formatNumber(pageLimit)} website pages across this workspace.`}
           </p>
-        ) : (
-          <Meter
-            label={t('agents.websitePages') || 'Website pages'}
-            used={pageAllowance.used}
-            limit={pageAllowance.limit}
-            tone="plan"
-          />
         )}
-
-        {pageAllowance.nearLimit && !pageAllowance.atLimit && !planLoading ? (
-          <Alert
-            tone="plan"
-            action={
-              <Link to="/billing" className={buttonClass('secondary', 'sm')}>
-                {t('agents.seePlans') || 'See plans'}
-              </Link>
-            }
-          >
-            <span className="figure">{formatNumber(pageAllowance.remaining)}</span> pages left on{' '}
-            {planName}.
-          </Alert>
-        ) : null}
 
         <Field label={t('agents.websiteAddress') || 'Website address'} hint={t('agents.aPublicPageIsEnough') || 'A public page is enough, with no login.'}>
           <Input
@@ -222,7 +214,8 @@ export function WebsiteFlow({
 
         {maxPages > 0 ? (
           <p className="text-xs text-text-tertiary">
-            Your plan crawls up to {maxPages} pages, {maxDepth} levels deep.
+            {t('agents.planCrawlsUpToNPages', { pages: maxPages, depth: maxDepth }) ||
+              `Your plan crawls up to ${maxPages} pages, ${maxDepth} levels deep.`}
           </p>
         ) : null}
 
@@ -230,9 +223,16 @@ export function WebsiteFlow({
             this one says the next press re-reads and re-charges every page. */}
         {alreadyTrained ? (
           <Alert tone="warning">
-            {alreadyTrained} is already trained. Training it again re-reads and re-charges every
-            page — use <strong className="font-medium">{t('agents.reTrain') || 'Re-train'}</strong> on the source below to see
-            what actually changed first.
+            <Trans
+              k="agents.siteIsAlreadyTrained"
+              fallback="{site} is already trained. Training it again re-reads and re-charges every page, so use {reTrain} on the source below to see what actually changed first."
+              values={{
+                site: alreadyTrained,
+                reTrain: (
+                  <strong className="font-medium">{t('agents.reTrain') || 'Re-train'}</strong>
+                ),
+              }}
+            />
           </Alert>
         ) : null}
 
@@ -282,8 +282,17 @@ export function WebsiteFlow({
                   budget.costPerPage === 0
                     ? t('agents.thisTrainingIsFree') || 'This training is free · balance unchanged'
                     : budget.freePages > 0
-                      ? `First ${formatNumber(budget.freePages)} free · then ${formatNumber(budget.costPerPage)} credits a page · balance ${formatNumber(budget.balance)}`
-                      : `${formatNumber(budget.costPerPage)} credits a page · balance ${formatNumber(budget.balance)}`
+                      ? t('agents.firstNFreeThenPerPage', {
+                          free: formatNumber(budget.freePages),
+                          perPage: formatNumber(budget.costPerPage),
+                          balance: formatNumber(budget.balance),
+                        }) ||
+                        `First ${formatNumber(budget.freePages)} free · then ${formatNumber(budget.costPerPage)} credits a page · balance ${formatNumber(budget.balance)}`
+                      : t('agents.creditsAPageBalance', {
+                          perPage: formatNumber(budget.costPerPage),
+                          balance: formatNumber(budget.balance),
+                        }) ||
+                        `${formatNumber(budget.costPerPage)} credits a page · balance ${formatNumber(budget.balance)}`
                 }
               />
               <FigureRow
@@ -364,7 +373,25 @@ export function WebsiteFlow({
                 disabled={!url.trim() || (preflight?.blocked ?? false)}
                 onClick={() => setConfirmingStart(true)}
               >
-                Train on {formatNumber(pageCount)} page{pageCount === 1 ? '' : 's'}
+                {t('agents.trainOnNPages', { count: formatNumber(pageCount) }) ||
+                  `Train on ${formatNumber(pageCount)} pages`}
+              </Button>
+              <Button variant="ghost" disabled={discovering} onClick={() => void flow.discover()}>
+                {t('agents.checkAgain') || 'Check again'}
+              </Button>
+            </>
+          ) : discoveryFailed ? (
+            <>
+              {/* The count failed, not the site. The crawl follows links from
+                  the homepage on its own, so the honest offer is to go ahead
+                  without a number: no page count, no invented cost. The confirm
+                  dialog's no-budget copy states the consequence. */}
+              <Button
+                variant="accent"
+                disabled={!url.trim() || discovering}
+                onClick={() => setConfirmingStart(true)}
+              >
+                {t('agents.trainAnyway') || 'Train anyway'}
               </Button>
               <Button variant="ghost" disabled={discovering} onClick={() => void flow.discover()}>
                 {t('agents.checkAgain') || 'Check again'}
@@ -393,11 +420,24 @@ export function WebsiteFlow({
         description={
           budget
             ? budget.costPerPage === 0
-              ? `${formatNumber(pageCount)} page${pageCount === 1 ? '' : 's'}, free. Your balance of ${formatNumber(budget.balance)} credits is not touched.`
-              : `${formatNumber(pageCount)} page${pageCount === 1 ? '' : 's'} × ${formatNumber(budget.costPerPage)} credits = ${formatNumber(cost)} credits, from a balance of ${formatNumber(budget.balance)}. Charged as they are read, so stopping early only pays for what was read.`
-            : `This reads ${url.trim() || 'this website'} and charges credits for each page it reads.`
+              ? t('agents.nPagesFreeBalanceUntouched', {
+                  count: formatNumber(pageCount),
+                  balance: formatNumber(budget.balance),
+                }) ||
+                `${formatNumber(pageCount)} pages, free. Your balance of ${formatNumber(budget.balance)} credits is not touched.`
+              : t('agents.nPagesTimesCredits', {
+                  count: formatNumber(pageCount),
+                  perPage: formatNumber(budget.costPerPage),
+                  cost: formatNumber(cost),
+                  balance: formatNumber(budget.balance),
+                }) ||
+                `${formatNumber(pageCount)} pages × ${formatNumber(budget.costPerPage)} credits = ${formatNumber(cost)} credits, from a balance of ${formatNumber(budget.balance)}. Charged as they are read, so stopping early only pays for what was read.`
+            : t('agents.thisReadsAndCharges', {
+                site: url.trim() || t('agents.thisWebsite') || 'this website',
+              }) ||
+              `This reads ${url.trim() || 'this website'} and charges credits for each page it reads.`
         }
-        confirmLabel="Start training"
+        confirmLabel={t('agents.startTraining') || 'Start training'}
         onConfirm={async () => {
           await flow.beginCrawl();
           setConfirmingStart(false);

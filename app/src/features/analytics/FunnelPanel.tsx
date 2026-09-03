@@ -70,7 +70,10 @@ export function FunnelPanel({ botId, range, unlocked }: FunnelPanelProps) {
         eyebrow="Qualification"
         title={t('analytics.howVisitorsBecomeBuyers') || 'How visitors become buyers'}
         titleAs="h2"
-        description={`Where people drop off between a first visit and a booked call · ${range.label.toLowerCase()}`}
+        description={
+          t('analytics.wherePeopleDropOff', { range: range.label.toLowerCase() }) ||
+          `Where people drop off between a first visit and a booked call · ${range.label.toLowerCase()}`
+        }
         actions={
           !planLocked && funnelHasData(stages) ? (
             <Button size="sm" variant="ghost" onClick={onExport} iconLeft={<Download aria-hidden />}>
@@ -120,7 +123,11 @@ export function FunnelPanel({ botId, range, unlocked }: FunnelPanelProps) {
               meta:
                 stage.conversionFromPrev === null
                   ? stage.sublabel
-                  : `${stage.sublabel} · ${formatPercent(stage.conversionFromPrev / 100)} of previous`,
+                  : t('analytics.sublabelOfPrevious', {
+                      sublabel: stage.sublabel,
+                      percent: formatPercent(stage.conversionFromPrev / 100),
+                    }) ||
+                    `${stage.sublabel} · ${formatPercent(stage.conversionFromPrev / 100)} of previous`,
             }))}
           />
         </CardBody>

@@ -267,6 +267,52 @@ describe('plans with nothing to sell', () => {
   });
 });
 
+/**
+ * Whose operators are being counted.
+ *
+ * `seatsUsed` reached this dialog as `entitlements.usage.operators`, which is
+ * an ACCOUNT-WIDE count, while every other figure in it comes from one
+ * chatbot's subscription. So a workspace with five operators, one of them on
+ * this chatbot, was refused a reduction from two seats to one on this
+ * chatbot's plan, a legal change the server would have accepted, under a
+ * hint line that named three different scopes in one sentence.
+ *
+ * The count is now labelled by scope: a per-chatbot count is the floor for a
+ * reduction, and an account-wide one is stated as such and may not block.
+ */
+describe('the scope of the filled-seat count', () => {
+  it('will not reduce below the seats filled ON THIS CHATBOT', async () => {
+    renderDialog({ currentSeats: 3, seatsUsed: 2, seatsUsedScope: 'chatbot' });
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '1' } });
+
+    expect(screen.getByText(/2 active operators on this chatbot/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /update seats/i })).toBeDisabled();
+  });
+
+  it('never blocks a reduction with a count taken across the whole workspace', async () => {
+    renderDialog({ currentSeats: 2, seatsUsed: 5, seatsUsedScope: 'workspace' });
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '1' } });
+
+    expect(screen.queryByText(/deactivate one before reducing/i)).toBeNull();
+    expect(screen.getByRole('button', { name: /update seats/i })).toBeEnabled();
+    // It is still said, because a refusal from the server would otherwise
+    // arrive with no explanation at all.
+    expect(screen.getByText(/5 operators are active across this workspace/i)).toBeInTheDocument();
+  });
+
+  it('labels an account-wide count in the allowance hint rather than mixing scopes', () => {
+    renderDialog({ currentSeats: 2, seatsUsed: 5, seatsUsedScope: 'workspace' });
+    expect(screen.getByText(/5 filled across this workspace/i)).toBeInTheDocument();
+  });
+
+  it('leaves a per-chatbot hint unqualified, because every term is that chatbot’s', () => {
+    renderDialog({ currentSeats: 2, seatsUsed: 1, seatsUsedScope: 'chatbot' });
+    const hint = screen.getByText(/filled/i);
+    expect(hint.textContent).toContain('1 filled');
+    expect(hint.textContent).not.toMatch(/across this workspace/i);
+  });
+});
+
 describe('the cancelled-purchase notice', () => {
   it('does not survive into a freshly opened dialog', async () => {
     api.changeOperatorSeats.mockResolvedValue({ requires_authorization: true, checkout: CHECKOUT });

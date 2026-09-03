@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -74,3 +75,72 @@ def test_discover_returns_credit_math(monkeypatch):
     assert body["credits_required_full"] == 150  # 30 * 5
     assert body["exceeds_balance"] is True  # 150 > 100
     assert body["urls"] == fake_urls
+
+
+# ── The preview's time budget and its honesty about partial results ──────
+
+
+def test_link_phase_budget_is_the_remainder_of_the_route_budget_with_a_floor():
+    """Two 20 second phases in a row could take 40 against a route that
+    promises about 20 and a browser that gives up at 30. The link phase gets
+    whatever is left of one overall budget, never less than a floor that still
+    lets it find something."""
+    from app.api.document_routes import _link_phase_budget
+
+    assert _link_phase_budget(elapsed=3.0) == pytest.approx(22.0)
+    assert _link_phase_budget(elapsed=20.0) == pytest.approx(5.0)
+    assert _link_phase_budget(elapsed=31.0) == pytest.approx(5.0)
+
+
+def _wire_discover(monkeypatch, *, sitemap_urls, link_urls, link_truncated):
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _ctx(s):
+        yield s
+
+    seen: dict = {}
+    monkeypatch.setattr("app.schemas.client._is_public_hostname", lambda h: True)
+    monkeypatch.setattr(document_routes, "get_session", lambda: _ctx(MagicMock()))
+    monkeypatch.setattr("app.services.plan_service.get_client_plan", lambda db, cid: SimpleNamespace(name="Standard"))
+    monkeypatch.setattr("app.services.plan_service.get_crawl_limits", lambda plan: {"max_crawl_pages": UNLIMITED})
+    monkeypatch.setattr(document_routes, "resolve_crawl_pricing", lambda db, cid, bid: (5, 0))
+    monkeypatch.setattr("app.services.credit_service.get_balance", lambda db, cid, bot_id=None: 100)
+
+    async def fake_sitemap(url, **kwargs):
+        return list(sitemap_urls)
+
+    async def fake_links(url, **kwargs):
+        seen["link_timeout"] = kwargs.get("timeout")
+        stats = kwargs.get("stats")
+        if stats is not None and link_truncated:
+            stats["truncated"] = True
+        return list(link_urls)
+
+    monkeypatch.setattr("app.services.url_discovery.discover_website_urls", fake_sitemap)
+    monkeypatch.setattr("app.services.url_discovery.discover_via_links", fake_links)
+    return seen
+
+
+def test_a_deadline_truncated_link_scan_is_reported_as_capped(monkeypatch):
+    seen = _wire_discover(
+        monkeypatch,
+        sitemap_urls=["https://acme.test"],
+        link_urls=["https://acme.test", "https://acme.test/a", "https://acme.test/b"],
+        link_truncated=True,
+    )
+    body = TestClient(_build_app()).post("/crawl/discover", json={"url": "https://acme.test"}).json()
+    assert body["total_found"] == 3
+    assert body["capped"] is True
+    assert seen["link_timeout"] <= 25.0
+
+
+def test_a_complete_link_scan_is_not_reported_as_capped(monkeypatch):
+    _wire_discover(
+        monkeypatch,
+        sitemap_urls=["https://acme.test"],
+        link_urls=["https://acme.test", "https://acme.test/a"],
+        link_truncated=False,
+    )
+    body = TestClient(_build_app()).post("/crawl/discover", json={"url": "https://acme.test"}).json()
+    assert body["capped"] is False

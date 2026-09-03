@@ -22,10 +22,30 @@ from app.schemas.client import _is_public_hostname
 logger = logging.getLogger(__name__)
 
 SUPPORTED_EVENTS = ["tier_transition", "lead_captured", "handoff_requested", "chat_closed", "meeting_booked"]
-_MAX_RETRIES = 5
-_RETRY_DELAYS = [30, 120, 600, 3600]
+# One first attempt plus the documented 30s/2m/10m/1h/4h ladder (I8), so an
+# endpoint down for an afternoon still receives the event: ``_MAX_RETRIES`` is
+# the TOTAL number of attempts, hence len(_RETRY_DELAYS) + 1.
+_RETRY_DELAYS = [30, 120, 600, 3600, 14400]
+_MAX_RETRIES = len(_RETRY_DELAYS) + 1
 _DELIVERY_TIMEOUT = 10
 _RETRY_POLL_INTERVAL_SECONDS = 30
+
+# Circuit breaker: consecutive EXHAUSTED deliveries (every attempt for one event
+# failed) that auto-disable an endpoint. ``_MAX_RETRIES`` bounds retries per
+# EVENT only, so without this an endpoint dead for a week keeps costing five
+# attempts for every event a busy bot produces, forever.
+_CIRCUIT_BREAKER_THRESHOLD = 10
+
+# Rows one retry sweep may claim. The sweep holds ``FOR UPDATE`` locks across a
+# serial Redis round-trip per row while the 30s cron re-fires, so an unbounded
+# claim after an outage means one transaction pinning the whole backlog. Later
+# ticks drain the rest.
+_RETRY_SWEEP_LIMIT = 200
+
+_CIRCUIT_BREAKER_REASON = (
+    f"Auto-disabled after {_CIRCUIT_BREAKER_THRESHOLD} consecutive deliveries exhausted every retry "
+    "without a single success. Fix the endpoint, then re-enable this webhook."
+)
 
 _retry_worker_thread: threading.Thread | None = None
 _retry_worker_stop_event = threading.Event()
@@ -106,6 +126,28 @@ def fire_webhook(bot_id: int, event_type: str, data: dict) -> None:
 
 def _ip_is_public(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     return not (ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local or ip.is_multicast)
+
+
+def _loggable_url(url: str) -> str:
+    """The part of a webhook URL that is safe to write to a log: scheme and host.
+
+    For the integrations customers actually wire up (Zapier
+    ``hooks.zapier.com/hooks/catch/<id>/<token>/``, Make, n8n) the PATH is the
+    credential: anyone holding it can post events into the customer's
+    automation. A log line carrying the full URL lands in the journal and rides
+    into Sentry as a breadcrumb on the worker's next event, and ``scrub_event``
+    strips request headers, not log arguments. The host is all triage needs.
+    """
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return "<unparseable>"
+    if not parsed.scheme or not parsed.hostname:
+        return "<unparseable>"
+    host = parsed.hostname
+    if parsed.port:
+        host = f"{host}:{parsed.port}"
+    return f"{parsed.scheme}://{host}"
 
 
 def _is_safe_webhook_url(url: str) -> bool:
@@ -204,6 +246,61 @@ def _open_pinned(url: str, *, data: bytes, headers: dict, timeout: int) -> tuple
         conn.close()
 
 
+def _trip_circuit_breaker_if_dead(session, webhook: Webhook) -> None:
+    """Auto-disable ``webhook`` once its endpoint has been dead for N events.
+
+    Called only after a terminal failure has been committed, so the row that
+    just landed is part of the window.
+
+    The streak is DERIVED from ``webhook_deliveries`` rather than tracked in a
+    counter column: a counter would need its own migration, its own reset path,
+    and would drift the moment a delivery row was written outside this function.
+
+    "Outcome" rows are those with no ``next_retry_at``: a success clears the
+    marker, and so does a final failure. A row that still carries one is a
+    ladder rung mid-flight, not a verdict, and counting rungs would trip the
+    breaker five times too early. A success anywhere in the most recent
+    ``_CIRCUIT_BREAKER_THRESHOLD`` outcomes resets the streak, which is what
+    makes "consecutive" mean consecutive.
+
+    ``disabled_at`` bounds the window. Without it, a webhook the customer
+    re-enables carries a full streak into its second life and the next single
+    failing event re-disables it instantly.
+    """
+    outcomes = select(WebhookDelivery.delivered_at).where(
+        WebhookDelivery.webhook_id == webhook.id,
+        WebhookDelivery.next_retry_at.is_(None),
+    )
+    if webhook.disabled_at is not None:
+        outcomes = outcomes.where(WebhookDelivery.created_at > webhook.disabled_at)
+
+    recent = (
+        session.execute(
+            outcomes.order_by(WebhookDelivery.created_at.desc(), WebhookDelivery.id.desc()).limit(
+                _CIRCUIT_BREAKER_THRESHOLD
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(recent) < _CIRCUIT_BREAKER_THRESHOLD or any(delivered_at is not None for delivered_at in recent):
+        return
+
+    webhook.is_active = False
+    webhook.disabled_reason = _CIRCUIT_BREAKER_REASON
+    webhook.disabled_at = datetime.now(UTC)
+    session.commit()
+    # Once per endpoint: ``fire_webhook`` filters on ``is_active``, so no
+    # further event reaches this branch until the customer re-enables it.
+    logger.error(
+        "Webhook %s AUTO-DISABLED: %d consecutive deliveries exhausted every attempt against %s. "
+        "No further events will be dispatched until the customer re-enables it",
+        webhook.id,
+        _CIRCUIT_BREAKER_THRESHOLD,
+        _loggable_url(webhook.url),
+    )
+
+
 def _deliver_webhook(webhook_id: int, event_type: str, data: dict, attempt: int = 1) -> None:
     """Deliver a single webhook. Called in background thread."""
     with get_session() as session:
@@ -212,7 +309,11 @@ def _deliver_webhook(webhook_id: int, event_type: str, data: dict, attempt: int 
             return
 
         if not _is_safe_webhook_url(webhook.url):
-            logger.warning("Webhook %s blocked: URL %r resolves to internal address", webhook_id, webhook.url)
+            logger.warning(
+                "Webhook %s blocked: URL at %s resolves to internal address",
+                webhook_id,
+                _loggable_url(webhook.url),
+            )
             session.add(
                 WebhookDelivery(
                     webhook_id=webhook.id,
@@ -226,6 +327,11 @@ def _deliver_webhook(webhook_id: int, event_type: str, data: dict, attempt: int 
                 )
             )
             session.commit()
+            # No breaker evaluation here. A blocked row is terminal, so it still
+            # COUNTS toward a later streak, but an SSRF block is a rejection at
+            # our own edge rather than a customer endpoint that failed, and
+            # tripping on it would disable a webhook whose owner never saw a
+            # single request leave.
             return
 
         now = datetime.now(UTC)
@@ -296,6 +402,11 @@ def _deliver_webhook(webhook_id: int, event_type: str, data: dict, attempt: int 
         )
         session.commit()
 
+        # Only a terminal failure can extend the streak. A success or a rung
+        # still awaiting its retry cannot, so the query is not worth running.
+        if delivered_at is None and next_retry_at is None and webhook.is_active:
+            _trip_circuit_breaker_if_dead(session, webhook)
+
 
 def process_pending_retries() -> int:
     """Process pending webhook retries that are due now.
@@ -309,6 +420,12 @@ def process_pending_retries() -> int:
      returns (M-1): clearing first meant a Redis hiccup lost the retry forever
     , the marker is the sole record that a redelivery is owed. On enqueue
      failure the row keeps its marker and the next sweep retries it.
+
+     The claim is capped at ``_RETRY_SWEEP_LIMIT``. Unbounded, one sweep after
+     an outage claimed every due row and then held its ``FOR UPDATE`` locks
+     across a serial Redis round-trip per row, while the 30s cron kept firing
+     on top of it. Oldest-due first, so a bounded sweep drains a backlog in
+     order rather than starving the rows that have waited longest.
     """
     now = datetime.now(UTC)
     queued = 0
@@ -322,6 +439,8 @@ def process_pending_retries() -> int:
                     WebhookDelivery.delivered_at.is_(None),
                     WebhookDelivery.attempt < _MAX_RETRIES,
                 )
+                .order_by(WebhookDelivery.next_retry_at.asc(), WebhookDelivery.id.asc())
+                .limit(_RETRY_SWEEP_LIMIT)
                 .with_for_update(skip_locked=True)
             )
             .scalars()

@@ -67,6 +67,7 @@ from app.core.dates import add_months
 from app.core.pricing import charge_currency, format_amount, seat_price
 from app.core.tax import SupplyKind, gross_charge_minor, supply_kind
 from app.db.models import (
+    ADDON_INVOICE_KINDS,
     AddonPlanCache,
     Bot,
     Client,
@@ -86,6 +87,14 @@ if TYPE_CHECKING:
     import razorpay
 
 logger = logging.getLogger(__name__)
+
+# Local statuses that mean a subscription row has already been retired by us.
+# Both spellings of cancelled, because a British-spelled terminal row exists in
+# older data (see ``/subscriptions/cancel``). A gateway event that lands on one
+# of these rows is the echo of a cancel WE issued (an upgrade's supersede, the
+# dunning expiry), never a fresh lapse, so the handlers do terminal
+# bookkeeping only and must not replay the paid→Free side effects.
+TERMINAL_SUBSCRIPTION_STATUSES = frozenset({"canceled", "cancelled", "expired"})
 
 # (connect, read) seconds for every Razorpay HTTP call. Connect is short --
 # a gateway refusing sockets will not recover in 30s. Read is generous,
@@ -2267,6 +2276,7 @@ def _release_idempotency_key(session: Session, event_id: str | None) -> None:
 # or a redelivery) hit the same refusal.
 _POOLED_SCOPE_DEAD_LETTER_PREFIX = "pooled-plan-scope-refusal:"
 _UNKNOWN_PLAN_DEAD_LETTER_PREFIX = "unknown-plan-refusal:"
+_MISSING_NOTES_DEAD_LETTER_PREFIX = "missing-notes-refusal:"
 _ORPHANED_HANDLE_DEAD_LETTER_PREFIX = "orphaned-checkout-handle:"
 
 
@@ -2345,6 +2355,50 @@ def _dead_letter_unknown_plan_refusal(
             f"charged (payment {payment_id}). Restore or correct the plan row, then re-run "
             "reconciliation (the idempotency key was released, so the event can be "
             "reprocessed)."
+        ),
+    )
+
+
+def _dead_letter_missing_notes_refusal(
+    *,
+    razorpay_sub_id: str,
+    payment_id: str | None,
+    event_id: str | None,
+    notes: dict[str, Any],
+    sub_entity: dict[str, Any],
+) -> None:
+    """Record an activation whose notes cannot name an account or a plan.
+
+    Same contract as the two refusals beside it: the customer HAS been charged,
+    a retry cannot invent the missing notes, so the charge is ACKed into the
+    dead-letter list ops watches and the idempotency key is released for a
+    deliberate second attempt once the notes are corrected on the gateway.
+
+    This branch used to log a WARNING and return. That ACK stopped
+    redelivery, the burned key refused superadmin replay and reconciliation,
+    and the only trace of a paid, unrecorded activation was a log line below
+    the level anything alerts on. Reachable for any mandate not minted by our
+    own checkout: a dashboard-created enterprise mandate, a legacy one from
+    before the notes were stamped, or a garbled note.
+    """
+    _dead_letter_synthetic(
+        dedup_key=f"{_MISSING_NOTES_DEAD_LETTER_PREFIX}{razorpay_sub_id}",
+        event_type="subscription.activated",
+        context={
+            "razorpay_subscription_id": razorpay_sub_id,
+            "razorpay_payment_id": payment_id,
+            "provider_event_id": event_id,
+            "notes_present": sorted(str(k) for k in notes),
+        },
+        body={"subscription": sub_entity},
+        error=(
+            "MANUAL RECONCILIATION REQUIRED (replay will not help. This row has no signed "
+            f"body). Razorpay subscription {razorpay_sub_id} activated but its notes carry no "
+            "usable oyechats_client_id / oyechats_plan_id, so the handler cannot tell whose "
+            "subscription this is. No local subscription was created and no credits were "
+            f"granted. The customer HAS been charged (payment {payment_id}). Set both notes on "
+            "the gateway subscription, then re-run reconciliation (the idempotency key was "
+            "released, so the event can be reprocessed)."
         ),
     )
 
@@ -2540,6 +2594,18 @@ def _handle_branding_addon_event(
         select(Subscription).where(Subscription.branding_addon_subscription_id == addon_sub_id)
     ).first()
     if local is None:
+        if event_name == "subscription.charged":
+            # Same first-charge race as ``_handle_subscription_charged``, and the
+            # same cost: money is already captured, so ACKing loses its GST
+            # invoice permanently (Razorpay never redelivers a 2xx). Raise so the
+            # event is dead-lettered and redelivered once activation has linked
+            # the mandate. Only the charge raises. A cancelled or halted event for
+            # an unknown mandate carries no money and must not burn retries.
+            logger.warning("Branding add-on subscription.charged for unlinked add-on sub %s. Will retry", addon_sub_id)
+            raise WebhookOutOfOrder(
+                f"branding add-on subscription.charged arrived before {addon_sub_id} "
+                "was linked locally; retry after activation"
+            )
         logger.info("Branding add-on event %s for unknown add-on sub %s. Acknowledged", event_name, addon_sub_id)
         return f"Branding add-on event {event_name} (no local sub)"
 
@@ -2599,6 +2665,14 @@ def _handle_seat_addon_event(
     seat_sub_id = sub_entity.get("id")
     local = session.scalars(select(Subscription).where(Subscription.seat_addon_subscription_id == seat_sub_id)).first()
     if local is None:
+        if event_name == "subscription.charged":
+            # See the branding handler: a captured charge on an unlinked mandate
+            # must be redelivered, not ACKed, or its GST invoice is lost.
+            logger.warning("Seat add-on subscription.charged for unlinked seat sub %s. Will retry", seat_sub_id)
+            raise WebhookOutOfOrder(
+                f"seat add-on subscription.charged arrived before {seat_sub_id} "
+                "was linked locally; retry after activation"
+            )
         logger.info("Seat add-on event %s for unknown seat sub %s. Acknowledged", event_name, seat_sub_id)
         return f"Seat add-on event {event_name} (no local sub)"
 
@@ -2726,12 +2800,16 @@ def handle_webhook_event(
     handler = handlers.get(event_name)
     if handler is None:
         return f"Unhandled event type: {event_name}"
-    if handler is _handle_subscription_activated:
-        # The only handler that can refuse an ALREADY-CHARGED activation without
-        # persisting anything. It needs the event id so it can release the
-        # idempotency key it would otherwise burn on work it never did. See
-        # ``_release_idempotency_key``. Passed explicitly rather than widening
-        # every handler's signature or smuggling it through a context var.
+    if handler in (_handle_subscription_activated, _handle_subscription_authenticated):
+        # The activation handler is the only one that can refuse an
+        # ALREADY-CHARGED activation without persisting anything. It needs the
+        # event id so it can release the idempotency key it would otherwise burn
+        # on work it never did. See ``_release_idempotency_key``. Passed
+        # explicitly rather than widening every handler's signature or smuggling
+        # it through a context var. ``authenticated`` delegates straight into it
+        # (promo / deferred-start mandates), so it must carry the key too, or a
+        # refusal there burns the provider event id and the mandate can never be
+        # reprocessed.
         return handler(session, payload, event_id=event_id)
     return handler(session, payload)
 
@@ -3212,7 +3290,9 @@ def _record_referral_conversion_from_notes(session: Session, client_id: int, not
         )
 
 
-def _handle_subscription_authenticated(session: Session, payload: dict[str, Any]) -> str:
+def _handle_subscription_authenticated(
+    session: Session, payload: dict[str, Any], *, event_id: str | None = None
+) -> str:
     """Mandate authorised, billing not started, two deferred-start cases meet here.
 
     A subscription minted with a future ``start_at`` sits in ``authenticated``
@@ -3234,6 +3314,10 @@ def _handle_subscription_authenticated(session: Session, payload: dict[str, Any]
 
     An immediate-start non-promo subscription is left alone: its own
     ``activated`` event is the canonical trigger and arrives on its own.
+
+    ``event_id`` is forwarded to the activation handler for the same reason the
+    dispatcher passes it there directly: a refusal inside activation releases
+    the idempotency key instead of burning it on work it never did.
     """
     sub_entity = _extract_subscription_entity(payload)
     if not sub_entity:
@@ -3243,7 +3327,7 @@ def _handle_subscription_authenticated(session: Session, payload: dict[str, Any]
     if _promotion_id_from_notes(notes) is None and _entity_future_start(sub_entity) is None:
         return f"subscription.authenticated for {sub_entity.get('id')} ignored (immediate start. Awaiting activated)"
 
-    return _handle_subscription_activated(session, payload)
+    return _handle_subscription_activated(session, payload, event_id=event_id)
 
 
 def _handle_subscription_activated(session: Session, payload: dict[str, Any], *, event_id: str | None = None) -> str:
@@ -3313,11 +3397,23 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
 
     if local is None:
         if client_id is None or plan_id is None:
-            logger.warning(
-                "Razorpay subscription.activated for %s missing client/plan in notes. Cannot create local row",
+            # Not a warning-and-return. The customer has paid; see the helper.
+            logger.error(
+                "REFUSING activation of Razorpay subscription %s: notes carry no usable "
+                "oyechats_client_id / oyechats_plan_id (present: %s). The customer HAS been "
+                "charged. No local subscription was created; recorded in failed_webhooks.",
                 razorpay_sub_id,
+                sorted(str(k) for k in notes),
             )
-            return "missing notes; cannot create subscription"
+            _dead_letter_missing_notes_refusal(
+                razorpay_sub_id=razorpay_sub_id,
+                payment_id=(_extract_payment_entity(payload) or {}).get("id"),
+                event_id=event_id,
+                notes=notes,
+                sub_entity=sub_entity,
+            )
+            _release_idempotency_key(session, event_id)
+            return "missing owner in notes; subscription NOT created"
 
         # The notes named a plan; it must actually EXIST before anything else is
         # decided. Every arm below either checks this plan's shape (the pooled
@@ -4172,6 +4268,24 @@ def record_verified_subscription_charge(
         return None
     if str(pay.get("status") or "").lower() != "captured":
         return None  # authorised-but-not-captured → wait for the charge webhook
+    # Razorpay writes ``current_period_start`` at the first REAL debit and
+    # nowhere else (see ``_was_unbilled_trial_conversion``). A subscription
+    # with no period yet has not billed: the captured payment Checkout handed
+    # back is the mandate's authorisation transaction, the token amount that
+    # Razorpay auto-refunds, which every deferred-start mandate (mid-trial
+    # conversion, resume, launch promo) produces. Recording it as a paid
+    # ``plan_charge`` mints a numbered tax invoice for a charge that never
+    # happened, and that invoice then satisfies ``_revoke_unpaid_activation_grant``
+    # so a failed first debit no longer revokes the plan allowance. Leave the
+    # invoice to the ``subscription.charged`` webhook, which carries the real
+    # first debit.
+    if local.current_period_start is None:
+        logger.info(
+            "verify: subscription %s has no billed period yet; not recording payment %s as a plan charge",
+            local.razorpay_subscription_id,
+            razorpay_payment_id,
+        )
+        return None
     try:
         return _ensure_subscription_charge_invoice(
             session,
@@ -4519,6 +4633,28 @@ def _handle_subscription_cancelled(session: Session, payload: dict[str, Any]) ->
     if _promote_scheduled_if_pending(session, local) is not None:
         return f"Subscription {sub_entity.get('id')} cancelled → promoted scheduled change"
 
+    # A row that is already terminal locally was retired by us, not by this
+    # event: an upgrade's activation flips the superseded row to ``canceled``
+    # and then cancels its mandate at the gateway, and the dunning expiry flips
+    # to ``expired`` and does the same. Razorpay's ``cancelled`` for that mandate
+    # then arrives here. Re-running the paid→Free side effects on it is wrong:
+    # the account is on a NEW paid subscription, and ``deactivate_client_knowledge``
+    # would pause every bot the customer just upgraded, while the unbilled-trial
+    # forfeit below would zero the new plan's grant and insert a second active
+    # Free row into the ``one active per scope`` index (a 5xx retry loop).
+    # Terminal bookkeeping only.
+    if local.status in TERMINAL_SUBSCRIPTION_STATUSES:
+        if local.canceled_at is None:
+            local.canceled_at = datetime.now(UTC)
+        session.flush()
+        logger.info(
+            "subscription.cancelled for %s (client %s) landed on an already-%s row; no lapse side effects",
+            sub_entity.get("id"),
+            local.client_id,
+            local.status,
+        )
+        return f"Subscription {sub_entity.get('id')} cancelled (already {local.status} locally)"
+
     local.status = "canceled"
     local.canceled_at = datetime.now(UTC)
     # A Razorpay-originated cancellation (customer cancelled via their UPI app
@@ -4554,6 +4690,18 @@ def _handle_subscription_cancelled(session: Session, payload: dict[str, Any]) ->
     # sat in limbo with no plan and no trial.
     if _was_unbilled_trial_conversion(local):
         _forfeit_and_convert_to_free(session, local)
+    else:
+        # Same leak, non-trial shape: a UPI mandate grants the first period at
+        # ``subscription.activated``, BEFORE its first debit. Cancelling in
+        # between (customer revokes the mandate in their UPI app) leaves a full
+        # unpaid period of credits standing, exactly what the halted/pending
+        # paths already reverse. The helper no-ops unless this subscription has
+        # zero paid plan invoices and its marker still sits past the period
+        # start, so an ordinary cancellation after months of billing is
+        # untouched. Not run on the branch above: the forfeit already zeroed the
+        # scope and granted the replacement Free allowance, which a second reset
+        # would wipe.
+        _revoke_unpaid_activation_grant(session, local)
 
     # Paid → Free: keep the bot's data but deactivate its knowledge so it stops
     # answering from a paid-tier KB until the customer re-adds on Free or
@@ -4597,13 +4745,25 @@ def _handle_subscription_completed(session: Session, payload: dict[str, Any]) ->
     if _promote_scheduled_if_pending(session, local) is not None:
         return f"Subscription {sub_entity.get('id')} completed → promoted scheduled change"
 
+    # Same guard as the cancelled handler: a row we already retired (superseded
+    # by an upgrade, or expired by dunning) must not have its lapse side effects
+    # replayed on top of the customer's current subscription.
+    if local.status in TERMINAL_SUBSCRIPTION_STATUSES:
+        session.flush()
+        return f"Subscription {sub_entity.get('id')} completed (already {local.status} locally)"
+
     local.status = "expired"
-    # Paid → Free (natural end-of-life): deactivate this bot's knowledge, same
-    # as the cancel / dunning-expiry paths.
-    from app.services.knowledge_state_service import deactivate_bot_knowledge
+    # Paid → Free (natural end-of-life): deactivate the lapsed knowledge, same
+    # as the cancel / dunning-expiry paths. Account-level rows carry a NULL
+    # bot_id, where the per-bot helper is a no-op, so they take the
+    # client-level path exactly like the cancel handler.
+    from app.services.knowledge_state_service import deactivate_bot_knowledge, deactivate_client_knowledge
     from app.services.transition_service import enforce_operator_ceiling
 
-    deactivate_bot_knowledge(session, local.bot_id)
+    if local.bot_id is None:
+        deactivate_client_knowledge(session, local.client_id)
+    else:
+        deactivate_bot_knowledge(session, local.bot_id)
     # Operator seats fall under the same paid→Free rule (see the cancel path).
     enforce_operator_ceiling(session, local.client_id)
     session.flush()
@@ -4686,10 +4846,29 @@ def _revoke_unpaid_activation_grant(session: Session, local: Subscription) -> bo
 
     marker = local.last_granted_period_end
     start = local.current_period_start
-    # Nothing granted for the current period, no period anchor to roll back to,
-    # or already revoked (marker sits at/below the period start).
-    if marker is None or start is None or marker <= start:
-        return False
+    # A mid-trial conversion has NO ``current_period_start``: Razorpay writes
+    # that field at the first real debit, and a deferred mandate's debit has
+    # not happened yet. That is not a missing anchor to bail on, it is the one
+    # shape that ALWAYS grants ahead of its payment, so it is precisely what
+    # this function was written to reverse. Anchoring on the field alone made
+    # the guard return early on its own primary case: convert on day 3, let the
+    # day-14 debit fail, and the account kept a full paid allowance through the
+    # whole ``past_due`` grace window having paid nothing. ``past_due`` is a
+    # live status, so entitlements stayed at the purchased tier throughout, and
+    # the expiry cron that ends the window never touches the ledger.
+    #
+    # ``_was_unbilled_trial_conversion`` is the same test the cancellation path
+    # already uses for this state, and it is deliberately stricter than "no
+    # period start": the conversion marker must also be set, so an ordinary row
+    # that happens to be missing an anchor is still left alone.
+    unbilled_conversion = _was_unbilled_trial_conversion(local)
+    if marker is None:
+        return False  # nothing granted, or already revoked
+    if start is None:
+        if not unbilled_conversion:
+            return False
+    elif marker <= start:
+        return False  # already revoked; the marker sits at the period start
 
     # Any successful PLAN charge on THIS subscription writes a paid Invoice;
     # its absence means the activation grant was never paid. Scoped to this sub
@@ -4716,6 +4895,11 @@ def _revoke_unpaid_activation_grant(session: Session, local: Subscription) -> bo
         return False
 
     credit_service.reset_monthly_plan_credits(session, local.client_id, bot_id=local.bot_id)
+    # ``None`` for an unbilled conversion, which is both correct and what keeps
+    # this idempotent: the monotonic guard in ``grant_subscription_period_once``
+    # only short-circuits on a marker that is not None, so a successful retry
+    # re-grants cleanly, while a redelivered halted/pending short-circuits on
+    # the ``marker is None`` test above instead of revoking a second time.
     local.last_granted_period_end = start
     logger.info(
         "Revoked unpaid activation grant for subscription %s (client %s, bot %s). "
@@ -4727,6 +4911,38 @@ def _revoke_unpaid_activation_grant(session: Session, local: Subscription) -> bo
     return True
 
 
+def _handle_dunning_event(session: Session, local: Subscription, sub_id: str, event_label: str) -> str:
+    """Shared body of ``subscription.halted`` / ``subscription.pending``.
+
+    A row that is already terminal locally (superseded by an upgrade, expired by
+    dunning, cancelled by the customer) must NOT be dragged back into
+    ``past_due``: that resurrects a retired subscription with a fresh 7-day
+    grace window, restores paid-tier entitlements the account no longer has,
+    and, when a live sibling row exists, inserts a second non-terminal row into
+    the ``one active per scope`` index. Same reasoning, and same terminal-only
+    bookkeeping, as the cancelled/completed handlers. The revoke is skipped too:
+    it is a live-row remedy, and on a retired row it would reset the credits of
+    whatever subscription the client is on now.
+    """
+    if local.status in TERMINAL_SUBSCRIPTION_STATUSES:
+        session.flush()
+        logger.info(
+            "subscription.%s for %s (client %s) landed on an already-%s row; no dunning side effects",
+            event_label,
+            sub_id,
+            local.client_id,
+            local.status,
+        )
+        return f"Subscription {sub_id} {event_label} (already {local.status} locally)"
+
+    _enter_past_due(local)
+    # Reverse an unpaid first-period activation grant (#2) so a customer whose
+    # UPI first charge fails doesn't keep a free period of credits.
+    _revoke_unpaid_activation_grant(session, local)
+    session.flush()
+    return f"Subscription {sub_id} {event_label}"
+
+
 def _handle_subscription_halted(session: Session, payload: dict[str, Any]) -> str:
     sub_entity = _extract_subscription_entity(payload)
     if not sub_entity:
@@ -4734,12 +4950,7 @@ def _handle_subscription_halted(session: Session, payload: dict[str, Any]) -> st
     local = _resolve_local_subscription(session, sub_entity.get("id", ""))
     if not local:
         return "Subscription not found"
-    _enter_past_due(local)
-    # Reverse an unpaid first-period activation grant (#2) so a customer whose
-    # UPI first charge fails doesn't keep a free period of credits.
-    _revoke_unpaid_activation_grant(session, local)
-    session.flush()
-    return f"Subscription {sub_entity.get('id')} halted"
+    return _handle_dunning_event(session, local, sub_entity.get("id", ""), "halted")
 
 
 def _handle_subscription_pending(session: Session, payload: dict[str, Any]) -> str:
@@ -4749,10 +4960,7 @@ def _handle_subscription_pending(session: Session, payload: dict[str, Any]) -> s
     local = _resolve_local_subscription(session, sub_entity.get("id", ""))
     if not local:
         return "Subscription not found"
-    _enter_past_due(local)
-    _revoke_unpaid_activation_grant(session, local)
-    session.flush()
-    return f"Subscription {sub_entity.get('id')} pending"
+    return _handle_dunning_event(session, local, sub_entity.get("id", ""), "pending")
 
 
 def _is_subscription_payment(pay_entity: dict[str, Any] | None) -> bool:
@@ -5297,16 +5505,19 @@ def _mark_withheld_charge(session: Session, invoice: Invoice | None) -> None:
 def _clawback_reasons_for(inv: Invoice) -> tuple[str, ...] | None:
     """Which grant type a refund/chargeback of ``inv`` should reverse.
 
-    ``None`` means the charge funded NO credit grant (seat add-ons,
-    withheld-credit charges after cancellation). Claw nothing. Deriving this
-    from ``subscription_id`` presence was P0-1: seat and withheld invoices
+    ``None`` means the charge funded NO credit grant (every add-on kind in
+    ``ADDON_INVOICE_KINDS`` -- seat and branding-removal -- and withheld-credit
+    charges after cancellation). Claw nothing, and do not fall through to the
+    legacy branch, whose "review manually" fallback would log a false error on
+    every branding refund. Deriving this from ``subscription_id`` presence was
+    P0-1: add-on and withheld invoices
     carry a subscription_id, so refunding one fell through to the
     most-recent-grant fallback and wiped an unrelated plan allowance.
 
     Legacy rows (``kind`` IS NULL, pre-migration) keep the old heuristic; they
     are also the only rows allowed the unlinked-grant fallback.
     """
-    if inv.kind in ("seat", "withheld_charge"):
+    if inv.kind in (*ADDON_INVOICE_KINDS, "withheld_charge"):
         return None
     if inv.kind == "topup":
         return ("topup",)
@@ -5314,6 +5525,28 @@ def _clawback_reasons_for(inv: Invoice) -> tuple[str, ...] | None:
         return ("plan_grant",)
     # Legacy (kind IS NULL): pre-kind heuristic.
     return ("plan_grant",) if inv.subscription_id is not None else ("topup",)
+
+
+#: Invoice statuses that record money already returned to the customer. A
+#: dispute must not overwrite one: there is no pre-dispute status column, so the
+#: label IS the record, and losing it makes a refunded charge read as retained.
+_MONEY_RETURNED_STATUSES = ("refunded", "partially_refunded")
+
+
+def _pre_dispute_status(inv: Invoice) -> str:
+    """What ``inv.status`` said before ``dispute.created`` overwrote it.
+
+    Derived from ``refunded_minor`` rather than stored, using the same rule
+    ``refund.failed`` recomputes with, so the two paths cannot disagree. Only
+    reached for an invoice that WAS "disputed", which is a state
+    :func:`_handle_dispute_created` now refuses to enter from a refunded row, so
+    in practice this answers "paid" unless a refund landed mid-dispute.
+    """
+    refunded_minor = int(inv.refunded_minor or 0)
+    if refunded_minor <= 0:
+        return "paid"
+    charge_minor = int(inv.amount_cents or 0)
+    return "refunded" if charge_minor and refunded_minor >= charge_minor else "partially_refunded"
 
 
 def _handle_dispute_created(session: Session, payload: dict[str, Any]) -> str:
@@ -5328,6 +5561,19 @@ def _handle_dispute_created(session: Session, payload: dict[str, Any]) -> str:
     if inv is None:
         logger.warning("dispute.created for unknown razorpay payment %s", payment_id)
         return f"Payment {payment_id} not found locally"
+    if inv.status in _MONEY_RETURNED_STATUSES:
+        # The money is already back with the customer, so the refund label is the
+        # truthful one and the dispute changes nothing about it. Recorded in the
+        # log rather than on the row: a chargeback here withdraws nothing extra,
+        # and overwriting the status would have ``dispute.won`` hand the invoice
+        # back as "paid" for money we returned.
+        logger.warning(
+            "Dispute %s opened on already-%s invoice %s. Keeping the refund status",
+            dispute.get("id"),
+            inv.status,
+            inv.id,
+        )
+        return f"Dispute {dispute.get('id')} opened on {inv.status} invoice {inv.id}"
     inv.status = "disputed"
     session.flush()
     return f"Dispute {dispute.get('id')} opened on invoice {inv.id}"
@@ -5403,6 +5649,9 @@ def _handle_dispute_won(session: Session, payload: dict[str, Any]) -> str:
     if inv is None:
         return f"Payment {payment_id} not found locally"
     if inv.status == "disputed":
-        inv.status = "paid"
+        # Restore what the row said before the dispute, do not assume "paid": a
+        # refund can land while a dispute is open, and stamping "paid" over it
+        # would report returned money as retained.
+        inv.status = _pre_dispute_status(inv)
     session.flush()
     return f"Dispute {dispute.get('id')} won on invoice {inv.id}"

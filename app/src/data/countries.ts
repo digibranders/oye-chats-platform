@@ -38,5 +38,5 @@ export const COUNTRY_OPTIONS: ComboboxOption<string>[] = (() => {
   const rest = ISO_COUNTRY_CODES.filter((c) => c !== 'IN')
     .map((code) => ({ value: code, label: countryName(code), keywords: code }))
     .sort((a, b) => a.label.localeCompare(b.label));
-  return [{ value: 'IN', label: 'India', keywords: 'IN' }, ...rest];
+  return [{ value: 'IN', label: countryName('IN'), keywords: 'IN' }, ...rest];
 })();

@@ -20,8 +20,18 @@ export interface SeatDialogProps {
   plan: PlanView | null;
   /** Seats currently provisioned on the subscription. */
   currentSeats: number;
-  /** Seats actually filled by an active operator. The floor for a reduction. */
+  /** Seats actually filled by an active operator. See {@link seatsUsedScope}. */
   seatsUsed: number;
+  /**
+   * WHOSE operators `seatsUsed` counts.
+   *
+   * `'chatbot'` is this subscription's own filled seats, and only that count is
+   * a floor for a reduction: the server checks the seats on THIS chatbot.
+   * `'workspace'` is the account-wide figure, which the caller falls back to
+   * when the per-chatbot count is unavailable. It is stated, never enforced:
+   * blocking on it refused reductions the server would have accepted.
+   */
+  seatsUsedScope?: 'chatbot' | 'workspace';
   /**
    * What ONE extra seat debits per month, tax included, in the charge currency.
    * From the server, NOT from `plan.extraSeatPriceMinor` — see below. Null while
@@ -71,6 +81,7 @@ export function SeatDialog({
   plan,
   currentSeats,
   seatsUsed,
+  seatsUsedScope = 'chatbot',
   grossSeatPriceMinor,
   taxRateBps,
   botId = null,
@@ -114,7 +125,15 @@ export function SeatDialog({
   const extra = unlimited ? 0 : Math.max(parsed - included, 0);
   const priceKnown = grossSeatPriceMinor !== null && grossSeatPriceMinor > 0;
   const monthlyExtraMinor = priceKnown ? extra * (grossSeatPriceMinor as number) : 0;
-  const belowUsed = valid && parsed < seatsUsed;
+  // Only a per-chatbot count is a floor. The account-wide fallback counts
+  // operators on chatbots this subscription does not pay for, so enforcing it
+  // refused reductions `POST /subscriptions/seats` would have accepted, and
+  // said "deactivate one" about people the customer would have had to find on
+  // another chatbot entirely.
+  const perChatbotCount = seatsUsedScope === 'chatbot';
+  const below = valid && parsed < seatsUsed;
+  const belowUsed = below && perChatbotCount;
+  const belowWorkspaceUsed = below && !perChatbotCount;
   const aboveCeiling = valid && parsed > maxSeats;
   // Never let someone commit to a charge whose figure we could not load.
   const quoteMissing = valid && delta > 0 && extra > 0 && !priceKnown;
@@ -279,10 +298,13 @@ export function SeatDialog({
         <div className="space-y-4">
           <Field
             label="Total operator seats"
-            hint={`${seatsUsed} filled · ${included} included · up to ${maxSeats} on this plan`}
+            /* Every term is this chatbot's, so none of them needs qualifying.
+               When the filled count is the account-wide fallback it says so,
+               rather than sitting unlabelled beside two per-chatbot figures. */
+            hint={`${seatsUsed} filled${perChatbotCount ? '' : ' across this workspace'} · ${included} included · up to ${maxSeats} on this plan`}
             error={
               belowUsed
-                ? `You have ${seatsUsed} active operator${seatsUsed === 1 ? '' : 's'}. Deactivate one before reducing to ${parsed}.`
+                ? `You have ${seatsUsed} active operator${seatsUsed === 1 ? '' : 's'} on this chatbot. Deactivate one before reducing to ${parsed}.`
                 : aboveCeiling
                   ? `Your plan allows up to ${maxSeats} seats. Upgrade for more.`
                   : !valid
@@ -349,6 +371,15 @@ export function SeatDialog({
             <Alert tone="warning">
               We could not load the seat price just now, so we will not start a purchase. Reopen
               this in a moment.
+            </Alert>
+          ) : null}
+
+          {/* A caution, not a refusal. The figure is real but it is the wrong
+              scope to bound this subscription, so it explains what could come
+              back from the server instead of pre-empting it. */}
+          {belowWorkspaceUsed ? (
+            <Alert tone="warning">
+              {`${seatsUsed} operators are active across this workspace, on every chatbot together. If more than ${parsed} of them are on this chatbot, this change is refused and we will say so.`}
             </Alert>
           ) : null}
 

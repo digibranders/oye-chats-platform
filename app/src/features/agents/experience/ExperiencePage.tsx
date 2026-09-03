@@ -12,10 +12,17 @@ import { LeadEnrichmentSection } from '../advanced/LeadEnrichmentSection';
 import { KnowledgeGapsCard } from '../knowledge/KnowledgeGapsCard';
 import { useKnowledgeGaps } from '../knowledge/useKnowledgeGaps';
 import { PreviewPanel } from './PreviewPanel';
-import { isSectionKey, SECTION_KEYS, SECTION_LABELS, summarizeSections, type SectionKey } from './experience-model';
+import {
+  isSectionKey,
+  SECTION_KEYS,
+  sectionLabel,
+  summarizeSections,
+  type SectionKey,
+} from './experience-model';
 import { useEntitlements } from '../../../hooks/useEntitlements';
 import { planIncludesEmailVerification, planIncludesVisitorIntelligence } from '../../../lib/planGates';
 import { useTranslation } from '../../../i18n/useTranslation';
+import { t as translateNow } from '../../../i18n/i18n';
 
 /**
  * A chatbot's Experience: what a visitor sees and hears.
@@ -52,15 +59,24 @@ const TAB_PARAM = 'tab';
 function tabItems(dirtySections: readonly SectionKey[], leadsLocked: boolean): TabItem[] {
   return SECTION_KEYS.map((key) => ({
     value: key,
-    label: SECTION_LABELS[key],
+    label: sectionLabel(key),
     // A lock on the Leads tab when the plan (Free/Starter) does not include
     // enrichment, so it reads as gated before the tab is even opened. The
     // unsaved-changes dot cannot also apply: a locked tab has nothing to save.
     badge:
       key === 'leads' && leadsLocked ? (
-        <Lock aria-label="Available on Standard and up" className="h-3 w-3 text-text-tertiary" />
+        <Lock
+          aria-label={translateNow('agents.availableOnStandardAndUp') || 'Available on Standard and up'}
+          className="h-3 w-3 text-text-tertiary"
+        />
       ) : dirtySections.includes(key) ? (
-        <StatusDot tone="warning" label={`${SECTION_LABELS[key]} has unsaved changes`} />
+        <StatusDot
+          tone="warning"
+          label={
+            translateNow('agents.sectionHasUnsavedChanges', { section: sectionLabel(key) }) ||
+            `${sectionLabel(key)} has unsaved changes`
+          }
+        />
       ) : undefined,
   }));
 }
@@ -341,11 +357,11 @@ export function ExperiencePage(): ReactElement {
         title={t('agents.leaveWithoutSaving') || 'Leave without saving?'}
         description={
           <>
-            You have unsaved changes in{' '}
+            {t('agents.youHaveUnsavedChangesIn') || 'You have unsaved changes in'}{' '}
             {experience.dirtySections.map((section, index) => (
               <span key={section}>
                 {index > 0 ? ', ' : ''}
-                <Badge tone="neutral">{SECTION_LABELS[section]}</Badge>
+                <Badge tone="neutral">{sectionLabel(section)}</Badge>
               </span>
             ))}
             {t('agents.leavingNowDiscardsThemThe') || '. Leaving now discards them. The widget on your site keeps the settings it already has.'}

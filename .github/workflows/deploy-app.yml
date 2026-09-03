@@ -72,8 +72,11 @@ jobs:
           # coming: the commit did not touch `api/**`, so there is no backend
           # deploy to wait for and the dashboard may ship on its own.
           GRACE_SECONDS=120
+          # Also the window in which a FAILED backend deploy may be re-run and
+          # still carry the dashboard with it. See the failure branch below.
           DEADLINE_SECONDS=2400
           started=$SECONDS
+          reported_failure=''
 
           while :; do
             # A transient API failure must not fail the deploy, so a failed
@@ -98,12 +101,35 @@ jobs:
                     # healthy release when it fails, so what is live right now
                     # is the OLD backend. Shipping a new dashboard against it
                     # is the exact breakage this workflow exists to prevent.
-                    echo "::error::Backend deploy concluded '${conclusion}'. The droplet has rolled back to the previous release, so the dashboard must not ship against it. ${url}"
-                    exit 1
+                    #
+                    # But this is NOT the end of the story, and treating it as
+                    # one stranded the dashboard for eleven hours on 2026-09-01:
+                    # the backend deploy failed at 17:58, this gate read that
+                    # conclusion eleven seconds later and exited, the backend was
+                    # re-run and went green at 18:16, and nothing re-triggered
+                    # the dashboard. `deploy-app.yml` fires on `push`, and a
+                    # re-run is not a push, so the console silently sat on the
+                    # previous build until the next merge. Referral attribution
+                    # shipped its backend half and not its frontend half.
+                    #
+                    # So a failure is reported once and then WAITED OUT. A
+                    # re-run reuses the same run id with a fresh attempt, so the
+                    # poll below sees it go back to `in_progress` and then to
+                    # `success` on its own. If no re-run comes, the deadline
+                    # below still fails the job.
+                    if [ "$reported_failure" != "$conclusion" ]; then
+                      echo "::warning::Backend deploy concluded '${conclusion}'; the droplet has rolled back, so the dashboard is held. Re-run it within the deadline and this job will pick the re-run up and ship. ${url}"
+                      reported_failure="$conclusion"
+                    fi
                     ;;
                 esac
+              else
+                # Only while it is genuinely still running. A completed-but-
+                # failed run is waiting on a human to re-run it, and the warning
+                # above already said so once; repeating it every 15s for the
+                # rest of the deadline buries it.
+                echo "Backend deploy is ${status}; waiting. ${url}"
               fi
-              echo "Backend deploy is ${status}; waiting. ${url}"
             elif [ $((SECONDS - started)) -ge $GRACE_SECONDS ]; then
               echo "No backend deploy for ${SHA} after ${GRACE_SECONDS}s: this commit does not touch api/**. Proceeding."
               exit 0
@@ -112,7 +138,11 @@ jobs:
             fi
 
             if [ $((SECONDS - started)) -ge $DEADLINE_SECONDS ]; then
-              echo "::error::Timed out after ${DEADLINE_SECONDS}s waiting for the backend deploy to finish."
+              if [ -n "$reported_failure" ]; then
+                echo "::error::Backend deploy concluded '${reported_failure}' and was not re-run successfully within ${DEADLINE_SECONDS}s. The droplet is on the previous release, so the dashboard must not ship against it. Re-run the backend deploy, then re-run this workflow."
+              else
+                echo "::error::Timed out after ${DEADLINE_SECONDS}s waiting for the backend deploy to finish."
+              fi
               exit 1
             fi
             sleep 15

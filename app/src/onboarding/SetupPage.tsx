@@ -12,6 +12,7 @@ import {
 } from '../ui';
 import { useSetupChecklist } from './useSetupChecklist';
 import { useTranslation } from '../i18n/useTranslation';
+import { t as translateNow } from '../i18n/i18n';
 
 /**
  * The setup checklist, in full.
@@ -44,7 +45,7 @@ export function SetupPage() {
               won depended on render order. The list's rows own it. */}
           <CardBody>
             <p className="text-base font-medium text-text-primary">
-              <span className="figure">{done}</span> of <span className="figure">{total}</span> done
+              {translateNow('app.nOfTotalDone', { done, total }) || `${done} of ${total} done`}
             </p>
             {/* `hideLabel`, which is what `Progress` documents for "a bar that
                 is chrome inside a row a heading already names". Without it the
@@ -56,7 +57,10 @@ export function SetupPage() {
               className="mt-2"
               hideLabel
               value={(done / total) * 100}
-              label={`Setup progress, ${done} of ${total} complete`}
+              label={
+                translateNow('app.setupProgressComplete', { done, total }) ||
+                `Setup progress, ${done} of ${total} complete`
+              }
             />
           </CardBody>
 

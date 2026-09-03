@@ -530,6 +530,21 @@ def create_operator(request: CreateOperatorRequest, auth=Depends(get_current_cli
         if bot is None:
             raise HTTPException(status_code=404, detail="Bot not found in this workspace.")
 
+        # Same workspace check for the department. Left unvalidated it binds the
+        # operator to another tenant's department row: nothing reads that row
+        # back across the boundary (department lists and queue filters are all
+        # client_id-scoped), so the damage is a queue filter that silently
+        # matches nothing rather than a leak.
+        if request.department_id is not None:
+            department = session.execute(
+                select(Department).where(
+                    Department.id == request.department_id,
+                    Department.client_id == client_id,
+                )
+            ).scalar_one_or_none()
+            if department is None:
+                raise HTTPException(status_code=404, detail="Department not found in this workspace.")
+
         # Check for duplicate email. Scoped to this workspace only
         existing = session.execute(
             select(Operator).where(Operator.email == request.email, Operator.client_id == client_id)
@@ -589,6 +604,9 @@ async def update_operator(
         _prevent_role_escalation(auth, request.role)
     department_changed = False
     new_department_id = None
+    # Set when the operator moves to a different bot, so their in-flight chats
+    # on the old bot are re-queued after the commit.
+    bot_reassigned = False
     # Set when ``is_active`` actually flips, so the post-commit side effects
     # (entitlements cache, WS eviction) only run on a real transition.
     active_changed = False
@@ -657,19 +675,28 @@ async def update_operator(
             if new_bot is None:
                 raise HTTPException(status_code=404, detail="Bot not found in this workspace.")
             # Reassignment must not leave dangling live chats on the old bot.
-            # They belong to a bot this operator no longer serves. End them
-            # cleanly by clearing the assignment; the WS layer will bounce them
-            # back to waiting so another operator on the old bot can pick up.
-            session.execute(
-                update(ChatSession)
-                .where(
-                    ChatSession.assigned_operator_id == operator.id,
-                    ChatSession.status == "live",
-                )
-                .values(assigned_operator_id=None, status="waiting")
-            )
+            # They belong to a bot this operator no longer serves. The rows are
+            # deliberately NOT cleared here: they are handed to
+            # ``manager.mark_operator_offline_now`` after the commit, which
+            # finds them by ``status == 'live'`` and moves the DB rows, the
+            # in-process queue and the visitors' sockets together. Pre-clearing
+            # them here (the previous raw UPDATE) left every visitor marked
+            # ``waiting`` in the DB but invisible to the queue and never told,
+            # exactly the trap documented on the deactivation path below.
             operator.bot_id = request.bot_id
+            bot_reassigned = True
         if request.department_id is not None:
+            # Workspace check, the same guard ``bot_id`` gets above. Without it
+            # an operator can be reassigned to another tenant's department row,
+            # which no client_id-scoped query will ever match again.
+            new_department = session.execute(
+                select(Department).where(
+                    Department.id == request.department_id,
+                    Department.client_id == auth["client_id"],
+                )
+            ).scalar_one_or_none()
+            if new_department is None:
+                raise HTTPException(status_code=404, detail="Department not found in this workspace.")
             # Track department change for dynamic WS update
             if operator.department_id != request.department_id:
                 department_changed = True
@@ -788,6 +815,23 @@ async def update_operator(
         except Exception:
             logger.exception(
                 "Failed to release live sessions for deactivated operator %s",
+                operator_id,
+            )
+
+    # A bot reassignment strands the operator's live chats on a bot they no
+    # longer serve. Release them through the ConnectionManager (not raw SQL) so
+    # the DB rows, the waiting queue and the visitors' sockets stay in step.
+    # Non-fatal for the same reason as the deactivation teardown above: the
+    # reassignment is already committed.
+    if bot_reassigned and not deactivated:
+        try:
+            await manager.mark_operator_offline_now(
+                operator_id,
+                visitor_message="Your operator is no longer available. Finding another one...",
+            )
+        except Exception:
+            logger.exception(
+                "Failed to release live sessions for reassigned operator %s",
                 operator_id,
             )
 
@@ -979,10 +1023,34 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
                 detail="This workspace's plan does not include live chat.",
             )
 
+        # Tenant-scope the requested department before anything reads it.
+        # ``department_id`` arrives in a payload authenticated only by the
+        # public bot key, so a foreign id would otherwise pick another
+        # workspace's business hours for the out-of-hours decision and put its
+        # department name into this workspace's notifications. An id we cannot
+        # match (foreign, or deleted since the widget cached it) degrades to
+        # workspace-wide routing rather than failing the visitor's handoff.
+        requested_department = None
+        if request.department_id is not None:
+            requested_department = session.execute(
+                select(Department).where(
+                    Department.id == request.department_id,
+                    Department.client_id == db_bot.client_id,
+                )
+            ).scalar_one_or_none()
+            if requested_department is None:
+                logger.warning(
+                    "Handoff requested with unknown/foreign department: bot=%s session=%s department_id=%s",
+                    bot.id,
+                    request.session_id,
+                    request.department_id,
+                )
+        department_id = requested_department.id if requested_department else None
+
         # ── State machine decides what happens ─────────────────────────────
         # Pass the department_id so per-department business hours apply
         # (Sales 9-6 vs Support 24/7 in the same workspace).
-        availability = availability_svc.resolve_live_chat_state(db_bot, session, department_id=request.department_id)
+        availability = availability_svc.resolve_live_chat_state(db_bot, session, department_id=department_id)
 
         # When the state machine says "show the offline form", we used to
         # short-circuit straight to the offline form. With Web Push enabled
@@ -1130,8 +1198,8 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
         chat_session.handoff_reason = (
             request.reason.replace("<", "&lt;").replace(">", "&gt;") if request.reason else None
         )
-        if request.department_id:
-            chat_session.department_id = request.department_id
+        if department_id:
+            chat_session.department_id = department_id
 
         timeout = db_bot.operator_timeout_seconds if db_bot else 120
 
@@ -1143,7 +1211,7 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
                     action="handoff_requested",
                     details={
                         "reason": request.reason,
-                        "department_id": request.department_id,
+                        "department_id": department_id,
                         "state": availability.state.value,
                     },
                 )
@@ -1176,7 +1244,7 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
         webhook_data = {
             "session_id": request.session_id,
             "reason": request.reason,
-            "department_id": request.department_id,
+            "department_id": department_id,
         }
         if lead_info:
             webhook_data["contact"] = {
@@ -1217,7 +1285,7 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
                 "task_dispatch_handoff_push",
                 request.session_id,
                 bot.id,
-                request.department_id,
+                department_id,
                 visitor_name,
                 request.reason,
                 queue_timeout,
@@ -1239,12 +1307,7 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
         try:
             from app.services.notification_service import notify_handoff_request
 
-            dept_name = None
-            if request.department_id:
-                from app.db.models import Department
-
-                dept = session.get(Department, request.department_id)
-                dept_name = dept.name if dept else None
+            dept_name = requested_department.name if requested_department else None
             if may_notify:
                 notify_handoff_request(
                     session,
@@ -1252,7 +1315,7 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
                     session_id=request.session_id,
                     visitor_name=visitor_name,
                     bot_name=bot.name,
-                    department_id=request.department_id,
+                    department_id=department_id,
                     department_name=dept_name,
                 )
         except Exception:
@@ -1270,7 +1333,7 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
         manager.request_handoff(
             request.session_id,
             timeout,
-            request.department_id,
+            department_id,
             visitor_name=visitor_name,
             reason=request.reason,
             bot_id=bot.id,
@@ -1721,9 +1784,15 @@ async def transfer_chat(session_id: SessionId, request: TransferRequest, auth=De
         old_operator_id = chat_session.assigned_operator_id
 
         if request.target_operator_id:
+            # ``is_active`` is part of the target's identity here: a
+            # deactivated operator's credential is refused at login and on
+            # every socket, so transferring to one strands the visitor in a
+            # live chat nobody can ever join.
             target_operator = session.execute(
                 select(Operator).where(
-                    Operator.id == request.target_operator_id, Operator.client_id == auth["client_id"]
+                    Operator.id == request.target_operator_id,
+                    Operator.client_id == auth["client_id"],
+                    Operator.is_active.is_(True),
                 )
             ).scalar_one_or_none()
             if not target_operator:

@@ -6,6 +6,7 @@ import { Button } from '../primitives/Button';
 import { CardFooter } from './Card';
 import { ConfirmDialog } from '../overlays/ConfirmDialog';
 import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 /**
  * The half of the contract that needs a data router.
@@ -42,9 +43,12 @@ function NavigationGuard({ dirty, surface }: { dirty: boolean; surface: string }
         if (!next) blocker.reset?.();
       }}
       title={t('ds.leaveWithoutSaving') || 'Leave without saving?'}
-      description={`Your changes to ${surface} have not been saved. Leaving now discards them.`}
-      confirmLabel="Discard and leave"
-      cancelLabel="Keep editing"
+      description={
+        translateNow('ds.changesToSurfaceNotSaved', { surface }) ||
+        `Your changes to ${surface} have not been saved. Leaving now discards them.`
+      }
+      confirmLabel={translateNow('ds.discardAndLeave') || 'Discard and leave'}
+      cancelLabel={translateNow('ds.keepEditing') || 'Keep editing'}
       destructive
       onConfirm={() => blocker.proceed?.()}
     />
@@ -140,6 +144,29 @@ export function SaveBar({
   className,
 }: SaveBarProps) {
   const { t } = useTranslation();
+  const canSave = dirty && !saving && blockedReason === null;
+
+  // Cmd/Ctrl+S saves. A settings form is the one place a user types and then
+  // walks away expecting it kept, and on a long page the bar is off screen at
+  // the moment they finish. The shortcut is bound only while a save is actually
+  // possible, so a clean page keeps the browser's own behaviour.
+  //
+  // No "not while typing" guard, and that is the difference from the shell's
+  // Cmd+K. That palette must yield to a composer or a search field, where the
+  // user expects their browser's shortcut. Cmd+S has no such meaning inside a
+  // web form (the browser's is "save this page as HTML"), and the cursor being
+  // in a field is exactly when someone reaches for it.
+  useEffect(() => {
+    if (!canSave) return undefined;
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key.toLowerCase() !== 's' || !(event.metaKey || event.ctrlKey)) return;
+      if (event.altKey || event.shiftKey) return;
+      event.preventDefault();
+      onSave();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [canSave, onSave]);
   // `??` would also swallow an explicit `null`; a default parameter
   // only applies to `undefined`, and callers pass null to opt OUT.
   const saveLabel = saveLabelProp === undefined ? (t('ds.saveChanges') || 'Save changes') : saveLabelProp;
@@ -159,7 +186,7 @@ export function SaveBar({
             // live until you save", which is true of a chatbot's greeting and
             // false of a personal notification preference — a shared primitive
             // cannot make that claim on every caller's behalf.
-            <>Unsaved changes to {summary}.</>
+            translateNow('ds.unsavedChangesTo', { summary }) || `Unsaved changes to ${summary}.`
           : t('ds.youHaveUnsavedChanges') || 'You have unsaved changes.';
   const tone = saveError || blockedReason ? 'text-danger' : 'text-text-secondary';
 
@@ -172,11 +199,19 @@ export function SaveBar({
         <Button variant="ghost" size="sm" onClick={onDiscard} disabled={!dirty || saving}>
           {discardLabel}
         </Button>
+        {/* `primary`, stated. Without a variant this took Button's default,
+            `secondary`, so Save was an outlined button beside a ghost Discard:
+            two quiet controls on a bar whose whole job is "there is one thing
+            to do here". The filled ink button is the house primary, and this
+            is the textbook case for it. The bar's own surface stays sunken on
+            purpose; the button is the beacon, not the tray. */}
         <Button
+          variant="primary"
           size="sm"
           onClick={onSave}
           loading={saving}
-          disabled={!dirty || saving || blockedReason !== null}
+          disabled={!canSave}
+          aria-keyshortcuts="Meta+S Control+S"
         >
           {saveLabel}
         </Button>

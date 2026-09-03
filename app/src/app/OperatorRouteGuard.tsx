@@ -2,6 +2,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { isOperatorAllowedPath } from '../shell/nav';
 import { ForbiddenPage } from './errors/ForbiddenPage';
+import { t as translateNow } from '../i18n/i18n';
 
 /**
  * The route-layer half of operator scoping.
@@ -30,9 +31,12 @@ export function OperatorRouteGuard() {
   if (!isLoading && isOperator && !isOperatorAllowedPath(pathname)) {
     return (
       <ForbiddenPage
-        description="Your operator seat covers the inbox and the leads it produces. An owner or an admin of this workspace can open the rest."
+        description={
+          translateNow('app.yourOperatorSeatCovers') ||
+          'Your operator seat covers the inbox and the leads it produces. An owner or an admin of this workspace can open the rest.'
+        }
         to="/inbox"
-        toLabel="Go to the inbox"
+        toLabel={translateNow('app.goToTheInbox') || 'Go to the inbox'}
       />
     );
   }

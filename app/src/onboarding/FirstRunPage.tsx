@@ -29,6 +29,7 @@ import {
   type FirstRunSource,
 } from './firstRun';
 import { useTranslation } from '../i18n/useTranslation';
+import { t as translateNow } from '../i18n/i18n';
 
 /**
  * The three ways in.
@@ -36,11 +37,18 @@ import { useTranslation } from '../i18n/useTranslation';
  * No icons. A globe beside the words "My website" labels nothing, and
  * DESIGN.md §6.4 says an icon names a distinct concept or it does not ship.
  */
+// @i18n-exempt: fallbacks, read through sourceLabel/sourceDescription below.
+// `value` is what gets stored and is never translated.
 const SOURCES: readonly { value: FirstRunSource; label: string; description: string }[] = [
   { value: 'website', label: 'My website', description: 'Reads your public pages' },
   { value: 'documents', label: 'Documents', description: 'PDF, Word or plain text' },
   { value: 'text', label: 'Text I paste in', description: 'Paste what you would tell a customer' },
 ];
+
+const sourceLabel = (s: (typeof SOURCES)[number]) =>
+  translateNow(`app.firstRunSource.${s.value}`) || s.label;
+const sourceDescription = (s: (typeof SOURCES)[number]) =>
+  translateNow(`app.firstRunSourceHelp.${s.value}`) || s.description;
 
 /**
  * The first run.
@@ -200,7 +208,11 @@ export function FirstRunPage() {
                   columns={3}
                   value={source}
                   onChange={setSource}
-                  items={SOURCES}
+                  items={SOURCES.map((o) => ({
+                    ...o,
+                    label: sourceLabel(o),
+                    description: sourceDescription(o),
+                  }))}
                 />
               </Field>
 

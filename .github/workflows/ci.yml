@@ -38,6 +38,42 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # The suite TRUNCATEs every table after each of its ~6,500 tests, and a
+      # TRUNCATE fsyncs. On a runner with a slow disk that is the whole job:
+      # on 2026-09-03 one runner ran the tests for commit ad362872 in 8
+      # minutes and another was at 39% of the same suite after 24 minutes.
+      # Nothing in this database outlives the job, so durability buys nothing
+      # here. A service container cannot take server flags (there is no
+      # ``command`` field, and ``options`` are ``docker create`` flags), so
+      # the settings are applied to the running cluster instead. All three
+      # take effect on reload: ``fsync`` and ``full_page_writes`` are
+      # sighup-context, ``synchronous_commit`` is user-context and becomes
+      # the default for every session opened from here on. The check fails
+      # the job if the settings did not stick, so a slow run can never again
+      # be mistaken for a slow suite.
+      - name: Postgres durability off (CI only)
+        run: |
+          export PGPASSWORD=test
+          psql -h localhost -U test -d test -v ON_ERROR_STOP=1 \
+            -c "ALTER SYSTEM SET fsync = off" \
+            -c "ALTER SYSTEM SET synchronous_commit = off" \
+            -c "ALTER SYSTEM SET full_page_writes = off" \
+            -c "SELECT pg_reload_conf()"
+          # pg_reload_conf() only signals the postmaster; the new values show
+          # up in fresh sessions a moment later.
+          for _ in $(seq 1 10); do
+            fsync=$(psql -h localhost -U test -d test -Atc "SHOW fsync")
+            [ "$fsync" = "off" ] && break
+            sleep 1
+          done
+          psql -h localhost -U test -d test -Atc \
+            "SELECT name || '=' || setting FROM pg_settings
+             WHERE name IN ('fsync', 'synchronous_commit', 'full_page_writes') ORDER BY 1"
+          if [ "$fsync" != "off" ]; then
+            echo "::error::SHOW fsync returned '$fsync', expected 'off'"
+            exit 1
+          fi
+
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.11'  # Match production server
@@ -87,7 +123,9 @@ jobs:
           # tests run instead of tripping the "not configured" guard.
           RAZORPAY_SEAT_PLAN_ID: plan_test_seat
         run: |
-          ~/.local/bin/uv run pytest -x -q --cov=app --cov-report=term-missing
+          # -ra: every non-passing outcome is listed by name at the end. With
+          # -q alone a hung or failed test printed nothing attributable.
+          ~/.local/bin/uv run pytest -x -q -ra --cov=app --cov-report=term-missing
 
   # ── Widget (React) ──
   widget:

@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Lock } from 'lucide-react';
 import { FullPageState, Measure, Page, PageHeader, buttonClass } from '../../ui';
+import { t as translateNow } from '../../i18n/i18n';
 
 export interface ForbiddenPageProps {
   /** What was refused, in the reader's terms. */
@@ -20,8 +21,13 @@ export interface ForbiddenPageProps {
   full?: boolean;
 }
 
-const DEFAULT_TITLE = 'You do not have access to this page';
-const DEFAULT_DESCRIPTION =
+// Resolved per call, not at module scope: a constant initialised at import
+// freezes whatever language was active when the module first loaded, and this
+// module is imported once for the life of the tab.
+const defaultTitle = () =>
+  translateNow('app.youDoNotHaveAccessToThisPage') || 'You do not have access to this page';
+const defaultDescription = () =>
+  translateNow('app.yourSeatInThisWorkspace') ||
   'Your seat in this workspace does not include it. An owner or an admin can open it for you.';
 
 /**
@@ -40,10 +46,10 @@ const DEFAULT_DESCRIPTION =
  * already pays for the feature is worse than saying nothing.
  */
 export function ForbiddenPage({
-  title = DEFAULT_TITLE,
-  description = DEFAULT_DESCRIPTION,
+  title = defaultTitle(),
+  description = defaultDescription(),
   to = '/',
-  toLabel = 'Go to Home',
+  toLabel = translateNow('app.goToHome') || 'Go to Home',
   full = false,
 }: ForbiddenPageProps) {
   const action = (

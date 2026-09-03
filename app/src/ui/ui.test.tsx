@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { Button } from './primitives/Button';
@@ -718,6 +718,34 @@ describe('Field trailing', () => {
     // Capped like every other pair in the system.
     expect(label.parentElement?.className).toContain('max-w-pair');
   });
+
+  /**
+   * The Field hands its control an id through context. A control in the
+   * trailing slot read the same context, so a Switch beside a text input took
+   * the field's id as well: two elements with one id, and `<label for>`
+   * resolving to whichever came first in the DOM, the switch's hidden
+   * checkbox. The text input then had no accessible name at all, and clicking
+   * the field's label flipped the switch.
+   */
+  it('does not hand the field id to the trailing control', async () => {
+    render(
+      <Field
+        label="Launcher text"
+        trailing={<Switch checked onCheckedChange={() => {}} label="Show launcher text" hideLabel />}
+      >
+        <Input defaultValue="Hi" />
+      </Field>,
+    );
+    const input = screen.getByRole('textbox', { name: 'Launcher text' });
+    const toggle = screen.getByRole('switch', { name: 'Show launcher text' });
+    expect(input.id).not.toBe('');
+    expect(document.querySelectorAll(`[id="${input.id}"]`)).toHaveLength(1);
+
+    // The field's label names the input, and only the input.
+    await userEvent.click(screen.getByText('Launcher text'));
+    expect(input).toHaveFocus();
+    expect(toggle).toBeChecked();
+  });
 });
 
 describe('a Field hint can be more than a sentence', () => {
@@ -970,6 +998,59 @@ describe('SaveBar', () => {
     // `useBlocker` throws outside a data router. Calling it unconditionally
     // would impose `createMemoryRouter` on every form that opted out.
     expect(() => bar({ dirty: true })).not.toThrow();
+  });
+
+  it('paints Save as the primary action, not as a peer of Discard', () => {
+    // With no variant it inherited Button's `secondary` default: an outlined
+    // Save beside a ghost Discard, two quiet controls on a bar whose one job is
+    // to say there is a single thing to do.
+    bar({ dirty: true });
+    expect(screen.getByRole('button', { name: 'Save changes' }).className).toMatch(/\bbg-ink\b/);
+    expect(screen.getByRole('button', { name: 'Discard' }).className).not.toMatch(/\bbg-ink\b/);
+  });
+
+  it('saves on Cmd+S and Ctrl+S while there is something to save', () => {
+    const onSave = vi.fn();
+    bar({ dirty: true, onSave });
+    fireEvent.keyDown(window, { key: 's', metaKey: true });
+    fireEvent.keyDown(window, { key: 'S', ctrlKey: true });
+    expect(onSave).toHaveBeenCalledTimes(2);
+  });
+
+  it('saves on Cmd+S even with the cursor in a field, unlike Cmd+K', () => {
+    // The palette yields to a composer; a save shortcut must not, because the
+    // cursor being in a field is exactly when someone reaches for it.
+    const onSave = vi.fn();
+    render(
+      <MemoryRouter>
+        <input aria-label="Name" />
+        <SaveBar dirty onSave={onSave} onDiscard={() => {}} />
+      </MemoryRouter>,
+    );
+    const input = screen.getByLabelText('Name');
+    input.focus();
+    fireEvent.keyDown(input, { key: 's', metaKey: true });
+    expect(onSave).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves Cmd+S alone when there is nothing to save, or saving is blocked', () => {
+    const onSave = vi.fn();
+    const { unmount } = bar({ dirty: false, variant: 'footer', onSave });
+    fireEvent.keyDown(window, { key: 's', metaKey: true });
+    unmount();
+    bar({ dirty: true, blockedReason: 'Weights must add up to more than zero.', onSave });
+    fireEvent.keyDown(window, { key: 's', metaKey: true });
+    bar({ dirty: true, saving: true, onSave });
+    fireEvent.keyDown(window, { key: 's', metaKey: true });
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('advertises the shortcut to assistive tech', () => {
+    bar({ dirty: true });
+    expect(screen.getByRole('button', { name: 'Save changes' })).toHaveAttribute(
+      'aria-keyshortcuts',
+      'Meta+S Control+S',
+    );
   });
 });
 

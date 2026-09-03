@@ -237,3 +237,61 @@ def chars_used_by_source(
     except (TypeError, ValueError):
         # Mocked test session returned a non-numeric sentinel. Treat as 0.
         return 0
+
+
+def sum_source_chars_for_bot(session: Session, *, client_id: int, bot_id: int) -> int:
+    """Sum of ``source_char_count`` across ONE bot's sources (not chunks).
+
+    Same per-source collapse as :func:`sum_source_chars_for_client` (one row per
+    ``document_name``), scoped to a single bot. This is the amount a bot's
+    knowledge contributes to its owner's running counter, so it is exactly what
+    a bulk delete of that bot has to hand back.
+    """
+    rows = session.execute(
+        select(func.coalesce(func.max(Document.source_char_count), 0).label("chars"))
+        .where(Document.client_id == client_id, Document.bot_id == bot_id)
+        .group_by(Document.document_name)
+    ).all()
+    return int(sum(int(r.chars or 0) for r in rows))
+
+
+def release_kb_usage_for_bot(session: Session, *, client_id: int, bot_id: int) -> int:
+    """Reclaim a bot's whole contribution from the account counter. Returns chars freed.
+
+    MUST be called BEFORE the rows are deleted (bot delete, trial purge): the
+    amount is read from ``documents.source_char_count``, which the delete
+    destroys. Every bulk path that removes a bot's knowledge has to call this,
+    or ``kb_characters_used`` only ever grows and the account eventually 402s on
+    an empty knowledge base.
+    """
+    freed = sum_source_chars_for_bot(session, client_id=client_id, bot_id=bot_id)
+    if freed:
+        increment_kb_usage(session, client_id, -freed)
+    return freed
+
+
+def release_kb_usage_for_sources(
+    session: Session,
+    *,
+    client_id: int,
+    bot_id: int | None,
+    document_names: list[str],
+) -> int:
+    """Reclaim named sources' contribution from the account counter. Returns chars freed.
+
+    The per-source counterpart of :func:`release_kb_usage_for_bot`, for paths
+    that delete a subset of a bot's sources (the crawl orphan sweep). Call it
+    BEFORE the delete, for the same reason.
+    """
+    if not document_names:
+        return 0
+    stmt = (
+        select(func.coalesce(func.max(Document.source_char_count), 0).label("chars"))
+        .where(Document.document_name.in_(document_names))
+        .group_by(Document.document_name)
+    )
+    stmt = stmt.where(Document.bot_id == bot_id) if bot_id else stmt.where(Document.client_id == client_id)
+    freed = int(sum(int(r.chars or 0) for r in session.execute(stmt).all()))
+    if freed:
+        increment_kb_usage(session, client_id, -freed)
+    return freed

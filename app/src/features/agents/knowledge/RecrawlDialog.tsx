@@ -19,18 +19,25 @@ import {
   recrawlBlockedReason,
   recrawlCost,
   type RecrawlDiff,
+  type RecrawlMode,
 } from './knowledge-model';
 import { useTranslation } from '../../../i18n/useTranslation';
+import { Trans } from '../../../i18n/Trans';
 
 type Bucket = 'unchanged' | 'new' | 'removed';
 
 export interface RecrawlDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Null while the preview is still being fetched. */
+  /**
+   * Null while the preview is still being fetched, and null for good once it
+   * has failed. There is no third state where counts are invented to fill it.
+   */
   diff: RecrawlDiff | null;
   /** The source and mode, known before the diff resolves. */
   sourceName: string;
+  /** What the customer asked for, which survives a preview that never arrives. */
+  mode: RecrawlMode;
   loading: boolean;
   /** The preview itself failed. The re-crawl can still go ahead, unpreviewed. */
   previewError: string | null;
@@ -53,12 +60,22 @@ export interface RecrawlDialogProps {
  * The cost is computed from *new + unchanged*, the pages a full re-crawl really
  * fetches — never from `sitemap_total`, which reads 0 when discovery times out
  * and would print "0 credits" over a run that re-bills every stored page.
+ *
+ * **A failed preview prices nothing.** The page used to hand this dialog a
+ * synthetic all-zero diff with an invented `balance: 0`, and every figure below
+ * rendered from it: "Unchanged 0 · New 0 · Gone 0 · Cost 0 credits" and an
+ * enabled "Re-train 0 pages for 0 credits" over a `force_reingest` run that
+ * re-reads and re-bills every stored page, 2,000 credits on a 400-page site.
+ * With no preview there is no well, no cost row and no count on the button:
+ * only the warning that says the comparison failed and that every page found
+ * will be read and charged.
  */
 export function RecrawlDialog({
   open,
   onOpenChange,
   diff,
   sourceName,
+  mode: requestedMode,
   loading,
   previewError,
   planLocked,
@@ -69,32 +86,44 @@ export function RecrawlDialog({
   const { t } = useTranslation();
   const [bucket, setBucket] = useState<Bucket>('new');
 
-  const mode = diff?.mode ?? 'full';
+  const mode = diff?.mode ?? requestedMode;
   const isDelta = mode === 'delta';
-  const cost = diff ? recrawlCost(diff) : null;
-  const blockedReason = diff ? recrawlBlockedReason(diff, previewError !== null) : null;
-  const shortOnCredits = diff !== null && !isDelta && cost !== null && cost.credits > diff.balance;
-  const rediscovers = diff !== null && orderedUrlsForRecrawl(diff) === null;
+  const previewFailed = previewError !== null;
+  // Every figure below reads from this, never from `diff`: a comparison the
+  // customer has just been told failed is not a source of counts or of a price.
+  const previewed = previewFailed ? null : diff;
+  const cost = previewed ? recrawlCost(previewed) : null;
+  const blockedReason = diff ? recrawlBlockedReason(diff, previewFailed) : null;
+  const shortOnCredits =
+    previewed !== null && !isDelta && cost !== null && cost.credits > previewed.balance;
+  const rediscovers = previewed !== null && orderedUrlsForRecrawl(previewed) === null;
 
   const urls =
-    diff === null
+    previewed === null
       ? []
       : bucket === 'unchanged'
-        ? diff.unchangedUrls
+        ? previewed.unchangedUrls
         : bucket === 'new'
-          ? diff.newUrls
-          : diff.removedUrls;
+          ? previewed.newUrls
+          : previewed.removedUrls;
   const bucketCount =
-    diff === null
+    previewed === null
       ? 0
       : bucket === 'unchanged'
-        ? diff.unchanged
+        ? previewed.unchanged
         : bucket === 'new'
-          ? diff.newPages
-          : diff.removedPages;
+          ? previewed.newPages
+          : previewed.removedPages;
 
+  // An unpreviewed re-train stays available: a network hiccup on a courtesy
+  // comparison must not be the reason a customer cannot refresh their own
+  // website. What it loses is the right to quote a number for it.
   const canConfirm =
-    !planLocked && !loading && diff !== null && blockedReason === null && !shortOnCredits;
+    !planLocked &&
+    !loading &&
+    (previewed !== null || previewFailed) &&
+    blockedReason === null &&
+    !shortOnCredits;
 
   return (
     <Dialog
@@ -110,7 +139,7 @@ export function RecrawlDialog({
       }
       footer={
         planLocked ? (
-          <Button onClick={() => onOpenChange(false)}>Close</Button>
+          <Button onClick={() => onOpenChange(false)}>{t('agents.close') || 'Close'}</Button>
         ) : (
           <>
             <Button variant="ghost" disabled={starting} onClick={() => onOpenChange(false)}>
@@ -130,8 +159,17 @@ export function RecrawlDialog({
                 {isDelta
                   ? t('agents.reTrainChangedPages') || 'Re-train changed pages'
                   : cost
-                    ? `Re-train ${formatNumber(cost.pages)} pages for ${formatNumber(cost.credits)} credits`
-                    : 'Re-train'}
+                    ? t('agents.reTrainNPagesForNCredits', {
+                        pages: formatNumber(cost.pages),
+                        credits: formatNumber(cost.credits),
+                      }) ||
+                      `Re-train ${formatNumber(cost.pages)} pages for ${formatNumber(cost.credits)} credits`
+                    : previewFailed
+                      ? // No count and no price, because neither is known. The
+                        // label still states the consequence in full, which is
+                        // the whole job of this button.
+                        t('agents.reTrainEveryPageCharged') || 'Re-train every page, charged'
+                      : 'Re-train'}
               </Button>
             )}
           </>
@@ -169,7 +207,9 @@ export function RecrawlDialog({
 
           {previewError ? (
             <Alert tone="warning" title={t('agents.weCouldNotCompareThe2') || 'We could not compare the pages'}>
-              {previewError} You can still re-train — we will rediscover the site as we go, and{' '}
+              {previewError}{' '}
+              {t('agents.youCanStillReTrain') ||
+                'You can still re-train: we will rediscover the site as we go, and'}{' '}
               {isDelta
                 ? 'unchanged pages will still be skipped during reading.'
                 : 'every page found will be read and charged.'}
@@ -178,7 +218,10 @@ export function RecrawlDialog({
 
           {blockedReason ? <Alert tone="warning">{blockedReason}</Alert> : null}
 
-          {diff && !loading && !blockedReason ? (
+          {/* No preview, no figures. The well below is the only thing on this
+              surface that states a price, so it renders from a comparison that
+              actually happened or it does not render at all. */}
+          {previewed && !loading && !blockedReason ? (
             <>
               {/* One well, four rows. It used to be a three-tile stat block
                   followed by an `Alert` restating the same arithmetic in prose,
@@ -187,19 +230,19 @@ export function RecrawlDialog({
                 <FigureList>
                   <FigureRow
                     label={t('agents.unchanged') || 'Unchanged'}
-                    value={formatNumber(diff.unchanged)}
+                    value={formatNumber(previewed.unchanged)}
                     hint={isDelta ? 'Skipped, free' : t('agents.readAgainCharged') || 'Read again, charged'}
                   />
                   <FigureRow
                     label={t('agents.new') || 'New'}
-                    value={formatNumber(diff.newPages)}
+                    value={formatNumber(previewed.newPages)}
                     hint={t('agents.notReadBefore') || 'Not read before'}
                   />
                   <FigureRow
                     label={t('agents.gone') || 'Gone'}
-                    value={formatNumber(diff.removedPages)}
+                    value={formatNumber(previewed.removedPages)}
                     hint={
-                      diff.headPartial
+                      previewed.headPartial
                         ? t('agents.atLeastThisManyWe') || 'At least this many. We could not check every stored page in time, and nothing is deleted by this preview'
                         : t('agents.noLongerOnTheSite') || 'No longer on the site'
                     }
@@ -210,16 +253,20 @@ export function RecrawlDialog({
                     // rounding error, and this is the number people check
                     // before they commit.
                     value={
-                      diff.costPerPage === 0
+                      previewed.costPerPage === 0
                         ? t('agents.thisIsFree') || 'free'
                         : `${formatNumber(cost?.credits ?? 0)} credits`
                     }
                     hint={
-                      diff.costPerPage === 0
+                      previewed.costPerPage === 0
                         ? t('agents.thisTrainingIsFree') || 'This training is free · balance unchanged'
                         : isDelta
-                          ? `The bill depends on which pages actually changed. ${formatNumber(diff.costPerPage)} credits a page · balance ${formatNumber(diff.balance)}`
-                          : `${formatNumber(cost?.pages ?? 0)} pages × ${formatNumber(diff.costPerPage)} credits · balance ${formatNumber(diff.balance)}`
+                          ? t('agents.billDependsOnChangedPages', {
+                              perPage: formatNumber(previewed.costPerPage),
+                              balance: formatNumber(previewed.balance),
+                            }) ||
+                            `The bill depends on which pages actually changed. ${formatNumber(previewed.costPerPage)} credits a page · balance ${formatNumber(previewed.balance)}`
+                          : `${formatNumber(cost?.pages ?? 0)} pages × ${formatNumber(previewed.costPerPage)} credits · balance ${formatNumber(previewed.balance)}`
                     }
                     emphasis
                     tone={shortOnCredits ? 'danger' : 'neutral'}
@@ -229,17 +276,25 @@ export function RecrawlDialog({
 
               {shortOnCredits ? (
                 <Alert tone="plan">
-                  This needs <span className="figure">{formatNumber(cost?.credits ?? 0)}</span>{' '}
-                  credits and you have{' '}
-                  <span className="figure">{formatNumber(diff.balance)}</span>. Nothing has been
-                  charged.
+                  <Trans
+                    k="agents.thisNeedsNCreditsYouHave"
+                    fallback="This needs {needed} credits and you have {balance}. Nothing has been charged."
+                    values={{
+                      needed: (
+                        <span className="figure">{formatNumber(cost?.credits ?? 0)}</span>
+                      ),
+                      balance: (
+                        <span className="figure">{formatNumber(previewed.balance)}</span>
+                      ),
+                    }}
+                  />
                 </Alert>
               ) : null}
 
               {rediscovers ? (
                 <Alert tone="neutral">
-                  This site has more pages than we can list here, so the re-train walks the whole
-                  site itself rather than the list below. The counts above are still exact.
+                  {t('agents.thisSiteHasMorePagesThanWeCanList') ||
+                    'This site has more pages than we can list here, so the re-train walks the whole site itself rather than the list below. The counts above are still exact.'}
                 </Alert>
               ) : null}
 
@@ -255,9 +310,9 @@ export function RecrawlDialog({
                   value={bucket}
                   onChange={setBucket}
                   items={[
-                    { value: 'new', label: `New ${formatNumber(diff.newPages)}` },
-                    { value: 'unchanged', label: `Unchanged ${formatNumber(diff.unchanged)}` },
-                    { value: 'removed', label: `Gone ${formatNumber(diff.removedPages)}` },
+                    { value: 'new', label: `New ${formatNumber(previewed.newPages)}` },
+                    { value: 'unchanged', label: `Unchanged ${formatNumber(previewed.unchanged)}` },
+                    { value: 'removed', label: `Gone ${formatNumber(previewed.removedPages)}` },
                   ]}
                 />
                 <ul className="mt-2 max-h-48 divide-y divide-border overflow-y-auto rounded-md border border-border">
@@ -281,8 +336,14 @@ export function RecrawlDialog({
                   )}
                   {bucketCount > urls.length ? (
                     <li className="px-3 py-2 text-2xs text-text-tertiary">
-                      Showing the first <span className="figure">{formatNumber(urls.length)}</span>{' '}
-                      of <span className="figure">{formatNumber(bucketCount)}</span>.
+                      <Trans
+                        k="agents.showingTheFirstNOfN"
+                        fallback="Showing the first {shown} of {total}."
+                        values={{
+                          shown: <span className="figure">{formatNumber(urls.length)}</span>,
+                          total: <span className="figure">{formatNumber(bucketCount)}</span>,
+                        }}
+                      />
                     </li>
                   ) : null}
                 </ul>

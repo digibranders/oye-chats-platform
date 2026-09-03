@@ -2968,10 +2968,18 @@ def _background_bant_extraction(
             bot = session.query(Bot).filter(Bot.id == bot_id).first() if bot_id else None
             config = bant_config or get_framework_config(bot)
 
-            chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
+            # Row-lock the session for the whole read-modify-write. Two turns
+            # can finish extraction concurrently (the pool runs them in
+            # parallel); without the lock both read the same
+            # ``dimension_scores``/tier, one overwrites the other's dimensions,
+            # and both see the same ``old_tier`` and fire a duplicate
+            # ``tier_transition`` webhook and qualified-lead email.
+            chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).with_for_update().first()
             if not chat_session:
                 return
 
+            # Read AFTER the lock: before it, this is the pre-image of whatever
+            # the other extraction is about to commit.
             old_tier = chat_session.bant_tier or "unqualified"
             score_field_map = {
                 "need": ("bant_need_score", "bant_need"),
@@ -3073,16 +3081,21 @@ def _background_bant_extraction(
 
             chat_session.bant_last_updated = datetime.now(UTC)
 
-            # Check tier transition → send notification
+            # Check tier transition → notify AFTER commit. Emails and webhooks
+            # are not transactional: dispatching them here would announce a
+            # transition that a later rollback never persisted. Everything they
+            # need is snapshotted now, because
+            # the session closure expires ORM attributes.
             new_tier = chat_session.bant_tier
+            tier_transition: dict | None = None
             if new_tier == "sql" and old_tier != "sql" and bot:
                 from app.services.email_service import get_notification_recipients
 
                 email_on_qualified = getattr(bot, "email_on_qualified", False)
                 recipients = get_notification_recipients(bot, "qualified_lead") if email_on_qualified else []
+                contact = None
                 if recipients:
                     lead_info = get_lead_info_by_session(session, session_id)
-                    contact = None
                     if lead_info:
                         contact = {
                             "name": lead_info.name,
@@ -3090,31 +3103,23 @@ def _background_bant_extraction(
                             "phone": lead_info.phone,
                             "company": lead_info.company,
                         }
-                    bant_updates = {
+                tier_transition = {
+                    "bot_id": bot.id,
+                    "bot_name": bot.name,
+                    "reply_to": getattr(bot, "reply_to_email", None),
+                    "recipients": recipients,
+                    "contact": contact,
+                    "bant_updates": {
                         "bant_need": chat_session.bant_need,
                         "bant_budget": chat_session.bant_budget,
                         "bant_authority": chat_session.bant_authority,
                         "bant_timeline": chat_session.bant_timeline,
-                    }
-                    reply_to = getattr(bot, "reply_to_email", None)
-                    for recipient in recipients:
-                        send_qualified_lead_email(recipient, bot.name, bant_updates, contact, reply_to=reply_to)
-                try:
-                    from app.services.webhook_service import fire_webhook
-
-                    fire_webhook(
-                        bot.id,
-                        "tier_transition",
-                        {
-                            "session_id": session_id,
-                            "old_tier": old_tier,
-                            "new_tier": new_tier,
-                            "score": chat_session.bant_score,
-                            "behavioral_score": getattr(chat_session, "behavioral_score", 0),
-                        },
-                    )
-                except Exception as wh_err:
-                    logger.warning(f"Webhook dispatch failed (non-blocking): {wh_err}")
+                    },
+                    "old_tier": old_tier,
+                    "new_tier": new_tier,
+                    "score": chat_session.bant_score,
+                    "behavioral_score": getattr(chat_session, "behavioral_score", 0),
+                }
 
             # Snapshot fields needed for the post-commit broadcast. Session
             # closure expires ORM attributes, so capture before commit().
@@ -3132,6 +3137,33 @@ def _background_bant_extraction(
             broadcast_client_id = bot.client_id if bot else None
 
             session.commit()
+
+        # ── Post-commit dispatch (see the snapshot above) ────────────────
+        if tier_transition:
+            for recipient in tier_transition["recipients"]:
+                send_qualified_lead_email(
+                    recipient,
+                    tier_transition["bot_name"],
+                    tier_transition["bant_updates"],
+                    tier_transition["contact"],
+                    reply_to=tier_transition["reply_to"],
+                )
+            try:
+                from app.services.webhook_service import fire_webhook
+
+                fire_webhook(
+                    tier_transition["bot_id"],
+                    "tier_transition",
+                    {
+                        "session_id": session_id,
+                        "old_tier": tier_transition["old_tier"],
+                        "new_tier": tier_transition["new_tier"],
+                        "score": tier_transition["score"],
+                        "behavioral_score": tier_transition["behavioral_score"],
+                    },
+                )
+            except Exception as wh_err:
+                logger.warning(f"Webhook dispatch failed (non-blocking): {wh_err}")
 
         # Notify connected operators that a session now meets the qualified
         # threshold (≥2 BANT dimensions) so their live console refetches the
@@ -3151,8 +3183,17 @@ def _background_bant_extraction(
                 coro = _live_manager.broadcast_qualified_bot_changed(broadcast_client_id, session_id)
                 if loop is not None:
                     loop.create_task(coro)
-                else:
-                    _asyncio.run(coro)
+                elif not _live_manager.schedule_from_thread(coro):
+                    # No main loop bound (ARQ worker, tests). Skip the push
+                    # rather than running the coroutine on a throwaway loop:
+                    # it writes to Starlette sockets owned by the main loop and
+                    # lazily builds the backplane's Redis publisher, which
+                    # ``asyncio.run`` would then close for every later publish.
+                    # The console's 15s poll covers the gap.
+                    logger.debug(
+                        "qualified_bot_changed broadcast skipped: no bound event loop (session=%s)",
+                        session_id,
+                    )
             except Exception as broadcast_err:  # noqa: BLE001
                 logger.debug("qualified_bot_changed broadcast skipped: %s", broadcast_err)
     except Exception as e:
@@ -7967,7 +8008,8 @@ async def rag_pipeline_stream(
                     # 30-chunk boost. The reranker defaults to RERANK_TOP_N=5, which
                     # silently undid the explicit boost above and made the bot
                     # under-report on "list all"/"how many" queries.
-                    final_results = rerank(search_query, final_results, top_n=_retrieval_k)
+                    # FlashRank's cross-encoder is CPU-bound and synchronous.
+                    final_results = await asyncio.to_thread(rerank, search_query, final_results, top_n=_retrieval_k)
                     _rerank_ms = (_t.perf_counter() - _rerank_start) * 1000
 
                 logger.info(
@@ -8412,10 +8454,12 @@ async def rag_pipeline_stream(
                     logger.warning(f"LLM returned zero chunks for session {session_id}")
                     yield "I'm sorry, I couldn't generate a response. Please try again or ask something else."
                     full_answer = "I'm sorry, I couldn't generate a response. Please try again or ask something else."
-            except GeneratorExit:
+            except (GeneratorExit, asyncio.CancelledError):
                 # The visitor closed the tab (or the SSE connection dropped) while
-                # the model was still streaming. ``GeneratorExit`` is a
-                # BaseException, so the ``except Exception`` below never saw it:
+                # the model was still streaming. Starlette cancels the streaming
+                # task, which surfaces here as ``CancelledError``; a generator
+                # closed directly raises ``GeneratorExit``. Both are
+                # BaseExceptions, so the ``except Exception`` below never saw them:
                 # the turn unwound straight through ``with get_session()``, the
                 # transaction rolled back, and every token already generated AND
                 # already shown to the visitor was lost from the transcript.
@@ -8462,8 +8506,14 @@ async def rag_pipeline_stream(
             # safety-net metric. Skipped when the leak-guard already fired
             # (full_answer is already the refusal) or the stream errored.
             if not _leak_aborted and not _stream_error:
-                _answer_safe, _answer_flag_category = check_generated_answer_safety(
-                    full_answer, bot_id=bid, session_id=session_id, path="stream"
+                # Sync HTTP call (up to 10s). Off the event loop, or every other
+                # in-flight stream on this worker stalls behind it.
+                _answer_safe, _answer_flag_category = await asyncio.to_thread(
+                    check_generated_answer_safety,
+                    full_answer,
+                    bot_id=bid,
+                    session_id=session_id,
+                    path="stream",
                 )
                 if not _answer_safe:
                     full_answer = _off_topic_refusal(_company_name, support_enabled=_plan_support_allowed)

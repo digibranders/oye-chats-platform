@@ -168,8 +168,11 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
               inside the first, with two concentric 10px radii. */}
           <LockedState
             size="panel"
-            title={`Weekly auto-retrain is on Standard and above`}
-            description={`On Standard and above this runs weekly, charging only for pages that changed. Your ${planName} plan re-trains when you ask it to.`}
+            title={t('agents.weeklyAutoRetrainIsOnStandard') || 'Weekly auto-retrain is on Standard and above'}
+            description={
+              t('agents.onStandardAndAboveThisRuns', { plan: planName }) ||
+              `On Standard and above this runs weekly, charging only for pages that changed. Your ${planName} plan re-trains when you ask it to.`
+            }
             action={
               <Link to="/billing" className={buttonClass('primary', 'sm')}>
                 {t('agents.seePlans') || 'See plans'}
@@ -187,8 +190,8 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
            are the whole card until there is a website to refresh. */
         <CardBody>
           <Alert tone="neutral">
-            There are no trained websites to refresh yet. Uploaded documents are not re-read — they
-            only change when you replace them.
+            {t('agents.noTrainedWebsitesToRefresh') ||
+              'There are no trained websites to refresh yet. Uploaded documents are not re-read, so they only change when you replace them.'}
           </Alert>
           {actionError ? (
             <Alert tone="danger" live className="mt-4">
@@ -205,7 +208,8 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
                   label: t('agents.schedule') || 'Schedule',
                   value: status.enabled ? (
                     <Badge tone="success" dot>
-                      Every {status.cadenceDays} days
+                      {t('agents.everyNDays', { days: status.cadenceDays }) ||
+                        `Every ${status.cadenceDays} days`}
                     </Badge>
                   ) : (
                     <Badge tone="neutral" dot>
@@ -240,8 +244,8 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
             />
             {status.pageCount === 0 ? (
               <Alert tone="neutral" className="mt-4">
-                There are no trained websites to refresh yet. Uploaded documents are not re-read —
-                they only change when you replace them.
+                {t('agents.noTrainedWebsitesToRefresh') ||
+                  'There are no trained websites to refresh yet. Uploaded documents are not re-read, so they only change when you replace them.'}
               </Alert>
             ) : null}
             {actionError ? (

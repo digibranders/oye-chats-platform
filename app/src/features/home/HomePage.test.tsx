@@ -169,6 +169,20 @@ describe('HomePage', () => {
     ).toBeTruthy();
   });
 
+  it('says the per-chatbot chat count covers all time, not the page\u2019s window', async () => {
+    // The column is `/analytics/dashboard` per chatbot with no `days` at all,
+    // on a page whose only stated window is the strip's "Last 30 days" \u2014 so a
+    // single row could carry a larger figure than the workspace total above it
+    // with nothing on screen explaining why.
+    renderHome();
+
+    const header = await screen.findByRole('columnheader', { name: /Chats/ });
+    expect(header).toHaveTextContent('All time');
+    // Still stated once for the strip, so the page now names two windows and
+    // each is attached to the figures it actually covers.
+    expect(screen.getAllByText('Last 30 days')).toHaveLength(1);
+  });
+
   it('says the chatbot\u2019s state once, and its consequence on the other track', async () => {
     renderHome();
 

@@ -335,19 +335,19 @@ export function UsagePage() {
                     tone:
                       pool.totalRemaining <= 0
                         ? 'danger'
-                        : balance.lowBalance
+                        : pool.lowBalance
                           ? 'warning'
                           : 'neutral',
                     hint:
                       pool.totalRemaining <= 0
-                        ? balance.allowanceInactive
+                        ? pool.allowanceInactive
                           ? 'No allowance is running. Choose a plan to start one'
                           : !pool.isActive
                             ? 'This chatbot has no credits left either'
                             : botId === null
                               ? 'Your chatbots have stopped answering'
                               : 'This chatbot has stopped answering'
-                        : balance.lowBalance
+                        : pool.lowBalance
                           ? `Under a fifth left${pool.resetsAt ? `, refills ${formatDate(pool.resetsAt)}` : ''}`
                           : undefined,
                   },
@@ -384,7 +384,7 @@ export function UsagePage() {
                   limit={pool.planGranted}
                   unit="credits"
                 />
-              ) : balance.allowanceInactive ? (
+              ) : pool.allowanceInactive ? (
                 <p className="text-xs text-text-secondary">
                   No allowance is running right now, so there is nothing to spend against. Choosing
                   a plan starts one.

@@ -54,7 +54,6 @@ jobs:
           # Toggle-able feature flags (set as GitHub Actions *variables* to flip without a code push)
           RELEVANCE_GATE_ENABLED: ${{ vars.RELEVANCE_GATE_ENABLED }}
           CHUNK_ENRICHMENT_ENABLED: ${{ vars.CHUNK_ENRICHMENT_ENABLED }}
-          CRAWLER_JS_ALL_PAGES: ${{ vars.CRAWLER_JS_ALL_PAGES }}
           RERANK_ENABLED: ${{ vars.RERANK_ENABLED }}
           # Embeddings — Google Gemini (off-box) is the sole provider, reusing
           # GOOGLE_API_KEY. Unset values fall back to safe defaults below.
@@ -146,7 +145,7 @@ jobs:
           host: ${{ secrets.DO_HOST }}
           username: ${{ secrets.DO_USER }}
           key: ${{ secrets.DO_SSH_KEY }}
-          envs: DB_URL,GOOGLE_API_KEY,OPENAI_API_KEY,CORS_ORIGINS,R2_KEY_ID,R2_APPLICATION_KEY,R2_BUCKET_NAME,R2_ENDPOINT,R2_PUBLIC_BASE_URL,SENTRY_DSN_BACKEND,SENTRY_RELEASE,LANGFUSE_SECRET_KEY,LANGFUSE_PUBLIC_KEY,BREVO_API_KEY,EMAIL_PROVIDER,SES_AWS_REGION,SES_AWS_ACCESS_KEY_ID,SES_AWS_SECRET_ACCESS_KEY,REDIS_URL,RELEVANCE_GATE_ENABLED,CHUNK_ENRICHMENT_ENABLED,CRAWLER_JS_ALL_PAGES,RERANK_ENABLED,EMBED_PROVIDER,GEMINI_EMBED_MODEL,EMBED_DIMENSIONS,EMBED_CONCURRENCY,SPIDER_API_KEY,SPIDER_REQUEST_MODE,JINA_API_KEY,JINA_FALLBACK_ENABLED,CRAWL_FAVICON_AVATAR_ENABLED,SSRF_TLS_VERIFY_ENABLED,WORKER_MAX_JOBS,STRIPE_SECRET_KEY,STRIPE_PUBLISHABLE_KEY,STRIPE_WEBHOOK_SECRET,RAZORPAY_KEY_ID,RAZORPAY_KEY_SECRET,RAZORPAY_WEBHOOK_SECRET,RAZORPAY_SEAT_PLAN_ID,RAZORPAY_TEST_PLAN_ID,RAZORPAY_SEAT_PLAN_ID_USD,INTL_PAYMENTS_ENABLED,CHECKOUT_TEST_CLIENT_IDS,FRONTEND_URL,API_BASE_URL,GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,GOOGLE_REDIRECT_URI,OAUTH_SUCCESS_REDIRECT_URL,OAUTH_STATE_SECRET,UNSUBSCRIBE_SECRET,VAPID_PUBLIC_KEY,VAPID_PRIVATE_KEY,REOON_API_KEY,IPAPI_IS_KEY,WS_BACKPLANE_ENABLED
+          envs: DB_URL,GOOGLE_API_KEY,OPENAI_API_KEY,CORS_ORIGINS,R2_KEY_ID,R2_APPLICATION_KEY,R2_BUCKET_NAME,R2_ENDPOINT,R2_PUBLIC_BASE_URL,SENTRY_DSN_BACKEND,SENTRY_RELEASE,LANGFUSE_SECRET_KEY,LANGFUSE_PUBLIC_KEY,BREVO_API_KEY,EMAIL_PROVIDER,SES_AWS_REGION,SES_AWS_ACCESS_KEY_ID,SES_AWS_SECRET_ACCESS_KEY,REDIS_URL,RELEVANCE_GATE_ENABLED,CHUNK_ENRICHMENT_ENABLED,RERANK_ENABLED,EMBED_PROVIDER,GEMINI_EMBED_MODEL,EMBED_DIMENSIONS,EMBED_CONCURRENCY,SPIDER_API_KEY,SPIDER_REQUEST_MODE,JINA_API_KEY,JINA_FALLBACK_ENABLED,CRAWL_FAVICON_AVATAR_ENABLED,SSRF_TLS_VERIFY_ENABLED,WORKER_MAX_JOBS,STRIPE_SECRET_KEY,STRIPE_PUBLISHABLE_KEY,STRIPE_WEBHOOK_SECRET,RAZORPAY_KEY_ID,RAZORPAY_KEY_SECRET,RAZORPAY_WEBHOOK_SECRET,RAZORPAY_SEAT_PLAN_ID,RAZORPAY_TEST_PLAN_ID,RAZORPAY_SEAT_PLAN_ID_USD,INTL_PAYMENTS_ENABLED,CHECKOUT_TEST_CLIENT_IDS,FRONTEND_URL,API_BASE_URL,GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,GOOGLE_REDIRECT_URI,OAUTH_SUCCESS_REDIRECT_URL,OAUTH_STATE_SECRET,UNSUBSCRIBE_SECRET,VAPID_PUBLIC_KEY,VAPID_PRIVATE_KEY,REOON_API_KEY,IPAPI_IS_KEY,WS_BACKPLANE_ENABLED
           script: |
             set -e  # Abort on any command failure — don't deploy broken code
 
@@ -202,6 +201,27 @@ jobs:
             if [ "$RZP_MODE" = "test" ]; then
               echo "::warning::Deploying with Razorpay TEST keys — no customer can actually be charged."
             fi
+
+            # The ₹1 checkout override must never ride along with live keys.
+            # `CHECKOUT_TEST_CLIENT_IDS` names `client.id` integers, and any id
+            # in it gets top-ups charged at ₹1, its plan swapped for the test
+            # plan, discounts skipped, the international kill switch bypassed,
+            # and the resulting ₹1 treated by the webhook as a legitimate paid
+            # activation worth a full month of credits.
+            #
+            # It keys on a surrogate autoincrement PK, and the launch wipe
+            # restarted `clients.id` at 1. A leftover value like "3,7" that
+            # once meant two test accounts now means whichever real customers
+            # land on those ids. The scoping comment in config.py promises real
+            # customers are never affected; renumbering is what breaks that
+            # promise, so the guard belongs here rather than in the code.
+            #
+            # Set it in the server's .env for a smoke test instead, where the
+            # next deploy expires it automatically.
+            if [ "$RZP_MODE" = "live" ] && [ -n "${CHECKOUT_TEST_CLIENT_IDS:-}" ]; then
+              echo "::error::CHECKOUT_TEST_CLIENT_IDS is set to '${CHECKOUT_TEST_CLIENT_IDS}' while Razorpay is in LIVE mode. Those ids would be charged ₹1 and granted full plan credits, and client ids were renumbered by the launch wipe, so they may now be real customers. Clear the repository variable and re-run."
+              exit 1
+            fi
             for v in VAPID_PUBLIC_KEY VAPID_PRIVATE_KEY BREVO_API_KEY REDIS_URL \
                      SENTRY_DSN_BACKEND LANGFUSE_SECRET_KEY LANGFUSE_PUBLIC_KEY \
                      STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET REOON_API_KEY IPAPI_IS_KEY \
@@ -220,6 +240,55 @@ jobs:
             PREV_SHA=$(git rev-parse HEAD)
             echo "🧷 Current release pinned for rollback: $PREV_SHA"
             cp api/.env api/.env.rollback 2>/dev/null || true
+
+            # Pre-restart failure guard. Everything from the checkout below to
+            # the restart phase mutates the box while the OLD processes keep
+            # running: new code on disk, .env already rewritten, migrations
+            # possibly applied. Both units are Restart=always, so a failure in
+            # that window would leave code this deploy never verified staged for
+            # the next crash, OOM or reboot to promote silently. On a non-zero
+            # exit before the restarts, put the on-disk tree back so it matches
+            # the processes that are still serving traffic.
+            PRE_RESTART_GUARD=armed
+            restore_pre_restart_state() {
+              GUARD_STATUS=$?
+              [ "$PRE_RESTART_GUARD" = "armed" ] || return 0
+              [ "$GUARD_STATUS" -ne 0 ] || return 0
+              PRE_RESTART_GUARD=fired
+              echo "::error::Deploy failed before the restart phase (exit $GUARD_STATUS). Services are still running the previous release $PREV_SHA; restoring the on-disk tree to match them."
+              cd /opt/oyechats/platform || return 0
+              git reset --hard "$PREV_SHA" || echo "WARN: could not restore the checkout to $PREV_SHA"
+              if [ -f api/.env.rollback ]; then
+                cp api/.env.rollback api/.env || echo "WARN: could not restore api/.env"
+              fi
+              # The forward path may already have installed the new tree's unit
+              # files. Put the running release's units back; daemon-reload only
+              # re-reads definitions, it starts and stops nothing. ws is
+              # restored only where it is already installed, for the same reason
+              # the forward path guards its copy.
+              cp api/systemd/oyechats-api.service api/systemd/oyechats-worker.service /etc/systemd/system/ || echo "WARN: could not restore unit files"
+              if systemctl cat oyechats-ws.service >/dev/null 2>&1; then
+                cp api/systemd/oyechats-ws.service /etc/systemd/system/ || echo "WARN: could not restore the ws unit file"
+              fi
+              systemctl daemon-reload || echo "WARN: daemon-reload failed while restoring"
+              cd api || return 0
+              /root/.local/bin/uv sync || echo "WARN: uv sync failed while restoring the previous release"
+              # F06: the restored services still run as `oyechats` and must keep
+              # reading .env and the venv.
+              if getent group oyechats >/dev/null 2>&1; then
+                chgrp oyechats .env || echo "WARN: could not chgrp api/.env"
+                chmod 640 .env || echo "WARN: could not chmod api/.env"
+                chmod -R u+rwX,go+rX .venv || echo "WARN: could not normalize .venv permissions"
+              fi
+              # Services are deliberately NOT restarted: they are healthy on the
+              # previous release, which is now what sits on disk again. The
+              # schema is deliberately left forward-migrated, the same policy the
+              # post-health rollback follows (migrations are backward-compatible
+              # by policy, REMEDIATION_PLAN.md §8; an automatic downgrade risks
+              # data loss and needs a human decision).
+              echo "On-disk tree restored to $PREV_SHA. Schema left forward-migrated; services untouched."
+            }
+            trap restore_pre_restart_state EXIT
 
             # Make the working tree match origin/main verbatim before
             # pulling. Operators occasionally hotfix files in place
@@ -302,10 +371,8 @@ jobs:
               "RELEVANCE_THRESHOLD=0.55" \
               "GATE_MODEL=gemini/gemini-2.5-flash" \
               "ENRICHMENT_MODEL=gemini/gemini-2.5-flash" \
-              "CRAWLER_BROWSER_RECYCLE=10" \
               "RELEVANCE_GATE_ENABLED=${RELEVANCE_GATE_ENABLED:-true}" \
               "CHUNK_ENRICHMENT_ENABLED=${CHUNK_ENRICHMENT_ENABLED}" \
-              "CRAWLER_JS_ALL_PAGES=${CRAWLER_JS_ALL_PAGES}" \
               "EMBED_PROVIDER=${EMBED_PROVIDER:-google}" \
               "GEMINI_EMBED_MODEL=${GEMINI_EMBED_MODEL:-gemini-embedding-001}" \
               "EMBED_DIMENSIONS=${EMBED_DIMENSIONS:-768}" \
@@ -427,6 +494,17 @@ jobs:
             # picked up on every deploy instead of drifting from the repo.
             cp /opt/oyechats/platform/api/systemd/oyechats-api.service /etc/systemd/system/
             cp /opt/oyechats/platform/api/systemd/oyechats-worker.service /etc/systemd/system/
+            # oyechats-ws.service was missing from this list, so on hosts that
+            # run the WebSocket split its unit never picked up a repo edit while
+            # api and worker did. It is copied only where the unit already
+            # exists, because `systemctl cat` is also the existence test the
+            # restart below uses: copying it everywhere would make that test
+            # true on hosts that never opted into the split and start a second
+            # Gunicorn on 127.0.0.1:8001 that nginx does not route to.
+            # Installing the split stays the manual act documented in the unit.
+            if systemctl cat oyechats-ws.service >/dev/null 2>&1; then
+              cp /opt/oyechats/platform/api/systemd/oyechats-ws.service /etc/systemd/system/
+            fi
             cp /opt/oyechats/platform/api/systemd/oyechats-backup.service /etc/systemd/system/
             cp /opt/oyechats/platform/api/systemd/oyechats-backup.timer /etc/systemd/system/
             systemctl daemon-reload
@@ -435,6 +513,13 @@ jobs:
             # hand-typed root cron. The script path must be executable.
             chmod +x /opt/oyechats/platform/api/scripts/backup.sh
             systemctl enable --now oyechats-backup.timer
+
+            # Restart phase begins. Disarm the pre-restart guard here: from this
+            # point the new code is live, so recovery belongs to the post-health
+            # rollback below, which restores the tree AND restarts the services.
+            # Two owners would fight over the same restore.
+            PRE_RESTART_GUARD=disarmed
+            trap - EXIT
 
             # Restart worker FIRST so its heartbeat is fresh before the new
             # API comes up — the deploy gate hits /health/full, which 503s
@@ -510,6 +595,13 @@ jobs:
             # what broke it (e.g. a bad hardening directive) can only recover
             # if rollback reverts them alongside the code.
             cp api/systemd/oyechats-api.service api/systemd/oyechats-worker.service /etc/systemd/system/
+            # ws too, on hosts that run the split: the forward path installs its
+            # unit there, so a rollback that skipped it would leave the WebSocket
+            # process on the rolled-back-FROM unit file. Guarded by the same
+            # existence test, so a host without the split stays without it.
+            if systemctl cat oyechats-ws.service >/dev/null 2>&1; then
+              cp api/systemd/oyechats-ws.service /etc/systemd/system/
+            fi
             systemctl daemon-reload
             cd api
             /root/.local/bin/uv sync || echo "WARN: uv sync failed during rollback"

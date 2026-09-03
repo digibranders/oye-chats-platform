@@ -146,7 +146,11 @@ export function Composer({
     if (!file) return;
     if (file.size > MAX_FILE_BYTES) {
       toast.error(t('inbox.thatFileIsTooLarge') || 'That file is too large', {
-        description: `The limit is ${formatBytes(MAX_FILE_BYTES)} and this one is ${formatBytes(file.size)}.`,
+        description:
+          t('inbox.theLimitIsAndThisOneIs', {
+            limit: formatBytes(MAX_FILE_BYTES),
+            size: formatBytes(file.size),
+          }) || `The limit is ${formatBytes(MAX_FILE_BYTES)} and this one is ${formatBytes(file.size)}.`,
       });
       return;
     }
@@ -265,7 +269,7 @@ export function Composer({
         <Tooltip
           content={
             <span className="flex items-center gap-1.5">
-              {t('inbox.send') || 'Send'} <Kbd>Enter</Kbd>
+              {t('inbox.send') || 'Send'} <Kbd>{t('inbox.enterKey') || 'Enter'}</Kbd>
             </span>
           }
         >

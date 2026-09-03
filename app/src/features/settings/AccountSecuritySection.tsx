@@ -27,6 +27,7 @@ import { OtpField } from '../../pages/auth/OtpField';
 import { PasswordRules } from '../../pages/auth/PasswordRules';
 import { errorMessage, passwordMeetsRules } from '../../pages/auth/authFlow';
 import { useTranslation } from '../../i18n/useTranslation';
+import { Trans } from '../../i18n/Trans';
 
 /**
  * The two credentials the account signs in with.
@@ -104,7 +105,7 @@ export function ChangePasswordCard({ isOperator }: { isOperator: boolean }) {
           description={
             isOperator ? undefined : (
               <>
-                Cannot remember it?{' '}
+                {t('settings.cannotRememberIt') || 'Cannot remember it?'}{' '}
                 <Link
                   to="/forgot-password"
                   className="font-medium text-accent-600 underline-offset-2 hover:underline"
@@ -386,8 +387,17 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps) {
           <form onSubmit={submitConfirm}>
             <CardBody className="space-y-5">
               <Alert tone="neutral" title={t('settings.checkTheNewInbox') || 'Check the new inbox'}>
-                We sent a code to <strong className="text-text-primary">{pending ?? email}</strong>.
-                Until you enter it, keep signing in with {user.email ?? 'your current address'}.
+                <Trans
+                  k="settings.weSentACodeKeepSigningIn"
+                  fallback="We sent a code to {newAddress}. Until you enter it, keep signing in with {currentAddress}."
+                  values={{
+                    newAddress: (
+                      <strong className="text-text-primary">{pending ?? email}</strong>
+                    ),
+                    currentAddress:
+                      user.email ?? t('settings.yourCurrentAddress') ?? 'your current address',
+                  }}
+                />
               </Alert>
 
               {confirmChange.isError ? (
@@ -437,12 +447,13 @@ export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps) {
         onOpenChange={setConfirmingCancel}
         title={t('settings.cancelThisEmailChange') || 'Cancel this email change?'}
         description={
-          <>
-            Your sign-in address stays {user.email ?? 'as it is'} and the code we sent to{' '}
-            {pending ?? email} stops working. You can start again whenever you like.
-          </>
+          t('settings.yourSignInAddressStays', {
+            current: user.email ?? t('settings.asItIs') ?? 'as it is',
+            pending: pending ?? email,
+          }) ||
+          `Your sign-in address stays ${user.email ?? 'as it is'} and the code we sent to ${pending ?? email} stops working. You can start again whenever you like.`
         }
-        confirmLabel="Cancel the change"
+        confirmLabel={t('settings.cancelTheChange') || 'Cancel the change'}
         cancelLabel="Keep it pending"
         onConfirm={async () => {
           await cancelChange.mutateAsync();

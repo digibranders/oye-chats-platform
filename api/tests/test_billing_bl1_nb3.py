@@ -27,9 +27,10 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import Base, Client, Plan, Subscription
+from app.db.models import Bot, Client, Document, Plan, Subscription
 from app.services import razorpay_service as rzp
 from app.services import transition_service
+from tests.conftest import reset_database
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("DB_URL"),
@@ -301,15 +302,7 @@ def test_promotion_is_idempotent_sequential(db, monkeypatch):
 # ── Fix A: the lock serializes a genuine webhook + cron double-fire ───────────
 
 
-def _truncate_all(session: Session) -> None:
-    names = ", ".join(f'"{t.name}"' for t in Base.metadata.sorted_tables)
-    from sqlalchemy import text as _sa_text
-
-    session.execute(_sa_text(f"TRUNCATE {names} RESTART IDENTITY CASCADE"))
-    session.commit()
-
-
-def test_lock_serializes_concurrent_webhook_and_cron(pg_engine, monkeypatch):
+def test_lock_serializes_concurrent_webhook_and_cron(pg_engine, fk_checks_switchable, monkeypatch):
     """Two independent sessions (webhook + cron) racing on the SAME cutover must
     promote exactly ONCE (one checkout, one email) not twice (Fig A).
 
@@ -370,9 +363,11 @@ def test_lock_serializes_concurrent_webhook_and_cron(pg_engine, monkeypatch):
     finally:
         session_a.rollback()
         session_b.rollback()
-        _truncate_all(session_a)
-        session_a.close()
+        # This test builds its own sessions rather than taking the ``db``
+        # fixture, so it runs that fixture's teardown by hand.
         session_b.close()
+        reset_database(session_a, fk_checks_switchable=fk_checks_switchable)
+        session_a.close()
 
 
 # ── Fix D: cron backstop drives the REAL task, not a hand-rolled query ────────
@@ -615,3 +610,95 @@ def test_promote_cron_rolls_back_a_failed_rows_partial_promotion(db, monkeypatch
 
     # Restore and prove the row still promotes cleanly afterwards.
     monkeypatch.setattr(transition_service, "promote_scheduled_change", real_promote)
+
+
+# ── A gateway cancel echoed back for a row we already retired ────────────────
+
+
+def _bot_with_active_knowledge(db, client: Client, *, key: str) -> Bot:
+    bot = Bot(client_id=client.id, bot_key=key, name="B")
+    db.add(bot)
+    db.flush()
+    db.add(
+        Document(
+            client_id=client.id,
+            bot_id=bot.id,
+            document_name="https://example.com/",
+            source="crawl",
+            file_hash=f"h-{key}",
+            content="hello",
+            embedding=[0.0] * 768,
+            is_active=True,
+        )
+    )
+    db.flush()
+    return bot
+
+
+def _knowledge_is_active(db, bot: Bot) -> bool:
+    rows = db.execute(select(Document.is_active).where(Document.bot_id == bot.id)).scalars().all()
+    return bool(rows) and all(rows)
+
+
+def test_cancelled_for_a_superseded_subscription_keeps_the_upgraded_knowledge_live(db):
+    """Upgrade cutover: activation flips the old account-level row to
+    ``canceled`` and cancels its mandate at the gateway. Razorpay then sends
+    ``subscription.cancelled`` for the OLD id. That event must not run the
+    paid→Free side effects against the customer's NEW subscription: before
+    this it called ``deactivate_client_knowledge``, whose per-bot funding check
+    never matches an account-level row, and paused every bot the customer had
+    just upgraded."""
+    client = _make_client(db, email="superseded-cancel@e.com")
+    standard = _make_plan(db, slug="sup-standard", price_cents=119900)
+    professional = _make_plan(db, slug="sup-professional", price_cents=399900)
+    old = _make_sub(db, client, standard, razorpay_subscription_id="sub_sup_old", status="canceled")
+    old.canceled_at = datetime(2026, 1, 15, tzinfo=UTC)
+    new = _make_sub(db, client, professional, razorpay_subscription_id="sub_sup_new", status="active")
+    bot = _bot_with_active_knowledge(db, client, key="bot-sup")
+    db.commit()
+
+    rzp._handle_subscription_cancelled(db, _cancelled_payload("sub_sup_old"))
+    db.commit()
+    db.refresh(old)
+    db.refresh(new)
+
+    assert _knowledge_is_active(db, bot), "the upgraded customer's knowledge must stay live"
+    assert new.status == "active"
+    assert old.status == "canceled"
+    # No second row was minted (the unbilled-trial forfeit path must not run
+    # on a row we already retired).
+    assert len(db.execute(select(Subscription).where(Subscription.client_id == client.id)).scalars().all()) == 2
+
+
+def test_completed_for_an_already_expired_subscription_is_bookkeeping_only(db):
+    client = _make_client(db, email="superseded-completed@e.com")
+    standard = _make_plan(db, slug="sup2-standard", price_cents=119900)
+    professional = _make_plan(db, slug="sup2-professional", price_cents=399900)
+    old = _make_sub(db, client, standard, razorpay_subscription_id="sub_sup2_old", status="expired")
+    _make_sub(db, client, professional, razorpay_subscription_id="sub_sup2_new", status="active")
+    bot = _bot_with_active_knowledge(db, client, key="bot-sup2")
+    db.commit()
+
+    rzp._handle_subscription_completed(db, _completed_payload("sub_sup2_old"))
+    db.commit()
+    db.refresh(old)
+
+    assert _knowledge_is_active(db, bot)
+    assert old.status == "expired"
+
+
+def test_cancelled_for_a_live_account_level_subscription_still_pauses_knowledge(db):
+    """The guard above must not over-reach: a genuine lapse (the only funded
+    row is the one being cancelled) still pauses the knowledge."""
+    client = _make_client(db, email="genuine-cancel@e.com")
+    standard = _make_plan(db, slug="gen-standard", price_cents=119900)
+    sub = _make_sub(db, client, standard, razorpay_subscription_id="sub_gen_live", status="active")
+    bot = _bot_with_active_knowledge(db, client, key="bot-gen")
+    db.commit()
+
+    rzp._handle_subscription_cancelled(db, _cancelled_payload("sub_gen_live"))
+    db.commit()
+    db.refresh(sub)
+
+    assert sub.status == "canceled"
+    assert not _knowledge_is_active(db, bot)

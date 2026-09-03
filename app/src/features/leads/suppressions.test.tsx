@@ -88,7 +88,9 @@ describe('SuppressionsDrawer', () => {
     // The full explanation is where somebody hunting for a delete button looks.
     await user.click(screen.getByRole('button', { name: /Why can.t I remove an address/i }));
     expect(
-      await screen.findByText(/Nothing removes one — not this panel and not support/i),
+      // Reworded when the copy moved into the dictionary: the project bans the
+      // em dash in customer copy, so the clause reads with a colon now.
+      await screen.findByText(/Nothing removes one: not this panel, and not support/i),
     ).toBeInTheDocument();
 
     // And there is genuinely no removal control anywhere in the panel. Anchored,

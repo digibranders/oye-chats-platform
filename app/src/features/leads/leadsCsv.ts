@@ -25,6 +25,10 @@ import { TIER_META, UNKNOWN_LOCATION, formatLocation, hasIntelligence, normalize
  * and a column headed plain "Tags" in a file that gets mailed around reads as
  * workspace data that every teammate also has.
  */
+// @i18n-exempt: a CSV column header, not chrome. The comment above HEADER
+// explains the contract: these columns line up with the server's own export so
+// the two files can be merged, and a downstream sheet keyed on them must not
+// change shape because the reader switched the dashboard language.
 export const LOCAL_TAGS_COLUMN = 'Tags (this browser only)';
 
 /**
@@ -42,6 +46,7 @@ export const LOCAL_TAGS_COLUMN = 'Tags (this browser only)';
  * the list payload does not carry them, so emitting the headers with empty
  * cells would assert that a lead had no campaign when we never asked.
  */
+// @i18n-exempt: see LOCAL_TAGS_COLUMN above. Data contract, not copy.
 const HEADER = [
   'Session ID',
   'Name',

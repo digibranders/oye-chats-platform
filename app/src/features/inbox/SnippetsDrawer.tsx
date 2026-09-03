@@ -91,7 +91,10 @@ export function SnippetsDrawer({ open, onOpenChange, snippets, loading, onChange
       setEditing(false);
       onChanged();
     } catch (err) {
-      setError(err instanceof Error ? `Could not save: ${err.message}` : t('inbox.couldNotSaveThisReply') || 'Could not save this reply.');
+      setError(
+        err instanceof Error
+          ? t('inbox.couldNotSaveReason', { reason: err.message }) || `Could not save: ${err.message}`
+          : t('inbox.couldNotSaveThisReply') || 'Could not save this reply.');
     } finally {
       setSaving(false);
     }

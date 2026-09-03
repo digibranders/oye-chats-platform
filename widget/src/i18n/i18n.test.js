@@ -664,56 +664,91 @@ const loadDicts = async () => {
     return { en: en.default, hi: hi.default };
 };
 
-test('dictionaries: en and hi expose exactly the same keys', async () => {
-    const { en, hi } = await loadDicts();
-    const a = flattenKeys(en.messages).sort();
-    const b = flattenKeys(hi.messages).sort();
-    assert.deepEqual(
-        a.filter((k) => !b.includes(k)),
-        [],
-        'keys present in English but missing from Hindi',
-    );
-    assert.deepEqual(
-        b.filter((k) => !a.includes(k)),
-        [],
-        'keys present in Hindi that English does not define',
-    );
+// Enumerated from the directory rather than listed by hand: the dictionary that
+// gets added without a test is exactly the one that needs one.
+const TRANSLATED_LANGUAGES = readdirSync(new URL('./locales/', import.meta.url))
+    .filter((f) => f.endsWith('.js') && f !== 'en.js')
+    .map((f) => f.replace(/\.js$/, ''))
+    .sort();
+
+const loadDict = async (lang) => (await import(`./locales/${lang}.js`)).default;
+
+const placeholdersIn = (s) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
+
+test('dictionaries: at least one translation ships', () => {
+    // Guards the loop below: an empty directory would make every test vacuous.
+    assert.ok(TRANSLATED_LANGUAGES.length > 0, 'no non-English dictionaries found');
 });
 
-test('dictionaries: every hi value is a non-empty string', async () => {
-    const { hi } = await loadDicts();
-    const walk = (obj, prefix = '') => {
-        for (const [k, v] of Object.entries(obj)) {
-            if (v && typeof v === 'object') walk(v, `${prefix}${k}.`);
-            else {
-                assert.equal(typeof v, 'string', `${prefix}${k} must be a string`);
-                assert.ok(v.trim().length > 0, `${prefix}${k} must not be empty`);
-            }
-        }
-    };
-    walk(hi.messages);
-});
+for (const lang of TRANSLATED_LANGUAGES) {
+    test(`dictionaries: ${lang} exposes exactly the same keys as en`, async () => {
+        const { en } = await loadDicts();
+        const dict = await loadDict(lang);
+        const a = flattenKeys(en.messages).sort();
+        const b = flattenKeys(dict.messages).sort();
+        assert.deepEqual(
+            a.filter((k) => !b.includes(k)),
+            [],
+            `keys present in English but missing from ${lang}`,
+        );
+        assert.deepEqual(
+            b.filter((k) => !a.includes(k)),
+            [],
+            `keys present in ${lang} that English does not define`,
+        );
+    });
 
-test('dictionaries: interpolation placeholders survive translation', async () => {
-    // t() replaces `{name}` style tokens. A translation that drops or renames one
-    // renders the sentence with a hole in it ("… has joined the conversation."),
-    // which no key-parity check would catch.
-    const { en, hi } = await loadDicts();
-    const params = (s) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
-    const walk = (a, b, prefix = '') => {
-        for (const [k, v] of Object.entries(a)) {
-            if (v && typeof v === 'object') walk(v, b[k], `${prefix}${k}.`);
-            else {
-                assert.deepEqual(
-                    params(b[k]),
-                    params(v),
-                    `${prefix}${k}: Hindi placeholders must match English`,
-                );
+    test(`dictionaries: every ${lang} value is a non-empty string`, async () => {
+        const dict = await loadDict(lang);
+        const walk = (obj, prefix = '') => {
+            for (const [k, v] of Object.entries(obj)) {
+                if (v && typeof v === 'object') walk(v, `${prefix}${k}.`);
+                else {
+                    assert.equal(typeof v, 'string', `${prefix}${k} must be a string`);
+                    assert.ok(v.trim().length > 0, `${prefix}${k} must not be empty`);
+                }
             }
-        }
-    };
-    walk(en.messages, hi.messages);
-});
+        };
+        walk(dict.messages);
+    });
+
+    test(`dictionaries: ${lang} interpolation placeholders survive translation`, async () => {
+        // t() replaces `{name}` style tokens. A translation that drops or renames
+        // one renders the sentence with a hole in it ("… has joined the
+        // conversation."), which no key-parity check would catch.
+        const { en } = await loadDicts();
+        const dict = await loadDict(lang);
+        const walk = (a, b, prefix = '') => {
+            for (const [k, v] of Object.entries(a)) {
+                if (v && typeof v === 'object') walk(v, b[k], `${prefix}${k}.`);
+                else {
+                    assert.deepEqual(
+                        placeholdersIn(b[k]),
+                        placeholdersIn(v),
+                        `${prefix}${k}: ${lang} placeholders must match English`,
+                    );
+                }
+            }
+        };
+        walk(en.messages, dict.messages);
+    });
+
+    test(`dictionaries: ${lang} declares matching metadata`, async () => {
+        const dict = await loadDict(lang);
+        assert.equal(
+            getLanguageCode(dict.locale),
+            lang,
+            `${lang}.js declares locale "${dict.locale}", which is not a ${lang} locale`,
+        );
+        assert.equal(
+            dict.direction,
+            getDirection(dict.locale),
+            `${lang}.js direction disagrees with the catalogue for ${dict.locale}`,
+        );
+        assert.ok(dict.native_name?.trim(), `${lang}.js must carry a native_name`);
+    });
+}
+
 
 // ── Hindi coverage for the swept surfaces ────────────────────────────────────
 

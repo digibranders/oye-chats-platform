@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -143,6 +143,41 @@ const BALANCE = {
   bots: [],
   account_pool_bot_count: 1,
 };
+
+/**
+ * The same balance, with a ledger of its own for chatbot 7.
+ *
+ * `GET /credits/balance` reports a per-chatbot pool for every chatbot that
+ * carries its own paid subscription, and each one brings that chatbot's plan
+ * ceilings and its usage against them. It is the only per-chatbot operator
+ * count this page holds.
+ */
+function scopedBalance(used: number, ceiling: number) {
+  return {
+    ...BALANCE,
+    bots: [
+      {
+        bot_id: 7,
+        bot_name: 'Acme Support',
+        bot_key: 'bot-acme',
+        plan_name: 'Standard',
+        plan: 2400,
+        topup: 500,
+        total: 2900,
+        monthly_grant: 3000,
+        plan_granted: 3000,
+        period_start: '2026-08-01T00:00:00Z',
+        resets_at: '2026-09-01T00:00:00Z',
+        usage: { ai_chat: { credits_used: 600, event_count: 600 } },
+        limits: { operators: ceiling },
+        limit_usage: { operators: used, documents: 4, leads: 9 },
+      },
+    ],
+    // No chatbot is left on the shared pool, so the scoped read resolves to the
+    // chatbot's own ledger rather than falling back to the account one.
+    account_pool_bot_count: 0,
+  };
+}
 
 function renderPage(entry = '/billing') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
@@ -386,6 +421,63 @@ describe('the plan summary', () => {
     ).toBeInTheDocument();
   });
 
+  /**
+   * The seat meter, and the dialog behind it, mixed two scopes.
+   *
+   * `entitlements.usage.operators` counts every operator in the WORKSPACE,
+   * while the plan, the ceiling and the subscription beside it all belong to
+   * one chatbot. So a workspace with five operators, one of them on the scoped
+   * chatbot, read "5 / 2" in red and then refused a reduction from 2 seats to
+   * 1 that the server would have accepted. The per-chatbot figure is in the
+   * balance payload this page already loads.
+   */
+  it('counts the seats on the scoped chatbot, not on the whole workspace', async () => {
+    state.selectedBot = { id: 7, name: 'Acme Support' };
+    state.entitlements = { ...state.entitlements, usage: { bots: 3, operators: 5 } };
+    api.getCreditBalance.mockResolvedValue(scopedBalance(1, 2));
+    renderPage();
+    await screen.findByText('Standard');
+
+    const meter = await screen.findByRole('meter', { name: /operator seats in use/i });
+    expect(meter.getAttribute('aria-valuetext')).toContain('1 of 2 used');
+  });
+
+  it('lets the scoped chatbot give back a seat its own roster is not using', async () => {
+    const user = userEvent.setup();
+    state.selectedBot = { id: 7, name: 'Acme Support' };
+    state.entitlements = { ...state.entitlements, usage: { bots: 3, operators: 5 } };
+    api.getCurrentSubscription.mockResolvedValue({
+      ...subscriptionPayload({ operator_quantity: 2 }),
+      plan: { ...PLAN, included_operator_seats: 1, limits: { bots: 1, operators: 2 } },
+    });
+    api.getCreditBalance.mockResolvedValue(scopedBalance(1, 2));
+    renderPage();
+    await screen.findByText('Standard');
+
+    await user.click(screen.getByRole('button', { name: /manage/i }));
+    // One scope per term, and the filled count is this chatbot's.
+    expect(await screen.findByText(/1 filled · 1 included · up to 2 on this plan/)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '1' } });
+    expect(screen.queryByText(/deactivate one before reducing/i)).toBeNull();
+    expect(screen.getByRole('button', { name: /update seats/i })).toBeEnabled();
+  });
+
+  it('labels an account-wide seat count when the chatbot has no pool of its own', async () => {
+    // A chatbot with no ledger of its own has no per-chatbot count to read, so
+    // the account figure stands in, labelled, and never used to refuse
+    // anything.
+    state.selectedBot = { id: 7, name: 'Acme Support' };
+    state.entitlements = { ...state.entitlements, usage: { bots: 3, operators: 5 } };
+    renderPage();
+    await screen.findByText('Standard');
+
+    expect(
+      await screen.findByRole('meter', { name: /operator seats in use across this workspace/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/counted across this workspace/i)).toBeInTheDocument();
+  });
+
   it('states the renewal date rather than a bare "renews"', async () => {
     renderPage();
     expect(await screen.findByText('Renews')).toBeInTheDocument();
@@ -539,5 +631,41 @@ describe('credits at a glance', () => {
     expect(await screen.findByText(/stopped answering/i)).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /buy credits/i })).not.toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /choose a plan/i }).length).toBeGreaterThan(0);
+  });
+});
+
+describe('per-agent credit scope', () => {
+  it('warns about the agent on screen, not about the workspace around it', async () => {
+    /* The figures on this card are per-pool; the warnings used to be the
+       workspace aggregate. A full agent beside a drained sibling therefore
+       rendered its healthy balance under a badge reading "Nearly out". */
+    state.selectedBot = { id: 7, name: 'Acme Support' };
+    api.getCreditBalance.mockResolvedValue({
+      ...BALANCE,
+      // Account pool is drained, so the AGGREGATE is low.
+      plan: 0,
+      plan_granted: 3000,
+      topup: 0,
+      total: 0,
+      bots: [
+        {
+          bot_id: 7,
+          bot_name: 'Acme Support',
+          plan_name: 'Professional',
+          monthly_grant: 8000,
+          plan_granted: 8000,
+          plan: 7600,
+          topup: 0,
+          total: 7600,
+          usage: {},
+        },
+      ],
+      account_pool_bot_count: 1,
+    });
+    renderPage();
+
+    await screen.findByText('Standard');
+    expect(screen.queryByText(/nearly out/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/stopped answering/i)).not.toBeInTheDocument();
   });
 });

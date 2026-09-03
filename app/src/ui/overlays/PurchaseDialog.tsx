@@ -5,6 +5,7 @@ import { Button } from '../primitives/Button';
 import { Spinner } from '../primitives/Spinner';
 import { Alert } from '../feedback/Alert';
 import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 /**
  * The phases a purchase moves through, in order. The consumer owns the
@@ -49,7 +50,9 @@ export function PurchaseSuccess({ message, greetingName }: PurchaseSuccessProps)
         <CheckCircle2 aria-hidden className="h-icon-lg w-icon-lg text-success" />
       </span>
       {greetingName ? (
-        <p className="text-prose text-text-secondary">Nice one, {greetingName}.</p>
+        <p className="text-prose text-text-secondary">
+          {translateNow('ds.niceOneName', { name: greetingName }) || `Nice one, ${greetingName}.`}
+        </p>
       ) : null}
       <div className="text-prose text-text-secondary">{message}</div>
     </div>

@@ -144,7 +144,7 @@ function VisitorRating({ rating }: { rating: number }) {
   const unhappy = rating <= 2;
   return (
     <span className="flex items-center gap-2">
-      <span role="img" aria-label={`Rated ${rating} out of 5`} className="flex items-center gap-0.5">
+      <span role="img" aria-label={translateNow('leads.ratedOutOf5', { rating }) || `Rated ${rating} out of 5`} className="flex items-center gap-0.5">
         {[1, 2, 3, 4, 5].map((step) => (
           <Star
             key={step}
@@ -179,7 +179,10 @@ function VisitorRating({ rating }: { rating: number }) {
 /** Company and recency, as the drawer's one-line subtitle. */
 function subtitle(lead: Lead): string | undefined {
   const company = companyDisplay(lead.contact)?.value;
-  const active = lead.last_active_at ? `Last active ${formatRelative(lead.last_active_at)}` : null;
+  const active = lead.last_active_at
+    ? translateNow('leads.lastActiveWhen', { when: formatRelative(lead.last_active_at) }) ||
+      `Last active ${formatRelative(lead.last_active_at)}`
+    : null;
   return [company, active].filter(Boolean).join(' · ') || undefined;
 }
 
@@ -202,7 +205,10 @@ function ScoreBand({ lead, rating }: { lead: Lead; rating: number | null }) {
         className="mt-3"
         hideLabel
         value={lead.score}
-        label={`Quality score: ${lead.score} out of 100`}
+        label={
+          translateNow('leads.qualityScoreOutOf100', { score: lead.score }) ||
+          `Quality score: ${lead.score} out of 100`
+        }
         tone={tier.tone === 'success' ? 'success' : tier.tone === 'warning' ? 'warning' : 'accent'}
       />
       <p className="mt-2 text-xs text-text-secondary">{tier.hint}</p>
@@ -301,7 +307,12 @@ function Annotations({ controller }: { controller: LeadAnnotationController }) {
       </p>
 
       <div className="mt-3 space-y-4">
-        <Field label={t('leads.note') || 'Note'} hint={note ? `Last edited ${formatDateTime(note.ts)}` : undefined}>
+        <Field label={t('leads.note') || 'Note'} hint={
+            note
+              ? t('leads.lastEditedWhen', { when: formatDateTime(note.ts) }) ||
+                `Last edited ${formatDateTime(note.ts)}`
+              : undefined
+          }>
           <Textarea
             rows={3}
             value={noteDraft}
@@ -346,6 +357,7 @@ function Annotations({ controller }: { controller: LeadAnnotationController }) {
 }
 
 /** Key beside the English: a module constant cannot be translated in place. */
+// @i18n-exempt: fallbacks. Each row carries its own key, resolved at render.
 const ACTION_LABELS: Record<string, { key: string; text: string }> = {
   handoff_requested: { key: 'leads.requestedAPerson', text: 'Requested a person' },
   accepted: { key: 'leads.operatorJoined', text: 'Operator joined' },
@@ -508,7 +520,8 @@ export function LeadDrawer({
                       loading={transcript.loadingEarlier}
                       onClick={transcript.loadEarlier}
                     >
-                      Load {TRANSCRIPT_PAGE_SIZE} earlier messages
+                      {t('leads.loadNEarlierMessages', { count: TRANSCRIPT_PAGE_SIZE }) ||
+                        `Load ${TRANSCRIPT_PAGE_SIZE} earlier messages`}
                     </Button>
                   </div>
                 ) : (

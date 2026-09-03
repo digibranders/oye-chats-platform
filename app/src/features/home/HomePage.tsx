@@ -425,8 +425,22 @@ function AgentTable({
         ),
       },
       {
+        // All time, and it has to say so. This column is the per-chatbot
+        // `/analytics/dashboard` read with no `days` at all, sitting on a page
+        // whose only stated window is the strip's "Last 30 days", so the same
+        // chatbot's row could show a larger number than the workspace total
+        // above it with nothing on screen explaining why. `AgentsPage` states
+        // the window on the identical figure; this is the same statement, on
+        // the column rather than in a toolbar sentence.
         key: 'chats',
-        header: t('home.chats') || 'Chats',
+        header: (
+          <span className="flex flex-col items-end">
+            <span>{t('home.chats') || 'Chats'}</span>
+            <span className="text-2xs font-normal text-text-tertiary">
+              {t('home.allTime') || 'All time'}
+            </span>
+          </span>
+        ),
         type: 'number',
         width: '5rem',
         render: (agent) =>

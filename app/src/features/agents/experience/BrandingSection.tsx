@@ -20,7 +20,7 @@ import PremiumOrb from './PremiumOrb';
 import { useEntitlements } from '../../../hooks/useEntitlements';
 import { ColorField } from './ColorField';
 import { NON_TEXT_CONTRAST_MIN, TEXT_CONTRAST_MIN } from './contrast';
-import { AVATAR_ACCEPT, AVATAR_HINT, MAX_AVATAR_BYTES, validateAvatarFile } from './avatarRules';
+import { AVATAR_ACCEPT, avatarHint, MAX_AVATAR_BYTES, validateAvatarFile } from './avatarRules';
 import { errorMessage, fetchSiteIcon, uploadAvatar } from './experience-api';
 import {
   DEFAULT_PRIMARY_COLOR,
@@ -45,10 +45,12 @@ import { useTranslation } from '../../../i18n/useTranslation';
  * shows it or, with the add-on, hides it. It never becomes someone else's line.
  */
 
-const AVATAR_TYPES: readonly { value: AvatarType; label: string }[] = [
-  { value: 'upload', label: 'Image' },
-  { value: 'orb', label: 'Orb' },
-  { value: 'mascot', label: 'Icon' },
+// Labels resolved per render: this is a module constant evaluated before any
+// locale exists. `value` is what gets stored and is never translated.
+const AVATAR_TYPES: readonly { value: AvatarType; labelKey: string; label: string }[] = [
+  { value: 'upload', labelKey: 'agents.avatarTypeImage', label: 'Image' },
+  { value: 'orb', labelKey: 'agents.avatarTypeOrb', label: 'Orb' },
+  { value: 'mascot', labelKey: 'agents.avatarTypeIcon', label: 'Icon' },
 ];
 
 export interface BrandingSectionProps {
@@ -239,7 +241,7 @@ export function BrandingSection({
             </span>
             <div className="min-w-0 flex-1">
               <SegmentedControl
-                items={AVATAR_TYPES}
+                items={AVATAR_TYPES.map((o) => ({ ...o, label: t(o.labelKey) || o.label }))}
                 value={draft.avatarType}
                 onChange={(avatarType) => onChange({ avatarType })}
                 label={t('agents.avatarStyle') || 'Avatar style'}
@@ -256,7 +258,7 @@ export function BrandingSection({
             <div className="flex flex-col gap-3">
               <FileDrop
                 label={t('agents.uploadAnImage') || 'Upload an image'}
-                hint={AVATAR_HINT}
+                hint={avatarHint()}
                 accept={AVATAR_ACCEPT}
                 maxSizeBytes={MAX_AVATAR_BYTES}
                 maxFiles={1}
@@ -363,7 +365,8 @@ export function BrandingSection({
                 {/* An ADD-ON, not a plan inclusion. No tier grants it, so
                     "Standard and above" sent customers to compare plans for
                     something no plan on that page would give them. */}
-                Removing it is a paid add-on on any plan. It currently reads{' '}
+                {t('agents.removingItIsAPaidAddOn') ||
+                  'Removing it is a paid add-on on any plan. It currently reads'}{' '}
                 <span className="font-medium text-text-primary">
                   {meta.brandingText || t('agents.poweredByOyechats') || 'Powered by OyeChats'}
                 </span>

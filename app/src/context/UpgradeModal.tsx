@@ -6,6 +6,7 @@ import { useEntitlements } from '../hooks/useEntitlements';
 import { getSubscriptionPlans } from '../services/api';
 import { renderPriceLabel, type PlanRow } from '../features/workspace/billing/planPricing';
 import type { UpgradeIntent } from './upgradeIntents';
+import { t as translateNow } from '../i18n/i18n';
 
 export interface UpgradeModalProps {
   open: boolean;
@@ -96,13 +97,13 @@ export function UpgradeModal({ open, content, onClose }: UpgradeModalProps) {
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
-            Not now
+            {translateNow('app.notNow') || 'Not now'}
           </Button>
           <Button
             onClick={seePlans}
             iconRight={<ArrowRight aria-hidden className="h-3.5 w-3.5" />}
           >
-            See plans
+            {translateNow('app.seePlans') || 'See plans'}
           </Button>
         </>
       }

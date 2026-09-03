@@ -269,6 +269,44 @@
   }
 }
 
+/* Phone layout. Two guards against the on-screen keyboard; both were seen
+   broken on real phones (iPhone 13 Safari, Android Chrome) on customer sites.
+
+   1. Text controls are at least 16px. iOS Safari zooms the whole page into a
+      focused control whose font-size is smaller, and the zoom never undoes
+      itself: the panel is then wider than the visible viewport, hangs off one
+      edge and leaves a strip of host page down the other. The widget cannot
+      set the host page's viewport meta tag (that belongs to the customer), so
+      the size floor is the only fix in our hands. !important because the
+      composer sets its font inline so its slash-command mirror matches it;
+      the mirror carries the same class and floor, so the two still line up.
+   2. .oyechats-mobile-backdrop fills the layout viewport behind the panel in
+      the panel's colour (rendered by ChatWindow). The panel is sized to the
+      visual viewport, which the keyboard leaves short of its own top edge
+      (Safari keeps a strip for its autofill bar; Chrome on Android
+      over-reports the keyboard inset on some builds), and that strip used to
+      show the host page. touch-action: none so a drag on the strip cannot
+      scroll the host page under the panel. */
+@media (max-width: 767px) {
+  input,
+  select,
+  textarea,
+  .oyechats-composer-mirror {
+    font-size: 16px !important;
+  }
+  .oyechats-mobile-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 9998;
+    touch-action: none;
+  }
+}
+@media (min-width: 768px) {
+  .oyechats-mobile-backdrop {
+    display: none;
+  }
+}
+
 /* Launcher pulse ring. Indicates active conversation */
 @keyframes launcherPulse {
   0%, 100% { transform: scale(1); opacity: 0.5; }

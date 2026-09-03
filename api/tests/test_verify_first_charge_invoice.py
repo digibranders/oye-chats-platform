@@ -100,3 +100,31 @@ def test_uncaptured_payment_defers_to_webhook(db, monkeypatch):
         ),
     )
     assert rzp.record_verified_subscription_charge(db, sub, "pay_uncap") is None
+
+
+def test_verify_does_not_invoice_a_mandate_that_has_not_billed(db, monkeypatch):
+    """A deferred-start mandate (mid-trial conversion, resume, launch promo)
+    returns the authorisation transaction's payment id from Checkout. That is
+    the token amount Razorpay auto-refunds, not a plan charge. Recording it as
+    a paid ``plan_charge`` mints a numbered tax invoice for money that never
+    moved and lets ``_revoke_unpaid_activation_grant`` see a "paid" activation.
+    ``current_period_start`` is written at the first REAL debit and nowhere
+    else, so its absence is the signal."""
+    monkeypatch.setattr(config, "INVOICING_V2_ENABLED", True)
+    save_seller_profile(db, {"legal_name": "Digibranders Pvt Ltd", "gstin": "27AAPFU0939F1ZV"}, actor_id=None)
+    sub = _standard_sub(db, "verify-unbilled@test.example", "sub_verify_unbilled")
+    sub.current_period_start = None
+    sub.current_period_end = None
+    db.flush()
+
+    fetched: list[str] = []
+
+    def _fetch(pid):
+        fetched.append(pid)
+        return {"status": "captured", "amount": 100, "currency": "INR", "invoice_id": None}
+
+    monkeypatch.setattr(rzp, "_get_razorpay", lambda: SimpleNamespace(payment=SimpleNamespace(fetch=_fetch)))
+
+    assert rzp.record_verified_subscription_charge(db, sub, "pay_auth_token") is None
+    assert fetched == ["pay_auth_token"]
+    assert db.query(Invoice).filter(Invoice.subscription_id == sub.id).count() == 0

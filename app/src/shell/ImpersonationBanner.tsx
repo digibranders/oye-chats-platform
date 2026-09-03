@@ -9,6 +9,7 @@ import {
 } from '../utils/impersonation';
 import { ImpersonationNotice } from './ImpersonationNotice';
 import { useTranslation } from '../i18n/useTranslation';
+import { Trans } from '../i18n/Trans';
 
 /**
  * The bar shown on every page while a super-admin is acting inside somebody
@@ -136,18 +137,36 @@ export function ImpersonationBanner() {
           `title` — DESIGN.md §6.9 bans the attribute, and this is the one
           string a super-admin genuinely has to be able to read in full. */}
       <p className="min-w-0 flex-1 text-xs">
-        Viewing <span className="font-semibold">{accountName}</span>
         {actorEmail ? (
-          <>
-            {' '}
-            as super-admin <span className="font-semibold">{actorEmail}</span>
-          </>
-        ) : null}
+          <Trans
+            k="shell.viewingAccountAsSuperAdmin"
+            fallback="Viewing {account} as super-admin {actor}"
+            values={{
+              account: <span className="font-semibold">{accountName}</span>,
+              actor: <span className="font-semibold">{actorEmail}</span>,
+            }}
+          />
+        ) : (
+          <Trans
+            k="shell.viewingAccount"
+            fallback="Viewing {account}"
+            values={{ account: <span className="font-semibold">{accountName}</span> }}
+          />
+        )}
         {/* "limited", not "safe": the allowlist admits real config writes
             (chatbot settings, canned responses, conversation triage), so the
             honest claim is scope-limited, not harmless. */}
         <> {t('shell.limitedActions') || '· limited actions'}</>
-        {expiry ? <> · expires <span className="figure">{expiry}</span></> : null}
+        {expiry ? (
+          <>
+            {' '}
+            <Trans
+              k="shell.expiresAt"
+              fallback="· expires {when}"
+              values={{ when: <span className="figure">{expiry}</span> }}
+            />
+          </>
+        ) : null}
       </p>
       <button
         type="button"

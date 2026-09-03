@@ -16,6 +16,7 @@ import { isSafeFileUrl, resolveDisplay, translationMissing } from './liveChatHel
 import { TranslationToggle } from './TranslationToggle';
 import type { OperatorMessage } from './liveChatProtocol';
 import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 export interface TranscriptProps {
   messages: OperatorMessage[];
@@ -52,6 +53,12 @@ export interface TranscriptProps {
   className?: string;
 }
 
+/** Who sent a message, in the reader's language. "AI" is a proper noun here. */
+function roleLabel(role: OperatorMessage['role']): string {
+  return translateNow(`inbox.role.${role}`) || ROLE_LABEL[role];
+}
+
+// @i18n-exempt: fallbacks, read through roleLabel above.
 const ROLE_LABEL: Record<OperatorMessage['role'], string> = {
   user: 'Visitor',
   bot: 'AI',
@@ -357,7 +364,7 @@ export function Transcript({
                       {/* The speaker, once per group, for the reader who cannot
                           separate the sides by colour or by ground. */}
                       {groupStart ? (
-                        <span className="sr-only">{ROLE_LABEL[message.role]}: </span>
+                        <span className="sr-only">{roleLabel(message.role)}: </span>
                       ) : null}
                       {/* `whitespace-pre-wrap` and nothing else: message bodies are
                           visitor-authored text and are never parsed as markup. */}
@@ -395,7 +402,7 @@ export function Transcript({
                         {message.timestamp ? (
                           <span className="figure">{formatTime(message.timestamp)}</span>
                         ) : null}
-                        {seen ? <span>· Seen</span> : null}
+                        {seen ? <span>{translateNow('inbox.seenSuffix') || '· Seen'}</span> : null}
                       </p>
                     ) : null}
                   </div>
@@ -412,7 +419,7 @@ export function Transcript({
           <span
             className="flex items-center gap-1 rounded-md rounded-bl-xs border border-border bg-surface px-3 py-2.5"
             role="status"
-            aria-label={`${visitorName} is typing`}
+            aria-label={translateNow('inbox.isTyping', { name: visitorName }) || `${visitorName} is typing`}
           >
             {[0, 1, 2].map((dot) => (
               <span key={dot} aria-hidden className="typing-dot h-1.5 w-1.5 rounded-full bg-text-tertiary" />

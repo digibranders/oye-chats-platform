@@ -5,6 +5,7 @@ import { Card, CardBody, CardSection, cn } from '../../ui';
 import { useTranslation } from '../../i18n/useTranslation';
 import { AuthHeroIllustration } from './AuthHeroIllustration';
 import { AuthDotGrid } from './AuthDotGrid';
+import { Trans } from '../../i18n/Trans';
 
 export interface AuthShellProps {
   title: string;
@@ -58,11 +59,11 @@ export function AuthShell({
               {t('auth.oyechats') || 'OYECHATS'}
             </p>
             <h2 className="mt-4 text-2xl font-semibold leading-tight tracking-tight text-rail-text">
-              {t('auth.anAssistantThatHasRead') || (
-                <>
-                  An assistant that has read<br />everything you have written.
-                </>
-              )}
+              <Trans
+                k="auth.anAssistantThatHasRead"
+                fallback="An assistant that has read{break}everything you have written."
+                values={{ break: <br /> }}
+              />
             </h2>
             <p className="mt-4 text-prose text-rail-text-muted">
               {t('auth.uploadWhatYouKnowPaste') || 'Upload what you know. Paste one line into your site.'}

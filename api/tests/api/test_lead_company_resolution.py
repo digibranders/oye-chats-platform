@@ -376,6 +376,13 @@ class TestItGoesToTheDurableQueue:
         out of every other test's environment.
         """
         monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+        from arq.worker import Function
+
         from app.worker.settings import WorkerSettings
 
-        assert "task_resolve_lead_company" in {f.__name__ for f in WorkerSettings.functions}
+        # Entries are a mix of bare callables and ``arq.worker.func(...)``
+        # wrappers (used where a task needs its own timeout or result TTL). A
+        # wrapper carries ``name``, not ``__name__``, so read both spellings or
+        # this guard silently stops seeing half the registry.
+        registered = {f.name if isinstance(f, Function) else f.__qualname__ for f in WorkerSettings.functions}
+        assert "task_resolve_lead_company" in registered

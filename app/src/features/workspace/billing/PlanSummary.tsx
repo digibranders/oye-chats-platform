@@ -36,8 +36,18 @@ export interface PlanSummaryProps {
   geo: BillingGeoView | null;
   /** The chatbot this subscription funds, when the page is scoped to one. */
   scopedBotName?: string | null;
-  /** Operator seats currently filled. */
+  /** Operator seats currently filled. See {@link seatsUsedScope}. */
   seatsUsed: number;
+  /**
+   * WHOSE operators {@link seatsUsed} counts.
+   *
+   * `'chatbot'` is the scoped chatbot's own filled seats, which is the only
+   * count that belongs beside this card's other figures: the plan, the ceiling
+   * and the subscription are all one chatbot's. `'workspace'` is the
+   * account-wide fallback, and the card says so rather than printing it as if
+   * it were this chatbot's.
+   */
+  seatsUsedScope?: 'chatbot' | 'workspace';
   /**
    * What ONE extra seat debits per month, tax included, in the charge currency.
    * From the server, NOT `plan.extraSeatPriceMinor`: seats bill against a single
@@ -74,6 +84,7 @@ export function PlanSummary({
   geo,
   scopedBotName = null,
   seatsUsed,
+  seatsUsedScope = 'workspace',
   grossSeatPriceMinor,
   onChangePlan,
   onManageSeats,
@@ -97,6 +108,17 @@ export function PlanSummary({
     typeof seatCeiling === 'number' &&
     seatCeiling !== UNLIMITED_LIMIT &&
     seatCeiling > seatQuota;
+  /**
+   * The filled count is the whole workspace's while this card is describing ONE
+   * chatbot's subscription, so it is named rather than left to read as that
+   * chatbot's own. Unlabelled, five operators spread across three chatbots
+   * rendered as "5 / 2" against a two-seat plan that was not over anything.
+   */
+  const seatsCountedAcrossWorkspace = seatsUsedScope === 'workspace' && scopedBotName !== null;
+  const seatMeterLabel =
+    seatsUsedScope === 'chatbot'
+      ? 'Operator seats in use'
+      : 'Operator seats in use across this workspace';
 
   return (
     <Card>
@@ -202,11 +224,14 @@ export function PlanSummary({
         <SettingRow
           label="Operator seats"
           description={
-            seatQuota === UNLIMITED_LIMIT
+            (seatQuota === UNLIMITED_LIMIT
               ? 'Unlimited operator seats.'
               : seatsBuyable && grossSeatPriceMinor
                 ? `${formatSeatAllowance(seatQuota)} included, then ${formatMoneyMinor(grossSeatPriceMinor, CHARGE_CURRENCY)} each per month.`
-                : `${formatSeatAllowance(seatQuota)} included. Upgrade for more.`
+                : `${formatSeatAllowance(seatQuota)} included. Upgrade for more.`) +
+            (seatsCountedAcrossWorkspace
+              ? ' Seats in use are counted across this workspace, not on this chatbot alone.'
+              : '')
           }
           controlWidth="auto"
         >
@@ -218,7 +243,7 @@ export function PlanSummary({
             ) : (
               <Meter
                 className="w-40"
-                label="Operator seats in use"
+                label={seatMeterLabel}
                 hideLabel
                 size="sm"
                 used={seatsUsed}

@@ -33,7 +33,10 @@ import { useSettingsDraft } from '../advanced/useSettingsDraft';
 import { ServiceEditor } from './ServiceEditor';
 import {
   BANT_DIMENSIONS,
+  bantDimensionHelp,
+  bantDimensionLabel,
   CURRENCIES,
+  currencyLabel,
   MAX_SERVICES,
   type BantDimension,
   type QuotationCatalog,
@@ -45,13 +48,15 @@ import {
   toPayload,
 } from './quotation.model';
 import { useTranslation } from '../../../i18n/useTranslation';
+import { t as translateNow } from '../../../i18n/i18n';
 
-const TITLE = 'Quotation';
+// Resolved per call: a module constant would freeze the language at import.
+const title = () => translateNow('agents.quotationTitle') || 'Quotation';
 
 function QuotationSkeleton() {
   return (
     <Page>
-      <PageHeader title={TITLE} />
+      <PageHeader title={title()} />
       <Stack>
         {[0, 1, 2].map((index) => (
           <Card key={index}>
@@ -107,7 +112,7 @@ function QuotationContent({ agentId }: { agentId: number }) {
   if (state.loadError) {
     return (
       <Page>
-        <PageHeader title={TITLE} />
+        <PageHeader title={title()} />
         <ErrorState
           framed
           title={t('agents.weCouldNotLoadThis5') || 'We could not load this chatbot\'s quotation catalog'}
@@ -133,7 +138,7 @@ function QuotationContent({ agentId }: { agentId: number }) {
   return (
     <Page>
       <PageHeader
-        title={TITLE}
+        title={title()}
         description={
           catalog.enabled
             ? undefined
@@ -141,9 +146,9 @@ function QuotationContent({ agentId }: { agentId: number }) {
         }
         actions={
           <>
-            {catalog.enabled ? null : <Badge tone="neutral">Quoting off</Badge>}
+            {catalog.enabled ? null : <Badge tone="neutral">{t('agents.quotingOff') || 'Quoting off'}</Badge>}
             <span className="flex items-center gap-2">
-              <span className="text-xs text-text-secondary">{catalog.enabled ? 'On' : t('agents.off') || 'Off'}</span>
+              <span className="text-xs text-text-secondary">{catalog.enabled ? t('agents.on') || 'On' : t('agents.off') || 'Off'}</span>
               <Switch
                 checked={catalog.enabled}
                 onCheckedChange={(next) => update((previous) => ({ ...previous, enabled: next }))}
@@ -192,7 +197,8 @@ function QuotationContent({ agentId }: { agentId: number }) {
                       </Button>
                     ) : null}
                     <span className="figure text-xs text-text-tertiary">
-                      {catalog.services.length} of {MAX_SERVICES}
+                      {t('agents.countOfMax', { count: catalog.services.length, max: MAX_SERVICES }) ||
+                        `${catalog.services.length} of ${MAX_SERVICES}`}
                     </span>
                   </div>
                 </div>
@@ -264,7 +270,7 @@ function QuotationContent({ agentId }: { agentId: number }) {
                     <Select
                       label={t('agents.currency') || 'Currency'}
                       value={catalog.currency}
-                      options={CURRENCIES}
+                      options={CURRENCIES.map((c) => ({ ...c, label: currencyLabel(c) }))}
                       disabled={configDisabled}
                       onValueChange={(currency) => update((previous) => ({ ...previous, currency }))}
                     />
@@ -290,8 +296,8 @@ function QuotationContent({ agentId }: { agentId: number }) {
                           key={dimension.key}
                           checked={catalog.required_categories.includes(dimension.key)}
                           disabled={configDisabled}
-                          label={dimension.label}
-                          description={dimension.help}
+                          label={bantDimensionLabel(dimension)}
+                          description={bantDimensionHelp(dimension)}
                           onCheckedChange={(checked) =>
                             update((previous) => {
                               const next: BantDimension[] = checked === true
@@ -317,9 +323,15 @@ function QuotationContent({ agentId }: { agentId: number }) {
                     hint={
                       catalog.required_categories.length === 0
                         ? t('agents.countedAcrossAllFourSignals') || 'Counted across all four signals.'
-                        : `Counted across ${catalog.required_categories
-                            .map((key) => BANT_DIMENSIONS.find((d) => d.key === key)?.label ?? key)
-                            .join(', ')}.`
+                        : (() => {
+                            const names = catalog.required_categories
+                              .map((key) => {
+                                const d = BANT_DIMENSIONS.find((x) => x.key === key);
+                                return d ? bantDimensionLabel(d) : key;
+                              })
+                              .join(', ');
+                            return t('agents.countedAcross', { names }) || `Counted across ${names}.`;
+                          })()
                     }
                   >
                     <Select
@@ -386,7 +398,7 @@ export function QuotationPage() {
   if (!agent) {
     return (
       <Page>
-        <PageHeader title={TITLE} />
+        <PageHeader title={title()} />
         <ErrorState
           framed
           title={error ? t('agents.weCouldNotLoadThis') || 'We could not load this chatbot' : t('agents.chatbotNotFound') || 'Chatbot not found'}
@@ -404,11 +416,14 @@ export function QuotationPage() {
   if (!planIncludesQuotations(planSlug)) {
     return (
       <Page>
-        <PageHeader title={TITLE} />
+        <PageHeader title={title()} />
         <Measure width="reading">
           <LockedState
             title={t('agents.quotationsAreNotIncludedOn') || 'Quotations are not included on your plan'}
-            description={`Your workspace is on ${planName || 'a plan'} without the quotation flow. On Professional and above, the chatbot prices a visitor's request in the conversation and hands you the itemised quote with the lead.`}
+            description={
+              t('agents.quotationNotOnYourPlan', { plan: planName || 'a plan' }) ||
+              `Your workspace is on ${planName || 'a plan'} without the quotation flow. On Professional and above, the chatbot prices a visitor's request in the conversation and hands you the itemised quote with the lead.`
+            }
             action={
               <Link to="/billing" className={buttonClass('primary', 'sm')}>
                 {t('agents.seePlans') || 'See plans'}

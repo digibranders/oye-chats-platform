@@ -113,7 +113,11 @@ async def crawl_website(
     # no longer silently collapses a sitemap-less crawl to a single page.
     linked: list[str] = []
     try:
-        linked = await _discover_links(url, max_urls=cap, timeout=25.0)
+        # ``timeout`` is a wall-clock bound on the whole link scan now (it used to
+        # cap only each request). The preview route keeps a short budget because
+        # a browser is waiting on it; this is a background job with nobody
+        # waiting, and a fuller page list is worth another half minute.
+        linked = await _discover_links(url, max_urls=cap, timeout=60.0)
     except Exception:
         logger.warning("Link discovery failed for %s. Trying Spider link crawl", url, exc_info=True)
 

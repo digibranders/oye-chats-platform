@@ -16,7 +16,7 @@
  */
 import { attributionAnchorHtml } from '../../../data/widgetEmbed';
 import { widgetScriptUrl, type PlatformEnv } from '../../../data/platformIntegrations';
-import type { Tone } from '../../../ui';
+import { formatDateTime, type Tone } from '../../../ui';
 import { t as translateNow } from '../../../i18n/i18n';
 
 /** Mirrors `_MAX_ALLOWED_DOMAINS` in `api/app/api/bot_routes.py`. */
@@ -30,14 +30,16 @@ export const VERIFY_POLL_MS = 5_000;
 /* ------------------------------------------------------------------ install */
 
 /**
- * The four ways this page can answer its one question.
+ * The five ways this page can answer its one question.
  *
  * `waiting` is deliberately **not** an error. A chatbot created two minutes ago
  * is not broken because nobody has pasted a script tag yet, and painting that
  * amber teaches people to ignore the colour. It only becomes a problem once the
  * customer has told us they installed it and we still cannot see it.
+ *
+ * `stale` is the other end of the same honesty rule. See {@link STALE_AFTER_MS}.
  */
-export type InstallState = 'installed' | 'checking' | 'not-detected' | 'waiting';
+export type InstallState = 'installed' | 'stale' | 'checking' | 'not-detected' | 'waiting';
 
 export interface InstallStatus {
   state: InstallState;
@@ -47,17 +49,61 @@ export interface InstallStatus {
   detail: string;
 }
 
+/**
+ * How quiet the heartbeat has to go before the green light is a lie.
+ *
+ * The stamp behind it (`widget_last_seen_at`) is written at most twice per bot
+ * per hour, so a live site on a slow week still reports within a day or two.
+ * Seven days is well past any plausible write cadence and short enough that a
+ * customer who removed the snippet hears about it in the same sprint.
+ */
+export const STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
+
 export interface InstallStatusInput {
   /** `Bot.widget_installed_at` — a first-seen stamp, or null. */
   installedAt: string | null | undefined;
+  /**
+   * `Bot.widget_last_seen_at`, the liveness stamp, refreshed as the widget
+   * boots. Optional: a chatbot installed before the heartbeat shipped has none,
+   * and that absence is NOT evidence of an outage. See {@link widgetHeartbeat}.
+   */
+  lastSeenAt?: string | null | undefined;
   /** The customer has pressed "I've added it". */
   claimed: boolean;
   /** A verification poll is running right now. */
   checking: boolean;
+  /** Injectable clock, so the staleness boundary is testable. */
+  now?: number;
 }
 
-export function installStatus({ installedAt, claimed, checking }: InstallStatusInput): InstallStatus {
+export function installStatus({
+  installedAt,
+  lastSeenAt,
+  claimed,
+  checking,
+  now = Date.now(),
+}: InstallStatusInput): InstallStatus {
   if (installedAt) {
+    // `installedAt` is stamped once and never refreshed, so on its own it only
+    // proves the widget loaded at least once, at some point. Reading it as
+    // "live" put a green "we have seen this load on a real page of your site"
+    // directly above a "Last seen: 7 months ago", for a customer who had
+    // removed the snippet. Where a heartbeat exists it is the newer fact and it
+    // wins; where it does not, the original reading stands, because no
+    // heartbeat is not the same as a silent one.
+    const seen = lastSeenAt ? Date.parse(lastSeenAt) : NaN;
+    if (Number.isFinite(seen) && now - seen > STALE_AFTER_MS) {
+      return {
+        state: 'stale',
+        label: translateNow('agents.notSeenRecently') || 'Not seen recently',
+        tone: 'warning',
+        detail:
+          translateNow('agents.weLastSawThisChatbotLoadOn', {
+            when: formatDateTime(lastSeenAt as string),
+          }) ||
+          `We last saw this chatbot load on ${formatDateTime(lastSeenAt as string)}. If it should be live, check the snippet is still on your site.`,
+      };
+    }
     return {
       state: 'installed',
       label: translateNow('agents.liveOnYourWebsite') || 'Live on your website',
@@ -100,7 +146,7 @@ export function installStatus({ installedAt, claimed, checking }: InstallStatusI
  * twice per bot per hour. See {@link widgetHeartbeat}, which is careful about
  * everything that stamp cannot tell you.
  */
-export const INSTALL_STAMP_CAPTION = 'First seen';
+export const installStampCaption = () => translateNow('agents.firstSeen') || 'First seen';
 
 /* ---------------------------------------------------------------- heartbeat */
 
@@ -241,7 +287,23 @@ export function entriesForWebsite(website: string | null | undefined): string[] 
   const apex = normalizeDomain(website ?? '');
   if (!apex) return [];
   if (apex.startsWith('*.') || LOCAL_HOSTS.has(apex)) return [apex];
-  return [apex, `*.${apex}`];
+  // `localhost` rides along so the customer can try the widget on a dev server
+  // before it is live. The backend auto-allows localhost only when APP_ENV is
+  // not production, so against the real API it is blocked the moment the
+  // allow-list stops being empty, which is exactly when the customer adds
+  // their own domains. Without this, turning the allow-list on is what breaks
+  // local testing, and the failure is silent: the launcher simply never
+  // appears.
+  //
+  // It is a suggestion, not a hidden grant: it lands as a chip the customer
+  // can see and delete before going live. The access it opens is narrow.
+  // An attacker holding the public bot key could embed the bot on their own
+  // machine, where only they can see it, while the same bot already answers
+  // anyone who visits the customer's real site. What the allow-list actually
+  // defends is a stolen key embedded on another PUBLIC site, which localhost
+  // is not, and scripted abuse was never covered here at all because a
+  // non-browser client can forge `Origin` (see api/app/core/origin_check.py).
+  return [apex, `*.${apex}`, 'localhost'];
 }
 
 export interface DomainRisk {
@@ -314,14 +376,26 @@ export function domainNotice({
     return {
       id: 'locked-out',
       tone: 'danger',
-      title: `${risk.host} is not on this list`,
-      body: `Your chatbot is set up for ${risk.host}, and requests from it would be turned away. Add ${risk.suggestions.join(' and ') || 'it'} before saving.`,
+      title: translateNow('agents.hostIsNotOnThisList', { host: risk.host }) || `${risk.host} is not on this list`,
+      body:
+        translateNow('agents.yourChatbotIsSetUpForHost', {
+          host: risk.host,
+          add: risk.suggestions.join(' and ') || translateNow('agents.it') || 'it',
+        }) ||
+        `Your chatbot is set up for ${risk.host}, and requests from it would be turned away. Add ${risk.suggestions.join(' and ') || 'it'} before saving.`,
     };
   }
   return {
     id: 'ok',
     tone: 'neutral',
-    title: `Locked to ${domains.length} ${domains.length === 1 ? 'domain' : 'domains'}`,
+    title:
+      translateNow('agents.lockedToNDomains', {
+        count: domains.length,
+        unit:
+          domains.length === 1
+            ? translateNow('agents.domainSingular') || 'domain'
+            : translateNow('agents.domainPlural') || 'domains',
+      }) || `Locked to ${domains.length} ${domains.length === 1 ? 'domain' : 'domains'}`,
     body: translateNow('agents.requestsFromAnyOtherWebsite') || 'Requests from any other website are rejected.',
   };
 }
@@ -344,7 +418,11 @@ export interface SnippetInput {
  * invisible to every crawler — this anchor is the only attribution that lands in
  * the HTML the customer's server sends.
  */
+// @i18n-exempt: this builds the HTML the customer pastes into their own site.
+// A translated <script> tag is a broken install.
 export function embedSnippet({ botKey, env, attribution }: SnippetInput): string {
+  // @i18n-exempt: the HTML the customer pastes into their own site. A
+  // translated <script> tag is a broken install.
   const tag = `<script src="${widgetScriptUrl(env)}" data-bot-key="${botKey}"></script>`;
   return attribution ? `${tag}\n${attributionAnchorHtml(botKey)}` : tag;
 }
@@ -412,8 +490,15 @@ export function troubleshootItems(input: TroubleshootInput): TroubleshootItem[] 
   if (risk) {
     items.push({
       id: 'allow-list',
-      title: `Your allow-list is turning away ${risk.host}`,
-      body: `Allowed domains is on, and ${risk.host} does not match any entry, so every request from your own site is rejected before it reaches your chatbot. Add ${risk.suggestions.join(' and ') || 'your website'} under Access, further up this page.`,
+      title:
+        translateNow('agents.allowListIsTurningAway', { host: risk.host }) ||
+        `Your allow-list is turning away ${risk.host}`,
+      body:
+        translateNow('agents.allowListIsTurningAwayBody', {
+          host: risk.host,
+          add: risk.suggestions.join(' and ') || translateNow('agents.yourWebsite') || 'your website',
+        }) ||
+        `Allowed domains is on, and ${risk.host} does not match any entry, so every request from your own site is rejected before it reaches your chatbot. Add ${risk.suggestions.join(' and ') || 'your website'} under Access, further up this page.`,
     });
   } else if (domainCheckEnabled && domainsConfigured > 0) {
     items.push({
@@ -463,63 +548,6 @@ export function troubleshootItems(input: TroubleshootInput): TroubleshootItem[] 
 
 /* ------------------------------------------------- send it to your developer */
 
-/**
- * For an SMB the person who signs up very often cannot edit the website.
- * "Email this to whoever runs your site" is a first-class install path, not a
- * fallback — the previous onboarding assumed the buyer was the installer and
- * dead-ended everyone who was not.
- */
-export function developerEmail({
-  botName,
-  snippet,
-  env,
-  apiBaseUrl,
-  platformName,
-  attribution,
-}: {
-  botName: string;
-  snippet: string;
-  env: PlatformEnv;
-  apiBaseUrl: string;
-  platformName?: string | null;
-  /** True when the snippet carries the attribution anchor, so the note applies. */
-  attribution: boolean;
-}): { subject: string; body: string; href: string } {
-  const subject = `Please add the ${botName} chat widget to our website`;
-  const body = [
-    `Hi,`,
-    ``,
-    `We use OyeChats for the chat assistant on our website. Could you add this to`,
-    `every page, immediately before the closing </body> tag?`,
-    ``,
-    snippet,
-    ``,
-    platformName
-      ? `Our site runs on ${platformName}.`
-      : `It goes in the shared layout or footer template, so it loads site-wide.`,
-    ``,
-    `Two things that catch people out:`,
-    `- It must be in <body>, not <head>.`,
-    `- If we send a Content-Security-Policy header, it needs`,
-    `  script-src ${scriptOrigin(env)} and connect-src ${apiOrigin(apiBaseUrl)}.`,
-    ...(attribution
-      ? [
-          ``,
-          `The second line is a small visible "Powered by OyeChats" credit link.`,
-          `Please keep it in the served HTML and do not hide it with CSS. A hidden`,
-          `link is a Google policy violation against our own domain.`,
-        ]
-      : []),
-    ``,
-    `Thanks!`,
-  ].join('\n');
-
-  return {
-    subject,
-    body,
-    href: `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`,
-  };
-}
 
 // ── Hosted demo page ────────────────────────────────────────────────────────
 

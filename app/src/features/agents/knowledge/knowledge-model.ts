@@ -158,6 +158,27 @@ export function summarise(sources: readonly KnowledgeSource[]): KnowledgeSummary
   };
 }
 
+/**
+ * "1 website · 0 documents": the mix under the Sources figure.
+ *
+ * Each noun is inflected by its own count. A template that pluralised both
+ * unconditionally read "1 websites" on the commonest case, a chatbot trained
+ * on one site, directly under a large figure reading "1".
+ */
+export function sourceMixLabel(summary: Pick<KnowledgeSummary, 'websites' | 'documents'>): string {
+  const websites =
+    summary.websites === 1
+      ? translateNow('agents.websitesCountOne', { count: formatNumber(1) }) || '1 website'
+      : translateNow('agents.websitesCountMany', { count: formatNumber(summary.websites) }) ||
+        `${formatNumber(summary.websites)} websites`;
+  const documents =
+    summary.documents === 1
+      ? translateNow('agents.documentsCountOne', { count: formatNumber(1) }) || '1 document'
+      : translateNow('agents.documentsCountMany', { count: formatNumber(summary.documents) }) ||
+        `${formatNumber(summary.documents)} documents`;
+  return `${websites} · ${documents}`;
+}
+
 // ── Plan allowances ────────────────────────────────────────────────────────
 
 /** `-1` is the plan resolver's UNLIMITED sentinel — never a real ceiling. */
@@ -178,17 +199,41 @@ export interface Allowance {
 }
 
 /**
- * What is left of a plan allowance.
+ * A ceiling the plan payload actually states: `UNLIMITED`, a positive number,
+ * or `null` when the plan says nothing.
+ *
+ * `useEntitlements().limitFor` collapses a missing plan key to `0`, which is
+ * the server's deny-by-default for *enforcement* and a lie when *rendered*: a
+ * plan row that never mentions `documents` arrives here indistinguishable from
+ * one that allows none. "We do not know your allowance" and "your allowance is
+ * spent" are different sentences, and only the first is defensible from a zero
+ * the client cannot tell apart from an absence. The server still enforces the
+ * real ceiling at the point of spend.
+ */
+export function planCeiling(limit: number | null | undefined): number | null {
+  if (typeof limit !== 'number' || !Number.isFinite(limit) || limit === 0) return null;
+  return limit < 0 ? UNLIMITED : limit;
+}
+
+/**
+ * What is left of a plan allowance, or `null` when the plan does not state one.
  *
  * Deliberately does not carry a *tone*. A quota that is full is not a fault —
  * it is the price of the plan the customer chose — and the surfaces that render
  * these read `plan`, not `danger`. Encoding the tone here is how "you have used
  * everything you paid for" ends up looking like "something has gone wrong".
+ *
+ * An absent ceiling returns `null` rather than a full allowance. It used to
+ * return `fraction: 1` and `atLimit: used >= 0` for any `limit <= 0`, so a plan
+ * row missing a key rendered "no documents left" and hard-locked the flow that
+ * adds knowledge: the customer could not train their chatbot at all, over a
+ * quota nobody had spent. Callers render the absent case as unknown.
  */
-export function allowanceOf(used: number, limit: number): Allowance {
-  const unlimited = limit === UNLIMITED || limit < 0;
+export function allowanceOf(used: number, limit: number | null | undefined): Allowance | null {
+  const ceiling = planCeiling(limit);
+  if (ceiling === null) return null;
   const safeUsed = Math.max(0, used);
-  if (unlimited) {
+  if (ceiling === UNLIMITED) {
     return {
       used: safeUsed,
       limit: UNLIMITED,
@@ -199,14 +244,14 @@ export function allowanceOf(used: number, limit: number): Allowance {
       nearLimit: false,
     };
   }
-  const fraction = limit <= 0 ? 1 : Math.min(1, safeUsed / limit);
+  const fraction = Math.min(1, safeUsed / ceiling);
   return {
     used: safeUsed,
-    limit,
+    limit: ceiling,
     unlimited: false,
-    remaining: Math.max(0, limit - safeUsed),
+    remaining: Math.max(0, ceiling - safeUsed),
     fraction,
-    atLimit: safeUsed >= limit,
+    atLimit: safeUsed >= ceiling,
     nearLimit: fraction >= 0.8,
   };
 }
@@ -244,7 +289,9 @@ export function gapWindowParam(window: GapWindow): string {
 }
 
 export function gapWindowLabel(window: GapWindow): string {
-  return window === null ? translateNow('agents.allTime') || 'All time' : `Last ${window} days`;
+  return window === null
+    ? translateNow('agents.allTime') || 'All time'
+    : translateNow('agents.lastNDays', { days: window }) || `Last ${window} days`;
 }
 
 // ── Re-crawl ───────────────────────────────────────────────────────────────
@@ -343,6 +390,43 @@ export function orderedUrlsForRecrawl(diff: RecrawlDiff): string[] | null {
   return urls.length > 0 ? urls : null;
 }
 
+/** Where a re-train points. Known from the source row, with or without a preview. */
+export interface RecrawlTarget {
+  crawlUrl: string;
+  replaceSource: string;
+  mode: RecrawlMode;
+}
+
+export interface RecrawlStartPlan extends RecrawlTarget {
+  /** The exact pages to re-read, or `null` to let the crawler enumerate. */
+  orderedUrls: string[] | null;
+  /** Denominator for the progress bar, or `null` when the size is unknown. */
+  discoveredTotal: number | null;
+  /** Delta only: how many pages the preview expects to actually change. */
+  expectedNewPages: number | null;
+}
+
+/**
+ * Everything a re-train start needs, derived from the preview when there is one.
+ *
+ * `discoveredTotal` is the point of this. Without it the progress bar falls
+ * back to `crawl.maxPages`, which is the server's `effective_max_pages`, on an
+ * unlimited plan that is `balance / cost_per_page`, so re-training a 47-page
+ * site reported "3 of 9,800 pages" with the bar pinned near zero. The fresh
+ * crawl path has always passed the field; the re-train path never did. It stays
+ * `null` when the URL list does, because a run whose page set the crawler will
+ * enumerate for itself has no denominator this side of the network.
+ */
+export function recrawlStartPlan(target: RecrawlTarget, diff: RecrawlDiff | null): RecrawlStartPlan {
+  const orderedUrls = diff === null ? null : orderedUrlsForRecrawl(diff);
+  return {
+    ...target,
+    orderedUrls,
+    discoveredTotal: orderedUrls === null ? null : orderedUrls.length,
+    expectedNewPages: diff !== null && diff.mode === 'delta' ? diff.newPages : null,
+  };
+}
+
 // ── Crawl pre-flight ───────────────────────────────────────────────────────
 
 export interface CrawlBudget {
@@ -424,7 +508,12 @@ export function crawlPreflight(
   if (budget.perCrawlLimit !== null && selectedPages > budget.perCrawlLimit) {
     return {
       blocked: true,
-      message: `Your plan trains up to ${budget.perCrawlLimit} pages in one go. Deselect ${selectedPages - budget.perCrawlLimit} to continue, or move to a plan with no per-crawl limit.`,
+      message:
+        translateNow('agents.planTrainsUpToNPages', {
+          limit: budget.perCrawlLimit,
+          deselect: selectedPages - budget.perCrawlLimit,
+        }) ||
+        `Your plan trains up to ${budget.perCrawlLimit} pages in one go. Deselect ${selectedPages - budget.perCrawlLimit} to continue, or move to a plan with no per-crawl limit.`,
     };
   }
   // Credits first. This one is about the crawl the customer is starting right
@@ -433,7 +522,12 @@ export function crawlPreflight(
   if (selectedPages > budget.affordablePages) {
     return {
       blocked: false,
-      message: `Your credits cover ${budget.affordablePages} of these ${selectedPages} pages. We train them in order and stop when the credits run out — nothing is charged twice.`,
+      message:
+        translateNow('agents.creditsCoverNOfThese', {
+          affordable: budget.affordablePages,
+          selected: selectedPages,
+        }) ||
+        `Your credits cover ${budget.affordablePages} of these ${selectedPages} pages. We train them in order and stop when the credits run out, and nothing is charged twice.`,
     };
   }
   // The cap wall the trial actually hits. `/crawl/discover` truncates its
@@ -451,8 +545,10 @@ export function crawlPreflight(
       blocked: false,
       message:
         planSlug === 'trial'
-          ? `Your site has at least ${budget.perCrawlLimit} pages, which is what your trial trains in one go. Upgrade to train the rest.`
-          : `Your site has at least ${budget.perCrawlLimit} pages, which is what your plan trains in one go. Upgrade to train the rest.`,
+          ? translateNow('agents.siteHasAtLeastNPagesTrial', { limit: budget.perCrawlLimit }) ||
+            `Your site has at least ${budget.perCrawlLimit} pages, which is what your trial trains in one go. Upgrade to train the rest.`
+          : translateNow('agents.siteHasAtLeastNPagesPlan', { limit: budget.perCrawlLimit }) ||
+            `Your site has at least ${budget.perCrawlLimit} pages, which is what your plan trains in one go. Upgrade to train the rest.`,
     };
   }
   return { blocked: false, message: null };
@@ -627,36 +723,57 @@ export interface CrawlOutcomeMessage {
  */
 export function crawlDoneMessage(coverage: CrawlCoverage): CrawlOutcomeMessage {
   const { ingested, processed, dropped, failed, aborted, reason } = coverage;
-  const read = `${formatNumber(ingested)} page${ingested === 1 ? '' : 's'}`;
+  const read =
+    (ingested === 1
+      ? translateNow('agents.onePageRead', { count: formatNumber(ingested) })
+      : translateNow('agents.nPagesRead', { count: formatNumber(ingested) })) ||
+    `${formatNumber(ingested)} page${ingested === 1 ? '' : 's'}`;
   if (!crawlFellShort(coverage)) {
-    return { tone: 'success', title: undefined, body: `Finished — this chatbot read ${read}.` };
+    return {
+      tone: 'success',
+      title: undefined,
+      body:
+        translateNow('agents.finishedThisChatbotRead', { read }) ||
+        `Finished. This chatbot read ${read}.`,
+    };
   }
 
   // Everything found but not covered, however it was lost: pages fetched and
   // not stored, plus pages discovery found that the crawl never reached.
   const missed = processed - ingested + dropped;
   const found = ingested + missed;
-  const opening = `This chatbot read ${read} of the ${formatNumber(found)} found on that site.`;
+  const opening =
+    translateNow('agents.thisChatbotReadNOfN', { read, found: formatNumber(found) }) ||
+    `This chatbot read ${read} of the ${formatNumber(found)} found on that site.`;
 
   if (aborted && reason === 'credits') {
     return {
       tone: 'warning',
-      title: 'Finished, but your credits ran out first',
-      body: `${opening} Add credits and train it again — pages it already has are not charged twice.`,
+      title: translateNow('agents.finishedButYourCreditsRan') || 'Finished, but your credits ran out first',
+      body: `${opening} ${
+        translateNow('agents.addCreditsAndTrainAgain') ||
+        'Add credits and train it again: pages it already has are not charged twice.'
+      }`,
     };
   }
   if (aborted && reason === 'knowledge_quota') {
     return {
       tone: 'warning',
-      title: 'Finished, but this plan’s knowledge base is full',
-      body: `${opening} Move up a plan, or remove a source below, then train it again.`,
+      title: translateNow('agents.finishedButThisPlansKnowledge') || 'Finished, but this plan’s knowledge base is full',
+      body: `${opening} ${
+        translateNow('agents.moveUpAPlanOrRemoveASource') ||
+        'Move up a plan, or remove a source below, then train it again.'
+      }`,
     };
   }
   if (aborted && reason === 'kill_switch') {
     return {
       tone: 'warning',
-      title: 'Finished, but training stopped early',
-      body: `${opening} Training is paused for this workspace — try again shortly, or contact support if it keeps stopping.`,
+      title: translateNow('agents.finishedButTrainingStoppedEarly') || 'Finished, but training stopped early',
+      body: `${opening} ${
+        translateNow('agents.trainingIsPausedForThisWorkspace') ||
+        'Training is paused for this workspace. Try again shortly, or contact support if it keeps stopping.'
+      }`,
     };
   }
   if (aborted) {
@@ -665,20 +782,29 @@ export function crawlDoneMessage(coverage: CrawlCoverage): CrawlOutcomeMessage {
     // something that was never wrong.
     return {
       tone: 'warning',
-      title: 'Finished, but training stopped early',
-      body: `${opening} Training it again picks up where it stopped — pages it already has are not charged twice.`,
+      title: translateNow('agents.finishedButTrainingStoppedEarly') || 'Finished, but training stopped early',
+      body: `${opening} ${
+        translateNow('agents.trainingAgainPicksUpWhereItStopped') ||
+        'Training it again picks up where it stopped: pages it already has are not charged twice.'
+      }`,
     };
   }
   if (failed > 0 && failed >= missed) {
     return {
       tone: 'warning',
-      title: 'Finished, but some pages could not be stored',
-      body: `${opening} Training it again usually picks up the rest.`,
+      title: translateNow('agents.finishedButSomePagesCould') || 'Finished, but some pages could not be stored',
+      body: `${opening} ${
+        translateNow('agents.trainingAgainPicksUpTheRest') ||
+        'Training it again usually picks up the rest.'
+      }`,
     };
   }
   return {
     tone: 'warning',
-    title: 'Finished, but not every page was added',
-    body: `${opening} Training it again usually picks up the rest, or upload the missing pages as documents.`,
+    title: translateNow('agents.finishedButNotEveryPage') || 'Finished, but not every page was added',
+    body: `${opening} ${
+      translateNow('agents.trainingAgainOrUploadDocuments') ||
+      'Training it again usually picks up the rest, or upload the missing pages as documents.'
+    }`,
   };
 }

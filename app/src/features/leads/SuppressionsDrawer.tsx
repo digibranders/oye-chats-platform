@@ -23,6 +23,7 @@ import type { Bot } from '../../types/domain';
 import type { EmailSuppression } from '../../services/api';
 import { SUPPRESSIONS_PAGE_SIZE, useSuppressions } from './useSuppressions';
 import { useTranslation } from '../../i18n/useTranslation';
+import { Trans } from '../../i18n/Trans';
 
 export interface SuppressionsDrawerProps {
   open: boolean;
@@ -33,6 +34,12 @@ export interface SuppressionsDrawerProps {
   bots: readonly Bot[];
 }
 
+/** The suppression reason in the reader's language; the key is the stored code. */
+function reasonLabel(reason: string): string {
+  return translateNow(`leads.suppressionReason.${reason}`) || REASON_LABEL[reason] || reason;
+}
+
+// @i18n-exempt: fallbacks, read through reasonLabel above.
 const REASON_LABEL: Record<string, string> = {
   unsubscribe: 'Unsubscribed',
   hard_bounce: 'Bounced',
@@ -110,7 +117,7 @@ export function SuppressionsDrawer({ open, onOpenChange, botId, bots }: Suppress
     {
       key: 'reason',
       header: t('leads.why') || 'Why',
-      render: (row) => <Badge tone="neutral">{REASON_LABEL[row.reason] ?? row.reason}</Badge>,
+      render: (row) => <Badge tone="neutral">{reasonLabel(row.reason)}</Badge>,
     },
     ...(botId === null
       ? [
@@ -288,7 +295,8 @@ export function SuppressionsDrawer({ open, onOpenChange, botId, bots }: Suppress
 
             {added ? (
               <Alert tone="success" live>
-                {added} will not be emailed again by this chatbot.
+                {t('leads.willNotBeEmailedAgain', { email: added }) ||
+                  `${added} will not be emailed again by this chatbot.`}
               </Alert>
             ) : null}
 
@@ -300,12 +308,14 @@ export function SuppressionsDrawer({ open, onOpenChange, botId, bots }: Suppress
 
           {/* The reason a reader hunts for a delete button — answered where they
               hunt for it, and not above the list on every open. */}
-          <Disclosure summary="Why can’t I remove an address?" divider headingLevel={3}>
+          <Disclosure
+            summary={t('leads.whyCantIRemoveAnAddress') || 'Why can’t I remove an address?'}
+            divider
+            headingLevel={3}
+          >
             <p className="text-prose text-text-secondary">
-              An address is added when somebody clicks unsubscribe, when their mail bounces
-              permanently, or when you record it here. Nothing removes one — not this panel and
-              not support. We may only email a visitor with their consent, and consent that has
-              been withdrawn cannot be restored from here.
+              {t('leads.whyCantIRemoveAnAddressBody') ||
+                'An address is added when somebody clicks unsubscribe, when their mail bounces permanently, or when you record it here. Nothing removes one: not this panel, and not support. We may only email a visitor with their consent, and consent that has been withdrawn cannot be restored from here.'}
             </p>
           </Disclosure>
         </div>
@@ -316,13 +326,13 @@ export function SuppressionsDrawer({ open, onOpenChange, botId, bots }: Suppress
         onOpenChange={setConfirming}
         title={t('leads.neverEmailThisAddressAgain') || 'Never email this address again?'}
         description={
-          <>
-            Every follow-up to <strong>{email.trim()}</strong> from this chatbot will be refused
-            from now on, including ones your teammates try to send. There is no way to reverse it
-            from this console.
-          </>
+          <Trans
+            k="leads.everyFollowUpToWillBeRefused"
+            fallback="Every follow-up to {email} from this chatbot will be refused from now on, including ones your teammates try to send. There is no way to reverse it from this console."
+            values={{ email: <strong>{email.trim()}</strong> }}
+          />
         }
-        confirmLabel="Add to unsubscribes"
+        confirmLabel={t('leads.addToUnsubscribes') || 'Add to unsubscribes'}
         onConfirm={confirmAdd}
       />
     </Drawer>

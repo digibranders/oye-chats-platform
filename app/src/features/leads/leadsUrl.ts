@@ -29,7 +29,7 @@ export type LeadsRangeKey = RangeKey | 'custom';
 
 export const LEADS_RANGE_OPTIONS: ReadonlyArray<{ value: LeadsRangeKey; label: string }> = [
   ...RANGE_OPTIONS,
-  { value: 'custom', label: 'Custom range' },
+  { value: 'custom', label: translateNow('leads.customRange') || 'Custom range' },
 ];
 
 /** Which face of the drawer is showing. Both are always reachable from either. */

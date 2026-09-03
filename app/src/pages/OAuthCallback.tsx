@@ -8,6 +8,7 @@ import { clearAuthStorage, setAuthBundle, setAuthItem } from '../utils/authStora
 import { keys } from '../query/keys';
 import { safeRelativePath } from './auth/authFlow';
 import { useTranslation } from '../i18n/useTranslation';
+import { t as translateNow } from '../i18n/i18n';
 
 /**
  * The backend's machine-readable OAuth failures, in words.
@@ -16,6 +17,14 @@ import { useTranslation } from '../i18n/useTranslation';
  * code is as likely to be a probe as a real failure, and echoing it back would
  * turn this page into a reflection point.
  */
+/** The message for an OAuth error code, in the reader's language. */
+function oauthErrorMessage(code: string): string | undefined {
+  const english = ERROR_MESSAGES[code];
+  if (!english) return undefined;
+  return translateNow(`auth.oauthError.${code}`) || english;
+}
+
+// @i18n-exempt: fallbacks, read through oauthErrorMessage above.
 const ERROR_MESSAGES: Record<string, string> = {
   oauth_unavailable: 'Google sign-in is not configured. Please use your email and password.',
   oauth_cancelled: 'Sign-in was cancelled. You can try again any time.',
@@ -38,7 +47,7 @@ const SLOW_AFTER_MS = 10_000;
 
 type Callback =
   | { kind: 'error'; message: string }
-  | { kind: 'working'; apiKey: string; next: string; isNew: boolean; isSuperadmin: boolean };
+  | { kind: 'working'; apiKey: string; next: string; isNew: boolean };
 
 /**
  * Classify the landing URL synchronously, so the first paint is already the
@@ -47,14 +56,14 @@ type Callback =
 function classifyCallback(searchParams: URLSearchParams): Callback {
   const errorCode = searchParams.get('error');
   if (errorCode) {
-    return { kind: 'error', message: ERROR_MESSAGES[errorCode] ?? GENERIC_ERROR };
+    return { kind: 'error', message: oauthErrorMessage(errorCode) ?? GENERIC_ERROR };
   }
 
   const rawHash = typeof window === 'undefined' ? '' : window.location.hash;
   const fragment = new URLSearchParams(rawHash.startsWith('#') ? rawHash.slice(1) : rawHash);
   const apiKey = fragment.get('api_key');
   if (!apiKey) {
-    return { kind: 'error', message: ERROR_MESSAGES.oauth_missing_params };
+    return { kind: 'error', message: oauthErrorMessage('oauth_missing_params') ?? GENERIC_ERROR };
   }
 
   return {
@@ -62,7 +71,6 @@ function classifyCallback(searchParams: URLSearchParams): Callback {
     apiKey,
     next: safeRelativePath(searchParams.get('next')),
     isNew: searchParams.get('new') === '1',
-    isSuperadmin: searchParams.get('superadmin') === '1',
   };
 }
 
@@ -113,7 +121,11 @@ export default function OAuthCallback() {
         admin_token: callback.apiKey,
         auth_type: 'client',
         admin_is_verified: 'true',
-        is_superadmin: callback.isSuperadmin ? 'true' : 'false',
+        // Never from `?superadmin=1`: the query string is whatever the browser
+        // was pointed at, so a crafted link would seed the flag the console
+        // reads to decide which chrome to draw. `/auth/me` answers it below,
+        // from the record behind the credential.
+        is_superadmin: 'false',
       });
       return getCurrentUser();
     },
@@ -133,6 +145,7 @@ export default function OAuthCallback() {
     if (profile.name) setAuthItem('admin_name', profile.name);
     if (typeof profile.id === 'number') setAuthItem('admin_client_id', String(profile.id));
     if (profile.company_name !== undefined) setAuthItem('company_name', profile.company_name ?? '');
+    setAuthItem('is_superadmin', profile.is_superadmin ? 'true' : 'false');
     if (profile.website !== undefined) setAuthItem('company_website', profile.website ?? '');
 
     // A partner who is not a customer has no console to land in.

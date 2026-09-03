@@ -9,6 +9,7 @@ import { Badge, Card, CardBody, buttonClass } from '../../ui';
 import { agentPath } from '../../shell/nav';
 import type { AgentHealth } from '../home/agentHealth';
 import type { Bot } from '../../types/domain';
+import { t as translateNow } from '../../i18n/i18n';
 
 /**
  * The severity word beside the specific state, so colour is never the signal.
@@ -17,6 +18,12 @@ import type { Bot } from '../../types/domain';
  * Knowledge, which is how the same chatbot could be described two ways on two
  * pages of the same console. One map, one importer.
  */
+/** The severity word in the reader's language. */
+function severityLabel(tone: AgentHealth['tone']): string {
+  return translateNow(`agents.healthSeverity.${tone}`) || SEVERITY[tone];
+}
+
+// @i18n-exempt: fallbacks, read through severityLabel above.
 const SEVERITY: Record<AgentHealth['tone'], string> = {
   success: 'Healthy',
   warning: 'Needs you',
@@ -25,7 +32,7 @@ const SEVERITY: Record<AgentHealth['tone'], string> = {
 };
 
 export function severityWord(tone: AgentHealth['tone']): string {
-  return SEVERITY[tone];
+  return severityLabel(tone);
 }
 
 export interface AgentHealthStripProps {

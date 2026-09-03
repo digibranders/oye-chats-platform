@@ -44,9 +44,10 @@ import { useTranslation } from '../../../i18n/useTranslation';
  * that fit, then edit and order them like any other line of copy.
  */
 
-const LAYOUTS: readonly { value: SuggestionsLayout; label: string }[] = [
-  { value: 'horizontal', label: 'Side by side' },
-  { value: 'vertical', label: 'Stacked' },
+// Labels resolved per render; `value` is the stored key.
+const LAYOUTS: readonly { value: SuggestionsLayout; labelKey: string; label: string }[] = [
+  { value: 'horizontal', labelKey: 'agents.layoutSideBySide', label: 'Side by side' },
+  { value: 'vertical', labelKey: 'agents.layoutStacked', label: 'Stacked' },
 ];
 
 /**
@@ -102,19 +103,36 @@ export function MessagesSection({
   // empty string (see `widget/src/components/Launcher.jsx`). The ref remembers
   // the last real text so toggling off and back on restores it instead of
   // making the customer retype it.
-  const launcherTextOn = draft.launcherName.trim() !== '';
+  //
+  // The switch is NOT simply "is the text non-empty". It was, and selecting the
+  // text to replace it flipped the switch off, disabled the input under the
+  // cursor and swapped in a "Hidden" placeholder before the replacement was
+  // typed. An empty field the customer is still editing stays on; only the
+  // switch turns the text off. What is saved does not change: empty is hidden,
+  // and the hint says so while the field is empty.
+  const [clearedByTyping, setClearedByTyping] = useState(false);
+  const launcherTextOn = draft.launcherName.trim() !== '' || clearedByTyping;
+  // @i18n-exempt: the WIDGET's launcher text, not dashboard chrome. This value
+  // is written into the draft and read by a visitor, whose own language the
+  // widget resolves. Translating it would save Hindi into the customer's record.
   const launcherTextStash = useRef(draft.launcherName.trim() || 'Have Questions?');
   const setLauncherName = useCallback(
     (value: string) => {
       if (value.trim()) launcherTextStash.current = value;
+      setClearedByTyping(value.trim() === '');
       onChange({ launcherName: value });
     },
     [onChange],
   );
   const toggleLauncherText = useCallback(
-    (on: boolean) => onChange({ launcherName: on ? launcherTextStash.current || 'Have Questions?' : '' }),
+    (on: boolean) => {
+      setClearedByTyping(false);
+      // @i18n-exempt: same widget value as the stash above, not dashboard chrome.
+      onChange({ launcherName: on ? launcherTextStash.current || 'Have Questions?' : '' });
+    },
     [onChange],
   );
+  const launcherTextEmpty = launcherTextOn && draft.launcherName.trim() === '';
 
   const [suggestions, setSuggestions] = useState<string[] | null>(null);
   const [suggesting, setSuggesting] = useState(false);
@@ -198,9 +216,12 @@ export function MessagesSection({
             label={t('agents.launcherText') || 'Launcher text'}
             trailingAlign="edge"
             hint={
-              launcherTextOn
-                ? t('agents.besideTheClosedLauncher') || 'Beside the closed launcher.'
-                : t('agents.theLauncherShowsJustThe') || 'The launcher shows just the icon, with no text beside it.'
+              launcherTextEmpty
+                ? t('agents.launcherTextEmpty') ||
+                  'Type the text visitors see beside the launcher, or turn this off.'
+                : launcherTextOn
+                  ? t('agents.besideTheClosedLauncher') || 'Beside the closed launcher.'
+                  : t('agents.theLauncherShowsJustThe') || 'The launcher shows just the icon, with no text beside it.'
             }
             trailing={
               <Switch
@@ -272,7 +293,7 @@ export function MessagesSection({
           description={t('agents.shownUnderTheGreeting') || 'Shown under the greeting.'}
           actions={
             <SegmentedControl
-              items={LAYOUTS}
+              items={LAYOUTS.map((o) => ({ ...o, label: t(o.labelKey) || o.label }))}
               value={draft.suggestionsLayout}
               onChange={(suggestionsLayout) => onChange({ suggestionsLayout })}
               label={t('agents.starterQuestionLayout') || 'Starter question layout'}
@@ -300,7 +321,7 @@ export function MessagesSection({
                     value={action}
                     maxLength={LIMITS.quickAction}
                     disabled={readOnly}
-                    aria-label={`Starter question ${index + 1}`}
+                    aria-label={t('agents.starterQuestionN', { n: index + 1 }) || `Starter question ${index + 1}`}
                     placeholder={t('agents.eGHowMuchDoes') || 'e.g. How much does it cost?'}
                     onChange={(event) =>
                       setActions(
@@ -313,7 +334,7 @@ export function MessagesSection({
                       variant="ghost"
                       size="icon-md"
                       disabled={readOnly || index === 0}
-                      aria-label={`Move starter question ${index + 1} up`}
+                      aria-label={t('agents.moveStarterQuestionUp', { n: index + 1 }) || `Move starter question ${index + 1} up`}
                       onClick={() => move(index, index - 1)}
                     >
                       <ChevronUp aria-hidden />
@@ -324,7 +345,7 @@ export function MessagesSection({
                       variant="ghost"
                       size="icon-md"
                       disabled={readOnly || index === quickActions.length - 1}
-                      aria-label={`Move starter question ${index + 1} down`}
+                      aria-label={t('agents.moveStarterQuestionDown', { n: index + 1 }) || `Move starter question ${index + 1} down`}
                       onClick={() => move(index, index + 1)}
                     >
                       <ChevronDown aria-hidden />
@@ -335,7 +356,7 @@ export function MessagesSection({
                       variant="ghost"
                       size="icon-md"
                       disabled={readOnly}
-                      aria-label={`Remove starter question ${index + 1}`}
+                      aria-label={t('agents.removeStarterQuestion', { n: index + 1 }) || `Remove starter question ${index + 1}`}
                       onClick={() =>
                         setActions(quickActions.filter((_, i) => i !== index))
                       }
@@ -370,7 +391,8 @@ export function MessagesSection({
             </Button>
             {atLimit ? (
               <span className="text-xs text-text-secondary">
-                {LIMITS.quickActions} is as many as the window fits.
+                {t('agents.isAsManyAsTheWindowFits', { count: LIMITS.quickActions }) ||
+                  `${LIMITS.quickActions} is as many as the window fits.`}
               </span>
             ) : null}
           </div>
@@ -385,8 +407,8 @@ export function MessagesSection({
             unusedSuggestions.length > 0 ? (
               <Well className="flex flex-col gap-2">
                 <p className="text-xs text-text-secondary">
-                  Questions your chatbot can already answer from what it has read. Add the ones that
-                  fit — you can reword them afterwards.
+                  {t('agents.questionsYourChatbotCanAlreadyAnswer') ||
+                    'Questions your chatbot can already answer from what it has read. Add the ones that fit, and you can reword them afterwards.'}
                 </p>
                 <ul className="flex flex-wrap gap-2">
                   {unusedSuggestions.map((question) => (

@@ -55,7 +55,7 @@ The plan was to put `ConnectionManager` behind Redis pub/sub *inside* one multi-
 
 - **Fan-out that iterates a per-process dict now reaches nobody** on the API process, permanently and silently. Every notification path had to be converted to "local sockets ∪ Redis presence, then deliver". Several were missed on the first pass and shipped inert.
 - **Redis moved onto the live-chat delivery path.** It was cache and queue; it is now correctness-adjacent, while publishes remain deliberately fail-open so a Redis blip cannot 500 a visitor's message. That combination makes the failure quiet.
-- **The API and WS processes can disagree about the flag.** The unit pins it true; the deploy writes `${WS_BACKPLANE_ENABLED:-false}` into the API's `.env`.
+- **The API and WS processes could disagree about the flag.** The unit pins it true, and the deploy now writes `${WS_BACKPLANE_ENABLED:-true}` into the API's `.env` (it wrote `:-false` originally, which is what made the two disagree), so they agree unless the repo variable is set to false explicitly.
 
 ### Not done from the original list
 

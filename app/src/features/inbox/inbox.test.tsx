@@ -104,12 +104,36 @@ describe('inboxModel', () => {
   it('counts an unread offline message so both scopes mean the same thing', () => {
     expect(toOfflineItem({ id: 1, status: 'new' }).unread).toBe(1);
     expect(toOfflineItem({ id: 2, status: 'read' }).unread).toBe(0);
-    expect(toOfflineItem({ id: 3, status: 'replied' }).state?.label).toBe('Replied');
+    // "Replied" claimed something nothing observed. The status is written when
+    // the mailto link is clicked, and the badge travels to every operator.
+    expect(toOfflineItem({ id: 3, status: 'replied' }).state?.label).toBe('Reply opened');
+  });
+
+  it('asserts no presence for a queue row, because the payload carries none', () => {
+    // `QueueItem` has no presence field, and this hard-coded `true`, so a
+    // two-day-old queue entry pulsed "Online now" beside "Waiting 2d".
+    const waiting = toWaitingItem({
+      session_id: '7',
+      name: 'Ada',
+      reason: null,
+      bot_id: null,
+      bot_name: null,
+      created_at: new Date(NOW - 2 * 86_400_000).toISOString(),
+    });
+    expect(waiting.online).toBe(false);
   });
 });
 
-function List({ onSelect }: { onSelect: (row: InboxItem) => void }) {
-  const [view, setView] = useState<InboxView>('yours');
+function List({
+  onSelect,
+  error = null,
+  initialView = 'yours',
+}: {
+  onSelect: (row: InboxItem) => void;
+  error?: string | null;
+  initialView?: InboxView;
+}) {
+  const [view, setView] = useState<InboxView>(initialView);
   const [selected, setSelected] = useState('s.a');
   const rows = [
     item({ id: 's.a', name: 'Ada', at: '2026-08-19T11:59:00Z' }),
@@ -130,13 +154,36 @@ function List({ onSelect }: { onSelect: (row: InboxItem) => void }) {
       query=""
       onQueryChange={() => {}}
       loading={false}
-      error={null}
+      error={error}
       now={NOW}
     />
   );
 }
 
 describe('ConversationList', () => {
+  it('drops the scope count when that scope failed to load', () => {
+    // "Messages (0)" sat in the switcher beside the list's own "Could not load
+    // your messages", so the pane reported a measurement it had not taken and
+    // contradicted itself in the same 300px.
+    render(
+      <List
+        onSelect={vi.fn()}
+        initialView="messages"
+        error="Could not load your messages"
+      />,
+    );
+    const scope = screen.getByRole('combobox', { name: /conversation scope/i });
+    expect(scope).toHaveTextContent('Messages');
+    expect(scope).not.toHaveTextContent('Messages (0)');
+  });
+
+  it('keeps the count for a scope that loaded', () => {
+    render(<List onSelect={vi.fn()} />);
+    expect(screen.getByRole('combobox', { name: /conversation scope/i })).toHaveTextContent(
+      'Yours (3)',
+    );
+  });
+
   it('is a listbox whose rows can be reached and chosen from the keyboard', async () => {
     const onSelect = vi.fn();
     const user = userEvent.setup();

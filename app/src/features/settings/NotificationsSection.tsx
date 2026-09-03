@@ -22,6 +22,7 @@ import { keys } from '../../query/keys';
 import { usePushSubscription } from '../../hooks/usePushSubscription';
 import {
   PUSH_EVENTS,
+  pushEventLabel,
   defaultPreferences,
   describeQuietHours,
   fromWire,
@@ -128,7 +129,14 @@ export function NotificationsSection() {
   const silenced = isFullySilenced(draft);
 
   return (
-    <SettingGroup title={t('settings.howWeReachYou') || 'How we reach you'} id="alerts">
+    <SettingGroup
+      title={t('settings.notificationsGroupTitle') || 'Notifications'}
+      description={
+        t('settings.notificationsGroupDescription') ||
+        'Alerts about your conversations - on this device, and everywhere you are signed in.'
+      }
+      id="alerts"
+    >
       {/* ── This device ───────────────────────────────────────────────────── */}
       <SettingRow
         label={t('settings.thisDevice') || 'This device'}
@@ -195,8 +203,8 @@ export function NotificationsSection() {
 
           {device.phase.status === 'unsupported' ? (
             <Alert tone="neutral">
-              This browser cannot receive push notifications. A recent Chrome, Edge or Firefox on
-              desktop can.
+              {t('settings.thisBrowserCannotReceivePush') ||
+                'This browser cannot receive push notifications. A recent Chrome, Edge or Firefox on desktop can.'}
             </Alert>
           ) : null}
 
@@ -208,8 +216,8 @@ export function NotificationsSection() {
 
           {device.phase.status === 'disabled' || device.phase.status === 'incomplete' ? (
             <Alert tone="neutral">
-              Push delivery is switched off on our side. It starts working here on its own once it
-              is back.
+              {t('settings.pushDeliveryIsSwitchedOff') ||
+                'Push delivery is switched off on our side. It starts working here on its own once it is back.'}
             </Alert>
           ) : null}
 
@@ -274,7 +282,7 @@ export function NotificationsSection() {
                 {PUSH_EVENTS.map((event) => (
                   <Switch
                     key={event.key}
-                    label={event.label}
+                    label={pushEventLabel(event)}
                     disabled={!draft.enabled}
                     checked={draft.events[event.key]}
                     onCheckedChange={(next) =>

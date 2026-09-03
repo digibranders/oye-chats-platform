@@ -12,6 +12,7 @@ import type { ActivityPoint } from '../../../types/domain';
 import type { RangeDays, Section } from './overview-data';
 import { rangeLabel, windowActivity } from './overview-data';
 import { useTranslation } from '../../../i18n/useTranslation';
+import { t as translateNow } from '../../../i18n/i18n';
 
 /**
  * A backend day string as a short axis tick.
@@ -59,7 +60,13 @@ export function ActivityChart({ section, days }: ActivityChartProps) {
       empty={points.length === 0 || total === 0}
       emptyTitle="No messages in this period"
       emptyDescription="Once visitors start chatting, each day's volume appears here. Try a longer range."
-      summary={`${formatNumber(total)} messages over ${points.length} days, ${rangeLabel(days).toLowerCase()}.`}
+      summary={
+        translateNow('agents.messagesOverDays', {
+          count: formatNumber(total),
+          days: points.length,
+          range: rangeLabel(days).toLowerCase(),
+        }) || `${formatNumber(total)} messages over ${points.length} days, ${rangeLabel(days).toLowerCase()}.`
+      }
       dataTable={
         <table className="w-full text-left text-xs">
           <caption className="sr-only">{t('agents.messagesPerDay') || 'Messages per day'}</caption>

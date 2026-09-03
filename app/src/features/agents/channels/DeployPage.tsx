@@ -326,8 +326,13 @@ export function DeployPage() {
 
   // A broken install opens on the checklist; everyone else opens on the steps
   // for their own stack. The reader's own choice always wins once they make one.
+  // `stale` counts as broken: a widget that has not loaded in a week has the
+  // same causes and the same checklist as one that never loaded at all.
   const activeHelpTab: HelpTab =
-    helpTab ?? (deploy.status.state === 'not-detected' ? 'troubleshoot' : 'platform');
+    helpTab ??
+    (deploy.status.state === 'not-detected' || deploy.status.state === 'stale'
+      ? 'troubleshoot'
+      : 'platform');
 
   return (
     <Page>
@@ -340,9 +345,23 @@ export function DeployPage() {
             reading sits beside Access — the allow-list most likely to be keeping
             that reading empty. `align="start"` lets each card keep its own
             height rather than stretching to the tallest in its row. */}
+        {/* Two INDEPENDENT columns, not a row-paired 2-up. Pairing looked
+            tidier on paper and cost a large hole in whichever column was
+            shorter, because the second row cannot start until the tallest cell
+            of the first has finished. The install-help card is the problem: it
+            is 273px with no platform chosen and roughly 850px once one is, so
+            with the snippet at ~506px the dead space was 233px on the right
+            before a choice and about 350px on the LEFT after it. Independent
+            columns let each card follow the one above it.
+
+            The reading pairs the old layout enforced still hold in practice:
+            the help card sits beside the snippet, and the install reading beside
+            Access, because that is the order they are written in. What is gone
+            is the guarantee, and with it the hole. */}
         <Grid cols={2} align="start">
-          {/* Row 1, left — the artefact. */}
-          <SnippetSection
+          <Stack>
+            {/* The artefact, then the allow-list that governs where it may run. */}
+            <SnippetSection
             botKey={botKey}
             botName={bot.name || 'OyeChats'}
             botId={agentId}
@@ -355,127 +374,141 @@ export function DeployPage() {
             devInviteSentAt={bot.dev_invite_sent_at ?? null}
           />
 
-          {/* Row 1, right — help beside the snippet: a reader who has just
-              copied the tag wants their platform's steps next, and a broken
-              install opens on the checklist. Two tabs over one card. */}
-          <Tabs
-            label={t('agents.installHelp') || 'Install help'}
-            value={activeHelpTab}
-            onValueChange={(next) => setHelpTab(next as HelpTab)}
-            items={[
-              { value: 'platform', label: t('agents.instructionsForYourPlatform') || 'Instructions for your platform' },
-              { value: 'troubleshoot', label: t('agents.notShowingUp') || 'Not showing up' },
-            ]}
-          >
-            <TabPanel value="platform">
-              <Card>
-                <CardBody>
-                  <PlatformGuide
-                    botKey={botKey}
-                    env={deploy.env}
-                    platformId={platformId}
-                    onPlatformChange={setPlatformId}
-                    attribution={attribution}
-                    resolving={entitlementsLoading}
-                  />
-                </CardBody>
-              </Card>
-            </TabPanel>
-            <TabPanel value="troubleshoot">
-              <Card>
-                <CardBody flush>
-                  <TroubleshootSection
-                    botKey={botKey}
-                    env={deploy.env}
-                    apiBaseUrl={deploy.apiBaseUrl}
+            {/* Row 2, left — Access. `scroll-mt` keeps the heading clear of the
+                sticky topbar when the status card's "Allowed domains" link jumps
+                here. The cell always renders — a skeleton while the access slice
+                loads — so the row pairing does not collapse mid-load. */}
+            <div id="access" className="scroll-mt-24">
+              {accessDraft ? (
+                <SettingGroup
+                  title={t('agents.access') || 'Access'}
+                  description={t('agents.whereThisChatbotIsAllowed') || 'Where this chatbot is allowed to run, and how far a conversation follows a visitor.'}
+                >
+                  <AccessSection
                     website={website}
-                    domains={domains}
-                    domainsConfigured={domains.length}
-                    domainCheckEnabled={Boolean(bot.domain_check_enabled)}
+                    domains={accessDraft.allowedDomains}
+                    domainCheckEnabled={accessDraft.domainCheckEnabled}
+                    sessionShareDomain={accessDraft.sessionShareDomain}
+                    onChange={setAccess}
                   />
-                </CardBody>
-              </Card>
-            </TabPanel>
-          </Tabs>
+                </SettingGroup>
+              ) : (
+                <Card>
+                  <CardBody className="space-y-3">
+                    <Skeleton className="h-5 w-40" />
+                    <Skeleton className="h-3.5 w-full" />
+                    <Skeleton className="h-control-md w-full" />
+                  </CardBody>
+                </Card>
+              )}
+            </div>
+          </Stack>
 
-          {/* Row 2, left — Access. `scroll-mt` keeps the heading clear of the
-              sticky topbar when the status card's "Allowed domains" link jumps
-              here. The cell always renders — a skeleton while the access slice
-              loads — so the row pairing does not collapse mid-load. */}
-          <div id="access" className="scroll-mt-24">
-            {accessDraft ? (
-              <SettingGroup
-                title="Access"
-                description="Where this chatbot is allowed to run, and how far a conversation follows a visitor."
+          <Stack>
+            {/* Row 1, right — help beside the snippet: a reader who has just
+                copied the tag wants their platform's steps next, and a broken
+                install opens on the checklist. Two tabs over one card. */}
+            {/* The tab row lives INSIDE the card, as its header. Outside it,
+                the strip floated above a separate bordered card: the snippet
+                card opposite began at the top of its column while this one
+                started a tab-row lower, so the two cards never lined up, and
+                the strip read as detached furniture rather than a control
+                belonging to the panel under it.
+
+                Two spacing corrections come with the move. `TAB_LIST` carries
+                `-mx-3` to sit flush with page copy when it is naked, so the
+                wrapper is padded by the card's own gutter and the negative
+                margin is cancelled. `TabPanel`'s `pt-6` is the gap under a
+                page-level tab row; the panels here are `CardBody`, which
+                brings its own, so it is dropped. */}
+            <Card>
+              <Tabs
+                className="[&>div:first-child]:px-cell [&>div:first-child>*]:mx-0"
+                label={t('agents.installHelp') || 'Install help'}
+                value={activeHelpTab}
+                onValueChange={(next) => setHelpTab(next as HelpTab)}
+                items={[
+                  { value: 'platform', label: t('agents.instructionsForYourPlatform') || 'Instructions for your platform' },
+                  { value: 'troubleshoot', label: t('agents.notShowingUp') || 'Not showing up' },
+                ]}
               >
-                <AccessSection
-                  website={website}
-                  domains={accessDraft.allowedDomains}
-                  domainCheckEnabled={accessDraft.domainCheckEnabled}
-                  sessionShareDomain={accessDraft.sessionShareDomain}
-                  onChange={setAccess}
-                />
-              </SettingGroup>
-            ) : (
-              <Card>
-                <CardBody className="space-y-3">
-                  <Skeleton className="h-5 w-40" />
-                  <Skeleton className="h-3.5 w-full" />
-                  <Skeleton className="h-control-md w-full" />
-                </CardBody>
-              </Card>
-            )}
-          </div>
+                <TabPanel value="platform" className="pt-0">
+                  <CardBody>
+                    <PlatformGuide
+                      botKey={botKey}
+                      env={deploy.env}
+                      platformId={platformId}
+                      onPlatformChange={setPlatformId}
+                      attribution={attribution}
+                      resolving={entitlementsLoading}
+                    />
+                  </CardBody>
+                </TabPanel>
+                <TabPanel value="troubleshoot" className="pt-0">
+                  <CardBody flush>
+                    <TroubleshootSection
+                      botKey={botKey}
+                      env={deploy.env}
+                      apiBaseUrl={deploy.apiBaseUrl}
+                      website={website}
+                      domains={domains}
+                      domainsConfigured={domains.length}
+                      domainCheckEnabled={Boolean(bot.domain_check_enabled)}
+                    />
+                  </CardBody>
+                </TabPanel>
+              </Tabs>
+            </Card>
 
-          {/* Row 2, right — the live install reading beside Access, and the
-              shareable hosted demo beneath it. Nudged down by the Access
-              section's title+description header (~56px), so the card lines up
-              with the Access card rather than its heading. Only in two-column
-              mode; single-column stacks flush with no gap. */}
-          <Stack className="@3xl/page:mt-14">
-            <InstallStatusCard
-              status={deploy.status}
-              installedAt={bot.widget_installed_at ?? null}
-              heartbeat={widgetHeartbeat({
-                installedAt: bot.widget_installed_at,
-                lastSeenAt: bot.widget_last_seen_at,
-                lastOrigin: bot.widget_last_origin,
-              })}
-              website={website}
-              domains={domains}
-              installs={deploy.domains}
-              domainsLoading={deploy.domainsLoading}
-              domainsChecking={deploy.domainsChecking}
-              domainsCheckedAt={deploy.domainsCheckedAt}
-              onCheckDomains={deploy.checkDomains}
-              domainsCheckError={deploy.domainsCheckError}
-              accessHref="#access"
-              verifiedNow={deploy.verifiedNow}
-              checking={deploy.checking}
-              onStartVerifying={deploy.startVerifying}
-              onStopVerifying={deploy.stopVerifying}
-              onTroubleshoot={() => setHelpTab('troubleshoot')}
-            />
+            {/* The live install reading, then the shareable hosted demo. The
+                `mt-14` that used to sit here was compensating for the Access
+                heading in the paired row; there is no row to align against now,
+                so the card simply follows the help card above it. */}
+            <Stack>
+              <InstallStatusCard
+                status={deploy.status}
+                installedAt={bot.widget_installed_at ?? null}
+                heartbeat={widgetHeartbeat({
+                  installedAt: bot.widget_installed_at,
+                  lastSeenAt: bot.widget_last_seen_at,
+                  lastOrigin: bot.widget_last_origin,
+                })}
+                website={website}
+                domains={domains}
+                installs={deploy.domains}
+                domainsLoading={deploy.domainsLoading}
+                domainsChecking={deploy.domainsChecking}
+                domainsCheckedAt={deploy.domainsCheckedAt}
+                onCheckDomains={deploy.checkDomains}
+                domainsCheckError={deploy.domainsCheckError}
+                accessHref="#access"
+                verifiedNow={deploy.verifiedNow}
+                checking={deploy.checking}
+                onStartVerifying={deploy.startVerifying}
+                onStopVerifying={deploy.stopVerifying}
+                onTroubleshoot={() => setHelpTab('troubleshoot')}
+              />
 
-            {/* A hosted page that runs this chatbot, for a customer whose site
-                is not ready, or who wants a colleague to try it before it goes
-                live. It opens the customer's OWN website with the chat on it,
-                from a screenshot captured during training, so the card also has
-                to say when that capture is missing, running, failed or old: in
-                every one of those cases the link quietly falls back to a
-                stand-in page, and a customer sending it to a prospect needs to
-                know that before they send it.
+              {/* A hosted page that runs this chatbot, for a customer whose site
+                  is not ready, or who wants a colleague to try it before it goes
+                  live. It opens the customer's OWN website with the chat on it,
+                  from a screenshot captured during training, so the card also has
+                  to say when that capture is missing, running, failed or old: in
+                  every one of those cases the link quietly falls back to a
+                  stand-in page, and a customer sending it to a prospect needs to
+                  know that before they send it.
 
-                How often it is opened is counted on this chatbot's Overview,
-                under "Demo shares", where every other figure about it lives. */}
-            <DemoLinkCard
-              agentId={agentId}
-              demoUrl={demoUrl}
-              website={website}
-              screenshotStatus={bot.demo_screenshot_status}
-              screenshotCapturedAt={bot.demo_screenshot_captured_at}
-              onRefresh={deploy.retry}
-            />
+                  How often it is opened is counted on this chatbot's Overview,
+                  under "Demo shares", where every other figure about it lives. */}
+              <DemoLinkCard
+                agentId={agentId}
+                demoUrl={demoUrl}
+                website={website}
+                screenshotStatus={bot.demo_screenshot_status}
+                screenshotCapturedAt={bot.demo_screenshot_captured_at}
+                onRefresh={deploy.retry}
+              />
+            </Stack>
           </Stack>
         </Grid>
       </Stack>
@@ -489,7 +522,7 @@ export function DeployPage() {
           saving={access.saving}
           saved={access.saved}
           saveError={access.saveError}
-          blockedReason={sessionError ? 'Fix the pinned parent domain under Access to save.' : null}
+          blockedReason={sessionError ? t('agents.fixThePinnedParentDomain') || 'Fix the pinned parent domain under Access to save.' : null}
           onSave={() => {
             if (lockingOut) setConfirmingLockout(true);
             else void commitAccess();
@@ -507,10 +540,14 @@ export function DeployPage() {
       <ConfirmDialog
         open={confirmingLockout}
         onOpenChange={setConfirmingLockout}
-        title="This will block your own website"
+        title={t('agents.thisWillBlockYourOwn') || 'This will block your own website'}
         description={
           risk
-            ? `Your chatbot is set up for ${risk.host}, and that address does not match anything on this list. Save it and the widget will stop loading there — visitors will see nothing at all. Adding ${risk.suggestions.join(' and ')} fixes it.`
+            ? t('agents.riskHostNotOnList', {
+                host: risk.host,
+                add: risk.suggestions.join(' and '),
+              }) ||
+              `Your chatbot is set up for ${risk.host}, and that address does not match anything on this list. Save it and the widget will stop loading there, so visitors will see nothing at all. Adding ${risk.suggestions.join(' and ')} fixes it.`
             : ''
         }
         confirmLabel="Save anyway"

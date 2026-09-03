@@ -75,7 +75,8 @@ export function OperatorLanguagePicker({
   });
 
   const hint = value
-    ? `Visitor messages are translated into ${labelFor(value) ?? value}.`
+    ? t('inbox.visitorMessagesAreTranslatedInto', { language: labelFor(value) ?? value }) ||
+      `Visitor messages are translated into ${labelFor(value) ?? value}.`
     : t('inbox.messagesShowInTheLanguage') || 'Messages show in the language they were written in.';
 
   return (

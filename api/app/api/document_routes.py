@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import re
+import time
 from pathlib import Path
 
 import psutil
@@ -16,8 +17,8 @@ from app.api.auth import (
     require_verified_email_for_workspace,
 )
 from app.config import DOCUMENTS_DIR
-from app.core.cache import cache_delete_prefix, qa_prefix_for_bot
-from app.core.rate_limit import key_from_api_key, limiter
+from app.core.cache import cache_delete_prefix, gate_prefix_for_bot, qa_prefix_for_bot
+from app.core.rate_limit import key_from_operator_credential, limiter
 from app.db.models import Bot, Document
 from app.db.repository import (
     count_knowledge_state,
@@ -26,6 +27,7 @@ from app.db.repository import (
     sync_bot_knowledge_state,
 )
 from app.db.session import get_session
+from app.ingestion.cleaner import clean_text
 from app.ingestion.pipeline import delete_archived_copies, run_folder_ingestion
 from app.schemas.client import CrawlDiffRequest, CrawlDiscoverRequest, CrawlRequest, DocumentPagesResponse
 from app.schemas.validators import MAX_URL, Identifier, RowId
@@ -39,6 +41,7 @@ from app.services.crawler_service import (
     request_cancellation,
     set_crawl_progress,
 )
+from app.services.knowledge_quota_service import KnowledgeQuotaExceeded, check_kb_quota
 
 logger = logging.getLogger(__name__)
 
@@ -471,9 +474,13 @@ def delete_document_endpoint(
                         session.commit()
                         logger.info(f"Cleared recommended_colors for bot {bot_id} (no crawled sources remain)")
 
-            # Invalidate cached QA responses. Knowledge base has changed
+            # Invalidate cached QA responses AND relevance-gate verdicts. The
+            # knowledge base just shrank, so an "on-topic" verdict cached before
+            # the delete would otherwise keep sending questions down a retrieval
+            # path whose content is gone.
             if bot_id:
                 cache_delete_prefix(qa_prefix_for_bot(bot_id))
+                cache_delete_prefix(gate_prefix_for_bot(bot_id))
                 # Re-derive the bot's "trained" counters from what's left, so
                 # deleting the last source stops the dashboard claiming the AI
                 # is still trained on it.
@@ -488,6 +495,7 @@ def delete_document_endpoint(
                 client_bot_ids = [row[0] for row in session.query(Bot.id).filter(Bot.client_id == client_id).all()]
                 for client_bot_id in client_bot_ids:
                     cache_delete_prefix(qa_prefix_for_bot(client_bot_id))
+                    cache_delete_prefix(gate_prefix_for_bot(client_bot_id))
                     sync_bot_knowledge_state(session, client_bot_id)
                 session.commit()
 
@@ -511,7 +519,7 @@ def _run_ingestion_background(client_id: int, documents_dir: str, bot_id: int | 
 
 
 @router.post("/ingest/preview-cost")
-@limiter.limit("20/minute", key_func=key_from_api_key)
+@limiter.limit("20/minute", key_func=key_from_operator_credential)
 def preview_ingest_cost(
     request: Request,
     files: list[UploadFile] = File(...),
@@ -662,7 +670,7 @@ def preview_ingest_cost(
 
 
 @router.post("/ingest")
-@limiter.limit("10/minute", key_func=key_from_api_key)
+@limiter.limit("10/minute", key_func=key_from_operator_credential)
 def ingest_documents(
     request: Request,
     files: list[UploadFile] = File(...),
@@ -865,7 +873,13 @@ def ingest_documents(
     # 10-minute request timeout. If extraction fails for a specific file we
     # skip it in the cost calculation, the background ingest will quarantine
     # it and no credits should be charged for content we can't store.
-    def _extract_words_for_cost(path: Path, ext: str) -> int:
+    def _extract_words_for_cost(path: Path, ext: str) -> tuple[int, int]:
+        """Return ``(word_count, cleaned_char_count)`` for one saved file.
+
+        The char count is measured on the CLEANED text because that is the unit
+        the KB quota counts (``pipeline._ingest_document``), so the pre-flight
+        below gates on the same number the pipeline will later enforce.
+        """
         try:
             if ext == ".pdf":
                 pages = load_pdf(str(path))
@@ -875,25 +889,66 @@ def ingest_documents(
                 pages = load_txt(str(path))
         except ExtractionError as exc:
             logger.warning(f"Skipping {path.name} for billing (extraction failed): {exc}")
-            return 0
+            return 0, 0
         except Exception:  # pragma: no cover. Pypdf/docx surprise
             logger.exception(f"Unexpected extraction error for {path.name}; skipping billing")
-            return 0
+            return 0, 0
         raw = " ".join(p.get("text", "") for p in pages)
-        return credit_service.count_words(raw)
+        cleaned = " ".join(clean_text(p.get("text", "")) for p in pages)
+        return credit_service.count_words(raw), len(cleaned)
 
     per_file_costs: list[tuple[str, int, int]] = []  # (filename, words, credits)
     total_cost = 0
+    total_chars = 0
     with get_session() as db:
         for saved_path in saved_paths:
             fname = saved_path.name
             ext = saved_path.suffix.lower()
-            words = _extract_words_for_cost(saved_path, ext)
+            words, chars = _extract_words_for_cost(saved_path, ext)
             # ``words == 0`` (extraction failed or the file had no text) prices
             # at 0 inside the helper, which is what ``preview-cost`` quotes.
             cost = credit_service.get_document_upload_cost_for_size(db, words)
             per_file_costs.append((fname, words, cost))
             total_cost += cost
+            total_chars += chars
+
+    # ── KB character quota, now that the real size is known ──
+    # The coarse check above only catches an account already AT its cap. This
+    # one asks the question the pipeline will ask: does THIS upload fit? Run
+    # before the deduction, because the worker's answer arrives after the money
+    # is gone and its only recourse is to quarantine the file and refund.
+    if total_chars > 0:
+        with get_session() as db:
+            try:
+                check_kb_quota(db, client_id, total_chars)
+            except KnowledgeQuotaExceeded as exc:
+                for saved in saved_paths:
+                    try:
+                        saved.unlink(missing_ok=True)
+                    except Exception:
+                        logger.debug("failed to clean up saved file after 402", exc_info=True)
+                raise HTTPException(
+                    status_code=402,
+                    detail={
+                        "error": "limit_reached",
+                        "limit": "knowledge_characters",
+                        "current": exc.current,
+                        "attempted": exc.attempted,
+                        "max": exc.limit,
+                        "current_plan": exc.plan_slug,
+                        "message": (
+                            "These documents don't fit in your plan's knowledge base "
+                            f"({exc.current:,} of {exc.limit:,} characters used, "
+                            f"{exc.attempted:,} more in this upload). "
+                            "Delete existing content or upgrade to add more."
+                        ),
+                        "upgrade_url": "/billing",
+                    },
+                ) from exc
+            finally:
+                # The quota check took a row lock; nothing here writes, so drop
+                # it immediately rather than holding it across the deduction.
+                db.rollback()
 
     deducted_amount = 0
     if total_cost > 0:
@@ -962,9 +1017,33 @@ def ingest_documents(
 
     job_id = None
     if WORKER_ENABLED:
-        from app.worker.enqueue import enqueue_sync
+        from app.worker.enqueue import bucketed_job_id, enqueue_sync
 
-        job_id = enqueue_sync("task_ingest_documents", client_id, str(tenant_dir), bot_id)
+        # One sweep per (client, bot) per bucket. Two uploads seconds apart both
+        # land in the same tenant folder, so without this they queue two sweeps
+        # of the same files and race each other. The bucket keeps ARQ's stored
+        # RESULT for a finished sweep from blocking the next upload's enqueue
+        # (results outlive the job by an hour), and a refusal still falls back
+        # to an in-process sweep so files are never left on disk unprocessed.
+        job_id = enqueue_sync(
+            "task_ingest_documents",
+            client_id,
+            str(tenant_dir),
+            bot_id,
+            _job_id=bucketed_job_id(f"ingest:{client_id}", bot_id or 0),
+        )
+        if job_id is None:
+            # Refused: a sweep with this id is already queued or running, and it
+            # may have listed the folder before these files landed. Run one more
+            # in-process rather than leave them on disk unprocessed; duplicate
+            # work is safe, ``_ingest_document`` re-checks the content hash
+            # under the client row lock and replaces a source, never doubles it.
+            logger.info(
+                "ingest sweep for client %s bot %s was already queued. Running one in-process too",
+                client_id,
+                bot_id,
+            )
+            background_tasks.add_task(_run_ingestion_background, client_id, str(tenant_dir), bot_id)
     else:
         background_tasks.add_task(_run_ingestion_background, client_id, str(tenant_dir), bot_id)
 
@@ -1037,7 +1116,7 @@ def crawl_progress_endpoint(auth: dict = Depends(get_current_client_or_operator)
 
 
 @router.post("/crawl/cancel", status_code=202)
-@limiter.limit("30/minute", key_func=key_from_api_key)
+@limiter.limit("30/minute", key_func=key_from_operator_credential)
 def crawl_cancel_endpoint(
     request: Request,
     bot_id: RowId | None = Query(None),
@@ -1084,8 +1163,22 @@ def crawl_cancel_endpoint(
     return {"status": "cancelling", "message": "Cancel requested. Crawl will stop within a few seconds."}
 
 
+# The preview's whole time budget, across both discovery phases. Each phase
+# used to get 20 seconds of its own, so a site with no usable sitemap could
+# take 40 against a route that promises about 20 and a browser that gives up
+# at 30. The link phase now gets what is left, never below a floor that still
+# lets it find something.
+_DISCOVERY_TOTAL_BUDGET = 25.0
+_DISCOVERY_LINK_FLOOR = 5.0
+
+
+def _link_phase_budget(elapsed: float) -> float:
+    """Seconds the link scan may take once the sitemap phase spent ``elapsed``."""
+    return max(_DISCOVERY_LINK_FLOOR, _DISCOVERY_TOTAL_BUDGET - elapsed)
+
+
 @router.post("/crawl/discover")
-@limiter.limit("120/hour", key_func=key_from_api_key)
+@limiter.limit("120/hour", key_func=key_from_operator_credential)
 async def crawl_discover_endpoint(
     discover_request: CrawlDiscoverRequest,
     request: Request,
@@ -1134,6 +1227,7 @@ async def crawl_discover_endpoint(
 
     _DISCOVERY_HARD_CAP = 1000
     discovery_cap = _DISCOVERY_HARD_CAP if plan_max == UNLIMITED else min(plan_max, _DISCOVERY_HARD_CAP)
+    started = time.monotonic()
     urls: list[str] = []
     try:
         urls = await discover_website_urls(
@@ -1149,9 +1243,15 @@ async def crawl_discover_endpoint(
     # (see crawl_provider.crawl_website). Mirror that here so the page count and
     # cost estimate the customer sees match what the crawl will actually bill,
     # instead of showing "1 page" for every sitemap-less site.
+    link_stats: dict = {}
     if len(urls) <= 1:
         try:
-            linked = await discover_via_links(discover_request.url, max_urls=discovery_cap, timeout=20.0)
+            linked = await discover_via_links(
+                discover_request.url,
+                max_urls=discovery_cap,
+                timeout=_link_phase_budget(time.monotonic() - started),
+                stats=link_stats,
+            )
             if len(linked) > len(urls):
                 urls = linked
         except Exception as exc:
@@ -1173,7 +1273,9 @@ async def crawl_discover_endpoint(
     return {
         "url": discover_request.url,
         "total_found": total,
-        "capped": total >= discovery_cap,
+        # A list cut short by the time budget is as partial as one cut by the
+        # page cap, and the UI already knows how to say "there may be more".
+        "capped": total >= discovery_cap or bool(link_stats.get("truncated")),
         "plan_max": plan_max,
         "urls": urls,
         "cost_per_page": cost_per_page,
@@ -1189,7 +1291,7 @@ async def crawl_discover_endpoint(
 
 
 @router.post("/crawl/diff")
-@limiter.limit("30/hour", key_func=key_from_api_key)
+@limiter.limit("30/hour", key_func=key_from_operator_credential)
 async def crawl_diff_endpoint(
     diff_request: CrawlDiffRequest,
     request: Request,
@@ -1431,7 +1533,7 @@ async def crawl_diff_endpoint(
 
 
 @router.post("/crawl", status_code=202)
-@limiter.limit("10/hour", key_func=key_from_api_key)
+@limiter.limit("10/hour", key_func=key_from_operator_credential)
 async def crawl_endpoint(
     crawl_request: CrawlRequest,
     request: Request,
@@ -1703,17 +1805,29 @@ async def crawl_endpoint(
         from app.worker.enqueue import WORKER_ENABLED, enqueue
 
         if WORKER_ENABLED:
+            # Every argument by KEYWORD. Positionally, these nine values used
+            # to land one slot to the left of where they belong: the task grew
+            # a `free_pages` parameter between `cost_per_page` and `max_depth`,
+            # so `plan_max_depth` was received as `free_pages` and
+            # `plan_concurrency` as `max_depth`, while `concurrency` silently
+            # took its default. That charged a trial customer for the training
+            # pages their allowance had already paid for (25 free pages became
+            # 3), handed every paid account 3 free pages on every crawl, and
+            # made both crawl knobs ignore the plan tier. The inline fallback
+            # below always used keywords, so it was correct and local runs
+            # never showed it.
             job = await enqueue(
                 "task_crawl_and_ingest",
-                client_id,
-                bot_id,
-                crawl_request.url,
-                effective_max_pages,
-                crawl_request.use_js,
-                crawl_request.replace_source,
-                cost_per_page,
-                plan_max_depth,
-                plan_concurrency,
+                client_id=client_id,
+                bot_id=bot_id,
+                url=crawl_request.url,
+                max_pages=effective_max_pages,
+                use_js=crawl_request.use_js,
+                replace_source=crawl_request.replace_source,
+                cost_per_page=cost_per_page,
+                free_pages=free_pages,
+                max_depth=plan_max_depth,
+                concurrency=plan_concurrency,
                 ordered_urls=ordered_urls,
                 force_reingest=force_reingest,
                 lock_token=lock_token,

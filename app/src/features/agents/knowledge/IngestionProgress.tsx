@@ -74,15 +74,21 @@ export function IngestionProgress({
   const phase = ingestProgress(status);
   const settled = jobId !== null && !job.isPending && !phase.active;
 
-  // Once, on the transition. `onFinished` usually invalidates queries, and a
-  // caller whose callback identity changes each render would otherwise be
+  // Once per job, on the transition. `onFinished` usually invalidates queries,
+  // and a caller whose callback identity changes each render would otherwise be
   // refetching in a loop for as long as this stayed mounted.
-  const announced = useRef(false);
+  //
+  // The latch is keyed by job rather than by mount: this component stays
+  // mounted across uploads, so a boolean latched on the first job meant the
+  // second upload in the same panel never announced itself and the knowledge
+  // list was never refreshed.
+  const announcedFor = useRef<string | null>(null);
   useEffect(() => {
-    if (!settled || phase.phase === 'failed' || announced.current) return;
-    announced.current = true;
+    if (!settled || phase.phase === 'failed' || jobId === null) return;
+    if (announcedFor.current === jobId) return;
+    announcedFor.current = jobId;
     onFinished?.();
-  }, [settled, phase.phase, onFinished]);
+  }, [settled, phase.phase, jobId, onFinished]);
 
   if (phase.phase === 'failed') {
     return (

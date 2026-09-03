@@ -37,12 +37,14 @@ than relying on whether discovery happens to find them again.
 """
 
 import asyncio
+import gzip
 import logging
 import re
+import time
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 from urllib.robotparser import RobotFileParser
 
-from app.core.ssrf import fetch_text_safely, probe_url_alive
+from app.core.ssrf import fetch_bytes_safely, fetch_text_safely, probe_url_alive
 
 logger = logging.getLogger(__name__)
 
@@ -246,6 +248,22 @@ def _norm_netloc(netloc: str) -> str:
     return netloc.lower().removeprefix("www.")
 
 
+# The sitemap spec's ceiling, 50 MB uncompressed, so a large but legitimate
+# sitemap is not truncated (code-review RV7). Applied to the wire body and
+# again to a gzip body after it inflates.
+_SITEMAP_MAX_BYTES = 50 * 1024 * 1024
+
+# A sitemap location, with or without a CDATA wrapper. The spec allows
+# ``<loc><![CDATA[https://...]]></loc>`` and All in One SEO, the most installed
+# WordPress SEO plugin, emits exactly that on every entry. The previous pattern
+# required the URL to begin right after ``<loc>``, so on such a site it matched
+# nothing in the index, fetched no child sitemap, and reported a single page for
+# a site with three hundred; the crawl then fell back to following links from
+# the homepage, slower and less complete, with no preview and no cost shown.
+# ``]`` is excluded from the URL so a half-closed wrapper can never leak in.
+_SITEMAP_LOC_RE = re.compile(r"<loc>\s*(?:<!\[CDATA\[)?\s*(https?://[^\s<\]]+)\s*(?:\]\]>)?\s*</loc>")
+
+
 async def discover_website_urls(
     seed_url: str,
     *,
@@ -329,13 +347,32 @@ async def discover_website_urls(
             # are attacker-controllable → SSRF-guarded fetch (audit F07). Allow
             # up to the sitemap-spec ceiling (50 MB uncompressed) so a large but
             # legitimate sitemap isn't truncated (code-review RV7).
-            result = await fetch_text_safely(url=url, session=session, max_bytes=50 * 1024 * 1024)
+            # Fetched as BYTES, because a sitemap may be served as a literal
+            # ``.xml.gz`` file. aiohttp undoes ``Content-Encoding: gzip`` on
+            # the wire on its own; this is the other case, where the body IS
+            # gzip. Decoding it as text produced replacement characters that
+            # matched no location, and the site reported zero pages. Sniffed
+            # by magic number rather than extension, so a gzip body under a
+            # ``.xml`` name is handled and a plain body under ``.gz`` is not
+            # mangled.
+            result = await fetch_bytes_safely(session, url, max_bytes=_SITEMAP_MAX_BYTES)
             if not result or result[0] != 200:
                 return
-            raw = result[1]
+            body = result[1]
+            if body[:2] == b"\x1f\x8b":
+                try:
+                    body = gzip.decompress(body)
+                except (OSError, EOFError, ValueError):
+                    return  # corrupt archive: nothing to read here
+                # The size cap applied to the wire body; re-apply it to what
+                # it inflated to, so a small archive cannot become a large
+                # allocation.
+                if len(body) > _SITEMAP_MAX_BYTES:
+                    return
+            raw = body.decode("utf-8", errors="replace")
 
             is_index = "<sitemapindex" in raw.lower()
-            locs = re.findall(r"<loc>\s*(https?://[^\s<]+)\s*</loc>", raw)
+            locs = _SITEMAP_LOC_RE.findall(raw)
 
             for loc in locs:
                 loc = loc.strip()
@@ -343,13 +380,19 @@ async def discover_website_urls(
                     await _parse_sitemap(loc, depth + 1)
                 else:
                     loc_netloc = _norm_netloc(urlparse(loc).netloc)
+                    # Keyed on the normalized form, as the link scan already
+                    # is: ``/pricing`` and ``/pricing/`` are one page, and a
+                    # sitemap that lists both must count it once. Keyed on
+                    # the raw string, a real site reported 339 pages found
+                    # while its page tree offered 338.
+                    key = normalize_url(loc)
                     if (
                         loc_netloc == base_netloc
                         and _is_html_url(loc)
-                        and loc not in seen_pages
+                        and key not in seen_pages
                         and robots_rules.can_fetch(_USER_AGENT, loc)
                     ):
-                        seen_pages.add(loc)
+                        seen_pages.add(key)
                         total_found += 1
                         # Past the cap we keep COUNTING but stop collecting, so
                         # the caller can tell the customer how much of their
@@ -369,8 +412,27 @@ async def discover_website_urls(
         # discoverable set. No further expansion, same-domain HTML link
         # scanning was removed so the discovery scope is exactly
         # "robots.txt-declared sitemap ∪ {seed_url}".
-        if _is_html_url(seed_url) and seed_url not in seen_pages and robots_rules.can_fetch(_USER_AGENT, seed_url):
-            seen_pages.add(seed_url)
+        #
+        # "Included" means as ONE page. The customer types ``https://www.x.com``
+        # and the sitemap lists ``https://x.com/``; those are the same page and
+        # must not be counted twice. When the sitemap already has it, the
+        # sitemap's spelling is kept and moved to the front: the crawl bills
+        # in list order, so a small budget has to reach the homepage first.
+        seed_key = normalize_url(seed_url)
+        if seed_key in seen_pages:
+            already_listed = False
+            for index, existing in enumerate(page_urls):
+                if normalize_url(existing) == seed_key:
+                    if index:
+                        page_urls.insert(0, page_urls.pop(index))
+                    already_listed = True
+                    break
+            if not already_listed:
+                # Seen, but past the cap and never collected. The typed page
+                # still leads the list; it was already counted once.
+                page_urls.insert(0, seed_url)
+        elif _is_html_url(seed_url) and robots_rules.can_fetch(_USER_AGENT, seed_url):
+            seen_pages.add(seed_key)
             total_found += 1
             page_urls.insert(0, seed_url)
 
@@ -420,6 +482,7 @@ async def discover_via_links(
     max_depth: int = 2,
     max_fetch: int = 25,
     timeout: float = 20.0,
+    stats: dict | None = None,
 ) -> list[str]:
     """Discover content pages by scanning same-domain ``<a href>`` links.
 
@@ -470,8 +533,23 @@ async def discover_via_links(
         seen: set[str] = {normalize_url(seed_url)}
         frontier: list[tuple[str, int]] = [(seed_url, 0)] if found else []
         fetched = 0
+        # ``timeout`` bounds the WHOLE crawl, not each request. It used to be
+        # only aiohttp's per-request budget, so the loop ran until ``max_fetch``
+        # pages had been fetched one after another: 33 seconds on a real site,
+        # past the 30 the browser waits for the preview and past the ~20 the
+        # route promises. Stopping at the deadline returns what was found so
+        # far, which is a preview nobody has to wait for; callers that need
+        # completeness pass a larger budget.
+        deadline = time.monotonic() + timeout
 
         while frontier and fetched < max_fetch and len(found) < max_urls:
+            if time.monotonic() >= deadline:
+                # Say so. The preview marks a list ``capped`` when it hits the
+                # page ceiling; a list cut short by time looked complete, and
+                # the count under it was presented as the whole site.
+                if stats is not None:
+                    stats["truncated"] = True
+                break
             url, depth = frontier.pop(0)
             if depth >= max_depth:
                 continue

@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import Base, Client, CreditLedger
 from app.services import credit_service
+from tests.conftest import reset_database, role_is_superuser
 
 _TEST_DB_SUFFIX = "_grantboundary"
 
@@ -94,8 +95,19 @@ def pg_engine():
     admin.dispose()
 
 
+@pytest.fixture(scope="module")
+def fk_checks_switchable(pg_engine) -> bool:
+    """Overrides the session-scoped fixture in ``conftest.py``.
+
+    That one asks about the shared engine; this module resets the database it
+    builds above, and a session-scoped fixture cannot depend on this module's
+    narrower ``pg_engine``.
+    """
+    return role_is_superuser(pg_engine)
+
+
 @pytest.fixture()
-def db(pg_engine):
+def db(pg_engine, fk_checks_switchable):
     # autoflush=False mirrors app.db.session.SessionLocal, it's a required
     # ingredient of the bug: with autoflush on, the balance query between the
     # two ledger adds flushes them one-by-one and the batched insert (the
@@ -103,9 +115,7 @@ def db(pg_engine):
     session = Session(pg_engine, autoflush=False)
     yield session
     session.rollback()
-    names = ", ".join(f'"{t.name}"' for t in Base.metadata.sorted_tables)
-    session.execute(sa_text(f"TRUNCATE {names} RESTART IDENTITY CASCADE"))
-    session.commit()
+    reset_database(session, fk_checks_switchable=fk_checks_switchable)
     session.close()
 
 

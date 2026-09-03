@@ -68,12 +68,15 @@ export function OverviewTab({ botId, range }: { botId: number | null; range: Res
         conversations: headline.totals?.totalConversations ?? 0,
         previousConversations: headline.previousConversations,
         unansweredCount: gaps.questions.length,
+        // The count is a page size the moment the page came back full, so the
+        // sentence says "at least" rather than presenting the cap as a total.
+        unansweredTruncated: gaps.truncated,
         topUnanswered: gaps.questions[0]
           ? { question: gaps.questions[0].question, count: gaps.questions[0].count }
           : null,
         knowledgeTo: botId != null ? agentPath(botId, 'knowledge') : undefined,
       }),
-    [range, headline.totals, headline.previousConversations, gaps.questions, botId],
+    [range, headline.totals, headline.previousConversations, gaps.questions, gaps.truncated, botId],
   );
 
   if (headline.error) {
@@ -116,7 +119,13 @@ export function OverviewTab({ botId, range }: { botId: number | null; range: Res
               },
               {
                 label: t('analytics.messages') || 'Messages',
-                value: formatNumber(current.total),
+                // Unknown, not zero. `useMessageSeries` yields an empty series
+                // when the activity read fails and `summarize([])` totals zero,
+                // so a failed request used to print "Messages 0" beside a live
+                // "Conversations 1,204", a pair that cannot both be true. The
+                // dash is the same affordance the Conversations tile beside it
+                // already uses for a figure it does not have.
+                value: formatNumber(messages.error ? null : current.total),
                 delta: messageDelta
                   ? {
                       value: messageDelta.value,

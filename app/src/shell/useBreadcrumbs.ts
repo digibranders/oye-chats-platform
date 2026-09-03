@@ -46,9 +46,16 @@ export interface Crumb {
 export function useBreadcrumbs(): Crumb[] {
   const { pathname } = useLocation();
   const { bots } = useBotContext();
-  // Re-render this hook's consumers when the language changes: the labels below
-  // are resolved at call time, and nothing else on the bar would move.
-  useTranslation();
+  // Subscribing is necessary but NOT sufficient. `useTranslation()` re-renders
+  // this hook's consumers on a language switch, but the memo below would still
+  // hand back the array it built in the previous language, because neither
+  // `pathname` nor `bots` changes when only the locale does. That shipped: the
+  // crumb stayed on the old language until you navigated - switch to Hindi and
+  // back to English on Settings and the bar still read "खाता".
+  //
+  // So the language is a real dependency of this computation and is declared as
+  // one, via `t`, not merely subscribed to.
+  const { t } = useTranslation();
 
   return useMemo(() => {
     const agentId = agentIdFromPath(pathname);
@@ -58,9 +65,9 @@ export function useBreadcrumbs(): Crumb[] {
       const segment = pathname.split('/')[3] ?? 'overview';
       const tab = AGENT_NAV.find((item) => item.segment === segment);
       return [
-        { label: label('Chatbots'), to: '/chatbots' },
+        { label: label(t('shell.chatbots') || 'Chatbots'), to: '/chatbots' },
         {
-          label: agent?.name ?? label('Chatbot'),
+          label: agent?.name ?? label((t('shell.chatbot') || 'Chatbot')),
           to: agentPath(agentId, 'overview'),
           pending: !agent,
         },
@@ -98,8 +105,8 @@ export function useBreadcrumbs(): Crumb[] {
       const section = pathname.split('/')[2];
       const sectionLabel = section ? ACCOUNT_SECTIONS[section] : undefined;
       return sectionLabel
-        ? [{ label: label('Account'), to: '/account' }, { label: label(sectionLabel) }]
-        : [{ label: label('Account') }];
+        ? [{ label: label(t('shell.account') || 'Account'), to: '/account' }, { label: label(sectionLabel) }]
+        : [{ label: label(t('shell.account') || 'Account') }];
     }
 
     const standalone = Object.entries(STANDALONE_CRUMBS).find(
@@ -107,6 +114,11 @@ export function useBreadcrumbs(): Crumb[] {
     );
     if (standalone) return [{ label: label(standalone[1]) }];
 
-    return [{ label: label('Not found') }];
-  }, [pathname, bots]);
+    return [{ label: label(t('shell.notFound') || 'Not found') }];
+    // `t` is the dependency that matters: useTranslation re-creates it whenever
+    // the store token moves, so depending on it invalidates this memo on a
+    // language switch. It shipped keyed on [pathname, bots] alone, and neither
+    // changes when only the language does - so React handed back the trail it
+    // had built in the previous language and the bar read खाता in English.
+  }, [pathname, bots, t]);
 }

@@ -173,26 +173,43 @@ describe('orderedDimensions', () => {
 });
 
 /**
- * The denominator has to be a property of the chatbot's framework, not of the
- * lead. The version this replaces floored it to the highest observed score, so
- * two leads on the same chatbot were shown "18 / 25" and "30 / 30" and neither
- * number could be compared with anything.
+ * A denominator this screen does not have is not a denominator it may invent.
+ *
+ * Two earlier versions did. One floored the ceiling to the lead's own highest
+ * score, so two leads on the same chatbot read "18 / 25" and "30 / 30". The
+ * next used `round(100 / dimensionCount)`, which assumes the 100 is shared
+ * equally and it is not: MEDDIC has six dimensions weighted 17 and a top option
+ * worth 21, so a top-scoring lead read "21/17". The lead payload carries only
+ * `{value, score}` per dimension, so the honest answer is `null`.
  */
 describe('dimensionMax', () => {
-  it('is 25 for a four-dimension framework', () => {
-    expect(dimensionMax(4)).toBe(25);
+  it('is null for the payload the API actually sends', () => {
+    expect(dimensionMax({ value: 'Approved', score: 21 })).toBeNull();
   });
 
-  it('is 20 for a five-dimension framework', () => {
-    expect(dimensionMax(5)).toBe(20);
+  it('is null rather than a guess when the count is all we know', () => {
+    const dimensions = orderedDimensions({
+      bant: {
+        metrics: { value: null, score: 21 },
+        economic_buyer: { value: null, score: 17 },
+      },
+    });
+    expect(dimensions.map((dimension) => dimension.max)).toEqual([null, null]);
   });
 
-  it('does not move with the scores it is a denominator for', () => {
-    expect(dimensionMax(4)).toBe(dimensionMax(4));
+  it('uses a real ceiling the moment the payload states one', () => {
+    expect(dimensionMax({ max: 21 })).toBe(21);
+    const [dimension] = orderedDimensions({
+      bant: { metrics: { value: null, score: 21, max: 21 } },
+    } as Parameters<typeof orderedDimensions>[0]);
+    expect(dimension.max).toBe(21);
   });
 
-  it('never divides by zero', () => {
-    expect(dimensionMax(0)).toBeGreaterThan(0);
+  it('refuses a ceiling that could not be one', () => {
+    expect(dimensionMax({ max: 0 })).toBeNull();
+    expect(dimensionMax({ max: -4 })).toBeNull();
+    expect(dimensionMax({ max: 'seventeen' })).toBeNull();
+    expect(dimensionMax(null)).toBeNull();
   });
 });
 

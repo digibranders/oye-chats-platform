@@ -264,3 +264,64 @@ class TestCharsUsedBySource:
         # Same name under a different bot must not leak into bot2's lookup.
         assert svc.chars_used_by_source(db, client_id=client.id, document_name="shared.pdf", bot_id=bot2.id) == 0
         assert svc.chars_used_by_source(db, client_id=client.id, document_name="shared.pdf", bot_id=bot1.id) == 111
+
+
+# ── Bulk reclaim (I6) ────────────────────────────────────────────────────────
+
+
+class TestReleaseKbUsage:
+    """Bulk deletes (bot delete, trial purge, crawl orphan sweep) must hand the
+    characters back, or the counter only ever grows and the account 402s on a
+    knowledge base that is mostly empty."""
+
+    def test_sum_for_bot_counts_each_source_once(self, db):
+        client = make_client(db)
+        bot = make_bot(db, client)
+        # 5 chunks of one source must count 200 chars, not 5 x 200.
+        add_document(db, client=client, bot=bot, name="a.pdf", source_char_count=200, chunks=5)
+        add_document(db, client=client, bot=bot, name="b.pdf", source_char_count=50, chunks=2)
+        assert svc.sum_source_chars_for_bot(db, client_id=client.id, bot_id=bot.id) == 250
+
+    def test_release_for_bot_decrements_and_ignores_other_bots(self, db):
+        client = make_client(db, kb_used=1000)
+        bot = make_bot(db, client)
+        other = make_bot(db, client)
+        add_document(db, client=client, bot=bot, name="a.pdf", source_char_count=300, chunks=3)
+        add_document(db, client=client, bot=other, name="c.pdf", source_char_count=400, chunks=1)
+
+        freed = svc.release_kb_usage_for_bot(db, client_id=client.id, bot_id=bot.id)
+        db.commit()
+
+        assert freed == 300
+        assert _kb_used(db, client.id) == 700
+
+    def test_release_for_bot_is_a_noop_without_documents(self, db):
+        client = make_client(db, kb_used=120)
+        bot = make_bot(db, client)
+        assert svc.release_kb_usage_for_bot(db, client_id=client.id, bot_id=bot.id) == 0
+        db.commit()
+        assert _kb_used(db, client.id) == 120
+
+    def test_release_for_sources_only_frees_the_named_ones(self, db):
+        client = make_client(db, kb_used=500)
+        bot = make_bot(db, client)
+        add_document(db, client=client, bot=bot, name="https://a.test/gone", source_char_count=120, chunks=4)
+        add_document(db, client=client, bot=bot, name="https://a.test/live", source_char_count=80, chunks=2)
+
+        freed = svc.release_kb_usage_for_sources(
+            db,
+            client_id=client.id,
+            bot_id=bot.id,
+            document_names=["https://a.test/gone"],
+        )
+        db.commit()
+
+        assert freed == 120
+        assert _kb_used(db, client.id) == 380
+
+    def test_release_for_sources_with_an_empty_list_writes_nothing(self, db):
+        client = make_client(db, kb_used=90)
+        bot = make_bot(db, client)
+        assert svc.release_kb_usage_for_sources(db, client_id=client.id, bot_id=bot.id, document_names=[]) == 0
+        db.commit()
+        assert _kb_used(db, client.id) == 90

@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import logging
+import time
 from datetime import UTC, datetime
 
 from fastapi import WebSocket
@@ -135,6 +136,14 @@ class ConnectionManager:
     # authenticates, so a reconnect loop would only hammer the WS endpoint.
     DEACTIVATED_CLOSE_CODE = 4003
 
+    # How long a disconnect that carries no socket reference may be treated as
+    # belonging to a socket we already replaced (multi-tab operator, visitor
+    # reconnect). The replaced socket's handler reports its ``WebSocketDisconnect``
+    # within milliseconds of the replacement, so this window is generous; outside
+    # it, a disconnect is taken at face value. Callers that DO pass ``ws`` get an
+    # exact identity check instead and never consult this.
+    SUPERSEDED_DISCONNECT_GRACE_SECONDS = 10.0
+
     def __init__(self):
         # session_id → WebSocket
         self.visitor_connections: dict[str, WebSocket] = {}
@@ -191,6 +200,15 @@ class ConnectionManager:
         # "Chatting with AI" operator console. Sessions whose heartbeat
         # stops within a small window are treated as no longer present.
         self._bot_session_last_seen: dict[str, float] = {}
+        # Sockets replaced by a newer connection for the same key, with the
+        # monotonic deadline until which their (socket-less) disconnect report
+        # should be ignored. See ``_is_superseded_disconnect``.
+        self._superseded_operator_sockets: dict[int, float] = {}
+        self._superseded_visitor_sockets: dict[str, float] = {}
+        # FastAPI event loop, captured at startup so background work running on
+        # the shared thread pool can hand a coroutine back to the loop that owns
+        # the sockets instead of spinning up a throwaway one.
+        self._main_loop: asyncio.AbstractEventLoop | None = None
         # session_id → pending connect-request initiated by an operator
         # {
         #   "operator_id": int,
@@ -202,6 +220,58 @@ class ConnectionManager:
         # Visitor in bot mode polls /chat/connect-request/{session_id} and sees
         # this; on yes/no the entry is consumed.
         self._connect_requests: dict[str, dict] = {}
+
+    def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Remember the FastAPI event loop for ``schedule_from_thread``."""
+        self._main_loop = loop
+
+    def schedule_from_thread(self, coro) -> bool:
+        """Run ``coro`` on the bound main loop from a non-async context.
+
+        Returns False (closing the coroutine) when no usable loop is bound, e.g.
+        in the ARQ worker or in tests. Callers must never fall back to
+        ``asyncio.run``: the coroutines here touch Starlette sockets and the
+        module-global Redis publisher, both of which belong to the main loop, and
+        a throwaway loop closes the publisher's connections on exit.
+        """
+        loop = self._main_loop
+        if loop is None or loop.is_closed() or not loop.is_running():
+            coro.close()
+            return False
+        try:
+            asyncio.run_coroutine_threadsafe(coro, loop)
+            return True
+        except RuntimeError:
+            coro.close()
+            return False
+
+    def _mark_socket_superseded(self, store: dict, key) -> None:
+        store[key] = time.monotonic() + self.SUPERSEDED_DISCONNECT_GRACE_SECONDS
+
+    def _is_superseded_disconnect(self, store: dict, key, current, ws) -> bool:
+        """True when this disconnect belongs to an already-replaced socket.
+
+        A reconnecting operator (multi-tab) or visitor gets their old socket
+        closed and the new one stored under the same key. The old socket's
+        handler then reports a disconnect, which used to tear down the NEW
+        connection: the operator was marked offline 60s later and their live
+        chats were re-queued.
+
+        When the caller passes the socket it was serving, the check is exact.
+        When it does not (older call sites), we fall back to the marker set at
+        replacement time, which only ever suppresses a disconnect while a live
+        replacement socket is actually registered.
+        """
+        if ws is not None:
+            superseded = current is not None and current is not ws
+            if superseded:
+                store.pop(key, None)
+            return superseded
+
+        deadline = store.pop(key, None)
+        if deadline is None or current is None:
+            return False
+        return time.monotonic() <= deadline
 
     def _ensure_background_tasks(self):
         """Start periodic background tasks (idempotent. Safe to call on every connection)."""
@@ -242,10 +312,14 @@ class ConnectionManager:
                 )
                 for cs in live_sessions:
                     if cs.assigned_operator_id not in self.operator_connections:
-                        # Operator not connected. Check DB online status
+                        # Operator not connected HERE. Check Redis presence (they
+                        # may hold a socket on a sibling process) and then the DB
+                        # online flag before taking their chat away.
                         op = db.execute(
                             select(Operator).where(Operator.id == cs.assigned_operator_id)
                         ).scalar_one_or_none()
+                        if op and op.id in self._presence_online_ids({op.client_id}):
+                            continue
                         if not op or not op.is_online:
                             cs.status = "bot"
                             cs.assigned_operator_id = None
@@ -311,6 +385,32 @@ class ConnectionManager:
         except Exception as e:
             logger.warning(f"Stale entry cleanup failed: {e}")
 
+    def _presence_online_ids(self, client_ids) -> set[int]:
+        """Operator ids Redis presence says are online, across ``client_ids``.
+
+        Used by the sweeps below to avoid judging a multi-process deployment
+        (the ``oyechats-ws`` split, or WEB_CONCURRENCY > 1) by this process's
+        socket dictionaries alone: an operator connected to a sibling process is
+        genuinely online, even though no socket for them lives here.
+
+        ``get_online_operator_ids`` already degrades to the DB ``is_online``
+        column when Redis is unavailable, so a Redis outage makes the sweeps
+        no-ops rather than logging the whole platform out. An unexpected error
+        beyond that leaves the affected workspace's operators out of the set,
+        i.e. the pre-fix behaviour for them.
+        """
+        online: set[int] = set()
+        for client_id in {c for c in client_ids if c is not None}:
+            try:
+                online |= set(presence.get_online_operator_ids(client_id))
+            except Exception:
+                logger.warning(
+                    "presence lookup failed for client=%s; skipping its operators in this sweep",
+                    client_id,
+                    exc_info=True,
+                )
+        return online
+
     def _fix_stale_online_flags(self):
         """Mark operators as offline in DB if they have is_online=True but are not
         connected and not in a grace period. Handles server crash scenarios where
@@ -319,9 +419,14 @@ class ConnectionManager:
         try:
             with get_session() as db:
                 online_operators = db.execute(select(Operator).where(Operator.is_online.is_(True))).scalars().all()
+                present_ids = self._presence_online_ids({op.client_id for op in online_operators})
                 fixed = 0
                 for op in online_operators:
-                    if op.id not in self.operator_connections and op.id not in self._operator_disconnect_tasks:
+                    if (
+                        op.id not in self.operator_connections
+                        and op.id not in self._operator_disconnect_tasks
+                        and op.id not in present_ids
+                    ):
                         op.is_online = False
                         fixed += 1
                 if fixed:
@@ -335,6 +440,11 @@ class ConnectionManager:
     async def connect_visitor(self, session_id: str, ws: WebSocket, subprotocol: str | None = None):
         await ws.accept(subprotocol=subprotocol)
         self._ensure_background_tasks()
+        old_ws = self.visitor_connections.get(session_id)
+        if old_ws is not None and old_ws is not ws:
+            # Reconnect before the old socket's handler noticed the drop. Its
+            # disconnect must not tear down the connection we just registered.
+            self._mark_socket_superseded(self._superseded_visitor_sockets, session_id)
         self.visitor_connections[session_id] = ws
         logger.info(f"Visitor connected: {session_id}")
         # Sync state to visitor: handles both the REST→WS race condition (visitor WS
@@ -342,7 +452,18 @@ class ConnectionManager:
         # server-restart scenarios where in-memory state was cleared.
         await self._restore_visitor_state(session_id)
 
-    def disconnect_visitor(self, session_id: str):
+    def disconnect_visitor(self, session_id: str, ws: WebSocket | None = None):
+        """Release visitor state. ``ws`` is the socket the caller was serving.
+
+        Passing it makes the "is this still the current socket?" check exact;
+        without it the superseded-socket marker set by ``connect_visitor`` is
+        consulted instead.
+        """
+        current_ws = self.visitor_connections.get(session_id)
+        if self._is_superseded_disconnect(self._superseded_visitor_sockets, session_id, current_ws, ws):
+            logger.info(f"Ignoring disconnect from superseded visitor socket: {session_id}")
+            return
+
         was_waiting = session_id in self.waiting_queue
         was_in_live_chat = session_id in self.assignments
         had_connection = self.visitor_connections.pop(session_id, None) is not None
@@ -475,6 +596,11 @@ class ConnectionManager:
         # starting a reconnect loop.
         old_ws = self.operator_connections.get(operator_id)
         if old_ws and old_ws is not ws:
+            # The old tab's handler will report a disconnect once this close
+            # lands. Mark the socket so that report does not tear down the tab
+            # we are about to register (which would re-queue this operator's
+            # live chats 60s later).
+            self._mark_socket_superseded(self._superseded_operator_sockets, operator_id)
             with contextlib.suppress(Exception):
                 await old_ws.close(code=4001, reason="Session opened in another tab")
 
@@ -594,25 +720,39 @@ class ConnectionManager:
             # up the state change via the resolver's 5s cache TTL.
             logger.debug("operator_joined broadcast failed", exc_info=True)
 
-    def disconnect_operator(self, operator_id: int):
+    def disconnect_operator(self, operator_id: int, ws: WebSocket | None = None) -> bool:
         """Remove the WebSocket reference but preserve in-memory state.
 
         Department, name, and session assignments are kept alive for the duration
         of the grace period so the operator can reconnect seamlessly. Full cleanup
         only happens in _operator_disconnect_timeout if they don't return in time.
+
+        ``ws`` is the socket the caller was serving; when given, a disconnect for
+        a socket that is no longer the current one is ignored. Returns False when
+        the disconnect was ignored, so callers skip the grace timer too.
         """
+        current_ws = self.operator_connections.get(operator_id)
+        if self._is_superseded_disconnect(self._superseded_operator_sockets, operator_id, current_ws, ws):
+            logger.info(f"Ignoring disconnect from superseded operator socket: {operator_id}")
+            return False
+
         self.operator_connections.pop(operator_id, None)
         logger.info(f"Operator WebSocket dropped: {operator_id} (grace period started)")
+        return True
 
-    async def disconnect_operator_and_broadcast(self, operator_id: int):
+    async def disconnect_operator_and_broadcast(self, operator_id: int, ws: WebSocket | None = None):
         """Start the operator disconnect grace period.
 
         Does NOT immediately mark the operator offline or broadcast an offline
         roster. Instead it starts a OPERATOR_DISCONNECT_TIMEOUT countdown.
         If the operator reconnects (cancel task) nothing changes for anyone.
         If they don't, _operator_disconnect_timeout does the full cleanup.
+
+        ``ws``: see :meth:`disconnect_operator`. A disconnect from a socket that
+        has already been replaced starts no countdown.
         """
-        self.disconnect_operator(operator_id)
+        if not self.disconnect_operator(operator_id, ws):
+            return
         self._cancel_operator_disconnect_task(operator_id)
         task = asyncio.create_task(self._operator_disconnect_timeout(operator_id))
         self._operator_disconnect_tasks[operator_id] = task
@@ -2054,7 +2194,7 @@ class ConnectionManager:
                     logger.debug(f"Visitor {session_id} already disconnected, message dropped ({detail})")
                 else:
                     logger.warning(f"Failed to send to visitor {session_id}: {detail}")
-                self.disconnect_visitor(session_id)
+                self.disconnect_visitor(session_id, ws)
         else:
             logger.info(f"No WS for visitor {session_id}, message dropped: {data.get('type', 'unknown')}")
 
@@ -2084,7 +2224,7 @@ class ConnectionManager:
                 # exists, so dropping the socket without starting one made every
                 # subsequent visitor message vanish from the console instead of
                 # being flushed on reconnect.
-                await self.disconnect_operator_and_broadcast(operator_id)
+                await self.disconnect_operator_and_broadcast(operator_id, ws)
 
     def _visible_queue_for_operator(self, operator_id: int) -> list[dict]:
         """Build this operator's visible queue from the DATABASE.

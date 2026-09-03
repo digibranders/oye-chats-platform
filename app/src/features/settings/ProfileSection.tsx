@@ -20,21 +20,29 @@ import {
 } from '../../services/api';
 import {
   AVATAR_ACCEPT,
-  AVATAR_HINT,
+  avatarHint,
   validateAvatarFile,
 } from '../agents/experience/avatarRules';
 import { keys } from '../../query/keys';
 import type { CurrentUser } from '../../types/domain';
 import { describeDirty, useDraft } from '../workspace/draft';
 import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 export interface ProfileSectionProps {
   user: CurrentUser;
   onSaved: (patch: { name?: string; email?: string }) => void;
 }
 
+// @i18n-exempt: fallbacks, read through profileFieldLabel below.
 const CLIENT_LABELS = { name: 'Name' } as const;
+// @i18n-exempt: fallbacks, read through profileFieldLabel below.
 const OPERATOR_LABELS = { name: 'Name', email: 'Email' } as const;
+
+/** A profile field label in the reader's language. */
+function profileFieldLabel(field: string, fallback: string): string {
+  return translateNow(`settings.profileField.${field}`) || fallback;
+}
 
 /**
  * Your own name — and, for a team seat, your own email.
@@ -206,7 +214,7 @@ export function ProfileSection({ user, onSaved }: ProfileSectionProps) {
           ) : null}
         </span>
       </SettingRow>
-      {isOperator ? <SettingBand>{AVATAR_HINT}</SettingBand> : null}
+      {isOperator ? <SettingBand>{avatarHint()}</SettingBand> : null}
 
       <SettingRow
         label={t('settings.name') || 'Name'}
@@ -245,7 +253,15 @@ export function ProfileSection({ user, onSaved }: ProfileSectionProps) {
       <SaveBar
         variant="footer"
         dirty={draft.isDirty}
-        summary={describeDirty(draft.dirty, isOperator ? OPERATOR_LABELS : CLIENT_LABELS)}
+        summary={describeDirty(
+          draft.dirty,
+          Object.fromEntries(
+            Object.entries(isOperator ? OPERATOR_LABELS : CLIENT_LABELS).map(([field, label]) => [
+              field,
+              profileFieldLabel(field, label),
+            ]),
+          ),
+        )}
         saving={save.isPending}
         onSave={submit}
         onDiscard={draft.reset}

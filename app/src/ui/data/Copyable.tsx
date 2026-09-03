@@ -4,6 +4,7 @@ import { cn } from '../lib/cn';
 import { Button } from '../primitives/Button';
 import { useClipboard } from '../hooks/useClipboard';
 import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 export interface CopyFieldProps {
   value: string;
@@ -110,7 +111,12 @@ export function CopyField({
       {/* The outcome, announced. A colour change on an icon is not feedback for
           anyone who cannot see it, and a silent failure is worse than none. */}
       <span role="status" aria-live="polite" className="sr-only">
-        {state === 'copied' ? `${label} copied` : state === 'failed' ? `Could not copy ${label}. Select the text to copy it manually.` : ''}
+        {state === 'copied'
+          ? translateNow('ds.labelCopied', { label }) || `${label} copied`
+          : state === 'failed'
+            ? translateNow('ds.couldNotCopyLabel', { label }) ||
+              `Could not copy ${label}. Select the text to copy it manually.`
+            : ''}
       </span>
     </div>
   );
@@ -183,7 +189,12 @@ export function CodeBlock({ code, caption, label = 'code', onCopy, className }: 
         <code>{code}</code>
       </pre>
       <span role="status" aria-live="polite" className="sr-only">
-        {state === 'copied' ? `${label} copied` : state === 'failed' ? `Could not copy the ${label}. Select the text to copy it manually.` : ''}
+        {state === 'copied'
+          ? translateNow('ds.labelCopied', { label }) || `${label} copied`
+          : state === 'failed'
+            ? translateNow('ds.couldNotCopyTheLabel', { label }) ||
+              `Could not copy the ${label}. Select the text to copy it manually.`
+            : ''}
       </span>
     </div>
   );

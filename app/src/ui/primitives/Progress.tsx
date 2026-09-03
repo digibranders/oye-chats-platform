@@ -4,6 +4,7 @@ import { Progress as BaseProgress } from '@base-ui/react/progress';
 import { cn } from '../lib/cn';
 import { formatNumber, formatPercent } from '../lib/formatters';
 import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 export interface ProgressProps {
   /** 0–100. Pass `null` for an indeterminate bar. */
@@ -176,7 +177,16 @@ export function Meter({
   // only applies to `undefined`, and callers pass null to opt OUT.
   const unlimitedNote = unlimitedNoteProp === undefined ? (t('ds.noLimit') || 'No limit') : unlimitedNoteProp;
   const unlimited = limit < 0;
-  const fraction = unlimited || limit === 0 ? 0 : used / limit;
+  /**
+   * A zero ceiling is a real ceiling, and anything used against it is over it.
+   *
+   * This used to be `limit === 0 ? 0`, so "1 / 0 seats", a workspace left
+   * holding an operator by a downgrade to a plan that allows none, painted a
+   * calm empty bar, while "11 / 10" painted the danger state. The meter further
+   * over its ceiling read as the safer of the two. Zero used against zero is a
+   * different fact: nothing is over anything, so it stays neutral and empty.
+   */
+  const fraction = unlimited ? 0 : limit > 0 ? used / limit : used > 0 ? 1 : 0;
   const tone =
     forcedTone ?? (fraction >= 1 ? 'danger' : fraction >= 0.8 ? 'warning' : 'accent');
 
@@ -227,7 +237,11 @@ export function Meter({
       // Spelled out, because "412 / 500" read aloud as two numbers is not the
       // fact the user needs; "82% used" is.
       getAriaValueText={(_formatted, value) =>
-        `${formatNumber(value)} of ${formatNumber(limit)} used, ${formatPercent(fraction)}`
+        translateNow('ds.ofLimitUsedPercent', {
+          used: formatNumber(value),
+          limit: formatNumber(limit),
+          percent: formatPercent(fraction),
+        }) || `${formatNumber(value)} of ${formatNumber(limit)} used, ${formatPercent(fraction)}`
       }
       className={className}
     >
