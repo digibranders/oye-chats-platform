@@ -1,5 +1,7 @@
 import { Alert, Tooltip } from '../../ui';
 import { asText } from './visitorNetwork';
+import { Trans } from '../../i18n/Trans';
+import { t as translateNow } from '../../i18n/i18n';
 
 /**
  * The company the visitor's network resolves to, drawn once.
@@ -37,10 +39,17 @@ export function NetworkSignal({ intel }: { intel: Record<string, unknown> }) {
         </div>
       ) : asn ? (
         <p className="text-prose text-text-secondary">
-          Connecting via <span className="text-text-primary">{asn}</span>
+          <Trans
+            k="leads.connectingVia"
+            fallback="Connecting via {network}"
+            values={{ network: <span className="text-text-primary">{asn}</span> }}
+          />
         </p>
       ) : null}
-      {masked ? <Alert tone="warning">VPN or proxy — signal unreliable.</Alert> : null}
+      {masked ? <Alert tone="warning">
+          {translateNow('leads.vpnOrProxyUnreliable') ||
+            'VPN or proxy detected, so this signal is unreliable.'}
+        </Alert> : null}
     </div>
   );
 }

@@ -70,6 +70,7 @@ import {
 } from './leadsUrl';
 import {
   TIER_META,
+  tierLabel,
   TIER_ORDER,
   companyDisplay,
   compareLeads,
@@ -83,6 +84,7 @@ import {
   type TierKey,
 } from './leadModel';
 import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
 /**
  * Leads — "who asked about buying, and how ready did they sound?"
@@ -108,24 +110,30 @@ import { useTranslation } from '../../i18n/useTranslation';
  * now one tooltip on one glyph, where a reader who wonders can find it.
  */
 
-const CONTACT_OPTIONS: ReadonlyArray<{ value: ContactFilter; label: string }> = [
-  { value: 'all', label: 'Everyone' },
-  { value: 'named', label: 'Named leads' },
-  { value: 'anonymous', label: 'Anonymous only' },
+// Built per call: a module constant would freeze the language at import.
+const contactOptions = (): ReadonlyArray<{ value: ContactFilter; label: string }> => [
+  { value: 'all', label: translateNow('leads.everyone') || 'Everyone' },
+  { value: 'named', label: translateNow('leads.namedLeads') || 'Named leads' },
+  { value: 'anonymous', label: translateNow('leads.anonymousOnly') || 'Anonymous only' },
 ];
 
-const TIER_OPTIONS = [
-  { value: '', label: 'Any quality' },
-  ...TIER_ORDER.map((tier) => ({ value: tier, label: TIER_META[tier].label })),
+const tierOptions = () => [
+  { value: '', label: translateNow('leads.anyQuality') || 'Any quality' },
+  ...TIER_ORDER.map((tier) => ({ value: tier, label: tierLabel(tier) })),
 ];
 
-const SCORE_OPTIONS = [
-  { value: '', label: 'Any score' },
-  ...MIN_SCORE_OPTIONS.map((score) => ({ value: String(score), label: `Score ${score}+` })),
+const scoreOptions = () => [
+  { value: '', label: translateNow('leads.anyScore') || 'Any score' },
+  ...MIN_SCORE_OPTIONS.map((score) => ({
+    value: String(score),
+    label: translateNow('leads.scorePlus', { score }) || `Score ${score}+`,
+  })),
 ];
 
 /** What each filter actually reaches. One tooltip, not two lines. */
-const SCOPE_NOTE = `Quality, score and date filter every lead. Search and lead type filter the ${LEADS_PAGE_SIZE} rows on this page.`;
+const scopeNote = () =>
+  translateNow('leads.scopeNote', { count: LEADS_PAGE_SIZE }) ||
+  `Quality, score and date filter every lead. Search and lead type filter the ${LEADS_PAGE_SIZE} rows on this page.`;
 
 /**
  * A deliverability verdict beside an email.
@@ -236,7 +244,7 @@ function LeadCell({ lead }: { lead: Lead }) {
           <EmailVerdict isValid={lead.contact?.is_valid_email} />
         </>
       ) : null}
-      {lead.unread ? <span className="sr-only">Not opened yet</span> : null}
+      {lead.unread ? <span className="sr-only">{translateNow('leads.notOpenedYet') || 'Not opened yet'}</span> : null}
     </span>
   );
 }
@@ -662,7 +670,7 @@ export function LeadsPage() {
               <Select
                 label={t('leads.filterByQuality') || 'Filter by quality'}
                 value={state.tier ?? ''}
-                options={TIER_OPTIONS}
+                options={tierOptions()}
                 disabled={intelligenceLocked}
                 onValueChange={(value) => update({ tier: (value || null) as TierKey | null })}
               />
@@ -671,7 +679,7 @@ export function LeadsPage() {
               <Select
                 label={t('leads.filterByMinimumScore') || 'Filter by minimum score'}
                 value={state.minScore === null ? '' : String(state.minScore)}
-                options={SCORE_OPTIONS}
+                options={scoreOptions()}
                 disabled={intelligenceLocked}
                 onValueChange={(value) => update({ minScore: value ? Number(value) : null })}
               />
@@ -716,11 +724,11 @@ export function LeadsPage() {
               <Select
                 label={t('leads.filterByLeadType') || 'Filter by lead type'}
                 value={state.contact}
-                options={CONTACT_OPTIONS}
+                options={contactOptions()}
                 onValueChange={(value) => update({ contact: value as ContactFilter })}
               />
             </div>
-            <Tooltip content={SCOPE_NOTE}>
+            <Tooltip content={scopeNote()}>
               <button
                 type="button"
                 aria-label={t('leads.whatTheseFiltersCover') || 'What these filters cover'}
@@ -890,10 +898,8 @@ export function LeadsPage() {
         // chatbot regardless of it, so quoting "12" beside an action that
         // cleared 300 was the dialog's whole failure.
         description={
-          <>
-            Clears the unread mark on every unread lead for this chatbot, on every
-            page. The date filter above does not narrow it. Cannot be undone.
-          </>
+          t('leads.clearsTheUnreadMark') ||
+          'Clears the unread mark on every unread lead for this chatbot, on every page. The date filter above does not narrow it. Cannot be undone.'
         }
         confirmLabel="Mark all read"
         onConfirm={async () => {
@@ -939,6 +945,8 @@ interface PreviewRow {
   lastActive: string;
 }
 
+// @i18n-exempt: fixture rows for the empty-state preview. Invented names and
+// relative dates that stand in for real data; nothing here is product copy.
 const PREVIEW_ROWS: readonly PreviewRow[] = [
   {
     session_id: 'p1',
@@ -969,7 +977,7 @@ const PREVIEW_ROWS: readonly PreviewRow[] = [
 const PREVIEW_COLUMNS: Column<PreviewRow>[] = [
   {
     key: 'lead',
-    header: 'Lead',
+    header: translateNow('leads.columnLead') || 'Lead',
     rowHeader: true,
     render: (row) => (
       <span className="flex items-center gap-2">
@@ -980,14 +988,14 @@ const PREVIEW_COLUMNS: Column<PreviewRow>[] = [
   },
   {
     key: 'company',
-    header: 'Company',
+    header: translateNow('leads.columnCompany') || 'Company',
     width: '12rem',
     render: (row) =>
       row.company ?? <span className="text-text-tertiary">{ABSENT}</span>,
   },
   {
     key: 'quality',
-    header: 'Quality',
+    header: translateNow('leads.columnQuality') || 'Quality',
     width: '11rem',
     render: (row) => (
       <span className="flex items-center gap-2">
@@ -998,7 +1006,7 @@ const PREVIEW_COLUMNS: Column<PreviewRow>[] = [
   },
   {
     key: 'last_active',
-    header: 'Last active',
+    header: translateNow('leads.columnLastActive') || 'Last active',
     width: '10rem',
     render: (row) => row.lastActive,
   },
