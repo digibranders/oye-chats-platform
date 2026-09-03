@@ -8,6 +8,7 @@ import { PlatformGuide } from './PlatformGuide';
 import { installStatus, widgetHeartbeat } from './deployModel';
 import type { DomainInstall } from './installDomainsModel';
 import { recordActivationEvent, sendInstallInvite } from '../../../services/api';
+import { DEFAULT_PLATFORM_ID, platforms } from '../../../data/platformIntegrations';
 
 vi.mock('../../../services/api', () => ({
   recordActivationEvent: vi.fn(),
@@ -585,5 +586,54 @@ describe('InstallStatusCard ▸ domains', () => {
       />,
     );
     expect(screen.queryByText('Loaded from')).toBeNull();
+  });
+});
+
+/**
+ * What every platform's instructions must contain.
+ *
+ * `install_detection.scan_html` finds an install by two things and only two:
+ * the loader FILENAME and a real bot key. If a platform's steps hand the
+ * customer a snippet missing either one, then a customer who follows those
+ * steps exactly gets a working widget that our own install check calls
+ * "Snippet not found" - which is what happened on oyechats.com.
+ *
+ * This pins the contract from the instructions' side. The scanner's side is
+ * pinned in api/tests/test_install_detection.py.
+ */
+describe('every platform hands out a snippet the install check can find', () => {
+  const KEY = 'bot-cd72ea98fd30';
+
+  // GTM is the one platform this cannot hold for, and not through any fault
+  // of the instructions: the snippet goes into a container Google fetches and
+  // runs in the browser, so nothing of ours is ever in the customer's HTML.
+  const UNDETECTABLE_BY_DESIGN = new Set(['gtm']);
+
+  for (const platform of platforms) {
+    it(`${platform.id} names the loader and carries the key`, () => {
+      const code = platform
+        .getSteps(KEY, 'production', { attribution: true })
+        .map((step) => step.code ?? '')
+        .join('\n');
+
+      expect(code).toContain('oyechats-widget.js');
+      expect(code).toContain(KEY);
+    });
+  }
+
+  it('records which platforms cannot be verified from outside, and why', () => {
+    // A list, not a comment, so that adding a platform whose install is
+    // invisible to a server-side fetch is a deliberate act with a name on it.
+    expect([...UNDETECTABLE_BY_DESIGN]).toEqual(['gtm']);
+  });
+});
+
+describe('the install panel opens on a platform', () => {
+  it('starts on HTML rather than an empty select', () => {
+    // The panel's whole job is to show steps. Opening on nothing showed a
+    // reader who had just been told to install something a second thing to
+    // choose first, and HTML is the one answer that is never wrong.
+    expect(DEFAULT_PLATFORM_ID).toBe('html');
+    expect(platforms.some((p) => p.id === DEFAULT_PLATFORM_ID)).toBe(true);
   });
 });

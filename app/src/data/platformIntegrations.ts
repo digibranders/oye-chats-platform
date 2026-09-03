@@ -326,9 +326,19 @@ const react: Platform = {
     description: 'Create React App or Vite',
     getSteps: (botKey, env, { attribution = true } = {}) => [
         {
-            title: 'Add a useEffect in your root component',
+            title: 'Add the script tag to index.html',
+            ...withInlineAttribution(
+                `<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
+                'Open public/index.html (Create React App) or index.html (Vite) and paste this just before </body>. This is the simplest place for it: the widget loads on every route without a component having to mount, and it stays in your served HTML, so anything that reads your page without running JavaScript can still see it.',
+                botKey,
+                { attribution },
+            ),
+            language: 'html',
+        },
+        {
+            title: 'Or, if you cannot edit index.html, add a useEffect',
             description:
-                'Open your App.jsx (or App.tsx) and add the following useEffect hook to dynamically load the widget script.',
+                'An alternative for setups where index.html is generated. Note that the widget is then created by JavaScript at runtime, so it will not appear in your served HTML and our install check cannot see it from outside.',
             code: `import { useEffect } from 'react';
 
 function App() {
@@ -886,6 +896,15 @@ export const platforms: Platform[] = [
 ];
 
 /** Category labels for the selector grid. */
+/**
+ * The platform the install panel opens on.
+ *
+ * HTML because it is the one answer that is never wrong: the snippet it gives
+ * is a plain script tag, which every platform in this list ultimately reduces
+ * to. A reader who knows their stack changes it in one keystroke.
+ */
+export const DEFAULT_PLATFORM_ID = 'html';
+
 export const categoryLabels: Record<string, string> = {
     generic: 'Generic',
     framework: 'Frameworks',
