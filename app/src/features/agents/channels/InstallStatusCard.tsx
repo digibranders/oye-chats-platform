@@ -136,7 +136,10 @@ export function InstallStatusCard({
               <span className="sr-only"> {t('agents.opensInANewTab') || '(opens in a new tab)'}</span>
             </a>
           ) : null}
-          {status.state === 'waiting' ? (
+          {/* `own-domain` shares this button and not the `not-detected` one.
+              The customer's next move is the same as `waiting`: paste it on
+              their own site. What it is not is a failed check to re-run. */}
+          {status.state === 'waiting' || status.state === 'own-domain' ? (
             <Button size="sm" variant="accent" onClick={onStartVerifying}>
               {t('agents.iHaveAddedItCheck') || 'I have added it, check now'}
             </Button>

@@ -16,6 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.api import bot_routes
 from app.api.bot_routes import _domain_state
 from app.services.install_probe import probe_targets
 
@@ -214,3 +215,61 @@ class TestTheRegistry:
         row = db.query(BotDomainInstall).filter_by(bot_id=bot.id).one()
         assert row.observed_last_at is not None
         assert row.probe_status == "missing"
+
+
+class TestOwnDomainsAreNotCustomerInstalls:
+    """``counts_as_install``, and the single rule behind it.
+
+    Our marketing site runs the widget, so its snippet probes as installed and
+    its heartbeat is refused, deliberately: our own traffic must never tick a
+    customer's setup step. The card then said "no visitor has opened the
+    chatbot here yet" forever, which is how this got reported as a bug against
+    a mechanism that was working exactly as designed.
+
+    The rule lives in one function so the two callers cannot drift. A payload
+    that claimed a host counts while the heartbeat refused it would reproduce
+    the same false fault by a different route.
+    """
+
+    @staticmethod
+    def _request(host: str = "api.oyechats.com"):
+        return SimpleNamespace(base_url=f"https://{host}/", headers={})
+
+    @pytest.fixture(autouse=True)
+    def _our_hosts(self, monkeypatch):
+        # The env under test has no APP_URL/MARKETING_URL, so the set would be
+        # just localhost. Pin it to its production shape instead.
+        monkeypatch.setattr(
+            bot_routes,
+            "_INTERNAL_WIDGET_HOSTS",
+            {"www.oyechats.com", "app.oyechats.com", "localhost", "127.0.0.1"},
+        )
+
+    def test_our_marketing_site_is_ours(self):
+        assert bot_routes._is_internal_widget_host("www.oyechats.com", self._request()) is True
+
+    def test_the_dashboard_is_ours(self):
+        assert bot_routes._is_internal_widget_host("app.oyechats.com", self._request()) is True
+
+    def test_the_api_serving_the_request_is_ours(self):
+        # The hosted demo and preview pages are served by the API itself, so a
+        # widget embedded there reports the API host as its origin. Excluded
+        # whatever the URL config resolves to, which is why the request has to
+        # be a parameter.
+        assert bot_routes._is_internal_widget_host("api.oyechats.com", self._request()) is True
+
+    def test_a_customer_domain_is_not_ours(self):
+        assert bot_routes._is_internal_widget_host("acme.com", self._request()) is False
+
+    def test_a_subdomain_of_ours_that_we_do_not_own_still_counts(self):
+        # Customer chatbots run on `*.oyechats.com` subdomains we hand out.
+        # Those are real installs and two of them are stamped in production.
+        assert bot_routes._is_internal_widget_host("cleanstart.oyechats.com", self._request()) is False
+
+    def test_the_heartbeat_and_the_payload_agree(self):
+        # Both sides of the rule, driven through their real entry points. If
+        # these ever disagree the UI reports a fault that does not exist.
+        for host, external in (("www.oyechats.com", False), ("acme.com", True)):
+            request = SimpleNamespace(base_url="https://api.oyechats.com/", headers={"origin": f"https://{host}"})
+            assert (bot_routes._external_install_hostname(request) is not None) is external
+            assert (not bot_routes._is_internal_widget_host(host, request)) is external

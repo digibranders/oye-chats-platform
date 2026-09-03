@@ -46,6 +46,48 @@ describe('installStatus', () => {
     expect(status.tone).toBe('warning');
   });
 
+  it('explains an OyeChats-owned domain instead of calling it uninstalled', () => {
+    // Our marketing site runs the widget. The backend refuses to count a load
+    // from one of our own hosts, so every stamp stays null and the card read
+    // "Waiting to be installed" for a snippet that was on the page and
+    // working. That reading is what got a working mechanism reported as a bug.
+    const status = installStatus({
+      installedAt: null,
+      claimed: false,
+      checking: false,
+      ownInstallDomain: 'www.oyechats.com',
+    });
+    expect(status.state).toBe('own-domain');
+    expect(status.tone).toBe('neutral');
+    expect(status.detail).toContain('www.oyechats.com');
+  });
+
+  it('lets a real install outrank an OyeChats-owned one', () => {
+    // Both at once: the snippet is on our site AND on the customer's. The
+    // customer's is the answer to the question the card asks.
+    const status = installStatus({
+      installedAt: '2026-08-30T09:00:00Z',
+      lastSeenAt: '2026-08-30T09:00:00Z',
+      claimed: false,
+      checking: false,
+      now: Date.parse('2026-08-31T09:00:00Z'),
+      ownInstallDomain: 'www.oyechats.com',
+    });
+    expect(status.state).toBe('installed');
+  });
+
+  it('reports a running search above an OyeChats-owned domain', () => {
+    // The customer has pressed check and is watching. Whatever is on our own
+    // site is not the thing they are waiting to hear about.
+    const status = installStatus({
+      installedAt: null,
+      claimed: true,
+      checking: true,
+      ownInstallDomain: 'www.oyechats.com',
+    });
+    expect(status.state).toBe('checking');
+  });
+
   it('reports the search while it is running, above the claim', () => {
     const status = installStatus({ installedAt: null, claimed: true, checking: true });
     expect(status.state).toBe('checking');

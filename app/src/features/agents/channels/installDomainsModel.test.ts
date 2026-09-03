@@ -52,6 +52,28 @@ describe('describeDomain', () => {
     expect(result.detail).toContain('No visitor');
   });
 
+  it('explains an OyeChats-owned domain rather than reporting it as untouched', () => {
+    // www.oyechats.com runs the widget, so it probes as installed and its
+    // heartbeat is refused on purpose: our own traffic must never tick a
+    // customer's setup step. Saying "no visitor has opened the chatbot here
+    // yet" to somebody who just opened it themselves is what got this
+    // reported as a bug against a mechanism working as designed.
+    const result = describeDomain(
+      domain({ hostname: 'www.oyechats.com', state: 'installed', probe_status: 'installed', counts_as_install: false }),
+    );
+    expect(result.tone).toBe('success');
+    expect(result.needsAttention).toBe(false);
+    expect(result.detail).not.toContain('No visitor');
+    expect(result.detail).toContain('OyeChats-owned');
+  });
+
+  it('keeps the ordinary wording when the flag is absent', () => {
+    // An older API build sends no flag. Defaulting to the OWN-domain wording
+    // would tell every customer their real install does not count.
+    const result = describeDomain(domain({ state: 'installed', probe_status: 'installed' }));
+    expect(result.detail).toContain('No visitor');
+  });
+
   it('says a different chatbot is there rather than saying the snippet is missing', () => {
     const result = describeDomain(
       domain({ state: 'missing', probe_status: 'foreign', other_chatbot: 'bot-000000000000' }),
