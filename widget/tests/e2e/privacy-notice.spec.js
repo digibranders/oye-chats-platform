@@ -67,8 +67,12 @@ test.describe('the privacy notice', () => {
   test('collapses on every viewport once the conversation has started', async ({ page }) => {
     const root = await boot(page, { history: SENT })
     const line = root.getByText('Privacy Policy')
-    // Present in the document either way — this is a layout collapse, not a
-    // removal, so the link stays reachable for assistive tech.
+    // Present in the document either way. `hidden` is display:none, which
+    // takes the link out of the accessibility tree too, so this is not an
+    // assistive-tech affordance: it is the disclosure having already done its
+    // job before the first message, on every viewport, with the row reclaimed
+    // afterwards. The count assertion pins that the element is collapsed
+    // rather than removed from the markup.
     await expect(line).toHaveCount(1)
     // Hidden on both phone and desktop once the first message is sent: the
     // decision the notice guards is already made, so the row is reclaimed.
