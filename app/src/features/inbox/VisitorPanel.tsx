@@ -27,7 +27,14 @@ import { NetworkSignal } from '../leads/NetworkSignal';
 import { useLeadAnnotations } from '../leads/useLeadAnnotations';
 import type { VisitorProfile } from './visitorProfile';
 import { useTranslation } from '../../i18n/useTranslation';
+import { t as translateNow } from '../../i18n/i18n';
 
+/** A BANT dimension in the reader's language. */
+function bantLabel(key: keyof NonNullable<VisitorProfile['bant']>): string {
+  return translateNow(`inbox.bant.${key}`) || BANT_LABEL[key];
+}
+
+// @i18n-exempt: fallbacks, read through bantLabel above.
 const BANT_LABEL: Record<keyof NonNullable<VisitorProfile['bant']>, string> = {
   budget: 'Budget',
   authority: 'Authority',
@@ -78,12 +85,17 @@ function PrivateNotes({ sessionId }: { sessionId: string }) {
   return (
     <Disclosure
       headingLevel={3}
-      summary={<span className="text-sm font-medium text-text-primary">Private notes</span>}
-      regionLabel="Private notes about this visitor"
+      summary={
+        <span className="text-sm font-medium text-text-primary">
+          {t('inbox.privateNotes') || 'Private notes'}
+        </span>
+      }
+      regionLabel={t('inbox.privateNotesAboutThisVisitor') || 'Private notes about this visitor'}
       trailing={
         controller.note ? (
           <span className="text-2xs text-text-tertiary">
-            Edited {formatRelative(controller.note.ts)}
+            {t('inbox.editedWhen', { when: formatRelative(controller.note.ts) }) ||
+              `Edited ${formatRelative(controller.note.ts)}`}
           </span>
         ) : null
       }
@@ -285,7 +297,7 @@ export function VisitorPanel({
     () =>
       profile?.bant
         ? (Object.keys(BANT_LABEL) as Array<keyof typeof BANT_LABEL>).map((key) => ({
-            label: BANT_LABEL[key],
+            label: bantLabel(key),
             value: profile.bant?.[key],
           }))
         : [],
@@ -436,7 +448,7 @@ export function VisitorPanel({
               }))}
             />
             <p className="mt-1 text-xs text-text-secondary">
-              Estimated total{' '}
+              {t('inbox.estimatedTotal') || 'Estimated total'}{' '}
               <span className="figure text-text-primary">
                 {formatMoney(
                   Math.round(profile.quotation.total * 100),

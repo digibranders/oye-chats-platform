@@ -1,6 +1,7 @@
 import { Languages } from 'lucide-react';
 import { Badge, Tooltip } from '../../ui';
 import { useLocaleCatalog } from '../../hooks/useLocaleCatalog';
+import { t as translateNow } from '../../i18n/i18n';
 
 /**
  * The language this conversation settled into.
@@ -24,7 +25,12 @@ export function ConversationLanguageBadge({
   const label = labelFor(languageCode);
   if (!label) return null;
   return (
-    <Tooltip content={`The visitor is writing in ${label}`}>
+    <Tooltip
+      content={
+        translateNow('inbox.theVisitorIsWritingIn', { language: label }) ||
+        `The visitor is writing in ${label}`
+      }
+    >
       <Badge tone="neutral" className={className}>
         <Languages aria-hidden className="h-3 w-3" />
         {label}

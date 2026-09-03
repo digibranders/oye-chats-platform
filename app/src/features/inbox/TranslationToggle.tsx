@@ -84,7 +84,7 @@ export function TranslationToggle({
       {showOriginal
         ? t('inbox.viewTranslation') || 'View translation'
         : label
-          ? `View original (${label})`
+          ? t('inbox.viewOriginalIn', { language: label }) || `View original (${label})`
           : t('inbox.viewOriginal') || 'View original'}
     </button>
   );

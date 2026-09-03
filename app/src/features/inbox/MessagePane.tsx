@@ -69,7 +69,10 @@ export function MessagePane({
 
   const mailto = useMemo(() => {
     if (!message.visitor_email) return null;
-    const subject = `Re: your message${message.bot_name ? ` about ${message.bot_name}` : ''}`;
+    const subject = message.bot_name
+      ? t('inbox.reYourMessageAbout', { bot: message.bot_name }) ||
+        `Re: your message about ${message.bot_name}`
+      : t('inbox.reYourMessage') || 'Re: your message';
     const quoted = `\n\n---\nYou wrote:\n${message.message_body ?? ''}`;
     return `mailto:${message.visitor_email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(
       `${reply}${quoted}`,
@@ -83,7 +86,10 @@ export function MessagePane({
       await onStatusChange(message.id, next);
     } catch (err) {
       setError(
-        err instanceof Error ? `Could not update this message: ${err.message}` : t('inbox.couldNotUpdateThisMessage2') || 'Could not update this message.',
+        err instanceof Error
+          ? t('inbox.couldNotUpdateThisMessageReason', { reason: err.message }) ||
+            `Could not update this message: ${err.message}`
+          : t('inbox.couldNotUpdateThisMessage2') || 'Could not update this message.',
       );
     } finally {
       setBusy(false);
@@ -91,7 +97,7 @@ export function MessagePane({
   }
 
   return (
-    <section aria-label={`Message from ${name}`} className="flex h-full min-h-0 flex-col bg-canvas">
+    <section aria-label={t('inbox.messageFrom', { name }) || `Message from ${name}`} className="flex h-full min-h-0 flex-col bg-canvas">
       <PaneHeader
         titleAs="h2"
         title={
@@ -109,7 +115,7 @@ export function MessagePane({
                     ? t('inbox.new') || 'New'
                     : status === 'read'
                       ? t('inbox.read') || 'Read'
-                      : 'Reply opened'}
+                      : t('inbox.replyOpened') || 'Reply opened'}
                 </Badge>
               </span>
               <span className="figure block truncate text-2xs font-normal text-text-tertiary">
@@ -121,7 +127,7 @@ export function MessagePane({
                   not send the mail; this says what the green state means. */}
               {status === 'replied' ? (
                 <span className="block truncate text-2xs font-normal text-text-tertiary">
-                  Marked when the mail link was opened
+                  {t('inbox.markedWhenTheMailLink') || 'Marked when the mail link was opened'}
                 </span>
               ) : null}
             </span>
@@ -136,7 +142,7 @@ export function MessagePane({
               onClick={() => void setStatus(status === 'new' ? 'read' : 'replied')}
             >
               <Check aria-hidden />
-              {status === 'new' ? t('inbox.markRead') || 'Mark read' : 'Mark reply opened'}
+              {status === 'new' ? t('inbox.markRead') || 'Mark read' : t('inbox.markReplyOpened') || 'Mark reply opened'}
             </Button>
             {/* Destructive actions are `danger` outline. As a ghost this was
                 indistinguishable in weight from "Mark read" beside it. */}
@@ -245,7 +251,7 @@ export function MessagePane({
                     if (status !== 'replied') void setStatus('replied');
                     toast.info(t('inbox.openingYourEmailApp') || 'Opening your email app', {
                       description:
-                        'This message is marked as having its reply opened. Send it from your mailbox.',
+                        t('inbox.thisMessageIsMarkedAs') || 'This message is marked as having its reply opened. Send it from your mailbox.',
                     });
                   }}
                 >
@@ -269,8 +275,11 @@ export function MessagePane({
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
         title={t('inbox.deleteThisMessage') || 'Delete this message?'}
-        description={`The message from ${name} is removed for everyone in the workspace, and there is no copy anywhere else.`}
-        confirmLabel="Delete"
+        description={
+          t('inbox.theMessageFromIsRemoved', { name }) ||
+          `The message from ${name} is removed for everyone in the workspace, and there is no copy anywhere else.`
+        }
+        confirmLabel={t('inbox.delete') || 'Delete'}
         destructive
         onConfirm={async () => {
           await onDelete(message.id);

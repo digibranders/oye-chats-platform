@@ -106,7 +106,7 @@ function Header({
         <>
           {wait ? (
             <Badge tone={waitTone(item.at, now)} className="figure">
-              Waiting {wait}
+              {t('inbox.waitingFor', { wait }) || `Waiting ${wait}`}
             </Badge>
           ) : null}
           {children}
@@ -197,9 +197,9 @@ export function ChatPane({
     if (!resolution || !sessionId) return;
     const { outcome, visitorName } = resolution;
     const who = visitorName ?? (t('inbox.theVisitor') || 'The visitor');
-    if (outcome === 'accepted') toast.success(`${who} accepted your invitation`);
-    else if (outcome === 'declined') toast.info(`${who} declined your invitation`);
-    else if (outcome === 'expired') toast.info(`Your invitation to ${who} expired`);
+    if (outcome === 'accepted') toast.success(t('inbox.acceptedYourInvitation', { who }) || `${who} accepted your invitation`);
+    else if (outcome === 'declined') toast.info(t('inbox.declinedYourInvitation', { who }) || `${who} declined your invitation`);
+    else if (outcome === 'expired') toast.info(t('inbox.yourInvitationExpired', { who }) || `Your invitation to ${who} expired`);
     setInvited(false);
     socket.clearConnectResolution(sessionId);
   }, [resolution, sessionId, socket, t]);
@@ -224,7 +224,9 @@ export function ChatPane({
     void run(t('inbox.couldNotAcceptThisConversation') || 'Could not accept this conversation', async () => {
       await acceptChat(sessionId, socket.operatorId);
       // The socket's `chat_accepted` moves it onto the board and into "Yours".
-      toast.success(`You are now talking to ${item.name}`);
+      toast.success(
+        t('inbox.youAreNowTalkingTo', { name: item.name }) || `You are now talking to ${item.name}`,
+      );
     });
   };
 
@@ -234,12 +236,15 @@ export function ChatPane({
     void sendConnectRequest(sessionId, socket.operatorId)
       .then(() => {
         setInvited(true);
-        toast.success(`Invitation sent to ${item.name}`, {
+        toast.success(t('inbox.invitationSentTo', { name: item.name }) || `Invitation sent to ${item.name}`, {
           description: t('inbox.theyWillSeeAnOffer') || 'They will see an offer to talk to a person.',
         });
       })
       .catch((err: unknown) => {
-        setError(err instanceof Error ? `Could not send the invitation: ${err.message}` : t('inbox.couldNotSendTheInvitation2') || 'Could not send the invitation.');
+        setError(err instanceof Error
+            ? t('inbox.couldNotSendTheInvitationReason', { reason: err.message }) ||
+              `Could not send the invitation: ${err.message}`
+            : t('inbox.couldNotSendTheInvitation2') || 'Could not send the invitation.');
       })
       .finally(() => setConnecting(false));
   };
@@ -252,7 +257,10 @@ export function ChatPane({
         toast.info(t('inbox.invitationWithdrawn') || 'Invitation withdrawn');
       })
       .catch((err: unknown) => {
-        setError(err instanceof Error ? `Could not withdraw: ${err.message}` : t('inbox.couldNotWithdrawTheInvitation') || 'Could not withdraw the invitation.');
+        setError(err instanceof Error
+            ? t('inbox.couldNotWithdrawReason', { reason: err.message }) ||
+              `Could not withdraw: ${err.message}`
+            : t('inbox.couldNotWithdrawTheInvitation') || 'Could not withdraw the invitation.');
       })
       .finally(() => setConnecting(false));
   };
@@ -272,7 +280,10 @@ export function ChatPane({
         setError(t('inbox.theFileUploadedButCould') || 'The file uploaded but could not be sent. You are not connected right now.');
       }
     } catch (err) {
-      setError(err instanceof Error ? `Could not upload that file: ${err.message}` : t('inbox.couldNotUploadThatFile2') || 'Could not upload that file.');
+      setError(err instanceof Error
+          ? t('inbox.couldNotUploadThatFileReason', { reason: err.message }) ||
+            `Could not upload that file: ${err.message}`
+          : t('inbox.couldNotUploadThatFile2') || 'Could not upload that file.');
     }
   };
 
@@ -285,7 +296,7 @@ export function ChatPane({
         : null;
 
   return (
-    <section aria-label={`Conversation with ${item.name}`} className="flex h-full min-h-0 flex-col bg-canvas">
+    <section aria-label={t('inbox.conversationWith', { name: item.name }) || `Conversation with ${item.name}`} className="flex h-full min-h-0 flex-col bg-canvas">
       <Header item={item} online={online} now={now} onShowDetails={onShowDetails}>
         {item.kind === 'waiting' ? (
           <Button size="sm" variant="primary" onClick={accept} loading={busy} disabled={busy}>
@@ -399,7 +410,10 @@ export function ChatPane({
           ended ? (
             <Alert tone="neutral">
               {ended.reason === 'transferred'
-                ? `You handed this conversation to ${ended.transferredTo ?? 'a colleague'}. The transcript stays here until you leave the inbox.`
+                ? t('inbox.youHandedThisConversationTo', {
+                    who: ended.transferredTo ?? t('inbox.aColleague') ?? 'a colleague',
+                  }) ||
+                  `You handed this conversation to ${ended.transferredTo ?? 'a colleague'}. The transcript stays here until you leave the inbox.`
                 : t('inbox.thisConversationHasEndedThe') || 'This conversation has ended. The transcript stays here until you leave the inbox.'}
             </Alert>
           ) : null
@@ -442,8 +456,11 @@ export function ChatPane({
         open={confirm === 'resolve'}
         onOpenChange={(open) => setConfirm(open ? 'resolve' : null)}
         title={t('inbox.resolveThisConversation') || 'Resolve this conversation?'}
-        description={`${item.name} will be asked to rate the chat, and it leaves your inbox. You can still find it under Leads.`}
-        confirmLabel="Resolve"
+        description={
+          t('inbox.willBeAskedToRateTheChat', { name: item.name }) ||
+          `${item.name} will be asked to rate the chat, and it leaves your inbox. You can still find it under Leads.`
+        }
+        confirmLabel={t('inbox.resolve') || 'Resolve'}
         onConfirm={async () => {
           await resolveOperatorChat(sessionId);
           onLeft();
@@ -454,8 +471,11 @@ export function ChatPane({
         open={confirm === 'return'}
         onOpenChange={(open) => setConfirm(open ? 'return' : null)}
         title={t('inbox.handThisBackToThe') || 'Hand this back to the AI?'}
-        description={`${item.name} keeps their conversation, but the AI answers from here. Use this when the question turned out to be one the bot can handle.`}
-        confirmLabel="Back to AI"
+        description={
+          t('inbox.keepsTheirConversationButAI', { name: item.name }) ||
+          `${item.name} keeps their conversation, but the AI answers from here. Use this when the question turned out to be one the bot can handle.`
+        }
+        confirmLabel={t('inbox.backToAI') || 'Back to AI'}
         onConfirm={async () => {
           await closeOperatorChat(sessionId);
           onLeft();
