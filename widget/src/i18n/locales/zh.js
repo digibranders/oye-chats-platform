@@ -389,6 +389,7 @@ export default {
             read_at: '已读 · {time}',
         },
         commands: {
+            language_description: '用其他语言阅读此对话',
             new_description: '开始一段新对话',
             clear_description: '隐藏上面的消息',
             human_description: '请求人工客服',

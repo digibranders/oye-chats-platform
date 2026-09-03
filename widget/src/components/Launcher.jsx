@@ -130,13 +130,15 @@ const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
                 visitor scrolls); it only disappears once opened or dismissed. */}
             {showGreeting && !isOpen && (
                 <div
-                    className="hidden md:block absolute bottom-full mb-4 right-0 w-[280px] bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden opacity-100 translate-y-0"
+                    className="hidden md:block absolute bottom-full mb-4 end-0 w-[280px] bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden opacity-100 translate-y-0"
                     style={{ animation: 'fadeUp 0.3s ease-out' }}
                 >
                     {/* Bubble header */}
                     <div className="flex items-center gap-2 px-4 pt-3.5 pb-2">
                         {renderSmallAvatar()}
-                        <span className="text-[13px] font-semibold text-[#16202C] flex-1">{botName}</span>
+                        {/* The chatbot's name is the customer's, in whatever
+                            language they named it. */}
+                        <span dir="auto" className="text-[13px] font-semibold text-[#16202C] flex-1">{botName}</span>
                         <button
                             onClick={dismissGreeting}
                             className="w-5 h-5 flex items-center justify-center text-gray-300 hover:text-gray-500 transition-colors"
@@ -146,7 +148,7 @@ const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
                         </button>
                     </div>
                     {/* Greeting text */}
-                    <p className="text-[13px] text-gray-500 leading-relaxed px-4 pb-3">{greetingMessage}</p>
+                    <p dir="auto" className="text-[13px] text-gray-500 leading-relaxed px-4 pb-3">{greetingMessage}</p>
                     {/* Mini input */}
                     <form onSubmit={handleBubbleSend} className="px-3 pb-3">
                         <div className="flex items-center gap-1.5 rounded-2xl border border-[#BBE7FF]/50 bg-white px-2.5 py-1.5 shadow-sm">
@@ -171,18 +173,30 @@ const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
                         </div>
                     </form>
                     {/* Arrow pointing down to launcher */}
-                    <div className="absolute -bottom-2 right-7 w-4 h-4 bg-white transform rotate-45 border-r border-b border-gray-100" />
+                    <div className="absolute -bottom-2 end-7 w-4 h-4 bg-white transform rotate-45 border-e border-b border-gray-100" />
                 </div>
             )}
 
             {/* Tooltip. Visible only when greeting bubble is not showing, and
                 only when the admin has not switched the launcher text off. */}
             {!showGreeting && showLauncherText && (
-                <div className={`hidden md:block absolute bottom-full mb-4 mr-2 bg-white px-4 py-2 rounded-xl shadow-lg border border-gray-100 transition-opacity duration-200 whitespace-nowrap ${!isOpen && !isScrolling ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-                    <div className="text-sm font-medium text-gray-700">
+                // `end-0` and `me-2`, not `mr-2`: with no inline anchor the
+                // tooltip took its static position, which flips with the
+                // container, so in Arabic it grew away from the launcher and
+                // off the edge of the screen. Anchored to the inline-end edge
+                // it opens inward in both directions.
+                <div className={`hidden md:block absolute bottom-full end-0 mb-4 me-2 bg-white px-4 py-2 rounded-xl shadow-lg border border-gray-100 transition-opacity duration-200 whitespace-nowrap ${!isOpen && !isScrolling ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+                    {/* `dir="auto"`: this is the CUSTOMER's text and we do not
+                        know its language. In an RTL panel an English string
+                        rendered without it comes out as "?Have Questions",
+                        because the trailing punctuation belongs to the
+                        paragraph, not the run. `auto` gives each string its
+                        own direction from its first strong character, so
+                        English reads as English and Arabic as Arabic. */}
+                    <div dir="auto" className="text-sm font-medium text-gray-700">
                         <b>{launcherName}</b>
                     </div>
-                    <div className="absolute -bottom-2 right-6 w-4 h-4 bg-white transform rotate-45 border-r border-b border-gray-100" />
+                    <div className="absolute -bottom-2 end-6 w-4 h-4 bg-white transform rotate-45 border-e border-b border-gray-100" />
                 </div>
             )}
 
@@ -204,7 +218,7 @@ const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
 
                 {/* Minimize badge. Appears at bottom-right when chat is open */}
                 <span
-                    className={`absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full flex items-center justify-center shadow-md transition-all duration-300 ${isOpen ? 'opacity-100 scale-100' : 'opacity-0 scale-0 pointer-events-none'}`}
+                    className={`absolute -bottom-0.5 -end-0.5 w-5 h-5 rounded-full flex items-center justify-center shadow-md transition-all duration-300 ${isOpen ? 'opacity-100 scale-100' : 'opacity-0 scale-0 pointer-events-none'}`}
                     style={{ backgroundColor: primaryColor }}
                 >
                     <ChevronDown size={12} className="text-white" />

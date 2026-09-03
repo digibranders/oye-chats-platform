@@ -65,6 +65,12 @@ _GLOBAL_KEY_RE = re.compile(
     re.IGNORECASE,
 )
 
+# A real bot key, for the client-injected fallback below. `bot_routes` mints
+# these as `bot-` plus twelve hex characters, and the shape is the whole
+# discriminator: our own marketing page prints an install SAMPLE reading
+# `data-bot-key="…"`, and a placeholder must never read as an install.
+_REAL_KEY_RE = re.compile(r"\bbot-[0-9a-f]{12}\b", re.IGNORECASE)
+
 # How much of a page to read. The snippet is conventionally in <body>, and on a
 # content-heavy page the tag can sit a long way down, but a whole marketing site
 # with inlined images is not worth pulling to find one script tag.
@@ -86,6 +92,11 @@ class WidgetScan:
     has_loader: bool
     #: Every `data-bot-key` found, in document order, deduplicated.
     bot_keys: tuple[str, ...]
+    #: True when the install was found in a client-rendered payload rather than
+    #: as a literal <script> tag. Reported to the reader, because "we found it,
+    #: in your JavaScript" and "we found your script tag" are different facts
+    #: and only one of them means a non-JS crawler can see the widget too.
+    client_injected: bool = False
 
     def verdict_for(self, bot_key: str) -> str:
         """Classify this page from one chatbot's point of view.
@@ -146,7 +157,41 @@ def scan_html(html: str) -> WidgetScan:
             if key and key not in keys:
                 keys.append(key)
 
-    return WidgetScan(has_loader=has_loader, bot_keys=tuple(keys))
+    if has_loader:
+        return WidgetScan(has_loader=True, bot_keys=tuple(keys), client_injected=False)
+
+    # ── Nothing in the markup. Look for a client-injected install ────────────
+    #
+    # A framework that renders the tag from JavaScript serves no <script src>
+    # for us to find: Next.js `<Script>` puts it in the RSC flight payload,
+    # Nuxt and friends do the equivalent. The evidence is still on the page,
+    # JSON-escaped, and a visitor's browser gets a working widget from it.
+    #
+    # This was not a hypothetical. oyechats.com installs its own widget with
+    # `<Script strategy="lazyOnload">`, so our own front page reported
+    # "Snippet not found" while the widget was live on it, and every customer
+    # on a modern framework saw the same.
+    #
+    # Both halves are required, and that is what keeps it honest. The loader
+    # FILENAME must appear, and so must a real key. Our own page carries an
+    # install sample reading `cdn.oyechats.com/widget.js` with
+    # `data-bot-key="…"` - a different filename and a placeholder - so it
+    # matches neither half.
+    if _LOADER_FILENAME not in html.lower():
+        return WidgetScan(has_loader=False, bot_keys=(), client_injected=False)
+
+    for match in _REAL_KEY_RE.finditer(html):
+        key = match.group(0).strip()
+        if key and key not in keys:
+            keys.append(key)
+
+    if not keys:
+        # The filename with no key behind it is a mention, not an install: a
+        # blog post about OyeChats, or our own docs. Calling that "installed"
+        # would tick a setup step nobody completed.
+        return WidgetScan(has_loader=False, bot_keys=(), client_injected=False)
+
+    return WidgetScan(has_loader=True, bot_keys=tuple(keys), client_injected=True)
 
 
 @dataclass(frozen=True)
@@ -208,7 +253,21 @@ async def probe_domain(session, hostname: str, bot_key: str) -> ProbeResult:
     verdict = scan.verdict_for(bot_key)
 
     if verdict == "installed":
-        return ProbeResult(hostname, "installed", bot_key=bot_key)
+        return ProbeResult(
+            hostname,
+            "installed",
+            bot_key=bot_key,
+            # Said out loud when it applies: the widget is genuinely installed
+            # and a visitor gets it, but it is not in the served HTML, so
+            # anything that does not run JavaScript cannot see it either.
+            detail=(
+                "Found in this page's JavaScript rather than its HTML, which is how "
+                "a framework like Next.js adds it. Visitors get the widget; a "
+                "crawler that does not run JavaScript will not see it."
+                if scan.client_injected
+                else None
+            ),
+        )
     if verdict == "foreign":
         found = scan.bot_keys[0] if scan.bot_keys else None
         return ProbeResult(
@@ -222,6 +281,10 @@ async def probe_domain(session, hostname: str, bot_key: str) -> ProbeResult:
         "missing",
         detail=(
             f"The page loaded (HTTP {status_code}) but no OyeChats snippet was in it. "
-            "If you add the widget with a tag manager, we cannot see it from here."
+            "We read the HTML as served, and we also look for the snippet a "
+            "framework like Next.js renders from JavaScript. Two installs stay "
+            "invisible to a check from outside and are not necessarily broken: a "
+            "tag manager, which fetches its container in the browser, and any "
+            "code that builds the script tag at runtime."
         ),
     )

@@ -57,11 +57,18 @@ const WelcomeScreen = ({ settings, onSend, welcomeExiting = false, exitDuration 
 
     return (
         <div
-            className="flex flex-col items-start text-left w-full"
+            // `text-start`, not `text-left`: the greeting should hug whichever
+            // edge the panel starts at, and in Arabic that is the right.
+            className="flex flex-col items-start text-start w-full"
             style={contentExitStyle || { animation: 'fadeUp 0.4s ease-out' }}
         >
-            <h2 className="text-2xl font-bold text-[#16202C]">{stripEmoji(title)}</h2>
-            <p className={`text-[15px] text-gray-500 ${isVertical ? 'mt-1 mb-3' : 'mt-1'}`}>
+            {/* `dir="auto"` on both: the customer authors this copy and we do
+                not know its language. Without it an English greeting inside an
+                RTL panel renders as "!Hi there", because the trailing
+                punctuation takes the paragraph's direction rather than the
+                run's. */}
+            <h2 dir="auto" className="text-2xl font-bold text-[#16202C]">{stripEmoji(title)}</h2>
+            <p dir="auto" className={`text-[15px] text-gray-500 ${isVertical ? 'mt-1 mb-3' : 'mt-1'}`}>
                 {subtitle}
             </p>
 

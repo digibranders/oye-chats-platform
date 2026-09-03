@@ -389,6 +389,7 @@ export default {
             read_at: 'Przeczytano · {time}',
         },
         commands: {
+            language_description: 'Czytaj tę rozmowę w innym języku',
             new_description: 'Rozpocznij nową rozmowę',
             clear_description: 'Ukryj powyższe wiadomości',
             human_description: 'Poproś o konsultanta na żywo',

@@ -389,6 +389,7 @@ export default {
             read_at: 'Letto · {time}',
         },
         commands: {
+            language_description: 'Leggi questa chat in un’altra lingua',
             new_description: 'Inizia una nuova conversazione',
             clear_description: 'Nascondi i messaggi qui sopra',
             human_description: 'Richiedi un operatore dal vivo',

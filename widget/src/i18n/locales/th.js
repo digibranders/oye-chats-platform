@@ -389,6 +389,7 @@ export default {
             read_at: 'อ่านแล้ว · {time}',
         },
         commands: {
+            language_description: 'อ่านแชทนี้ในภาษาอื่น',
             new_description: 'เริ่มการสนทนาใหม่',
             clear_description: 'ซ่อนข้อความด้านบน',
             human_description: 'ขอคุยกับเจ้าหน้าที่',

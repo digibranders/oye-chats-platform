@@ -389,6 +389,7 @@ export default {
             read_at: '읽음 · {time}',
         },
         commands: {
+            language_description: '이 대화를 다른 언어로 보기',
             new_description: '새 대화 시작하기',
             clear_description: '위의 메시지 숨기기',
             human_description: '실시간 상담원 요청하기',
