@@ -17,7 +17,10 @@ import {
   MAX_OPTIONS_PER_REQUIREMENT,
   MAX_REQUIREMENTS_PER_SERVICE,
   QUANTITY_MODES,
+  quantityModeHelp,
+  quantityModeLabel,
   REQUIREMENT_TYPES,
+  requirementTypeLabel,
   type QuantityMode,
   type Requirement,
   type RequirementType,
@@ -144,9 +147,15 @@ function ServiceEditorInner({
         eyebrow={`Requirement ${index + 1}`}
         title={service.name.trim() || t('agents.untitledService') || 'Untitled requirement'}
         titleAs="h3"
-        description={`${
-          requirements.length === 1 ? '1 line' : `${formatNumber(requirements.length)} lines`
-        } · up to ${money(currency, ceilingFor(service))}`}
+        description={(() => {
+          const lines =
+            requirements.length === 1
+              ? t('agents.oneLine') || '1 line'
+              : t('agents.nLines', { count: formatNumber(requirements.length) }) ||
+                `${formatNumber(requirements.length)} lines`;
+          const ceiling = money(currency, ceilingFor(service));
+          return t('agents.linesUpTo', { lines, ceiling }) || `${lines} · up to ${ceiling}`;
+        })()}
         actions={
           <>
             <Button
@@ -225,12 +234,15 @@ function ServiceEditorInner({
                 </Button>
               ) : null}
               <span className="figure text-xs text-text-tertiary">
-                {formatNumber(requirements.length)} of {formatNumber(MAX_REQUIREMENTS_PER_SERVICE)}
+                {t('agents.countOfMax', {
+                  count: formatNumber(requirements.length),
+                  max: formatNumber(MAX_REQUIREMENTS_PER_SERVICE),
+                }) || `${formatNumber(requirements.length)} of ${formatNumber(MAX_REQUIREMENTS_PER_SERVICE)}`}
               </span>
             </div>
           </div>
           <p className="mt-1 text-sm text-text-secondary">
-            Every line the visitor can take, and what each one costs.
+            {t('agents.everyLineTheVisitorCan') || 'Every line the visitor can take, and what each one costs.'}
           </p>
 
           {requirements.length === 0 ? null : (
@@ -255,7 +267,10 @@ function ServiceEditorInner({
                       required
                       className="min-w-0 flex-1"
                       hint={
-                        lineCollapsed ? `Up to ${money(currency, lineCeiling(requirement))}` : undefined
+                        lineCollapsed
+                          ? t('agents.upToAmount', { amount: money(currency, lineCeiling(requirement)) }) ||
+                            `Up to ${money(currency, lineCeiling(requirement))}`
+                          : undefined
                       }
                     >
                       <Input
@@ -289,7 +304,7 @@ function ServiceEditorInner({
                       size="sm"
                       className="mt-6"
                       disabled={disabled}
-                      aria-label={`Remove line ${requirementIndex + 1}`}
+                      aria-label={t('agents.removeLineN', { n: requirementIndex + 1 }) || `Remove line ${requirementIndex + 1}`}
                       onClick={() =>
                         onChange({
                           requirements: requirements.filter((_, i) => i !== requirementIndex),
@@ -334,7 +349,7 @@ function ServiceEditorInner({
                       <Select
                         label={t('agents.type') || 'Type'}
                         value={requirement.type}
-                        options={REQUIREMENT_TYPES}
+                        options={REQUIREMENT_TYPES.map((r) => ({ ...r, label: requirementTypeLabel(r) }))}
                         disabled={disabled}
                         onValueChange={(value) => {
                           const type = value as RequirementType;
@@ -360,12 +375,15 @@ function ServiceEditorInner({
                         which is which. */}
                     <Field
                       label={t('agents.howTheQuantityIsSet') || 'How the quantity is set'}
-                      hint={QUANTITY_MODES.find((mode) => mode.value === requirement.quantity_mode)?.help}
+                      hint={(() => {
+                        const mode = QUANTITY_MODES.find((m) => m.value === requirement.quantity_mode);
+                        return mode ? quantityModeHelp(mode) : undefined;
+                      })()}
                     >
                       <Select
                         label={t('agents.howTheQuantityIsSet') || 'How the quantity is set'}
                         value={requirement.quantity_mode}
-                        options={QUANTITY_MODES}
+                        options={QUANTITY_MODES.map((q) => ({ ...q, label: quantityModeLabel(q) }))}
                         disabled={disabled}
                         onValueChange={(value) =>
                           patchRequirement(requirementIndex, { quantity_mode: value as QuantityMode })
@@ -441,8 +459,11 @@ function ServiceEditorInner({
                       <div className="flex flex-wrap items-baseline justify-between gap-2">
                         <p className="text-sm font-medium text-text-primary">{t('agents.options') || 'Options'}</p>
                         <span className="figure text-xs text-text-tertiary">
-                          {formatNumber(requirement.options.length)} of{' '}
-                          {formatNumber(MAX_OPTIONS_PER_REQUIREMENT)}
+                          {t('agents.countOfMax', {
+                            count: formatNumber(requirement.options.length),
+                            max: formatNumber(MAX_OPTIONS_PER_REQUIREMENT),
+                          }) ||
+                            `${formatNumber(requirement.options.length)} of ${formatNumber(MAX_OPTIONS_PER_REQUIREMENT)}`}
                         </span>
                       </div>
                       <ul className="mt-2 space-y-2">
@@ -489,7 +510,7 @@ function ServiceEditorInner({
                               size="sm"
                               className="mt-6"
                               disabled={disabled}
-                              aria-label={`Remove option ${optionIndex + 1}`}
+                              aria-label={t('agents.removeOptionN', { n: optionIndex + 1 }) || `Remove option ${optionIndex + 1}`}
                               onClick={() =>
                                 patchRequirement(requirementIndex, {
                                   options: requirement.options.filter((_, i) => i !== optionIndex),
