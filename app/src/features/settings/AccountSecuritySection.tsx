@@ -104,7 +104,7 @@ export function ChangePasswordCard({ isOperator }: { isOperator: boolean }) {
           description={
             isOperator ? undefined : (
               <>
-                Cannot remember it?{' '}
+                {t('settings.cannotRememberIt') || 'Cannot remember it?'}{' '}
                 <Link
                   to="/forgot-password"
                   className="font-medium text-accent-600 underline-offset-2 hover:underline"

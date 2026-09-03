@@ -23,6 +23,54 @@ function toMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
+/**
+ * Turn a failed `pushManager.subscribe()` into something a human can act on.
+ *
+ * The browser's own message is not fit to show. When Chrome cannot complete
+ * registration with its push service it throws literally
+ * "Registration failed - could not retrieve the public key", which we rendered
+ * verbatim into a red banner on the account page. Three things wrong with that:
+ * it reads like a server misconfiguration when the server is fine, it names a
+ * key the reader has no way to see or fix, and it is browser-generated English
+ * that sits untranslated on a Hindi dashboard.
+ *
+ * So the browser text goes to the console, where the person who can act on it
+ * will look, and the reader gets our own copy in their own language. The one
+ * thing every branch says is the thing that actually matters to an operator:
+ * conversations still arrive in the inbox.
+ */
+function describeSubscribeFailure(error: unknown): string {
+  // Logged, not shown. This is the only place the original survives, and
+  // debugging a push failure without it is guesswork.
+  console.warn('[OyeChats] push subscribe failed', error);
+
+  const name = error instanceof Error ? error.name : '';
+
+  if (name === 'NotAllowedError') {
+    return (
+      translateNow('settings.pushPermissionRefused') ||
+      'Your browser refused the notification permission. Allow notifications for this site, then try again.'
+    );
+  }
+
+  // AbortError is what Chrome throws when it cannot reach its push service, and
+  // it is by far the most common failure in practice: a VPN, a corporate proxy,
+  // a privacy extension, or a browser profile with Google services switched off.
+  // Nothing about it is specific to this account, and nothing the user does in
+  // OyeChats will change it - so the copy points at the device, not at us.
+  if (name === 'AbortError') {
+    return (
+      translateNow('settings.pushServiceUnreachable') ||
+      'This browser could not reach its notification service, so alerts cannot be switched on here. A VPN, a privacy extension or a restricted browser profile is the usual cause. Conversations still arrive in the inbox.'
+    );
+  }
+
+  return (
+    translateNow('settings.couldntEnableNotificationsHere') ||
+    'We could not switch on notifications on this device. Conversations still arrive in the inbox.'
+  );
+}
+
 // ── Push state machine ───────────────────────────────────────────────────────
 //
 // Honesty note: this hook can *manage* a web-push subscription that already
@@ -186,7 +234,7 @@ export function usePushSubscription(): UsePushSubscriptionResult {
       }
       setPhase(await mintSubscription(registration));
     } catch (error) {
-      setActionError(toMessage(error, translateNow('app.couldntEnableNotificationsPleaseTry') || 'Couldn’t enable notifications. Please try again.'));
+      setActionError(describeSubscribeFailure(error));
     } finally {
       setBusy(false);
     }

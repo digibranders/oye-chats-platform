@@ -46,9 +46,16 @@ export interface Crumb {
 export function useBreadcrumbs(): Crumb[] {
   const { pathname } = useLocation();
   const { bots } = useBotContext();
-  // Re-render this hook's consumers when the language changes: the labels below
-  // are resolved at call time, and nothing else on the bar would move.
-  useTranslation();
+  // Subscribing is necessary but NOT sufficient. `useTranslation()` re-renders
+  // this hook's consumers on a language switch, but the memo below would still
+  // hand back the array it built in the previous language, because neither
+  // `pathname` nor `bots` changes when only the locale does. That shipped: the
+  // crumb stayed on the old language until you navigated - switch to Hindi and
+  // back to English on Settings and the bar still read "खाता".
+  //
+  // So the locale is a real dependency of this computation and is declared as
+  // one, not merely subscribed to.
+  const { locale } = useTranslation();
 
   return useMemo(() => {
     const agentId = agentIdFromPath(pathname);
@@ -108,5 +115,10 @@ export function useBreadcrumbs(): Crumb[] {
     if (standalone) return [{ label: label(standalone[1]) }];
 
     return [{ label: label('Not found') }];
-  }, [pathname, bots]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `locale` is a real
+    // dependency the rule cannot see: the labels come from `navLabel()`, which
+    // resolves against the active dictionary when it is CALLED. Nothing inside
+    // this memo mentions `locale`, so the rule reads it as unnecessary and the
+    // memo went stale on a language switch instead.
+  }, [pathname, bots, locale]);
 }
