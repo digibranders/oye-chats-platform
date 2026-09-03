@@ -7,9 +7,10 @@ topup). The previous implementation always wrote to the client pool and picked
 the most-recent grant regardless of type, which left per-bot credits
 un-reversed and could drive the client pool negative.
 
-Runs against a throwaway Postgres DB (mirrors test_affiliate_service.py). The
-clawback path uses PG advisory locks + real ledger rows, so a real server is
-required; the module skips when none is reachable at ``DB_URL``.
+Runs on the shared throwaway Postgres from ``conftest.py``: the ``db`` fixture
+there resets between tests. The clawback path uses PG advisory locks + real
+ledger rows, so a real server is required; the module skips when none is
+reachable at ``DB_URL``.
 """
 
 from __future__ import annotations
@@ -19,14 +20,10 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import create_engine, func, make_url, select
-from sqlalchemy import text as sa_text
-from sqlalchemy.orm import Session
 
-from app.db.models import Base, Client, CreditLedger, Invoice, Plan, Subscription
+from app.db.models import Client, CreditLedger, Invoice, Plan, Subscription
 from app.services import credit_service
 from app.services import razorpay_service as rzp
-
-_TEST_DB_SUFFIX = "_clawtest"
 
 
 def _server_url():
@@ -51,42 +48,6 @@ pytestmark = pytest.mark.skipif(
     _BASE_URL is None or not _server_reachable(_BASE_URL),
     reason="credit clawback integration tests need a reachable Postgres at DB_URL",
 )
-
-
-@pytest.fixture(scope="module")
-def pg_engine():
-    test_db = (_BASE_URL.database or "postgres") + _TEST_DB_SUFFIX
-    admin = create_engine(_BASE_URL.set(database="postgres"), isolation_level="AUTOCOMMIT")
-    with admin.connect() as conn:
-        conn.exec_driver_sql(f'DROP DATABASE IF EXISTS "{test_db}"')
-        conn.exec_driver_sql(f'CREATE DATABASE "{test_db}"')
-    admin.dispose()
-
-    engine = create_engine(_BASE_URL.set(database=test_db))
-    with engine.connect() as conn:
-        conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS citext")
-        conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS vector")
-        conn.commit()
-    Base.metadata.create_all(engine)
-    yield engine
-    engine.dispose()
-
-    admin = create_engine(_BASE_URL.set(database="postgres"), isolation_level="AUTOCOMMIT")
-    with admin.connect() as conn:
-        conn.exec_driver_sql(f'DROP DATABASE IF EXISTS "{test_db}"')
-    admin.dispose()
-
-
-@pytest.fixture()
-def db(pg_engine):
-    session = Session(pg_engine)
-    yield session
-    session.rollback()
-    # Clean slate between tests. TRUNCATE … CASCADE sidesteps FK-cycle ordering.
-    names = ", ".join(f'"{t.name}"' for t in Base.metadata.sorted_tables)
-    session.execute(sa_text(f"TRUNCATE {names} RESTART IDENTITY CASCADE"))
-    session.commit()
-    session.close()
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────

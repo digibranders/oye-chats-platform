@@ -89,16 +89,24 @@ def pg_engine():
     admin.dispose()
 
 
-@pytest.fixture(scope="session")
-def fk_checks_switchable(pg_engine) -> bool:
-    """Whether the test role may turn foreign-key enforcement off for a transaction.
+def role_is_superuser(engine) -> bool:
+    """Whether the role behind ``engine`` may turn foreign-key enforcement off.
 
     ``SET session_replication_role = replica`` needs a superuser, which the CI
     service container's role and a Homebrew Postgres role both are. Without it
-    ``reset_database`` falls back to the full TRUNCATE.
+    ``reset_database`` falls back to the full TRUNCATE. A module that builds its
+    own engine calls this directly: it cannot reuse the session-scoped fixture
+    below, because overriding ``pg_engine`` at module scope would make that
+    fixture depend on a narrower scope than its own.
     """
-    with pg_engine.connect() as conn:
+    with engine.connect() as conn:
         return bool(conn.exec_driver_sql("SELECT rolsuper FROM pg_roles WHERE rolname = current_user").scalar())
+
+
+@pytest.fixture(scope="session")
+def fk_checks_switchable(pg_engine) -> bool:
+    """``role_is_superuser`` for the shared engine, asked once per session."""
+    return role_is_superuser(pg_engine)
 
 
 # ── Per-test database reset ──────────────────────────────────────────────────
