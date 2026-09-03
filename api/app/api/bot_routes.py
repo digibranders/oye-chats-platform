@@ -316,6 +316,24 @@ def _widget_heartbeat_due(redis, bot_id: int, hostname: str) -> bool:
     return True
 
 
+def _is_internal_widget_host(hostname: str, request: Request) -> bool:
+    """Is this hostname one of OUR surfaces rather than a customer's site?
+
+    The request is a parameter because the set is not static: the hosted demo
+    and preview pages are served by the API itself, so a widget embedded there
+    reports the API's own host as its origin. That has to be excluded whatever
+    ``APP_URL``/``MARKETING_URL`` happen to resolve to.
+
+    Shared by the heartbeat, which must not stamp an install for one of these,
+    and by ``GET /bots/{bot_id}/install-domains``, which has to be able to say
+    so. Two copies of this rule would drift, and the pair being out of step is
+    exactly the state where the UI reports a fault that does not exist.
+    """
+    if hostname in _INTERNAL_WIDGET_HOSTS:
+        return True
+    return hostname == extract_hostname(str(request.base_url))
+
+
 def _external_install_hostname(request: Request) -> str | None:
     """The Origin/Referer hostname of a genuine customer widget bootstrap.
 
@@ -335,10 +353,9 @@ def _external_install_hostname(request: Request) -> str | None:
     """
     origin = request.headers.get("origin") or request.headers.get("referer")
     hostname = extract_hostname(origin)
-    if not hostname or hostname in _INTERNAL_WIDGET_HOSTS:
+    if not hostname:
         return None
-    self_host = extract_hostname(str(request.base_url))
-    return None if hostname == self_host else hostname
+    return None if _is_internal_widget_host(hostname, request) else hostname
 
 
 def _is_external_install_origin(request: Request) -> bool:
@@ -4154,6 +4171,14 @@ def get_install_domains(
                     # this endpoint can produce: it is a chatbot that works now
                     # and stops the moment the allow-list is enforced.
                     "allowed": is_origin_allowed(row.hostname, allowed) if allowed else True,
+                    # An OyeChats-owned host: our marketing site, the dashboard,
+                    # localhost. `_external_install_hostname` refuses to stamp
+                    # an install from one, deliberately, so our own traffic can
+                    # never tick a customer's setup step. Reported because the
+                    # UI otherwise says "no visitor has opened the chatbot here
+                    # yet" forever and reads as a fault - which is exactly how
+                    # this was reported.
+                    "counts_as_install": not _is_internal_widget_host(row.hostname, request),
                 }
             )
 
@@ -4181,6 +4206,7 @@ def get_install_domains(
                     "probe_detail": None,
                     "other_chatbot": None,
                     "allowed": True,
+                    "counts_as_install": not _is_internal_widget_host(host, request),
                 }
             )
 

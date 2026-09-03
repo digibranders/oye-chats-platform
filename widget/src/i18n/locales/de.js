@@ -389,6 +389,7 @@ export default {
             read_at: 'Gelesen · {time}',
         },
         commands: {
+            language_description: 'Diesen Chat in einer anderen Sprache lesen',
             new_description: 'Eine neue Unterhaltung beginnen',
             clear_description: 'Die Nachrichten oben ausblenden',
             human_description: 'Einen Mitarbeiter im Live-Chat anfordern',

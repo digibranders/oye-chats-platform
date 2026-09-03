@@ -389,6 +389,7 @@ export default {
             read_at: 'Gelezen · {time}',
         },
         commands: {
+            language_description: 'Lees deze chat in een andere taal',
             new_description: 'Een nieuw gesprek beginnen',
             clear_description: 'De berichten hierboven verbergen',
             human_description: 'Een medewerker in de livechat aanvragen',

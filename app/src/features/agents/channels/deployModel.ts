@@ -38,8 +38,16 @@ export const VERIFY_POLL_MS = 5_000;
  * customer has told us they installed it and we still cannot see it.
  *
  * `stale` is the other end of the same honesty rule. See {@link STALE_AFTER_MS}.
+ *
+ * `own-domain` is the same rule again, for the one case where the machinery is
+ * working and the reading still looks like a fault: the snippet is on a page we
+ * own, so the backend refuses to count it (`_is_internal_widget_host` in
+ * `api/app/api/bot_routes.py`). It is its own state rather than reworded
+ * `waiting` copy because neither of that state's affordances applies. There is
+ * nothing to check again, and nothing on the troubleshooting checklist is the
+ * cause.
  */
-export type InstallState = 'installed' | 'stale' | 'checking' | 'not-detected' | 'waiting';
+export type InstallState = 'installed' | 'stale' | 'checking' | 'not-detected' | 'waiting' | 'own-domain';
 
 export interface InstallStatus {
   state: InstallState;
@@ -72,6 +80,12 @@ export interface InstallStatusInput {
   claimed: boolean;
   /** A verification poll is running right now. */
   checking: boolean;
+  /**
+   * The hostname of an OyeChats-owned domain our probe found the snippet on,
+   * when nothing else has produced an install. Only ever one of our own hosts:
+   * a real customer domain stamps `installedAt` and never reaches this.
+   */
+  ownInstallDomain?: string | null;
   /** Injectable clock, so the staleness boundary is testable. */
   now?: number;
 }
@@ -81,6 +95,7 @@ export function installStatus({
   lastSeenAt,
   claimed,
   checking,
+  ownInstallDomain,
   now = Date.now(),
 }: InstallStatusInput): InstallStatus {
   if (installedAt) {
@@ -117,6 +132,20 @@ export function installStatus({
       label: translateNow('agents.lookingForYourWidget') || 'Looking for your widget',
       tone: 'neutral',
       detail: translateNow('agents.openAPageOfYour') || 'Open a page of your site in another tab. We check every few seconds.',
+    };
+  }
+  if (ownInstallDomain) {
+    // The snippet is live and correct, on a domain of OURS. Nothing here is
+    // broken, so this must not borrow the wording of a chatbot that has never
+    // loaded: that reading is what sent somebody looking for a bug in a
+    // working install.
+    return {
+      state: 'own-domain',
+      label: translateNow('agents.seenOnOurOwnDomain') || 'Seen on an OyeChats domain',
+      tone: 'neutral',
+      detail:
+        translateNow('agents.weFoundYourSnippetOn', { host: ownInstallDomain }) ||
+        `We found your snippet on ${ownInstallDomain}. That domain belongs to OyeChats, so loads from it are never counted as an install. Add the snippet to your own website to go live.`,
     };
   }
   if (claimed) {

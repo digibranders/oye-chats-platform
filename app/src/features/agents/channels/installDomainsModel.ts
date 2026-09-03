@@ -38,6 +38,14 @@ export interface DomainInstall {
   other_chatbot: string | null;
   /** Whether the allow-list would admit this origin today. */
   allowed: boolean;
+  /**
+   * False for an OyeChats-owned host: the marketing site, the dashboard,
+   * localhost. A widget bootstrap from one of those deliberately never stamps
+   * an install, so our own traffic cannot tick a customer's setup step. Said
+   * out loud because the panel otherwise reports "no visitor has opened the
+   * chatbot here yet" forever and reads as a fault.
+   */
+  counts_as_install?: boolean;
 }
 
 export interface InstallDomains {
@@ -80,6 +88,21 @@ export function describeDomain(domain: DomainInstall): DomainPresentation {
         needsAttention: false,
       };
     case 'installed':
+      // An OyeChats-owned host will never leave this state, however many
+      // times it is loaded, because a bootstrap from one of ours is refused
+      // as an install on purpose. Saying "no visitor has opened the chatbot
+      // here yet" to somebody who has just opened it themselves is a lie by
+      // omission, and it is the reading that got this reported as a bug.
+      if (domain.counts_as_install === false) {
+        return {
+          label: translateNow('agents.snippetFound') || 'Snippet found',
+          tone: 'success',
+          detail:
+            translateNow('agents.snippetFoundOwnDomainDetail') ||
+            'Your snippet is on this page and the widget works here. This is an OyeChats-owned domain, so loads from it are never counted as a customer install. Check the heartbeat on your own site instead.',
+          needsAttention: false,
+        };
+      }
       return {
         label: translateNow('agents.snippetFound') || 'Snippet found',
         tone: 'success',

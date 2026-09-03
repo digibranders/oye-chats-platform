@@ -389,6 +389,7 @@ export default {
             read_at: 'Leído · {time}',
         },
         commands: {
+            language_description: 'Lee este chat en otro idioma',
             new_description: 'Iniciar una conversación nueva',
             clear_description: 'Ocultar los mensajes anteriores',
             human_description: 'Solicitar un agente en vivo',

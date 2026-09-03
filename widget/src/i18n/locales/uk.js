@@ -389,6 +389,7 @@ export default {
             read_at: 'Прочитано · {time}',
         },
         commands: {
+            language_description: 'Читати цей чат іншою мовою',
             new_description: 'Почати нову розмову',
             clear_description: 'Сховати повідомлення вище',
             human_description: 'Покликати оператора',

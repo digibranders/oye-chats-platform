@@ -88,6 +88,7 @@ const ChatInput = ({
     // once a human operator is involved.
     onNewChat,
     onClearMessages,
+    onOpenLanguage,
 }) => {
     // Badge href/label come from the bot's own branding settings. Memoised on
     // the two inputs that can change; the bot key is a page-lifetime global set
@@ -118,7 +119,7 @@ const ChatInput = ({
     // without a switch statement here. A command whose handler prop was
     // not provided (e.g. onHandoff omitted when live chat is disabled)
     // is filtered out of the palette entirely below.
-    const commandHandlers = { onNewChat, onClearMessages, onHandoff };
+    const commandHandlers = { onNewChat, onClearMessages, onHandoff, onOpenLanguage };
     // A command is available when (a) its handler was actually wired by the
     // parent (e.g. onHandoff is dropped when live chat is disabled) AND
     // (b) its ``isAvailable`` predicate is satisfied for the current session
@@ -134,7 +135,7 @@ const ChatInput = ({
                     (typeof c.isAvailable !== 'function' || c.isAvailable(commandContext)),
             ),
         // eslint-disable-next-line react-hooks/exhaustive-deps
-        [onNewChat, onClearMessages, onHandoff, userMessageCount],
+        [onNewChat, onClearMessages, onHandoff, onOpenLanguage, userMessageCount],
     );
 
     // "Visitor has demonstrated they know about slash commands" state.
@@ -515,7 +516,16 @@ const ChatInput = ({
                             >
                                 <Icon size={14} className="text-[#3A0CA3] flex-shrink-0" />
                                 <span className="flex-1 min-w-0">
-                                    <span className="block text-[13px] font-medium text-[#16202C] leading-tight">
+                                    {/* `dir="ltr"`: this is a literal token the
+                                        visitor types, not prose. Inside an RTL
+                                        panel bidi moves the leading slash to
+                                        the far side and it renders "new/",
+                                        which is not a command anybody can
+                                        type. */}
+                                    <span
+                                        dir="ltr"
+                                        className="block text-[13px] font-medium text-[#16202C] leading-tight"
+                                    >
                                         /{cmd.name}
                                     </span>
                                     <span className="block text-[11px] text-gray-500 leading-tight mt-0.5">

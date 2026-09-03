@@ -287,6 +287,7 @@ export default {
             read_at: 'Read · {time}',
         },
         commands: {
+            language_description: 'Read this chat in another language',
             new_description: 'Start a fresh conversation',
             clear_description: 'Hide the messages above',
             human_description: 'Request a live agent',

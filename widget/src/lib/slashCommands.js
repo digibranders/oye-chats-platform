@@ -1,5 +1,5 @@
 import React from 'react';
-import { RotateCcw, Eraser } from 'lucide-react';
+import { RotateCcw, Eraser, Globe } from 'lucide-react';
 
 // Hand-rolled rather than imported so it matches the headphones glyph the
 // composer's own handoff button draws inline.
@@ -74,6 +74,21 @@ export const SLASH_COMMANDS = [
         destructive: false,
         handlerKey: 'onClearMessages',
         isAvailable: (ctx) => (ctx?.userMessageCount ?? 0) >= 1,
+    },
+    {
+        // Offered only when the header menu would offer it too: the bot is
+        // multilingual, the customer allows visitors to switch, and there is
+        // more than one language to switch between. ChatWindow decides that
+        // once and gates this command by withholding the handler, which is the
+        // same mechanism `/human` uses when live chat is off.
+        name: 'language',
+        label: 'Change language',
+        description: 'Read this chat in another language',
+        descriptionKey: 'commands.language_description',
+        icon: Globe,
+        destructive: false,
+        handlerKey: 'onOpenLanguage',
+        isAvailable: () => true,
     },
     {
         name: 'human',

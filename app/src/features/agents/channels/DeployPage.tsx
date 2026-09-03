@@ -22,7 +22,7 @@ import {
 import { useAgent } from '../../../context/AgentContext';
 import { useEntitlements } from '../../../hooks/useEntitlements';
 import { getBotDemoUrl, getClientSettings, updateBot } from '../../../services/api';
-import { platforms } from '../../../data/platformIntegrations';
+import { DEFAULT_PLATFORM_ID, platforms } from '../../../data/platformIntegrations';
 import { useSettingsDraft } from '../advanced/useSettingsDraft';
 import { useDeployData } from './useDeployData';
 import { ownSiteRisk, widgetHeartbeat } from './deployModel';
@@ -132,7 +132,14 @@ export function DeployPage() {
   const { agent, loading: agentLoading } = useAgent();
   const deploy = useDeployData();
   const { hasFeature, loading: entitlementsLoading } = useEntitlements();
-  const [platformId, setPlatformId] = useState<string | null>(null);
+  // Opens on HTML rather than on nothing. The panel's whole job is to show
+  // steps, and an empty select showed a reader who had just been told to
+  // install something a second thing to choose first. HTML because it is the
+  // one answer that is never wrong - the field's own hint already says "Not
+  // sure? Pick HTML" - and because a reader who does know their stack changes
+  // it in one keystroke, which is cheaper than the state where nobody sees
+  // anything.
+  const [platformId, setPlatformId] = useState<string | null>(DEFAULT_PLATFORM_ID);
   const [helpTab, setHelpTab] = useState<HelpTab | null>(null);
   const [confirmingLockout, setConfirmingLockout] = useState(false);
 

@@ -393,6 +393,7 @@ export default {
             read_at: 'تمت القراءة · {time}',
         },
         commands: {
+            language_description: 'اقرأ هذه المحادثة بلغة أخرى',
             new_description: 'بدء محادثة جديدة',
             clear_description: 'إخفاء الرسائل أعلاه',
             human_description: 'طلب التحدث إلى موظف',

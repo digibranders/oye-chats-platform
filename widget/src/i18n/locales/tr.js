@@ -389,6 +389,7 @@ export default {
             read_at: 'Okundu · {time}',
         },
         commands: {
+            language_description: 'Bu sohbeti başka bir dilde okuyun',
             new_description: 'Yeni bir görüşme başlat',
             clear_description: 'Yukarıdaki mesajları gizle',
             human_description: 'Canlı bir temsilci talep et',

@@ -275,6 +275,18 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
     const [sessionId, setSessionId] = useState(() => readSessionId());
     const [currentLocale, setCurrentLocale] = useState(() => getLocale());
     const [showLanguageSelector, setShowLanguageSelector] = useState(false);
+
+    // Whether a language switch is on offer at all: the bot is multilingual,
+    // the customer allows visitors to switch, and there is more than one
+    // language to switch between. A bot with one supported locale opened a
+    // menu with a single, inert option.
+    //
+    // Read in two places now - the header menu and the `/language` command -
+    // so it is computed once. Two copies of this condition is how one surface
+    // ends up offering a switch the other refuses.
+    const canSwitchLanguage = settings.language_config?.enabled === true
+        && settings.language_config?.allow_visitor_language_switch !== false
+        && (settings.language_config?.supported_locales?.length || 0) > 1;
     // How the active locale was chosen. Sent to the backend on every turn as
     // `language_source`; 'explicit' is what makes the backend lock the session
     // language against later re-detection.
@@ -2850,8 +2862,20 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                     <BotAvatar settings={settings} size="sm" />
                 </span>
                 {/* Full name for screen readers; the visible text is split into
-                    per-letter spans so it can cascade back in on hover. */}
-                <span className="text-[12px] font-semibold text-[#16202C] leading-tight" aria-label={botName}>
+                    per-letter spans so it can cascade back in on hover.
+
+                    `dir="auto"` is load-bearing here, not decoration. Splitting
+                    a string into one element per character gives every
+                    character its own bidi run, so inside an RTL panel the
+                    browser lays them out right-to-left and the name renders
+                    backwards: "OyeChats" came out as "stahCeyO". Setting the
+                    direction from the name's own first strong character
+                    resolves the whole span as one run again. */}
+                <span
+                    dir="auto"
+                    className="text-[12px] font-semibold text-[#16202C] leading-tight"
+                    aria-label={botName}
+                >
                     {Array.from(botName).map((ch, i) => (
                         <span
                             key={i}
@@ -3060,9 +3084,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                     // Only worth showing when there is genuinely something to
                     // switch between. A bot with one supported locale (or none
                     // configured) opened a menu with a single, inert option.
-                    const showLanguageOption = settings.language_config?.enabled === true
-                        && settings.language_config?.allow_visitor_language_switch !== false
-                        && (settings.language_config?.supported_locales?.length || 0) > 1;
+                    const showLanguageOption = canSwitchLanguage;
                     const hasMenuOptions = showLiveChatOption || showBookMeetingOption
                         || showTranscriptOption || showLeaveMessageOption || showLanguageOption;
                     const itemClass = "w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[13px] text-[#16202C] hover:bg-gray-50 transition-colors";
@@ -4259,6 +4281,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                     userMessageCount={messages.reduce((n, m) => (m.sender === 'user' ? n + 1 : n), 0)}
                     onNewChat={chatMode === 'bot' && !isInitializing ? handleNewChat : undefined}
                     onClearMessages={chatMode === 'bot' && !isInitializing ? handleClearMessages : undefined}
+                    // Withheld rather than disabled when a switch is not on
+                    // offer: ChatInput drops any command whose handler is
+                    // missing, so the palette never lists one that does nothing.
+                    onOpenLanguage={canSwitchLanguage ? () => setShowLanguageSelector(true) : undefined}
                 />
             )}
 

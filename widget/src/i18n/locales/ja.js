@@ -389,6 +389,7 @@ export default {
             read_at: '既読 · {time}',
         },
         commands: {
+            language_description: 'このチャットを別の言語で読む',
             new_description: '新しい会話を始める',
             clear_description: '上のメッセージを非表示にする',
             human_description: '担当者との会話を希望する',
