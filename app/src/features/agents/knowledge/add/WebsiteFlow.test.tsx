@@ -163,7 +163,7 @@ describe('WebsiteFlow: what a finished crawl claims', () => {
     };
     renderFlow();
 
-    expect(screen.getByText('Finished — this chatbot read 42 pages.')).toBeInTheDocument();
+    expect(screen.getByText('Finished. This chatbot read 42 pages.')).toBeInTheDocument();
   });
 
   it('falls back to the fetched count while the result payload is still in flight', () => {
@@ -172,7 +172,7 @@ describe('WebsiteFlow: what a finished crawl claims', () => {
     state.crawl = { ...state.crawl, status: 'done', botId: 1, pagesCrawled: 7, result: null };
     renderFlow();
 
-    expect(screen.getByText('Finished — this chatbot read 7 pages.')).toBeInTheDocument();
+    expect(screen.getByText('Finished. This chatbot read 7 pages.')).toBeInTheDocument();
   });
 });
 

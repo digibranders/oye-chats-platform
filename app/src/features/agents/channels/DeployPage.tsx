@@ -381,8 +381,8 @@ export function DeployPage() {
             <div id="access" className="scroll-mt-24">
               {accessDraft ? (
                 <SettingGroup
-                  title="Access"
-                  description="Where this chatbot is allowed to run, and how far a conversation follows a visitor."
+                  title={t('agents.access') || 'Access'}
+                  description={t('agents.whereThisChatbotIsAllowed') || 'Where this chatbot is allowed to run, and how far a conversation follows a visitor.'}
                 >
                   <AccessSection
                     website={website}
@@ -522,7 +522,7 @@ export function DeployPage() {
           saving={access.saving}
           saved={access.saved}
           saveError={access.saveError}
-          blockedReason={sessionError ? 'Fix the pinned parent domain under Access to save.' : null}
+          blockedReason={sessionError ? t('agents.fixThePinnedParentDomain') || 'Fix the pinned parent domain under Access to save.' : null}
           onSave={() => {
             if (lockingOut) setConfirmingLockout(true);
             else void commitAccess();
@@ -540,10 +540,14 @@ export function DeployPage() {
       <ConfirmDialog
         open={confirmingLockout}
         onOpenChange={setConfirmingLockout}
-        title="This will block your own website"
+        title={t('agents.thisWillBlockYourOwn') || 'This will block your own website'}
         description={
           risk
-            ? `Your chatbot is set up for ${risk.host}, and that address does not match anything on this list. Save it and the widget will stop loading there — visitors will see nothing at all. Adding ${risk.suggestions.join(' and ')} fixes it.`
+            ? t('agents.riskHostNotOnList', {
+                host: risk.host,
+                add: risk.suggestions.join(' and '),
+              }) ||
+              `Your chatbot is set up for ${risk.host}, and that address does not match anything on this list. Save it and the widget will stop loading there, so visitors will see nothing at all. Adding ${risk.suggestions.join(' and ')} fixes it.`
             : ''
         }
         confirmLabel="Save anyway"

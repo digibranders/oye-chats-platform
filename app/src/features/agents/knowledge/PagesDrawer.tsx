@@ -13,6 +13,7 @@ import type { SourcePage } from '../../../types/domain';
 import { errorMessage, isForbidden } from './knowledge-api';
 import { rootDomainOf } from './knowledge-model';
 import { useTranslation } from '../../../i18n/useTranslation';
+import { t as translateNow } from '../../../i18n/i18n';
 
 export interface PagesDrawerProps {
   /** The website source whose pages to list, or null when closed. */
@@ -74,7 +75,10 @@ export function PagesDrawer({ sourceName, agentId, onClose }: PagesDrawerProps) 
           // 28px, like every other icon action in the app. 24 is the SC 2.5.8
           // floor exactly, with no padding buffer, in a fifty-row list.
           className={buttonClass('ghost', 'icon-sm')}
-          aria-label={`Open ${row.title || row.url} in a new tab`}
+          aria-label={
+            translateNow('agents.openInANewTab', { what: row.title || row.url }) ||
+            `Open ${row.title || row.url} in a new tab`
+          }
         >
           <ExternalLink aria-hidden className="h-3.5 w-3.5" />
         </a>
@@ -99,7 +103,11 @@ export function PagesDrawer({ sourceName, agentId, onClose }: PagesDrawerProps) 
       title={domain ?? (t('agents.pages') || 'Pages')}
       description={
         pages.data?.total_pages
-          ? `${formatNumber(pages.data.total_pages)} pages · ${formatNumber(pages.data.total_chunks ?? 0)} passages this chatbot can answer from.`
+          ? t('agents.nPagesNPassages', {
+              pages: formatNumber(pages.data.total_pages),
+              passages: formatNumber(pages.data.total_chunks ?? 0),
+            }) ||
+            `${formatNumber(pages.data.total_pages)} pages · ${formatNumber(pages.data.total_chunks ?? 0)} passages this chatbot can answer from.`
           : t('agents.thePagesThisChatbotRead') || 'The pages this chatbot read from this website.'
       }
     >
@@ -111,7 +119,11 @@ export function PagesDrawer({ sourceName, agentId, onClose }: PagesDrawerProps) 
         columns={columns}
         rows={rows}
         rowKey={(row) => row.url}
-        caption={`Pages read from ${domain ?? 'this website'}`}
+        caption={
+          t('agents.pagesReadFrom', {
+            domain: domain ?? t('agents.thisWebsite') ?? 'this website',
+          }) || `Pages read from ${domain ?? 'this website'}`
+        }
         loading={pages.isPending && domain !== null}
         error={
           forbidden

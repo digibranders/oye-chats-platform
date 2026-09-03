@@ -222,7 +222,10 @@ function TreeRow({
           onCheckedChange={() => onToggleSelect(node)}
           aria-label={
             hasChildren
-              ? `${label} and everything under it, ${node.urls.length} pages`
+              ? translateNow('agents.andEverythingUnderIt', {
+                  label,
+                  count: node.urls.length,
+                }) || `${label} and everything under it, ${node.urls.length} pages`
               : `${label}`
           }
         />
@@ -361,7 +364,9 @@ export function CrawlPageTree({
             <span className="figure font-medium text-text-primary">
               {formatNumber(selectedCount)}
             </span>{' '}
-            of <span className="figure">{formatNumber(allUrls.length)}</span> pages selected
+            {translateNow('agents.of') || 'of'}{' '}
+            <span className="figure">{formatNumber(allUrls.length)}</span>{' '}
+            {translateNow('agents.pagesSelected') || 'pages selected'}
           </span>
         </div>
         <div className="flex items-center gap-1">

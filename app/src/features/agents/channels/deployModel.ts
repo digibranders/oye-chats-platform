@@ -95,9 +95,13 @@ export function installStatus({
     if (Number.isFinite(seen) && now - seen > STALE_AFTER_MS) {
       return {
         state: 'stale',
-        label: 'Not seen recently',
+        label: translateNow('agents.notSeenRecently') || 'Not seen recently',
         tone: 'warning',
-        detail: `We last saw this chatbot load on ${formatDateTime(lastSeenAt as string)}. If it should be live, check the snippet is still on your site.`,
+        detail:
+          translateNow('agents.weLastSawThisChatbotLoadOn', {
+            when: formatDateTime(lastSeenAt as string),
+          }) ||
+          `We last saw this chatbot load on ${formatDateTime(lastSeenAt as string)}. If it should be live, check the snippet is still on your site.`,
       };
     }
     return {
@@ -142,7 +146,7 @@ export function installStatus({
  * twice per bot per hour. See {@link widgetHeartbeat}, which is careful about
  * everything that stamp cannot tell you.
  */
-export const INSTALL_STAMP_CAPTION = 'First seen';
+export const installStampCaption = () => translateNow('agents.firstSeen') || 'First seen';
 
 /* ---------------------------------------------------------------- heartbeat */
 
@@ -372,14 +376,26 @@ export function domainNotice({
     return {
       id: 'locked-out',
       tone: 'danger',
-      title: `${risk.host} is not on this list`,
-      body: `Your chatbot is set up for ${risk.host}, and requests from it would be turned away. Add ${risk.suggestions.join(' and ') || 'it'} before saving.`,
+      title: translateNow('agents.hostIsNotOnThisList', { host: risk.host }) || `${risk.host} is not on this list`,
+      body:
+        translateNow('agents.yourChatbotIsSetUpForHost', {
+          host: risk.host,
+          add: risk.suggestions.join(' and ') || translateNow('agents.it') || 'it',
+        }) ||
+        `Your chatbot is set up for ${risk.host}, and requests from it would be turned away. Add ${risk.suggestions.join(' and ') || 'it'} before saving.`,
     };
   }
   return {
     id: 'ok',
     tone: 'neutral',
-    title: `Locked to ${domains.length} ${domains.length === 1 ? 'domain' : 'domains'}`,
+    title:
+      translateNow('agents.lockedToNDomains', {
+        count: domains.length,
+        unit:
+          domains.length === 1
+            ? translateNow('agents.domainSingular') || 'domain'
+            : translateNow('agents.domainPlural') || 'domains',
+      }) || `Locked to ${domains.length} ${domains.length === 1 ? 'domain' : 'domains'}`,
     body: translateNow('agents.requestsFromAnyOtherWebsite') || 'Requests from any other website are rejected.',
   };
 }
@@ -402,7 +418,11 @@ export interface SnippetInput {
  * invisible to every crawler — this anchor is the only attribution that lands in
  * the HTML the customer's server sends.
  */
+// @i18n-exempt: this builds the HTML the customer pastes into their own site.
+// A translated <script> tag is a broken install.
 export function embedSnippet({ botKey, env, attribution }: SnippetInput): string {
+  // @i18n-exempt: the HTML the customer pastes into their own site. A
+  // translated <script> tag is a broken install.
   const tag = `<script src="${widgetScriptUrl(env)}" data-bot-key="${botKey}"></script>`;
   return attribution ? `${tag}\n${attributionAnchorHtml(botKey)}` : tag;
 }
@@ -470,8 +490,15 @@ export function troubleshootItems(input: TroubleshootInput): TroubleshootItem[] 
   if (risk) {
     items.push({
       id: 'allow-list',
-      title: `Your allow-list is turning away ${risk.host}`,
-      body: `Allowed domains is on, and ${risk.host} does not match any entry, so every request from your own site is rejected before it reaches your chatbot. Add ${risk.suggestions.join(' and ') || 'your website'} under Access, further up this page.`,
+      title:
+        translateNow('agents.allowListIsTurningAway', { host: risk.host }) ||
+        `Your allow-list is turning away ${risk.host}`,
+      body:
+        translateNow('agents.allowListIsTurningAwayBody', {
+          host: risk.host,
+          add: risk.suggestions.join(' and ') || translateNow('agents.yourWebsite') || 'your website',
+        }) ||
+        `Allowed domains is on, and ${risk.host} does not match any entry, so every request from your own site is rejected before it reaches your chatbot. Add ${risk.suggestions.join(' and ') || 'your website'} under Access, further up this page.`,
     });
   } else if (domainCheckEnabled && domainsConfigured > 0) {
     items.push({
@@ -521,63 +548,6 @@ export function troubleshootItems(input: TroubleshootInput): TroubleshootItem[] 
 
 /* ------------------------------------------------- send it to your developer */
 
-/**
- * For an SMB the person who signs up very often cannot edit the website.
- * "Email this to whoever runs your site" is a first-class install path, not a
- * fallback — the previous onboarding assumed the buyer was the installer and
- * dead-ended everyone who was not.
- */
-export function developerEmail({
-  botName,
-  snippet,
-  env,
-  apiBaseUrl,
-  platformName,
-  attribution,
-}: {
-  botName: string;
-  snippet: string;
-  env: PlatformEnv;
-  apiBaseUrl: string;
-  platformName?: string | null;
-  /** True when the snippet carries the attribution anchor, so the note applies. */
-  attribution: boolean;
-}): { subject: string; body: string; href: string } {
-  const subject = `Please add the ${botName} chat widget to our website`;
-  const body = [
-    `Hi,`,
-    ``,
-    `We use OyeChats for the chat assistant on our website. Could you add this to`,
-    `every page, immediately before the closing </body> tag?`,
-    ``,
-    snippet,
-    ``,
-    platformName
-      ? `Our site runs on ${platformName}.`
-      : `It goes in the shared layout or footer template, so it loads site-wide.`,
-    ``,
-    `Two things that catch people out:`,
-    `- It must be in <body>, not <head>.`,
-    `- If we send a Content-Security-Policy header, it needs`,
-    `  script-src ${scriptOrigin(env)} and connect-src ${apiOrigin(apiBaseUrl)}.`,
-    ...(attribution
-      ? [
-          ``,
-          `The second line is a small visible "Powered by OyeChats" credit link.`,
-          `Please keep it in the served HTML and do not hide it with CSS. A hidden`,
-          `link is a Google policy violation against our own domain.`,
-        ]
-      : []),
-    ``,
-    `Thanks!`,
-  ].join('\n');
-
-  return {
-    subject,
-    body,
-    href: `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`,
-  };
-}
 
 // ── Hosted demo page ────────────────────────────────────────────────────────
 

@@ -1,4 +1,5 @@
 import { normalizeDomain } from './deployModel';
+import { t as translateNow } from '../../../i18n/i18n';
 
 /**
  * Access — the three `Bot` columns that decide **where** this chatbot may run.
@@ -71,9 +72,9 @@ export function sessionShareDomainError(value: string): string | null {
   const trimmed = value.trim();
   if (trimmed.length === 0) return null;
   if (trimmed.startsWith('*.')) {
-    return 'A wildcard will not work here. Use the parent domain on its own, e.g. acme.com.';
+    return translateNow('agents.aWildcardWillNotWork') || 'A wildcard will not work here. Use the parent domain on its own, e.g. acme.com.';
   }
-  if (!normalizeDomain(trimmed)) return 'That is not a domain. Use a hostname like acme.com.';
+  if (!normalizeDomain(trimmed)) return translateNow('agents.thatIsNotADomain') || 'That is not a domain. Use a hostname like acme.com.';
   return null;
 }
 

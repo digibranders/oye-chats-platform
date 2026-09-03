@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  INSTALL_STAMP_CAPTION,
+  installStampCaption,
   apiOrigin,
   demoPreviewState,
-  developerEmail,
   domainNotice,
   embedSnippet,
   entriesForWebsite,
@@ -18,6 +17,7 @@ import {
 } from './deployModel';
 import { formatDateTime } from '../../../ui';
 import { attributionAnchorHtml } from '../../../data/widgetEmbed';
+import { developerEmail } from './developerEmail';
 
 const BOT_KEY = 'bot-11a026a4b8b3';
 
@@ -124,7 +124,7 @@ describe('installStatus', () => {
   });
 
   it('captions the stamp as a start date, because nothing refreshes that column', () => {
-    expect(INSTALL_STAMP_CAPTION).toBe('First seen');
+    expect(installStampCaption()).toBe('First seen');
   });
 });
 
