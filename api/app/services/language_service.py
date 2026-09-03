@@ -103,7 +103,29 @@ def is_multilingual_enabled(bot) -> bool:
 # which needs no runtime dictionary because every call site carries an inline
 # English default. tests/test_widget_ui_languages_contract.py reads the widget's
 # locales directory and fails if the two drift.
-WIDGET_UI_LANGUAGES: frozenset[str] = frozenset({"en", "hi"})
+WIDGET_UI_LANGUAGES: frozenset[str] = frozenset(
+    {
+        "ar",
+        "de",
+        "en",
+        "es",
+        "fr",
+        "hi",
+        "id",
+        "it",
+        "ja",
+        "ko",
+        "nl",
+        "pl",
+        "pt",
+        "ru",
+        "th",
+        "tr",
+        "uk",
+        "vi",
+        "zh",
+    }
+)
 
 # Dictionaries that SHIP but are deliberately not offered yet.
 #
@@ -116,30 +138,13 @@ WIDGET_UI_LANGUAGES: frozenset[str] = frozenset({"en", "hi"})
 # Promotion is one line - move the code from here to WIDGET_UI_LANGUAGES - and
 # that line is the reviewable record that someone signed the language off.
 #
+# Empty today: the 17 languages that waited here have all been promoted. It
+# stays as the mechanism, because the next translation will need it.
+#
 # Without this set the contract test refuses the state entirely: it asserts the
 # shipped dictionaries and WIDGET_UI_LANGUAGES match in BOTH directions, so an
 # unreviewed translation could only be committed by also offering it.
-WIDGET_UI_LANGUAGES_PENDING_REVIEW: frozenset[str] = frozenset(
-    {
-        "es",
-        "fr",
-        "de",
-        "pt",
-        "it",
-        "nl",
-        "ja",
-        "ko",
-        "zh",
-        "ar",
-        "tr",
-        "id",
-        "vi",
-        "th",
-        "pl",
-        "ru",
-        "uk",
-    }
-)
+WIDGET_UI_LANGUAGES_PENDING_REVIEW: frozenset[str] = frozenset()
 
 # Base languages the ADMIN DASHBOARD ships an interface for (Phase 7).
 #
