@@ -74,8 +74,21 @@ export function LanguageSection({
   const addable = useMemo(
     () =>
       locales
-        .filter((locale) => uiTranslatedFor(locale.code) && !draft.supportedLocales.includes(locale.code))
-        .map((locale) => ({ value: locale.code, label: locale.name, keywords: locale.code })),
+        .filter(
+          (locale) =>
+            uiTranslatedFor(locale.code) && !draft.supportedLocales.includes(locale.locale),
+        )
+        // `locale.locale`, NOT `locale.code`. `supported_locales` is a list of
+        // BCP-47 tags and the backend validates every entry against its
+        // catalogue, so a bare language code fails the whole save with
+        // "Unsupported locale(s) ...: hi". It also made the three English rows
+        // indistinguishable, because en-IN, en-US and en-GB all carry
+        // `code: 'en'` and so all carried the same option value.
+        .map((locale) => ({
+          value: locale.locale,
+          label: locale.name,
+          keywords: `${locale.locale} ${locale.code} ${locale.nativeName}`,
+        })),
     [locales, uiTranslatedFor, draft.supportedLocales],
   );
 

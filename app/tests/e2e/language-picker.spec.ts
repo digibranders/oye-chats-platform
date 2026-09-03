@@ -82,3 +82,78 @@ test.describe('Language picker', () => {
     await expect(notice).toContainText(/not translated into Urdu/i);
   });
 });
+
+/**
+ * What the picker actually PUTS in `supported_locales`.
+ *
+ * The field is a list of BCP-47 tags: the backend validates each entry against
+ * its locale catalogue and refuses the whole save otherwise. The options were
+ * built from `LocaleEntry.code`, which is the BASE language (`hi`), not
+ * `LocaleEntry.locale`, which is the tag (`hi-IN`). So adding a language from
+ * this control and pressing Save returned
+ *
+ *   Unsupported locale(s) in language_config.supported_locales: hi
+ *
+ * and nothing could be added at all. English hid it: `en-IN` was already on
+ * the bot from creation, so the only rows anyone reached through the dropdown
+ * were the broken ones.
+ *
+ * The same mistake made the three English rows indistinguishable, because
+ * en-IN, en-US and en-GB all carry `code: 'en'` and so all carried the same
+ * option value.
+ */
+test.describe('Language picker writes locale tags, not language codes', () => {
+  test('adding a language sends a BCP-47 tag the backend accepts', async ({ page }) => {
+    const saved: unknown[] = [];
+    await mockBackend(page, {
+      bot: {
+        language_config: {
+          enabled: true,
+          default_locale: 'en-IN',
+          supported_locales: ['en-IN'],
+          operator_translation_enabled: false,
+        },
+      },
+      onBotUpdate: (body) => {
+        saved.push((body as { language_config?: { supported_locales?: unknown } })?.language_config
+          ?.supported_locales);
+      },
+    });
+    await openLanguageTab(page);
+
+    await page.getByLabel('Add a language').click();
+    await page.getByRole('option', { name: /Hindi/ }).click();
+
+    // The chip names the LOCALE, not the bare language: "Hindi (India)".
+    await expect(page.getByText('Hindi (India)')).toBeVisible();
+
+    await page.getByRole('button', { name: /Save changes/i }).click();
+
+    await expect
+      .poll(() => saved.at(-1), { timeout: 10_000 })
+      .toEqual(['en-IN', 'hi-IN']);
+  });
+
+  test('each English region is its own option', async ({ page }) => {
+    await mockBackend(page, {
+      bot: {
+        language_config: {
+          enabled: true,
+          default_locale: 'en-IN',
+          supported_locales: ['hi-IN'],
+          operator_translation_enabled: false,
+        },
+      },
+    });
+    await openLanguageTab(page);
+    await page.getByLabel('Add a language').click();
+
+    // Three distinct rows, and picking one must not add the other two.
+    await expect(page.getByRole('option', { name: 'English (India)' })).toBeVisible();
+    await expect(page.getByRole('option', { name: 'English (United States)' })).toBeVisible();
+    await page.getByRole('option', { name: 'English (United States)' }).click();
+
+    await expect(page.getByText('English (United States)')).toBeVisible();
+    await expect(page.getByText('English (India)')).toHaveCount(0);
+  });
+});

@@ -58,6 +58,14 @@ export interface MockOptions {
    */
   bot?: Partial<typeof BOT>;
   /**
+   * Called with the parsed body of every write to `/bots/<id>`.
+   *
+   * The console's own screen cannot tell you whether it sent a valid payload:
+   * a mocked backend accepts anything. This is how a spec asserts on what
+   * actually went over the wire, which is where the locale-tag bug lived.
+   */
+  onBotUpdate?: (body: unknown) => void;
+  /**
    * Rows returned by `GET /me/workspaces`.
    *
    * Defaults to the single owned workspace, which is what most of the console
@@ -118,6 +126,11 @@ const ENTITLEMENTS = {
 const LOCALES = {
   locales: [
     { code: 'en', locale: 'en-IN', name: 'English (India)', native_name: 'English (India)', direction: 'ltr', ui_translated: true },
+    // Three English rows, as the real catalogue has. They all share
+    // `code: 'en'`, which is what let a picker keyed on the base language look
+    // correct while being unable to tell them apart.
+    { code: 'en', locale: 'en-US', name: 'English (United States)', native_name: 'English (US)', direction: 'ltr', ui_translated: true },
+    { code: 'en', locale: 'en-GB', name: 'English (United Kingdom)', native_name: 'English (UK)', direction: 'ltr', ui_translated: true },
     { code: 'hi', locale: 'hi-IN', name: 'Hindi (India)', native_name: 'हिन्दी', direction: 'ltr', ui_translated: true },
     // In the catalogue because the AI converses in them, but the widget ships
     // no UI dictionary, so the language picker must not offer them.
@@ -152,6 +165,7 @@ export async function mockBackend(page: Page, opts: MockOptions = {}): Promise<O
     translate,
     online = true,
     bot: botOverrides,
+    onBotUpdate,
     workspaces = [{ id: 1, name: 'Acme Corporation', role: 'owner' }],
     waitingCount = 0,
     notifications = [],
@@ -257,7 +271,19 @@ export async function mockBackend(page: Page, opts: MockOptions = {}): Promise<O
   // catch-all `{}`, so every agent page in these specs was rendering an empty
   // payload and its defaults rather than the bot above.
   // The `*` glob does not cross `/`, so sub-resources are unaffected.
-  await page.route(`${API}/bots/*`, (route) => route.fulfill({ json: bot }));
+  await page.route(`${API}/bots/*`, (route) => {
+    const request = route.request();
+    if (request.method() !== 'GET') {
+      let parsed: unknown = null;
+      try {
+        parsed = request.postDataJSON();
+      } catch {
+        parsed = request.postData();
+      }
+      onBotUpdate?.(parsed);
+    }
+    return route.fulfill({ json: bot });
+  });
   await page.route(`${API}/operators/me/status*`, (route) =>
     route.fulfill({ json: { operator_id: 1, operator_name: 'Asha', is_online: online } }),
   );
