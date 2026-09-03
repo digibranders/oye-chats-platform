@@ -46,8 +46,8 @@ def pg_engine():
     regression.
 
     Isolation does not depend on the scope: the function-scoped ``db`` fixture
-    TRUNCATEs every table with RESTART IDENTITY after each test, so a
-    session-wide database is as clean per test as a per-module one was.
+    resets every table and sequence the test touched (``reset_database``), so
+    a session-wide database is as clean per test as a per-module one was.
     """
     base = _pg_base_url()
     if base is None:
@@ -62,14 +62,15 @@ def pg_engine():
     admin.dispose()
 
     # A lock is waited on for 30s at most, a statement runs for 60s at most.
-    # The per-test teardown below TRUNCATEs every table, which needs an
-    # exclusive lock on each; Postgres waits for one indefinitely by default,
-    # so a connection something left holding a transaction made that teardown
-    # a silent hang (2026-09-02: a CI job at 65% of the suite, no output for
-    # half an hour, cancelled by hand). With the timeout it fails in 30s, on
-    # the test whose teardown could not proceed, saying "lock timeout". Both
-    # sit below pytest-timeout's 120s so the report names the statement, not
-    # merely the test.
+    # The per-test teardown below clears every table the test wrote to, which
+    # blocks on any row or table lock another transaction still holds;
+    # Postgres waits for one indefinitely by default, so a connection
+    # something left holding a transaction made that teardown a silent hang
+    # (2026-09-02: a CI job at 65% of the suite, no output for half an hour,
+    # cancelled by hand). With the timeout it fails in 30s, on the test whose
+    # teardown could not proceed, saying "lock timeout". Both sit below
+    # pytest-timeout's 120s so the report names the statement, not merely the
+    # test.
     engine = create_engine(
         base.set(database=test_db),
         connect_args={"options": "-c lock_timeout=30s -c statement_timeout=60s"},
@@ -86,6 +87,106 @@ def pg_engine():
     with admin.connect() as conn:
         conn.exec_driver_sql(f'DROP DATABASE IF EXISTS "{test_db}" WITH (FORCE)')
     admin.dispose()
+
+
+@pytest.fixture(scope="session")
+def fk_checks_switchable(pg_engine) -> bool:
+    """Whether the test role may turn foreign-key enforcement off for a transaction.
+
+    ``SET session_replication_role = replica`` needs a superuser, which the CI
+    service container's role and a Homebrew Postgres role both are. Without it
+    ``reset_database`` falls back to the full TRUNCATE.
+    """
+    with pg_engine.connect() as conn:
+        return bool(conn.exec_driver_sql("SELECT rolsuper FROM pg_roles WHERE rolname = current_user").scalar())
+
+
+# ── Per-test database reset ──────────────────────────────────────────────────
+#
+# The reset used to be ``TRUNCATE <every table> RESTART IDENTITY CASCADE`` after
+# each test. Cheap to write, expensive to run: a TRUNCATE gives every table,
+# index and TOAST relation in the list a new file on disk (223 relations here),
+# and fsyncs them at commit. Measured on 2026-09-03 with durability off, so this
+# is the cost with no disk latency at all: 53ms per reset, 40ms of it reachable
+# from ``clients`` alone through CASCADE. Nearly 2,000 tests use the ``db``
+# fixture, so the truncates were about a fifth of the suite on a healthy CI
+# runner, and on a runner with a slow disk they were the whole job (the same
+# commit: 8 minutes on one runner, 39% done after 24 minutes on another).
+#
+# ``reset_database`` produces the state that TRUNCATE did, at DELETE cost:
+#   * one round trip finds the tables that hold rows and the sequences that
+#     have handed out a value since they were last restarted (1.4ms on a clean
+#     schema, which most tests leave behind);
+#   * the rows are deleted with foreign-key enforcement off for the transaction,
+#     so no delete order is needed and the FK cycle between affiliates, bots,
+#     clients, referral_codes and subscriptions cannot block it;
+#   * exactly the sequences TRUNCATE RESTART IDENTITY would have restarted
+#     (those owned by a column of a model table) are restarted, including one
+#     advanced by an INSERT that was rolled back or deleted, since nextval is
+#     not transactional and would otherwise leak ids into the next test.
+# A test that only reads pays a 1ms check; one that writes a client and a bot
+# pays under a millisecond more. ``test_db_reset_harness.py`` holds the parity
+# tests against TRUNCATE.
+
+# Order is irrelevant to the reset, so the plain table map is used rather than
+# ``sorted_tables``, whose dependency sort warns about the FK cycle above.
+_TABLE_NAMES: tuple[str, ...] = tuple(sorted(_Base.metadata.tables))
+_ALL_TABLES_SQL = ", ".join(f'"{name}"' for name in _TABLE_NAMES)
+_DIRTY_TABLES_SQL = " UNION ALL ".join(
+    f"SELECT '{name}' WHERE EXISTS (SELECT 1 FROM \"{name}\")" for name in _TABLE_NAMES
+)
+# Sequences owned by a column of a model table (SERIAL: deptype 'a', IDENTITY:
+# deptype 'i'). ``pg_sequences.last_value`` is NULL until the first nextval after
+# a restart, so a non-NULL value means the sequence is no longer at its start.
+_USED_SEQUENCES_SQL = """
+    SELECT seq.relname
+    FROM pg_class seq
+    JOIN pg_namespace ns ON ns.oid = seq.relnamespace
+    JOIN pg_depend dep ON dep.objid = seq.oid AND dep.deptype IN ('a', 'i')
+    JOIN pg_class tbl ON tbl.oid = dep.refobjid
+    JOIN pg_sequences ps ON ps.schemaname = ns.nspname AND ps.sequencename = seq.relname
+    WHERE seq.relkind = 'S'
+      AND tbl.relname = ANY(:tables)
+      AND ps.last_value IS NOT NULL
+"""
+
+
+def dirty_tables(session: _Session) -> set[str]:
+    """Names of the model tables that currently hold at least one row."""
+    return {row[0] for row in session.execute(_sa_text(_DIRTY_TABLES_SQL))}
+
+
+def used_sequences(session: _Session) -> set[str]:
+    """Names of the model tables' owned sequences that are not at their start."""
+    rows = session.execute(_sa_text(_USED_SEQUENCES_SQL), {"tables": list(_TABLE_NAMES)})
+    return {row[0] for row in rows}
+
+
+def reset_database(session: _Session, *, fk_checks_switchable: bool) -> None:
+    """Leave every model table empty and every owned sequence at its start.
+
+    Equivalent to ``TRUNCATE <every table> RESTART IDENTITY CASCADE`` and
+    commits. ``fk_checks_switchable`` is whether the role may disable
+    foreign-key enforcement for the transaction (see the fixture of that name);
+    when it may not, the TRUNCATE itself runs.
+    """
+    dirty = dirty_tables(session)
+    sequences = used_sequences(session)
+    if not dirty and not sequences:
+        session.rollback()
+    elif not fk_checks_switchable:
+        session.execute(_sa_text(f"TRUNCATE {_ALL_TABLES_SQL} RESTART IDENTITY CASCADE"))
+        session.commit()
+    else:
+        session.execute(_sa_text("SET LOCAL session_replication_role = replica"))
+        for name in sorted(dirty):
+            session.execute(_sa_text(f'DELETE FROM "{name}"'))
+        for name in sorted(sequences):
+            session.execute(_sa_text(f'ALTER SEQUENCE "{name}" RESTART'))
+        session.commit()
+    # The identity map still holds objects for rows that no longer exist; a
+    # row inserted next would otherwise collide with them on the same id.
+    session.expunge_all()
 
 
 @pytest.fixture(autouse=True)
@@ -110,7 +211,7 @@ def _drain_background_pool() -> None:
     Geolocation lookups, lead enrichment, webhook deliveries and groundedness
     checks all run on ``app.core.thread_pool`` after a request has returned. A
     task still running when the test ends may hold a transaction on a table
-    the teardown is about to TRUNCATE, and the truncate then waits for it. An
+    the teardown is about to clear, and the reset then waits for it. An
     undrained pool is therefore reported here, by task name, on the test that
     left it, instead of surfacing as a stall on whichever test comes next.
     """
@@ -132,15 +233,13 @@ def _no_background_work_outlives_a_test():
 
 
 @pytest.fixture()
-def db(pg_engine):
+def db(pg_engine, fk_checks_switchable):
     session = _Session(pg_engine)
     yield session
     session.rollback()
-    # Before the truncate, never after: see ``_drain_background_pool``.
+    # Before the reset, never after: see ``_drain_background_pool``.
     _drain_background_pool()
-    names = ", ".join(f'"{t.name}"' for t in _Base.metadata.sorted_tables)
-    session.execute(_sa_text(f"TRUNCATE {names} RESTART IDENTITY CASCADE"))
-    session.commit()
+    reset_database(session, fk_checks_switchable=fk_checks_switchable)
     session.close()
 
 
