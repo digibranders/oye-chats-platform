@@ -81,10 +81,10 @@ describe('Menu', () => {
     // A column picker with a "Reset" command beside it showed a ragged left
     // edge: 8px against 28px.
     expect(classesOf(within(menu).getByRole('menuitem', { name: 'Reset columns' }))).toContain(
-      'pl-7',
+      'ps-7',
     );
     expect(classesOf(within(menu).getByRole('menuitemcheckbox', { name: 'Status' }))).toContain(
-      'pl-7',
+      'ps-7',
     );
   });
 
@@ -212,7 +212,7 @@ describe('Dialog and Drawer share one padding contract', () => {
       </Drawer>,
     );
     expect(screen.getByText('Lead')).toBeInTheDocument();
-    expect(classesOf(screen.getByRole('dialog'))).toContain('sm:rounded-l-xl');
+    expect(classesOf(screen.getByRole('dialog'))).toContain('sm:rounded-s-xl');
   });
 
   it('declares a page container on the body, so a grid inside asks the panel', () => {

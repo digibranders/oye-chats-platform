@@ -158,7 +158,7 @@ export function AppShell() {
                   `w-64`: every inset inside `Rail` is tuned against the same
                   `--spacing-rail` token, so a fixed pixel class here would
                   drift out of sync the next time that token changes. */}
-              <BaseDialog.Popup className="motion-slide-left fixed inset-y-0 left-0 z-[var(--z-overlay)] w-rail focus:outline-none">
+              <BaseDialog.Popup className="motion-slide-start fixed inset-y-0 start-0 z-[var(--z-overlay)] w-rail focus:outline-none">
                 <BaseDialog.Title className="sr-only">{t('shell.navigation') || 'Navigation'}</BaseDialog.Title>
                 <Rail
                   collapsed={false}

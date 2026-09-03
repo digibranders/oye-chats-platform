@@ -525,7 +525,7 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
           </Badge>
         ) : null}
 
-        <div className="ml-auto flex items-center gap-3">
+        <div className="ms-auto flex items-center gap-3">
           {!liveChat ? (
             <Link to="/billing" className={buttonClass('primary', 'sm')}>
               {t('inbox.addLiveChat') || 'Add live chat'}

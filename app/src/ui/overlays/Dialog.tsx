@@ -109,8 +109,10 @@ export function Dialog({
         <BaseDialog.Backdrop className={OVERLAY_SCRIM} />
         <BaseDialog.Popup
           className={cn(
+            // rtl-ok: centers the panel on the viewport — the midpoint is the
+            // same regardless of reading direction.
             'motion-panel fixed left-1/2 top-1/2 z-[var(--z-overlay)] flex max-h-[calc(100dvh-2rem)]',
-            'w-[calc(100dvw-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col',
+            'w-[calc(100dvw-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col', // rtl-ok: centering, see above
             'overflow-hidden rounded-xl border border-border bg-surface shadow-lg focus:outline-none',
             SIZES[size],
             className,

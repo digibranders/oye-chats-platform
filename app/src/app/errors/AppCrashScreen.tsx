@@ -50,7 +50,7 @@ export function AppCrashScreen({ title, description, detail, actions }: AppCrash
             </a>
             .
           </p>
-          {detail ? <ErrorDetails detail={detail} className="mt-3 text-left" /> : null}
+          {detail ? <ErrorDetails detail={detail} className="mt-3 text-start" /> : null}
         </>
       }
     />

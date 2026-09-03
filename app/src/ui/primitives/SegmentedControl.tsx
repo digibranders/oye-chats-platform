@@ -77,13 +77,24 @@ export function SegmentedControl<T extends string>({
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    // Left/Right follow the VISUAL direction the key points, per the WAI-ARIA
+    // radiogroup pattern — under rtl the segments themselves render mirrored,
+    // so the physical Right key has to move to the previous segment to still
+    // track the same visual motion, not the same logical one.
+    const rtl = document.documentElement.dir === 'rtl';
     switch (event.key) {
       case 'ArrowRight':
+        event.preventDefault();
+        move(rtl ? -1 : 1);
+        break;
+      case 'ArrowLeft':
+        event.preventDefault();
+        move(rtl ? 1 : -1);
+        break;
       case 'ArrowDown':
         event.preventDefault();
         move(1);
         break;
-      case 'ArrowLeft':
       case 'ArrowUp':
         event.preventDefault();
         move(-1);

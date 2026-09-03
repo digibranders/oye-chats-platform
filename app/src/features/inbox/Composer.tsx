@@ -173,6 +173,9 @@ export function Composer({
           // drawers), `--z-overlay` (at `--z-sticky` it painted *under* any
           // sticky toolbar), and the `p-1` inset that stops an option's
           // highlight bleeding into the container's own radius.
+          // rtl-ok: `left-cell`/`right-cell` share the same "cell" token, a
+          // symmetric inset that matches the container's own `px-cell` below
+          // — not an asymmetric anchor, so it holds under either direction.
           className="motion-pop absolute bottom-full left-cell right-cell z-[var(--z-overlay)] mb-2 max-h-64 overflow-y-auto rounded-lg border border-border bg-surface p-1 shadow-md"
         >
           {matches.map((snippet, index) => (
@@ -189,7 +192,7 @@ export function Composer({
               }}
               onMouseEnter={() => setHighlight(index)}
               className={cn(
-                'flex w-full flex-col items-start gap-0.5 rounded-sm px-2 py-1.5 text-left',
+                'flex w-full flex-col items-start gap-0.5 rounded-sm px-2 py-1.5 text-start',
                 index === highlight ? 'bg-accent-50' : 'bg-surface',
               )}
             >
@@ -279,7 +282,7 @@ export function Composer({
             disabled={disabled || value.trim().length === 0}
             onClick={submit}
           >
-            <Send aria-hidden />
+            <Send aria-hidden className="rtl:-scale-x-100" />
           </Button>
         </Tooltip>
       </div>

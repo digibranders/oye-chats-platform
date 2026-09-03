@@ -272,7 +272,7 @@ export function AutoRetrainCard({ agentId, section, planName }: AutoRetrainCardP
               type="button"
               onClick={() => setRunsCollapsed((value) => !value)}
               aria-expanded={!runsCollapsed}
-              className="flex w-full items-center justify-between gap-2 text-left"
+              className="flex w-full items-center justify-between gap-2 text-start"
             >
               <span className="text-base font-medium text-text-primary">
                 {t('agents.runHistory') || 'Run history'}

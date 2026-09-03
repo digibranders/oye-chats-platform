@@ -101,9 +101,9 @@ export function Drawer({
         <BaseDialog.Backdrop className={OVERLAY_SCRIM} />
         <BaseDialog.Popup
           className={cn(
-            'motion-slide-right fixed inset-y-0 right-0 z-[var(--z-overlay)] flex w-full flex-col',
-            'overflow-hidden border-l border-border bg-surface shadow-lg focus:outline-none',
-            'sm:rounded-l-xl',
+            'motion-slide-end fixed inset-y-0 end-0 z-[var(--z-overlay)] flex w-full flex-col',
+            'overflow-hidden border-s border-border bg-surface shadow-lg focus:outline-none',
+            'sm:rounded-s-xl',
             WIDTHS[width],
             className,
           )}

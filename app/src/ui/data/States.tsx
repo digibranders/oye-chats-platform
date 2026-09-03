@@ -178,7 +178,7 @@ function StateBody({
         // horizontal gutter; the vertical one is the state's own breathing
         // room and belongs to it either way.
         !flush && 'px-cell',
-        centred ? 'text-center' : 'text-left',
+        centred ? 'text-center' : 'text-start',
       )}
     >
       {Icon && size !== 'inline' ? (
@@ -569,7 +569,7 @@ export function LoadingBars({ rows = 5, className }: { rows?: number; className?
         <div key={index} className="flex items-center gap-4 px-cell py-2.5">
           <Skeleton className="h-3 w-24 shrink-0" />
           <Skeleton className="h-2 w-full max-w-80 rounded-xs" />
-          <Skeleton className="ml-auto h-3 w-10 shrink-0" />
+          <Skeleton className="ms-auto h-3 w-10 shrink-0" />
         </div>
       ))}
     </div>

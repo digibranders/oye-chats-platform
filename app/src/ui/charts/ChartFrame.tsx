@@ -100,8 +100,13 @@ export function ChartFrame({
         ) : (
           <>
             {/* The picture, hidden from assistive tech, and the words that
-                replace it. Both always render — the summary is not a fallback. */}
-            <div aria-hidden className="h-full w-full">
+                replace it. Both always render — the summary is not a fallback.
+                LTR island: a plotted axis reads left to right regardless of
+                the console's own language, the same convention as a numeric
+                `.figure` column, so this is `dir="ltr"` rather than mirrored -
+                only the labels and legend around it follow the console's
+                direction. */}
+            <div aria-hidden dir="ltr" className="h-full w-full">
               {children}
             </div>
             <p className="sr-only">{summary}</p>

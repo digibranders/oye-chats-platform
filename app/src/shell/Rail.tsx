@@ -102,7 +102,7 @@ function RailHeaderButton({
   controls?: string;
 }) {
   return (
-    <Tooltip content={label} side="right">
+    <Tooltip content={label} side="inline-end">
       <button
         type="button"
         onClick={onClick}
@@ -163,7 +163,7 @@ export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 
   const header = collapsed ? (
     // Collapsed, the mark is the expander. At 60px there is room for one 24px
     // control, and throwing the brand away to keep a chevron is the wrong trade.
-    <Tooltip content="Expand navigation" side="right">
+    <Tooltip content="Expand navigation" side="inline-end">
       <button
         type="button"
         onClick={onToggle}
@@ -317,7 +317,7 @@ export function Rail({ collapsed, onNavigate, onToggle, onClose, inboxCount = 0 
                       to="/chatbots?new=1"
                       onClick={onNavigate}
                       aria-label={t('shell.newChatbot') || 'New chatbot'}
-                      className="-mr-1 flex h-6 w-6 items-center justify-center rounded-sm text-rail-text-muted transition-colors hover:bg-rail-hover hover:text-rail-text focus-visible:outline-rail-accent"
+                      className="-me-1 flex h-6 w-6 items-center justify-center rounded-sm text-rail-text-muted transition-colors hover:bg-rail-hover hover:text-rail-text focus-visible:outline-rail-accent"
                     >
                       <Plus aria-hidden className="h-icon-sm w-icon-sm" />
                     </Link>

@@ -297,15 +297,18 @@ export function AffiliatePage() {
                 </th>
                 <td />
                 <td />
+                {/* rtl-ok: numeric figure — digits stay right-aligned so place value lines up, regardless of direction */}
                 <td className="figure text-right font-semibold">
                   {formatNumber(stats?.totalClicks ?? 0)}
                 </td>
+                {/* rtl-ok: numeric figure — digits stay right-aligned so place value lines up, regardless of direction */}
                 <td className="figure text-right font-semibold">
                   {formatNumber(stats?.totalSignups ?? 0)}
                 </td>
                 {/* The all-codes rate is `null` until something is clicked.
                     `?? 0` printed "0% conversion" for an affiliate who had not
                     started yet, which reads as a result rather than as silence. */}
+                {/* rtl-ok: numeric figure — digits stay right-aligned so place value lines up, regardless of direction */}
                 <td className="figure text-right font-semibold">
                   {stats?.conversionPct == null ? (
                     <>

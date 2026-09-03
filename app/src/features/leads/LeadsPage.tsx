@@ -752,7 +752,7 @@ export function LeadsPage() {
                 nothing else in it once the page's title stopped repeating the
                 breadcrumb. This is the row it belongs on: the one other
                 page-scoped control already lives on. */}
-            <div className="ml-auto">
+            <div className="ms-auto">
               <MenuRoot>
                 <MenuTrigger
                   aria-label={t('leads.leadActions') || 'Lead actions'}

@@ -114,7 +114,7 @@ function PlanCard({
       ) : (
         <p className="figure mt-2 text-2xl font-semibold leading-tight text-text-primary">
           {formatMoneyMinor(headlineMinor, price.displayCurrency)}
-          <span className="ml-1 font-sans text-xs font-normal text-text-tertiary">/mo</span>
+          <span className="ms-1 font-sans text-xs font-normal text-text-tertiary">/mo</span>
         </p>
       )}
       {/* On the annual cycle the headline is per-month, so the yearly total it

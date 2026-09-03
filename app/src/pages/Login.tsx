@@ -295,7 +295,7 @@ export default function Login() {
               {...form.register('password')}
             />
           </Field>
-          <div className="mt-1.5 text-right">
+          <div className="mt-1.5 text-end">
             <Link
               to="/forgot-password"
               className="text-xs font-medium text-accent-600 hover:text-accent-700 hover:underline"

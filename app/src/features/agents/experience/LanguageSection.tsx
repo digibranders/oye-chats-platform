@@ -169,7 +169,7 @@ export function LanguageSection({
           <ul className="flex flex-wrap gap-2">
             {draft.supportedLocales.map((code) => (
               <li key={code}>
-                <span className="inline-flex items-center gap-1 rounded-md border border-border py-0.5 pl-2 pr-0.5 text-sm text-text-primary">
+                <span className="inline-flex items-center gap-1 rounded-md border border-border py-0.5 ps-2 pe-0.5 text-sm text-text-primary">
                   {name(code)}
                   <Button
                     variant="ghost"

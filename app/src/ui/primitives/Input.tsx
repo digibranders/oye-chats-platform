@@ -116,6 +116,12 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
     <input
       ref={ref}
       type={revealable && revealed ? 'text' : type}
+      // A number input is digits and a decimal separator, never prose, and
+      // Arabic-Indic digit substitution plus a mirrored caret make a
+      // right-to-left number field genuinely hard to type into. `dir="ltr"`
+      // by default; a caller can still override it via `props`, which spread
+      // after this and wins.
+      dir={type === 'number' ? 'ltr' : undefined}
       className={cn(
         CONTROL_BASE,
         controlClass(size),

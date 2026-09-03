@@ -134,6 +134,7 @@ export function LeadQualification({ lead }: LeadQualificationProps) {
                   {dimension.captured ? t('leads.captured') || 'Captured' : t('leads.nothingCapturedForThisYet') || 'Nothing captured for this yet'}
                 </span>
               )}
+              {/* rtl-ok: numeric figure — digits stay right-aligned so place value lines up, regardless of direction */}
               <span className="figure w-12 shrink-0 text-right text-xs text-text-secondary">
                 {max !== null
                   ? `${dimension.score}/${max}`

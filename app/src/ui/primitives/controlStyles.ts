@@ -56,9 +56,9 @@ export const CONTROL_SIZE: Record<ControlSize, ControlGeometry> = {
     text: 'text-xs',
     icon: 'h-icon-sm w-icon-sm',
     gap: 'gap-1.5',
-    affixInset: { leading: 'left-2.5', trailing: 'right-2.5' },
+    affixInset: { leading: 'start-2.5', trailing: 'end-2.5' },
     // 10 inset + 14 glyph + 8 clearance = 32 · 10 + 24 button + 6 = 40
-    affixPad: { leading: 'pl-8', trailing: 'pr-10' },
+    affixPad: { leading: 'ps-8', trailing: 'pe-10' },
   },
   md: {
     height: 'h-control-md',
@@ -67,9 +67,9 @@ export const CONTROL_SIZE: Record<ControlSize, ControlGeometry> = {
     text: 'text-base',
     icon: 'h-icon-md w-icon-md',
     gap: 'gap-2',
-    affixInset: { leading: 'left-3', trailing: 'right-3' },
+    affixInset: { leading: 'start-3', trailing: 'end-3' },
     // 12 + 16 + 8 = 36 · 12 + 24 + 8 = 44
-    affixPad: { leading: 'pl-9', trailing: 'pr-11' },
+    affixPad: { leading: 'ps-9', trailing: 'pe-11' },
   },
   lg: {
     height: 'h-control-lg',
@@ -78,9 +78,9 @@ export const CONTROL_SIZE: Record<ControlSize, ControlGeometry> = {
     text: 'text-base',
     icon: 'h-icon-md w-icon-md',
     gap: 'gap-2',
-    affixInset: { leading: 'left-4', trailing: 'right-4' },
+    affixInset: { leading: 'start-4', trailing: 'end-4' },
     // 16 + 16 + 8 = 40 · 16 + 24 + 8 = 48
-    affixPad: { leading: 'pl-10', trailing: 'pr-12' },
+    affixPad: { leading: 'ps-10', trailing: 'pe-12' },
   },
 };
 

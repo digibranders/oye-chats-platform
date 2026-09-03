@@ -249,7 +249,7 @@ export function StatRow({ period, items, columns = 4, loading = false, label, cl
         {items.map((item) => (
           <div
             key={item.label}
-            className="-ml-px -mt-px border-l border-t border-border px-cell py-4"
+            className="-ms-px -mt-px border-s border-t border-border px-cell py-4"
           >
             <StatTile
               {...item}
@@ -299,6 +299,8 @@ export function FigureRow({
       </dt>
       <dd
         className={cn(
+          // rtl-ok: numeric figure — digits stay right-aligned so place
+          // value lines up, regardless of direction.
           'figure shrink-0 text-right text-sm',
           emphasis ? 'font-semibold' : 'font-medium',
           VALUE_TONE[tone],

@@ -18,7 +18,7 @@ export interface QueueSettingsCardProps {
 
 /** The unit, inside the control rather than in the label. */
 function Seconds() {
-  return <span className="pr-1 text-xs text-text-tertiary">sec</span>;
+  return <span className="pe-1 text-xs text-text-tertiary">sec</span>;
 }
 
 /**

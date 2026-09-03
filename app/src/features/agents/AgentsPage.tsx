@@ -552,7 +552,7 @@ export function AgentsPage() {
               <div
                 role="status"
                 aria-live="polite"
-                className="ml-auto text-xs text-text-secondary sm:text-right"
+                className="ms-auto text-xs text-text-secondary sm:text-end"
               >
                 <p className="whitespace-nowrap">
                   {visible.length === summary.total

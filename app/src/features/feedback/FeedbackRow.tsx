@@ -58,7 +58,7 @@ export function FeedbackRow({ item, expanded, onToggle }: FeedbackRowProps) {
         onOpenChange={onToggle}
         regionLabel={`Full exchange: ${item.question}`}
         className="px-cell py-1"
-        panelClassName="pb-3 pr-cell"
+        panelClassName="pb-3 pe-cell"
         summary={
           <span className="flex min-w-0 items-center gap-3">
             <Badge tone={positive ? 'success' : 'danger'} dot>
@@ -93,11 +93,11 @@ export function FeedbackRow({ item, expanded, onToggle }: FeedbackRowProps) {
               leading rule is the device the visitor panel already uses for
               "here is what someone said", so the two treatments match. */}
           <dl className="grid gap-3">
-            <div className="border-l-[3px] border-l-border-strong pl-3">
+            <div className="border-s-[3px] border-s-border-strong ps-3">
               <Eyebrow as="dt">Visitor asked</Eyebrow>
               <dd className="mt-1 text-prose text-text-primary">{item.question}</dd>
             </div>
-            <div className="border-l-[3px] border-l-border-strong pl-3">
+            <div className="border-s-[3px] border-s-border-strong ps-3">
               <Eyebrow as="dt">Chatbot answered</Eyebrow>
               <dd className="mt-1 text-prose text-text-secondary">{item.answer}</dd>
             </div>

@@ -260,7 +260,7 @@ function Bubble({ message }: { message: TranscriptMessage }) {
             // as markdown would reformat their own words.
             <p className="whitespace-pre-wrap break-words text-prose text-text-primary">{text}</p>
           ) : (
-            <div className="break-words text-prose text-text-primary [&_a]:text-accent-600 [&_a]:underline [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-4 [&_p]:my-0 [&_strong]:font-semibold [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-4">
+            <div className="break-words text-prose text-text-primary [&_a]:text-accent-600 [&_a]:underline [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:ps-4 [&_p]:my-0 [&_strong]:font-semibold [&_ul]:my-1 [&_ul]:list-disc [&_ul]:ps-4">
               <Markdown>{text}</Markdown>
             </div>
           )

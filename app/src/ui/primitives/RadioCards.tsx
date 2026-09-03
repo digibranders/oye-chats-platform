@@ -151,7 +151,7 @@ export function RadioCards<T extends string>({
             data-value={item.value}
             onClick={() => onChange(item.value)}
             className={cn(
-              'flex flex-col items-start rounded-md border p-3 text-left',
+              'flex flex-col items-start rounded-md border p-3 text-start',
               'transition-colors duration-[var(--dur-fast)]',
               'disabled:cursor-not-allowed disabled:border-border disabled:bg-surface-sunken',
               selected

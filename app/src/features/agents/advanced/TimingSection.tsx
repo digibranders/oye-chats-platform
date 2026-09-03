@@ -40,7 +40,7 @@ function TimingSectionInner({ config, onChange }: TimingSectionProps) {
       trailing={
         <span className="text-xs text-text-tertiary">The defaults suit almost every site.</span>
       }
-      panelClassName="pl-0 pt-2"
+      panelClassName="ps-0 pt-2"
     >
       <Card>
         {CONFIG_GROUPS.map((group) => (

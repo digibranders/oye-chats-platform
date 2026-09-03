@@ -211,7 +211,11 @@ export function ZoomPanCanvas({
         <g transform={`translate(${transform.tx} ${transform.ty}) scale(${transform.scale})`}>{children}</g>
       </svg>
 
-      <div className="absolute right-3 top-3 flex flex-col gap-1">
+      <div
+        // rtl-ok: zoom/pan controls stay in a fixed visual corner by
+        // convention, independent of reading direction (Google Maps, Figma).
+        className="absolute right-3 top-3 flex flex-col gap-1"
+      >
         <Button
           size="icon-sm"
           variant="secondary"
@@ -236,6 +240,8 @@ export function ZoomPanCanvas({
       </div>
 
       <div
+        // rtl-ok: same fixed-corner control cluster as the zoom buttons
+        // above, independent of reading direction.
         className="absolute bottom-3 right-3 rounded-md border border-border bg-surface px-2 py-1 text-xs font-medium tabular-nums text-text-secondary"
         aria-live="polite"
       >

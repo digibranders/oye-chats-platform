@@ -704,7 +704,7 @@ export function FeedbackModal({
                             type="button"
                             onClick={() => removeAttachment(att.id)}
                             aria-label={`Remove ${att.name}`}
-                            className="absolute right-0.5 top-0.5 rounded-full bg-ink/60 p-0.5 text-text-inverse opacity-0 transition-opacity hover:bg-danger group-hover:opacity-100"
+                            className="absolute end-0.5 top-0.5 rounded-full bg-ink/60 p-0.5 text-text-inverse opacity-0 transition-opacity hover:bg-danger group-hover:opacity-100"
                           >
                             <X aria-hidden className="h-3 w-3" />
                           </button>
