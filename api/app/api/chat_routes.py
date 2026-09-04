@@ -760,7 +760,7 @@ def _resolve_and_update_location(session_id: str, ip_address: str, bot_id: int |
 
     ``bot_id`` gates the paid Visitor-Intelligence company lookup
     (``fetch_ip_intel``): it fires only for a Professional bot, when the
-    ``company_name`` feature switch is on, and only after 10 credits are
+    ``company_name`` feature switch is on, and only after 5 credits are
     successfully reserved. Otherwise it is skipped silently. The free
     geolocation below always runs regardless of plan.
 
@@ -802,10 +802,10 @@ def _resolve_and_update_location(session_id: str, ip_address: str, bot_id: int |
         # The metering (a paid, Professional-only lookup costing
         # `credit_cost.company_name`) and the per-session dedup were written
         # independently. Git merges them without complaint and either order
-        # compiles, but charging before the dedup bills the customer 10 credits
+        # compiles, but charging before the dedup bills the customer 5 credits
         # for EVERY message of a conversation, re-buying an answer that cannot
-        # change: a 15-turn chat would cost 150 credits of enrichment against
-        # 15 credits of actual AI replies, and ~67 such conversations would
+        # change: a 15-turn chat would cost 75 credits of enrichment against
+        # 15 credits of actual AI replies, and ~134 such conversations would
         # exhaust a Professional plan's entire monthly allowance.
         ip_intel = None
         if not has_intel:
@@ -830,7 +830,7 @@ def _resolve_and_update_location(session_id: str, ip_address: str, bot_id: int |
                 # names (9 consumer ISPs and a subnet label) and
                 # `ip_intel_service` correctly nulls `company_name` for every
                 # one of those. Charging before the lookup therefore billed the
-                # full 10 credits for "no company identified" nearly every
+                # full 5 credits for "no company identified" nearly every
                 # time. We eat the vendor call when we fail to deliver; the
                 # customer pays only for an answer.
                 #

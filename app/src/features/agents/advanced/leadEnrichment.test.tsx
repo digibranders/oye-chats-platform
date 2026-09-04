@@ -37,7 +37,7 @@ describe('LeadEnrichmentSection', () => {
 
   it('states the company-lookup charge as a CONDITION, not a flat price', () => {
     /* Most visitors resolve to a consumer ISP and name no employer, and those
-       cost nothing. A bare "10 credits" reads as 10 per visitor. */
+       cost nothing. A bare "5 credits" reads as 5 per visitor. */
     render(<LeadEnrichmentSection {...base} />);
 
     expect(screen.getByText(/only when a company is found/i)).toBeInTheDocument();

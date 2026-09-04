@@ -218,7 +218,7 @@ _DEFAULT_PRICING: dict[str, Any] = {
     # Note this feature charges only when a company is actually IDENTIFIED
     # (see chat_routes._resolve_and_update_location): most visitors arrive on
     # consumer ISP ranges that name no employer, and the customer must not pay
-    # 10 credits for "not identified".
+    # 5 credits for "not identified".
     "feature.company_name_enabled": True,
     # Operator live-chat translation (Phase 4). Off = no translation call and
     # no charge, for every workspace, with no deploy. The per-bot
