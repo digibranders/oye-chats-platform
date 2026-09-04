@@ -259,9 +259,12 @@ def _co(company_name: str | None) -> str:
 
 
 def _greeting(company_name: str | None) -> IntentResponse:
-    co = _co(company_name)
+    # No leading "Hey"/"Happy to help": a returning visitor's reply already
+    # prepends a "Welcome back, {name}!" opener, so a second greeting here reads
+    # as a double greeting. Lead straight into the options instead.
+    team = f"the **{company_name}** team" if company_name else "our team"
     return IntentResponse(
-        answer=f"Hey. Happy to help. Want to hear about our services, see recent work, or chat with the team at {co}?",
+        answer=f"Want to hear about our services, see recent work, or chat with {team}?",
         intent="greeting",
     )
 

@@ -36,6 +36,7 @@ from app.db.session import get_session
 from app.ingestion.embedder import embed_chunks, embed_chunks_async
 from app.security.injection_patterns import compile_detection_pattern
 from app.services import plan_entitlements_service, runtime_config
+from app.services import pricing_gate as _pricing_gate
 from app.services.email_service import send_qualified_lead_email
 from app.services.groundedness_gate import check_groundedness, should_sample
 from app.services.intent_router import route_intent
@@ -6648,7 +6649,66 @@ def rag_pipeline(
             # ── Redis QA cache: check BEFORE expensive rewrite/embed/search ──
             _q_hash = hashlib.sha256(_normalize_question_for_cache(question).encode()).hexdigest()[:32]
             _cache_key = qa_response_key(bid, _q_hash, _cache_lang_segment(language)) if bid else None
-            if _cache_key and not _affirmed_handoff:
+            # A pricing question must NOT be answerable from this cache. The
+            # read sits ~150 lines ahead of the pricing gate block, so an answer
+            # cached before the gate existed is served verbatim afterwards:
+            # exactly the stale figure the feature exists to suppress. That
+            # window is not hypothetical, it is the deploy itself. Every bot on
+            # the platform has a warm QA cache full of answers generated under
+            # the old unrestricted behaviour, and nothing flushes it on deploy.
+            # ``bot_routes.update_bot`` does flush the cache when bot settings
+            # change, which covers a later ``pricing_url`` edit, but it cannot
+            # cover entries that predate the release, a Redis blip, a partially
+            # applied prefix delete, or a turn already in flight when a setting
+            # was saved. Making the READ safe means the ordering holds on its
+            # own instead of resting entirely on invalidation.
+            #
+            # Bypassing the read was chosen over folding gate state into the
+            # cache key. The key is built by ``qa_response_key(bot_id,
+            # question_hash, lang)`` in ``app/core/cache.py``, a format
+            # deliberately kept byte-identical for bots without multilingual so
+            # nobody takes a mass miss on deploy; mixing the normalized
+            # ``pricing_url`` into it would re-key EVERY question on every
+            # settings change, not just the pricing ones, and would push gate
+            # state into a shared key helper used by other readers. The bypass
+            # instead costs one full pipeline run, and only on pricing-intent
+            # turns: every other question reads and writes this cache exactly as
+            # before.
+            #
+            # Intent is read from the RAW question here because the rewrite has
+            # not run yet at this point, and running one before the cache check
+            # would defeat the point of a cache that is checked BEFORE the
+            # expensive steps. A pronoun follow-up therefore is not recognised
+            # here; it also hashes to its own cache key (so a pre-gate pricing
+            # answer is not what it would hit), and the gate block below still
+            # intercepts it on the rewritten query.
+            #
+            # The bypass is ALSO conditioned on the gate's own standdown, via the
+            # same predicate the gate itself calls. A bot whose plan has no human
+            # path and no usable ``pricing_url`` stands the gate down entirely, so
+            # nothing downstream is going to intercept this turn, and bypassing
+            # the cache for it buys a full uncached pipeline run to protect
+            # against an interception that cannot happen. Sharing
+            # ``no_support_path_standdown`` rather than restating the condition is
+            # what stops the two from drifting: if the bypass were broader than
+            # the gate it would only waste money, but if it were ever NARROWER
+            # than the gate a pre-gate cached price would be served on a bot the
+            # gate does intercept, which is the exact failure this bypass exists
+            # to prevent.
+            _gate_may_intercept = (
+                # Non-English conversations are left to the knowledge base (see the
+                # gate call below), so the gate cannot intercept them and bypassing
+                # the cache for one would be pure waste. Keeping the same language
+                # term on both sides is what stops the bypass and the gate from
+                # drifting apart, exactly as the standdown predicate does.
+                not _lang_is_non_english(language)
+                and _pricing_gate.is_pricing_question(question)
+                and not _pricing_gate.no_support_path_standdown(
+                    support_enabled=_plan_support_allowed,
+                    pricing_url=getattr(bot, "pricing_url", None) if bot else None,
+                )
+            )
+            if _cache_key and not _affirmed_handoff and not _gate_may_intercept:
                 cached_qa = cache_get(_cache_key)
                 if cached_qa:
                     # Detect handoff intent even on cache hit. ``live_chat_on``
@@ -6793,6 +6853,157 @@ def rag_pipeline(
                     final_results = _zero_result_multi_query_fallback(question, cid, bid, _retrieval_k)
                 if RERANK_ENABLED and not _lang_is_non_english(language):
                     final_results = rerank(search_query, final_results, top_n=_retrieval_k)
+
+            # ── Pricing answer gate ──────────────────────────────────────────
+            # Mirror of the block in ``rag_pipeline_stream``, which carries the
+            # full rationale. The two pipelines duplicate every gate they share;
+            # keeping this one in both is what stops the dashboard Preview from
+            # quoting a price the widget won't. No bot opts out here either, and
+            # a bot on a plan WITH human support escalates rather than answering
+            # a pricing question from the general knowledge base even when it has
+            # no ``pricing_url``. The one carve-out is passed in as
+            # ``support_enabled`` below.
+            #
+            # Intent is read from the raw question OR the rewritten
+            # ``search_query``, whichever carries it. A pronoun follow-up
+            # ("do you have plans?" then "and that one?") has no price token of
+            # its own, so gating on the raw question alone stands the gate down
+            # and lets the unrestricted knowledge base answer the exact question
+            # this gate exists to intercept. The two strings are tested
+            # separately rather than concatenated so the idiom exclusion in
+            # ``is_pricing_question`` still applies per phrasing. Same
+            # raw-plus-rewrite pattern as the on-scope check further down.
+            # Under CAG-lite ``search_query`` IS the raw question: that branch
+            # injects the whole knowledge base and skips ``rewrite_query``
+            # entirely to save an LLM call per turn. With no rewrite the two
+            # candidates below collapse into one string and the follow-up
+            # protection is dead for exactly the population most likely to arm
+            # this gate, since CAG-lite is ON by default for any bot at or under
+            # CAG_LITE_THRESHOLD (20) chunks, which is essentially every
+            # newly-trained SMB bot.
+            #
+            # So resolve a rewrite HERE, used ONLY for the gate's intent check.
+            # ``search_query`` itself is left untouched: retrieval under CAG-lite
+            # genuinely does not use it, and rewriting it would change unrelated
+            # behaviour (the keyword arm, the reranker, the CRAG judge).
+            #
+            # COST. ``rewrite_query`` is an LLM call and avoiding per-turn cost is
+            # half the reason CAG-lite exists. This call is no longer bought by an
+            # owner opting in: the gate is unconditional, so it now fires for
+            # EVERY CAG-lite bot on the platform instead of only for the ones
+            # whose owner had armed a toggle that shipped off by default. That is
+            # a real and permanent increase in spend, and it is still the right
+            # trade. Without the rewrite the gate is bypassable by any pronoun
+            # follow-up on precisely the bots that run CAG-lite (20 chunks or
+            # fewer, i.e. essentially every newly-trained SMB bot), and a gate a
+            # visitor can walk around is worse than the call: it reads as
+            # protection while the stale rate card answers anyway.
+            #
+            # It is still narrowed as tightly as it can be. All three must hold:
+            #   * CAG-lite is running this turn. On the retrieval path
+            #     ``search_query`` is already a rewrite, so there is nothing here
+            #     left to buy.
+            #   * the raw question does not already carry pricing intent. When it
+            #     does the gate fires on the raw question and a rewrite would
+            #     change nothing.
+            #   * there is conversation history to resolve a pronoun against.
+            #     ``history`` already contains this turn's own question (it is
+            #     persisted and committed before history is read), so on a
+            #     genuine first turn it holds a single message and
+            #     ``rewrite_query``'s own two-message guard returns immediately
+            #     without an LLM call. It also returns immediately when the
+            #     question carries no follow-up signal (pronoun, determiner,
+            #     phrase), so the real spend is bounded to pronoun-shaped,
+            #     non-pricing-looking follow-up turns on a CAG-lite bot. That
+            #     bound is what keeps an unconditional gate affordable.
+            _gate_search_query = search_query
+            if _use_cag_lite and not _pricing_gate.is_pricing_question(question) and history:
+                _gate_search_query = rewrite_query(session_id, question, history)
+            _gate_question = (
+                question
+                if _pricing_gate.is_pricing_question(question) or _gate_search_query == question
+                else _gate_search_query
+            )
+            # ``support_enabled`` is the PLAN half of the human-support gate, the
+            # same value handed to ``pricing_pivot`` a few lines below, and it is
+            # passed for one combination only: a plan with no live queue and no
+            # leave-a-message form, on a bot with no usable ``pricing_url``, has
+            # nowhere to escalate a pricing question TO. Escalating there refused
+            # to answer AND offered nothing, so the gate stands down and normal
+            # RAG runs. Every paid plan is unaffected, including a paid bot with
+            # no pricing page, which still escalates to its team.
+            # A non-English conversation is left to the knowledge base, exactly
+            # like the CRAG judge below. The intent detector is an English regex
+            # and every ``pricing_pivot`` branch is English-only, so a fired gate
+            # would escalate with an English sentence dropped into a non-English
+            # reply, breaking the conversation-language contract. A currency
+            # amount plus a question mark is script-neutral and would otherwise
+            # trip the gate on any language. Failing open here matches KNOWN
+            # LIMITATION 1 in pricing_gate.py: a non-English pricing question is
+            # answered from the knowledge base rather than gated.
+            if _lang_is_non_english(language):
+                _pricing_decision = _pricing_gate.PricingGateDecision(
+                    fired=False, outcome="not_pricing", chunks=final_results
+                )
+            else:
+                _pricing_decision = _pricing_gate.evaluate_pricing_gate(
+                    question=_gate_question,
+                    quote_active=_quote_active_or_pending(bot, chat_session, current_bant),
+                    pricing_url=getattr(bot, "pricing_url", None) if bot else None,
+                    chunks=final_results,
+                    support_enabled=_plan_support_allowed,
+                )
+            if _pricing_decision.fired and _pricing_decision.outcome == "answer":
+                final_results = _pricing_decision.chunks
+            elif _pricing_decision.fired:
+                _safety_net_metric(
+                    "pricing_gate_escalation",
+                    reason=_pricing_decision.outcome,
+                    path="nonstream",
+                    session=session_id,
+                    bot_id=bid,
+                )
+                _pivot = _pricing_gate.pricing_pivot(
+                    company_name=_company_name,
+                    pricing_url=getattr(bot, "pricing_url", None) if bot else None,
+                    support_enabled=_plan_support_allowed,
+                    live_chat_enabled=live_chat_on,
+                )
+                _pivot_text = (
+                    _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + _pivot.text
+                )
+                _bot_msg = add_chat_message(
+                    session,
+                    session_id,
+                    client_id=cid,
+                    role="bot",
+                    content=_pivot_text,
+                    bot_id=bid,
+                    is_unanswered=True,
+                    source_language=_lang_base(language),
+                )
+                _pivot_result = {
+                    "answer": _pivot_text,
+                    "sources": [],
+                    "session_id": session_id,
+                    "message_id": _bot_msg.id,
+                    "suggest_handoff": _pivot.suggest_handoff,
+                }
+                # Leave-message card (paid plan with live chat turned off). It
+                # travels as metadata, exactly like the LLM-driven card below:
+                # the sentinel is a model-to-server token that this pipeline
+                # STRIPS from the answer, so appending it here would ship the
+                # literal "[LEAVE_MESSAGE_CARD]" to the visitor, write it into
+                # chat history, and still open no form. The reference site's
+                # extra guards are satisfied by construction here:
+                # ``pricing_pivot`` only sets ``needs_message_card`` when the
+                # plan allows human support and it did NOT suggest a handoff,
+                # so the two CTAs cannot compete on this turn.
+                if _pivot.needs_message_card:
+                    _pivot_result["show_leave_message"] = True
+                    _mark_card_shown(chat_session, "leave_message")
+                session.commit()
+                return _pivot_result
 
             # ── Phase 4A: CRAG relevance gate ────────────────────────────
             # BYPASSED for a non-English conversation, for the same reason
@@ -7140,7 +7351,10 @@ def rag_pipeline(
                 meeting_booking_enabled=getattr(bot, "meeting_booking_enabled", False) if bot else False,
                 services=getattr(bot, "services", None) if bot else None,
                 services_url=getattr(bot, "services_url", None) if bot else None,
-                answer_links=getattr(bot, "answer_links", None) if bot else None,
+                answer_links=_pricing_gate.merge_pricing_smart_link(
+                    answer_links=getattr(bot, "answer_links", None) if bot else None,
+                    pricing_url=getattr(bot, "pricing_url", None) if bot else None,
+                ),
                 team_connect_offer=_team_connect_offer and not _show_qualified_popup,
                 suppress_probe=_show_qualified_popup,
                 recently_probed=_recently_probed,
@@ -7922,7 +8136,66 @@ async def rag_pipeline_stream(
             # ── Redis QA cache: check BEFORE expensive rewrite/embed/search ──
             _q_hash = hashlib.sha256(_normalize_question_for_cache(question).encode()).hexdigest()[:32]
             _cache_key = qa_response_key(bid, _q_hash, _cache_lang_segment(language)) if bid else None
-            if _cache_key and not _affirmed_handoff:
+            # A pricing question must NOT be answerable from this cache. The
+            # read sits ~150 lines ahead of the pricing gate block, so an answer
+            # cached before the gate existed is served verbatim afterwards:
+            # exactly the stale figure the feature exists to suppress. That
+            # window is not hypothetical, it is the deploy itself. Every bot on
+            # the platform has a warm QA cache full of answers generated under
+            # the old unrestricted behaviour, and nothing flushes it on deploy.
+            # ``bot_routes.update_bot`` does flush the cache when bot settings
+            # change, which covers a later ``pricing_url`` edit, but it cannot
+            # cover entries that predate the release, a Redis blip, a partially
+            # applied prefix delete, or a turn already in flight when a setting
+            # was saved. Making the READ safe means the ordering holds on its
+            # own instead of resting entirely on invalidation.
+            #
+            # Bypassing the read was chosen over folding gate state into the
+            # cache key. The key is built by ``qa_response_key(bot_id,
+            # question_hash, lang)`` in ``app/core/cache.py``, a format
+            # deliberately kept byte-identical for bots without multilingual so
+            # nobody takes a mass miss on deploy; mixing the normalized
+            # ``pricing_url`` into it would re-key EVERY question on every
+            # settings change, not just the pricing ones, and would push gate
+            # state into a shared key helper used by other readers. The bypass
+            # instead costs one full pipeline run, and only on pricing-intent
+            # turns: every other question reads and writes this cache exactly as
+            # before.
+            #
+            # Intent is read from the RAW question here because the rewrite has
+            # not run yet at this point, and running one before the cache check
+            # would defeat the point of a cache that is checked BEFORE the
+            # expensive steps. A pronoun follow-up therefore is not recognised
+            # here; it also hashes to its own cache key (so a pre-gate pricing
+            # answer is not what it would hit), and the gate block below still
+            # intercepts it on the rewritten query.
+            #
+            # The bypass is ALSO conditioned on the gate's own standdown, via the
+            # same predicate the gate itself calls. A bot whose plan has no human
+            # path and no usable ``pricing_url`` stands the gate down entirely, so
+            # nothing downstream is going to intercept this turn, and bypassing
+            # the cache for it buys a full uncached pipeline run to protect
+            # against an interception that cannot happen. Sharing
+            # ``no_support_path_standdown`` rather than restating the condition is
+            # what stops the two from drifting: if the bypass were broader than
+            # the gate it would only waste money, but if it were ever NARROWER
+            # than the gate a pre-gate cached price would be served on a bot the
+            # gate does intercept, which is the exact failure this bypass exists
+            # to prevent.
+            _gate_may_intercept = (
+                # Non-English conversations are left to the knowledge base (see the
+                # gate call below), so the gate cannot intercept them and bypassing
+                # the cache for one would be pure waste. Keeping the same language
+                # term on both sides is what stops the bypass and the gate from
+                # drifting apart, exactly as the standdown predicate does.
+                not _lang_is_non_english(language)
+                and _pricing_gate.is_pricing_question(question)
+                and not _pricing_gate.no_support_path_standdown(
+                    support_enabled=_plan_support_allowed,
+                    pricing_url=getattr(bot, "pricing_url", None) if bot else None,
+                )
+            )
+            if _cache_key and not _affirmed_handoff and not _gate_may_intercept:
                 cached_qa = cache_get(_cache_key)
                 if cached_qa:
                     # Run handoff detection even on cache hit so the widget can
@@ -8158,6 +8431,168 @@ async def rag_pipeline_stream(
                     _gather_ms + _fuse_ms + _rerank_ms,
                     len(final_results),
                 )
+
+            # ── Pricing answer gate ──────────────────────────────────────────
+            # Runs after retrieval is finalized and BEFORE the CRAG gate, on the
+            # finalized chunk list, so it composes with fusion/rerank instead of
+            # duplicating retrieval. No bot opts out: every bot is gated on every
+            # pricing-intent turn, and on any plan that includes human support a
+            # bot with no ``pricing_url`` escalates rather than answering from the
+            # general knowledge base. The single carve-out is the plan with NO
+            # human path at all, passed in as ``support_enabled`` below. See
+            # ``app/services/pricing_gate.py`` for the decision table.
+            #
+            # Deliberately yields to the quote flow: the BANT quotation card is
+            # an admin-authored priced document, so when one is active or pending
+            # it is the better pricing answer and this gate stands down. That is
+            # the only standdown left, and it is per turn, not per bot.
+            #
+            # Intent is read from the raw question OR the rewritten
+            # ``search_query``, whichever carries it. A pronoun follow-up
+            # ("do you have plans?" then "and that one?") has no price token of
+            # its own, so gating on the raw question alone stands the gate down
+            # and lets the unrestricted knowledge base answer the exact question
+            # this gate exists to intercept. The two strings are tested
+            # separately rather than concatenated so the idiom exclusion in
+            # ``is_pricing_question`` still applies per phrasing. Same
+            # raw-plus-rewrite pattern as the on-scope check further down.
+            # Under CAG-lite ``search_query`` IS the raw question: that branch
+            # injects the whole knowledge base and skips ``rewrite_query``
+            # entirely to save an LLM call per turn. With no rewrite the two
+            # candidates below collapse into one string and the follow-up
+            # protection is dead for exactly the population most likely to arm
+            # this gate, since CAG-lite is ON by default for any bot at or under
+            # CAG_LITE_THRESHOLD (20) chunks, which is essentially every
+            # newly-trained SMB bot.
+            #
+            # So resolve a rewrite HERE, used ONLY for the gate's intent check.
+            # ``search_query`` itself is left untouched: retrieval under CAG-lite
+            # genuinely does not use it, and rewriting it would change unrelated
+            # behaviour (the keyword arm, the reranker, the CRAG judge).
+            #
+            # COST. ``rewrite_query`` is an LLM call and avoiding per-turn cost is
+            # half the reason CAG-lite exists. This call is no longer bought by an
+            # owner opting in: the gate is unconditional, so it now fires for
+            # EVERY CAG-lite bot on the platform instead of only for the ones
+            # whose owner had armed a toggle that shipped off by default. That is
+            # a real and permanent increase in spend, and it is still the right
+            # trade. Without the rewrite the gate is bypassable by any pronoun
+            # follow-up on precisely the bots that run CAG-lite (20 chunks or
+            # fewer, i.e. essentially every newly-trained SMB bot), and a gate a
+            # visitor can walk around is worse than the call: it reads as
+            # protection while the stale rate card answers anyway.
+            #
+            # It is still narrowed as tightly as it can be. All three must hold:
+            #   * CAG-lite is running this turn. On the retrieval path
+            #     ``search_query`` is already a rewrite, so there is nothing here
+            #     left to buy.
+            #   * the raw question does not already carry pricing intent. When it
+            #     does the gate fires on the raw question and a rewrite would
+            #     change nothing.
+            #   * there is conversation history to resolve a pronoun against.
+            #     ``history`` already contains this turn's own question (it is
+            #     persisted and committed before history is read), so on a
+            #     genuine first turn it holds a single message and
+            #     ``rewrite_query``'s own two-message guard returns immediately
+            #     without an LLM call. It also returns immediately when the
+            #     question carries no follow-up signal (pronoun, determiner,
+            #     phrase), so the real spend is bounded to pronoun-shaped,
+            #     non-pricing-looking follow-up turns on a CAG-lite bot. That
+            #     bound is what keeps an unconditional gate affordable.
+            # ``rewrite_query`` is synchronous and blocking (an LLM round trip),
+            # and there is no async variant of it: every other caller on this
+            # streaming path offloads it with ``asyncio.to_thread`` (see
+            # ``_resolve_search_query_and_embedding``), so this one does too
+            # rather than stalling the event loop mid-turn.
+            _gate_search_query = search_query
+            if _use_cag_lite and not _pricing_gate.is_pricing_question(question) and history:
+                _gate_search_query = await asyncio.to_thread(rewrite_query, session_id, question, history)
+            _gate_question = (
+                question
+                if _pricing_gate.is_pricing_question(question) or _gate_search_query == question
+                else _gate_search_query
+            )
+            # ``support_enabled`` is the PLAN half of the human-support gate, the
+            # same value handed to ``pricing_pivot`` a few lines below, and it is
+            # passed for one combination only: a plan with no live queue and no
+            # leave-a-message form, on a bot with no usable ``pricing_url``, has
+            # nowhere to escalate a pricing question TO. Escalating there refused
+            # to answer AND offered nothing, so the gate stands down and normal
+            # RAG runs. Every paid plan is unaffected, including a paid bot with
+            # no pricing page, which still escalates to its team.
+            # A non-English conversation is left to the knowledge base, exactly
+            # like the CRAG judge below. The intent detector is an English regex
+            # and every ``pricing_pivot`` branch is English-only, so a fired gate
+            # would escalate with an English sentence dropped into a non-English
+            # reply, breaking the conversation-language contract. A currency
+            # amount plus a question mark is script-neutral and would otherwise
+            # trip the gate on any language. Failing open here matches KNOWN
+            # LIMITATION 1 in pricing_gate.py: a non-English pricing question is
+            # answered from the knowledge base rather than gated.
+            if _lang_is_non_english(language):
+                _pricing_decision = _pricing_gate.PricingGateDecision(
+                    fired=False, outcome="not_pricing", chunks=final_results
+                )
+            else:
+                _pricing_decision = _pricing_gate.evaluate_pricing_gate(
+                    question=_gate_question,
+                    quote_active=_quote_active_or_pending(bot, chat_session, current_bant),
+                    pricing_url=getattr(bot, "pricing_url", None) if bot else None,
+                    chunks=final_results,
+                    support_enabled=_plan_support_allowed,
+                )
+            if _pricing_decision.fired and _pricing_decision.outcome == "answer":
+                # Narrow the context to the pricing page and let the normal
+                # generation path run: the answer is grounded in that page alone.
+                final_results = _pricing_decision.chunks
+            elif _pricing_decision.fired:
+                _safety_net_metric(
+                    "pricing_gate_escalation",
+                    reason=_pricing_decision.outcome,
+                    path="stream",
+                    session=session_id,
+                    bot_id=bid,
+                )
+                _pivot = _pricing_gate.pricing_pivot(
+                    company_name=_company_name,
+                    pricing_url=getattr(bot, "pricing_url", None) if bot else None,
+                    support_enabled=_plan_support_allowed,
+                    live_chat_enabled=live_chat_on,
+                )
+                _pivot_text = (
+                    _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + _pivot.text
+                )
+                yield _stream_metadata(session_id, [], language)
+                yield _pivot_text
+                _bot_msg = add_chat_message(
+                    session,
+                    session_id,
+                    client_id=cid,
+                    role="bot",
+                    content=_pivot_text,
+                    bot_id=bid,
+                    is_unanswered=True,
+                    source_language=_lang_base(language),
+                )
+                session.flush()
+                _msg_id = _bot_msg.id
+                _pivot_meta = {"message_id": _msg_id, "suggest_handoff": _pivot.suggest_handoff}
+                # Leave-message card (paid plan with live chat turned off). It
+                # travels as metadata, exactly like the LLM-driven card below:
+                # the sentinel is a model-to-server token that this pipeline
+                # STRIPS from the answer, so appending it here would stream the
+                # literal "[LEAVE_MESSAGE_CARD]" to the visitor, write it into
+                # chat history, and still open no form. The reference site's
+                # extra guards are satisfied by construction here:
+                # ``pricing_pivot`` only sets ``needs_message_card`` when the
+                # plan allows human support and it did NOT suggest a handoff,
+                # so the two CTAs cannot compete on this turn.
+                if _pivot.needs_message_card:
+                    _pivot_meta["show_leave_message"] = True
+                    _mark_card_shown(chat_session, "leave_message")
+                session.commit()
+                yield f"\nFINAL_METADATA:{json.dumps(_pivot_meta)}\n"
+                return
 
             sources = [doc.document_name for doc in final_results]
 
@@ -8473,7 +8908,10 @@ async def rag_pipeline_stream(
                 meeting_booking_enabled=getattr(bot, "meeting_booking_enabled", False) if bot else False,
                 services=getattr(bot, "services", None) if bot else None,
                 services_url=getattr(bot, "services_url", None) if bot else None,
-                answer_links=getattr(bot, "answer_links", None) if bot else None,
+                answer_links=_pricing_gate.merge_pricing_smart_link(
+                    answer_links=getattr(bot, "answer_links", None) if bot else None,
+                    pricing_url=getattr(bot, "pricing_url", None) if bot else None,
+                ),
                 team_connect_offer=_team_connect_offer and not _show_qualified_popup,
                 suppress_probe=_show_qualified_popup,
                 recently_probed=_recently_probed,

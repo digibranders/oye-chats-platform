@@ -1064,6 +1064,11 @@ def _bot_to_cache_dict(bot: Bot) -> dict:
         # reports an empty list and the widget's "don't re-link a clicked smart
         # link" behaviour silently never engages.
         "answer_links": getattr(bot, "answer_links", None),
+        # Pricing answer gate. Cached with the rest of the answering config: the
+        # gate itself is unconditional, but this URL is the only thing that lets
+        # it ANSWER, so a cache hit that dropped it would make every bot escalate
+        # every pricing question until the cache expired.
+        "pricing_url": getattr(bot, "pricing_url", None),
         "created_at": bot.created_at.isoformat() if bot.created_at else None,
     }
 
