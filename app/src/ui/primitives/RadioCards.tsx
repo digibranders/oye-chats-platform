@@ -81,13 +81,25 @@ export function RadioCards<T extends string>({
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
+    // Left/Right follow the VISUAL direction the key points, per the WAI-ARIA
+    // radiogroup pattern: at `columns` 2 or 3 the cards render in an RTL-
+    // mirrored grid, so the physical Right key has to move to the previous
+    // card to still track the same visual motion. Down/Up are unaffected —
+    // a grid's row order does not invert under a horizontal mirror.
+    const rtl = document.documentElement.dir === 'rtl';
     switch (event.key) {
       case 'ArrowRight':
+        event.preventDefault();
+        move(rtl ? -1 : 1);
+        break;
+      case 'ArrowLeft':
+        event.preventDefault();
+        move(rtl ? 1 : -1);
+        break;
       case 'ArrowDown':
         event.preventDefault();
         move(1);
         break;
-      case 'ArrowLeft':
       case 'ArrowUp':
         event.preventDefault();
         move(-1);

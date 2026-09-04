@@ -340,10 +340,16 @@ function TypePicker({
   }
 
   function onKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>, index: number): void {
-    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+    // Right/Left follow the VISUAL direction the key points (the four types
+    // render in one `grid-cols-4` row that mirrors under rtl); Down/Up are
+    // plain aliases for next/previous and carry no direction of their own.
+    const rtl = document.documentElement.dir === 'rtl';
+    const next = rtl ? 'ArrowLeft' : 'ArrowRight';
+    const previous = rtl ? 'ArrowRight' : 'ArrowLeft';
+    if (event.key === next || event.key === 'ArrowDown') {
       event.preventDefault();
       focus((index + 1) % TYPES.length);
-    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+    } else if (event.key === previous || event.key === 'ArrowUp') {
       event.preventDefault();
       focus((index - 1 + TYPES.length) % TYPES.length);
     }
@@ -601,7 +607,7 @@ export function FeedbackModal({
               ) : (
                 <>
                   {t('shell.sendFeedback') || 'Send feedback'}
-                  <ArrowRight aria-hidden className="h-icon-sm w-icon-sm" />
+                  <ArrowRight aria-hidden className="h-icon-sm w-icon-sm rtl:-scale-x-100" />
                 </>
               )}
             </Button>

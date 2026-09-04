@@ -114,7 +114,7 @@ export function SetupPage() {
                       a link" never rendered at all. */}
                   <ArrowRight
                     aria-hidden
-                    className="mt-1 h-icon-md w-icon-md shrink-0 text-text-tertiary opacity-40 transition-opacity group-hover:opacity-100"
+                    className="mt-1 h-icon-md w-icon-md shrink-0 text-text-tertiary opacity-40 transition-opacity group-hover:opacity-100 rtl:-scale-x-100"
                   />
                 </Link>
               </li>

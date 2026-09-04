@@ -551,7 +551,7 @@ function SetupCard({
                 <span className="min-w-0 flex-1 truncate text-base font-medium text-text-primary">
                   {step.label}
                 </span>
-                <ArrowRight aria-hidden className="h-icon-md w-icon-md shrink-0 text-text-tertiary" />
+                <ArrowRight aria-hidden className="h-icon-md w-icon-md shrink-0 text-text-tertiary rtl:-scale-x-100" />
               </Link>
             </li>
           ))}

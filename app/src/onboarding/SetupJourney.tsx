@@ -168,7 +168,7 @@ export function SetupJourney({ workspaceId = null }: SetupJourneyProps) {
             <span aria-hidden>
               {t('onboarding.nextStep') || 'Next'}: {next.label}
             </span>
-            <ArrowRight aria-hidden />
+            <ArrowRight aria-hidden className="rtl:-scale-x-100" />
           </Link>
           <Button
             variant="ghost"
