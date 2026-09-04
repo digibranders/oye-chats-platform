@@ -12,13 +12,19 @@ the other. ``_drive`` normalises the two shapes to ``{answer, sources, meta}``
 so one test body covers both.
 
 No bot below opts in and none opts out, because there is no toggle to opt with.
-The fixtures vary two things: ``pricing_url``, the page a bot may price from,
-and the PLAN half of the human-support gate. Leaving the URL unset is a real
-configuration with real consequences, not a way to switch the gate off: on a
-paid plan every pricing question goes to the team, and on a plan with no human
-path at all the gate stands down instead, because there is no team to go to.
-That last cell is the Free carve-out and it is the only place the knowledge base
-can answer a pricing question again.
+The fixtures vary three things: ``pricing_url``, the page a bot may price from,
+the PLAN half of the human-support gate, and whether the bot maps a ``contact``
+Smart Link. Leaving the URL unset is a real configuration with real
+consequences, not a way to switch the gate off: on a paid plan every pricing
+question goes to the team; on a plan with no human path the gate escalates and
+hands over the CONTACT page if one is mapped, and only stands down when there is
+no contact page either. That last cell is the whole of the Free carve-out now,
+and it is the only place the knowledge base can answer a pricing question again.
+
+The contact page is a public page on the customer's own website, so handing it
+over is information rather than a channel: the paid feature is the in-chat
+channel (live queue, leave-a-message form, operator inbox, notification emails),
+and none of it is promised by a link.
 
 Assertions are on structure, never prose: which safety-net metric fired,
 whether the LLM ran at all, what reached the prompt, ``sources``,
@@ -66,6 +72,12 @@ _PRICING_URL = "https://acme.com/pricing"
 _PRICED_CHUNK = "Pricing: the Acme Pro plan starts at $49 per month per seat."
 _STALE_URL = "https://acme.com/legacy-rate-card"
 _STALE_CHUNK = "Pricing archive: the legacy rate card was $9 per month per seat."
+
+# The customer's own public contact page, reached through the bot's existing
+# Smart Links rather than a new column. It is what turns the Free "no pricing
+# page" cell from a standdown into an escalation the visitor can act on.
+_CONTACT_URL = "https://acme.com/contact"
+_CONTACT_LINKS = [{"keyword": "Contact Us", "url": _CONTACT_URL}]
 
 
 # ── harness ──────────────────────────────────────────────────────────────────
@@ -709,10 +721,12 @@ async def test_support_configuration_matrix(
     Free (plan excludes live chat) has NO live queue and NO leave-a-message
     form, so the reply must not offer either: both dead-end the visitor. With a
     usable ``pricing_url`` the gate still fires on Free and hands the page over,
-    which is a useful reply. With NO usable URL there is nothing left to offer,
-    so the gate stands down entirely and the knowledge base answers: that
-    combination is asserted separately below, because it is the one cell of this
-    matrix where no escalation happens at all.
+    which is a useful reply. The bots in this matrix map NO Smart Links, so with
+    no usable URL there is genuinely nothing left to point at and the gate stands
+    down entirely: that combination is asserted separately below, because it is
+    the one cell of this matrix where no escalation happens at all. The same cell
+    on a bot that DOES map a contact page escalates instead, which is covered by
+    its own test rather than by widening this matrix.
 
     Paid + live chat on offers the live handoff. Paid + live chat off asks for
     the async message card, and that card must travel as metadata, never as the
@@ -728,12 +742,13 @@ async def test_support_configuration_matrix(
     meta, answer = out["meta"], out["answer"]
 
     if not plan_allows and outcome_case == "no_url":
-        # Inverted from the old "Free with no URL escalates" cell. There is no
-        # queue, no form and no page, so refusing to answer offered the visitor
-        # literally nothing. The gate stands down and normal RAG runs, which
-        # means the stale card CAN answer again on this one configuration. That
-        # is the accepted cost of the carve-out, and asserting it positively is
-        # the only way the cost stays visible instead of drifting silently.
+        # The fallback of last resort. There is no queue, no form, no pricing
+        # page and (on these fixtures) no contact page either, so refusing to
+        # answer offers the visitor literally nothing. The gate stands down and
+        # normal RAG runs, which means the stale card CAN answer again on this
+        # one configuration. That is the whole remaining cost of the carve-out,
+        # and asserting it positively is the only way the cost stays visible
+        # instead of drifting silently.
         assert _gate_metrics == [], "the gate must not escalate where there is nothing to escalate to"
         assert len(_stub_generation["prompts"]) == 1, "the turn must reach the model like any ungated question"
         assert "$9 per month" in _stub_generation["prompts"][0]
@@ -791,35 +806,38 @@ async def test_free_plan_hands_over_the_configured_pricing_url(
     the page itself."""
     monkeypatch.setattr(rs.plan_entitlements_service, "is_live_chat_enabled_for_bot", lambda *_a, **_k: False)
     client = _make_client(db)
-    bot = _make_bot(db, client, pricing_url=_PRICING_URL)
+    bot = _make_bot(db, client, pricing_url=_PRICING_URL, answer_links=list(_CONTACT_LINKS))
 
     out = await _drive(pipeline, bot, "what is your pricing?", f"free-handover-{pipeline}")
 
     assert [m["reason"] for m in _gate_metrics] == ["escalate_no_content"]
     assert _PRICING_URL in out["answer"]
+    # A mapped contact page must not displace the pricing page even on the
+    # ``escalate_no_content`` branch: the owner named a page for exactly this.
+    assert _CONTACT_URL not in out["answer"]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("pipeline", PIPELINES)
-async def test_free_plan_with_no_url_answers_from_the_knowledge_base(
+async def test_free_plan_with_no_url_and_no_contact_page_answers_from_the_knowledge_base(
     db, monkeypatch, pipeline, _stub_outside_world, _stub_generation, _gate_metrics, _no_cag_lite
 ):
-    """Inverted from "Free with no URL offers no link and no human".
+    """The fallback of last resort, and now only half of the old case.
 
-    That WAS the behaviour, and it was a dead end: the bot refused to answer and
-    then offered nothing, because on Free there is no live queue and no
-    leave-a-message form to offer. The product owner chose the knowledge-base
-    answer over the dead end, so the gate now stands down and this turn behaves
-    exactly as it did before the feature existed.
+    With no live queue, no leave-a-message form, no pricing page AND no contact
+    page there is nothing whatsoever to point the visitor at, so refusing to
+    answer would offer them nothing. The gate stands down and this turn behaves
+    exactly as it did before the feature existed. The companion test below drives
+    the same bot WITH a contact Smart Link and asserts the opposite outcome.
 
     The stale chunk in the knowledge base is the point of the assertion, not an
     accident of the fixture: this test exists to prove the chunk reaches the
-    model. That is the accepted cost of the carve-out, spelled out so nobody
-    later reads a passing suite as "the gate still protects Free bots".
+    model. That is the whole remaining cost of the carve-out, spelled out so
+    nobody later reads a passing suite as "the gate still protects Free bots".
     """
     monkeypatch.setattr(rs.plan_entitlements_service, "is_live_chat_enabled_for_bot", lambda *_a, **_k: False)
     client = _make_client(db)
-    bot = _make_bot(db, client, pricing_url=None)
+    bot = _make_bot(db, client, pricing_url=None, answer_links=[{"keyword": "careers", "url": "https://acme.com/jobs"}])
     _make_document(db, bot, client, _STALE_URL, _STALE_CHUNK)
 
     out = await _drive(pipeline, bot, "what is your pricing?", f"free-nourl-{pipeline}")
@@ -834,6 +852,96 @@ async def test_free_plan_with_no_url_answers_from_the_knowledge_base(
     # metadata at all, and on Free neither CTA exists to be offered anyway.
     assert out["meta"].get("suggest_handoff") is not True
     assert "show_leave_message" not in out["meta"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pipeline", PIPELINES)
+async def test_free_plan_with_no_url_but_a_contact_smart_link_hands_the_link_over(
+    db, monkeypatch, pipeline, _stub_outside_world, _stub_generation, _gate_metrics, _no_cag_lite
+):
+    """The behaviour change, end to end, on both pipelines.
+
+    A Free bot with no pricing page but a mapped ``contact`` Smart Link answers a
+    pricing question with the contact link and nothing else. Every assertion here
+    is one half of "the contact link IS the response": the gate escalates
+    (``escalate_no_url``), the LLM is never called, the stale rate card sitting in
+    the same knowledge base never reaches a prompt, and the copy never mentions
+    connecting to the team, because Free has no in-chat channel to connect to.
+    """
+    monkeypatch.setattr(rs.plan_entitlements_service, "is_live_chat_enabled_for_bot", lambda *_a, **_k: False)
+    client = _make_client(db)
+    bot = _make_bot(db, client, pricing_url=None, answer_links=list(_CONTACT_LINKS))
+    _make_document(db, bot, client, _STALE_URL, _STALE_CHUNK)
+
+    sid = f"free-nourl-contact-{pipeline}"
+    out = await _drive(pipeline, bot, "what is your pricing?", sid)
+    answer, meta = out["answer"], out["meta"]
+
+    assert [m["reason"] for m in _gate_metrics] == ["escalate_no_url"]
+    assert _stub_generation["prompts"] == [], "the contact-link pivot must never be an LLM call"
+    assert _CONTACT_URL in answer
+    assert "get in touch here" in answer
+    assert "$9" not in answer, "the stale rate card answered a gated pricing question"
+    assert out["sources"] == []
+    lowered = answer.lower()
+    assert "connect you" not in lowered, "a Free bot promised a channel its plan does not include"
+    assert "team" not in lowered
+    assert "message form" not in lowered
+    assert meta["suggest_handoff"] is False
+    assert "show_leave_message" not in meta
+    assert rs.LEAVE_MESSAGE_CARD_SENTINEL not in answer
+
+    messages = _bot_messages(db, sid)
+    assert len(messages) == 1
+    assert messages[0].content == answer
+    assert _CONTACT_URL in messages[0].content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pipeline", PIPELINES)
+async def test_free_plan_with_an_unusable_pricing_url_but_a_contact_page_still_escalates(
+    db, monkeypatch, pipeline, _stub_outside_world, _stub_generation, _gate_metrics, _no_cag_lite
+):
+    """An unusable pricing URL is no pricing URL at all, on this path too.
+
+    The bot is in the same position as one with a NULL ``pricing_url``: nothing
+    to price from, but a contact page to point at. It must escalate and hand over
+    the contact link, and must never paste the ``javascript:`` value anywhere.
+    """
+    monkeypatch.setattr(rs.plan_entitlements_service, "is_live_chat_enabled_for_bot", lambda *_a, **_k: False)
+    client = _make_client(db)
+    bot = _make_bot(db, client, pricing_url="javascript:alert(1)", answer_links=list(_CONTACT_LINKS))
+    _make_document(db, bot, client, _STALE_URL, _STALE_CHUNK)
+
+    out = await _drive(pipeline, bot, "what is your pricing?", f"free-badurl-contact-{pipeline}")
+
+    assert [m["reason"] for m in _gate_metrics] == ["escalate_no_url"]
+    assert _stub_generation["prompts"] == []
+    assert _CONTACT_URL in out["answer"]
+    assert "javascript:" not in out["answer"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pipeline", PIPELINES)
+async def test_free_plan_with_an_unusable_contact_link_still_stands_the_gate_down(
+    db, monkeypatch, pipeline, _stub_outside_world, _stub_generation, _gate_metrics, _no_cag_lite
+):
+    """A contact Smart Link the extractor refuses is no contact page at all.
+
+    If an unusable value re-opened the gate, this Free bot would escalate with
+    nothing to hand over and the visitor would get the warm no-link copy on a
+    turn the bot refused to answer: the exact dead end the carve-out removes.
+    """
+    monkeypatch.setattr(rs.plan_entitlements_service, "is_live_chat_enabled_for_bot", lambda *_a, **_k: False)
+    client = _make_client(db)
+    bot = _make_bot(db, client, pricing_url=None, answer_links=[{"keyword": "contact", "url": "javascript:alert(1)"}])
+    _make_document(db, bot, client, _STALE_URL, _STALE_CHUNK)
+
+    out = await _drive(pipeline, bot, "what is your pricing?", f"free-badcontact-{pipeline}")
+
+    assert _gate_metrics == []
+    assert len(_stub_generation["prompts"]) == 1, "the turn must reach the model like any ungated question"
+    assert "javascript:" not in out["answer"]
 
 
 @pytest.mark.asyncio
@@ -854,6 +962,8 @@ async def test_free_plan_with_an_unusable_pricing_url_also_stands_the_gate_down(
     """
     monkeypatch.setattr(rs.plan_entitlements_service, "is_live_chat_enabled_for_bot", lambda *_a, **_k: False)
     client = _make_client(db)
+    # No contact Smart Link either: this bot has nothing at all to point at, so
+    # the standdown is the last resort rather than the first choice.
     bot = _make_bot(db, client, pricing_url="javascript:alert(1)")
     _make_document(db, bot, client, _STALE_URL, _STALE_CHUNK)
 
@@ -880,7 +990,10 @@ async def test_free_plan_with_a_usable_url_still_gates(
     """
     monkeypatch.setattr(rs.plan_entitlements_service, "is_live_chat_enabled_for_bot", lambda *_a, **_k: False)
     client = _make_client(db)
-    bot = _make_bot(db, client, pricing_url=_PRICING_URL)
+    # A contact page is mapped as well, and must lose: the pricing page is a real
+    # priceable source and punting to a contact form instead would be a worse
+    # answer than the one the bot can actually give.
+    bot = _make_bot(db, client, pricing_url=_PRICING_URL, answer_links=list(_CONTACT_LINKS))
     _make_document(db, bot, client, _PRICING_URL, _PRICED_CHUNK)
     _make_document(db, bot, client, _STALE_URL, _STALE_CHUNK)
 
@@ -891,6 +1004,7 @@ async def test_free_plan_with_a_usable_url_still_gates(
     assert "$49 per month" in prompt
     assert "$9 per month" not in prompt, "the stale rate card leaked into a gated answer on a Free bot"
     assert out["answer"] == "GENERATED ANSWER"
+    assert _CONTACT_URL not in out["answer"], "the contact page displaced an answer the pricing page could give"
 
 
 @pytest.mark.asyncio
@@ -914,6 +1028,45 @@ async def test_a_paid_plan_with_no_url_still_escalates_to_the_team(
     assert _stub_generation["prompts"] == [], "an escalating pivot must never be an LLM call"
     assert "$9" not in out["answer"]
     assert out["meta"]["suggest_handoff"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pipeline", PIPELINES)
+@pytest.mark.parametrize("bot_toggle", [True, False], ids=["live_chat_on", "live_chat_off"])
+async def test_a_paid_plan_with_no_url_and_a_contact_link_still_escalates_to_the_team(
+    db, monkeypatch, pipeline, bot_toggle, _stub_outside_world, _stub_generation, _gate_metrics, _no_cag_lite
+):
+    """The regression this change is most likely to cause, pinned on both paid
+    variants.
+
+    ``contact_url`` reaches the gate and the pivot on EVERY plan, because both
+    pipelines resolve it once per turn for the unrelated ``_no_info_pivot``. A
+    paid bot that happens to map a contact Smart Link must be completely
+    unaffected by that: the paid feature is the in-chat channel, which is a
+    better answer than a link, so the team offer stands and the contact URL is
+    never substituted for it.
+    """
+    monkeypatch.setattr(rs.plan_entitlements_service, "is_live_chat_enabled_for_bot", lambda *_a, **_k: True)
+    client = _make_client(db)
+    bot = _make_bot(db, client, pricing_url=None, live_chat_enabled=bot_toggle, answer_links=list(_CONTACT_LINKS))
+    _make_document(db, bot, client, _STALE_URL, _STALE_CHUNK)
+
+    sid = f"paid-nourl-contact-{bot_toggle}-{pipeline}"
+    out = await _drive(pipeline, bot, "what is your pricing?", sid)
+    answer, meta = out["answer"], out["meta"]
+
+    assert [m["reason"] for m in _gate_metrics] == ["escalate_no_url"]
+    assert _stub_generation["prompts"] == []
+    assert _CONTACT_URL not in answer, "a paid bot handed over a link instead of the channel its plan includes"
+    assert "get in touch here" not in answer
+    assert "team" in answer.lower()
+    assert "$9" not in answer
+    if bot_toggle:
+        assert meta["suggest_handoff"] is True
+        assert "show_leave_message" not in meta
+    else:
+        assert meta["suggest_handoff"] is False
+        assert meta["show_leave_message"] is True
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1181,6 +1334,8 @@ async def test_the_cache_bypass_agrees_with_the_gates_own_standdown(
     monkeypatch.setattr(rs, "cache_get", lambda key, *a, **k: cached if ":qa:" in str(key) else None)
 
     client = _make_client(db)
+    # No pricing page and no contact page: the one configuration that still
+    # stands down, and therefore the only one the bypass may skip.
     bot = _make_bot(db, client, pricing_url=None)
     _make_document(db, bot, client, _STALE_URL, _STALE_CHUNK)
 
@@ -1189,6 +1344,35 @@ async def test_the_cache_bypass_agrees_with_the_gates_own_standdown(
     assert out["answer"] == "CACHED ANSWER", "the bypass still fired on a bot that stands the gate down"
     assert _stub_generation["prompts"] == []
     assert _gate_metrics == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pipeline", PIPELINES)
+async def test_the_cache_is_bypassed_on_a_free_bot_that_now_gates_on_its_contact_page(
+    db, monkeypatch, pipeline, _stub_outside_world, _stub_generation, _gate_metrics, _no_cag_lite
+):
+    """The dangerous direction of the bypass, on the newly-gated configuration.
+
+    A Free bot with no pricing page but a mapped contact page used to stand the
+    gate down and now escalates. If the bypass predicate were left reading only
+    ``pricing_url`` it would keep skipping the bypass for this bot, and a pre-gate
+    cached price would be served ahead of the gate on exactly the configuration
+    the change was made for. Sharing one predicate is what prevents that; this
+    test is what proves the sharing survived.
+    """
+    monkeypatch.setattr(rs.plan_entitlements_service, "is_live_chat_enabled_for_bot", lambda *_a, **_k: False)
+    cached = {"answer": "Our pricing is $9 per month per seat.", "sources": [_STALE_URL]}
+    monkeypatch.setattr(rs, "cache_get", lambda key, *a, **k: cached if ":qa:" in str(key) else None)
+
+    client = _make_client(db)
+    bot = _make_bot(db, client, pricing_url=None, answer_links=list(_CONTACT_LINKS))
+    _make_document(db, bot, client, _STALE_URL, _STALE_CHUNK)
+
+    out = await _drive(pipeline, bot, "what is your pricing?", f"cache-free-contact-{pipeline}")
+
+    assert "$9" not in out["answer"], "a cached pre-gate price was served on a Free bot the gate now intercepts"
+    assert [m["reason"] for m in _gate_metrics] == ["escalate_no_url"]
+    assert _CONTACT_URL in out["answer"]
 
 
 @pytest.mark.asyncio

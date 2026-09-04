@@ -1589,7 +1589,63 @@ def _question_looks_on_scope(question: str, company_name: str | None) -> bool:
     return not _has_latin_words(question)
 
 
-def _no_info_pivot(company_name: str | None, support_enabled: bool = True) -> str:
+# Smart-link keywords that mean "this is the company's contact page". Matched
+# exactly after trimming and case-folding, never as a substring: "contact sales"
+# is a sales form and "contacts" could be a directory, and handing a visitor the
+# wrong page is worse than handing them none. Kept narrow on purpose, since this
+# reads an admin-authored map that was never designed to be machine-interpreted.
+_CONTACT_LINK_KEYWORDS = frozenset({"contact", "contact us", "contact-us"})
+
+
+def _contact_url_from_answer_links(answer_links: object) -> str | None:
+    """Find the customer's own contact page in a bot's Smart Links.
+
+    WHY Smart Links rather than a dedicated ``bots.contact_url`` column: the
+    product owner explicitly chose reuse over a new column. An admin who wants
+    the bot to point at their contact page has almost always already mapped one
+    in Smart Links (``[{"keyword": ..., "url": ...}]``, see ``Bot.answer_links``
+    and ``_normalize_answer_links`` in ``app/api/bot_routes.py``), so a new
+    column would add a migration, an API field and an admin control to collect a
+    URL the platform usually already holds, and would then have two places that
+    disagree about where "contact us" points.
+
+    This stays inside the documented Smart Links contract that they "never
+    restrict what the bot may answer": nothing here changes what may be said,
+    it only decides which link a reply the bot was already going to send can
+    carry.
+
+    ``answer_links`` is JSONB and predates its write-side validation, so a
+    legacy or hand-edited row can hold anything: a dict, a string, entries with
+    no URL. Everything unrecognised is skipped rather than raised on, and a
+    junk entry never shadows a usable one further down the list. Usability is
+    decided by ``_pricing_gate.normalize_url``, the single definition of a
+    real http(s) link shared with the pricing gate, so a value like
+    ``javascript:alert(1)`` can never be pasted into a visitor's reply and
+    persisted to ``chat_messages.content``.
+
+    Returns the URL as the admin typed it (trimmed), NOT the normalized form:
+    ``normalize_url`` strips the scheme for comparison purposes, and the visitor
+    needs a link they can click.
+    """
+    if not isinstance(answer_links, list):
+        return None
+    for entry in answer_links:
+        if not isinstance(entry, dict):
+            continue
+        keyword = entry.get("keyword")
+        if not isinstance(keyword, str) or keyword.strip().casefold() not in _CONTACT_LINK_KEYWORDS:
+            continue
+        url = entry.get("url")
+        if not isinstance(url, str):
+            continue
+        candidate = url.strip()
+        if _pricing_gate.normalize_url(candidate) is None:
+            continue
+        return candidate
+    return None
+
+
+def _no_info_pivot(company_name: str | None, support_enabled: bool = True, *, contact_url: str | None = None) -> str:
     """Graceful 'I don't have that detail handy' response.
 
     Preserves the company-confident voice (no 'I don't have access to my
@@ -1599,9 +1655,37 @@ def _no_info_pivot(company_name: str | None, support_enabled: bool = True) -> st
     is False (e.g. a Free-plan bot, whose plan excludes live chat and offline
     messages) it must NOT offer to connect the visitor with the team, since no
     such channel exists. It stays a warm bot-only pivot instead.
+
+    ``contact_url`` (Free branch only, from ``_contact_url_from_answer_links``)
+    is what stops that Free branch being a dead end. Without it the bot could
+    not answer, could not offer a human, and gave the visitor nothing to do
+    next, on every unanswerable on-scope question.
+
+    WHY handing over that link is not a paywall leak, so nobody undoes it: the
+    paid feature is the in-chat CHANNEL (live queue, leave-a-message form,
+    operator inbox, notification emails). A public page on the customer's own
+    website is information, not a channel, and this copy promises no follow-up
+    through the chat. It is the same reasoning that already lets the Free
+    pricing pivot hand over ``pricing_url`` ("The current pricing is here:"),
+    and the phrasing deliberately matches it: a plain statement of where to go.
+
+    The paid branch is untouched by ``contact_url``. A paid bot has the real
+    channel, which is the better answer than a link.
     """
     cn = f"**{company_name}**" if company_name else "us"
     if not support_enabled:
+        # Re-validate rather than trusting the caller, mirroring
+        # ``pricing_gate.pricing_pivot``. This is a plain public function whose
+        # return value goes straight to a visitor and into the transcript, and a
+        # caller that skipped the extractor (or a future one that reads the URL
+        # from somewhere else) must not be able to render "You can get in touch
+        # here: javascript:alert(1)". An unusable URL is treated as no URL at
+        # all, which takes the no-link copy.
+        usable_url = (
+            contact_url.strip() if isinstance(contact_url, str) and _pricing_gate.normalize_url(contact_url) else None
+        )
+        if usable_url:
+            return f"I don't have that specific detail on hand for {cn}. You can get in touch here: {usable_url}"
         return f"I don't have that specific detail on hand for {cn}. Is there something else about {cn} I can help you with?"
     return (
         f"I don't have that specific detail on hand for {cn}. Want me to "
@@ -6474,6 +6558,18 @@ def rag_pipeline(
             )
             live_chat_on = _plan_support_allowed and bool(getattr(bot, "live_chat_enabled", True))
 
+            # Where a Free-plan bot sends a visitor whose on-scope question it
+            # could not answer. Resolved once per turn and reused at every
+            # ``_no_info_pivot`` callsite below, because the callsites sit deep
+            # inside two branches each and re-deriving it there would put four
+            # copies of the same lookup in the hot path. See
+            # ``_contact_url_from_answer_links`` for why the bot's existing
+            # Smart Links are the source rather than a dedicated column, and
+            # ``_no_info_pivot`` for why handing over a public page on the
+            # customer's own website is not a paywall leak. ``getattr`` covers
+            # the unknown-bot case (no bot, no links, no URL).
+            _contact_url = _contact_url_from_answer_links(getattr(bot, "answer_links", None))
+
             ensure_chat_session(session, session_id, client_id=cid, bot_id=bid, location=location, device=device)
 
             # Save the visitor's question and commit it immediately, before any
@@ -6706,6 +6802,16 @@ def rag_pipeline(
                 and not _pricing_gate.no_support_path_standdown(
                     support_enabled=_plan_support_allowed,
                     pricing_url=getattr(bot, "pricing_url", None) if bot else None,
+                    # The same contact page the gate itself reads, resolved once
+                    # per turn well above this block. It is REQUIRED by the
+                    # predicate rather than defaulted precisely so this callsite
+                    # cannot forget it: a Free bot that maps a contact page now
+                    # escalates instead of standing down, and a bypass still
+                    # reading only ``pricing_url`` would report a standdown for
+                    # it, skip the bypass, and let a pre-gate cached price be
+                    # served ahead of the gate on exactly the configuration this
+                    # change was made for.
+                    contact_url=_contact_url,
                 )
             )
             if _cache_key and not _affirmed_handoff and not _gate_may_intercept:
@@ -6928,10 +7034,32 @@ def rag_pipeline(
             # same value handed to ``pricing_pivot`` a few lines below, and it is
             # passed for one combination only: a plan with no live queue and no
             # leave-a-message form, on a bot with no usable ``pricing_url``, has
-            # nowhere to escalate a pricing question TO. Escalating there refused
-            # to answer AND offered nothing, so the gate stands down and normal
-            # RAG runs. Every paid plan is unaffected, including a paid bot with
-            # no pricing page, which still escalates to its team.
+            # no CHANNEL to escalate a pricing question to.
+            #
+            # ``contact_url`` is what keeps that from becoming a standdown by
+            # default, and it is the SAME value ``_no_info_pivot`` below already
+            # uses: the bot's own ``contact`` Smart Link, resolved once per turn
+            # at the top of this pipeline. An escalation does not have to end in
+            # a channel, it can end in a page, so a Free bot that maps a contact
+            # page escalates (``escalate_no_url``, chunks emptied) and the pivot
+            # hands that link over as the WHOLE reply. Routing it through the
+            # gate rather than appending a link to a knowledge-base answer is the
+            # point: the chunks are dropped, so a stale rate card cannot ride
+            # along with the link. Only a Free bot with neither page left stands
+            # the gate down and lets the knowledge base answer.
+            #
+            # WHY that is not a paywall leak, kept here as well as in the gate so
+            # neither copy can be undone in isolation: the paid feature is the
+            # in-chat CHANNEL (live queue, leave-a-message form, operator inbox,
+            # notification emails). A public page on the customer's own website
+            # is information, not a channel, and the Free pivot promises no
+            # follow-up through the chat (``suggest_handoff`` and
+            # ``needs_message_card`` both stay False).
+            #
+            # Every paid plan is unaffected by both arguments, including a paid
+            # bot with no pricing page that happens to map a contact link: it
+            # still escalates to its team, because the branch reading
+            # ``contact_url`` sits behind ``not support_enabled``.
             # A non-English conversation is left to the knowledge base, exactly
             # like the CRAG judge below. The intent detector is an English regex
             # and every ``pricing_pivot`` branch is English-only, so a fired gate
@@ -6952,6 +7080,7 @@ def rag_pipeline(
                     pricing_url=getattr(bot, "pricing_url", None) if bot else None,
                     chunks=final_results,
                     support_enabled=_plan_support_allowed,
+                    contact_url=_contact_url,
                 )
             if _pricing_decision.fired and _pricing_decision.outcome == "answer":
                 final_results = _pricing_decision.chunks
@@ -6968,6 +7097,7 @@ def rag_pipeline(
                     pricing_url=getattr(bot, "pricing_url", None) if bot else None,
                     support_enabled=_plan_support_allowed,
                     live_chat_enabled=live_chat_on,
+                    contact_url=_contact_url,
                 )
                 _pivot_text = (
                     _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + _pivot.text
@@ -7115,7 +7245,9 @@ def rag_pipeline(
                     # default pivot, which drops the offer when support is off.
                     _pivot = _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + (
                         (_canned_localized("no_info_pivot", _company_name, language) if _plan_support_allowed else None)
-                        or _no_info_pivot(_company_name, support_enabled=_plan_support_allowed)
+                        or _no_info_pivot(
+                            _company_name, support_enabled=_plan_support_allowed, contact_url=_contact_url
+                        )
                     )
                     _bot_msg = add_chat_message(
                         session,
@@ -7196,7 +7328,9 @@ def rag_pipeline(
                     # default pivot, which drops the offer when support is off.
                     _pivot = _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + (
                         (_canned_localized("no_info_pivot", _company_name, language) if _plan_support_allowed else None)
-                        or _no_info_pivot(_company_name, support_enabled=_plan_support_allowed)
+                        or _no_info_pivot(
+                            _company_name, support_enabled=_plan_support_allowed, contact_url=_contact_url
+                        )
                     )
                     _bot_msg = add_chat_message(
                         session,
@@ -7961,6 +8095,18 @@ async def rag_pipeline_stream(
             )
             live_chat_on = _plan_support_allowed and bool(getattr(bot, "live_chat_enabled", True))
 
+            # Where a Free-plan bot sends a visitor whose on-scope question it
+            # could not answer. Resolved once per turn and reused at every
+            # ``_no_info_pivot`` callsite below, because the callsites sit deep
+            # inside two branches each and re-deriving it there would put four
+            # copies of the same lookup in the hot path. See
+            # ``_contact_url_from_answer_links`` for why the bot's existing
+            # Smart Links are the source rather than a dedicated column, and
+            # ``_no_info_pivot`` for why handing over a public page on the
+            # customer's own website is not a paywall leak. ``getattr`` covers
+            # the unknown-bot case (no bot, no links, no URL).
+            _contact_url = _contact_url_from_answer_links(getattr(bot, "answer_links", None))
+
             ensure_chat_session(session, session_id, client_id=cid, bot_id=bid, location=location, device=device)
 
             # Save the visitor's question and commit it immediately, before any
@@ -8193,6 +8339,16 @@ async def rag_pipeline_stream(
                 and not _pricing_gate.no_support_path_standdown(
                     support_enabled=_plan_support_allowed,
                     pricing_url=getattr(bot, "pricing_url", None) if bot else None,
+                    # The same contact page the gate itself reads, resolved once
+                    # per turn well above this block. It is REQUIRED by the
+                    # predicate rather than defaulted precisely so this callsite
+                    # cannot forget it: a Free bot that maps a contact page now
+                    # escalates instead of standing down, and a bypass still
+                    # reading only ``pricing_url`` would report a standdown for
+                    # it, skip the bypass, and let a pre-gate cached price be
+                    # served ahead of the gate on exactly the configuration this
+                    # change was made for.
+                    contact_url=_contact_url,
                 )
             )
             if _cache_key and not _affirmed_handoff and not _gate_may_intercept:
@@ -8516,10 +8672,32 @@ async def rag_pipeline_stream(
             # same value handed to ``pricing_pivot`` a few lines below, and it is
             # passed for one combination only: a plan with no live queue and no
             # leave-a-message form, on a bot with no usable ``pricing_url``, has
-            # nowhere to escalate a pricing question TO. Escalating there refused
-            # to answer AND offered nothing, so the gate stands down and normal
-            # RAG runs. Every paid plan is unaffected, including a paid bot with
-            # no pricing page, which still escalates to its team.
+            # no CHANNEL to escalate a pricing question to.
+            #
+            # ``contact_url`` is what keeps that from becoming a standdown by
+            # default, and it is the SAME value ``_no_info_pivot`` below already
+            # uses: the bot's own ``contact`` Smart Link, resolved once per turn
+            # at the top of this pipeline. An escalation does not have to end in
+            # a channel, it can end in a page, so a Free bot that maps a contact
+            # page escalates (``escalate_no_url``, chunks emptied) and the pivot
+            # hands that link over as the WHOLE reply. Routing it through the
+            # gate rather than appending a link to a knowledge-base answer is the
+            # point: the chunks are dropped, so a stale rate card cannot ride
+            # along with the link. Only a Free bot with neither page left stands
+            # the gate down and lets the knowledge base answer.
+            #
+            # WHY that is not a paywall leak, kept here as well as in the gate so
+            # neither copy can be undone in isolation: the paid feature is the
+            # in-chat CHANNEL (live queue, leave-a-message form, operator inbox,
+            # notification emails). A public page on the customer's own website
+            # is information, not a channel, and the Free pivot promises no
+            # follow-up through the chat (``suggest_handoff`` and
+            # ``needs_message_card`` both stay False).
+            #
+            # Every paid plan is unaffected by both arguments, including a paid
+            # bot with no pricing page that happens to map a contact link: it
+            # still escalates to its team, because the branch reading
+            # ``contact_url`` sits behind ``not support_enabled``.
             # A non-English conversation is left to the knowledge base, exactly
             # like the CRAG judge below. The intent detector is an English regex
             # and every ``pricing_pivot`` branch is English-only, so a fired gate
@@ -8540,6 +8718,7 @@ async def rag_pipeline_stream(
                     pricing_url=getattr(bot, "pricing_url", None) if bot else None,
                     chunks=final_results,
                     support_enabled=_plan_support_allowed,
+                    contact_url=_contact_url,
                 )
             if _pricing_decision.fired and _pricing_decision.outcome == "answer":
                 # Narrow the context to the pricing page and let the normal
@@ -8558,6 +8737,7 @@ async def rag_pipeline_stream(
                     pricing_url=getattr(bot, "pricing_url", None) if bot else None,
                     support_enabled=_plan_support_allowed,
                     live_chat_enabled=live_chat_on,
+                    contact_url=_contact_url,
                 )
                 _pivot_text = (
                     _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + _pivot.text
@@ -8683,7 +8863,9 @@ async def rag_pipeline_stream(
                     # default pivot, which drops the offer when support is off.
                     _pivot = _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + (
                         (_canned_localized("no_info_pivot", _company_name, language) if _plan_support_allowed else None)
-                        or _no_info_pivot(_company_name, support_enabled=_plan_support_allowed)
+                        or _no_info_pivot(
+                            _company_name, support_enabled=_plan_support_allowed, contact_url=_contact_url
+                        )
                     )
                     yield _stream_metadata(session_id, [], language)
                     yield _pivot
@@ -8761,7 +8943,9 @@ async def rag_pipeline_stream(
                     # default pivot, which drops the offer when support is off.
                     _pivot = _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + (
                         (_canned_localized("no_info_pivot", _company_name, language) if _plan_support_allowed else None)
-                        or _no_info_pivot(_company_name, support_enabled=_plan_support_allowed)
+                        or _no_info_pivot(
+                            _company_name, support_enabled=_plan_support_allowed, contact_url=_contact_url
+                        )
                     )
                     yield _stream_metadata(session_id, [], language)
                     yield _pivot

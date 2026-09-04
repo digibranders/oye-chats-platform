@@ -10,11 +10,19 @@ the general knowledge base.
 Two standdowns, and they are different in kind. ``quote_standdown`` is per TURN:
 an active or pending BANT quotation is the better pricing answer while it is in
 flight. ``no_support_path_standdown`` is per BOT CONFIGURATION and is the Free
-carve-out: a plan with no live queue and no leave-a-message form, on a bot with
-no usable pricing page, has nothing to escalate TO, so the gate stands down and
-the knowledge base answers rather than dead-ending the visitor. That one
-re-opens the stale-price hole for exactly that configuration, on purpose, and
-the tests below say so out loud.
+carve-out, now narrowed to a genuine last resort: a plan with no live queue and
+no leave-a-message form, on a bot with neither a usable pricing page NOR a
+usable contact page, has nothing at all to point the visitor at, so the gate
+stands down and the knowledge base answers rather than dead-ending them.
+
+The contact page is what narrowed it. A Free bot that maps a ``contact`` Smart
+Link now ESCALATES a pricing question it cannot source (``escalate_no_url``,
+empty chunks, no LLM call) and the pivot hands that public page over. That is
+not a paywall leak: the paid feature is the in-chat CHANNEL (live queue,
+leave-a-message form, operator inbox, notification emails), and a public page on
+the customer's own website is information, not a channel. So the stale-price
+hole is now open only for a Free bot with no pricing page AND no contact page,
+and the tests below say exactly that out loud.
 """
 
 from types import SimpleNamespace
@@ -294,8 +302,13 @@ def test_no_pricing_url_escalates_even_when_a_priced_chunk_is_right_there():
         ("not_even_a_string", 42),
     ],
 )
-def test_no_human_path_and_no_usable_url_stands_the_gate_down(case, unusable_url):
-    """Inverted from "Free with no URL escalates".
+def test_no_human_path_no_usable_url_and_no_contact_page_stands_the_gate_down(case, unusable_url):
+    """The fallback of last resort, and now only half of the old case.
+
+    With neither a pricing page nor a contact page there is nothing to point the
+    visitor at, so a knowledge-base answer still beats a dead end. The companion
+    test below covers the other half: the same bot WITH a contact page escalates
+    and hands that page over instead.
 
     Unusability is decided by ``normalize_url``, not by truthiness, so every
     value the gate itself would have rejected as ``escalate_no_url`` takes the
@@ -309,12 +322,140 @@ def test_no_human_path_and_no_usable_url_stands_the_gate_down(case, unusable_url
         pricing_url=unusable_url,
         chunks=[_PRICED, _OTHER],
         support_enabled=False,
+        contact_url=None,
     )
     assert decision.fired is False, case
     assert decision.outcome == "no_support_path_standdown", case
     # Untouched, not filtered: the whole point is that normal RAG runs and the
     # knowledge base answers exactly as it did before this feature existed.
     assert decision.chunks == [_PRICED, _OTHER], case
+
+
+@pytest.mark.parametrize(
+    ("case", "unusable_url"),
+    [
+        ("null", None),
+        ("empty", ""),
+        ("whitespace", "   "),
+        ("non_http_scheme", "javascript:alert(1)"),
+        ("schemeless", "//acme.com/pricing"),
+        ("malformed_ipv6", "http://[::1"),
+        ("not_a_url_at_all", "rate-card-2026.pdf"),
+        ("not_even_a_string", 42),
+    ],
+)
+def test_no_human_path_and_no_usable_url_but_a_contact_page_escalates(case, unusable_url):
+    """The other half of the case above, and the behaviour change.
+
+    A Free bot that maps a contact page is no longer a dead end, so the reason
+    for standing down is gone and the gate fires again. ``escalate_no_url`` with
+    EMPTY chunks is the assertion that matters: the visitor gets the contact link
+    from ``pricing_pivot`` and no knowledge-base chunk can leak into the reply,
+    which is the whole reason this is an escalation rather than a standdown with
+    a link bolted on afterwards.
+    """
+    decision = evaluate_pricing_gate(
+        question="what is your pricing?",
+        quote_active=False,
+        pricing_url=unusable_url,
+        chunks=[_PRICED, _OTHER],
+        support_enabled=False,
+        contact_url="https://acme.com/contact",
+    )
+    assert decision.fired is True, case
+    assert decision.outcome == "escalate_no_url", case
+    assert decision.chunks == [], case
+
+
+@pytest.mark.parametrize(
+    ("case", "unusable_contact"),
+    [
+        ("null", None),
+        ("empty", ""),
+        ("whitespace", "   "),
+        ("non_http_scheme", "javascript:alert(1)"),
+        ("mailto", "mailto:hi@acme.com"),
+        ("schemeless", "//acme.com/contact"),
+        ("malformed_ipv6", "http://[::1"),
+        ("not_even_a_string", 42),
+    ],
+)
+def test_a_contact_url_normalize_url_rejects_does_not_re_open_the_gate(case, unusable_contact):
+    """Usability is decided by ``normalize_url`` on the CONTACT side too.
+
+    A truthiness test here would escalate on ``javascript:alert(1)`` and then ask
+    ``pricing_pivot`` to hand it over, which the pivot refuses; the visitor would
+    get the no-link copy on a turn the gate refused to answer, which is the exact
+    dead end the carve-out exists to prevent. An unusable contact URL is no
+    contact URL at all, so the standdown still applies.
+    """
+    decision = evaluate_pricing_gate(
+        question="what is your pricing?",
+        quote_active=False,
+        pricing_url=None,
+        chunks=[_PRICED, _OTHER],
+        support_enabled=False,
+        contact_url=unusable_contact,
+    )
+    assert decision.fired is False, case
+    assert decision.outcome == "no_support_path_standdown", case
+    assert decision.chunks == [_PRICED, _OTHER], case
+
+
+def test_a_usable_pricing_url_outranks_a_contact_page_on_free():
+    """Order inside the Free branch: the pricing page always wins.
+
+    A bot that names both must still answer FROM the page rather than punting to
+    a contact form. The contact link is the fallback for a bot with no priceable
+    source, never a replacement for one.
+    """
+    decision = evaluate_pricing_gate(
+        question="what is your pricing?",
+        quote_active=False,
+        pricing_url="http://acme.com/pricing",
+        chunks=[_OTHER, _PRICED],
+        support_enabled=False,
+        contact_url="https://acme.com/contact",
+    )
+    assert decision.fired is True
+    assert decision.outcome == "answer"
+    assert decision.chunks == [_PRICED]
+
+
+def test_a_contact_page_never_changes_a_paid_plan():
+    """The path most likely to be broken by a careless edit. A paid bot with no
+    pricing page escalates to its TEAM, and the contact link must not be
+    substituted for the channel its plan actually includes."""
+    for contact_url in (None, "https://acme.com/contact"):
+        decision = evaluate_pricing_gate(
+            question="what is your pricing?",
+            quote_active=False,
+            pricing_url=None,
+            chunks=[_PRICED, _OTHER],
+            support_enabled=True,
+            contact_url=contact_url,
+        )
+        assert decision.fired is True, contact_url
+        assert decision.outcome == "escalate_no_url", contact_url
+        assert decision.chunks == [], contact_url
+
+
+def test_contact_url_defaults_to_absent_so_a_forgetful_caller_keeps_the_standdown():
+    """The safe direction for THIS argument is the opposite of ``support_enabled``.
+
+    A caller that forgets ``contact_url`` costs one Free visitor a link they
+    could have had; a caller that forgets it in the other direction would have
+    the gate escalate with nothing to hand over. So the default is "no contact
+    page", which is exactly the pre-change behaviour.
+    """
+    decision = evaluate_pricing_gate(
+        question="what is your pricing?",
+        quote_active=False,
+        pricing_url=None,
+        chunks=[_PRICED],
+        support_enabled=False,
+    )
+    assert decision.outcome == "no_support_path_standdown"
 
 
 def test_no_human_path_but_a_usable_url_still_fires_the_gate():
@@ -409,22 +550,35 @@ def test_an_active_quote_outranks_the_free_standdown():
 
 
 @pytest.mark.parametrize(
-    ("support_enabled", "pricing_url", "expected"),
+    ("support_enabled", "pricing_url", "contact_url", "expected"),
     [
-        (False, None, True),
-        (False, "javascript:alert(1)", True),
-        (False, "https://acme.com/pricing", False),
-        (True, None, False),
-        (True, "https://acme.com/pricing", False),
+        (False, None, None, True),
+        (False, "javascript:alert(1)", None, True),
+        (False, None, "javascript:alert(1)", True),
+        (False, "javascript:alert(1)", "mailto:hi@acme.com", True),
+        (False, None, "https://acme.com/contact", False),
+        (False, "javascript:alert(1)", "https://acme.com/contact", False),
+        (False, "https://acme.com/pricing", None, False),
+        (False, "https://acme.com/pricing", "https://acme.com/contact", False),
+        (True, None, None, False),
+        (True, None, "https://acme.com/contact", False),
+        (True, "https://acme.com/pricing", "https://acme.com/contact", False),
     ],
 )
-def test_the_exported_standdown_predicate_matches_the_gates_own_decision(support_enabled, pricing_url, expected):
+def test_the_exported_standdown_predicate_matches_the_gates_own_decision(
+    support_enabled, pricing_url, contact_url, expected
+):
     """The pipelines' answer-cache bypass calls this predicate directly, so it
     has to agree with ``evaluate_pricing_gate`` by construction. If the bypass
     were ever NARROWER than the gate, a pre-gate cached price would be served on
     a bot the gate does intercept: the exact failure the bypass exists to
-    prevent."""
-    assert no_support_path_standdown(support_enabled=support_enabled, pricing_url=pricing_url) is expected
+    prevent, and the contact-page rows are the newly dangerous ones, because a
+    bypass still reading only ``pricing_url`` would skip the bypass on exactly
+    the Free bots that now escalate."""
+    assert (
+        no_support_path_standdown(support_enabled=support_enabled, pricing_url=pricing_url, contact_url=contact_url)
+        is expected
+    )
 
     decision = evaluate_pricing_gate(
         question="what is your pricing?",
@@ -432,6 +586,7 @@ def test_the_exported_standdown_predicate_matches_the_gates_own_decision(support
         pricing_url=pricing_url,
         chunks=[_PRICED],
         support_enabled=support_enabled,
+        contact_url=contact_url,
     )
     assert (decision.outcome == "no_support_path_standdown") is expected
 
@@ -541,7 +696,9 @@ def test_pivot_on_free_plan_still_hands_over_a_usable_url_with_stray_whitespace(
     assert "https://acme.com/pricing" in pivot.text
 
 
-def test_pivot_on_free_plan_without_a_url_stays_warm_and_bot_only():
+def test_pivot_on_free_plan_without_a_url_or_a_contact_page_stays_warm_and_bot_only():
+    """Only half of the old case: with neither page there is still nothing to
+    hand over, so the warm bot-only copy is all that is left."""
     pivot = pricing_pivot(
         company_name="Acme",
         pricing_url=None,
@@ -552,6 +709,99 @@ def test_pivot_on_free_plan_without_a_url_stays_warm_and_bot_only():
     assert pivot.needs_message_card is False
     assert "team" not in pivot.text.lower()
     assert "http" not in pivot.text
+
+
+def test_pivot_on_free_plan_without_a_pricing_url_hands_over_the_contact_page():
+    """The other half, and the behaviour change: the contact link IS the answer.
+
+    Still no handoff and still no card, because Free has no in-chat channel and
+    this must stay a plain pointer to a public page rather than a promise of
+    follow-up. The phrasing deliberately matches ``_no_info_pivot``'s Free branch
+    ("You can get in touch here:") so the bot has one voice for one action.
+    """
+    pivot = pricing_pivot(
+        company_name="Acme",
+        pricing_url=None,
+        support_enabled=False,
+        live_chat_enabled=False,
+        contact_url="https://acme.com/contact",
+    )
+    assert pivot.text == (
+        "I don't have pricing I can confirm for **Acme**. You can get in touch here: https://acme.com/contact"
+    )
+    assert pivot.suggest_handoff is False
+    assert pivot.needs_message_card is False
+    assert "team" not in pivot.text.lower()
+    assert "connect" not in pivot.text.lower()
+
+
+def test_pivot_on_free_plan_prefers_the_pricing_page_over_the_contact_page():
+    """Order inside the Free branch. A bot that configured both wants the visitor
+    on the page that actually states prices."""
+    pivot = pricing_pivot(
+        company_name="Acme",
+        pricing_url="https://acme.com/pricing",
+        support_enabled=False,
+        live_chat_enabled=False,
+        contact_url="https://acme.com/contact",
+    )
+    assert "https://acme.com/pricing" in pivot.text
+    assert "https://acme.com/contact" not in pivot.text
+
+
+@pytest.mark.parametrize(
+    "unusable",
+    [None, "", "   ", "javascript:alert(1)", "mailto:hi@acme.com", "//acme.com/contact", "http://[::1", 42],
+)
+def test_pivot_treats_a_contact_url_normalize_url_rejects_as_no_contact_page(unusable):
+    """Re-validated here rather than trusted from the caller, exactly as the
+    pricing URL already is: this text goes straight to a visitor and into
+    ``chat_messages.content``, so "You can get in touch here: javascript:alert(1)"
+    must be impossible even if a future caller reads the URL from somewhere the
+    extractor does not guard."""
+    pivot = pricing_pivot(
+        company_name="Acme",
+        pricing_url=None,
+        support_enabled=False,
+        live_chat_enabled=False,
+        contact_url=unusable,
+    )
+    assert "http" not in pivot.text, unusable
+    assert "javascript:" not in pivot.text, unusable
+    assert "mailto:" not in pivot.text, unusable
+    assert pivot.suggest_handoff is False
+    assert pivot.needs_message_card is False
+
+
+def test_pivot_hands_over_a_usable_contact_url_with_stray_whitespace():
+    """The admin pastes links by hand; padding is cosmetic, not unusable."""
+    pivot = pricing_pivot(
+        company_name="Acme",
+        pricing_url=None,
+        support_enabled=False,
+        live_chat_enabled=False,
+        contact_url="  https://acme.com/contact  ",
+    )
+    assert "https://acme.com/contact" in pivot.text
+    assert "  https" not in pivot.text
+
+
+@pytest.mark.parametrize("live_chat_enabled", [True, False])
+def test_pivot_on_a_paid_plan_ignores_the_contact_page_entirely(live_chat_enabled):
+    """The paid branch is untouched: a paid bot has the real in-chat channel,
+    which is a better answer than a link, so the contact page must not be
+    substituted for it on either paid variant."""
+    pivot = pricing_pivot(
+        company_name="Acme",
+        pricing_url=None,
+        support_enabled=True,
+        live_chat_enabled=live_chat_enabled,
+        contact_url="https://acme.com/contact",
+    )
+    assert "https://acme.com/contact" not in pivot.text
+    assert "team" in pivot.text.lower()
+    assert pivot.suggest_handoff is live_chat_enabled
+    assert pivot.needs_message_card is (not live_chat_enabled)
 
 
 def test_pivot_with_live_chat_offers_a_live_handoff():
