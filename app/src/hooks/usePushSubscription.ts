@@ -15,6 +15,50 @@ const PUSH_SUPPORTED =
   'PushManager' in window &&
   'Notification' in window;
 
+/**
+ * iOS/iPadOS, regardless of which browser app: Apple requires every browser
+ * on the platform, Chrome and Firefox included, to embed WebKit, so they all
+ * share WebKit's Push API restriction below. iPadOS since 13 reports a
+ * desktop-class UA (indistinguishable from real macOS Safari on UA alone),
+ * caught here by desktop Safari's own tell: touch support, which no real Mac
+ * has.
+ */
+function isIOSSafariEngine(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  if (/iPad|iPhone|iPod/.test(navigator.userAgent)) return true;
+  return navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+}
+
+/** Launched from the Home Screen (or otherwise installed), not a browser tab. */
+function isStandalone(): boolean {
+  if (typeof window === 'undefined') return false;
+  if (window.matchMedia?.('(display-mode: standalone)').matches) return true;
+  // Safari-only, pre-dates the standard media query; still the only signal
+  // on older iOS.
+  return (navigator as unknown as { standalone?: boolean }).standalone === true;
+}
+
+/**
+ * Why `PUSH_SUPPORTED` is false, so the UI can give the reader something to
+ * act on instead of a flat "this device can't". WebKit only exposes
+ * `PushManager` to a page running standalone (installed to the Home Screen),
+ * and only from iOS 16.4 - a platform restriction, not a bug, and one this
+ * app is already built to route around (see `manifest.webmanifest` and the
+ * `apple-mobile-web-app-*` tags in `index.html`).
+ */
+export type UnsupportedReason =
+  /** Not iOS: a genuinely outdated or unsupported browser. */
+  | 'no-push-api'
+  /** iOS, running in a normal browser tab: adding it to the Home Screen fixes this. */
+  | 'ios-not-installed'
+  /** iOS, ALREADY on the Home Screen, and still no PushManager: pre-16.4. */
+  | 'ios-too-old';
+
+function unsupportedReason(): UnsupportedReason {
+  if (!isIOSSafariEngine()) return 'no-push-api';
+  return isStandalone() ? 'ios-too-old' : 'ios-not-installed';
+}
+
 /** The service worker this app ships (public/sw.js) - it owns the `push` handler. */
 const SERVICE_WORKER_URL = '/sw.js';
 
@@ -89,7 +133,7 @@ function describeSubscribeFailure(error: unknown): string {
 
 export type PushPhase =
   | { readonly status: 'checking' }
-  | { readonly status: 'unsupported' }
+  | { readonly status: 'unsupported'; readonly reason: UnsupportedReason }
   | { readonly status: 'denied' }
   | { readonly status: 'subscribed' }
   | { readonly status: 'default' }
@@ -127,7 +171,7 @@ async function mintSubscription(registration: ServiceWorkerRegistration): Promis
 
 /** Pure, synchronous read of the starting phase - no side effects, so it's a safe lazy initializer. */
 function initialPushPhase(): PushPhase {
-  if (!PUSH_SUPPORTED) return { status: 'unsupported' };
+  if (!PUSH_SUPPORTED) return { status: 'unsupported', reason: unsupportedReason() };
   const permission = Notification.permission;
   if (permission === 'denied') return { status: 'denied' };
   // Both 'granted' and 'default' need an async check (is there already a

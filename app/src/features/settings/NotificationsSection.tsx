@@ -203,8 +203,14 @@ export function NotificationsSection() {
 
           {device.phase.status === 'unsupported' ? (
             <Alert tone="neutral">
-              {t('settings.thisBrowserCannotReceivePush') ||
-                'This browser cannot receive push notifications. A recent Chrome, Edge or Firefox on desktop can.'}
+              {device.phase.reason === 'ios-not-installed'
+                ? t('settings.addToHomeScreenForPush') ||
+                  'Add OyeChats to your Home Screen to get push notifications on this phone: open the share menu, then "Add to Home Screen". This works in Safari and in Chrome on iOS, since both use the same engine.'
+                : device.phase.reason === 'ios-too-old'
+                  ? t('settings.iosNeedsANewerVersionForPush') ||
+                    'This iPhone or iPad is already on the Home Screen, but its iOS version is too old for push notifications. Update to iOS 16.4 or later, then re-check.'
+                  : t('settings.thisBrowserCannotReceivePush') ||
+                    'This browser cannot receive push notifications. A recent Chrome, Edge or Firefox on desktop can.'}
             </Alert>
           ) : null}
 

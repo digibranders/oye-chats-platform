@@ -697,6 +697,8 @@ const en = {
     yourPlan: 'Your plan',
   },
   settings: {
+    addToHomeScreenForPush:
+        'Add OyeChats to your Home Screen to get push notifications on this phone: open the share menu, then "Add to Home Screen". This works in Safari and in Chrome on iOS, since both use the same engine.',
     alertPreferencesSaved: 'Alert preferences saved',
     alertsCanReachYouAt: 'Alerts can reach you at any hour.',
     appliesEverywhereYouAreSigned: 'Applies everywhere you are signed in.',
@@ -733,6 +735,8 @@ const en = {
     from: 'From',
     fromTheAccountYouSigned: 'From the account you signed in with.',
     gettingHelp: 'Getting help',
+    iosNeedsANewerVersionForPush:
+        'This iPhone or iPad is already on the Home Screen, but its iOS version is too old for push notifications. Update to iOS 16.4 or later, then re-check.',
     language: {
       description: 'Applies to this browser only. Your chatbots answer visitors in the languages you set per chatbot.',
       label: 'Dashboard language',
