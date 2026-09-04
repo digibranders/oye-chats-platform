@@ -300,7 +300,7 @@ export function BillingPage() {
                   actions={
                     <Link to="/billing/usage" className={buttonClass('secondary', 'sm')}>
                       See usage
-                      <ArrowRight aria-hidden />
+                      <ArrowRight aria-hidden className="rtl:-scale-x-100" />
                     </Link>
                   }
                 />

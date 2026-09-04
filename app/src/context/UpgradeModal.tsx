@@ -101,7 +101,7 @@ export function UpgradeModal({ open, content, onClose }: UpgradeModalProps) {
           </Button>
           <Button
             onClick={seePlans}
-            iconRight={<ArrowRight aria-hidden className="h-3.5 w-3.5" />}
+            iconRight={<ArrowRight aria-hidden className="h-3.5 w-3.5 rtl:-scale-x-100" />}
           >
             {translateNow('app.seePlans') || 'See plans'}
           </Button>
@@ -127,7 +127,7 @@ export function UpgradeModal({ open, content, onClose }: UpgradeModalProps) {
       {content.recommendedPlan ? (
         <div className="mt-4 flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface-sunken px-3 py-2.5">
           <Badge tone="neutral">{planName}</Badge>
-          <ArrowRight aria-hidden className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
+          <ArrowRight aria-hidden className="h-3.5 w-3.5 shrink-0 text-text-tertiary rtl:-scale-x-100" />
           <Badge tone="plan">{targetLabel}</Badge>
         </div>
       ) : null}

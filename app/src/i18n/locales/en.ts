@@ -1396,7 +1396,7 @@ const en = {
     liveChatButton: 'Live chat button',
     liveOnYourWebsite: 'Live on your website',
     // ── Steve's plan-gating / site-icon work (branch `steve`) ──
-    couldntGetYourWebsitesIcon: "Couldn't get your website's icon \u2014 upload one instead.",
+    couldntGetYourWebsitesIcon: "Couldn't get your website's icon. Upload one instead.",
     useMyWebsitesIcon: "Use my website's icon",
     pulledFromYourSiteThenCrop: 'Pulled from your site, then crop it to fit.',
     cropYourAvatar: 'Crop your avatar',
@@ -1406,7 +1406,7 @@ const en = {
         'Verify a lead\u2019s email and identify the company from their IP. Available on Standard and up.',
     businessHoursLocked:
         'Set the hours this chatbot is staffed and show an offline banner outside them.',
-    theLauncherShowsJustThe: 'The launcher shows just the icon \u2014 no text beside it.',
+    theLauncherShowsJustThe: 'The launcher shows just the icon, with no text beside it.',
     showLauncherText: 'Show launcher text',
     launcherTextHidden: 'Hidden',
     launcherTextEmpty: 'Type the text visitors see beside the launcher, or turn this off.',
