@@ -1565,6 +1565,10 @@ const ar = {
     previewStateLabel: "حالة المعاينة",
     price: "السعر",
     pricing: "التسعير",
+    answerPricingFromOnePage: "صفحة الأسعار",
+    whenThisIsOnPricing:
+      "يجيب روبوت المحادثة عن أسئلة الأسعار من هذه الصفحة فقط. وإذا تعذّر عليه الإجابة منها، فإنه يحوّل الزائر إلى فريقك بدلاً من التخمين. اترك الحقل فارغًا ليذهب كل سؤال عن الأسعار إلى فريقك مباشرة.",
+    pricingPageLink: "رابط صفحة الأسعار",
     privacyPolicy: "سياسة الخصوصية",
     processingInTheBackground: "قيد المعالجة في الخلفية",
     promptCopied: "تم نسخ الموجّه",

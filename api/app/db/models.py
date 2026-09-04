@@ -574,6 +574,19 @@ class Bot(Base):
     # answer-scope above. Smart links never restrict what the bot may answer.
     answer_links = Column(JSONB, nullable=True)
 
+    # Pricing answer gate. A visitor's pricing question is answered ONLY from
+    # ``pricing_url``'s chunks; if that page is missing from the knowledge base
+    # or carries no price content the bot routes to the team instead of falling
+    # back to the rest of the KB (see ``app/services/pricing_gate.py``). The
+    # gate is unconditional platform-wide, so this column selects the SOURCE, not
+    # whether the restriction applies: a bot that leaves it NULL routes every
+    # pricing question to the team rather than answering one from the general
+    # knowledge base. Deliberately separate from ``answer_links`` above: smart
+    # links are cosmetic and must keep their documented "never restrict what the
+    # bot may answer" contract, so turning one into an answering restriction
+    # would silently change what every existing bot is allowed to say.
+    pricing_url = Column(String, nullable=True)
+
     # Widget embed origin restriction. When ``domain_check_enabled`` is true the
     # backend rejects ``X-Bot-Key`` requests whose Origin/Referer hostname does not
     # match an entry in ``allowed_domains``. Entries support exact hostnames

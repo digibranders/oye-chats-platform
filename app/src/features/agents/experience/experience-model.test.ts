@@ -367,3 +367,54 @@ describe('isHttpUrl', () => {
     expect(isHttpUrl('')).toBe(false);
   });
 });
+
+// The pricing restriction is unconditional: there is no toggle, and the URL is
+// the only control. An empty URL is a valid configuration meaning every pricing
+// question routes to the team rather than being answered from the rest of the
+// knowledge base.
+describe('pricing page', () => {
+  it('parses the pricing page off the bot payload', () => {
+    const draft = draftFromBot({ ...RAW, pricing_url: 'https://acme.test/pricing' });
+    expect(draft.pricingUrl).toBe('https://acme.test/pricing');
+  });
+
+  it('defaults the pricing page to empty when the payload omits it', () => {
+    const draft = draftFromBot({ ...RAW });
+    expect(draft.pricingUrl).toBe('');
+  });
+
+  it('patches only the changed pricing fields', () => {
+    const baseline = draftFromBot({ ...RAW });
+    const draft = { ...baseline, pricingUrl: 'https://acme.test/pricing' };
+    const patch = patchFromDraft(draft, baseline);
+    expect(patch.pricing_url).toBe('https://acme.test/pricing');
+    expect(Object.keys(patch)).toEqual(['pricing_url']);
+  });
+
+  it('sends nothing when the pricing page did not change', () => {
+    const baseline = draftFromBot({ ...RAW, pricing_url: 'https://acme.test/pricing' });
+    expect(patchFromDraft({ ...baseline }, baseline)).toEqual({});
+  });
+
+  it('accepts an empty pricing page, which routes every pricing question to the team', () => {
+    const baseline = draftFromBot({ ...RAW });
+    expect(baseline.pricingUrl).toBe('');
+    expect(validateDraft(baseline).pricingUrl).toBeUndefined();
+    expect(validateDraft({ ...baseline, pricingUrl: '   ' }).pricingUrl).toBeUndefined();
+  });
+
+  it('rejects a non-empty pricing page that is not a usable link', () => {
+    const baseline = draftFromBot({ ...RAW });
+    expect(validateDraft({ ...baseline, pricingUrl: 'acme.test/pricing' }).pricingUrl).toBeTruthy();
+    expect(
+      validateDraft({ ...baseline, pricingUrl: 'javascript:alert(1)' }).pricingUrl,
+    ).toBeTruthy();
+  });
+
+  it('accepts a well-formed pricing page link', () => {
+    const baseline = draftFromBot({ ...RAW });
+    expect(
+      validateDraft({ ...baseline, pricingUrl: 'https://acme.test/pricing' }).pricingUrl,
+    ).toBeUndefined();
+  });
+});

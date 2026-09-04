@@ -163,6 +163,15 @@ export interface ExperienceDraft {
   companyDescription: string;
   services: ServiceEntry[];
   smartLinks: SmartLink[];
+  /**
+   * The one page a pricing answer may come from. Empty string when unset,
+   * which routes every pricing question to the team.
+   *
+   * The restriction is unconditional: a pricing question this page cannot
+   * answer goes to the team instead of falling back to the rest of the
+   * knowledge base.
+   */
+  pricingUrl: string;
 
   // Language
   /**
@@ -241,6 +250,7 @@ export const FIELD_SECTION: Record<DraftField, SectionKey> = {
   companyDescription: 'voice',
   services: 'voice',
   smartLinks: 'voice',
+  pricingUrl: 'voice',
 
   liveChatEnabled: 'handoff',
   waitingMessage: 'handoff',
@@ -570,6 +580,7 @@ export function draftFromBot(raw: Record<string, unknown>): ExperienceDraft {
     companyDescription: asString(raw.company_description),
     services: parseServices(raw.services),
     smartLinks: parseSmartLinks(raw.answer_links),
+    pricingUrl: asString(raw.pricing_url),
 
     multilingualEnabled: asBoolean(language.enabled),
     supportedLocales: parseSupportedLocales(language.supported_locales),
@@ -635,6 +646,7 @@ export function normalizeDraft(draft: ExperienceDraft): ExperienceDraft {
       .map((service) => ({ name: service.name.trim(), url: service.url.trim() }))
       .filter((service) => service.name.length > 0),
     smartLinks: normalizeSmartLinks(draft.smartLinks),
+    pricingUrl: draft.pricingUrl.trim(),
     queueTimeoutSeconds: clamp(draft.queueTimeoutSeconds, QUEUE_TIMEOUT.min, QUEUE_TIMEOUT.max),
     maxQueueSize: clamp(draft.maxQueueSize, MAX_QUEUE.min, MAX_QUEUE.max),
     ...normalizeLanguage(draft),
@@ -736,6 +748,7 @@ const ANSWER_FIELDS: readonly DraftField[] = [
   'companyDescription',
   'services',
   'smartLinks',
+  'pricingUrl',
 ];
 
 export function answerIsStale(draft: ExperienceDraft, baseline: ExperienceDraft): boolean {
@@ -807,6 +820,7 @@ export function patchFromDraft(
     }));
   }
   if (changed.has('smartLinks')) patch.answer_links = draft.smartLinks;
+  if (changed.has('pricingUrl')) patch.pricing_url = draft.pricingUrl;
 
   if (changed.has('liveChatEnabled')) patch.live_chat_enabled = draft.liveChatEnabled;
   if (changed.has('waitingMessage')) patch.waiting_message = draft.waitingMessage;
@@ -904,6 +918,15 @@ export function validateDraft(draft: ExperienceDraft): DraftErrors {
     }
     if (keyword.length > 0) keywords.add(keyword);
   });
+
+  // The pricing restriction is unconditional, so an empty value is valid: it
+  // means every pricing question routes to the team. Only a non-empty value
+  // that is not a usable link is an error.
+  if (draft.pricingUrl.trim().length > 0 && !isHttpUrl(draft.pricingUrl.trim())) {
+    errors.pricingUrl =
+      translateNow('agents.enterAFullLinkStarting') ||
+      'Enter a full link starting with http:// or https://';
+  }
 
   if (
     draft.queueTimeoutSeconds < QUEUE_TIMEOUT.min ||

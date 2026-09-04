@@ -1578,6 +1578,10 @@ const en = {
     previewStateLabel: 'Preview state',
     price: 'Price',
     pricing: 'pricing',
+    answerPricingFromOnePage: 'Pricing page',
+    whenThisIsOnPricing:
+      'The chatbot answers pricing questions only from this page. If it cannot answer from here, it routes the visitor to your team instead of guessing. Leave this empty and every pricing question goes straight to your team.',
+    pricingPageLink: 'Pricing page link',
     privacyPolicy: 'Privacy Policy',
     processingInTheBackground: 'Processing in the background',
     promptCopied: 'Prompt copied',

@@ -71,6 +71,7 @@ from app.schemas.validators import (
     ShortText,
     bounded_json_object,
     bounded_list,
+    validate_http_url,
 )
 from app.services.brand_tone import BRAND_TONE_PRESETS, CUSTOM_PRESET, is_valid_preset_value, preset_text
 from app.services.email_service import send_install_invite_email
@@ -393,6 +394,17 @@ def _normalize_services(raw) -> list[dict]:
             url = url.strip() if isinstance(url, str) and url.strip() else None
             out.append({"name": name, "url": url})
     return out
+
+
+def _validate_optional_http_url(value: str) -> str:
+    """An http(s) URL, or the empty string that clears the setting.
+
+    ``HttpUrlStr`` alone rejects "", which is the only way the admin UI can
+    unset a URL field, so the gate's URL gets this thin wrapper instead.
+    """
+    if value == "":
+        return value
+    return validate_http_url(value)
 
 
 def _normalize_answer_links(raw) -> list[dict]:
@@ -773,6 +785,13 @@ class UpdateBotRequest(BaseModel):
     # malformed entry outright rather than letting the normalizer discard it,
     # so a typo'd URL is a visible 422 instead of a link that never appears.
     answer_links: Annotated[list[AnswerLink], bounded_list(_MAX_ANSWER_LINKS)] | None = None
+    # Pricing answer gate. The URL is validated as a real http(s) link because
+    # an unusable value here does not degrade gracefully, it makes the bot
+    # escalate every pricing question: the gate is unconditional, so an unusable
+    # value is indistinguishable from naming no page at all. Empty string clears
+    # it, which is a real choice (route every pricing question to the team), not
+    # a way to turn the gate off.
+    pricing_url: Annotated[str, AfterValidator(_validate_optional_http_url)] | None = Field(None, max_length=MAX_URL)
     # Widget embed origin restriction.
     allowed_domains: Annotated[list[str], bounded_list(_MAX_ALLOWED_DOMAINS)] | None = None
     domain_check_enabled: bool | None = None
@@ -929,6 +948,7 @@ class BotResponse(BaseModel):
     services_url: str | None = None  # Legacy field kept for compat.
     # Smart links, always returned as ``[{keyword, url}]`` objects.
     answer_links: list[dict] | None = None
+    pricing_url: str | None = None
     allowed_domains: list[str] = []
     domain_check_enabled: bool = False
     session_share_domain: str | None = None
@@ -1071,6 +1091,7 @@ def _bot_to_response(bot: Bot, request: Request, *, plan_slug: str = "free", pla
         services=_normalize_services(bot.services),
         services_url=bot.services_url,
         answer_links=_normalize_answer_links(bot.answer_links),
+        pricing_url=bot.pricing_url,
         allowed_domains=list(bot.allowed_domains or []),
         domain_check_enabled=bool(bot.domain_check_enabled),
         session_share_domain=bot.session_share_domain,

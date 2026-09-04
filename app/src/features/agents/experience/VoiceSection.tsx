@@ -459,6 +459,35 @@ export function VoiceSection({
           </div>
         </CardBody>
       </Card>
+
+      <Card>
+        <CardHeader
+          eyebrow="Pricing"
+          titleAs="h2"
+          title={t('agents.answerPricingFromOnePage') || 'Pricing page'}
+          description={
+            t('agents.whenThisIsOnPricing') ||
+            'The chatbot answers pricing questions only from this page. If it cannot answer from here, it routes the visitor to your team instead of guessing. Leave this empty and every pricing question goes straight to your team.'
+          }
+        />
+        <CardBody className="flex flex-col gap-4">
+          <Input
+            value={draft.pricingUrl}
+            disabled={readOnly}
+            spellCheck={false}
+            inputMode="url"
+            aria-label={t('agents.pricingPageLink') || 'Pricing page link'}
+            placeholder="https://example.com/pricing"
+            aria-invalid={errors.pricingUrl ? true : undefined}
+            onChange={(event) => onChange({ pricingUrl: event.target.value })}
+          />
+          {errors.pricingUrl ? (
+            <p role="status" className="text-xs text-danger">
+              {errors.pricingUrl}
+            </p>
+          ) : null}
+        </CardBody>
+      </Card>
     </div>
   );
 }
