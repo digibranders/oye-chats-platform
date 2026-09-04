@@ -580,3 +580,106 @@ def detect_message_language_detail(text: str) -> tuple[str | None, float, int]:
     total_letters = scripted + latin
     confidence = counts[dominant] / total_letters if total_letters else 0.0
     return (dominant, round(confidence, 4), counts[dominant])
+
+
+# ── First-turn detection: how strong is strong enough ────────────────────────
+
+# A dominant-script share at or above this is trusted on its own.
+DETECTION_THRESHOLD = 0.85
+# Below it, an absolute count of script-bearing letters can still carry a
+# code-switched message ("मुझे pricing चाहिए" scores 0.42 and is plainly Hindi).
+CODE_SWITCH_MIN_SCRIPT_LETTERS = 4
+CODE_SWITCH_MIN_SHARE = 0.25
+
+
+def detection_is_trusted(confidence: float, script_letters: int) -> bool:
+    """Is a first-turn script detection strong enough to act on?
+
+    Lives here rather than beside either caller because BOTH resolution paths
+    ask it - the bot turn in ``chat_routes`` and the live-chat turn in
+    ``resolve_live_chat_language`` - and two copies of a threshold is how the
+    two paths would come to disagree about what language a visitor is writing.
+    """
+    if confidence >= DETECTION_THRESHOLD:
+        return True
+    return script_letters >= CODE_SWITCH_MIN_SCRIPT_LETTERS and confidence >= CODE_SWITCH_MIN_SHARE
+
+
+def resolve_live_chat_language(db, session_id: str, bot, message: str) -> str | None:
+    """Resolve and persist a language for a session that reached live chat
+    without one. Returns the session's base language code, or None.
+
+    Writes through the CALLER's session and does not commit: it runs inside the
+    same transaction that stamps the visitor's message with the language it
+    returns, so the row and the session it was resolved from either both land
+    or neither does.
+
+    ``chat_routes._resolve_visitor_language_and_update_session`` is the only
+    other writer of ``ChatSession.language_code``, and it runs exclusively on
+    the bot turn. A visitor who is handed to an operator before ever asking the
+    chatbot anything - the "talk to a human" button on the launcher, a
+    proactive operator invitation, an out-of-hours form that later goes live -
+    therefore reached a live conversation with a NULL language, and every
+    translation gate downstream reads that column:
+
+      * ``translation_service.resolve_incoming_target`` returns no target, so
+        the visitor's words are never translated for the operator;
+      * ``ws_routes`` passes it as ``target_language``, so the operator's reply
+        is never translated for the visitor;
+      * the message rows are stamped ``source_language=NULL``, so the operator
+        console cannot even offer the original/translation toggle, and the
+        whole feature reads as absent rather than as broken.
+
+    Deliberately narrower than the bot-turn resolver. There is no HTTP request
+    here, so no ``Accept-Language`` and no client-declared locale: the only
+    evidence is what the visitor just typed, falling back to the bot's own
+    default. It never overwrites a language a session already has - the bot
+    turn, an explicit visitor selection and a lock all outrank a guess made
+    from one live-chat line.
+    """
+    from sqlalchemy import update
+
+    from app.db.models import ChatSession
+
+    if bot is None or not is_multilingual_enabled(bot):
+        return None
+
+    config = getattr(bot, "language_config", None) or {}
+    supported = config.get("supported_locales") or ["en-IN"]
+    default_locale = normalize_locale(config.get("default_locale")) or "en-IN"
+    # The same customer-facing switch the bot turn honours ("Detect the
+    # visitor's language"). Off means the bot's default is the answer, not that
+    # there is no answer: a session with no language at all is what broke this.
+    auto_detect = config.get("auto_detect", True) is not False
+
+    locale = default_locale
+    source = "default"
+    confidence = 0.0
+    if auto_detect:
+        detected, share, letters = detect_message_language_detail(message or "")
+        if detected and detection_is_trusted(share, letters):
+            matched = match_supported_locale(detected, supported)
+            if matched:
+                locale, source, confidence = matched, "message_detected", share
+
+    language = language_from_locale(locale) or "en"
+
+    try:
+        # Guarded on the column still being NULL rather than on the read the
+        # caller already did: the bot turn writes this same column and can land
+        # between that read and this write.
+        result = db.execute(
+            update(ChatSession)
+            .where(ChatSession.id == session_id, ChatSession.language_code.is_(None))
+            .values(
+                language_code=language,
+                locale=locale,
+                language_source=source,
+                language_confidence=confidence,
+            )
+        )
+    except Exception:
+        logger.warning("live-chat language resolution failed | session=%s", session_id, exc_info=True)
+        return None
+
+    return language if result.rowcount else None

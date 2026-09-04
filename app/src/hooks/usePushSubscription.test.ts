@@ -103,3 +103,76 @@ describe('usePushSubscription, when the browser cannot register with its push se
     expect(phase.message).toBe('The script has an unsupported MIME type');
   });
 });
+
+describe('usePushSubscription, why push is unsupported', () => {
+  const IPHONE_UA =
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0.0.0 Mobile/15E148 Safari/604.1';
+  const DESKTOP_UA_NO_PUSH =
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/40.0.0.0 Safari/537.36';
+
+  /**
+   * `PUSH_SUPPORTED` and the reason it computes when false are both read once,
+   * at module load, from `navigator`/`window` — so getting a fresh read under
+   * a different fake environment means a fresh module instance. The other
+   * describe block in this file never needs this: every test there runs with
+   * `PushManager` present, which the very first import already captured.
+   */
+  async function loadHookWithout(
+    capability: 'PushManager',
+    env: { userAgent: string; standalone?: boolean; displayModeStandalone?: boolean },
+  ) {
+    vi.resetModules();
+    Object.defineProperty(navigator, 'userAgent', { configurable: true, value: env.userAgent });
+    Object.defineProperty(navigator, 'platform', { configurable: true, value: 'iPhone' });
+    Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 5 });
+    Object.defineProperty(navigator, 'standalone', { configurable: true, value: env.standalone ?? false });
+    Object.defineProperty(navigator, 'serviceWorker', {
+      configurable: true,
+      value: { register: vi.fn().mockResolvedValue({ pushManager: {} }), ready: Promise.resolve({ pushManager: {} }) },
+    });
+    Object.defineProperty(window, 'Notification', {
+      configurable: true,
+      value: { permission: 'default', requestPermission: vi.fn() },
+    });
+    // The capability under test is absent - the whole point of this block.
+    // ('PushManager' is the only one this hook currently branches its reason
+    // on; the parameter exists so a future capability gap says which one.)
+    void capability;
+    delete (window as { PushManager?: unknown }).PushManager;
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: query === '(display-mode: standalone)' && !!env.displayModeStandalone,
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }));
+
+    const { usePushSubscription } = await import('./usePushSubscription');
+    return renderHook(() => usePushSubscription());
+  }
+
+  it('tells an iOS visitor in a plain tab to add it to the Home Screen', async () => {
+    const { result } = await loadHookWithout('PushManager', { userAgent: IPHONE_UA });
+    expect(result.current.phase).toEqual({ status: 'unsupported', reason: 'ios-not-installed' });
+  });
+
+  it('tells an already-installed iOS visitor their iOS is too old, not to reinstall', async () => {
+    const { result } = await loadHookWithout('PushManager', {
+      userAgent: IPHONE_UA,
+      displayModeStandalone: true,
+    });
+    expect(result.current.phase).toEqual({ status: 'unsupported', reason: 'ios-too-old' });
+  });
+
+  it('falls back to the same iOS reason via navigator.standalone, the pre-standard Safari signal', async () => {
+    const { result } = await loadHookWithout('PushManager', {
+      userAgent: IPHONE_UA,
+      standalone: true,
+    });
+    expect(result.current.phase).toEqual({ status: 'unsupported', reason: 'ios-too-old' });
+  });
+
+  it('gives a non-iOS unsupported browser the generic reason, not the iOS one', async () => {
+    const { result } = await loadHookWithout('PushManager', { userAgent: DESKTOP_UA_NO_PUSH });
+    expect(result.current.phase).toEqual({ status: 'unsupported', reason: 'no-push-api' });
+  });
+});

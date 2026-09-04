@@ -415,7 +415,7 @@ def test_company_lookup_skipped_when_not_professional(db):
 # An IP names a company only when that company owns its range. Measured on
 # production traffic, 10 resolutions produced ZERO usable company names. 9
 # consumer ISPs and a subnet label. Charging before the lookup therefore billed
-# the full 10 credits for "not identified" nearly every time.
+# the full 5 credits for "not identified" nearly every time.
 
 
 def test_no_charge_when_the_visitor_cannot_be_resolved_to_a_company(db):
@@ -434,7 +434,7 @@ def test_no_charge_when_the_visitor_cannot_be_resolved_to_a_company(db):
         _resolve_and_update_location(session_id, "8.8.8.8", 40)
 
     assert intel.call_count == 1, "the lookup still runs. We eat the vendor call"
-    assert charge.call_count == 0, "charged 10 credits for 'no company identified'"
+    assert charge.call_count == 0, "charged 5 credits for 'no company identified'"
 
     # The free network signal is still stored, so the operator sees who routed
     # the visitor and the dedup latches (no re-lookup next message).

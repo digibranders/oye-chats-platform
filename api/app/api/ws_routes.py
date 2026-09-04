@@ -15,6 +15,7 @@ from app.db.models import Bot, ChatSession, Client, Operator
 from app.db.repository import add_chat_message, get_lead_info_by_session
 from app.db.session import get_session
 from app.schemas.ws import OPERATOR_FRAMES, VISITOR_FRAMES, parse_frame
+from app.services.language_service import resolve_live_chat_language
 from app.services.live_chat_service import is_client_gone, manager
 from app.services.plan_service import get_client_subscription
 from app.services.session_state_machine import InvalidTransitionError, transition_session
@@ -478,6 +479,20 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                     ).one_or_none()
                     if cs is not None:
                         cs_status, cs_bot_id, source_language = cs
+
+                    if cs is not None and not source_language:
+                        # A session can reach live chat without ever taking a
+                        # bot turn - "talk to a human" straight off the
+                        # launcher, a proactive operator invitation, an
+                        # out-of-hours form picked up later - and the bot turn
+                        # is the only other place a language is ever resolved.
+                        # Such a session used to stay NULL forever, which
+                        # silently disabled translation in BOTH directions and
+                        # left the console unable to even offer the
+                        # original/translation toggle, because that is keyed on
+                        # the message's source language. Resolved here, once,
+                        # before the row is stamped with it.
+                        source_language = resolve_live_chat_language(session, session_id, bot, content)
 
                     persisted = add_chat_message(
                         session,

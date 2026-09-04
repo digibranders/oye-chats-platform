@@ -64,6 +64,7 @@ from app.schemas.validators import (
 from app.services.ip_intel_service import fetch_ip_intel
 from app.services.language_service import (
     detect_message_language_detail,
+    detection_is_trusted,
     get_locale_direction,
     is_multilingual_enabled,
     language_from_locale,
@@ -243,46 +244,19 @@ def _resolve_session_id(provided: str | None, bot_id: int) -> str:
     return provided
 
 
-# Message-detection confidence floor. A first-turn detection below this is not
-# trusted enough to persist; the session falls to the bot default instead.
-_LANGUAGE_DETECTION_THRESHOLD = 0.85
-
-# Code-switching escape hatch for the floor above.
-#
-# Confidence is the share of letters in the dominant non-Latin script, so a
-# mixed message can never reach 0.85: "मुझे pricing चाहिए" scores 0.42. Hindi
-# is the only non-English language actually shipped and Hinglish is how it is
-# typed, so the floor as written rejected the detector's main use case. Script
-# PRESENCE is strong evidence in a way a share is not, a visitor who types
-# Devanagari at all is not writing English, so a detection also clears the bar
-# once enough non-Latin letters are present in their own right.
-#
-# The absolute count is what keeps this from firing on noise: a signature, an
-# emoji-adjacent glyph or one borrowed word cannot reach four letters of the
-# same script. The share floor bounds the other direction, so a long English
-# message carrying one short quoted phrase stays English. Pure Latin text
-# never reaches here at all (the detector returns 0.0 for it), so English
-# detection is unchanged.
-_CODE_SWITCH_MIN_SCRIPT_LETTERS = 4
-_CODE_SWITCH_MIN_SHARE = 0.25
+# The detection-trust rule (its floor, its code-switching escape hatch, and the
+# two together) lives in ``language_service.detection_is_trusted``. It moved
+# there when live chat gained its own resolver: the bot turn and the live-chat
+# turn have to agree about what language a visitor is writing in, and a
+# threshold defined twice is how they would come to disagree.
+_detection_is_trusted = detection_is_trusted
 
 # Tiers whose resolved locale a trusted message detection is allowed to
 # replace. ``browser`` is a header every browser sends and ``persisted`` is a
-# value carried over from a previous visit; neither is a statement about the
-# language this visitor is typing right now. ``explicit`` (the visitor picked
-# it) and ``site`` / ``html_lang`` (the customer declared it) are, and are
-# never overridden. Leaving detection on ``default`` alone made it effectively
-# dead code: any browser advertising ``en-*`` matches a bot offering ``en-IN``,
-# so the source is ``browser`` for nearly every real visitor and a message in
-# pure Devanagari was answered in English.
+# locale this same chain resolved earlier; neither outranks the visitor
+# actually typing in a script. ``explicit`` and ``site`` are choices and are
+# absent from this tuple deliberately.
 _DETECTION_OVERRIDABLE_SOURCES = ("default", "browser", "persisted")
-
-
-def _detection_is_trusted(confidence: float, script_letters: int) -> bool:
-    """Is a first-turn script detection strong enough to act on?"""
-    if confidence >= _LANGUAGE_DETECTION_THRESHOLD:
-        return True
-    return script_letters >= _CODE_SWITCH_MIN_SCRIPT_LETTERS and confidence >= _CODE_SWITCH_MIN_SHARE
 
 
 def _visitor_language_switch_allowed(lang_cfg: dict) -> bool:
@@ -760,7 +734,7 @@ def _resolve_and_update_location(session_id: str, ip_address: str, bot_id: int |
 
     ``bot_id`` gates the paid Visitor-Intelligence company lookup
     (``fetch_ip_intel``): it fires only for a Professional bot, when the
-    ``company_name`` feature switch is on, and only after 10 credits are
+    ``company_name`` feature switch is on, and only after 5 credits are
     successfully reserved. Otherwise it is skipped silently. The free
     geolocation below always runs regardless of plan.
 
@@ -802,10 +776,10 @@ def _resolve_and_update_location(session_id: str, ip_address: str, bot_id: int |
         # The metering (a paid, Professional-only lookup costing
         # `credit_cost.company_name`) and the per-session dedup were written
         # independently. Git merges them without complaint and either order
-        # compiles, but charging before the dedup bills the customer 10 credits
+        # compiles, but charging before the dedup bills the customer 5 credits
         # for EVERY message of a conversation, re-buying an answer that cannot
-        # change: a 15-turn chat would cost 150 credits of enrichment against
-        # 15 credits of actual AI replies, and ~67 such conversations would
+        # change: a 15-turn chat would cost 75 credits of enrichment against
+        # 15 credits of actual AI replies, and ~134 such conversations would
         # exhaust a Professional plan's entire monthly allowance.
         ip_intel = None
         if not has_intel:
@@ -830,7 +804,7 @@ def _resolve_and_update_location(session_id: str, ip_address: str, bot_id: int |
                 # names (9 consumer ISPs and a subnet label) and
                 # `ip_intel_service` correctly nulls `company_name` for every
                 # one of those. Charging before the lookup therefore billed the
-                # full 10 credits for "no company identified" nearly every
+                # full 5 credits for "no company identified" nearly every
                 # time. We eat the vendor call when we fail to deliver; the
                 # customer pays only for an answer.
                 #

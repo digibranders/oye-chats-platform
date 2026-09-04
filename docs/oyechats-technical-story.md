@@ -479,7 +479,7 @@ The credit costs are configuration, not code, and every one is super-admin tunab
 - **One crawled page — five credits.**
 - **One uploaded document — three credits**, scaled by size.
 - **One email-address verification — ten credits.**
-- **One company lookup — ten credits.**
+- **One company lookup — five credits.**
 - **Customer-facing emails — free.** Notifications, confirmations, and follow-ups never cost the customer anything.
 
 Owner previews from the dashboard are free but daily-bounded.

@@ -695,6 +695,8 @@ const ar = {
     yourPlan: "خطتك",
   },
   settings: {
+    addToHomeScreenForPush:
+        "أضف OyeChats إلى الشاشة الرئيسية لتصلك الإشعارات الفورية على هذا الهاتف: افتح قائمة المشاركة، ثم اختر \"إضافة إلى الشاشة الرئيسية\". يعمل هذا في Safari وفي Chrome على iOS، لأن كلاهما يستخدم المحرك نفسه.",
     alertPreferencesSaved: "تم حفظ تفضيلات التنبيهات",
     alertsCanReachYouAt: "يمكن أن تصلك التنبيهات في أي وقت.",
     appliesEverywhereYouAreSigned: "ينطبق ذلك في كل مكان تكون فيه مسجّلاً للدخول.",
@@ -731,6 +733,8 @@ const ar = {
     from: "من",
     fromTheAccountYouSigned: "من الحساب الذي سجّلت الدخول به.",
     gettingHelp: "الحصول على المساعدة",
+    iosNeedsANewerVersionForPush:
+        "هذا iPhone أو iPad مضاف بالفعل إلى الشاشة الرئيسية، لكن إصدار iOS عليه أقدم من أن يدعم الإشعارات الفورية. حدّث إلى iOS 16.4 أو أحدث، ثم أعد التحقّق.",
     language: {
       description: "ينطبق على هذا المتصفح فقط. تجيب روبوتات المحادثة الخاصة بك الزوار باللغات التي تحددها لكل روبوت.",
       label: "لغة لوحة التحكم",

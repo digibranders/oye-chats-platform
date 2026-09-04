@@ -22,7 +22,7 @@ vi.mock('../../services/api', () => api);
 
 const push = vi.hoisted(() => ({
   supported: true,
-  phase: { status: 'default' } as { status: string; message?: string },
+  phase: { status: 'default' } as { status: string; message?: string; reason?: string },
   busy: false,
   actionError: '',
   enable: vi.fn(),
@@ -80,9 +80,25 @@ describe('NotificationsSection — the four states', () => {
   });
 
   it('says plainly when the browser cannot do push at all', async () => {
-    push.phase = { status: 'unsupported' };
+    push.phase = { status: 'unsupported', reason: 'no-push-api' };
     renderSection();
     expect(await screen.findByText(/cannot receive push notifications/i)).toBeInTheDocument();
+  });
+
+  it('tells an iOS visitor to add it to the Home Screen, not that push is desktop-only', async () => {
+    // iOS Chrome and Safari share WebKit, so both are missing PushManager in a
+    // plain tab. The generic "desktop only" copy above is actively wrong here:
+    // the fix is one tap away, since the app already ships full PWA install
+    // support for exactly this case.
+    push.phase = { status: 'unsupported', reason: 'ios-not-installed' };
+    renderSection();
+    expect(await screen.findByText(/add oyechats to your home screen/i)).toBeInTheDocument();
+  });
+
+  it('tells an already-installed iOS visitor to update iOS, not to reinstall', async () => {
+    push.phase = { status: 'unsupported', reason: 'ios-too-old' };
+    renderSection();
+    expect(await screen.findByText(/already on the home screen/i)).toBeInTheDocument();
   });
 
   it('says we cannot undo a browser block from here', async () => {

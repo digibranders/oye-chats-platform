@@ -59,7 +59,7 @@ export interface UsageBuckets {
   readonly emailSend: UsageBreakdownEntry;
   /** Reoon email verification (Standard + Professional), 10 credits each. */
   readonly emailVerification: UsageBreakdownEntry;
-  /** IP → company lookup / Visitor Intelligence (Professional), 10 credits each. */
+  /** IP → company lookup / Visitor Intelligence (Professional), 5 credits each. */
   readonly companyName: UsageBreakdownEntry;
 }
 
