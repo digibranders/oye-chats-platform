@@ -107,6 +107,23 @@ export interface OperatorSocketApi extends OperatorSocketState {
 }
 
 /**
+ * A state updater that removes one session's entry, keeping the object
+ * identity when there is nothing to remove.
+ *
+ * Returning `prev` unchanged on a miss is what stops a `chat_closed` for one
+ * conversation from re-rendering every other conversation's row, and matters
+ * doubly for `endedBySession`, which the inbox list depends on directly.
+ */
+function dropSession<T>(sessionId: string) {
+  return (prev: Record<string, T>): Record<string, T> => {
+    if (!(sessionId in prev)) return prev;
+    const next = { ...prev };
+    delete next[sessionId];
+    return next;
+  };
+}
+
+/**
  * Merge one translation onto the message it belongs to.
  *
  * Shared by the `message_translation` frame and by the operator's own retry.
@@ -357,18 +374,19 @@ export function useOperatorSocket({ enabled, isOperator }: UseOperatorSocketOpti
         setActiveChats((prev) => ({ ...prev, [sid]: chat }));
         setPresenceBySession((prev) => ({ ...prev, [sid]: 'online' }));
         setQueue((prev) => prev.filter((q) => q.session_id !== sid));
+        // The same visitor can come back. A session that was closed and is
+        // then accepted again keeps its id, so an ending left behind from the
+        // previous round outlived the conversation it described: the row read
+        // "Ended", the composer said "This conversation is closed", and the
+        // operator could not answer somebody who was demonstrably typing at
+        // them. Accepting a chat is the event that makes an ending untrue.
+        setEndedBySession(dropSession(sid));
         break;
       }
 
       case 'chat_transferred':
       case 'chat_closed': {
         const sid = msg.session_id;
-        const dropKey = <T,>(prev: Record<string, T>): Record<string, T> => {
-          if (!(sid in prev)) return prev;
-          const next = { ...prev };
-          delete next[sid];
-          return next;
-        };
 
         /*
           Record HOW the conversation ended, and by whom.
@@ -392,15 +410,15 @@ export function useOperatorSocket({ enabled, isOperator }: UseOperatorSocketOpti
           },
         }));
 
-        setActiveChats(dropKey);
-        setPresenceBySession(dropKey);
+        setActiveChats(dropSession(sid));
+        setPresenceBySession(dropSession(sid));
         // The transcript deliberately survives. An operator who has just closed
         // or handed off a conversation still needs to read it — to write a note,
         // to answer a colleague, or to check what they promised.
-        setUnreadBySession(dropKey);
-        setTypingBySession(dropKey);
-        setVisitorReadAtBySession(dropKey);
-        setConnectResolutions(dropKey);
+        setUnreadBySession(dropSession(sid));
+        setTypingBySession(dropSession(sid));
+        setVisitorReadAtBySession(dropSession(sid));
+        setConnectResolutions(dropSession(sid));
         // Refs are not React state - clear them imperatively.
         delete typingSentAtRef.current[sid];
         delete sentReadIdRef.current[sid];
@@ -432,6 +450,15 @@ export function useOperatorSocket({ enabled, isOperator }: UseOperatorSocketOpti
         setPresenceBySession((prev) => {
           const next = { ...prev };
           for (const c of chats) next[c.session_id] = c.visitor_online ? 'online' : 'disconnected';
+          return next;
+        });
+        // Same reasoning as `chat_accepted`: the server restoring a chat as
+        // ASSIGNED is proof it is not over, whatever this tab recorded before
+        // the socket dropped. Without this a reconnect mid-conversation
+        // resurrected a stale ending and locked the composer again.
+        setEndedBySession((prev) => {
+          let next = prev;
+          for (const c of chats) next = dropSession<SessionEnding>(c.session_id)(next);
           return next;
         });
         break;
