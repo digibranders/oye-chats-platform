@@ -2,6 +2,7 @@ import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { oyechatsPwaPlugin } from './plugins/vite-plugin-oyechats-pwa.js'
+import { oyechatsAnalyticsPlugin } from './plugins/vite-plugin-oyechats-analytics.js'
 
 /**
  * Identifies this build to the client.
@@ -20,6 +21,7 @@ export default defineConfig({
     react(),
     tailwindcss(),
     oyechatsPwaPlugin(),
+    oyechatsAnalyticsPlugin(),
   ],
   test: {
     environment: 'jsdom',
