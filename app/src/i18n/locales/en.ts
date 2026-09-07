@@ -2265,6 +2265,10 @@ const en = {
     writeTheAnswersYourTeam: 'Write the answers your team gives every day once, and reach them with a slash from any conversation.',
     writeYourReplyItOpens: 'Write your reply. It opens in your email app with their message quoted underneath.',
     youAreNotSetUp: 'You are not set up to take chats',
+    thisTabIsNotTheLiveOne: 'This tab is not the live one',
+    theInboxIsOpenInAnother:
+        'The inbox is open in another tab, and only one can hold the connection. Take it over here to see who is waiting.',
+    useThisTab: 'Use this tab',
     youAreNotTakingChats: 'You are not taking chats',
     youAreNowTalkingTo: 'You are now talking to {name}',
     youAreWatchingTheAi: 'You are watching the AI answer. Offer to take over to start replying yourself.',
