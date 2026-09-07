@@ -1116,6 +1116,53 @@ def _is_explicit_media_request(question: str | None) -> bool:
 _BANT_DIMENSIONS: tuple[str, ...] = ("budget", "authority", "need", "timeline")
 
 
+def _bot_branding_removable(bot, session) -> bool:
+    """Whether the bot's workspace holds the branding-removal add-on.
+
+    Read through the cached per-bot entitlements (the same lookup the live-chat
+    and BANT gates on this turn already warmed). A lookup failure keeps the
+    platform name, the state every bot starts in, rather than breaking the
+    turn over a canned reply.
+    """
+    try:
+        entitlements = plan_entitlements_service.get_bot_entitlements(bot.id, session)
+        return bool((entitlements.features or {}).get("branding_removable"))
+    except Exception as exc:  # noqa: BLE001 - an entitlement hiccup must not break the turn
+        logger.debug("Branding entitlement lookup failed (non-blocking): %s", exc)
+        return False
+
+
+_FRAMEWORK_DISPLAY_NAMES = {"bant": "BANT", "meddic": "MEDDIC", "champ": "CHAMP", "gpctba_ci": "GPCTBA/C&I"}
+
+
+def _framework_display_name(config: dict | None) -> str:
+    """Human name of the framework a ``bant_config`` describes, for headings."""
+    key = str((config or {}).get("framework") or "bant").lower()
+    return _FRAMEWORK_DISPLAY_NAMES.get(key, key.upper())
+
+
+def _qualification_rows(chat_session, config: dict | None) -> list[tuple[str, str | None]]:
+    """``(label, captured value)`` per dimension of the ACTIVE framework, in
+    conversation order, for the qualified-lead email.
+
+    Values come from ``_build_bant_state``, which merges the legacy BANT columns
+    with ``dimension_scores``, so a BANT bot renders exactly the four rows it
+    always did and a MEDDIC/CHAMP bot renders its own dimensions instead of an
+    empty table. Labels are the rubric's own (``config[dim]["label"]``), which
+    is what the customer sees in the dashboard.
+    """
+    state = _build_bant_state(chat_session)
+    framework_config = config or {}
+    dims = _framework_dimensions(framework_config) or list(_BANT_DIMENSIONS)
+    rows: list[tuple[str, str | None]] = []
+    for dim in dims:
+        dim_config = framework_config.get(dim) if isinstance(framework_config.get(dim), dict) else {}
+        label = str(dim_config.get("label") or dim.replace("_", " ").title())
+        value = state.get(dim)
+        rows.append((label, str(value) if value else None))
+    return rows
+
+
 def _count_marked_bant_dimensions(bant_state: dict | None, framework_config: dict | None = None) -> int:
     """Count qualification dimensions with any signal (score > 0 OR text value
     present) for the bot's ACTIVE framework.
@@ -3497,12 +3544,19 @@ def _background_bant_extraction(
                     "reply_to": getattr(bot, "reply_to_email", None),
                     "recipients": recipients,
                     "contact": contact,
+                    # Legacy BANT columns, kept because the outbound webhook
+                    # payload is a customer-facing contract. The email renders
+                    # ``qualification``: every dimension of the ACTIVE framework,
+                    # so a MEDDIC or CHAMP lead no longer arrives with an empty
+                    # table.
                     "bant_updates": {
                         "bant_need": chat_session.bant_need,
                         "bant_budget": chat_session.bant_budget,
                         "bant_authority": chat_session.bant_authority,
                         "bant_timeline": chat_session.bant_timeline,
                     },
+                    "qualification": _qualification_rows(chat_session, config),
+                    "framework_label": _framework_display_name(config),
                     "old_tier": old_tier,
                     "new_tier": new_tier,
                     "score": chat_session.bant_score,
@@ -3528,6 +3582,8 @@ def _background_bant_extraction(
                     tier_transition["bant_updates"],
                     tier_transition["contact"],
                     reply_to=tier_transition["reply_to"],
+                    qualification=tier_transition["qualification"],
+                    framework_label=tier_transition["framework_label"],
                 )
             try:
                 from app.services.webhook_service import fire_webhook
@@ -6892,6 +6948,10 @@ def rag_pipeline(
                 plan_entitlements_service.is_live_chat_enabled_for_bot(bot.id, session) if _has_bot else False
             )
             live_chat_on = _plan_support_allowed and bool(getattr(bot, "live_chat_enabled", True))
+            # Whether this workspace paid to remove "Powered by OyeChats". The
+            # intent router's canned identity replies name the platform, which a
+            # branding-removed customer has bought the right not to show.
+            _branding_removable = _bot_branding_removable(bot, session) if _has_bot else False
 
             # Where a Free-plan bot sends a visitor whose on-scope question it
             # could not answer. Resolved once per turn and reused at every
@@ -6992,7 +7052,16 @@ def rag_pipeline(
             # off; see ``_english_judges_bypassed``. Resolved once per turn so the
             # sites below can never disagree with each other.
             _judges_bypassed = _english_judges_bypassed(language, question)
-            _intent = None if (_affirmed_handoff or _judges_bypassed) else route_intent(question, _company_name)
+            _intent = (
+                None
+                if (_affirmed_handoff or _judges_bypassed)
+                else route_intent(
+                    question,
+                    _company_name,
+                    support_enabled=_plan_support_allowed,
+                    platform_branded=not _branding_removable,
+                )
+            )
             if _intent is not None:
                 _safety_net_metric(
                     "intent_router_short_circuit",
@@ -7195,12 +7264,16 @@ def rag_pipeline(
                             bot_id=bid,
                             source_language=_lang_base(language),
                         )
+                        # Read the id before the commit expires the row, so the
+                        # reply does not pay a refresh SELECT for it.
+                        session.flush()
+                        _cached_msg_id = bot_msg.id
                         session.commit()
                         return {
                             "answer": _cached_answer,
                             "sources": cached_qa.get("sources", []),
                             "session_id": session_id,
-                            "message_id": bot_msg.id,
+                            "message_id": _cached_msg_id,
                         }
 
             # Expensive steps: query rewriting (LLM call) + embedding (API call).
@@ -8107,7 +8180,10 @@ def rag_pipeline(
                     None if (_show_qualified_popup or _team_connect_offer) else _next_probe
                 )
 
-            # Read before the commit expires the row; afterwards it costs a SELECT.
+            # Flush so the INSERT runs and the id is assigned, then read both
+            # before the commit expires the row: afterwards each costs a SELECT.
+            session.flush()
+            bot_msg_id = bot_msg.id
             _bot_msg_trace_id = getattr(bot_msg, "trace_id", None)
             session.commit()
 
@@ -8132,7 +8208,7 @@ def rag_pipeline(
                     current_bant,
                     bid,
                     bant_config,
-                    bot_msg.id,
+                    bot_msg_id,
                     _cta_signal,
                     _binding_hint,
                 )
@@ -8152,7 +8228,7 @@ def rag_pipeline(
                 "answer": answer,
                 "sources": [doc.document_name for doc in final_results],
                 "session_id": session_id,
-                "message_id": bot_msg.id,
+                "message_id": bot_msg_id,
                 "generation_failed": _generation_failed,
             }
             if suggest_handoff and live_chat_on:
@@ -8468,6 +8544,10 @@ async def rag_pipeline_stream(
                 plan_entitlements_service.is_live_chat_enabled_for_bot(bot.id, session) if _has_bot else False
             )
             live_chat_on = _plan_support_allowed and bool(getattr(bot, "live_chat_enabled", True))
+            # Whether this workspace paid to remove "Powered by OyeChats". The
+            # intent router's canned identity replies name the platform, which a
+            # branding-removed customer has bought the right not to show.
+            _branding_removable = _bot_branding_removable(bot, session) if _has_bot else False
 
             # Where a Free-plan bot sends a visitor whose on-scope question it
             # could not answer. Resolved once per turn and reused at every
@@ -8574,7 +8654,16 @@ async def rag_pipeline_stream(
             # off; see ``_english_judges_bypassed``. Resolved once per turn so the
             # sites below can never disagree with each other.
             _judges_bypassed = _english_judges_bypassed(language, question)
-            _intent = None if (_affirmed_handoff or _judges_bypassed) else route_intent(question, _company_name)
+            _intent = (
+                None
+                if (_affirmed_handoff or _judges_bypassed)
+                else route_intent(
+                    question,
+                    _company_name,
+                    support_enabled=_plan_support_allowed,
+                    platform_branded=not _branding_removable,
+                )
+            )
             if _intent is not None:
                 _safety_net_metric(
                     "intent_router_short_circuit",

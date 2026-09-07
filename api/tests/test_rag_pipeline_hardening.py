@@ -252,3 +252,37 @@ class TestBoundedHelpers:
         monkeypatch.setattr(rs, "detect_handoff_intent", lambda q: True)
         monkeypatch.setattr(rs, "detect_handoff_intent_keywords", lambda q: False)
         assert await rs._detect_handoff_bounded("I want a human") is True
+
+
+# ── Qualified-lead email rows follow the active framework ───────────────────
+
+
+class TestQualificationRows:
+    @staticmethod
+    def _session(**dimension_scores):
+        return SimpleNamespace(
+            bant_need="CRM migration",
+            bant_timeline=None,
+            bant_authority=None,
+            bant_budget=None,
+            bant_need_score=10,
+            bant_budget_score=0,
+            bant_authority_score=0,
+            bant_timeline_score=0,
+            dimension_scores=dimension_scores or None,
+        )
+
+    def test_meddic_bot_renders_its_own_dimensions_in_conversation_order(self):
+        rows = rs._qualification_rows(self._session(metrics={"value": "Cut churn 20%", "score": 25}), _MEDDIC_CONFIG)
+        assert rows == [("Metrics", "Cut churn 20%"), ("Champion", None), ("Decision criteria", None)]
+
+    def test_bant_bot_without_config_renders_the_legacy_four(self):
+        rows = rs._qualification_rows(self._session(), None)
+        assert [label for label, _ in rows] == ["Budget", "Authority", "Need", "Timeline"]
+        assert dict(rows)["Need"] == "CRM migration"
+
+    def test_framework_display_names(self):
+        assert rs._framework_display_name(_MEDDIC_CONFIG) == "MEDDIC"
+        assert rs._framework_display_name(None) == "BANT"
+        assert rs._framework_display_name({"framework": "gpctba_ci"}) == "GPCTBA/C&I"
+        assert rs._framework_display_name({"framework": "custom_x"}) == "CUSTOM_X"
