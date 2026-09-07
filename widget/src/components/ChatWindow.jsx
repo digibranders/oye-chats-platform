@@ -2947,16 +2947,28 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
     }, [liveMessages]);
 
     // ── Inline live message renderer ─────────────────────────────────────────────
-    const renderLiveMessage = (msg) => {
+    // ``idx`` is supplied by the caller's ``.map`` so a run of messages from the
+    // same sender can be drawn tighter than the gap between speakers.
+    const renderLiveMessage = (msg, idx) => {
         const userBubbleBg = sanitizeColor(settings.user_bubble_color, '#DBE9FF');
         const primaryColor = sanitizeColor(settings.primary_color, '#3A0CA3');
 
         if (msg.sender === 'user') {
+            // Half the messages area's gap, negative, when this message continues
+            // a run from the same sender. A visitor firing four lines in a row is
+            // one thought split across bubbles; the full between-speakers gap
+            // makes it read as four separate turns.
+            const halfGapPx = currentTheme.messagesArea?.includes('gap-6') ? -12 : -10;
+            const tightTop = idx > 0 && liveMessages[idx - 1]?.sender === 'user' ? halfGapPx : 0;
             return (
-                <div key={msg.id} className="flex flex-col items-end">
+                <div
+                    key={msg.id}
+                    className="flex flex-col items-end"
+                    style={tightTop ? { marginTop: `${tightTop}px` } : undefined}
+                >
                     <div className="flex justify-end w-full">
                         <div
-                            className="max-w-[85%] px-4 py-3 rounded-2xl text-[14px] break-words"
+                            className="max-w-[85%] px-4 py-[6.72px] rounded-lg text-[14px] break-words"
                             style={{ backgroundColor: userBubbleBg, color: '#16202C' }}
                         >
                             {sanitizeFileUrl(msg.file_url) ? (
@@ -3477,11 +3489,30 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                 {!isInitializing && (() => {
                     const items = [];
                     let lastDateStr = null;
+                    // Half the messages area's own gap, negative, used to tighten
+                    // consecutive messages from the same sender. Read off the
+                    // theme so the two stay in step if either is retuned.
+                    const halfGapPx = currentTheme.messagesArea?.includes('gap-6') ? -12 : -10;
+                    // Sender of the last bubble ACTUALLY RENDERED. Tracked at push
+                    // time rather than read off ``messages[idx - 1]``, because the
+                    // two disagree: entries that render nothing (a completed
+                    // quotation, an already-submitted handoff form, a bot slot with
+                    // no text yet) sit in the array between two user messages that
+                    // end up adjacent on screen. Array adjacency would miss those.
+                    let prevBubbleSender = null;
                     messages.forEach((msg) => {
+                        // Null unless THIS iteration renders a bubble, so any other
+                        // branch resets the run for free when it is assigned below.
+                        let renderedSender = null;
+                        // Whether a date separator is about to be emitted above this
+                        // message. It breaks the run, so the pair either side of it
+                        // keeps the full gap.
+                        let startsNewDay = false;
                         // Insert a date separator when the day changes (only for returning users with history)
                         if (isReturningUser && msg.timestamp) {
                             const msgDateStr = new Date(msg.timestamp).toDateString();
                             if (msgDateStr !== lastDateStr) {
+                                startsNewDay = lastDateStr !== null;
                                 items.push(<DateSeparator key={`sep-${msgDateStr}-${msg.id}`} date={msg.timestamp} />);
                                 lastDateStr = msgDateStr;
                             }
@@ -3581,6 +3612,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                         } else if (msg.type === 'handoff_form') {
                             // Already submitted. Skip
                         } else {
+                            const tight = !startsNewDay && msg.sender === 'user' && prevBubbleSender === 'user'
+                                ? halfGapPx
+                                : 0;
+                            renderedSender = msg.sender;
                             items.push(
                                 <MessageBubble
                                     key={msg.id}
@@ -3589,9 +3624,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                                     settings={settings}
                                     streamingId={streamingId}
                                     onFeedback={handleBotMessageFeedback}
+                                    tightTopPx={tight}
                                 />
                             );
                         }
+                        prevBubbleSender = renderedSender;
                     });
                     return items;
                 })()}
@@ -3745,7 +3782,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                 )}
 
                 {/* Live chat messages. Seamless continuation in the same stream */}
-                {!isInitializing && liveMessages.map(renderLiveMessage)}
+                {!isInitializing && liveMessages.map((m, i) => renderLiveMessage(m, i))}
 
                 {/* Operator typing indicator */}
                 {isOperatorTyping && (

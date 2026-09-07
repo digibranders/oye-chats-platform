@@ -46,36 +46,44 @@ const formatTimestamp = (iso) => {
 // `time` is already locale-formatted by formatTimestamp above, so the
 // dictionary entries only position it: Hindi puts the separator and the
 // receipt word in a different order than English does.
-const labelFor = (status, readAt, deliveredAt, sentAt) => {
+// The VISIBLE receipt is the bare word. The timestamp moves to the tooltip
+// (`title`) and the accessible name: the state is what a visitor glances for,
+// and "Delivered · 19:54" doubles the width of the line to carry a number they
+// did not ask for and can read off the message itself.
+const labelFor = (status) => {
     switch (status) {
-        case 'sending':
-            return t('status.sending') || 'Sending…';
-        case 'sent': {
-            const time = formatTimestamp(sentAt);
-            return time
-                ? t('status.sent_at', { time }) || `Sent · ${time}`
-                : t('status.sent') || 'Sent';
-        }
-        case 'delivered': {
-            const time = formatTimestamp(deliveredAt || sentAt);
-            return time
-                ? t('status.delivered_at', { time }) || `Delivered · ${time}`
-                : t('status.delivered') || 'Delivered';
-        }
-        case 'read': {
-            const time = formatTimestamp(readAt);
-            return time
-                ? t('status.read_at', { time }) || `Read · ${time}`
-                : t('status.read') || 'Read';
-        }
+        case 'sending': return t('status.sending') || 'Sending…';
+        case 'sent': return t('status.sent') || 'Sent';
+        case 'delivered': return t('status.delivered') || 'Delivered';
+        case 'read': return t('status.read') || 'Read';
         default: return '';
     }
 };
 
+// Kept for the tooltip / aria-label, which is where the time now lives.
+const detailFor = (status, readAt, deliveredAt, sentAt) => {
+    switch (status) {
+        case 'sent': {
+            const time = formatTimestamp(sentAt);
+            return time ? t('status.sent_at', { time }) || `Sent · ${time}` : null;
+        }
+        case 'delivered': {
+            const time = formatTimestamp(deliveredAt || sentAt);
+            return time ? t('status.delivered_at', { time }) || `Delivered · ${time}` : null;
+        }
+        case 'read': {
+            const time = formatTimestamp(readAt);
+            return time ? t('status.read_at', { time }) || `Read · ${time}` : null;
+        }
+        default: return null;
+    }
+};
+
 const MessageStatus = ({ status = 'sending', sentAt, deliveredAt, readAt, className = '' }) => {
-    const label = useMemo(
-        () => labelFor(status, readAt, deliveredAt, sentAt),
-        [status, readAt, deliveredAt, sentAt],
+    const label = useMemo(() => labelFor(status), [status]);
+    const detail = useMemo(
+        () => detailFor(status, readAt, deliveredAt, sentAt) || label,
+        [status, readAt, deliveredAt, sentAt, label],
     );
 
     if (status === 'failed' || !label) return null;
@@ -85,11 +93,11 @@ const MessageStatus = ({ status = 'sending', sentAt, deliveredAt, readAt, classN
     return (
         <span
             className={`oyechats-msg-status select-none transition-colors duration-300 ease-out ${className}`}
-            // `title` kept even though the text is now visible: the label is
-            // truncated to the bubble's width on a narrow viewport, and hover
-            // is the only way back to the timestamp when it is.
-            title={label}
-            aria-label={label}
+            // The timestamp lives here rather than in the visible text: hover
+            // (and any screen reader) still gets "Delivered · 19:54", while the
+            // line itself stays one short word.
+            title={detail}
+            aria-label={detail}
             role="status"
             data-status={status}
             style={{
