@@ -48,6 +48,7 @@ from app.worker.tasks import (  # noqa: E402  (litellm config must precede)
     task_ingest_documents,
     task_ingest_web_batch,
     task_invoice_reconciliation_alert,
+    task_migrate_embedding_profile,
     task_probe_bot_installs,
     task_process_webhook_retries,
     task_promo_precharge_reminders,
@@ -56,7 +57,6 @@ from app.worker.tasks import (  # noqa: E402  (litellm config must precede)
     task_prune_stale_events,
     task_recompute_kb_usage,
     task_reconcile_orphaned_seat_addons,
-    task_reembed_all_documents,
     task_reembed_document,
     task_refresh_promo_free_credits,
     task_render_invoice_pdfs,
@@ -187,11 +187,10 @@ class WorkerSettings:
         task_send_quotation_visitor_email,
         task_send_visitor_message_email,
         task_reembed_document,
-        # One-shot backfill over EVERY document with a NULL embedding. It paces
+        # Re-embeds whole bots onto the current embedding profile. It paces
         # itself against the shared embed rate limiter, so on a real corpus it
-        # runs for hours, far past the 1600s worker default. Unregistered until
-        # now, which meant an operator enqueue was rejected outright (I11).
-        func(task_reembed_all_documents, timeout=86400),
+        # runs for hours, far past the 1600s worker default.
+        func(task_migrate_embedding_profile, timeout=86400),
         task_render_invoice_pdfs,
         task_invoice_reconciliation_alert,
         task_reconcile_orphaned_seat_addons,

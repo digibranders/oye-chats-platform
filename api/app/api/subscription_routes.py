@@ -3592,6 +3592,28 @@ def _invalidate_branding_caches(session, client_id: int) -> None:
         logger.debug("branding add-on cache invalidation failed for client=%s", client_id, exc_info=True)
 
 
+def resolve_bot_plan(bot: Bot) -> Plan | None:
+    """The plan governing one agent, resolved through its SUBSCRIPTION.
+
+    Never read ``Bot.plan_id`` for anything a customer sees. That column is
+    stamped once when the bot is provisioned and no code path ever reassigns it
+    (a plan change rewrites ``Subscription.plan_id`` and leaves the bot's copy
+    behind), so it goes stale on the first upgrade or downgrade and stays stale.
+
+    Reading it made the Usage page report the ceilings of a tier the agent no
+    longer held, while enforcement, which resolves through ``subscriptions``,
+    applied the real ones. The displayed limits contradicted both the invoice
+    and the gate. ``Subscription.plan_id`` is the base plan entitlements always
+    follow, so resolving here keeps what we SHOW and what we ENFORCE on one
+    source.
+
+    Returns ``None`` for a bot with no subscription (the Free and legacy-pooled
+    agents), which callers render as "no per-agent plan".
+    """
+    subscription = bot.subscription
+    return subscription.plan if subscription is not None else None
+
+
 # ── Credits API (companion router) ──
 
 
@@ -3679,10 +3701,10 @@ def get_credit_balance(http_request: Request, client: Client = Depends(get_curre
             ledger_bot_id = credit_service.resolve_bot_ledger_bot_id(bot)
             if ledger_bot_id is None:
                 continue  # legacy / Free bot, its usage rolls up to the account pool
-            bot_plan = bot.plan if bot.plan_id else None
+            bot_sub = bot.subscription
+            bot_plan = resolve_bot_plan(bot)
             bot_breakdown = credit_service.get_balance_breakdown(session, client.id, bot_id=ledger_bot_id)
             bot_period_start, bot_usage = _scope_period_and_usage(session, client.id, ledger_bot_id)
-            bot_sub = bot.subscription
 
             # ── Per-agent plan ceilings + usage (drives the Usage page's
             # "Plan limits" section when this agent is the active scope). Limits

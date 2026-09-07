@@ -53,35 +53,6 @@ class TestHandoffKeywords:
         assert svc.detect_handoff_intent_keywords("talk   to    a   human") is True
 
 
-# ── detect_sales_intent (LLM) ───────────────────────────────────────────────
-
-
-class TestSalesIntent:
-    def test_yes_response_is_true(self, monkeypatch):
-        monkeypatch.setattr(svc, "generate_response", lambda *a, **k: "YES")
-        assert svc.detect_sales_intent("what are your plans?") is True
-
-    def test_no_response_is_false(self, monkeypatch):
-        monkeypatch.setattr(svc, "generate_response", lambda *a, **k: "NO")
-        assert svc.detect_sales_intent("what is the weather?") is False
-
-    def test_response_is_case_and_whitespace_insensitive(self, monkeypatch):
-        monkeypatch.setattr(svc, "generate_response", lambda *a, **k: "  yes\n")
-        assert svc.detect_sales_intent("pricing?") is True
-
-    def test_yes_embedded_in_longer_answer_counts(self, monkeypatch):
-        # Parsing looks for the substring "YES" after upper()/strip().
-        monkeypatch.setattr(svc, "generate_response", lambda *a, **k: "Definitely YES")
-        assert svc.detect_sales_intent("can I get a demo?") is True
-
-    def test_llm_exception_degrades_to_false(self, monkeypatch):
-        def boom(*a, **k):
-            raise RuntimeError("llm down")
-
-        monkeypatch.setattr(svc, "generate_response", boom)
-        assert svc.detect_sales_intent("pricing?") is False
-
-
 # ── detect_handoff_intent (hybrid keyword + LLM) ────────────────────────────
 
 _KEYWORD_MSG = "I want to talk to a human"

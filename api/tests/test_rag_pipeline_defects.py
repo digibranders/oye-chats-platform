@@ -124,7 +124,7 @@ def _stub_pipeline(
         lambda *a, **k: ("".join(chunks), bool((llm_status or {}).get("failed"))),
     )
 
-    async def fake_resolve(session_id, question, history, bid, cid, company_name):
+    async def fake_resolve(session_id, question, history, bid, cid, company_name, embedding_profile=None):
         return question, None
 
     monkeypatch.setattr(rs, "_resolve_search_query_and_embedding", fake_resolve)

@@ -20,7 +20,6 @@ import {
   buttonClass,
 } from '../../../ui';
 import { useAgent } from '../../../context/AgentContext';
-import { useEntitlements } from '../../../hooks/useEntitlements';
 import { getBotDemoUrl, getClientSettings, updateBot } from '../../../services/api';
 import { DEFAULT_PLATFORM_ID, platforms } from '../../../data/platformIntegrations';
 import { useSettingsDraft } from '../advanced/useSettingsDraft';
@@ -131,7 +130,6 @@ export function DeployPage() {
   const { t } = useTranslation();
   const { agent, loading: agentLoading } = useAgent();
   const deploy = useDeployData();
-  const { hasFeature, loading: entitlementsLoading } = useEntitlements();
   // Opens on HTML rather than on nothing. The panel's whole job is to show
   // steps, and an empty select showed a reader who had just been told to
   // install something a second thing to choose first. HTML because it is the
@@ -177,12 +175,6 @@ export function DeployPage() {
     }) => updateAccess((previous) => ({ ...previous, ...patch })),
     [updateAccess],
   );
-
-  // The snippet variant is entitlement-driven and keys off the plan, not off the
-  // chatbot's own `show_branding` flag: a paid customer who chooses to keep the
-  // badge still gets an anchor-free snippet, because the anchor and the badge
-  // are different things.
-  const attribution = !hasFeature('branding_removable');
 
   const bot = deploy.bot;
   const platform = platforms.find((p) => p.id === platformId) ?? null;
@@ -331,15 +323,13 @@ export function DeployPage() {
     deploy.retry();
   };
 
-  // A broken install opens on the checklist; everyone else opens on the steps
-  // for their own stack. The reader's own choice always wins once they make one.
-  // `stale` counts as broken: a widget that has not loaded in a week has the
-  // same causes and the same checklist as one that never loaded at all.
-  const activeHelpTab: HelpTab =
-    helpTab ??
-    (deploy.status.state === 'not-detected' || deploy.status.state === 'stale'
-      ? 'troubleshoot'
-      : 'platform');
+  // Always opens on the steps for the reader's own stack. It used to open on
+  // the troubleshooting checklist whenever the install was not detected, which
+  // is every chatbot's state until its first real visitor, so the page led
+  // with "what is wrong" before the reader had been shown what to do. The
+  // status card's "What to check" still switches here explicitly, and the
+  // reader's own choice always wins once they make one.
+  const activeHelpTab: HelpTab = helpTab ?? 'platform';
 
   return (
     <Page>
@@ -375,8 +365,6 @@ export function DeployPage() {
             env={deploy.env}
             apiBaseUrl={deploy.apiBaseUrl}
             platform={platform}
-            attribution={attribution}
-            resolving={entitlementsLoading}
             devInviteEmail={bot.dev_invite_email ?? null}
             devInviteSentAt={bot.dev_invite_sent_at ?? null}
           />
@@ -446,8 +434,6 @@ export function DeployPage() {
                       env={deploy.env}
                       platformId={platformId}
                       onPlatformChange={setPlatformId}
-                      attribution={attribution}
-                      resolving={entitlementsLoading}
                     />
                   </CardBody>
                 </TabPanel>

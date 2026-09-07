@@ -63,58 +63,8 @@ _HANDOFF_KEYWORDS_RE = re.compile(
 )
 
 
-def _detect_intent_raw(question: str) -> bool:
-    """Detect sales intent via LLM. No observability instrumentation (LiteLLM auto-traces)."""
-    prompt = f"""You are a sales-intent classifier for a customer-facing chatbot.
-
-TASK: Determine whether the user's message signals business or sales intent.
-
-CLASSIFY AS YES when the user:
-- Asks about services, pricing, plans, or subscriptions
-- Requests a demo, consultation, or meeting
-- Describes a business problem they need solved
-- Inquires about partnerships or integrations
-- Compares your offerings to competitors
-
-CLASSIFY AS NO when the user:
-- Asks a general knowledge or support question
-- Makes small talk or greetings
-- Asks how-to or troubleshooting questions
-- Requests contact information without buying intent
-
-User message: "{question}"
-
-Respond with ONLY the word YES or NO. No explanation."""
-
-    response = generate_response(prompt, temperature=0, max_tokens=16, metadata={"generation_name": "intent-detection"})
-    result = response.strip().upper()
-    has_intent = "YES" in result
-    logger.info("Sales Intent Detection for '%s': %s", question, result)
-    return has_intent
-
-
-def detect_sales_intent(question: str) -> bool:
-    """
-    Analyzes the user's question to determine if it has 'Business Intent' or 'Sales Intent'.
-    Returns True if the user is asking about services, pricing, partnership, or business solutions.
-    LiteLLM auto-instruments with Langfuse via callbacks.
-
-    No production caller today: ``rag_service`` imports only the handoff
-    detectors, so this still runs on the primary model with the default LLM
-    budget. Any future caller on a hot path must route it to
-    ``runtime_config.get_gate_model()`` with a tight ``timeout``/``num_retries``,
-    exactly as :func:`_detect_handoff_intent_raw` does; a YES/NO classification
-    is gate-tier work (AR-10).
-    """
-    try:
-        return _detect_intent_raw(question)
-    except Exception as e:
-        logger.error(f"Intent detection failed: {e}")
-        return False
-
-
 def _detect_handoff_intent_raw(question: str) -> bool:
-    """Detect human handoff intent via LLM. Same prompt shape as sales intent detection.
+    """Detect human handoff intent via LLM: a one-word YES/NO classification.
 
     Runs on the gate-tier model (AR-10) with a single tightly bounded attempt.
     This ran on the PRIMARY model with the default 60s × 3-attempt budget on

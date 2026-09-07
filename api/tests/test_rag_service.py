@@ -1280,7 +1280,7 @@ class TestResolveSearchQueryAndEmbedding:
 
         embed_calls = []
 
-        async def fake_embed(bid, cid, search_query):
+        async def fake_embed(bid, cid, search_query, embedding_profile=None):
             embed_calls.append(search_query)
             return [0.1] * 768
 
@@ -1306,7 +1306,7 @@ class TestResolveSearchQueryAndEmbedding:
 
         embed_calls = []
 
-        async def fake_embed(bid, cid, search_query):
+        async def fake_embed(bid, cid, search_query, embedding_profile=None):
             embed_calls.append(search_query)
             return {"What about the price of that?": [0.1] * 768, "What is the price of the software?": [0.9] * 768}[
                 search_query
@@ -1336,7 +1336,7 @@ class TestResolveSearchQueryAndEmbedding:
 
         embed_calls = []
 
-        async def fake_embed(bid, cid, search_query):
+        async def fake_embed(bid, cid, search_query, embedding_profile=None):
             embed_calls.append(search_query)
             return [0.1] * 768
 
@@ -2295,6 +2295,22 @@ class TestMaybeAppendNameAsk:
             out = rag_service._maybe_append_name_ask("Our uptime is 99.95%.", MagicMock(), "s1", 3, 9, "hi", history=[])
         assert out.startswith("Welcome back, Gaurav!")
         assert "Our uptime is 99.95%." in out
+
+    def test_welcome_back_does_not_double_the_greeting(self):
+        """When the returning-visitor opener is prepended to the canned greeting
+        reply, the greeting's own warm lead ("Hey. Happy to help.") must be
+        dropped so the visitor never sees "Welcome back, Steve! Hey. Happy to
+        help." — one greeting, not two."""
+        from app.services import rag_service
+        from app.services.intent_router import route_intent
+
+        greeting = route_intent("hi", "CleanStart").answer
+        lead = SimpleNamespace(name="Steve")
+        with patch.object(rag_service, "get_lead_info_by_session", return_value=lead):
+            out = rag_service._maybe_append_name_ask(greeting, MagicMock(), "s1", 3, 9, "hi", history=[])
+        assert out.startswith("Welcome back, Steve!")
+        assert "Hey. Happy to help." not in out
+        assert "Want to hear about our services" in out
 
     def test_no_welcome_back_once_the_bot_has_already_spoken(self):
         """The opener is a once-per-session greeting: mid-conversation cache hits

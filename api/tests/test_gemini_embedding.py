@@ -206,3 +206,22 @@ def test_first_batch_exception_cancels_not_yet_started_futures(monkeypatch):
     # Only the first (already-running) batch should have reached the
     # handler, the other 4 were cancelled while still PENDING.
     assert calls["n"] == 1
+
+
+def test_task_type_is_sent_only_when_the_profile_prescribes_one(monkeypatch):
+    """``taskType`` is what makes the embedding asymmetric. It rides on every
+    request of a batch when the profile prescribes one, and the legacy profile
+    sends none at all (not a null), so those requests stay byte-identical to
+    what produced the rows they are compared against."""
+    monkeypatch.setattr(ge, "GOOGLE_API_KEY", "k")
+    monkeypatch.setattr(ge, "EMBED_DIMENSIONS", 2)
+    seen = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        seen.append([r.get("taskType", "<absent>") for r in body["requests"]])
+        return httpx.Response(200, json={"embeddings": [{"values": [1.0, 0.0]} for _ in body["requests"]]})
+
+    ge.embed_texts(["a", "b"], task_type="RETRIEVAL_DOCUMENT", _client=_client(handler))
+    ge.embed_texts(["a"], _client=_client(handler))
+    assert seen == [["RETRIEVAL_DOCUMENT", "RETRIEVAL_DOCUMENT"], ["<absent>"]]

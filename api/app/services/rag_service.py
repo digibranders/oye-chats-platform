@@ -16,6 +16,7 @@ from sqlalchemy.orm import joinedload
 
 from app import config
 from app.core.cache import QA_RESPONSE_TTL, cache_delete, cache_get, cache_set, qa_response_key
+from app.core.embedding_profiles import EMBEDDING_PROFILE_LEGACY, normalize_profile, query_task_type
 from app.core.langfuse_client import get_langfuse, langfuse_generation, redact_pii
 from app.core.metrics import forward_to_sentry_if_alertable, increment_metric_counter
 from app.core.thread_pool import submit_background
@@ -36,11 +37,12 @@ from app.db.repository import (
 from app.db.session import get_session
 from app.ingestion.embedder import embed_chunks, embed_chunks_async
 from app.security.injection_patterns import compile_detection_pattern
+from app.services import meeting_gate as _meeting_gate
 from app.services import plan_entitlements_service, runtime_config
 from app.services import pricing_gate as _pricing_gate
 from app.services.email_service import send_qualified_lead_email
 from app.services.groundedness_gate import check_groundedness, should_sample
-from app.services.intent_router import route_intent
+from app.services.intent_router import route_intent, strip_greeting_lead
 from app.services.intent_service import detect_handoff_intent, detect_handoff_intent_keywords
 from app.services.llm_service import (
     _apply_model_family_kwargs,
@@ -1116,6 +1118,53 @@ def _is_explicit_media_request(question: str | None) -> bool:
 _BANT_DIMENSIONS: tuple[str, ...] = ("budget", "authority", "need", "timeline")
 
 
+def _bot_branding_removable(bot, session) -> bool:
+    """Whether the bot's workspace holds the branding-removal add-on.
+
+    Read through the cached per-bot entitlements (the same lookup the live-chat
+    and BANT gates on this turn already warmed). A lookup failure keeps the
+    platform name, the state every bot starts in, rather than breaking the
+    turn over a canned reply.
+    """
+    try:
+        entitlements = plan_entitlements_service.get_bot_entitlements(bot.id, session)
+        return bool((entitlements.features or {}).get("branding_removable"))
+    except Exception as exc:  # noqa: BLE001 - an entitlement hiccup must not break the turn
+        logger.debug("Branding entitlement lookup failed (non-blocking): %s", exc)
+        return False
+
+
+_FRAMEWORK_DISPLAY_NAMES = {"bant": "BANT", "meddic": "MEDDIC", "champ": "CHAMP", "gpctba_ci": "GPCTBA/C&I"}
+
+
+def _framework_display_name(config: dict | None) -> str:
+    """Human name of the framework a ``bant_config`` describes, for headings."""
+    key = str((config or {}).get("framework") or "bant").lower()
+    return _FRAMEWORK_DISPLAY_NAMES.get(key, key.upper())
+
+
+def _qualification_rows(chat_session, config: dict | None) -> list[tuple[str, str | None]]:
+    """``(label, captured value)`` per dimension of the ACTIVE framework, in
+    conversation order, for the qualified-lead email.
+
+    Values come from ``_build_bant_state``, which merges the legacy BANT columns
+    with ``dimension_scores``, so a BANT bot renders exactly the four rows it
+    always did and a MEDDIC/CHAMP bot renders its own dimensions instead of an
+    empty table. Labels are the rubric's own (``config[dim]["label"]``), which
+    is what the customer sees in the dashboard.
+    """
+    state = _build_bant_state(chat_session)
+    framework_config = config or {}
+    dims = _framework_dimensions(framework_config) or list(_BANT_DIMENSIONS)
+    rows: list[tuple[str, str | None]] = []
+    for dim in dims:
+        dim_config = framework_config.get(dim) if isinstance(framework_config.get(dim), dict) else {}
+        label = str(dim_config.get("label") or dim.replace("_", " ").title())
+        value = state.get(dim)
+        rows.append((label, str(value) if value else None))
+    return rows
+
+
 def _count_marked_bant_dimensions(bant_state: dict | None, framework_config: dict | None = None) -> int:
     """Count qualification dimensions with any signal (score > 0 OR text value
     present) for the bot's ACTIVE framework.
@@ -1702,6 +1751,64 @@ def _contact_url_from_answer_links(answer_links: object) -> str | None:
             continue
         return candidate
     return None
+
+
+def resolve_contact_url(bot: object, session: object = None, *, crawled_fallback: bool = True) -> str | None:
+    """The contact page to hand a visitor, preferring what the admin configured.
+
+    Two sources, in strict precedence order:
+
+    1. A ``contact`` Smart Link in ``bot.answer_links``, typed deliberately by
+       an admin.
+    2. The contact page found among the bot's OWN crawled pages, which the
+       crawler already stored in ``documents``.
+
+    Explicit beats inferred, so an admin who HAS configured a Smart Link never
+    has it silently overridden by a page a crawl happened to find. In practice
+    the fallback is what fires: 0 of 18 bots on the development database had a
+    ``contact`` Smart Link, which is why the Free pricing pivot -- whose entire
+    job is to hand this page over -- never fired, and every Free bot fell
+    through to answering pricing questions from its unrestricted knowledge base.
+
+    The DB lookup is skipped entirely when a Smart Link answers, and callers
+    pass ``crawled_fallback=False`` when nothing on the turn can use the result:
+    every consumer (``pricing_pivot``, ``_no_info_pivot``, ``meeting_pivot``,
+    ``no_support_path_standdown``) reads ``contact_url`` on its Free branch
+    only, so a bot whose plan includes human support never pays for a
+    ``SELECT DISTINCT`` over its whole crawled corpus on every chat turn.
+    Uploads are excluded: an uploaded file named "contact-us" is not a URL a
+    visitor can open, and ``document_name`` holds a bare filename for them.
+
+    Best-effort: any lookup failure returns the Smart Link answer (or None)
+    rather than breaking the turn. ``session`` is optional so pure callers and
+    tests can resolve the configured half without a database.
+    """
+    configured = _contact_url_from_answer_links(getattr(bot, "answer_links", None))
+    if configured:
+        return configured
+    bot_id = getattr(bot, "id", None)
+    if not crawled_fallback or session is None or not bot_id:
+        return None
+    try:
+        from sqlalchemy import distinct, select
+
+        from app.db.models import Document
+        from app.services.knowledge_links import detect_contact_url
+
+        urls = (
+            session.execute(
+                select(distinct(Document.document_name)).where(
+                    Document.bot_id == bot_id,
+                    Document.source == "crawl",
+                )
+            )
+            .scalars()
+            .all()
+        )
+    except Exception:  # noqa: BLE001  A contact link is never worth failing a turn over
+        logger.warning("contact-url derivation failed for bot %s", bot_id, exc_info=True)
+        return None
+    return detect_contact_url(urls)
 
 
 def _no_info_pivot(company_name: str | None, support_enabled: bool = True, *, contact_url: str | None = None) -> str:
@@ -2351,19 +2458,30 @@ def _vector_search(
     query_embedding: list,
     k: int = 15,
     max_distance: float | None = None,
+    embedding_profile: str | None = None,
 ) -> list:
     """Run vector similarity search in its own DB session (thread-safe).
 
     ``max_distance`` is forwarded only when provided, so the default path stays
     byte-identical to ``search_similar_documents``'s own English-tuned default.
     Phase 3 passes a relaxed value for non-English sessions (see
-    ``CROSS_LINGUAL_MAX_DISTANCE``)."""
+    ``CROSS_LINGUAL_MAX_DISTANCE``). ``embedding_profile`` is the profile
+    ``query_embedding`` was made under; only chunks on the same profile are
+    candidates (``app/core/embedding_profiles.py``)."""
     import time as _t
 
     _start = _t.perf_counter()
     _extra = {} if max_distance is None else {"max_distance": max_distance}
     with get_session() as s:
-        results = search_similar_documents(s, client_id=cid, query_embedding=query_embedding, k=k, bot_id=bid, **_extra)
+        results = search_similar_documents(
+            s,
+            client_id=cid,
+            query_embedding=query_embedding,
+            k=k,
+            bot_id=bid,
+            embedding_profile=embedding_profile,
+            **_extra,
+        )
     logger.info(
         "[retrieval] vector_search bot=%s k=%d hits=%d elapsed_ms=%.1f",
         bid,
@@ -2391,24 +2509,40 @@ def _keyword_search(cid: int | None, bid: int | None, query: str, k: int = 15) -
     return results
 
 
-def _query_embed_cache_key(bid: int | None, cid: int | None, search_query: str) -> str:
-    return f"oyechats:emb:{bid or cid}:{hashlib.sha256(search_query.encode()).hexdigest()[:32]}"
+def _query_embed_cache_key(
+    bid: int | None, cid: int | None, search_query: str, embedding_profile: str | None = None
+) -> str:
+    # The profile is part of the key: a vector cached while a bot was on one
+    # profile is not comparable to its chunks once the migration task has
+    # moved it, and the cache would otherwise serve it for the rest of its TTL.
+    profile = normalize_profile(embedding_profile)
+    return f"oyechats:emb:{bid or cid}:{profile}:{hashlib.sha256(search_query.encode()).hexdigest()[:32]}"
 
 
-def _embed_query_cached(bid: int | None, cid: int | None, search_query: str) -> list | None:
+def _embed_query_cached(
+    bid: int | None, cid: int | None, search_query: str, embedding_profile: str | None = None
+) -> list | None:
     """Embed the query (with short-TTL cache), returning None on any embedding
     failure so the caller degrades to keyword-only retrieval. A Gemini embeddings
     outage must not take down every chat, the hybrid pipeline survives one half
     being unavailable.
+
+    ``embedding_profile`` is the bot's (``app/core/embedding_profiles.py``): it
+    decides the query task type, so the vector is made the way the chunks it
+    will be compared against were.
     """
-    emb_key = _query_embed_cache_key(bid, cid, search_query)
+    emb_key = _query_embed_cache_key(bid, cid, search_query, embedding_profile)
     cached = cache_get(emb_key)
     if cached and isinstance(cached, list):
         return cached
     try:
         # Small wait ceiling: a bulk crawl's rate-limiter debt must not pin
         # this request thread (EmbedWaitExceeded lands in the except below).
-        embs = embed_chunks([search_query], max_wait_s=config.EMBED_QUERY_MAX_WAIT_S)
+        embs = embed_chunks(
+            [search_query],
+            task_type=query_task_type(normalize_profile(embedding_profile)),
+            max_wait_s=config.EMBED_QUERY_MAX_WAIT_S,
+        )
     except Exception as exc:
         logger.warning(
             "Query embedding failed (%s). Falling back to keyword-only retrieval",
@@ -2421,7 +2555,9 @@ def _embed_query_cached(bid: int | None, cid: int | None, search_query: str) -> 
     return query_embedding
 
 
-async def _embed_query_cached_async(bid: int | None, cid: int | None, search_query: str) -> list | None:
+async def _embed_query_cached_async(
+    bid: int | None, cid: int | None, search_query: str, embedding_profile: str | None = None
+) -> list | None:
     """Async twin of :func:`_embed_query_cached` for the streaming path.
 
     ``cache_get``/``cache_set`` use the sync redis-py client (``app/core/cache.py``
@@ -2430,12 +2566,16 @@ async def _embed_query_cached_async(bid: int | None, cid: int | None, search_que
     mirroring the ``asyncio.to_thread`` pattern already used elsewhere in this
     function for blocking calls.
     """
-    emb_key = _query_embed_cache_key(bid, cid, search_query)
+    emb_key = _query_embed_cache_key(bid, cid, search_query, embedding_profile)
     cached = await asyncio.to_thread(cache_get, emb_key)
     if cached and isinstance(cached, list):
         return cached
     try:
-        embs = await embed_chunks_async([search_query], max_wait_s=config.EMBED_QUERY_MAX_WAIT_S)
+        embs = await embed_chunks_async(
+            [search_query],
+            task_type=query_task_type(normalize_profile(embedding_profile)),
+            max_wait_s=config.EMBED_QUERY_MAX_WAIT_S,
+        )
     except Exception as exc:
         logger.warning(
             "Query embedding failed (%s). Streaming with keyword-only retrieval",
@@ -3497,12 +3637,19 @@ def _background_bant_extraction(
                     "reply_to": getattr(bot, "reply_to_email", None),
                     "recipients": recipients,
                     "contact": contact,
+                    # Legacy BANT columns, kept because the outbound webhook
+                    # payload is a customer-facing contract. The email renders
+                    # ``qualification``: every dimension of the ACTIVE framework,
+                    # so a MEDDIC or CHAMP lead no longer arrives with an empty
+                    # table.
                     "bant_updates": {
                         "bant_need": chat_session.bant_need,
                         "bant_budget": chat_session.bant_budget,
                         "bant_authority": chat_session.bant_authority,
                         "bant_timeline": chat_session.bant_timeline,
                     },
+                    "qualification": _qualification_rows(chat_session, config),
+                    "framework_label": _framework_display_name(config),
                     "old_tier": old_tier,
                     "new_tier": new_tier,
                     "score": chat_session.bant_score,
@@ -3528,6 +3675,8 @@ def _background_bant_extraction(
                     tier_transition["bant_updates"],
                     tier_transition["contact"],
                     reply_to=tier_transition["reply_to"],
+                    qualification=tier_transition["qualification"],
+                    framework_label=tier_transition["framework_label"],
                 )
             try:
                 from app.services.webhook_service import fire_webhook
@@ -4147,7 +4296,10 @@ def _maybe_append_name_ask(
             # is by definition a returning visitor rather than one who just
             # introduced themselves.
             opener = _name_ack_prefix(known, False, language, returning=_is_first_bot_reply(hist))
-            return opener + text.lstrip() if opener and text else text
+            # The welcome-back opener IS the greeting, so drop the canned reply's
+            # own greeting lead ("Hey. Happy to help.") to avoid doubling it.
+            # No-op for non-greeting replies (e.g. QA-cache hits).
+            return opener + strip_greeting_lead(text) if opener and text else text
         if _should_ask_visitor_name(None, hist) and not _is_name_ask_message(text):
             return (text.rstrip() if text else "") + f"\n\n{_name_ask_text(language)}"
     except Exception:  # noqa: BLE001  Personalization is best-effort, never fatal
@@ -6050,7 +6202,14 @@ Respond with EXACTLY {n} lines, one paraphrase per line, nothing else, no number
         return []
 
 
-def _zero_result_multi_query_fallback(question: str, cid: int | None, bid: int | None, retrieval_k: int) -> list:
+def _zero_result_multi_query_fallback(
+    question: str,
+    cid: int | None,
+    bid: int | None,
+    retrieval_k: int,
+    *,
+    embedding_profile: str | None = None,
+) -> list:
     """AR-40: when the primary single-embedding retrieval finds ZERO chunks,
     try a small multi-query fan-out before giving up.
 
@@ -6076,10 +6235,12 @@ def _zero_result_multi_query_fallback(question: str, cid: int | None, bid: int |
 
         best_by_id: dict[int, tuple] = {}
         for paraphrase in paraphrases:
-            embedding = _embed_query_cached(bid, cid, paraphrase)
+            embedding = _embed_query_cached(bid, cid, paraphrase, embedding_profile=embedding_profile)
             if embedding is None:
                 continue
-            for doc, distance in _vector_search(cid, bid, embedding, k=retrieval_k):
+            for doc, distance in _vector_search(
+                cid, bid, embedding, k=retrieval_k, embedding_profile=embedding_profile
+            ):
                 if doc.id not in best_by_id or distance < best_by_id[doc.id][1]:
                     best_by_id[doc.id] = (doc, distance)
 
@@ -6248,6 +6409,7 @@ async def _resolve_search_query_and_embedding(
     bid: int | None,
     cid: int | None,
     company_name: str | None,
+    embedding_profile: str | None = None,
 ) -> tuple[str, list | None]:
     """Resolve the retrieval query (rewritten + company-expanded) and its
     embedding, overlapping the query-rewrite LLM call with a speculative embed
@@ -6268,7 +6430,9 @@ async def _resolve_search_query_and_embedding(
     """
     raw_expanded_query = _expand_company_query(question, company_name)
     rewrite_task = asyncio.create_task(asyncio.to_thread(rewrite_query, session_id, question, history))
-    speculative_embed_task = asyncio.create_task(_embed_query_cached_async(bid, cid, raw_expanded_query))
+    speculative_embed_task = asyncio.create_task(
+        _embed_query_cached_async(bid, cid, raw_expanded_query, embedding_profile=embedding_profile)
+    )
 
     search_query = await _await_rewrite(rewrite_task, question)
     search_query = _expand_company_query(search_query, company_name)
@@ -6281,7 +6445,7 @@ async def _resolve_search_query_and_embedding(
         # failure), so awaiting both concurrently is safe; only the second
         # result is used.
         query_embedding, _ = await asyncio.gather(
-            _embed_query_cached_async(bid, cid, search_query),
+            _embed_query_cached_async(bid, cid, search_query, embedding_profile=embedding_profile),
             speculative_embed_task,
         )
 
@@ -6888,10 +7052,23 @@ def rag_pipeline(
             #
             # Deny-by-default (False) when the bot is unknown.
             _has_bot = bot is not None and getattr(bot, "id", None) is not None
+            # The embedding profile this bot's vectors live under. The query is
+            # embedded with the profile's query task type and vector search is
+            # restricted to chunks carrying the same profile, so a query is never
+            # ranked against vectors from another space (see
+            # app/core/embedding_profiles.py). A bot-less turn (legacy
+            # client-scoped rows) uses the legacy profile those rows carry.
+            _embedding_profile = (
+                normalize_profile(getattr(bot, "embedding_profile", None)) if _has_bot else EMBEDDING_PROFILE_LEGACY
+            )
             _plan_support_allowed = (
                 plan_entitlements_service.is_live_chat_enabled_for_bot(bot.id, session) if _has_bot else False
             )
             live_chat_on = _plan_support_allowed and bool(getattr(bot, "live_chat_enabled", True))
+            # Whether this workspace paid to remove "Powered by OyeChats". The
+            # intent router's canned identity replies name the platform, which a
+            # branding-removed customer has bought the right not to show.
+            _branding_removable = _bot_branding_removable(bot, session) if _has_bot else False
 
             # Where a Free-plan bot sends a visitor whose on-scope question it
             # could not answer. Resolved once per turn and reused at every
@@ -6903,7 +7080,9 @@ def rag_pipeline(
             # ``_no_info_pivot`` for why handing over a public page on the
             # customer's own website is not a paywall leak. ``getattr`` covers
             # the unknown-bot case (no bot, no links, no URL).
-            _contact_url = _contact_url_from_answer_links(getattr(bot, "answer_links", None))
+            # The crawled-page fallback costs a DISTINCT over the bot's corpus,
+            # and only the Free branches of the pivots read the result.
+            _contact_url = resolve_contact_url(bot, session, crawled_fallback=not _plan_support_allowed)
 
             ensure_chat_session(session, session_id, client_id=cid, bot_id=bid, location=location, device=device)
 
@@ -6992,7 +7171,16 @@ def rag_pipeline(
             # off; see ``_english_judges_bypassed``. Resolved once per turn so the
             # sites below can never disagree with each other.
             _judges_bypassed = _english_judges_bypassed(language, question)
-            _intent = None if (_affirmed_handoff or _judges_bypassed) else route_intent(question, _company_name)
+            _intent = (
+                None
+                if (_affirmed_handoff or _judges_bypassed)
+                else route_intent(
+                    question,
+                    _company_name,
+                    support_enabled=_plan_support_allowed,
+                    platform_branded=not _branding_removable,
+                )
+            )
             if _intent is not None:
                 _safety_net_metric(
                     "intent_router_short_circuit",
@@ -7152,6 +7340,14 @@ def rag_pipeline(
                     # change was made for.
                     contact_url=_contact_url,
                 )
+            ) or (
+                # Same reasoning for the MEETING gate: it intercepts a
+                # scheduling request on a bot with no scheduler, so a pre-gate
+                # cached answer served ahead of it would reinstate exactly the
+                # broken promise the gate exists to remove.
+                not _lang_is_non_english(language)
+                and not _meeting_gate.scheduler_is_configured(bot)
+                and _meeting_gate.is_meeting_question(question)
             )
             # Read ahead of the QA-cache lookup, which needs to know whether the
             # conversation has prior visitor turns. The visitor's own message is
@@ -7195,12 +7391,16 @@ def rag_pipeline(
                             bot_id=bid,
                             source_language=_lang_base(language),
                         )
+                        # Read the id before the commit expires the row, so the
+                        # reply does not pay a refresh SELECT for it.
+                        session.flush()
+                        _cached_msg_id = bot_msg.id
                         session.commit()
                         return {
                             "answer": _cached_answer,
                             "sources": cached_qa.get("sources", []),
                             "session_id": session_id,
-                            "message_id": bot_msg.id,
+                            "message_id": _cached_msg_id,
                         }
 
             # Expensive steps: query rewriting (LLM call) + embedding (API call).
@@ -7271,7 +7471,7 @@ def rag_pipeline(
                 search_query = _expand_company_query(search_query, _company_name)
 
                 # ── Phase 4B: embedding cache (degrades to keyword-only) ──────
-                query_embedding = _embed_query_cached(bid, cid, search_query)
+                query_embedding = _embed_query_cached(bid, cid, search_query, embedding_profile=_embedding_profile)
 
                 # List/count questions ("how many clients", "list all
                 # services") used to be boosted to k=30 so the bot saw the
@@ -7292,6 +7492,7 @@ def rag_pipeline(
                         query_embedding=query_embedding,
                         k=_retrieval_k,
                         bot_id=bid,
+                        embedding_profile=_embedding_profile,
                         **_xling_extra,
                     )
                     if query_embedding is not None
@@ -7309,7 +7510,9 @@ def rag_pipeline(
                 final_results = reciprocal_rank_fusion(vector_results, keyword_results)
                 final_results = _trim_results(final_results, top_k=_retrieval_k)
                 if not final_results:
-                    final_results = _zero_result_multi_query_fallback(question, cid, bid, _retrieval_k)
+                    final_results = _zero_result_multi_query_fallback(
+                        question, cid, bid, _retrieval_k, embedding_profile=_embedding_profile
+                    )
                 if RERANK_ENABLED and not _judges_bypassed:
                     final_results = rerank(search_query, final_results, top_n=_retrieval_k)
 
@@ -7487,6 +7690,64 @@ def rag_pipeline(
                     _mark_card_shown(chat_session, "leave_message")
                 session.commit()
                 return _pivot_result
+
+            # ── Meeting gate ─────────────────────────────────────────────
+            # A scheduling request on a bot with NO usable online scheduler is
+            # answered HERE, deterministically, instead of by an instruction in
+            # the system prompt.
+            #
+            # Placement is the whole point. It sits AFTER the pricing gate, which
+            # returns first when it fires, so a priced question is never re-read
+            # as a scheduling one; and BEFORE the CRAG relevance gate, because a
+            # scheduling request is never IN the knowledge base, so the judge
+            # scores it off-topic and its refusal returns before generation is
+            # ever reached. That ordering is why the previous prompt-only
+            # handling could not work: measured end to end, the model promised a
+            # form on both paid and Free and rendered one on neither, and the
+            # leave-message safety net cannot rescue it because scheduling
+            # phrasing matches neither of its predicates.
+            #
+            # A bot WITH a scheduler configured falls through untouched to the
+            # existing booking-card flow, which is the better answer.
+            if not _meeting_gate.scheduler_is_configured(bot) and _meeting_gate.is_meeting_question(_gate_question):
+                _safety_net_metric(
+                    "meeting_gate_pivot",
+                    path="nonstream",
+                    support_enabled=str(_plan_support_allowed),
+                    session=session_id,
+                    bot_id=bid,
+                )
+                _mtg = _meeting_gate.meeting_pivot(
+                    company_name=_company_name,
+                    support_enabled=_plan_support_allowed,
+                    live_chat_enabled=live_chat_on,
+                    contact_url=_contact_url,
+                )
+                _mtg_text = (
+                    _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + _mtg.text
+                )
+                _bot_msg = add_chat_message(
+                    session,
+                    session_id,
+                    client_id=cid,
+                    role="bot",
+                    content=_mtg_text,
+                    bot_id=bid,
+                    is_unanswered=True,
+                    source_language=_lang_base(language),
+                )
+                _mtg_result = {
+                    "answer": _mtg_text,
+                    "sources": [],
+                    "session_id": session_id,
+                    "message_id": _bot_msg.id,
+                    "suggest_handoff": _mtg.suggest_handoff,
+                }
+                if _mtg.needs_message_card:
+                    _mtg_result["show_leave_message"] = True
+                    _mark_card_shown(chat_session, "leave_message")
+                session.commit()
+                return _mtg_result
 
             # ── Phase 4A: CRAG relevance gate ────────────────────────────
             # BYPASSED for a non-English conversation, for the same reason
@@ -8107,7 +8368,10 @@ def rag_pipeline(
                     None if (_show_qualified_popup or _team_connect_offer) else _next_probe
                 )
 
-            # Read before the commit expires the row; afterwards it costs a SELECT.
+            # Flush so the INSERT runs and the id is assigned, then read both
+            # before the commit expires the row: afterwards each costs a SELECT.
+            session.flush()
+            bot_msg_id = bot_msg.id
             _bot_msg_trace_id = getattr(bot_msg, "trace_id", None)
             session.commit()
 
@@ -8132,7 +8396,7 @@ def rag_pipeline(
                     current_bant,
                     bid,
                     bant_config,
-                    bot_msg.id,
+                    bot_msg_id,
                     _cta_signal,
                     _binding_hint,
                 )
@@ -8152,7 +8416,7 @@ def rag_pipeline(
                 "answer": answer,
                 "sources": [doc.document_name for doc in final_results],
                 "session_id": session_id,
-                "message_id": bot_msg.id,
+                "message_id": bot_msg_id,
                 "generation_failed": _generation_failed,
             }
             if suggest_handoff and live_chat_on:
@@ -8464,10 +8728,23 @@ async def rag_pipeline_stream(
             #
             # Deny-by-default (False) when the bot is unknown.
             _has_bot = bot is not None and getattr(bot, "id", None) is not None
+            # The embedding profile this bot's vectors live under. The query is
+            # embedded with the profile's query task type and vector search is
+            # restricted to chunks carrying the same profile, so a query is never
+            # ranked against vectors from another space (see
+            # app/core/embedding_profiles.py). A bot-less turn (legacy
+            # client-scoped rows) uses the legacy profile those rows carry.
+            _embedding_profile = (
+                normalize_profile(getattr(bot, "embedding_profile", None)) if _has_bot else EMBEDDING_PROFILE_LEGACY
+            )
             _plan_support_allowed = (
                 plan_entitlements_service.is_live_chat_enabled_for_bot(bot.id, session) if _has_bot else False
             )
             live_chat_on = _plan_support_allowed and bool(getattr(bot, "live_chat_enabled", True))
+            # Whether this workspace paid to remove "Powered by OyeChats". The
+            # intent router's canned identity replies name the platform, which a
+            # branding-removed customer has bought the right not to show.
+            _branding_removable = _bot_branding_removable(bot, session) if _has_bot else False
 
             # Where a Free-plan bot sends a visitor whose on-scope question it
             # could not answer. Resolved once per turn and reused at every
@@ -8479,7 +8756,9 @@ async def rag_pipeline_stream(
             # ``_no_info_pivot`` for why handing over a public page on the
             # customer's own website is not a paywall leak. ``getattr`` covers
             # the unknown-bot case (no bot, no links, no URL).
-            _contact_url = _contact_url_from_answer_links(getattr(bot, "answer_links", None))
+            # The crawled-page fallback costs a DISTINCT over the bot's corpus,
+            # and only the Free branches of the pivots read the result.
+            _contact_url = resolve_contact_url(bot, session, crawled_fallback=not _plan_support_allowed)
 
             ensure_chat_session(session, session_id, client_id=cid, bot_id=bid, location=location, device=device)
 
@@ -8574,7 +8853,16 @@ async def rag_pipeline_stream(
             # off; see ``_english_judges_bypassed``. Resolved once per turn so the
             # sites below can never disagree with each other.
             _judges_bypassed = _english_judges_bypassed(language, question)
-            _intent = None if (_affirmed_handoff or _judges_bypassed) else route_intent(question, _company_name)
+            _intent = (
+                None
+                if (_affirmed_handoff or _judges_bypassed)
+                else route_intent(
+                    question,
+                    _company_name,
+                    support_enabled=_plan_support_allowed,
+                    platform_branded=not _branding_removable,
+                )
+            )
             if _intent is not None:
                 _safety_net_metric(
                     "intent_router_short_circuit",
@@ -8728,6 +9016,14 @@ async def rag_pipeline_stream(
                     # change was made for.
                     contact_url=_contact_url,
                 )
+            ) or (
+                # Same reasoning for the MEETING gate: it intercepts a
+                # scheduling request on a bot with no scheduler, so a pre-gate
+                # cached answer served ahead of it would reinstate exactly the
+                # broken promise the gate exists to remove.
+                not _lang_is_non_english(language)
+                and not _meeting_gate.scheduler_is_configured(bot)
+                and _meeting_gate.is_meeting_question(question)
             )
             # Materialize history to detached role/content objects HERE, ahead of
             # the QA-cache lookup (which needs to know whether the conversation
@@ -8898,7 +9194,7 @@ async def rag_pipeline_stream(
             else:
                 handoff_task = asyncio.create_task(asyncio.to_thread(detect_handoff_intent, question))
                 search_query, query_embedding = await _resolve_search_query_and_embedding(
-                    session_id, question, history, bid, cid, _company_name
+                    session_id, question, history, bid, cid, _company_name, embedding_profile=_embedding_profile
                 )
 
                 try:
@@ -8926,7 +9222,15 @@ async def rag_pipeline_stream(
                 _xling_max_distance = CROSS_LINGUAL_MAX_DISTANCE if _judges_bypassed else None
                 if query_embedding is not None:
                     vector_results, keyword_results = await asyncio.gather(
-                        asyncio.to_thread(_vector_search, cid, bid, query_embedding, _retrieval_k, _xling_max_distance),
+                        asyncio.to_thread(
+                            _vector_search,
+                            cid,
+                            bid,
+                            query_embedding,
+                            _retrieval_k,
+                            _xling_max_distance,
+                            embedding_profile=_embedding_profile,
+                        ),
                         asyncio.to_thread(_keyword_search, cid, bid, search_query, _retrieval_k),
                     )
                 else:
@@ -8960,7 +9264,12 @@ async def rag_pipeline_stream(
                 final_results = _trim_results(final_results, top_k=_retrieval_k)
                 if not final_results:
                     final_results = await asyncio.to_thread(
-                        _zero_result_multi_query_fallback, question, cid, bid, _retrieval_k
+                        _zero_result_multi_query_fallback,
+                        question,
+                        cid,
+                        bid,
+                        _retrieval_k,
+                        embedding_profile=_embedding_profile,
                     )
                 _fuse_ms = (_t.perf_counter() - _fuse_start) * 1000
 
@@ -9174,6 +9483,62 @@ async def rag_pipeline_stream(
                 return
 
             sources = [doc.document_name for doc in final_results]
+
+            # ── Meeting gate ─────────────────────────────────────────────
+            # A scheduling request on a bot with NO usable online scheduler is
+            # answered HERE, deterministically, instead of by an instruction in
+            # the system prompt.
+            #
+            # Placement is the whole point. It sits AFTER the pricing gate, which
+            # returns first when it fires, so a priced question is never re-read
+            # as a scheduling one; and BEFORE the CRAG relevance gate, because a
+            # scheduling request is never IN the knowledge base, so the judge
+            # scores it off-topic and its refusal returns before generation is
+            # ever reached. That ordering is why the previous prompt-only
+            # handling could not work: measured end to end, the model promised a
+            # form on both paid and Free and rendered one on neither, and the
+            # leave-message safety net cannot rescue it because scheduling
+            # phrasing matches neither of its predicates.
+            #
+            # A bot WITH a scheduler configured falls through untouched to the
+            # existing booking-card flow, which is the better answer.
+            if not _meeting_gate.scheduler_is_configured(bot) and _meeting_gate.is_meeting_question(_gate_question):
+                _safety_net_metric(
+                    "meeting_gate_pivot",
+                    path="stream",
+                    support_enabled=str(_plan_support_allowed),
+                    session=session_id,
+                    bot_id=bid,
+                )
+                _mtg = _meeting_gate.meeting_pivot(
+                    company_name=_company_name,
+                    support_enabled=_plan_support_allowed,
+                    live_chat_enabled=live_chat_on,
+                    contact_url=_contact_url,
+                )
+                _mtg_text = (
+                    _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + _mtg.text
+                )
+                yield _stream_metadata(session_id, [], language)
+                yield _mtg_text
+                _bot_msg = add_chat_message(
+                    session,
+                    session_id,
+                    client_id=cid,
+                    role="bot",
+                    content=_mtg_text,
+                    bot_id=bid,
+                    is_unanswered=True,
+                    source_language=_lang_base(language),
+                )
+                session.flush()
+                _mtg_meta = {"message_id": _bot_msg.id, "suggest_handoff": _mtg.suggest_handoff}
+                if _mtg.needs_message_card:
+                    _mtg_meta["show_leave_message"] = True
+                    _mark_card_shown(chat_session, "leave_message")
+                session.commit()
+                yield f"\nFINAL_METADATA:{json.dumps(_mtg_meta)}\n"
+                return
 
             # ── Phase 4A: CRAG relevance gate (streaming path) ───────────────
             # BYPASSED for a non-English conversation, for the same reason

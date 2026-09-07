@@ -159,6 +159,40 @@ async def test_orphan_sweep_runs_when_every_surviving_page_is_unchanged(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_orphan_sweep_caps_removals_when_the_whole_site_answers_404(monkeypatch):
+    """A broken deploy that 404s every page must not wipe the knowledge base in
+    one run: removals are capped at max(5, 20%) of the stored URLs, the same
+    valve the scheduled re-crawl applies, and the rest survive for a later
+    crawl to confirm."""
+    del_session = MagicMock()
+    candidates = [f"https://acme.test/page-{i:02d}" for i in range(30)]
+    liveness = dict.fromkeys(candidates, False)
+    _q, checked = _wire_common(monkeypatch, del_session, candidates, liveness)
+
+    released: dict[str, list[str]] = {}
+
+    def fake_release(session, *, client_id, bot_id, document_names):
+        released["names"] = list(document_names)
+        return 0
+
+    monkeypatch.setattr(orch, "release_kb_usage_for_sources", fake_release)
+
+    await orch.run_full_crawl(
+        client_id=1,
+        bot_id=None,
+        url="https://acme.test",
+        max_pages=50,
+        use_js=False,
+        replace_source="acme.test",
+        cost_per_page=5,
+    )
+
+    # Every candidate was probed, but only 20% of 30 = 6 were removed.
+    assert set(checked["urls"]) == set(candidates)
+    assert released["names"] == candidates[:6]
+
+
+@pytest.mark.asyncio
 async def test_orphan_sweep_reclaims_kb_characters_before_deleting(monkeypatch):
     """I6: the char count lives on the rows the sweep is about to delete, so it
     has to be handed back first or ``kb_characters_used`` only ever grows."""

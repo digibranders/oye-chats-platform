@@ -144,7 +144,7 @@ Two properties of the guard are load-bearing and easy to regress:
 | [`app/src/query/`](../../../../app/src/query) · [`app/src/context/`](../../../../app/src/context) | Data fetching and providers (workspace, auth, notifications) |
 | [`app/src/ui/`](../../../../app/src/ui) | Design-system primitives, rendered standalone at `/dev/ui` |
 | [`app/src/i18n/`](../../../../app/src/i18n) | Console locales (`en`, `hi`) |
-| [`app/src/data/widgetEmbed.ts`](../../../../app/src/data/widgetEmbed.ts) | Both embed-snippet variants — with and without the "Powered by" anchor, per the `branding_removable` entitlement |
+| [`app/src/features/agents/channels/deployModel.ts`](../../../../app/src/features/agents/channels/deployModel.ts) | The embed snippet: one script tag, the same for every plan |
 
 ## Error surfaces
 

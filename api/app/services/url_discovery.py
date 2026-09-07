@@ -582,6 +582,23 @@ async def discover_via_links(
     return found[:max_urls]
 
 
+# Safety valve on any orphan sweep that deletes stored pages on a confirmed 404.
+# A 404 is authoritative for one page, but a whole site answering 404 (a broken
+# deploy, an expired domain, a CDN misconfiguration) would otherwise wipe a
+# knowledge base in a single run. Removals are capped at 20% of the stored
+# URLs per run, with a floor of 5 so a small bot can still be tidied. A site
+# that stays broken loses at most this much per run; one that recovers keeps
+# the rest. Shared by the scheduled re-crawl (``recrawl_service``) and the
+# interactive crawl's sweep (``crawl_orchestrator``) so the two cannot drift.
+REMOVAL_CAP_FLOOR: int = 5
+REMOVAL_CAP_PERCENT: int = 20
+
+
+def removal_cap(total_urls: int) -> int:
+    """How many confirmed-gone pages one sweep may remove: ``max(5, 20%)`` of the stored URLs."""
+    return max(REMOVAL_CAP_FLOOR, int(total_urls) * REMOVAL_CAP_PERCENT // 100)
+
+
 async def check_urls_alive(
     urls: list[str],
     *,

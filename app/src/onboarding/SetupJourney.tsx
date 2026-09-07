@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { ArrowRight, Check, X } from 'lucide-react';
 import { Button, buttonClass, cn } from '../ui';
 import { useSetupChecklist } from './useSetupChecklist';
+import { useAgent } from '../context/AgentContext';
 import { useTranslation } from '../i18n/useTranslation';
 
 /** Per workspace, so dismissing it on one does not dismiss it on another. */
@@ -51,7 +52,11 @@ export interface SetupJourneyProps {
  */
 export function SetupJourney({ workspaceId = null }: SetupJourneyProps) {
   const { t } = useTranslation();
-  const { steps, done, total, complete, loading } = useSetupChecklist();
+  // The strip sits above one chatbot's pages, so it reports that chatbot. Read
+  // from the workspace's first chatbot instead, a second chatbot with nothing
+  // indexed opened with four steps already struck through.
+  const { agent } = useAgent();
+  const { steps, done, total, complete, loading } = useSetupChecklist(agent);
   const { pathname } = useLocation();
   const key = dismissKeyFor(workspaceId);
   const [dismissed, setDismissed] = useState(() => readDismissed(key));

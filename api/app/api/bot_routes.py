@@ -38,7 +38,6 @@ from app.config import (
     DEMO_SCREENSHOT_ENABLED,
     DEMO_SCREENSHOT_TTL_DAYS,
     FRONTEND_URL,
-    MARKETING_URL,
 )
 from app.config import WIDGET_SCRIPT_URL as CONFIGURED_WIDGET_SCRIPT_URL
 from app.core.cache import (
@@ -238,12 +237,21 @@ def _normalize_session_share_domain(raw: str | None) -> str | None:
 
 logger = logging.getLogger(__name__)
 
-# Hostnames that are OUR OWN surfaces (dashboard preview, marketing site, demo
-# pages, local dev). A widget bootstrap from one of these is not a real customer
-# install, so it must never stamp ``Bot.widget_installed_at``.
-_INTERNAL_WIDGET_HOSTS = {
-    h for h in (extract_hostname(APP_URL), extract_hostname(MARKETING_URL), extract_hostname(FRONTEND_URL)) if h
-} | {"localhost", "127.0.0.1"}
+# Hostnames that render OTHER accounts' chatbots: the dashboard (the Experience
+# and Deploy previews bootstrap whichever chatbot is open), local dev, and the
+# API's own host for the hosted demo/preview pages (added per request in
+# ``_is_internal_widget_host``). A bootstrap from one of these must never stamp
+# ``Bot.widget_installed_at``: it is us looking at a customer's chatbot, not a
+# customer installing it.
+#
+# The marketing site is deliberately NOT here. It only ever embeds our own
+# chatbot, so a bootstrap from it can only ever stamp our own row, and refusing
+# it left that one install permanently "not detected" and its setup step
+# permanently open, which is how this was reported as a bug.
+_INTERNAL_WIDGET_HOSTS = {h for h in (extract_hostname(APP_URL), extract_hostname(FRONTEND_URL)) if h} | {
+    "localhost",
+    "127.0.0.1",
+}
 
 
 # How long one bot suppresses further heartbeat writes.
@@ -323,7 +331,7 @@ def _is_internal_widget_host(hostname: str, request: Request) -> bool:
     The request is a parameter because the set is not static: the hosted demo
     and preview pages are served by the API itself, so a widget embedded there
     reports the API's own host as its origin. That has to be excluded whatever
-    ``APP_URL``/``MARKETING_URL`` happen to resolve to.
+    ``APP_URL`` happens to resolve to.
 
     Shared by the heartbeat, which must not stamp an install for one of these,
     and by ``GET /bots/{bot_id}/install-domains``, which has to be able to say
@@ -345,7 +353,7 @@ def _external_install_hostname(request: Request) -> str | None:
     excluded too, because the hosted demo/preview pages are served by the API
     itself, a widget embedded there reports the API host as its origin, which
     must not count as a customer install regardless of how the
-    ``APP_URL``/``MARKETING_URL`` config resolves.
+    ``APP_URL`` config resolves.
 
     The hostname is returned rather than discarded because it is what
     ``Bot.widget_last_origin`` stores. It is browser-forgeable and must stay
@@ -3246,24 +3254,17 @@ class InstallInviteRequest(BaseModel):
     email: EmailAddress
 
 
-def _attribution_anchor(bot_key: str) -> str:
-    """The crawlable "Powered by OyeChats" link that rides beside the tag.
+def _embed_snippet(bot_key: str) -> str:
+    """The one tag a customer pastes. Mirrors ``app/src/.../deployModel.ts``.
 
-    Mirrors ``app/src/data/widgetEmbed.ts``. Kept in sync by hand, and safe to
-    interpolate for the same reason stated there: ``bot_key`` is matched against
-    an allowlist before it reaches the URL, so it cannot carry a quote or an
+    Nothing but the script tag goes into the customer's page: OyeChats branding
+    lives inside the widget, where the branding add-on governs it. ``bot_key``
+    is matched against an allowlist first, so it cannot carry a quote or an
     angle bracket into this markup.
     """
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", bot_key or ""):
         raise HTTPException(status_code=422, detail="This chatbot's embed key is malformed.")
-    href = f"https://www.oyechats.com/?ref={bot_key}&utm_source=widget&utm_medium=referral"
-    css = "font-size:11px;color:inherit;opacity:0.7;text-decoration:none"
-    return f'<a href="{href}" rel="nofollow" style="{css}">{DEFAULT_BRANDING_TEXT}</a>'
-
-
-def _embed_snippet(bot_key: str, *, attribution: bool) -> str:
-    tag = f'<script src="{WIDGET_SCRIPT_URL}" data-bot-key="{bot_key}"></script>'
-    return f"{tag}\n{_attribution_anchor(bot_key)}" if attribution else tag
+    return f'<script src="{WIDGET_SCRIPT_URL}" data-bot-key="{bot_key}"></script>'
 
 
 @router.post("/{bot_id}/install-invite")
@@ -3294,11 +3295,7 @@ def send_install_invite(
     with get_session() as session:
         bot = _get_workspace_bot(session, bot_id, auth["client_id"])
 
-        # Deny-by-default: an unresolved entitlement keeps the credit link in,
-        # which is the recoverable mistake. The reverse mails out a white-label
-        # snippet we cannot take back.
-        attribution = not _bot_has_branding_addon(session, bot.id)
-        snippet = _embed_snippet(bot.bot_key, attribution=attribution)
+        snippet = _embed_snippet(bot.bot_key)
 
         requester = auth["entity"]
         reply_to = getattr(requester, "email", None)
@@ -3315,7 +3312,6 @@ def send_install_invite(
             snippet=snippet,
             script_origin=urlparse(WIDGET_SCRIPT_URL).scheme + "://" + urlparse(WIDGET_SCRIPT_URL).netloc,
             api_origin=API_BASE_URL,
-            attribution=attribution,
             requester_name=getattr(requester, "name", None),
             reply_to=reply_to,
         )

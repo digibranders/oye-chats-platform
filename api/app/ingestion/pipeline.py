@@ -7,8 +7,12 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy import select
+
 from app.config import ARCHIVE_DIR
 from app.core.cache import cache_delete_prefix, gate_prefix_for_bot, qa_prefix_for_bot
+from app.core.embedding_profiles import EMBEDDING_PROFILE_LEGACY, document_task_type, normalize_profile
+from app.db.models import Bot
 from app.db.repository import delete_chunks_for_url, insert_documents, is_document_processed, upsert_events
 from app.db.session import get_session
 from app.ingestion.chunking import chunk_text
@@ -304,6 +308,69 @@ def _crawl_page_unchanged(session, *, client_id: int, bot_id: int | None, url: s
     return session.execute(stmt.limit(1)).first() is not None
 
 
+# How many times one ingestion re-pins the bot's embedding profile before
+# giving up. The profile moves once per bot, when the migration task flips it,
+# so a second change inside one ingestion is an operator editing the column by
+# hand, and a third is something this code should refuse to chase.
+_PROFILE_PIN_ATTEMPTS = 3
+
+
+def _bot_embedding_profile(session, bot_id: int | None, *, lock: bool = False) -> str:
+    """The embedding profile ``bot_id``'s chunks are stored under.
+
+    Read from the bot row, the one source of truth ingestion, the query path
+    and the migration task share (``app/core/embedding_profiles.py``).
+    ``lock=True`` takes ``FOR SHARE`` on the row, which is how an insert
+    transaction pins the profile it read: the migration flips a bot under
+    ``FOR NO KEY UPDATE`` only once every one of its chunks is on the new
+    profile, that lock waits for every in-flight insert holding a share lock,
+    and an insert that starts after the flip sees the new value. So a chunk
+    can never land on the old profile after the bot has moved off it. The
+    explicit share lock is needed even though the insert's foreign key takes
+    ``KEY SHARE`` on the same row: that one is taken at INSERT time, after the
+    profile was read, and does not conflict with the migration's lock.
+
+    A missing bot, and legacy client-scoped ingestion (``bot_id=None``), is the
+    legacy profile: what un-stamped vectors were made with.
+    """
+    if bot_id is None:
+        return EMBEDDING_PROFILE_LEGACY
+    stmt = select(Bot.embedding_profile).where(Bot.id == bot_id)
+    if lock:
+        stmt = stmt.with_for_update(read=True)
+    return normalize_profile(session.execute(stmt).scalar_one_or_none())
+
+
+def _pin_embedding_profile(session, bot_id: int | None, expected: str, reembed: Callable[[str], None]) -> str:
+    """Pin the profile for the transaction about to store vectors made under
+    ``expected``, and return the profile the rows must be stamped with.
+
+    Takes the share lock (``_bot_embedding_profile(lock=True)``) as the first
+    statement of the insert transaction. When the committed profile is not the
+    one the vectors were embedded under, the lock is released again
+    (``rollback``: nothing has been written yet), ``reembed(new_profile)``
+    remakes the vectors, and the lock is retaken. Releasing first matters:
+    embedding can wait minutes on Gemini back-off, and holding a row lock on
+    the bot across that would stall every settings save for it, which is the
+    same rule that keeps the client-row lock out of the embed step.
+    """
+    profile = expected
+    for _ in range(_PROFILE_PIN_ATTEMPTS):
+        committed = _bot_embedding_profile(session, bot_id, lock=True)
+        if committed == profile:
+            return profile
+        session.rollback()
+        logger.info(
+            "Bot %s moved from embedding profile %s to %s during ingestion. Re-embedding under the new one",
+            bot_id,
+            profile,
+            committed,
+        )
+        profile = committed
+        reembed(profile)
+    raise RuntimeError(f"embedding profile of bot {bot_id} changed {_PROFILE_PIN_ATTEMPTS} times during one ingestion")
+
+
 def _ingest_document(
     client_id: int,
     source_name: str,
@@ -371,6 +438,10 @@ def _ingest_document(
         if is_document_processed(session, client_id, file_hash, bot_id=bot_id):
             logger.info(f"Skipping {source_name} (Already processed for client {client_id}, bot {bot_id})")
             return 0
+        # The profile the vectors are made under. Unlocked: the insert
+        # transaction re-reads it under ``FOR SHARE`` and re-embeds if the
+        # migration task flipped the bot in between.
+        embedding_profile = _bot_embedding_profile(session, bot_id)
 
     # 2. Chunk the SAME cleaned text we hashed (Preserves metadata)
     chunks = chunk_text(cleaned_pages_data, document_name=source_name)
@@ -400,12 +471,19 @@ def _ingest_document(
         logger.warning(f"No content to embed for {source_name}")
         return 0
 
-    embeddings = embed_chunks(chunk_content_list=chunk_contents)
+    embeddings = embed_chunks(chunk_content_list=chunk_contents, task_type=document_task_type(embedding_profile))
 
     # 4. Save to Database with JSONB metadata. Everything below is one short
     #    transaction: replace → quota → re-check → insert → account.
     with get_session() as session:
         try:
+
+            def _reembed(profile: str) -> None:
+                nonlocal embeddings
+                embeddings = embed_chunks(chunk_content_list=chunk_contents, task_type=document_task_type(profile))
+
+            embedding_profile = _pin_embedding_profile(session, bot_id, embedding_profile, _reembed)
+
             # 4a. Replace the previous version of THIS source. A changed
             # ``pricing.pdf`` hashes differently, so the dedup check above
             # passes and, without this, its old chunks stayed live next to the
@@ -458,6 +536,7 @@ def _ingest_document(
                 bot_id=bot_id,
                 source=source,
                 source_char_count=source_char_count,
+                embedding_profile=embedding_profile,
             )
             # Advance the per-account KB counter in the SAME TX as the insert
             # so a rollback below unwinds both. Ordering (insert → increment)
@@ -722,7 +801,6 @@ def run_folder_ingestion(client_id: int, folder_path: str, bot_id: int | None = 
     # stale-counter bug this hook exists to prevent.
     if processed_count > 0:
         try:
-            from app.db.models import Bot
             from app.db.repository import sync_bot_knowledge_state
             from app.db.session import get_session
 
@@ -848,9 +926,7 @@ def batch_web_ingestion(
     # Local import: credit_service depends on db.models which already imports
     # heavily. Keep this lazy so importing pipeline.py stays cheap and there
     # is no risk of a circular import via app.services.
-    from sqlalchemy import select
-
-    from app.db.models import Bot, CreditLedger
+    from app.db.models import CreditLedger
     from app.services import credit_service
 
     all_chunk_contents: list[str] = []
@@ -874,6 +950,9 @@ def batch_web_ingestion(
         if bot_id is not None and cost_per_page > 0:
             _bot_for_ledger = session.get(Bot, bot_id)
             ledger_bot_id = credit_service.resolve_bot_ledger_bot_id(_bot_for_ledger)
+        # The profile every page's vectors are made under. Unlocked here; each
+        # page's insert transaction pins it under ``FOR SHARE`` below.
+        embedding_profile = _bot_embedding_profile(session, bot_id)
 
         for page in pages:
             url = page["url"]
@@ -980,8 +1059,20 @@ def batch_web_ingestion(
         logger.info(f"Batch embedding {len(all_chunk_contents)} chunks from {len(page_boundaries)} pages")
         all_embeddings: list = embed_chunks(
             chunk_content_list=all_chunk_contents,
+            task_type=document_task_type(embedding_profile),
             progress_cb=embed_progress_cb,
         )
+        # Called by ``_pin_embedding_profile`` when the migration task moved
+        # the bot under a running crawl: every chunk not yet stored is remade
+        # under the new profile in ONE call, from the page being pinned to the
+        # end, so the pages after it find their vectors already right.
+        pending_from = 0
+
+        def _reembed_pending(profile: str) -> None:
+            all_embeddings[pending_from:] = embed_chunks(
+                chunk_content_list=all_chunk_contents[pending_from:],
+                task_type=document_task_type(profile),
+            )
 
         # Insert per-page with individual commits to prevent rollback cascade
         total = 0
@@ -1011,6 +1102,14 @@ def batch_web_ingestion(
         for boundary in page_boundaries:
             start = boundary["start_idx"]
             count = boundary["count"]
+
+            # First statement of this page's transaction: pin the profile the
+            # rows are stamped with (see ``_pin_embedding_profile``). Outside
+            # the ``try`` on purpose, so an embedding outage during a re-embed
+            # propagates like the batch embed above does and the job retries,
+            # instead of being counted as one failed page after another.
+            pending_from = start
+            embedding_profile = _pin_embedding_profile(session, bot_id, embedding_profile, _reembed_pending)
 
             page_chunks = all_chunk_contents[start : start + count]
             page_embeddings = all_embeddings[start : start + count]
@@ -1061,6 +1160,7 @@ def batch_web_ingestion(
                     bot_id=bot_id,
                     source="crawl",
                     source_char_count=page_source_chars,
+                    embedding_profile=embedding_profile,
                 )
                 increment_kb_usage(session, client_id, page_source_chars)
                 # Atomic billing: deduct in the same TX as the chunk insert so

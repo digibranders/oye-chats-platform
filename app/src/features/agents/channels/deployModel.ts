@@ -14,7 +14,6 @@
  * asymmetry is the most likely way a customer takes their own widget offline,
  * so it is modelled here rather than left for them to discover in production.
  */
-import { attributionAnchorHtml } from '../../../data/widgetEmbed';
 import { widgetScriptUrl, type PlatformEnv } from '../../../data/platformIntegrations';
 import { formatDateTime, type Tone } from '../../../ui';
 import { t as translateNow } from '../../../i18n/i18n';
@@ -434,26 +433,22 @@ export function domainNotice({
 export interface SnippetInput {
   botKey: string;
   env: PlatformEnv;
-  /** Include the crawlable attribution anchor. */
-  attribution: boolean;
 }
 
 /**
  * The markup a customer pastes. One builder, so the page, the platform guide,
  * the developer email and the AI prompt can never quote three different things.
  *
- * The anchor is not decoration. The widget mounts into a shadow root from
- * JavaScript after a visitor clicks the launcher, so its in-widget badge is
- * invisible to every crawler — this anchor is the only attribution that lands in
- * the HTML the customer's server sends.
+ * Nothing but the script tag goes into the customer's page. OyeChats branding
+ * lives inside the widget, where the `branding_removable` entitlement governs
+ * it; we do not write markup of our own into a customer's site.
  */
 // @i18n-exempt: this builds the HTML the customer pastes into their own site.
 // A translated <script> tag is a broken install.
-export function embedSnippet({ botKey, env, attribution }: SnippetInput): string {
+export function embedSnippet({ botKey, env }: SnippetInput): string {
   // @i18n-exempt: the HTML the customer pastes into their own site. A
   // translated <script> tag is a broken install.
-  const tag = `<script src="${widgetScriptUrl(env)}" data-bot-key="${botKey}"></script>`;
-  return attribution ? `${tag}\n${attributionAnchorHtml(botKey)}` : tag;
+  return `<script src="${widgetScriptUrl(env)}" data-bot-key="${botKey}"></script>`;
 }
 
 /** The origin a Content-Security-Policy has to allow for the bundle to load. */

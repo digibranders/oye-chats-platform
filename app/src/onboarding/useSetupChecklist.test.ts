@@ -21,8 +21,9 @@ vi.mock('@tanstack/react-query', () => ({
 }));
 
 const bots: Bot[] = [];
+const sidebar = vi.hoisted(() => ({ selectedBot: null as unknown }));
 vi.mock('../context/BotContext', () => ({
-  useBotContext: () => ({ bots, loading: false }),
+  useBotContext: () => ({ bots, selectedBot: sidebar.selectedBot, loading: false }),
 }));
 
 function withBot(over: Partial<Bot> = {}) {
@@ -163,5 +164,70 @@ describe('the "capture your first lead" step', () => {
   it('is not done before the stats have loaded', () => {
     leadStats.data = undefined;
     expect(leadStep().done).toBe(false);
+  });
+});
+
+describe('which chatbot the checklist is about', () => {
+  /**
+   * It read `bots[0]`, always.
+   *
+   * The reasoning was that a workspace with several chatbots is past the
+   * checklist. But `SetupJourney` renders above EVERY chatbot's pages, so a
+   * brand-new second chatbot with nothing indexed, no branding and no leads
+   * opened with four of five steps struck through, every one of them earned by
+   * the first chatbot. Reported with a screenshot of exactly that.
+   */
+  const trained = {
+    id: 6,
+    name: 'OyeChats',
+    indexed_chunk_count: 692,
+    bot_logo_source: 'manual',
+    avatar_type: 'upload',
+    manual_field_overrides: [],
+    widget_installed_at: '2026-09-01T00:00:00Z',
+  } as Bot;
+  const fresh = {
+    id: 8,
+    name: 'Eval Bot',
+    indexed_chunk_count: 0,
+    bot_logo_source: null,
+    avatar_type: 'upload',
+    manual_field_overrides: [],
+    widget_installed_at: null,
+  } as Bot;
+
+  afterEach(() => {
+    sidebar.selectedBot = null;
+    leadStats.data = undefined;
+  });
+
+  function withBots(scope?: Bot | null) {
+    bots.length = 0;
+    bots.push(trained, fresh);
+    return renderHook(() => useSetupChecklist(scope)).result.current;
+  }
+
+  it('reports the chatbot it is given, not the first one in the workspace', () => {
+    leadStats.data = { total: 19, with_contact: 3 }; // the FIRST chatbot's leads, were they read
+    const steps = withBots(fresh).steps;
+    const done = Object.fromEntries(steps.map((s) => [s.id, s.done]));
+    expect(done).toEqual({ create: true, train: false, brand: false, install: false, lead: true });
+    // `lead` above is true only because the mocked query returns the same data
+    // for any key; what matters is that every step LINKS to the given chatbot.
+    expect(steps.find((s) => s.id === 'train')!.to).toBe('/chatbots/8/knowledge');
+    expect(steps.find((s) => s.id === 'install')!.to).toBe('/chatbots/8/deploy');
+  });
+
+  it('follows the sidebar scope when no chatbot is given', () => {
+    sidebar.selectedBot = fresh;
+    expect(withBots().steps.find((s) => s.id === 'train')!.done).toBe(false);
+    expect(withBots().steps.find((s) => s.id === 'brand')!.to).toBe('/chatbots/8/experience');
+  });
+
+  it('falls back to the first chatbot with no scope and nothing selected', () => {
+    const steps = withBots().steps;
+    expect(steps.find((s) => s.id === 'train')!.done).toBe(true);
+    expect(steps.find((s) => s.id === 'install')!.done).toBe(true);
+    expect(steps.find((s) => s.id === 'train')!.to).toBe('/chatbots/6/knowledge');
   });
 });

@@ -1065,27 +1065,44 @@ async def run_full_crawl(
             # exist. So we confirm each candidate is actually gone before
             # deleting; check_urls_alive is conservative (only a confirmed
             # 404/410 counts as dead. Timeouts, 5xx, and blocks are kept).
+            #
+            # Every stored URL under the source is read (one query), and the
+            # candidates are split off in Python: the full count is what the
+            # removal cap below is a percentage of.
             with get_session() as del_session:
-                candidate_urls = [
+                stored_urls = [
                     row[0]
                     for row in del_session.query(Document.document_name)
-                    .filter(
-                        domain_expr == sweep_source,
-                        owner_filter,
-                        Document.document_name.notin_(newly_crawled_urls),
-                    )
+                    .filter(domain_expr == sweep_source, owner_filter)
                     .distinct()
                     .all()
                 ]
+            _recrawled = set(newly_crawled_urls)
+            candidate_urls = sorted(u for u in stored_urls if u not in _recrawled)
 
             dead_urls: list[str] = []
             freed = 0
             if candidate_urls:
-                from app.services.url_discovery import check_urls_alive
+                from app.services.url_discovery import check_urls_alive, removal_cap
 
                 async with crawl_heartbeat(client_id):
                     liveness = await check_urls_alive(candidate_urls)
-                dead_urls = [u for u, alive in liveness.items() if not alive]
+                dead_urls = [u for u in candidate_urls if liveness.get(u, True) is False]
+                # The same valve the scheduled re-crawl applies: a whole site
+                # answering 404 mid-deploy must not wipe the knowledge base in
+                # one run. ``max(5, 20%)`` of the stored URLs; the rest stay
+                # until a later crawl confirms them again.
+                cap = removal_cap(len(stored_urls))
+                if len(dead_urls) > cap:
+                    logger.warning(
+                        "Orphan sweep for '%s': %d of %d stored urls answer 404/410; removing %d this run (cap), "
+                        "the rest stay until the next crawl",
+                        sweep_source,
+                        len(dead_urls),
+                        len(stored_urls),
+                        cap,
+                    )
+                    dead_urls = dead_urls[:cap]
 
             deleted = 0
             if dead_urls:

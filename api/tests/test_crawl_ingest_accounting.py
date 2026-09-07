@@ -47,7 +47,7 @@ def _use_test_session(monkeypatch, db) -> None:
     monkeypatch.setattr(
         pipeline,
         "embed_chunks",
-        lambda chunk_content_list, progress_cb=None: [[0.0] * 768 for _ in chunk_content_list],
+        lambda chunk_content_list, task_type=None, progress_cb=None: [[0.0] * 768 for _ in chunk_content_list],
     )
 
 

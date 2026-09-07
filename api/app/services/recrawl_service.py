@@ -63,7 +63,7 @@ from app.services.crawler_service import (
     release_crawl_lock,
 )
 from app.services.knowledge_quota_service import release_kb_usage_for_sources
-from app.services.url_discovery import check_urls_alive
+from app.services.url_discovery import check_urls_alive, removal_cap
 
 logger = logging.getLogger(__name__)
 
@@ -94,19 +94,12 @@ _MAX_ERRORS_IN_SUMMARY: int = 10
 # under a page.
 _MAX_HISTORY_ENTRIES: int = 20
 
-# Safety valve on the removal pass. A confirmed 404 is authoritative for one
-# page, but a whole site answering 404 (a broken deploy, an expired domain, a
-# CDN misconfiguration) would otherwise wipe the knowledge base in a single
-# run. Removals are capped at 20% of the bot's URLs per run, with a floor of 5
-# so a small bot can still be tidied. A site that stays broken loses at most
-# this much per week; one that recovers keeps the rest.
-_REMOVAL_CAP_FLOOR: int = 5
-_REMOVAL_CAP_PERCENT: int = 20
-
 
 def _removal_cap(total_urls: int) -> int:
-    """How many confirmed-gone pages one run may remove: ``max(5, 20%)`` of the bot's URLs."""
-    return max(_REMOVAL_CAP_FLOOR, total_urls * _REMOVAL_CAP_PERCENT // 100)
+    """How many confirmed-gone pages one run may remove: ``max(5, 20%)`` of the
+    bot's URLs. The rule lives in ``url_discovery.removal_cap`` so the
+    interactive crawl's orphan sweep applies exactly the same valve."""
+    return removal_cap(total_urls)
 
 
 async def _confirm_gone(urls: list[str]) -> list[str]:

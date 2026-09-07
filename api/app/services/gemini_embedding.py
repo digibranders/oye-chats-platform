@@ -88,14 +88,26 @@ def _retry_delay_from_429(resp: httpx.Response) -> float | None:
     return float(match.group(1)) if match else None
 
 
-def _embed_one_batch(client: httpx.Client, batch: list[str], max_wait_s: float | None = None) -> list[list[float]]:
+def _embed_one_batch(
+    client: httpx.Client,
+    batch: list[str],
+    max_wait_s: float | None = None,
+    task_type: str | None = None,
+) -> list[list[float]]:
     url = f"{GEMINI_EMBED_URL}/models/{GEMINI_EMBED_MODEL}:batchEmbedContents"
+    # ``taskType`` is what makes the embedding asymmetric: RETRIEVAL_DOCUMENT
+    # for stored chunks, RETRIEVAL_QUERY for the question. It is a property of
+    # the embedding profile (app/core/embedding_profiles.py), never chosen
+    # here, and omitted entirely for the legacy profile so those requests are
+    # byte-identical to what produced the rows they are compared against.
+    request_extra = {"taskType": task_type} if task_type else {}
     body = {
         "requests": [
             {
                 "model": f"models/{GEMINI_EMBED_MODEL}",
                 "content": {"parts": [{"text": text}]},
                 "outputDimensionality": EMBED_DIMENSIONS,
+                **request_extra,
             }
             for text in batch
         ]
@@ -153,11 +165,19 @@ def _embed_one_batch(client: httpx.Client, batch: list[str], max_wait_s: float |
 def embed_texts(
     texts: list[str],
     *,
+    task_type: str | None = None,
     progress_cb: Callable[[int, int], None] | None = None,
     max_wait_s: float | None = None,
     _client: httpx.Client | None = None,
 ) -> list[list[float]]:
     """Embed ``texts`` → EMBED_DIMENSIONS-wide, L2-normalized vectors.
+
+    ``task_type`` is the Gemini ``taskType`` the embedding profile prescribes
+    (``document_task_type`` / ``query_task_type`` in
+    ``app/core/embedding_profiles.py``); ``None`` sends none, which is the
+    legacy symmetric profile. Callers pass the profile's answer, never a
+    literal, so a query is always embedded the way the chunks it will be
+    compared against were.
 
     Batches of ``_MAX_BATCH`` are sent to Gemini **concurrently** (up to the
     runtime-tunable ``embed.concurrency``, super-admin Models & RAG card) since
@@ -193,7 +213,9 @@ def embed_texts(
     start = perf_counter()
     pool = ThreadPoolExecutor(max_workers=workers)
     try:
-        future_to_idx = {pool.submit(_embed_one_batch, client, b, max_wait_s): i for i, b in enumerate(batches)}
+        future_to_idx = {
+            pool.submit(_embed_one_batch, client, b, max_wait_s, task_type): i for i, b in enumerate(batches)
+        }
         try:
             for future in as_completed(future_to_idx):
                 idx = future_to_idx[future]

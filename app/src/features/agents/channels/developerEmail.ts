@@ -32,15 +32,12 @@ export function developerEmail({
   env,
   apiBaseUrl,
   platformName,
-  attribution,
 }: {
   botName: string;
   snippet: string;
   env: PlatformEnv;
   apiBaseUrl: string;
   platformName?: string | null;
-  /** True when the snippet carries the attribution anchor, so the note applies. */
-  attribution: boolean;
 }): { subject: string; body: string; href: string } {
   const subject = `Please add the ${botName} chat widget to our website`;
   const body = [
@@ -59,14 +56,6 @@ export function developerEmail({
     `- It must be in <body>, not <head>.`,
     `- If we send a Content-Security-Policy header, it needs`,
     `  script-src ${scriptOrigin(env)} and connect-src ${apiOrigin(apiBaseUrl)}.`,
-    ...(attribution
-      ? [
-          ``,
-          `The second line is a small visible "Powered by OyeChats" credit link.`,
-          `Please keep it in the served HTML and do not hide it with CSS. A hidden`,
-          `link is a Google policy violation against our own domain.`,
-        ]
-      : []),
     ``,
     `Thanks!`,
   ].join('\n');

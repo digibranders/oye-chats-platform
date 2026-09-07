@@ -9,7 +9,6 @@ templates in the send path anymore, so the design lives in one place and the gal
 (``scripts/build_email_gallery``) renders these same functions.
 """
 
-import asyncio
 import base64
 import contextlib
 import json
@@ -493,13 +492,17 @@ def send_email_async(
             to_email, subject, html_body, reply_to=reply_to, sender_name=sender_name, attachments=attachments
         )
 
-    try:
-        loop = asyncio.get_event_loop()
-        loop.run_in_executor(None, _send)
-    except RuntimeError:
-        import threading
+    # The dedicated email pool (``thread_pool.submit_email``). Its workers are
+    # joined at interpreter exit, so an email accepted seconds before a restart
+    # is still delivered, and it is separate from the shared background pool,
+    # whose three workers run the per-turn BANT and groundedness LLM calls: a
+    # signup or password-reset code must not wait minutes behind those. The
+    # loop's default executor is not used either; it serves every
+    # ``asyncio.to_thread`` on the chat path and outbound mail must not queue a
+    # visitor's turn behind a slow SMTP relay.
+    from app.core.thread_pool import submit_email
 
-        threading.Thread(target=_send, daemon=True).start()
+    submit_email(_send)
 
 
 def send_template_async(
@@ -522,13 +525,17 @@ def send_template_async(
     def _send():
         _send_brevo_template(to_email, template_id, params, reply_to=reply_to, sender_name=sender_name)
 
-    try:
-        loop = asyncio.get_event_loop()
-        loop.run_in_executor(None, _send)
-    except RuntimeError:
-        import threading
+    # The dedicated email pool (``thread_pool.submit_email``). Its workers are
+    # joined at interpreter exit, so an email accepted seconds before a restart
+    # is still delivered, and it is separate from the shared background pool,
+    # whose three workers run the per-turn BANT and groundedness LLM calls: a
+    # signup or password-reset code must not wait minutes behind those. The
+    # loop's default executor is not used either; it serves every
+    # ``asyncio.to_thread`` on the chat path and outbound mail must not queue a
+    # visitor's turn behind a slow SMTP relay.
+    from app.core.thread_pool import submit_email
 
-        threading.Thread(target=_send, daemon=True).start()
+    submit_email(_send)
 
 
 def send_template_to_multiple(
@@ -602,8 +609,19 @@ def send_qualified_lead_email(
     tier: str = "sql",
     *,
     reply_to: str | None = None,
+    qualification: list[tuple[str, str | None]] | None = None,
+    framework_label: str = "BANT",
 ):
-    """Send email when a lead reaches a BANT qualification tier."""
+    """Send email when a lead reaches a qualification tier.
+
+    ``qualification`` is the ``(label, captured value)`` row per dimension of
+    the bot's ACTIVE framework, as built by ``rag_service._qualification_rows``;
+    ``framework_label`` names that framework in the section heading. Without
+    it the legacy ``bant`` dict is rendered as the four BANT rows, which is
+    what every caller did before frameworks existed and what a MEDDIC or CHAMP
+    bot used to receive: an empty table, because none of its dimensions has a
+    BANT column.
+    """
     tier_key = (tier or "sql").lower()
     tier_label = {
         "mql": "Marketing Qualified Lead",
@@ -621,9 +639,11 @@ def send_qualified_lead_email(
             f"A visitor on {strong(safe_bot)} has reached {esc(tier_label)} status. They match your "
             f"qualification criteria. &nbsp;{ed.chip(tier_label, chip_kind)}"
         )
-        + ed.section_label("Qualification (BANT)")
+        + ed.section_label(f"Qualification ({esc(framework_label)})")
         + info_table(
-            [
+            [(esc(label), esc(value)) for label, value in qualification]
+            if qualification
+            else [
                 ("Need", esc(bant.get("bant_need"))),
                 ("Budget", esc(bant.get("bant_budget"))),
                 ("Authority", esc(bant.get("bant_authority"))),
@@ -1375,7 +1395,6 @@ def send_install_invite_email(
     snippet: str,
     script_origin: str,
     api_origin: str,
-    attribution: bool,
     requester_name: str | None,
     reply_to: str,
     platform_name: str | None = None,
@@ -1392,9 +1411,9 @@ def send_install_invite_email(
     recipient is a third party who never signed up with us, so a reply asking
     "did you actually ask for this?" has to reach the colleague who did.
 
-    The snippet is built by the caller from the bot's OWN entitlement, never
-    accepted from a request body: nothing downstream re-checks a string a
-    customer has already pasted into their repository.
+    The snippet is built by the caller, never accepted from a request body:
+    nothing downstream re-checks a string a customer has already pasted into
+    their repository.
     """
     asker = esc(requester_name) if requester_name else "A colleague"
     safe_bot = esc(bot_name)
@@ -1416,16 +1435,6 @@ def send_install_invite_email(
         + p(
             "2. If the site sends a Content-Security-Policy header, it needs "
             f"{strong(esc('script-src ' + script_origin))} and {strong(esc('connect-src ' + api_origin))}."
-        )
-        + (
-            p(
-                "The second line is a small visible &ldquo;Powered by OyeChats&rdquo; credit link. Please keep it "
-                "in the served HTML and do not hide it with CSS: a hidden link is a Google policy violation "
-                "against your own domain.",
-                top=8,
-            )
-            if attribution
-            else ""
         )
         + p(f"Questions? Just reply to this email and it goes straight back to {esc(reply_to)}.", top=8)
     )

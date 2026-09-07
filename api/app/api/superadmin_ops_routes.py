@@ -347,7 +347,7 @@ def reindex_document(
     Enqueues ``task_reembed_document`` on ARQ when the worker is enabled; when
     it isn't (local dev, worker down) it falls back to re-embedding inline so
     the action still completes. Either way the document's vector is recomputed
-    with the current embedding provider.
+    under the owning bot's embedding profile.
     """
     _require_write(admin)
     with get_session() as session:
@@ -380,30 +380,14 @@ def reindex_document(
 def _reembed_document_inline(document_id: int) -> None:
     """Recompute a single document's embedding synchronously.
 
-    Used as the no-worker fallback for the reindex endpoint. Mirrors the SQL
-    that ``task_reembed_document`` runs so behaviour is identical either way.
+    Used as the no-worker fallback for the reindex endpoint. Runs the same
+    service function ``task_reembed_document`` runs, so behaviour is identical
+    either way: the vector is remade under the owning bot's embedding profile
+    and the row is stamped with it.
     """
-    from sqlalchemy import text
+    from app.services.embedding_profile_service import reembed_document
 
-    from app.ingestion.embedder import embed_chunks
-
-    with get_session() as session:
-        row = session.execute(
-            text("SELECT content FROM documents WHERE id = :id"),
-            {"id": document_id},
-        ).fetchone()
-        if row is None:
-            return
-        content = row[0] or ""
-
-    embeddings = embed_chunks([content])
-    emb_str = "[" + ",".join(str(v) for v in embeddings[0]) + "]"
-    with get_session() as session:
-        session.execute(
-            text("UPDATE documents SET embedding = CAST(:emb AS vector) WHERE id = :id"),
-            {"emb": emb_str, "id": document_id},
-        )
-        session.commit()
+    reembed_document(document_id)
 
 
 # ── Revenue cohorts ──────────────────────────────────────────────────────────

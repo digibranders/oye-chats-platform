@@ -57,7 +57,9 @@ class TestFindsARealInstall:
         )
         assert _verdict(html) == "installed"
 
-    def test_the_attribution_anchor_beside_it_changes_nothing(self):
+    def test_a_legacy_attribution_anchor_beside_it_changes_nothing(self):
+        # Sites installed before the attribution anchor was withdrawn still
+        # carry one. It is not what the check keys off, and never was.
         html = f'{CANONICAL}<a href="https://www.oyechats.com/?ref={BOT}" rel="nofollow">Powered by OyeChats</a>'
         assert _verdict(html) == "installed"
 

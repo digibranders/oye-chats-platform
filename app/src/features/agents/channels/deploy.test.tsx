@@ -275,19 +275,11 @@ describe('PlatformGuide', () => {
   const base = {
     botKey: BOT_KEY,
     env: 'production' as const,
-    attribution: true,
-    resolving: false,
   };
 
   it('explains the emptiness rather than showing a blank panel', () => {
     render(<PlatformGuide {...base} platformId={null} onPlatformChange={vi.fn()} />);
     expect(screen.getByText('Choose a platform to see the steps')).toBeInTheDocument();
-  });
-
-  it('waits for the plan before quoting a snippet that might be wrong', () => {
-    render(<PlatformGuide {...base} resolving platformId="html" onPlatformChange={vi.fn()} />);
-    expect(screen.getByLabelText('Working out which snippet your plan needs')).toBeInTheDocument();
-    expect(screen.queryByText(/Add the script tag/i)).not.toBeInTheDocument();
   });
 
   it('renders the chosen platform’s own steps, with the live key in them', () => {
@@ -296,15 +288,10 @@ describe('PlatformGuide', () => {
     expect(screen.getAllByText(new RegExp(BOT_KEY)).length).toBeGreaterThan(0);
   });
 
-  it('drops the attribution line from the steps for an entitled plan', () => {
-    const { rerender } = render(
-      <PlatformGuide {...base} platformId="html" onPlatformChange={vi.fn()} />,
-    );
-    expect(screen.getAllByText(/nofollow/).length).toBeGreaterThan(0);
-    rerender(
-      <PlatformGuide {...base} attribution={false} platformId="html" onPlatformChange={vi.fn()} />,
-    );
+  it('gives the customer the script tag and no markup of ours', () => {
+    render(<PlatformGuide {...base} platformId="html" onPlatformChange={vi.fn()} />);
     expect(screen.queryByText(/nofollow/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Powered by OyeChats/)).not.toBeInTheDocument();
   });
 
   it('is a searchable control with a real accessible name', () => {
@@ -337,8 +324,6 @@ describe('SnippetSection — emailing the developer', () => {
     env: 'production' as const,
     apiBaseUrl: 'https://api.oyechats.com',
     platform: null,
-    attribution: true,
-    resolving: false,
     devInviteEmail: null as string | null,
     devInviteSentAt: null as string | null,
   };
@@ -612,7 +597,7 @@ describe('every platform hands out a snippet the install check can find', () => 
   for (const platform of platforms) {
     it(`${platform.id} names the loader and carries the key`, () => {
       const code = platform
-        .getSteps(KEY, 'production', { attribution: true })
+        .getSteps(KEY, 'production')
         .map((step) => step.code ?? '')
         .join('\n');
 

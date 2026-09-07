@@ -53,20 +53,24 @@ Phase 2 persists. It adds no new schema.
   generation-only. Requirement 17 is a hard constraint.
 - Per-language vector indexes or duplicated knowledge bases. Requirement 16.
   Unified retrieval is proven viable below.
-- Switching embedding models. `gemini-embedding-001` (768-dim, symmetric, no
-  `task_type`) is retained; adopting `gemini-embedding-2` would require
-  re-embedding the whole corpus and is a separate decision.
+- Switching embedding models. `gemini-embedding-001` (768-dim) is retained;
+  adopting `gemini-embedding-2` is a new embedding profile plus a full
+  migration run (`api/app/core/embedding_profiles.py`) and a separate decision.
 
 ## Retrieval strategy: why unified retrieval works (requirement 16)
 
 No per-language index is needed. Three verified facts:
 
-1. **The embedding model is multilingual and symmetric.**
-   `gemini-embedding-001` is called in `api/app/services/gemini_embedding.py`
-   (`batchEmbedContents` around lines 92-96) with **no `task_type`**. Queries
-   and documents therefore share one symmetric space, so a Hindi query vector
-   lands near the English chunk vector for the same concept, and there is no
-   `RETRIEVAL_QUERY`/`RETRIEVAL_DOCUMENT` asymmetry to reconcile.
+1. **The embedding model is multilingual, and queries and chunks always
+   share one space.** `gemini-embedding-001` is called in
+   `api/app/services/gemini_embedding.py` (`batchEmbedContents`) with the
+   `taskType` the bot's embedding profile prescribes: none on the legacy
+   profile (one symmetric space), `RETRIEVAL_DOCUMENT` for chunks and
+   `RETRIEVAL_QUERY` for questions on the current one. Either way a Hindi
+   query vector lands near the English chunk vector for the same concept,
+   and vector search only ever compares a query against chunks on the same
+   profile (`app/core/embedding_profiles.py`), so there is no cross-profile
+   asymmetry to reconcile.
 2. **Cosine distance is order-equivalent to L2** for the L2-normalized unit
    vectors used here (`repository.py:802-807`), so no metric change is needed.
 3. **`Document` already has no language column**, and `metadata_info` (JSONB)

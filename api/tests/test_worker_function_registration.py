@@ -1,7 +1,9 @@
 """What the ARQ worker will actually accept and how it keeps job results.
 
-I11: ``task_reembed_all_documents`` existed, was documented, and was never in
-``WorkerSettings.functions`` — every enqueue of it was rejected outright.
+I11: the bulk re-embed task existed, was documented, and was never in
+``WorkerSettings.functions`` — every enqueue of it was rejected outright. Its
+successor, ``task_migrate_embedding_profile``, must stay registered, and with
+a timeout long enough for a whole corpus.
 
 I7 (worker half): the demo-screenshot capture and the install probe are both
 enqueued under a FIXED job id so a burst of triggers collapses into one job.
@@ -40,10 +42,10 @@ def test_every_registered_entry_is_unique(worker_settings):
     assert len(names) == len(set(names))
 
 
-def test_reembed_all_documents_is_registered_with_a_long_timeout(worker_settings):
-    entry = _registered(worker_settings).get("task_reembed_all_documents")
+def test_embedding_profile_migration_is_registered_with_a_long_timeout(worker_settings):
+    entry = _registered(worker_settings).get("task_migrate_embedding_profile")
     assert entry is not None, "an unregistered task cannot be enqueued at all"
-    # The backfill paces itself against the shared embed rate limiter and runs
+    # The migration paces itself against the shared embed rate limiter and runs
     # far past the worker-wide 1600s default.
     assert entry.timeout_s is not None and entry.timeout_s > worker_settings.job_timeout
 
