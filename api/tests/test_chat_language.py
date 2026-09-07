@@ -418,6 +418,56 @@ class TestPhase3FirstTurnDetection:
         assert result.source == "message_detected"
         assert result.locale == "hi-IN"
 
+    def test_confident_detection_outranks_the_host_page_lang_attribute(self, monkeypatch):
+        """``<html lang>`` describes the PAGE, not the visitor.
+
+        The widget reads that attribute on nearly every install and sends it as
+        ``language_source="html_lang"``, so with the tier missing from
+        ``_DETECTION_OVERRIDABLE_SOURCES`` a Devanagari first message on any
+        page declaring ``lang="en"`` was answered in English and the session
+        settled as English: on real sites detection was as unreachable as it
+        had been behind the browser header. A locale the customer DECLARED
+        through the JS API (``site``) is a choice and still wins, see
+        ``test_a_site_declared_locale_is_never_overridden_by_detection``.
+        """
+        bot = _build_bot()
+        body = ChatRequest(
+            question="नमस्ते, मुझे कीमत बताइए",
+            session_id=SESSION_ID,
+            locale="en-IN",
+            language_source="html_lang",
+        )
+        db = _mock_db(row=None)
+        monkeypatch.setattr("app.api.chat_routes.get_session", lambda: _session_ctx(db))
+        ensure = MagicMock()
+        monkeypatch.setattr("app.api.chat_routes.ensure_chat_session", ensure)
+
+        result = _resolve_visitor_language_and_update_session(
+            _request_with_header("en-US,en;q=0.9"), body, bot, SESSION_ID
+        )
+        assert result.source == "message_detected"
+        assert result.locale == "hi-IN"
+        assert result.language == "hi"
+        # The session settles as Hindi, not as the page's English.
+        assert ensure.call_args.kwargs["language_source"] == "message_detected"
+        assert ensure.call_args.kwargs["locale"] == "hi-IN"
+
+    def test_the_page_lang_attribute_still_decides_when_the_message_carries_no_signal(self, monkeypatch):
+        bot = _build_bot()
+        body = ChatRequest(
+            question="Bonjour, je voudrais des informations",
+            session_id=SESSION_ID,
+            locale="fr-FR",
+            language_source="html_lang",
+        )
+        db = _mock_db(row=None)
+        monkeypatch.setattr("app.api.chat_routes.get_session", lambda: _session_ctx(db))
+        monkeypatch.setattr("app.api.chat_routes.ensure_chat_session", MagicMock())
+
+        result = _resolve_visitor_language_and_update_session(_request_with_header(None), body, bot, SESSION_ID)
+        assert result.source == "html_lang"
+        assert result.locale == "fr-FR"
+
     def test_an_undetectable_message_leaves_the_browser_header_in_place(self, monkeypatch):
         """The browser tier still decides when the message carries no signal."""
         bot = _build_bot()

@@ -128,17 +128,119 @@ _DEDUP_DATE_PATTERNS = (
     ),
 )
 
-# Whole-line patterns to drop entirely (the line is essentially metadata).
-_DEDUP_TIMESTAMP_LINE_PATTERNS = (
-    # "Last updated: ...", "Last modified ...", "Published on ...", "Posted: ..."
-    re.compile(
-        r"(?im)^[\s>\-*\"'|]*"
-        r"(?:last\s+(?:updated|modified|reviewed)|published(?:\s+on)?|updated(?:\s+on)?|posted(?:\s+on)?|created(?:\s+on)?|copyright|©)"
-        r"\s*[:\--]?\s*.*$"
-    ),
-    # Bare "(c) 2026" / "© 2026 Company Name" footer lines
-    re.compile(r"(?im)^[\s>\-*\"'|]*(?:©|\(c\))\s*\d{4}.*$"),
+# Whole lines dropped from the hash input. A line is dropped only when it is
+# METADATA: a "Last updated" / "Published on" / "Posted" label whose remainder
+# is nothing but a date, or a copyright notice carrying its year. The previous
+# rule dropped ANY line that merely began with one of those words, so "Updated
+# pricing: the Pro plan is now $99/month" hashed identically to the page before
+# the price change, the re-crawl skipped it as unchanged, and the customer's
+# edit never reached the knowledge base. Every guard below errs toward keeping
+# the line: a kept line still has its dates normalised to ``<DATE>`` (so a
+# bumped timestamp inside it cannot flip the hash), whereas a dropped line is
+# invisible to the hash for good.
+
+# A label line longer than this is prose that happens to start with a label.
+_DEDUP_META_LINE_MAX_CHARS = 120
+
+# Markdown / quote / table decoration a metadata line may start with.
+_DEDUP_LINE_LEAD = r"""^[\s>\-*"'|#]*"""
+
+# "Last updated: <rest>", "Published on <rest>", "Posted: <rest>", "Date modified <rest>"
+_DEDUP_META_LINE_PREFIX = re.compile(
+    _DEDUP_LINE_LEAD
+    + r"(?:last\s+(?:updated|modified|reviewed)|(?:date\s+)?(?:published|updated|modified|posted|created)(?:\s+(?:on|at))?)\b"
+    + r"\s*[:\-–—]?\s*(?P<rest>.*?)\s*$",
+    re.IGNORECASE,
 )
+
+# "© 2026 Acme Inc", "(c) 2026", "Copyright © 2019-2026 Acme Inc. All rights
+# reserved.", "Copyright 2025 Acme". The year must follow the marker directly:
+# "(c) Since 2019, all refunds are processed within 14 days" and "Copyright of
+# all content produced in 2020 belongs to the client" are policy clauses, and
+# hiding them from the hash would hide an edit to them from the re-crawl.
+_DEDUP_COPYRIGHT_LINE = re.compile(
+    _DEDUP_LINE_LEAD + r"(?:copyright\s*(?:©|\(c\))?|©|\(c\))\s*(?:19|20)\d{2}\b",
+    re.IGNORECASE,
+)
+_DEDUP_YEAR = re.compile(r"\b(?:19|20)\d{2}\b")
+
+# A price, a discount, a rate: never metadata, whatever the line starts with.
+_DEDUP_SUBSTANTIVE_MARKERS = re.compile(r"[$€£¥₹%]")
+
+# The tokens a date-shaped remainder is made of. Each is erased from the
+# remainder in turn; a metadata line has nothing alphanumeric left afterwards,
+# while "for teams of 5-50 people, our Growth plan includes SSO" keeps every
+# word that matters. Month and weekday names are matched whole so "market"
+# and "decide" are not mistaken for "Mar" and "Dec".
+_DEDUP_DATE_TOKEN_PATTERNS = (
+    *_DEDUP_DATE_PATTERNS,
+    # Relative: "2 days ago", "an hour ago", "yesterday", "just now"
+    re.compile(
+        r"\b(?:\d+|an?|one)\s+(?:sec(?:ond)?|min(?:ute)?|hour|day|week|month|year)s?\s+ago\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\b(?:yesterday|today|just\s+now|recently)\b", re.IGNORECASE),
+    # Time of day and zone: "10:30 AM", "14:05:00 UTC"
+    re.compile(r"\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:am|pm)?\b", re.IGNORECASE),
+    re.compile(r"\b(?:utc|gmt|[ecmp][sd]t|ist|cet|cest|bst)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?"
+        r"|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b\.?",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:mon(?:day)?|tue(?:s|sday)?|wed(?:nesday)?|thu(?:rs|rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b\.?",
+        re.IGNORECASE,
+    ),
+    _DEDUP_YEAR,
+    # Day of month, with or without its ordinal: "3", "15th"
+    re.compile(r"\b\d{1,2}(?:st|nd|rd|th)?\b", re.IGNORECASE),
+    # Connectives a written-out date needs: "on the 3rd of March, at 10:00"
+    re.compile(r"\b(?:on|at|in|the|of|and|an?)\b", re.IGNORECASE),
+)
+
+_DEDUP_ALNUM = re.compile(r"[^\W_]")
+# One line at a time, newline excluded, so a matched line can be blanked in
+# place while its line ending (``\n`` or ``\r\n``) survives untouched.
+_DEDUP_ANY_LINE = re.compile(r"(?m)^(.*)$")
+
+
+def _is_dedup_metadata_line(line: str) -> bool:
+    """Whether ``line`` is volatile page metadata the dedup hash should not see.
+
+    Two shapes qualify, and nothing else:
+
+    * A timestamp label ("Last updated", "Published on", "Posted", "Created",
+      "Modified") whose remainder is entirely date-shaped: a date in any of
+      the ``_DEDUP_DATE_PATTERNS`` forms, a month or a year on its own, or a
+      relative time such as "2 days ago". The remainder is stripped of those
+      tokens and the line is metadata only if nothing alphanumeric survives,
+      so "Updated pricing: the Pro plan is now $99/month" and "Created for
+      teams of 5-50 people" are kept.
+    * A copyright notice whose year follows the marker directly ("© 2026
+      Acme"): the year is the only part of it that changes, and it changes on
+      every site every January. A clause that merely starts with "(c)" or
+      "Copyright" and mentions a year further along is prose and is kept.
+
+    A line over ``_DEDUP_META_LINE_MAX_CHARS`` is prose; a line containing a
+    currency symbol or a percentage is a price. Both are always kept.
+    """
+    stripped = line.strip()
+    if not stripped or _DEDUP_SUBSTANTIVE_MARKERS.search(stripped):
+        return False
+    # Checked before the length cap: a trademark-laden footer runs well past
+    # 120 chars and its year still ticks over every January.
+    if _DEDUP_COPYRIGHT_LINE.match(stripped):
+        return True
+    if len(stripped) > _DEDUP_META_LINE_MAX_CHARS:
+        return False
+    match = _DEDUP_META_LINE_PREFIX.match(stripped)
+    if match is None:
+        return False
+    rest = match.group("rest")
+    for pattern in _DEDUP_DATE_TOKEN_PATTERNS:
+        rest = pattern.sub(" ", rest)
+    return _DEDUP_ALNUM.search(rest) is None
 
 
 def _normalize_for_dedup_hash(text: str) -> str:
@@ -151,14 +253,18 @@ def _normalize_for_dedup_hash(text: str) -> str:
       * A re-crawl where a real paragraph changed produces a DIFFERENT hash
         → page is re-ingested → updated content reaches the KB. ✓
 
-    Conservative on purpose: only patterns that are reliably date-shaped or
-    sit in a clearly-metadata sentence get scrubbed. Numbers embedded in
-    prose ("Q4 2026 revenue grew 12%") are untouched because they could be
-    substantive content.
+    Conservative on purpose: only lines ``_is_dedup_metadata_line`` classes
+    as metadata are blanked, and only patterns that are reliably date-shaped
+    get scrubbed. Numbers embedded in prose ("Q4 2026 revenue grew 12%") are
+    untouched because they could be substantive content.
     """
-    out = text
-    for pattern in _DEDUP_TIMESTAMP_LINE_PATTERNS:
-        out = pattern.sub("", out)
+    # A metadata line is blanked, not deleted, and every line keeps its own
+    # ending. That is the exact shape the previous regex produced (it
+    # substituted "" for the line and left the newline), and every stored
+    # dedup hash was computed from it. Reproducing it byte for byte keeps
+    # those hashes valid, so the first crawl after this change does not
+    # re-embed, and re-bill, every page that carries a "Last updated" line.
+    out = _DEDUP_ANY_LINE.sub(lambda m: "" if _is_dedup_metadata_line(m.group(1)) else m.group(1), text)
     for pattern in _DEDUP_DATE_PATTERNS:
         out = pattern.sub("<DATE>", out)
     # Collapse the whitespace we may have left behind so the hash is stable

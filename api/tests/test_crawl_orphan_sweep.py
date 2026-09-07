@@ -15,7 +15,21 @@ import app.services.crawl_orchestrator as orch
 import app.services.url_discovery as url_discovery
 
 
-def _wire_common(monkeypatch, del_session, candidates, liveness):
+def _unchanged_ingest(cid, pages, **kw):
+    """``batch_web_ingestion`` when every page dedup-skipped: nothing written."""
+    return {
+        "chunks": 0,
+        "pages_changed": 0,
+        "pages_unchanged": len(pages),
+        "pages_charged": 0,
+        "pages_failed": 0,
+        "credits_deducted": 0,
+        "aborted": False,
+        "abort_reason": None,
+    }
+
+
+def _wire_common(monkeypatch, del_session, candidates, liveness, ingest=None):
     q = MagicMock()
     del_session.query.return_value = q
     q.filter.return_value = q
@@ -47,11 +61,14 @@ def _wire_common(monkeypatch, del_session, candidates, liveness):
     monkeypatch.setattr(
         orch,
         "batch_web_ingestion",
-        lambda cid, pages, **kw: {
-            "chunks": len(pages),
-            "pages_charged": len(pages),
-            "credits_deducted": 5 * len(pages),
-        },
+        ingest
+        or (
+            lambda cid, pages, **kw: {
+                "chunks": len(pages),
+                "pages_charged": len(pages),
+                "credits_deducted": 5 * len(pages),
+            }
+        ),
     )
     monkeypatch.setattr(orch, "set_crawl_progress", lambda *a, **k: None)
     monkeypatch.setattr(orch, "release_crawl_lock", lambda *a, **k: None)
@@ -101,6 +118,44 @@ async def test_orphan_sweep_retains_live_pages_on_discovery_shortfall(monkeypatc
     assert set(checked["urls"]) == set(candidates)
     # Nothing is confirmed gone → no deletion runs.
     q.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_orphan_sweep_runs_when_every_surviving_page_is_unchanged(monkeypatch):
+    """The sweep's primary case: the customer deleted one page and changed
+    nothing else. Every surviving page dedup-skips, so the crawl writes zero
+    chunks. The old ``total_chunks > 0`` gate made exactly that re-crawl the
+    one that never swept, and the bot kept quoting the deleted page."""
+    del_session = MagicMock()
+    candidates = ["https://acme.test/retired", "https://acme.test/still-here"]
+    liveness = {"https://acme.test/retired": False, "https://acme.test/still-here": True}
+    q, checked = _wire_common(monkeypatch, del_session, candidates, liveness, ingest=_unchanged_ingest)
+
+    released: list[str] = []
+
+    def fake_release(session, *, client_id, bot_id, document_names):
+        released.extend(document_names)
+        return 0
+
+    monkeypatch.setattr(orch, "release_kb_usage_for_sources", fake_release)
+
+    result = await orch.run_full_crawl(
+        client_id=1,
+        bot_id=None,
+        url="https://acme.test",
+        max_pages=50,
+        use_js=False,
+        replace_source="acme.test",
+        cost_per_page=5,
+    )
+
+    assert result["chunks_processed"] == 0
+    # The sweep ran: liveness was checked for every stored page missing from
+    # this crawl…
+    assert set(checked["urls"]) == set(candidates)
+    # …and only the page the site confirms gone was released and deleted.
+    assert released == ["https://acme.test/retired"]
+    q.delete.assert_called_once()
 
 
 @pytest.mark.asyncio

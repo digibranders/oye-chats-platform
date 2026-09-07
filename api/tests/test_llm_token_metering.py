@@ -10,11 +10,14 @@ per-bot prompt/completion token counts, both for non-streaming responses
 chunk with empty `choices` and populated `usage`).
 """
 
+import contextlib
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from app.core.metrics import increment_metric_counter_by
+from app.services import llm_service
 from app.services.llm_service import _meter_token_usage, _stream_from_model
 
 
@@ -27,11 +30,16 @@ class TestIncrementMetricCounterBy:
         with patch("app.core.metrics.get_redis", return_value=mock_redis):
             increment_metric_counter_by("llm_tokens_prompt", 250, bot_id=7)
 
-        mock_pipe.incrby.assert_called_once()
-        key_arg, amount_arg = mock_pipe.incrby.call_args[0]
+        # Per-bot key AND the global key, in one pipeline: the platform-wide
+        # token total is the per-bot events summed, and the super-admin read
+        # defaults to the global scope.
+        assert mock_pipe.incrby.call_count == 2
+        (key_arg, amount_arg), (global_key, global_amount) = (c[0] for c in mock_pipe.incrby.call_args_list)
         assert "llm_tokens_prompt" in key_arg
         assert "b7" in key_arg
         assert amount_arg == 250
+        assert "llm_tokens_prompt" in global_key and "global" in global_key
+        assert global_amount == 250
 
     def test_skips_redis_call_for_zero_or_negative_amount(self):
         mock_redis = MagicMock()
@@ -122,3 +130,130 @@ class TestStreamRequestsUsageAndMetersFinalChunk:
 
         assert chunks == ["hello"]
         mock_meter.assert_called_once_with(usage_chunk, {"bot_id": 3})
+
+
+def _content_chunk(text: str, *, prompt_tokens: int | None = None, completion_tokens: int | None = None):
+    usage = (
+        MagicMock(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
+        if prompt_tokens is not None
+        else None
+    )
+    chunk = MagicMock(usage=usage)
+    chunk.choices = [MagicMock(delta=MagicMock(content=text))]
+    return chunk
+
+
+def _stream_of(*chunks):
+    async def fake_aiter():
+        for chunk in chunks:
+            yield chunk
+
+    async def fake_acompletion(**kwargs):
+        mock_stream = MagicMock()
+        mock_stream.__aiter__ = lambda self=None: fake_aiter()
+        return mock_stream
+
+    return fake_acompletion
+
+
+class TestStreamMetersUsageOnceFromTheLastUsageChunk:
+    """OpenAI reports usage on one final chunk, but a provider that attaches
+    CUMULATIVE usage to every chunk used to be metered once per chunk, so a
+    reply of N chunks was billed to FinOps roughly N/2 times over."""
+
+    @pytest.mark.asyncio
+    async def test_cumulative_per_chunk_usage_is_metered_once_from_the_last_chunk(self):
+        first = _content_chunk("a", prompt_tokens=80, completion_tokens=1)
+        second = _content_chunk("b", prompt_tokens=80, completion_tokens=2)
+        final = MagicMock(usage=MagicMock(prompt_tokens=80, completion_tokens=3))
+        final.choices = []
+
+        with (
+            patch("app.services.llm_service.litellm.acompletion", side_effect=_stream_of(first, second, final)),
+            patch("app.services.llm_service._meter_token_usage") as mock_meter,
+        ):
+            chunks = [c async for c in _stream_from_model("openai/gpt-5.4-mini", "hi", None, {"bot_id": 3})]
+
+        assert chunks == ["a", "b"]
+        mock_meter.assert_called_once_with(final, {"bot_id": 3})
+
+    @pytest.mark.asyncio
+    async def test_a_stream_without_usage_is_not_metered(self):
+        with (
+            patch(
+                "app.services.llm_service.litellm.acompletion",
+                side_effect=_stream_of(_content_chunk("a"), _content_chunk("b")),
+            ),
+            patch("app.services.llm_service._meter_token_usage") as mock_meter,
+        ):
+            chunks = [c async for c in _stream_from_model("openai/gpt-5.4-mini", "hi", None, {"bot_id": 3})]
+
+        assert chunks == ["a", "b"]
+        mock_meter.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_usage_seen_before_a_mid_stream_failure_is_still_metered_once(self):
+        """The tokens were consumed whether or not the stream finished cleanly,
+        so the last usage seen is metered from the cleanup path, once."""
+        first = _content_chunk("a", prompt_tokens=80, completion_tokens=1)
+
+        async def fake_aiter():
+            yield first
+            raise RuntimeError("connection reset")
+
+        async def fake_acompletion(**kwargs):
+            mock_stream = MagicMock()
+            mock_stream.__aiter__ = lambda self=None: fake_aiter()
+            return mock_stream
+
+        with (
+            patch("app.services.llm_service.litellm.acompletion", side_effect=fake_acompletion),
+            patch("app.services.llm_service._meter_token_usage") as mock_meter,
+            pytest.raises(RuntimeError, match="connection reset"),
+        ):
+            async for _ in _stream_from_model("openai/gpt-5.4-mini", "hi", None, {"bot_id": 3}):
+                pass
+
+        mock_meter.assert_called_once_with(first, {"bot_id": 3})
+
+
+class TestStreamUsageReachesLangfuse:
+    """The streaming generation used to be recorded with output only, so every
+    streamed reply (the production chat path) showed no token usage in
+    Langfuse while the non-streaming calls did."""
+
+    @staticmethod
+    def _capturing_generation(updates: list):
+        @contextlib.contextmanager
+        def _gen(*args, **kwargs):
+            yield SimpleNamespace(update=lambda **kw: updates.append(kw), record_litellm=lambda *a, **k: None)
+
+        return _gen
+
+    @pytest.mark.asyncio
+    async def test_last_usage_chunk_is_attached_to_the_generation(self, monkeypatch):
+        updates: list = []
+        monkeypatch.setattr(llm_service, "langfuse_generation", self._capturing_generation(updates))
+        final = MagicMock(usage=MagicMock(prompt_tokens=80, completion_tokens=12))
+        final.choices = []
+
+        with patch(
+            "app.services.llm_service.litellm.acompletion", side_effect=_stream_of(_content_chunk("hello"), final)
+        ):
+            chunks = [c async for c in _stream_from_model("openai/gpt-5.4-mini", "hi", None, None)]
+
+        assert chunks == ["hello"]
+        assert updates[-1]["output"] == "hello"
+        assert updates[-1]["model"] == "openai/gpt-5.4-mini"
+        # Same shape ``record_litellm`` produces for non-streaming calls.
+        assert updates[-1]["usage"] == {"input": 80, "output": 12}
+
+    @pytest.mark.asyncio
+    async def test_no_usage_chunk_records_none(self, monkeypatch):
+        updates: list = []
+        monkeypatch.setattr(llm_service, "langfuse_generation", self._capturing_generation(updates))
+
+        with patch("app.services.llm_service.litellm.acompletion", side_effect=_stream_of(_content_chunk("hello"))):
+            [c async for c in _stream_from_model("openai/gpt-5.4-mini", "hi", None, None)]
+
+        assert updates[-1]["usage"] is None

@@ -23,12 +23,21 @@ free from :func:`app.ingestion.pipeline.batch_web_ingestion`:
    pipeline hashes each page (boilerplate-normalised, so "© 2025 → 2026"
    doesn't count as a change), skips ones that match a prior hash, and
    replaces stale chunks in-place for the ones that did change.
+4. URLs the refetch could not deliver are probed directly. A page the
+   origin answers 404/410 for has been removed from the site, so its
+   chunks are deleted and its characters handed back to the knowledge
+   quota, the same sequence the interactive crawl's orphan sweep runs.
+   Anything less definitive (a timeout, a 5xx, a blocked probe) is kept
+   and reported under ``failed``. Removals are capped per run, see
+   :func:`_removal_cap`.
 
 The service returns a summary the admin card renders back to the
 customer verbatim. ``changed_pages`` counts URLs that produced new
-chunks, ``unchanged_pages`` counts URLs the hash dedup skipped, and
-``failed_urls`` retains up to ``_MAX_ERRORS_IN_SUMMARY`` samples so a
-support ticket has evidence without blowing up the JSONB column.
+chunks, ``unchanged_pages`` counts URLs the hash dedup skipped,
+``removed_pages`` counts URLs whose chunks were deleted because the page
+is gone, and ``failed_urls`` / ``removed_urls`` retain up to
+``_MAX_ERRORS_IN_SUMMARY`` samples so a support ticket has evidence
+without blowing up the JSONB column.
 """
 
 from __future__ import annotations
@@ -37,11 +46,13 @@ import asyncio
 import logging
 import random
 from datetime import UTC, datetime, timedelta
+from functools import partial
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import Bot, Document
+from app.db.repository import delete_chunks_for_url
 from app.db.session import get_session
 from app.ingestion.pipeline import batch_web_ingestion
 from app.services.crawl_provider import fetch_urls
@@ -51,6 +62,8 @@ from app.services.crawler_service import (
     is_cancellation_requested,
     release_crawl_lock,
 )
+from app.services.knowledge_quota_service import release_kb_usage_for_sources
+from app.services.url_discovery import check_urls_alive
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +93,80 @@ _MAX_ERRORS_IN_SUMMARY: int = 10
 # expander to show meaningful trends while keeping the JSONB row well
 # under a page.
 _MAX_HISTORY_ENTRIES: int = 20
+
+# Safety valve on the removal pass. A confirmed 404 is authoritative for one
+# page, but a whole site answering 404 (a broken deploy, an expired domain, a
+# CDN misconfiguration) would otherwise wipe the knowledge base in a single
+# run. Removals are capped at 20% of the bot's URLs per run, with a floor of 5
+# so a small bot can still be tidied. A site that stays broken loses at most
+# this much per week; one that recovers keeps the rest.
+_REMOVAL_CAP_FLOOR: int = 5
+_REMOVAL_CAP_PERCENT: int = 20
+
+
+def _removal_cap(total_urls: int) -> int:
+    """How many confirmed-gone pages one run may remove: ``max(5, 20%)`` of the bot's URLs."""
+    return max(_REMOVAL_CAP_FLOOR, total_urls * _REMOVAL_CAP_PERCENT // 100)
+
+
+async def _confirm_gone(urls: list[str]) -> list[str]:
+    """Return the subset of ``urls`` whose origin answers 404 or 410, in input order.
+
+    A URL missing from the provider's results only means the provider did not
+    deliver it: a timeout, a bot-blocking firewall, a 5xx during a deploy.
+    None of those is grounds to forget what the page said. ``check_urls_alive``
+    probes the origin directly and calls a page dead only on a definitive
+    404/410; everything else, including a probe failure, keeps the page.
+    """
+    if not urls:
+        return []
+    try:
+        liveness = await check_urls_alive(urls)
+    except Exception:  # noqa: BLE001  a failed probe must keep every page, never fail the run
+        logger.exception("recrawl: liveness probe failed for %d urls; keeping all of them", len(urls))
+        return []
+    return [u for u in urls if liveness.get(u, True) is False]
+
+
+def _remove_gone_pages(*, client_id: int, bot_id: int, urls: list[str]) -> tuple[list[str], int]:
+    """Delete every chunk stored for ``urls`` and hand their characters back to the KB quota.
+
+    Same sequence as the interactive crawl's orphan sweep
+    (``crawl_orchestrator``): release the quota FIRST, because the character
+    count lives on the rows about to go, then delete per URL. One transaction,
+    so either every listed page is gone or none is and the summary never
+    claims a removal that rolled back. Returns ``(removed_urls, chunks_removed)``.
+    """
+    if not urls:
+        return [], 0
+    chunks_removed = 0
+    freed = 0
+    try:
+        with get_session() as session:
+            freed = release_kb_usage_for_sources(session, client_id=client_id, bot_id=bot_id, document_names=urls)
+            for url in urls:
+                deleted = delete_chunks_for_url(session, url, bot_id=bot_id, client_id=client_id)
+                chunks_removed += deleted
+                logger.info(
+                    "recrawl_bot: removed %s for bot %s (%d chunks); the page now answers 404/410",
+                    url,
+                    bot_id,
+                    deleted,
+                )
+            session.commit()
+    except Exception:  # noqa: BLE001  the summary must still be written
+        logger.exception(
+            "recrawl_bot: removing %d gone pages failed for bot %s; nothing was deleted", len(urls), bot_id
+        )
+        return [], 0
+    logger.info(
+        "recrawl_bot: bot %s: %d pages removed (%d chunks, %d KB chars reclaimed)",
+        bot_id,
+        len(urls),
+        chunks_removed,
+        freed,
+    )
+    return list(urls), chunks_removed
 
 
 def _load_crawl_urls_for_bot(session: Session, bot_id: int) -> list[str]:
@@ -199,6 +286,9 @@ async def recrawl_bot(bot_id: int) -> dict:
             "failed": 0,
             "failed_urls": [],
             "chunks_updated": 0,
+            "removed_pages": 0,
+            "removed_urls": [],
+            "chunks_removed": 0,
         }
         _persist_summary(bot_id, summary, "empty", now)
         return {"status": "empty", **summary}
@@ -257,8 +347,8 @@ async def recrawl_bot(bot_id: int) -> dict:
                 deduct_reason="auto_recrawl",
             )
 
+        loop = asyncio.get_running_loop()
         if fetched_pages:
-            loop = asyncio.get_running_loop()
             try:
                 ingest_result = await loop.run_in_executor(None, _do_ingest)
             except Exception:  # noqa: BLE001
@@ -287,17 +377,53 @@ async def recrawl_bot(bot_id: int) -> dict:
         total_chunks = int(ingest_result.get("chunks") or 0)
         changed_pages = int(ingest_result.get("pages_changed") or 0)
 
+        # Pages the site itself says are gone. The refetch above only ever
+        # touches URLs the bot already stores, so a page the customer deleted
+        # was refetched, failed, tallied under ``failed`` and kept its chunks
+        # for good: the bot went on quoting a retired offer, week after week.
+        # A page is removed only when the origin answers 404/410 for it, only
+        # when this run fetched at least one page (a run that fetched nothing
+        # has proven nothing about the site), and never more than
+        # ``_removal_cap`` pages per run. A preempting interactive crawl runs
+        # its own orphan sweep with the complete page list, so nothing is
+        # deleted under its feet.
+        removed_urls: list[str] = []
+        chunks_removed = 0
+        if fetched_pages and failed_fetch and not is_cancellation_requested(client_id):
+            gone = await _confirm_gone(failed_fetch)
+            cap = _removal_cap(len(urls))
+            if len(gone) > cap:
+                logger.warning(
+                    "recrawl_bot: %d of %d urls for bot %s answer 404/410; removing %d this run (cap), "
+                    "the rest stay until the next run",
+                    len(gone),
+                    len(urls),
+                    bot_id,
+                    cap,
+                )
+            to_remove = gone[:cap]
+            if to_remove:
+                removed_urls, chunks_removed = await loop.run_in_executor(
+                    None, partial(_remove_gone_pages, client_id=client_id, bot_id=bot_id, urls=to_remove)
+                )
+        # A removed page is a handled outcome, not a failure to report.
+        removed_set = set(removed_urls)
+        still_failed = [u for u in failed_fetch if u not in removed_set]
+
         fetched_count = len(fetched_pages)
         unchanged_pages = max(0, fetched_count - changed_pages)
-        failed_count = len(failed_fetch)
+        failed_count = len(still_failed)
 
         summary = {
             "total_urls": len(urls),
             "changed_pages": changed_pages,
             "unchanged_pages": unchanged_pages,
             "failed": failed_count,
-            "failed_urls": failed_fetch[:_MAX_ERRORS_IN_SUMMARY],
+            "failed_urls": still_failed[:_MAX_ERRORS_IN_SUMMARY],
             "chunks_updated": total_chunks,
+            "removed_pages": len(removed_urls),
+            "removed_urls": removed_urls[:_MAX_ERRORS_IN_SUMMARY],
+            "chunks_removed": chunks_removed,
         }
         status = _classify_status(changed=changed_pages, failed=failed_count, total=len(urls))
         _persist_summary(bot_id, summary, status, now)
@@ -334,6 +460,7 @@ def _persist_summary(bot_id: int, summary: dict, status: str, now: datetime) -> 
             "unchanged": int(summary.get("unchanged_pages") or 0),
             "changed": int(summary.get("changed_pages") or 0),
             "failed": int(summary.get("failed") or 0),
+            "removed": int(summary.get("removed_pages") or 0),
         }
         bot.recrawl_history = [history_entry, *(bot.recrawl_history or [])][:_MAX_HISTORY_ENTRIES]
 

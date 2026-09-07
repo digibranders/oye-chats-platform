@@ -6,7 +6,7 @@ import re
 import litellm
 
 from app.config import FALLBACK_MODEL_KEY_SET, PRIMARY_MODEL_KEY_SET
-from app.core.langfuse_client import langfuse_generation
+from app.core.langfuse_client import langfuse_generation, litellm_usage
 from app.core.metrics import (
     forward_to_sentry_if_alertable,
     increment_metric_counter,
@@ -84,6 +84,24 @@ def _classify_and_log_llm_error(exc: Exception, *, context: str) -> None:
         increment_metric_counter("llm_unknown_error")
 
 
+def _same_model(requested_model: str, actual_model: str) -> bool:
+    """Whether ``actual_model`` (as LiteLLM reports it) is the model we asked for.
+
+    Provider prefixes are stripped from both sides and the comparison is
+    case-insensitive. A dated snapshot suffix counts as the same model in
+    either direction: ``gpt-5.4-mini`` requested and ``gpt-5.4-mini-2026-03-01``
+    served is the primary answering under its resolved snapshot, and a pinned
+    snapshot request served under the bare alias is the same thing the other
+    way round. Two genuinely different ids (``gpt-5.4-mini`` vs
+    ``gemini-2.5-flash``) share no prefix and never match.
+    """
+    requested = _bare_model(requested_model).strip().lower()
+    actual = _bare_model(actual_model).strip().lower()
+    if not requested or not actual:
+        return False
+    return requested == actual or actual.startswith(requested) or requested.startswith(actual)
+
+
 def _meter_fallback_if_used(requested_model: str, response) -> None:
     """AR-16: detect and meter a silent primary->fallback degradation.
 
@@ -92,14 +110,47 @@ def _meter_fallback_if_used(requested_model: str, response) -> None:
     There was previously no counter/log marker distinguishing "primary
     answered" from "primary was flaky and fallback quietly saved the turn".
     A primary provider degraded for an hour would recover silently on every
-    request with zero visibility. Best-effort: compares the model litellm
-    reports as having produced the completion (``response.model``) against
-    the model actually requested.
+    request with zero visibility.
+
+    LiteLLM reports the model under the PROVIDER's name: for a request of
+    ``openai/gpt-5.4-mini``, ``response.model`` comes back as the bare, usually
+    snapshot-dated ``gpt-5.4-mini-2026-03-01``. An earlier version compared
+    that string to the prefixed request id verbatim, so this counter fired on
+    every successful primary call and ``/health/full``'s ``fallback_count_1h``
+    was pure noise. Two signals are used instead, either of which marks a
+    fallback:
+
+    * the provider-stripped names genuinely differ (:func:`_same_model`);
+    * LiteLLM's ``response._hidden_params["custom_llm_provider"]`` (stamped on
+      every completion) names a provider other than the requested prefix.
+      This catches a same-name-different-route fallback the name check cannot.
+
+    Best-effort: a response without either signal (a test double, an exotic
+    provider) is left alone rather than guessed at.
     """
     try:
+        hidden = getattr(response, "_hidden_params", None)
+        hidden = hidden if isinstance(hidden, dict) else {}
         actual_model = getattr(response, "model", None)
-        if actual_model and actual_model != requested_model:
-            logger.warning(f"llm_fallback_triggered | requested={requested_model} actual={actual_model}")
+        if not isinstance(actual_model, str) or not actual_model:
+            actual_model = hidden.get("model")
+        actual_provider = hidden.get("custom_llm_provider")
+        requested_provider = requested_model.split("/", 1)[0] if "/" in requested_model else None
+
+        provider_differs = (
+            isinstance(actual_provider, str)
+            and bool(actual_provider)
+            and requested_provider is not None
+            and actual_provider.lower() != requested_provider.lower()
+        )
+        model_differs = (
+            isinstance(actual_model, str) and bool(actual_model) and not _same_model(requested_model, actual_model)
+        )
+        if provider_differs or model_differs:
+            logger.warning(
+                f"llm_fallback_triggered | requested={requested_model} actual={actual_model} "
+                f"provider={actual_provider or 'unknown'}"
+            )
             increment_metric_counter("llm_fallback_triggered")
     except Exception as exc:  # noqa: BLE001 - metering must never break the caller
         logger.debug("Fallback metering failed (non-blocking): %s", exc)
@@ -225,6 +276,20 @@ def _apply_model_family_kwargs(kwargs: dict, model: str) -> None:
         kwargs.setdefault("reasoning_effort", "disable")
 
 
+def _build_messages(prompt: str, system_prompt: str | None) -> list[dict[str, str]]:
+    """The chat ``messages`` list for one call (AR-27 system/user split).
+
+    ``system_prompt`` set → a separate ``role: system`` message ahead of the
+    ``role: user`` prompt, so a provider's prefix-based prompt cache can match
+    the stable half turn over turn. Unset → the single user message every
+    non-hybrid-prompt caller (BANT extraction, query rewrite, …) has always sent.
+    The same list is handed to LiteLLM and to the Langfuse generation.
+    """
+    if system_prompt:
+        return [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
+    return [{"role": "user", "content": prompt}]
+
+
 def _generate_response(
     prompt: str,
     *,
@@ -233,6 +298,8 @@ def _generate_response(
     temperature: float | None = None,
     metadata: dict | None = None,
     model: str | None = None,
+    timeout: float | None = None,
+    num_retries: int | None = None,
 ) -> tuple[str, bool]:
     """Core non-streaming LLM call. Returns ``(text, failed)``.
 
@@ -247,7 +314,9 @@ def _generate_response(
     ahead of ``prompt`` (``role: user``) instead of folding everything into
     one message (AR-27). Lets a provider's prefix-based prompt cache match
     the stable system message turn over turn even as ``prompt`` (per-turn
-    state/context/history/question) changes.
+    state/context/history/question) changes. The Langfuse generation traces
+    the same two messages, so a regression in the stable half is visible on
+    the trace instead of hidden behind the user turn.
 
     ``model``: override the resolved primary model for this call only (e.g.
     ``runtime_config.get_gate_model()`` for non-generative classification/
@@ -257,6 +326,14 @@ def _generate_response(
     quality loss). When set, no cross-provider fallback chain is attempted
     (matching the gate's own single-model-no-fallback contract). Callers
     needing fallback protection should leave this unset.
+
+    ``timeout`` / ``num_retries``: per-call override of the module defaults
+    (``LLM_TIMEOUT_S`` per attempt × ``LLM_NUM_RETRIES`` retries, ≈180s worst
+    case). A classifier on the visitor's critical path (the handoff-intent
+    check runs every turn and is awaited before retrieval) needs a bound of a
+    few seconds and no retries; a background caller keeps the generous
+    default. ``None`` keeps the default, so existing callers are unchanged.
+    Same contract as :func:`classify_brand_tone` / :func:`extract_company_context`.
     """
     resolved_model = model or _primary_model()
     generation_name = (metadata or {}).get("generation_name", "llm-generation")
@@ -265,11 +342,7 @@ def _generate_response(
         return LLM_CONFIG_ERROR_MESSAGE, True
     try:
         logger.info(f"Generating LLM response | model={resolved_model} | prompt_length={len(prompt)}")
-        messages = (
-            [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
-            if system_prompt
-            else [{"role": "user", "content": prompt}]
-        )
+        messages = _build_messages(prompt, system_prompt)
         kwargs: dict = {
             "model": resolved_model,
             "messages": messages,
@@ -290,9 +363,9 @@ def _generate_response(
             kwargs["temperature"] = temperature
         _apply_model_family_kwargs(kwargs, resolved_model)
 
-        with langfuse_generation(generation_name, model=resolved_model, prompt=prompt) as gen:
-            kwargs.setdefault("timeout", _LLM_TIMEOUT_S)
-            kwargs.setdefault("num_retries", _LLM_NUM_RETRIES)
+        with langfuse_generation(generation_name, model=resolved_model, input=messages) as gen:
+            kwargs.setdefault("timeout", timeout if timeout is not None else _LLM_TIMEOUT_S)
+            kwargs.setdefault("num_retries", num_retries if num_retries is not None else _LLM_NUM_RETRIES)
             response = litellm.completion(**kwargs)
             content = response.choices[0].message.content
             gen.record_litellm(response, output=content)
@@ -322,6 +395,8 @@ def generate_response(
     temperature: float | None = None,
     metadata: dict | None = None,
     model: str | None = None,
+    timeout: float | None = None,
+    num_retries: int | None = None,
 ) -> str:
     """Generate a non-streaming response via LiteLLM (text only).
 
@@ -329,6 +404,9 @@ def generate_response(
 
     ``model``: see :func:`_generate_response`. Override for non-generative
     (classification/rewrite) callers that should use a cheaper tier.
+
+    ``timeout`` / ``num_retries``: see :func:`_generate_response`. Per-call
+    budget for callers on a latency-critical path; ``None`` keeps the defaults.
     """
     return _generate_response(
         prompt,
@@ -337,6 +415,8 @@ def generate_response(
         temperature=temperature,
         metadata=metadata,
         model=model,
+        timeout=timeout,
+        num_retries=num_retries,
     )[0]
 
 
@@ -348,11 +428,15 @@ def generate_response_checked(
     temperature: float | None = None,
     metadata: dict | None = None,
     model: str | None = None,
+    timeout: float | None = None,
+    num_retries: int | None = None,
 ) -> tuple[str, bool]:
     """Like :func:`generate_response` but also returns a structural ``failed``
     flag (True when generation produced only a canned error, i.e. no real
     answer). Use this on the credit-charged chat path so a failed reply can be
-    refunded without relying on forgeable answer-text matching."""
+    refunded without relying on forgeable answer-text matching.
+
+    ``timeout`` / ``num_retries``: see :func:`_generate_response`."""
     return _generate_response(
         prompt,
         system_prompt=system_prompt,
@@ -360,6 +444,8 @@ def generate_response_checked(
         temperature=temperature,
         metadata=metadata,
         model=model,
+        timeout=timeout,
+        num_retries=num_retries,
     )
 
 
@@ -632,7 +718,23 @@ Website content:
         return None
 
 
+# Per-chunk read bound on the streaming path: once the first chunk has arrived,
+# a gap this long between chunks means the upstream socket stalled (TCP open,
+# no bytes flowing) and the stream is abandoned rather than held open.
 _STREAM_CHUNK_TIMEOUT_S = 60
+
+# One deadline for "request + first chunk" on the streaming path. Before this
+# existed the stream bounded only the gaps BETWEEN chunks: the per-chunk
+# ``wait_for`` could not start until ``litellm.acompletion`` returned, and that
+# call carried no ``timeout`` at all, so a primary that accepted the connection
+# and then stalled before emitting anything held the visitor for LiteLLM's
+# default request timeout (``DEFAULT_REQUEST_TIMEOUT_SECONDS`` = 6000s). Nothing
+# raised, so the fallback model was never tried. Ten seconds is far above a
+# healthy time-to-first-token (~1-2s) and far below what a visitor will wait on
+# a blank widget. Env-tunable. The budget deliberately also covers LiteLLM's own
+# same-model retries: a primary that needs several retries to produce a token
+# forfeits the turn to the fallback instead of stretching the wait.
+_LLM_FIRST_TOKEN_TIMEOUT_S = float(os.getenv("LLM_FIRST_TOKEN_TIMEOUT_S", "10.0"))
 
 
 async def _stream_from_model(
@@ -643,29 +745,47 @@ async def _stream_from_model(
     temperature: float | None = None,
     system_prompt: str | None = None,
 ):
-    """Async inner generator: stream chunks from ``model``, enforcing per-chunk timeout.
+    """Async inner generator: stream chunks from ``model`` under two deadlines.
 
     Uses ``litellm.acompletion`` so the event loop is never blocked waiting for
-    the next chunk. Each chunk read is wrapped in ``asyncio.wait_for`` so a
-    stalled upstream connection (TCP open but no bytes flowing) raises
-    ``TimeoutError`` within ``_STREAM_CHUNK_TIMEOUT_S`` seconds.
+    the next chunk. Two bounds apply:
+
+    * **First chunk**: a single ``_LLM_FIRST_TOKEN_TIMEOUT_S`` deadline covers
+      the request itself (connect, TLS, LiteLLM's same-model retries) AND the
+      wait for the first chunk. A primary that accepts the connection and
+      stalls before emitting anything raises ``TimeoutError`` here, before the
+      visitor has seen any text, so :func:`generate_response_stream` takes the
+      fallback model instead of showing a timeout message.
+    * **Per chunk**: every later read gets a fresh ``_STREAM_CHUNK_TIMEOUT_S``
+      deadline, so a connection that stalls mid-answer (TCP open, no bytes)
+      raises ``TimeoutError`` instead of hanging.
+
+    ``timeout=_LLM_TIMEOUT_S`` is also passed to LiteLLM so the provider
+    client's own connect/read timeouts are bounded rather than left at the
+    LiteLLM default; for a stream that is a per-read bound, not a cap on the
+    whole answer.
 
     Raises on connection / API error so the caller can fall back to another model.
+
+    Token usage is metered ONCE, from the last usage-bearing chunk, after the
+    stream ends (AR-26). OpenAI sends usage on a single final chunk, but a
+    provider that attaches cumulative usage to every chunk would otherwise have
+    been summed once per chunk. The same usage lands on the Langfuse
+    generation, which previously recorded streamed replies with no usage at all.
 
     The underlying LiteLLM stream wrapper holds an httpx ``AsyncClient`` stream;
     if the SSE consumer disconnects mid-response the generator is closed via
     ``GeneratorExit`` and the httpx task leaks (Sentry: "Task was destroyed but
-    it is pending!"). The ``finally`` block below explicitly aborts the wrapper.
+    it is pending!"). The ``finally`` block below explicitly aborts the wrapper,
+    on the first-chunk deadline path too, where the wrapper exists only if the
+    request itself had already returned.
     """
     generation_name = (metadata or {}).get("generation_name", "llm-stream")
+    messages = _build_messages(prompt, system_prompt)
     _output = ""
-    with langfuse_generation(generation_name, model=model, prompt=prompt) as gen:
+    last_usage_chunk = None
+    with langfuse_generation(generation_name, model=model, input=messages) as gen:
         try:
-            messages = (
-                [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
-                if system_prompt
-                else [{"role": "user", "content": prompt}]
-            )
             kwargs: dict = {
                 "model": model,
                 "messages": messages,
@@ -681,26 +801,46 @@ async def _stream_from_model(
                 kwargs["max_tokens"] = max_tokens
             if temperature is not None:
                 kwargs["temperature"] = temperature
+            kwargs.setdefault("timeout", _LLM_TIMEOUT_S)
             kwargs.setdefault("num_retries", _LLM_NUM_RETRIES)
             _apply_model_family_kwargs(kwargs, model)
-            response = await litellm.acompletion(**kwargs)
+
+            first_token_timeout_s = _LLM_FIRST_TOKEN_TIMEOUT_S
+            loop = asyncio.get_running_loop()
+            first_token_deadline = loop.time() + first_token_timeout_s
+            response = None
             try:
+                try:
+                    async with asyncio.timeout_at(first_token_deadline):
+                        response = await litellm.acompletion(**kwargs)
+                except TimeoutError as exc:
+                    raise TimeoutError(
+                        f"LLM first token timeout after {first_token_timeout_s:g}s. No response to the request"
+                    ) from exc
                 response_iter = response.__aiter__()
+                # The first read spends whatever the request left of the same
+                # deadline; every later read gets its own per-chunk window.
+                chunk_deadline = first_token_deadline
+                received_any = False
                 while True:
                     try:
-                        chunk = await asyncio.wait_for(
-                            response_iter.__anext__(),
-                            timeout=_STREAM_CHUNK_TIMEOUT_S,
-                        )
+                        async with asyncio.timeout_at(chunk_deadline):
+                            chunk = await response_iter.__anext__()
                     except StopAsyncIteration:
                         break
                     except TimeoutError as exc:
+                        if not received_any:
+                            raise TimeoutError(
+                                f"LLM first token timeout after {first_token_timeout_s:g}s. "
+                                "Request accepted but no chunk arrived"
+                            ) from exc
                         raise TimeoutError(
                             f"LLM chunk timeout after {_STREAM_CHUNK_TIMEOUT_S}s. Upstream stalled"
                         ) from exc
-                    usage = getattr(chunk, "usage", None)
-                    if usage is not None:
-                        _meter_token_usage(chunk, metadata)
+                    received_any = True
+                    chunk_deadline = loop.time() + _STREAM_CHUNK_TIMEOUT_S
+                    if getattr(chunk, "usage", None) is not None:
+                        last_usage_chunk = chunk
                     if not chunk.choices:
                         continue
                     content = chunk.choices[0].delta.content
@@ -708,14 +848,16 @@ async def _stream_from_model(
                         _output += content
                         yield content
             finally:
-                aclose = getattr(response, "aclose", None)
+                if last_usage_chunk is not None:
+                    _meter_token_usage(last_usage_chunk, metadata)
+                aclose = getattr(response, "aclose", None) if response is not None else None
                 if aclose is not None:
                     try:
                         await aclose()
                     except Exception as close_err:
                         logger.debug(f"LiteLLM stream aclose() raised on cleanup: {close_err}")
         finally:
-            gen.update(output=_output, model=model)
+            gen.update(output=_output, model=model, usage=litellm_usage(last_usage_chunk))
 
 
 async def generate_response_stream(
@@ -753,8 +895,12 @@ async def generate_response_stream(
     2. Fallback model (``FALLBACK_MODEL``. Default: Gemini 2.5 Flash) if primary raises
     3. Generic error message if both fail
 
-    Each chunk read uses ``asyncio.wait_for`` so a stalled upstream TCP connection
-    raises ``TimeoutError`` within ``_STREAM_CHUNK_TIMEOUT_S`` seconds instead of
+    Timeouts (see :func:`_stream_from_model`): the primary gets
+    ``_LLM_FIRST_TOKEN_TIMEOUT_S`` to return its first chunk, request included;
+    a stall before that raises ``TimeoutError`` with nothing yielded and is
+    handled below exactly like any other pre-first-token failure, i.e. the
+    fallback model is tried. Once text is flowing, a gap of
+    ``_STREAM_CHUNK_TIMEOUT_S`` between chunks ends the stream instead of
     blocking the event loop forever.
     """
 

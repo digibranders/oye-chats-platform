@@ -24,6 +24,7 @@ from app.services.rag_service import (
     LEAVE_MESSAGE_CARD_SENTINEL,
     MEETING_CARD_SENTINEL,
     YOUTUBE_CARD_SENTINEL_PREFIX,
+    _build_media_catalog,
     _download_card_re,
     _leave_message_card_re,
     _meeting_card_re,
@@ -64,9 +65,9 @@ class TestConstantsAppearInAssembledPrompt:
     """Proves the prompt prose actually USES the shared constant (not just a
     coincidentally-matching literal), the whole point of AR-34."""
 
-    def test_meeting_leave_message_and_media_constants_appear_in_system_prompt(self):
-        """These sections (handoff/meeting/media-cards) are per-bot-config,
-        stable across turns, and stay in system_prompt per AR-27."""
+    def test_meeting_and_leave_message_constants_appear_in_system_prompt(self):
+        """These sections (handoff/meeting) are per-bot-config, stable across
+        turns, and stay in system_prompt per AR-27."""
         client = SimpleNamespace(name="TestCo")
         with patch("app.services.rag_service.get_framework_config", return_value={}):
             system, _user = build_hybrid_prompt(
@@ -78,12 +79,25 @@ class TestConstantsAppearInAssembledPrompt:
                 meeting_booking_enabled=True,
             )
 
-        for constant in (
-            MEETING_CARD_SENTINEL,
-            LEAVE_MESSAGE_CARD_SENTINEL,
-            YOUTUBE_CARD_SENTINEL_PREFIX,
-            DOWNLOAD_CARD_SENTINEL_PREFIX,
-        ):
+        for constant in (MEETING_CARD_SENTINEL, LEAVE_MESSAGE_CARD_SENTINEL):
+            assert constant in system, f"{constant!r} not found in assembled system prompt"
+        # The media rulebook is gated on an AVAILABLE MEDIA catalog in the
+        # reference context; a turn without one carries no media sentinels.
+        assert YOUTUBE_CARD_SENTINEL_PREFIX not in system
+        assert DOWNLOAD_CARD_SENTINEL_PREFIX not in system
+
+    def test_media_constants_appear_when_the_context_carries_a_catalog(self):
+        """The media-card rules use the shared prefixes; they are present
+        exactly when ``_build_media_catalog`` put a catalog in the context, which
+        is bot-stable (``get_bot_media_urls`` contributes every turn)."""
+        client = SimpleNamespace(name="TestCo")
+        context = "ctx" + _build_media_catalog(
+            [{"youtube": [{"video_id": "IB7GGzCNy-U", "url": "https://youtu.be/IB7GGzCNy-U", "title": "Intro"}]}]
+        )
+        with patch("app.services.rag_service.get_framework_config", return_value={}):
+            system, _user = build_hybrid_prompt(client, "Q", context, "")
+
+        for constant in (YOUTUBE_CARD_SENTINEL_PREFIX, DOWNLOAD_CARD_SENTINEL_PREFIX):
             assert constant in system, f"{constant!r} not found in assembled system prompt"
 
     def test_cta_constants_appear_in_user_prompt(self):

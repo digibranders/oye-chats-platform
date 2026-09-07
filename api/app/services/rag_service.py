@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import functools
 import hashlib
 import json
 import logging
@@ -10,7 +11,7 @@ from datetime import date, datetime
 from types import SimpleNamespace
 
 import litellm
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, create_model
 from sqlalchemy.orm import joinedload
 
 from app import config
@@ -41,7 +42,12 @@ from app.services.email_service import send_qualified_lead_email
 from app.services.groundedness_gate import check_groundedness, should_sample
 from app.services.intent_router import route_intent
 from app.services.intent_service import detect_handoff_intent, detect_handoff_intent_keywords
-from app.services.llm_service import generate_response, generate_response_checked, generate_response_stream
+from app.services.llm_service import (
+    _apply_model_family_kwargs,
+    generate_response,
+    generate_response_checked,
+    generate_response_stream,
+)
 from app.services.qualification_service import (
     calculate_composite_score,
     get_framework_config,
@@ -1107,16 +1113,27 @@ def _is_explicit_media_request(question: str | None) -> bool:
     )
 
 
-def _count_marked_bant_dimensions(bant_state: dict | None) -> int:
-    """Count BANT dimensions with any signal (score > 0 OR text value present).
+_BANT_DIMENSIONS: tuple[str, ...] = ("budget", "authority", "need", "timeline")
 
-    Mirrors the ``bant_marked`` calculation in ``_background_bant_extraction``
-    so the "≥2 dimensions qualified" trigger stays coherent with the
-    qualified-lead broadcast to operators.
+
+def _count_marked_bant_dimensions(bant_state: dict | None, framework_config: dict | None = None) -> int:
+    """Count qualification dimensions with any signal (score > 0 OR text value
+    present) for the bot's ACTIVE framework.
+
+    ``framework_config`` is the bot's ``bant_config``; its dimensions are read
+    with ``_framework_dimensions`` so a MEDDIC, CHAMP or GPCTBA bot counts its
+    own dimensions (kept in ``dimension_scores`` and merged into the state dict
+    by ``_build_bant_state``). Without a config the legacy BANT four are
+    counted, which is what every caller did before frameworks existed and keeps
+    a BANT bot byte-identical. This count is the trigger behind the team-connect
+    offer and the operator "qualified lead" broadcast, so the framework-blind
+    version meant a non-BANT bot never reached either from its own signals.
     """
     if not bant_state:
         return 0
-    dimensions = ("budget", "authority", "need", "timeline")
+    dimensions: tuple[str, ...] = _BANT_DIMENSIONS
+    if framework_config:
+        dimensions = tuple(_framework_dimensions(framework_config)) or _BANT_DIMENSIONS
     marked = 0
     for dim in dimensions:
         score = int(bant_state.get(f"{dim}_score", 0) or 0)
@@ -1141,7 +1158,14 @@ def _quote_gate_state(bot, bant_state: dict | None) -> tuple[bool, int, int]:
     if not isinstance(catalog, dict) or not catalog.get("enabled") or not catalog.get("services"):
         return (False, 0, 0)
 
-    valid = ("need", "budget", "authority", "timeline")
+    # The active framework's dimensions, so a non-BANT bot's quote trigger
+    # counts the dimensions it actually scores. A bot without a framework
+    # config (or a stand-in object that carries none) is a BANT bot and sees
+    # the same four as before.
+    bant_config = getattr(bot, "bant_config", None) if bot else None
+    valid: tuple[str, ...] = _BANT_DIMENSIONS
+    if isinstance(bant_config, dict) and bant_config:
+        valid = tuple(_framework_dimensions(get_framework_config(bot))) or _BANT_DIMENSIONS
     required = [d for d in (catalog.get("required_categories") or []) if d in valid]
     dims = required or list(valid)
 
@@ -1370,6 +1394,41 @@ def _lang_is_non_english(language) -> bool:
     """True only for an enabled bot whose conversation language is not English."""
     base = _lang_base(language)
     return bool(base) and base != "en"
+
+
+def _question_in_non_english_script(question: str | None) -> bool:
+    """True when the visitor's message itself is written in a trusted amount of
+    a non-Latin script (Devanagari, Arabic, CJK, ...), whatever the bot's
+    multilingual setting says.
+
+    Every English-tuned judge in this pipeline (the deterministic intent
+    router, the CRAG relevance judge, the pricing-intent regex, the FlashRank
+    reranker) is skipped for a non-English conversation, but that skip used to
+    key on ``_lang_is_non_english(language)`` alone, which is False for a bot
+    with multilingual OFF (the default) and for an enabled bot whose session
+    settled as English. The judges then ran on a Hindi question anyway, and the
+    relevance judge scores an on-topic Hindi question 0.00 where the identical
+    English question scores 0.70 (measured; see the gate call sites), so the
+    platform's default configuration turned on-topic Devanagari questions into
+    the off-topic refusal. Script detection is the same zero-cost, server-side
+    check the first-turn language resolver uses. Latin-script text (English,
+    romanised Hinglish) returns False, so English traffic is byte-identical to
+    before.
+    """
+    if not question:
+        return False
+    from app.services.language_service import detect_message_language_detail, detection_is_trusted
+
+    detected, confidence, script_letters = detect_message_language_detail(question)
+    return bool(detected) and detected != "en" and detection_is_trusted(confidence, script_letters)
+
+
+def _english_judges_bypassed(language, question: str | None) -> bool:
+    """Whether this turn skips the English-tuned judges (intent router, CRAG
+    relevance judge, pricing gate, reranker) and takes the cross-lingual
+    retrieval settings instead: an enabled bot in a non-English conversation,
+    or a message written in a non-English script on any bot."""
+    return _lang_is_non_english(language) or _question_in_non_english_script(question)
 
 
 def _cache_lang_segment(language) -> str | None:
@@ -1953,6 +2012,10 @@ def _retrieval_included_crawled_content(chunks: list) -> bool:
 # The truncation was the "how many videos do you have" undercount bug.
 _MAX_CATALOG_VIDEOS = 25
 _MAX_CATALOG_FILES = 15
+# Heading of the catalog block ``_build_media_catalog`` appends to the reference
+# context. ``build_hybrid_prompt`` looks for it to decide whether this turn needs
+# the media-card rulebook at all.
+_MEDIA_CATALOG_MARKER = "AVAILABLE MEDIA"
 
 
 def _iter_media_urls_from_chunks(retrieved_chunks) -> list[dict]:
@@ -2196,7 +2259,7 @@ def _build_media_catalog(media_sources: list[dict]) -> str:
 
     return (
         "\n═══════════════════════════════════════════════════════\n"
-        "AVAILABLE MEDIA (pick the ONE whose title best matches the "
+        f"{_MEDIA_CATALOG_MARKER} (pick the ONE whose title best matches the "
         "visitor's question, then emit its sentinel per the MEDIA CARDS rules):\n"
         "═══════════════════════════════════════════════════════\n" + "\n".join(video_lines + file_lines)
     )
@@ -2237,6 +2300,44 @@ class QualificationExtractionResult(BaseModel):
 
 BANTSignalExtraction = QualificationSignalExtraction
 BANTExtractionResult = QualificationExtractionResult
+
+_DEFAULT_RUBRIC_MAX_SCORE = 25
+
+
+@functools.lru_cache(maxsize=16)
+def _extraction_result_model(max_score: int) -> type[BaseModel]:
+    """Strict extraction schema whose ``score`` ceiling follows the bot's rubric.
+
+    ``QualificationSignalExtraction`` hardcodes ``le=25``, the default preset's
+    ceiling, and that bound is emitted into the provider-enforced JSON schema.
+    The dashboard lets a customer score rubric options anywhere in 0-100, so on
+    a 0-100 rubric the model could never emit more than 25: the composite
+    normalises by the rubric maximum, every dimension topped out at a quarter of
+    its weight, and the SQL tier was unreachable with no error anywhere. Built
+    per ceiling (and cached, the schema is deterministic) so the provider
+    constraint and the rubric always agree. The default ceiling returns the
+    module-level class so existing callers and tests see the same object.
+    """
+    ceiling = max(int(max_score), 1)
+    if ceiling == _DEFAULT_RUBRIC_MAX_SCORE:
+        return QualificationExtractionResult
+    signal_model = create_model(
+        "QualificationSignalExtraction",
+        __config__=ConfigDict(extra="forbid"),
+        dimension=(str, ...),
+        signal_text=(str, Field(description="Exact quote from the user message that indicates this signal")),
+        extracted_value=(str, Field(description="Structured summary of the signal")),
+        confidence=(str, Field(description="How confident the extraction is")),
+        score=(int, Field(ge=0, le=ceiling, description=f"Score 0-{ceiling} based on the provided rubric")),
+    )
+    return create_model(
+        "QualificationExtractionResult",
+        __config__=ConfigDict(extra="forbid"),
+        signals=(
+            list[signal_model],
+            Field(description="Only NEW signals from this exchange, empty list if none found"),
+        ),
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2409,6 +2510,90 @@ def _normalize_question_for_cache(question: str) -> str:
     normalized = _CACHE_KEY_WHITESPACE_RE.sub(" ", normalized)
     normalized = _CACHE_KEY_TRAILING_PUNCT_RE.sub("", normalized).strip()
     return normalized
+
+
+def _answer_mentions_visitor_name(answer: str, visitor_name: str | None) -> bool:
+    """Whole-word, case-insensitive check for any token of the visitor's name
+    in the answer. Names are at most two tokens of 40 characters
+    (``_clean_visitor_name``); tokens shorter than two characters are ignored
+    so an initial can never veto caching on its own."""
+    if not answer or not visitor_name:
+        return False
+    for token in str(visitor_name).split():
+        if len(token) < 2:
+            continue
+        if re.search(rf"(?<!\w){re.escape(token)}(?!\w)", answer, re.IGNORECASE):
+            return True
+    return False
+
+
+def _answer_is_cacheable(
+    *,
+    answer: str,
+    question: str,
+    visitor_name: str | None,
+    opener: str,
+    probe_active: bool,
+    prior_turns: bool,
+) -> bool:
+    """Whether a generated answer may be written to the shared, per-bot QA cache.
+
+    The cache is keyed on bot + normalised question only (``qa_response_key``),
+    and a hit is replayed verbatim to ANY visitor of that bot who asks the same
+    question within ``QA_RESPONSE_TTL``. Two classes of answer therefore must
+    never be written to it:
+
+    * Personalised text. The pipelines prepend a by-name opener ("Thanks,
+      Priya!") on the turn a visitor introduces themselves or returns, and the
+      PERSONALIZATION block tells the model to use the visitor's name on every
+      later turn. Both used to be cached and then served to strangers, which is
+      a privacy leak as well as a nonsense reply. The qualification probe is
+      the same shape of problem once there is earlier conversation to draw on:
+      its instruction asks the model to reflect a concrete fact the visitor
+      stated before asking the next question, so ``probe_active`` is passed as
+      "probing this turn AND there are prior visitor turns" (see
+      ``_has_prior_visitor_turns``). A first-turn probe reflects only the
+      question itself, which every cache hit shares by construction.
+    * Context-dependent questions. The cache is read BEFORE the follow-up
+      rewrite, so "tell me more about it" is keyed on those words alone; an
+      answer generated in one conversation about product X would be served to
+      another conversation where "it" meant product Y. That only holds when
+      there IS prior conversation (``prior_turns``): on a first turn "how much
+      does it cost?" has nothing for "it" to refer back to, it is the plain
+      FAQ the cache exists for, and every other first-turn asker shares that
+      exact context.
+
+    Everything else (the plain, impersonal FAQ answer that is the whole point
+    of the cache) still caches exactly as before.
+    """
+    if opener:
+        return False
+    if probe_active:
+        return False
+    if prior_turns and _looks_like_follow_up(question):
+        return False
+    return not _answer_mentions_visitor_name(answer, visitor_name)
+
+
+def _has_prior_visitor_turns(history: list) -> bool:
+    """True when the conversation holds a visitor message BEFORE the current
+    one. ``history`` is read after the current question has been persisted, so
+    it always contains that question; only a second visitor turn means there
+    is earlier conversation the model may reflect back in its reply."""
+    return sum(1 for m in history or () if _msg_role(m) == "user") > 1
+
+
+def _qa_cache_lookup(cache_key: str, bot_id: int | None):
+    """Read the QA cache and count the outcome, as one unit of blocking work.
+
+    Both are synchronous Redis round trips. The streaming pipeline runs this
+    on a worker thread; keeping the counter inside the same hop matters
+    because a counter left on the event loop would stall every other stream
+    for exactly the Redis latency the thread hop was added to hide.
+    """
+    cached = cache_get(cache_key)
+    increment_metric_counter("qa_cache_hit" if cached else "qa_cache_miss", bot_id=bot_id)
+    return cached
 
 
 def _expand_company_query(question: str, company_name: str | None) -> str:
@@ -2748,21 +2933,25 @@ def _bant_model() -> str:
     return runtime_config.get_gate_model()
 
 
-def _parse_qualification_signals(resp_text: str) -> list[dict]:
+def _parse_qualification_signals(
+    resp_text: str, model_cls: type[BaseModel] = QualificationExtractionResult
+) -> list[dict]:
     """Parse the extractor's structured output into signal dicts.
 
-    Tolerates a known gemini structured-output malformation where the model
-    returns a bare JSON array (``[{...}]``) instead of the
-    ``{"signals": [...]}`` object the schema requires — it wraps the array and
-    re-validates. Raises on genuinely unparseable / schema-violating output so
-    the caller can retry on a more reliable model."""
+    ``model_cls`` is the schema the completion was requested with (see
+    ``_extraction_result_model``), so validation applies the same score ceiling
+    the provider enforced. Tolerates a known gemini structured-output
+    malformation where the model returns a bare JSON array (``[{...}]``) instead
+    of the ``{"signals": [...]}`` object the schema requires — it wraps the
+    array and re-validates. Raises on genuinely unparseable / schema-violating
+    output so the caller can retry on a more reliable model."""
     try:
-        return [s.model_dump() for s in QualificationExtractionResult.model_validate_json(resp_text).signals]
+        return [s.model_dump() for s in model_cls.model_validate_json(resp_text).signals]
     except Exception:
         data = json.loads(resp_text)  # raises → caller retries / gives up
         if isinstance(data, list):
             data = {"signals": data}
-        return [s.model_dump() for s in QualificationExtractionResult.model_validate(data).signals]
+        return [s.model_dump() for s in model_cls.model_validate(data).signals]
 
 
 def extract_qualification_signals(
@@ -2788,6 +2977,9 @@ def extract_qualification_signals(
         dimensions = _framework_dimensions(config)
 
         rubric_lines = []
+        # Highest option score across the enabled dimensions: the ceiling the
+        # strict output schema must allow (see ``_extraction_result_model``).
+        rubric_max_score = _DEFAULT_RUBRIC_MAX_SCORE
         for dim in dimensions:
             dim_config = config.get(dim, {})
             if not dim_config.get("enabled", True):
@@ -2795,7 +2987,8 @@ def extract_qualification_signals(
             options = dim_config.get("options", [])
             if not options:
                 continue
-            max_score = max((int(o.get("score", 0)) for o in options), default=25)
+            max_score = max((int(o.get("score", 0)) for o in options), default=_DEFAULT_RUBRIC_MAX_SCORE)
+            rubric_max_score = max(rubric_max_score, max_score)
             options_str = ", ".join(f'"{o["label"]}" ({o["score"]} pts)' for o in options)
             current_score = current_bant.get(f"{dim}_score", 0)
             current_value = current_bant.get(dim) or "null"
@@ -2804,6 +2997,7 @@ def extract_qualification_signals(
             )
 
         rubric_text = "\n".join(rubric_lines)
+        result_model = _extraction_result_model(rubric_max_score)
 
         # Answer-binding frame. When the bot's previous turn probed a specific
         # dimension, a terse reply is an answer to THAT dimension and the
@@ -2942,38 +3136,61 @@ SCORING DISCIPLINE
         _last_err: Exception | None = None
         for _attempt, _model in enumerate(_models):
             try:
-                with langfuse_generation("bant-extraction-v2", model=_model, prompt=extraction_prompt) as gen:
-                    response = litellm.completion(
-                        model=_model,
-                        # Bounded timeout so a stalled upstream can't hang the BANT
-                        # extraction background job indefinitely (audit F09).
-                        timeout=45,
-                        messages=[
-                            {
-                                "role": "system",
-                                "content": "You are a qualification signal extractor. Return structured JSON.",
-                            },
-                            {"role": "user", "content": extraction_prompt},
-                        ],
-                        response_format={
-                            "type": "json_schema",
-                            "json_schema": {
-                                "name": "QualificationExtractionResult",
-                                "strict": True,
-                                "schema": QualificationExtractionResult.model_json_schema(),
-                            },
+                _kwargs: dict = {
+                    "model": _model,
+                    # Bounded timeout so a stalled upstream can't hang the BANT
+                    # extraction background job indefinitely (audit F09).
+                    "timeout": 45,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "You are a qualification signal extractor. Return structured JSON.",
                         },
-                        metadata={"generation_name": "bant-extraction-v2"},
-                    )
+                        {"role": "user", "content": extraction_prompt},
+                    ],
+                    "response_format": {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": "QualificationExtractionResult",
+                            "strict": True,
+                            "schema": result_model.model_json_schema(),
+                        },
+                    },
+                    # Sized for a rich turn, not a typical one: each signal
+                    # carries an exact quote, a summary, a confidence and a
+                    # dimension (~120 tokens), and a MEDDIC message touching six
+                    # dimensions is real. Truncated JSON fails validation on BOTH
+                    # models and silently loses the turn's signals, so the cap
+                    # is a runaway guard, not a budget.
+                    "max_tokens": 2048,
+                    "metadata": {"generation_name": "bant-extraction-v2"},
+                }
+                # Reasoning off for the gate-tier model, exactly as every other
+                # judge call does (see ``_apply_model_family_kwargs``). With
+                # thinking left on, gemini-2.5-flash spent an unbounded output
+                # budget reasoning about a 2.5k-token rubric before emitting
+                # the JSON, which made this the most expensive auxiliary call
+                # on a turn; with thinking on AND a cap, the JSON came back
+                # empty. Off plus a cap is the only combination that is both
+                # bounded and correct.
+                _apply_model_family_kwargs(_kwargs, _model)
+                with langfuse_generation("bant-extraction-v2", model=_model, prompt=extraction_prompt) as gen:
+                    response = litellm.completion(**_kwargs)
                     resp_text = response.choices[0].message.content
                     gen.record_litellm(response, output=resp_text)
+                    if getattr(response.choices[0], "finish_reason", None) == "length":
+                        # Distinct from a parse failure in the logs: the cap
+                        # is the cause, and the retry below shares it.
+                        logger.warning(
+                            "[bant] extraction hit its output cap (model=%s); signals may be truncated", _model
+                        )
 
                 if not resp_text:
                     logger.debug("[bant] extraction empty response (model=%s) question=%r", _model, question[:80])
                     signals = []  # a clean empty response is a real "no signal", not a failure
                     break
 
-                signals = _parse_qualification_signals(resp_text)
+                signals = _parse_qualification_signals(resp_text, result_model)
                 break
             except Exception as _err:  # noqa: BLE001 — try the next model before giving up
                 _last_err = _err
@@ -3035,13 +3252,31 @@ def extract_bant_from_conversation(
 
 
 def _background_groundedness_check(
-    question: str, answer: str, chunks: list, bot_id: int | None, client_id: int | None
+    question: str,
+    answer: str,
+    chunks: list,
+    bot_id: int | None,
+    client_id: int | None,
+    trace_id: str | None = None,
 ) -> None:
     """Fire-and-forget post-generation groundedness check (AR-12).
 
-    Observability-only. Logs a structured metric via ``_safety_net_metric``,
-    never alters the already-streamed answer. See ``groundedness_gate.py``'s
-    module docstring for why this is detection-only, not correction.
+    Observability-only. Never alters the already-streamed answer. See
+    ``groundedness_gate.py``'s module docstring for why this is detection-only,
+    not correction.
+
+    Three sinks, because each answers a different question:
+
+    * ``groundedness_check`` counts how many turns were judged (the sample).
+    * ``groundedness_low`` counts the turns judged below threshold. The metric
+      store keeps counters by name only and drops every tag, so before this
+      counter existed the verdict travelled as a tag and the hallucination rate
+      was unreadable: Redis held "checks ran", never "checks failed", and a
+      gate-tier LLM call was being paid on every turn for a number nobody
+      could see.
+    * The Langfuse ``groundedness`` score on the turn's trace, so a low score
+      can be opened next to the exact prompt, chunks and answer that produced
+      it and filtered per bot and per model.
     """
     try:
         is_grounded, score = check_groundedness(question, answer, chunks, bot_id=bot_id, client_id=client_id)
@@ -3052,6 +3287,15 @@ def _background_groundedness_check(
             score=round(score, 2),
             grounded=is_grounded,
         )
+        if not is_grounded:
+            _safety_net_metric("groundedness_low", bot_id=bot_id, client_id=client_id, score=round(score, 2))
+        if trace_id:
+            lf = get_langfuse()
+            if lf:
+                try:
+                    lf.create_score(trace_id=trace_id, name="groundedness", value=float(score), data_type="NUMERIC")
+                except Exception as score_err:  # noqa: BLE001 - scoring is best-effort observability
+                    logger.debug("Langfuse groundedness score failed (non-blocking): %s", score_err)
     except Exception as exc:  # never let this fire-and-forget task raise
         logger.warning("Background groundedness check failed (non-blocking): %s", exc)
 
@@ -3102,6 +3346,7 @@ def _background_bant_extraction(
             # (incl. lazy relationships like recipients) is safe.
             bot = session.query(Bot).filter(Bot.id == bot_id).first() if bot_id else None
             config = bant_config or get_framework_config(bot)
+            _framework_dims = set(_framework_dimensions(config))
 
             # Row-lock the session for the whole read-modify-write. Two turns
             # can finish extraction concurrently (the pool runs them in
@@ -3131,6 +3376,14 @@ def _background_bant_extraction(
                 # bant_*_score / bant_tier stuck at zero even when signals
                 # were correctly recorded in bant_signals.
                 dim = (signal["dimension"] or "").lower()
+                if _framework_dims and dim not in _framework_dims:
+                    # The extractor's worked examples are written in BANT
+                    # vocabulary, so a MEDDIC/CHAMP bot occasionally receives a
+                    # BANT-named signal. Writing it would populate legacy columns
+                    # the framework does not use, inflate ``dimensions_assessed``
+                    # and store an off-framework name in the audit log.
+                    logger.info("[bant] dropping signal for dimension %r outside the active framework", dim)
+                    continue
                 new_score = int(signal.get("score", 0) or 0)
                 if new_score <= 0:
                     continue
@@ -3258,17 +3511,10 @@ def _background_bant_extraction(
 
             # Snapshot fields needed for the post-commit broadcast. Session
             # closure expires ORM attributes, so capture before commit().
-            bant_marked = sum(
-                1
-                for score_col, text_col in (
-                    ("bant_budget_score", "bant_budget"),
-                    ("bant_authority_score", "bant_authority"),
-                    ("bant_need_score", "bant_need"),
-                    ("bant_timeline_score", "bant_timeline"),
-                )
-                if (getattr(chat_session, score_col, 0) or 0) > 0
-                or ((getattr(chat_session, text_col, "") or "").strip())
-            )
+            # Framework-aware: ``_build_bant_state`` merges the legacy BANT
+            # columns with ``dimension_scores``, so a MEDDIC/CHAMP bot's own
+            # dimensions count towards the operator "qualified" broadcast.
+            bant_marked = _count_marked_bant_dimensions(_build_bant_state(chat_session), config)
             broadcast_client_id = bot.client_id if bot else None
 
             session.commit()
@@ -4784,11 +5030,11 @@ MEETING / SCHEDULING REQUESTS (no online scheduler configured):
     3. NEVER emit {MEETING_CARD_SENTINEL}. That card is disabled for this bot and
        would render as nothing."""
 
-    # Media cards (YouTube video + downloadable file). Rules are static and
-    # always included so OpenAI prompt caching keeps them free after the first
-    # request per bot. Whether a card is actually emitted is fully determined
-    # at inference time by whether the retrieved context contains an
-    # ``AVAILABLE MEDIA`` catalog. See ``_build_media_catalog``.
+    # Media cards (YouTube video + downloadable file). The rules are static
+    # text, included only when this turn's reference context carries an
+    # ``AVAILABLE MEDIA`` catalog (see the gate right after this block and
+    # ``_build_media_catalog``); whether a card is actually emitted is then
+    # decided at inference time from that catalog.
     # NOTE: intentionally a plain triple-quoted string, not an f-string.
     # The block contains ~40 literal prose placeholders like ``{Asset Title}``,
     # ``{topic}``, ``{product-name}``, ``{Some Episode Title}`` that describe
@@ -5385,6 +5631,18 @@ MEDIA CARDS (inline cards. MANDATORY USAGE RULES):
         "{DOWNLOAD_CARD_SENTINEL_PREFIX}",
         DOWNLOAD_CARD_SENTINEL_PREFIX,
     )
+    # The media rulebook is ~33k characters (~8k tokens), the single largest
+    # block in the prompt. It is only actionable on a turn whose reference
+    # context carries an AVAILABLE MEDIA catalog, and that catalog is stable
+    # per bot: ``get_bot_media_urls`` contributes the bot's whole media palette
+    # on every turn, so a bot with media sees the rules on every turn (its
+    # prompt-cache prefix is unchanged) while a bot without media, the common
+    # SMB case, never pays those tokens or the attention they take away from
+    # the grounding rules. It used to be included unconditionally so that the
+    # provider cache could absorb its price; the cache never absorbed the
+    # attention cost.
+    if _MEDIA_CATALOG_MARKER not in (context_text or ""):
+        media_cards_section = ""
 
     # Build optional sections (truncate to prevent prompt bloat)
     if custom_system_prompt:
@@ -5778,6 +6036,11 @@ Respond with EXACTLY {n} lines, one paraphrase per line, nothing else, no number
             prompt,
             model=runtime_config.get_gate_model(),
             max_tokens=200,
+            # Request-path budget: this runs between retrieval and the first
+            # token on a zero-result turn, so it gets the rewrite's deadline,
+            # not the 60s × retries default meant for background work.
+            timeout=_QUERY_REWRITE_TIMEOUT_S,
+            num_retries=0,
             metadata={"generation_name": "query-paraphrase-fallback"},
         )
         lines = [ln.strip() for ln in (raw or "").splitlines() if ln.strip()]
@@ -5832,50 +6095,112 @@ def _zero_result_multi_query_fallback(question: str, cid: int | None, bid: int |
         return []
 
 
+# Whole-word match list. Sub-string matching ("that") was producing both
+# false positives (rewrite triggered on "what's the price" because of
+# "what") and false negatives ("who is he?" never matched because the
+# original list lacked "he/she/his/her"). Whole-word boundaries fix both.
+# Module-level (not rebuilt per call) because the QA cache also consults it:
+# a question that would be rewritten against history is context-dependent and
+# must never be served from, or written to, the context-free QA cache.
+_FOLLOW_UP_SIGNALS: tuple[str, ...] = (
+    # neutral pronouns / determiners
+    "it",
+    "that",
+    "this",
+    "these",
+    "those",
+    "they",
+    "them",
+    "their",
+    "theirs",
+    # masculine
+    "he",
+    "him",
+    "his",
+    # feminine
+    "she",
+    "her",
+    "hers",
+    # phrase-level signals
+    "the same",
+    "more about",
+    "what about",
+    "how about",
+    "and the",
+    "also",
+    "and pricing",
+    "and timelines",
+    "and timeline",
+    "and cost",
+)
+_FOLLOW_UP_SIGNAL_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(s) for s in _FOLLOW_UP_SIGNALS) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_follow_up(question: str) -> bool:
+    """True when the question carries a pronoun/determiner/phrase signal that
+    makes it depend on conversation context (the trigger ``rewrite_query``
+    uses to decide whether an LLM rewrite is worth an extra call)."""
+    return bool(question) and bool(_FOLLOW_UP_SIGNAL_RE.search(question))
+
+
+# Hard deadline for the follow-up query rewrite on the request path. The
+# rewrite is a gate-tier LLM call whose own client timeout is generous
+# (``llm_service._LLM_TIMEOUT_S`` × retries), and it sits ahead of retrieval
+# and therefore ahead of the visitor's first token. A stalled rewrite must
+# degrade to searching the raw question, not hold the stream.
+_QUERY_REWRITE_TIMEOUT_S = float(os.getenv("QUERY_REWRITE_TIMEOUT_S", "3.0"))
+
+# Same contract for the handoff-intent classifier: it is a gate-tier YES/NO
+# call whose result only decides whether to OFFER a human handoff, so a stall
+# degrades to the keyword signal rather than delaying the answer.
+_HANDOFF_INTENT_TIMEOUT_S = float(os.getenv("HANDOFF_INTENT_TIMEOUT_S", "4.0"))
+
+
+async def _await_rewrite(rewrite_task: asyncio.Task, question: str) -> str:
+    """Await an in-flight ``rewrite_query`` task under ``_QUERY_REWRITE_TIMEOUT_S``,
+    falling back to the raw question when the deadline passes. The worker
+    thread behind the task cannot be interrupted; it is left to finish and its
+    result is discarded, which is cheap next to the dead air it would cause."""
+    try:
+        return await asyncio.wait_for(rewrite_task, timeout=_QUERY_REWRITE_TIMEOUT_S)
+    except TimeoutError:
+        logger.warning("Query rewrite exceeded %.1fs. Searching the raw question", _QUERY_REWRITE_TIMEOUT_S)
+        _safety_net_metric("query_rewrite_timeout")
+        return question
+    except Exception as exc:  # noqa: BLE001 - the rewrite is an optimisation, never a dependency
+        logger.warning("Query rewrite task failed (%s). Searching the raw question", type(exc).__name__)
+        return question
+
+
+async def _rewrite_query_bounded(session_id: str, question: str, history: list) -> str:
+    """``rewrite_query`` off the event loop with the request-path deadline."""
+    task = asyncio.create_task(asyncio.to_thread(rewrite_query, session_id, question, history))
+    return await _await_rewrite(task, question)
+
+
+async def _detect_handoff_bounded(question: str) -> bool:
+    """``detect_handoff_intent`` off the event loop with a hard deadline,
+    degrading to the keyword-only signal when the classifier stalls."""
+    task = asyncio.create_task(asyncio.to_thread(detect_handoff_intent, question))
+    try:
+        return await asyncio.wait_for(task, timeout=_HANDOFF_INTENT_TIMEOUT_S)
+    except TimeoutError:
+        logger.warning("Handoff intent classifier exceeded %.1fs. Using keyword fallback", _HANDOFF_INTENT_TIMEOUT_S)
+        return detect_handoff_intent_keywords(question)
+    except Exception as exc:  # noqa: BLE001 - never let the classifier break the turn
+        logger.warning("Handoff intent classifier failed (%s). Using keyword fallback", type(exc).__name__)
+        return detect_handoff_intent_keywords(question)
+
+
 def rewrite_query(session_id: str, question: str, history: list) -> str:
     """Rewrite a follow-up question into a standalone search query using conversation history."""
     if not history or len(history) < 2:
         return question
 
-    # Whole-word match list. Sub-string matching ("that") was producing both
-    # false positives (rewrite triggered on "what's the price" because of
-    # "what") and false negatives ("who is he?" never matched because the
-    # original list lacked "he/she/his/her"). Whole-word boundaries fix both.
-    follow_up_signals = (
-        # neutral pronouns / determiners
-        "it",
-        "that",
-        "this",
-        "these",
-        "those",
-        "they",
-        "them",
-        "their",
-        "theirs",
-        # masculine
-        "he",
-        "him",
-        "his",
-        # feminine
-        "she",
-        "her",
-        "hers",
-        # gender-neutral singular
-        "they",  # already above; left for readability
-        # phrase-level signals
-        "the same",
-        "more about",
-        "what about",
-        "how about",
-        "and the",
-        "also",
-        "and pricing",
-        "and timelines",
-        "and timeline",
-        "and cost",
-    )
-    pattern = r"\b(?:" + "|".join(re.escape(s) for s in follow_up_signals) + r")\b"
-    if not re.search(pattern, question, re.IGNORECASE):
+    if not _looks_like_follow_up(question):
         return question
 
     history_text = "\n".join(f"{msg.role.upper()}: {msg.content}" for msg in history[-4:])
@@ -5898,6 +6223,16 @@ Respond with ONLY the rewritten standalone query, nothing else."""
         rewritten = generate_response(
             rewrite_prompt,
             model=runtime_config.get_gate_model(),
+            # A standalone search query is one short line; the cap bounds the
+            # cost of a model that decides to explain itself anyway.
+            max_tokens=120,
+            # Client-side budget matching the caller-side deadline
+            # (``_await_rewrite``): the default 60s × retries is sized for
+            # background work and this call sits ahead of the first token.
+            # The synchronous pipeline has no ``wait_for`` around it, so this
+            # is the only bound it gets.
+            timeout=_QUERY_REWRITE_TIMEOUT_S,
+            num_retries=0,
             metadata={"generation_name": "query-rewrite"},
         )
         return rewritten.strip() if rewritten and rewritten.strip() else question
@@ -5935,7 +6270,7 @@ async def _resolve_search_query_and_embedding(
     rewrite_task = asyncio.create_task(asyncio.to_thread(rewrite_query, session_id, question, history))
     speculative_embed_task = asyncio.create_task(_embed_query_cached_async(bid, cid, raw_expanded_query))
 
-    search_query = await rewrite_task
+    search_query = await _await_rewrite(rewrite_task, question)
     search_query = _expand_company_query(search_query, company_name)
 
     if search_query == raw_expanded_query:
@@ -6651,9 +6986,13 @@ def rag_pipeline(
             # Phase 3: skip the deterministic English canned-intent path for
             # non-English sessions so the LLM handles greetings/acks natively in
             # the conversation language. English and disabled bots are unchanged.
-            _intent = (
-                None if (_affirmed_handoff or _lang_is_non_english(language)) else route_intent(question, _company_name)
-            )
+            # The English-tuned judges (intent router, pricing gate, CRAG relevance
+            # judge, reranker) stand down for a non-English conversation AND for a
+            # message written in a non-English script on a bot with multilingual
+            # off; see ``_english_judges_bypassed``. Resolved once per turn so the
+            # sites below can never disagree with each other.
+            _judges_bypassed = _english_judges_bypassed(language, question)
+            _intent = None if (_affirmed_handoff or _judges_bypassed) else route_intent(question, _company_name)
             if _intent is not None:
                 _safety_net_metric(
                     "intent_router_short_circuit",
@@ -6797,7 +7136,7 @@ def rag_pipeline(
                 # the cache for one would be pure waste. Keeping the same language
                 # term on both sides is what stops the bypass and the gate from
                 # drifting apart, exactly as the standdown predicate does.
-                not _lang_is_non_english(language)
+                not _judges_bypassed
                 and _pricing_gate.is_pricing_question(question)
                 and not _pricing_gate.no_support_path_standdown(
                     support_enabled=_plan_support_allowed,
@@ -6814,8 +7153,22 @@ def rag_pipeline(
                     contact_url=_contact_url,
                 )
             )
-            if _cache_key and not _affirmed_handoff and not _gate_may_intercept:
-                cached_qa = cache_get(_cache_key)
+            # Read ahead of the QA-cache lookup, which needs to know whether the
+            # conversation has prior visitor turns. The visitor's own message is
+            # already persisted, so it is the last entry.
+            history = get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
+            _prior_turns = _has_prior_visitor_turns(history)
+
+            # Never serve a follow-up-shaped question from the context-free
+            # cache once the conversation has prior turns for it to depend on;
+            # see the streaming path and ``_answer_is_cacheable``.
+            if (
+                _cache_key
+                and not _affirmed_handoff
+                and not _gate_may_intercept
+                and not (_prior_turns and _looks_like_follow_up(question))
+            ):
+                cached_qa = _qa_cache_lookup(_cache_key, bid)
                 if cached_qa:
                     # Detect handoff intent even on cache hit. ``live_chat_on``
                     # is the plan-aware value resolved once at the top of this
@@ -6881,7 +7234,7 @@ def rag_pipeline(
             # this turn's probe at the end of the turn.
             _last_probed_for_cta = getattr(chat_session, "last_probed_dimension", None)
             _trusted_cta = cta_dimension if (cta_dimension and cta_dimension == _last_probed_for_cta) else None
-            history = get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
+            # ``history`` was read above, before the QA-cache lookup.
             # A visitor whose name we already had when this session opened (the
             # widget re-seeds it from the previous conversation) gets welcomed
             # back by name on our FIRST reply. Excludes someone who introduced
@@ -6931,7 +7284,7 @@ def rag_pipeline(
                 _retrieval_k = 15
                 # Phase 3: relax the vector distance ceiling for non-English
                 # sessions; English / disabled keep the tuned default.
-                _xling_extra = {"max_distance": CROSS_LINGUAL_MAX_DISTANCE} if _lang_is_non_english(language) else {}
+                _xling_extra = {"max_distance": CROSS_LINGUAL_MAX_DISTANCE} if _judges_bypassed else {}
                 vector_results = (
                     search_similar_documents(
                         session,
@@ -6957,7 +7310,7 @@ def rag_pipeline(
                 final_results = _trim_results(final_results, top_k=_retrieval_k)
                 if not final_results:
                     final_results = _zero_result_multi_query_fallback(question, cid, bid, _retrieval_k)
-                if RERANK_ENABLED and not _lang_is_non_english(language):
+                if RERANK_ENABLED and not _judges_bypassed:
                     final_results = rerank(search_query, final_results, top_n=_retrieval_k)
 
             # ── Pricing answer gate ──────────────────────────────────────────
@@ -7069,7 +7422,7 @@ def rag_pipeline(
             # trip the gate on any language. Failing open here matches KNOWN
             # LIMITATION 1 in pricing_gate.py: a non-English pricing question is
             # answered from the knowledge base rather than gated.
-            if _lang_is_non_english(language):
+            if _judges_bypassed:
                 _pricing_decision = _pricing_gate.PricingGateDecision(
                     fired=False, outcome="not_pricing", chunks=final_results
                 )
@@ -7154,7 +7507,7 @@ def rag_pipeline(
             # unrelated context. Wrongly refusing a paying customer's question
             # is far more costly than occasionally answering a loose one.
             _bot_threshold = getattr(bot, "relevance_threshold", None) if bot else None
-            if _lang_is_non_english(language):
+            if _judges_bypassed:
                 _is_relevant, _gate_score = True, 1.0
             else:
                 _is_relevant, _gate_score = check_relevance(
@@ -7449,7 +7802,7 @@ def rag_pipeline(
             _team_connect_offer = (
                 _plan_support_allowed
                 and is_bant_enabled
-                and _count_marked_bant_dimensions(current_bant) >= 2
+                and _count_marked_bant_dimensions(current_bant, bant_config) >= 2
                 and not _card_already_shown(chat_session, "team_connect")
                 # Conditional: when a quote is active or about to fire for this
                 # session, hold the team-connect / book-a-meeting CTA so only one
@@ -7754,6 +8107,8 @@ def rag_pipeline(
                     None if (_show_qualified_popup or _team_connect_offer) else _next_probe
                 )
 
+            # Read before the commit expires the row; afterwards it costs a SELECT.
+            _bot_msg_trace_id = getattr(bot_msg, "trace_id", None)
             session.commit()
 
             _cta_signal = _score_cta_answer(_trusted_cta, question, bant_config)
@@ -7783,7 +8138,15 @@ def rag_pipeline(
                 )
 
             if should_sample():
-                submit_background(_background_groundedness_check, question, answer, final_results, bid, cid)
+                submit_background(
+                    _background_groundedness_check,
+                    question,
+                    answer,
+                    final_results,
+                    bid,
+                    cid,
+                    _bot_msg_trace_id,
+                )
 
             result = {
                 "answer": answer,
@@ -7911,7 +8274,18 @@ def rag_pipeline(
                 # bounded staleness every cached answer already carries, and it is
                 # strictly better than never caching at all.
             )
-            if _cache_key and not _skip_cache_for_turn:
+            if (
+                _cache_key
+                and not _skip_cache_for_turn
+                and _answer_is_cacheable(
+                    answer=answer,
+                    question=question,
+                    visitor_name=visitor_name,
+                    opener=_opener,
+                    probe_active=_next_probe is not None and _prior_turns,
+                    prior_turns=_prior_turns,
+                )
+            ):
                 cache_set(_cache_key, {"answer": answer, "sources": result["sources"]}, QA_RESPONSE_TTL)
 
             return result
@@ -8194,9 +8568,13 @@ async def rag_pipeline_stream(
             # Phase 3: skip the deterministic English canned-intent path for
             # non-English sessions so the LLM handles greetings/acks natively in
             # the conversation language. English and disabled bots are unchanged.
-            _intent = (
-                None if (_affirmed_handoff or _lang_is_non_english(language)) else route_intent(question, _company_name)
-            )
+            # The English-tuned judges (intent router, pricing gate, CRAG relevance
+            # judge, reranker) stand down for a non-English conversation AND for a
+            # message written in a non-English script on a bot with multilingual
+            # off; see ``_english_judges_bypassed``. Resolved once per turn so the
+            # sites below can never disagree with each other.
+            _judges_bypassed = _english_judges_bypassed(language, question)
+            _intent = None if (_affirmed_handoff or _judges_bypassed) else route_intent(question, _company_name)
             if _intent is not None:
                 _safety_net_metric(
                     "intent_router_short_circuit",
@@ -8334,7 +8712,7 @@ async def rag_pipeline_stream(
                 # the cache for one would be pure waste. Keeping the same language
                 # term on both sides is what stops the bypass and the gate from
                 # drifting apart, exactly as the standdown predicate does.
-                not _lang_is_non_english(language)
+                not _judges_bypassed
                 and _pricing_gate.is_pricing_question(question)
                 and not _pricing_gate.no_support_path_standdown(
                     support_enabled=_plan_support_allowed,
@@ -8351,21 +8729,50 @@ async def rag_pipeline_stream(
                     contact_url=_contact_url,
                 )
             )
-            if _cache_key and not _affirmed_handoff and not _gate_may_intercept:
-                cached_qa = cache_get(_cache_key)
+            # Materialize history to detached role/content objects HERE, ahead of
+            # the QA-cache lookup (which needs to know whether the conversation
+            # has prior visitor turns) and ahead of the connection-release commit
+            # further down, which frees the pooled connection during retrieval
+            # without any later access (notably rewrite_query, which runs on a
+            # worker thread) triggering a cross-thread lazy reload on the
+            # request-scoped session. Every consumer reads only .role / .content,
+            # so SimpleNamespace is a faithful, session-free stand-in. The
+            # visitor's own message is already persisted, so it is the last entry.
+            history = [
+                SimpleNamespace(role=m.role, content=m.content)
+                for m in get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
+            ]
+            _prior_turns = _has_prior_visitor_turns(history)
+
+            # A follow-up-shaped question ("tell me more about it") depends on
+            # this conversation's history, while the cache is keyed on the words
+            # alone and is read before the rewrite resolves them; never serve one
+            # from the cache when there IS such history. On a first turn nothing
+            # precedes it for "it" to refer back to, so "how much does it cost?"
+            # is the plain FAQ the cache exists for. ``_answer_is_cacheable``
+            # keeps the write side consistent. The Redis round-trips, hit counter
+            # included, run on a worker thread so a slow Redis cannot stall every
+            # other stream on this event loop.
+            if (
+                _cache_key
+                and not _affirmed_handoff
+                and not _gate_may_intercept
+                and not (_prior_turns and _looks_like_follow_up(question))
+            ):
+                cached_qa = await asyncio.to_thread(_qa_cache_lookup, _cache_key, bid)
                 if cached_qa:
                     # Run handoff detection even on cache hit so the widget can
                     # trigger the handoff form when appropriate. ``live_chat_on``
                     # is the plan-aware value resolved once at the top of this
                     # turn, so a Free-plan bot never invalidates its cache to
                     # generate a handoff it isn't entitled to offer.
-                    _cached_handoff = await asyncio.to_thread(detect_handoff_intent, question)
+                    _cached_handoff = await _detect_handoff_bounded(question)
 
                     if _cached_handoff and live_chat_on:
                         # Handoff requested. Invalidate cache and fall through to
                         # the full pipeline so the LLM generates a proper handoff
                         # response with the suggest_handoff flag.
-                        cache_delete(_cache_key)
+                        await asyncio.to_thread(cache_delete, _cache_key)
                         logger.info(f"QA cache invalidated (handoff detected) | bot_id={bid}")
                     else:
                         logger.info(f"QA stream cache hit | bot_id={bid} | session={session_id}")
@@ -8421,16 +8828,8 @@ async def rag_pipeline_stream(
             # this turn's probe at the end of the turn.
             _last_probed_for_cta = getattr(chat_session, "last_probed_dimension", None)
             _trusted_cta = cta_dimension if (cta_dimension and cta_dimension == _last_probed_for_cta) else None
-            # Materialize history to detached role/content objects RIGHT HERE, so
-            # the connection-release commit below can free the pooled connection
-            # during retrieval without any later access (notably rewrite_query,
-            # which runs on a worker thread) triggering a cross-thread lazy reload
-            # on the request-scoped session. Every consumer reads only .role /
-            # .content, so SimpleNamespace is a faithful, session-free stand-in.
-            history = [
-                SimpleNamespace(role=m.role, content=m.content)
-                for m in get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
-            ]
+            # ``history`` was materialised above, before the QA-cache lookup, as
+            # detached role/content objects; see the comment there.
             # Streaming twin of the non-streaming welcome-back flag. See there.
             # Never for preview: the owner isn't a returning visitor, their name
             # is simply seeded, so the reply addresses them naturally rather than
@@ -8495,7 +8894,7 @@ async def rag_pipeline_stream(
                 logger.info(f"CAG-lite stream mode: injecting all {_total_chunks} chunks (bot_id={bid})")
                 final_results = await asyncio.to_thread(_fetch_all_chunks_isolated, bid, cid)
                 search_query = question
-                suggest_handoff = await asyncio.to_thread(detect_handoff_intent, question) or _affirmed_handoff
+                suggest_handoff = await _detect_handoff_bounded(question) or _affirmed_handoff
             else:
                 handoff_task = asyncio.create_task(asyncio.to_thread(detect_handoff_intent, question))
                 search_query, query_embedding = await _resolve_search_query_and_embedding(
@@ -8524,7 +8923,7 @@ async def rag_pipeline_stream(
                 # Phase 3: relax the vector distance ceiling for non-English
                 # sessions (cross-lingual pairs sit at higher cosine distance).
                 # English / disabled pass None and keep the tuned default.
-                _xling_max_distance = CROSS_LINGUAL_MAX_DISTANCE if _lang_is_non_english(language) else None
+                _xling_max_distance = CROSS_LINGUAL_MAX_DISTANCE if _judges_bypassed else None
                 if query_embedding is not None:
                     vector_results, keyword_results = await asyncio.gather(
                         asyncio.to_thread(_vector_search, cid, bid, query_embedding, _retrieval_k, _xling_max_distance),
@@ -8566,7 +8965,7 @@ async def rag_pipeline_stream(
                 _fuse_ms = (_t.perf_counter() - _fuse_start) * 1000
 
                 _rerank_ms = 0.0
-                if RERANK_ENABLED and not _lang_is_non_english(language):
+                if RERANK_ENABLED and not _judges_bypassed:
                     _rerank_start = _t.perf_counter()
                     # Forward ``_retrieval_k`` so list/count questions keep their
                     # 30-chunk boost. The reranker defaults to RERANK_TOP_N=5, which
@@ -8662,7 +9061,7 @@ async def rag_pipeline_stream(
             # rather than stalling the event loop mid-turn.
             _gate_search_query = search_query
             if _use_cag_lite and not _pricing_gate.is_pricing_question(question) and history:
-                _gate_search_query = await asyncio.to_thread(rewrite_query, session_id, question, history)
+                _gate_search_query = await _rewrite_query_bounded(session_id, question, history)
             _gate_question = (
                 question
                 if _pricing_gate.is_pricing_question(question) or _gate_search_query == question
@@ -8707,7 +9106,7 @@ async def rag_pipeline_stream(
             # trip the gate on any language. Failing open here matches KNOWN
             # LIMITATION 1 in pricing_gate.py: a non-English pricing question is
             # answered from the knowledge base rather than gated.
-            if _lang_is_non_english(language):
+            if _judges_bypassed:
                 _pricing_decision = _pricing_gate.PricingGateDecision(
                     fired=False, outcome="not_pricing", chunks=final_results
                 )
@@ -8795,7 +9194,7 @@ async def rag_pipeline_stream(
             # unrelated context. Wrongly refusing a paying customer's question
             # is far more costly than occasionally answering a loose one.
             _bot_threshold = getattr(bot, "relevance_threshold", None) if bot else None
-            if _lang_is_non_english(language):
+            if _judges_bypassed:
                 _is_relevant, _gate_score = True, 1.0
             else:
                 _is_relevant, _gate_score = await asyncio.to_thread(
@@ -9057,7 +9456,7 @@ async def rag_pipeline_stream(
             _team_connect_offer = (
                 _plan_support_allowed
                 and is_bant_enabled
-                and _count_marked_bant_dimensions(current_bant) >= 2
+                and _count_marked_bant_dimensions(current_bant, bant_config) >= 2
                 and not _card_already_shown(chat_session, "team_connect")
                 # Conditional: when a quote is active or about to fire for this
                 # session, hold the team-connect / book-a-meeting CTA so only one
@@ -9546,6 +9945,9 @@ async def rag_pipeline_stream(
                     # always carries message_id even if the commit later fails.
                     session.flush()
                     bot_msg_id = bot_msg.id
+                    # Captured with the id, for the same reason: the commit
+                    # expires the row and reading it afterwards costs a SELECT.
+                    _bot_msg_trace_id = getattr(bot_msg, "trace_id", None)
                     session.commit()
 
                     # Only cache a real LLM answer, never cache the zero-chunk
@@ -9576,8 +9978,18 @@ async def rag_pipeline_stream(
                         and not _llm_status.get("error")
                         and not _stream_error
                         and not _skip_cache_for_turn
+                        and _answer_is_cacheable(
+                            answer=full_answer,
+                            question=question,
+                            visitor_name=visitor_name,
+                            opener=_opener,
+                            probe_active=_next_probe is not None and _prior_turns,
+                            prior_turns=_prior_turns,
+                        )
                     ):
-                        cache_set(_cache_key, {"answer": full_answer, "sources": sources}, QA_RESPONSE_TTL)
+                        await asyncio.to_thread(
+                            cache_set, _cache_key, {"answer": full_answer, "sources": sources}, QA_RESPONSE_TTL
+                        )
 
                     _cta_signal = _score_cta_answer(_trusted_cta, question, bant_config)
                     if is_bant_enabled and (
@@ -9606,7 +10018,13 @@ async def rag_pipeline_stream(
 
                     if should_sample():
                         submit_background(
-                            _background_groundedness_check, question, full_answer, final_results, bid, cid
+                            _background_groundedness_check,
+                            question,
+                            full_answer,
+                            final_results,
+                            bid,
+                            cid,
+                            _bot_msg_trace_id,
                         )
 
                     if bot_msg_id:

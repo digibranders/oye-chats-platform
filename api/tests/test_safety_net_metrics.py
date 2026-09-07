@@ -27,14 +27,20 @@ class TestIncrementMetricCounter:
 
         # AR-26: increment_metric_counter now delegates to
         # increment_metric_counter_by(name, 1, ...) so a single amount-aware
-        # code path backs both the +1 and +N counter APIs.
-        mock_pipe.incrby.assert_called_once()
-        mock_pipe.expire.assert_called_once()
+        # code path backs both the +1 and +N counter APIs. A per-bot event is
+        # also a platform event, so the same pipeline writes the global key:
+        # the super-admin read defaults to the global scope, and a counter
+        # that only ever landed under ``b5`` read there as a permanent zero.
+        assert mock_pipe.incrby.call_count == 2
+        assert mock_pipe.expire.call_count == 2
         mock_pipe.execute.assert_called_once()
-        key_arg, amount_arg = mock_pipe.incrby.call_args[0]
+        (key_arg, amount_arg), (global_key, global_amount) = (c[0] for c in mock_pipe.incrby.call_args_list)
         assert "moderation_block" in key_arg
         assert "b5" in key_arg
         assert amount_arg == 1
+        assert "moderation_block" in global_key
+        assert "global" in global_key
+        assert global_amount == 1
 
     def test_scoped_globally_when_no_bot_id(self):
         mock_redis = MagicMock()
@@ -145,6 +151,28 @@ class TestSafetyNetMetricsEndpoint:
         assert body["bot_id"] is None
         assert "moderation_block" in body["totals"]
         assert "injection_attempt" in body["series"]
+
+    def test_reports_the_kb_guarantee_cache_and_chat_latency_counters(self):
+        """Names other subsystems emit must be readable here, or they are the
+        log-line-with-no-consumer this endpoint exists to end. The latency
+        histograms are listed by the two counters that read as totals
+        (``_count`` and ``_over``): a histogram has no key under its bare name."""
+        client = self._client()
+        with patch("app.core.metrics.get_redis", return_value=None):
+            body = client.get("/superadmin/safety-net-metrics").json()
+
+        for name in (
+            "groundedness_low",
+            "gate_failed_open",
+            "qa_cache_hit",
+            "qa_cache_miss",
+            "chat_ttft_ms_count",
+            "chat_ttft_ms_over",
+            "chat_stream_total_ms_count",
+            "chat_stream_total_ms_over",
+        ):
+            assert name in body["totals"], name
+            assert name in body["series"], name
 
     def test_scoped_to_a_single_bot(self):
         client = self._client()
