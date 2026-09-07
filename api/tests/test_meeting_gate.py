@@ -53,6 +53,27 @@ class TestIsMeetingQuestion:
         ABOUT meetings from its own knowledge base."""
         assert is_meeting_question("do you have meeting rooms?") is False
 
+    def test_knowledge_base_questions_with_meeting_nouns_do_not_fire(self):
+        """Regression: the broad verb list once included have/want/need/request,
+        so each of these hijacked a knowledge-base question into "I can't set
+        up meetings" on every bot without a scheduler."""
+        for q in (
+            "Do you have a demo video I can watch?",
+            "I want to see the demo of the product",
+            "Do you have a walkthrough video?",
+            "Do you have a free consultation?",
+            "I need to call your office, what's the number?",
+            "How do I request a call recording?",
+            "I want the appointment cancellation policy",
+            "I have a question about the session pricing",
+            "what does a consultation cost?",
+        ):
+            assert is_meeting_question(q) is False, q
+
+    def test_article_anchored_requests_still_fire(self):
+        for q in ("I want a demo", "we need a call with your team", "request a call", "I'd like an appointment"):
+            assert is_meeting_question(q) is True, q
+
     def test_get_a_demo_does_not_over_fire(self):
         """``get`` is anchored to article+noun; on its own it is far too broad
         and a false positive hijacks a legitimate knowledge-base question."""

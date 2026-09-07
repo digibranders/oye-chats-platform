@@ -1753,7 +1753,7 @@ def _contact_url_from_answer_links(answer_links: object) -> str | None:
     return None
 
 
-def resolve_contact_url(bot: object, session: object = None) -> str | None:
+def resolve_contact_url(bot: object, session: object = None, *, crawled_fallback: bool = True) -> str | None:
     """The contact page to hand a visitor, preferring what the admin configured.
 
     Two sources, in strict precedence order:
@@ -1770,10 +1770,14 @@ def resolve_contact_url(bot: object, session: object = None) -> str | None:
     job is to hand this page over -- never fired, and every Free bot fell
     through to answering pricing questions from its unrestricted knowledge base.
 
-    The DB lookup is skipped entirely when a Smart Link answers, and only runs
-    on turns that actually need a contact URL. Uploads are excluded: an uploaded
-    file named "contact-us" is not a URL a visitor can open, and
-    ``document_name`` holds a bare filename for them.
+    The DB lookup is skipped entirely when a Smart Link answers, and callers
+    pass ``crawled_fallback=False`` when nothing on the turn can use the result:
+    every consumer (``pricing_pivot``, ``_no_info_pivot``, ``meeting_pivot``,
+    ``no_support_path_standdown``) reads ``contact_url`` on its Free branch
+    only, so a bot whose plan includes human support never pays for a
+    ``SELECT DISTINCT`` over its whole crawled corpus on every chat turn.
+    Uploads are excluded: an uploaded file named "contact-us" is not a URL a
+    visitor can open, and ``document_name`` holds a bare filename for them.
 
     Best-effort: any lookup failure returns the Smart Link answer (or None)
     rather than breaking the turn. ``session`` is optional so pure callers and
@@ -1783,7 +1787,7 @@ def resolve_contact_url(bot: object, session: object = None) -> str | None:
     if configured:
         return configured
     bot_id = getattr(bot, "id", None)
-    if session is None or not bot_id:
+    if not crawled_fallback or session is None or not bot_id:
         return None
     try:
         from sqlalchemy import distinct, select
@@ -7076,7 +7080,9 @@ def rag_pipeline(
             # ``_no_info_pivot`` for why handing over a public page on the
             # customer's own website is not a paywall leak. ``getattr`` covers
             # the unknown-bot case (no bot, no links, no URL).
-            _contact_url = resolve_contact_url(bot, session)
+            # The crawled-page fallback costs a DISTINCT over the bot's corpus,
+            # and only the Free branches of the pivots read the result.
+            _contact_url = resolve_contact_url(bot, session, crawled_fallback=not _plan_support_allowed)
 
             ensure_chat_session(session, session_id, client_id=cid, bot_id=bid, location=location, device=device)
 
@@ -8750,7 +8756,9 @@ async def rag_pipeline_stream(
             # ``_no_info_pivot`` for why handing over a public page on the
             # customer's own website is not a paywall leak. ``getattr`` covers
             # the unknown-bot case (no bot, no links, no URL).
-            _contact_url = resolve_contact_url(bot, session)
+            # The crawled-page fallback costs a DISTINCT over the bot's corpus,
+            # and only the Free branches of the pivots read the result.
+            _contact_url = resolve_contact_url(bot, session, crawled_fallback=not _plan_support_allowed)
 
             ensure_chat_session(session, session_id, client_id=cid, bot_id=bid, location=location, device=device)
 

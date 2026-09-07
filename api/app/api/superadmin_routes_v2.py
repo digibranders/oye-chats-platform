@@ -1725,6 +1725,9 @@ _SAFETY_NET_METRIC_NAMES = [
     "off_topic_refusal",
     "output_moderation_block",
     "pricing_gate_escalation",
+    # Scheduling request answered deterministically because the bot has no
+    # scheduler configured (meeting_gate.py via rag_service.py).
+    "meeting_gate_pivot",
     "system_prompt_leak",
     # AR-15/AR-16: LLM call-outcome metrics (llm_service.py), included here
     # for a single unified reporting endpoint even though they're not

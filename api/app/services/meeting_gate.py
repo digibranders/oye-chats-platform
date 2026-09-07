@@ -56,16 +56,37 @@ from dataclasses import dataclass
 
 from app.services.pricing_gate import normalize_url
 
+# A meeting noun followed by one of these is a THING, not an event: "demo
+# video", "call recording", "session pricing", "appointment policy". Those are
+# knowledge-base questions and must never be read as a request for time.
+_MEETING_NOUN_SUFFIX = (
+    r"(?!\s+(?:video|recording|recordings|transcript|log|logs|history|notes|minutes|"
+    r"room|rooms|space|venue|policy|policies|pricing|price|prices|fee|fees|cost|costs|"
+    r"cancellation|center|centre|link|page))"
+)
+
 # Scheduling VERB + meeting NOUN in tight co-occurrence. Requiring both keeps
 # "do you have meeting rooms?" (a product question about the customer's
 # offering) out of the gate while catching every ordinary way a visitor asks to
 # get time with someone.
+#
+# ``have``, ``want``, ``need`` and ``request`` are deliberately NOT in the broad
+# verb list: with 40 characters of slack they fired on "do you have a demo
+# video?", "I need to call your office", "I want the appointment cancellation
+# policy" and "I have a question about the session pricing", hijacking
+# knowledge-base questions on every bot without a scheduler. They appear only in
+# the article-anchored branch below ("I want a demo", "request a call"), where
+# the noun has to follow the article directly.
 _MEETING_RE = re.compile(
     r"\b(?:book|schedule|set\s*up|setup|arrange|organis|organiz|fix|"
-    r"reserve|get\s+on|hop\s+on|jump\s+on|have|want|need|request)\w*\b[^.?!]{0,40}?"
+    r"reserve|get\s+on|hop\s+on|jump\s+on)\w*\b[^.?!]{0,40}?"
     r"\b(?:meeting|meet|demo|call|appointment|consultation|walkthrough|"
     r"discovery|session|slot|time\s+slot)\b"
-    r"|\b(?:can|could|shall)\s+we\s+(?:meet|talk|connect|catch\s+up)\b"
+    + _MEETING_NOUN_SUFFIX
+    + r"|\b(?:want|need|would\s+like|'?d\s+like|request(?:ing)?)\s+(?:a|an|some|another)\s+"
+    r"(?:meeting|demo|call|appointment|consultation|walkthrough|session)\b"
+    + _MEETING_NOUN_SUFFIX
+    + r"|\b(?:can|could|shall)\s+we\s+(?:meet|talk|connect|catch\s+up)\b"
     r"|\b(?:book|schedule)\s+(?:a|an|some)\s+time\b"
     # "get a demo" / "get an appointment". ``get`` is deliberately NOT in the
     # verb list above: on its own it is far too broad ("where do I get a copy of
