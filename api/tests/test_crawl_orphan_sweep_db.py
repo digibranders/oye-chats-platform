@@ -28,7 +28,7 @@ pytestmark = pytest.mark.skipif(not os.getenv("DB_URL"), reason="needs a reachab
 _EMBEDDING = [0.0] * 768
 
 
-def _seed_pages(db, client_id: int, urls: list[str]) -> None:
+def _seed_pages(db, client_id: int, urls: list[str], *, chars: int | None = None) -> None:
     for url in urls:
         db.add(
             Document(
@@ -39,12 +39,18 @@ def _seed_pages(db, client_id: int, urls: list[str]) -> None:
                 content=f"body of {url}",
                 metadata_info={"url": url},
                 embedding=_EMBEDDING,
+                source_char_count=chars,
             )
         )
     db.commit()
 
 
-def _stub_crawl(monkeypatch, db, fetched: list[str], liveness: dict[str, bool]) -> dict:
+def _stub_crawl(
+    monkeypatch, db, fetched: list[str], liveness: dict[str, bool], *, everything_unchanged: bool = False
+) -> dict:
+    """``everything_unchanged`` makes the ingest stub report that every fetched
+    page dedup-skipped (zero chunks written), the shape of a re-crawl after the
+    customer deleted a page and touched nothing else."""
     checked: dict = {}
 
     async def fake_fetch_urls(urls, **kw):
@@ -65,13 +71,15 @@ def _stub_crawl(monkeypatch, db, fetched: list[str], liveness: dict[str, bool]) 
     monkeypatch.setattr(orch, "fetch_urls", fake_fetch_urls)
     monkeypatch.setattr(orch, "fetch_recommended_colors", no_colors)
     monkeypatch.setattr(url_discovery, "check_urls_alive", fake_alive)
+    written = 0 if everything_unchanged else 1
     monkeypatch.setattr(
         orch,
         "batch_web_ingestion",
         lambda cid, pages, **kw: {
-            "chunks": len(pages),
-            "pages_changed": len(pages),
-            "pages_charged": len(pages),
+            "chunks": written * len(pages),
+            "pages_changed": written * len(pages),
+            "pages_unchanged": (1 - written) * len(pages),
+            "pages_charged": written * len(pages),
             "pages_failed": 0,
             "credits_deducted": 0,
             "aborted": False,
@@ -182,3 +190,41 @@ async def test_a_live_page_missing_from_the_crawl_is_never_deleted(db, monkeypat
         "https://acme.test/kept",
         "https://acme.test/slow",
     }
+
+
+@pytest.mark.asyncio
+async def test_a_retired_page_is_removed_when_nothing_else_changed(db, monkeypatch):
+    """The sweep's primary case. Every surviving page dedup-skips (zero chunks
+    written), the one page the customer deleted answers 404, and its rows go,
+    with its characters handed back to the account's knowledge quota."""
+    client = Client(
+        name="Acme", email="sweep4@test.local", hashed_password="x", api_key="k-sweep4", kb_characters_used=300
+    )
+    db.add(client)
+    db.flush()
+    _seed_pages(db, client.id, ["https://acme.test/kept", "https://acme.test/retired"], chars=100)
+
+    checked = _stub_crawl(
+        monkeypatch,
+        db,
+        fetched=["https://acme.test/kept"],
+        liveness={"https://acme.test/retired": False},
+        everything_unchanged=True,
+    )
+
+    result = await orch.run_full_crawl(
+        client_id=client.id,
+        bot_id=None,
+        url="https://acme.test",
+        max_pages=10,
+        use_js=False,
+        replace_source="acme.test",
+        cost_per_page=0,
+        ordered_urls=["https://acme.test/kept"],
+    )
+
+    assert result["chunks_processed"] == 0
+    assert checked["urls"] == ["https://acme.test/retired"]
+    assert {row[0] for row in db.query(Document.document_name).all()} == {"https://acme.test/kept"}
+    db.refresh(client)
+    assert client.kb_characters_used == 200

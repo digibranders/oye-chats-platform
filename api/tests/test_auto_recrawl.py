@@ -18,6 +18,7 @@ import os
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -26,7 +27,9 @@ from fastapi.testclient import TestClient
 from app.db.models import Bot, Client, Document
 from app.services import recrawl_service
 
-pytestmark = pytest.mark.skipif(not os.getenv("DB_URL"), reason="needs a reachable Postgres at DB_URL")
+# Applied per test rather than module-wide: the pure-function and fully-mocked
+# tests below have no reason to skip on a machine without Postgres.
+needs_db = pytest.mark.skipif(not os.getenv("DB_URL"), reason="needs a reachable Postgres at DB_URL")
 
 
 @contextmanager
@@ -48,7 +51,7 @@ def _mk_bot(db, client_id, key, **kw):
     return b
 
 
-def _mk_doc(db, bot_id, client_id, name, source="crawl"):
+def _mk_doc(db, bot_id, client_id, name, source="crawl", chars=None):
     db.add(
         Document(
             client_id=client_id,
@@ -58,6 +61,7 @@ def _mk_doc(db, bot_id, client_id, name, source="crawl"):
             file_hash=f"h-{name}",
             content="x",
             embedding=[0.0] * 768,
+            source_char_count=chars,
         )
     )
 
@@ -65,6 +69,7 @@ def _mk_doc(db, bot_id, client_id, name, source="crawl"):
 # ── recrawl_service ───────────────────────────────────────────────────────────
 
 
+@needs_db
 def test_load_crawl_urls_excludes_uploads_and_dedupes(db):
     c = _mk_client(db, "rc-urls@test.example")
     bot = _mk_bot(db, c.id, "bot-rc-urls")
@@ -127,6 +132,7 @@ def test_compute_next_recrawl_at_disperses_a_cohort(monkeypatch):
     assert max(schedule) - min(schedule) > timedelta(hours=1)
 
 
+@needs_db
 def test_recrawl_bot_persists_summary_and_advances_schedule(db, monkeypatch):
     c = _mk_client(db, "rc-run@test.example")
     bot = _mk_bot(
@@ -159,6 +165,13 @@ def test_recrawl_bot_persists_summary_and_advances_schedule(db, monkeypatch):
         },
     )
 
+    # /broken timed out rather than 404ing: not confirmed gone, so it stays a
+    # failure and keeps its chunks.
+    async def _still_alive(urls, **kw):
+        return dict.fromkeys(urls, True)
+
+    monkeypatch.setattr(recrawl_service, "check_urls_alive", _still_alive)
+
     before = datetime.now(UTC)
     summary = asyncio.run(recrawl_service.recrawl_bot(bot.id))
 
@@ -168,6 +181,7 @@ def test_recrawl_bot_persists_summary_and_advances_schedule(db, monkeypatch):
     assert summary["failed"] == 1
     assert summary["failed_urls"] == ["https://a.test/broken"]
     assert summary["chunks_updated"] == 4
+    assert summary["removed_pages"] == 0
 
     db.refresh(bot)
     assert bot.last_recrawl_status == "partial"
@@ -178,6 +192,7 @@ def test_recrawl_bot_persists_summary_and_advances_schedule(db, monkeypatch):
     assert bot.recrawl_history[0]["status"] == "partial"
 
 
+@needs_db
 def test_recrawl_bot_reports_accurate_changed_count_when_every_page_changed(db, monkeypatch):
     """Prior to the fix, ``recrawl_service`` fell back to ``changed_pages = 1``
     whenever any chunks landed. Because the paid-crawl path leans on
@@ -229,6 +244,7 @@ def test_recrawl_bot_reports_accurate_changed_count_when_every_page_changed(db, 
     assert summary["chunks_updated"] == 40
 
 
+@needs_db
 def test_recrawl_bot_reports_accurate_mixed_change_count(db, monkeypatch):
     """The mixed case: 5 URLs, 2 changed, 3 unchanged, 0 failed. Confirms the
     summary math (unchanged = fetched - changed) still holds when the ingest
@@ -273,6 +289,7 @@ def test_recrawl_bot_reports_accurate_mixed_change_count(db, monkeypatch):
     assert summary["status"] == "success"
 
 
+@needs_db
 def test_recrawl_bot_empty_still_advances_schedule(db, monkeypatch):
     c = _mk_client(db, "rc-empty@test.example")
     bot = _mk_bot(
@@ -292,6 +309,7 @@ def test_recrawl_bot_empty_still_advances_schedule(db, monkeypatch):
     assert bot.next_recrawl_at > datetime.now(UTC) + timedelta(days=6)
 
 
+@needs_db
 def test_recrawl_history_is_capped_newest_first(db, monkeypatch):
     c = _mk_client(db, "rc-hist@test.example")
     bot = _mk_bot(db, c.id, "bot-rc-hist", recrawl_enabled=True)
@@ -312,9 +330,297 @@ def test_recrawl_history_is_capped_newest_first(db, monkeypatch):
     assert all(h["ran_at"] != "2026-01-20T00:00:00+00:00" for h in bot.recrawl_history)
 
 
+# ── recrawl_service: removing pages the site confirms gone ───────────────────
+#
+# The weekly refetch only ever touches URLs the bot already stores, so a page
+# the customer deleted was refetched, failed, tallied under ``failed`` and kept
+# its chunks for good. These drive ``recrawl_bot`` with every collaborator
+# mocked, so they run without Postgres; the last one repeats the core case
+# against real rows.
+
+
+def _ingest_nothing_changed(client_id, pages, **kw):
+    return {"chunks": 0, "pages_changed": 0, "pages_charged": 0, "credits_deducted": 0}
+
+
+def _wire_recrawl(monkeypatch, *, urls, fetched, liveness, ingest=_ingest_nothing_changed):
+    """Mock every collaborator of ``recrawl_bot`` and record what it does.
+
+    ``fetched`` is the subset of ``urls`` the provider delivers; ``liveness``
+    maps a URL to the probe's answer (missing URLs count as alive).
+    """
+    bot = SimpleNamespace(id=7, client_id=3)
+    session = MagicMock()
+    session.get.return_value = bot
+    monkeypatch.setattr(recrawl_service, "get_session", lambda: _ctx(session))
+    monkeypatch.setattr(recrawl_service, "_load_crawl_urls_for_bot", lambda s, bot_id: list(urls))
+    monkeypatch.setattr(recrawl_service, "acquire_crawl_lock", lambda cid, **kw: "recrawl:token")
+    monkeypatch.setattr(recrawl_service, "release_crawl_lock", lambda *a, **kw: None)
+    monkeypatch.setattr(recrawl_service, "clear_cancellation", lambda cid: None)
+    monkeypatch.setattr(recrawl_service, "is_cancellation_requested", lambda cid: False)
+    monkeypatch.setattr(recrawl_service, "batch_web_ingestion", ingest)
+
+    async def _fake_fetch(fetch_list, **kw):
+        return {"results": [{"url": u, "content": f"body {u}"} for u in fetch_list if u in fetched]}
+
+    monkeypatch.setattr(recrawl_service, "fetch_urls", _fake_fetch)
+
+    calls = SimpleNamespace(probed=[], released=[], deleted=[], order=[], persisted={})
+
+    async def _fake_alive(probe_list, **kw):
+        calls.probed.extend(probe_list)
+        return {u: liveness.get(u, True) for u in probe_list}
+
+    def _fake_release(s, *, client_id, bot_id, document_names):
+        calls.released.extend(document_names)
+        calls.order.append("release")
+        return 100 * len(document_names)
+
+    def _fake_delete(s, document_name, bot_id=None, client_id=None):
+        calls.deleted.append(document_name)
+        calls.order.append("delete")
+        return 3
+
+    monkeypatch.setattr(recrawl_service, "check_urls_alive", _fake_alive)
+    monkeypatch.setattr(recrawl_service, "release_kb_usage_for_sources", _fake_release)
+    monkeypatch.setattr(recrawl_service, "delete_chunks_for_url", _fake_delete)
+    monkeypatch.setattr(
+        recrawl_service,
+        "_persist_summary",
+        lambda bot_id, summary, status, now: calls.persisted.update(summary=summary, status=status),
+    )
+    return calls
+
+
+def test_recrawl_removes_a_page_the_site_confirms_gone(monkeypatch):
+    urls = ["https://a.test/home", "https://a.test/pricing", "https://a.test/retired"]
+    calls = _wire_recrawl(monkeypatch, urls=urls, fetched=urls[:2], liveness={"https://a.test/retired": False})
+
+    summary = asyncio.run(recrawl_service.recrawl_bot(7))
+
+    # Only the URL the provider failed on was probed, and it alone was removed.
+    assert calls.probed == ["https://a.test/retired"]
+    assert calls.released == ["https://a.test/retired"]
+    assert calls.deleted == ["https://a.test/retired"]
+    # Quota is handed back BEFORE the rows carrying the char count are deleted.
+    assert calls.order == ["release", "delete"]
+    assert summary["removed_pages"] == 1
+    assert summary["removed_urls"] == ["https://a.test/retired"]
+    assert summary["chunks_removed"] == 3
+    # A removed page is a handled outcome, not a failure.
+    assert summary["failed"] == 0
+    assert summary["failed_urls"] == []
+    assert summary["unchanged_pages"] == 2
+    assert summary["status"] == "success"
+    assert calls.persisted["status"] == "success"
+
+
+def test_recrawl_keeps_a_page_that_merely_failed_to_fetch(monkeypatch):
+    """A timeout, a 5xx or a blocked probe is not a deletion; the page stays
+    and is reported as failed, exactly as before."""
+    urls = ["https://a.test/home", "https://a.test/flaky"]
+    calls = _wire_recrawl(monkeypatch, urls=urls, fetched=urls[:1], liveness={"https://a.test/flaky": True})
+
+    summary = asyncio.run(recrawl_service.recrawl_bot(7))
+
+    assert calls.probed == ["https://a.test/flaky"]
+    assert calls.deleted == []
+    assert summary["removed_pages"] == 0
+    assert summary["failed"] == 1
+    assert summary["failed_urls"] == ["https://a.test/flaky"]
+    assert summary["status"] == "partial"
+
+
+def test_recrawl_removal_is_capped_per_run(monkeypatch):
+    """A whole site answering 404 (a broken deploy) must not wipe the knowledge
+    base in one run: at most ``max(5, 20%)`` of the bot's URLs go, in order,
+    and the rest stay listed as failed until the next run."""
+    urls = [f"https://a.test/p{i}" for i in range(10)]
+    gone = urls[2:]
+    calls = _wire_recrawl(monkeypatch, urls=urls, fetched=urls[:2], liveness=dict.fromkeys(gone, False))
+
+    summary = asyncio.run(recrawl_service.recrawl_bot(7))
+
+    assert recrawl_service._removal_cap(10) == 5
+    assert calls.deleted == gone[:5]
+    assert summary["removed_pages"] == 5
+    assert summary["failed"] == 3
+    assert summary["failed_urls"] == gone[5:]
+    assert summary["status"] == "partial"
+
+
+def test_removal_cap_is_twenty_percent_with_a_floor_of_five():
+    assert recrawl_service._removal_cap(1) == 5
+    assert recrawl_service._removal_cap(24) == 5
+    assert recrawl_service._removal_cap(25) == 5
+    assert recrawl_service._removal_cap(30) == 6
+    assert recrawl_service._removal_cap(100) == 20
+
+
+def test_recrawl_never_removes_when_nothing_was_fetched(monkeypatch):
+    """A run that fetched nothing has proven nothing about the site. No probe,
+    no deletion, and the run is reported as failed as before."""
+    urls = ["https://a.test/a", "https://a.test/b", "https://a.test/c"]
+    calls = _wire_recrawl(monkeypatch, urls=urls, fetched=[], liveness=dict.fromkeys(urls, False))
+
+    summary = asyncio.run(recrawl_service.recrawl_bot(7))
+
+    assert calls.probed == []
+    assert calls.deleted == []
+    assert summary["removed_pages"] == 0
+    assert summary["failed"] == 3
+    assert summary["status"] == "failed"
+
+
+def test_recrawl_keeps_every_page_when_the_liveness_probe_fails(monkeypatch):
+    urls = ["https://a.test/home", "https://a.test/gone"]
+    calls = _wire_recrawl(monkeypatch, urls=urls, fetched=urls[:1], liveness={"https://a.test/gone": False})
+
+    async def _probe_blows_up(probe_list, **kw):
+        raise RuntimeError("dns is down")
+
+    monkeypatch.setattr(recrawl_service, "check_urls_alive", _probe_blows_up)
+
+    summary = asyncio.run(recrawl_service.recrawl_bot(7))
+
+    assert calls.deleted == []
+    assert summary["removed_pages"] == 0
+    assert summary["failed"] == 1
+    assert summary["status"] == "partial"
+
+
+def test_recrawl_skips_removal_when_an_interactive_crawl_preempts_it(monkeypatch):
+    """The interactive crawl runs its own orphan sweep with the complete page
+    list; nothing may be deleted under its feet. The cancel flag is clear at
+    the pre-ingest check and set by the time the removal pass asks."""
+    urls = ["https://a.test/home", "https://a.test/gone"]
+    calls = _wire_recrawl(monkeypatch, urls=urls, fetched=urls[:1], liveness={"https://a.test/gone": False})
+    answers = iter([False, True])
+    monkeypatch.setattr(recrawl_service, "is_cancellation_requested", lambda cid: next(answers))
+
+    summary = asyncio.run(recrawl_service.recrawl_bot(7))
+
+    assert calls.probed == []
+    assert calls.deleted == []
+    assert summary["failed"] == 1
+    assert summary["status"] == "partial"
+
+
+def test_a_failed_removal_leaves_the_summary_honest(monkeypatch):
+    """If the delete transaction fails, the page must still be reported as
+    failed (its chunks are still there), never as removed."""
+    urls = ["https://a.test/home", "https://a.test/gone"]
+    calls = _wire_recrawl(monkeypatch, urls=urls, fetched=urls[:1], liveness={"https://a.test/gone": False})
+
+    def _delete_blows_up(s, document_name, bot_id=None, client_id=None):
+        raise RuntimeError("deadlock detected")
+
+    monkeypatch.setattr(recrawl_service, "delete_chunks_for_url", _delete_blows_up)
+
+    summary = asyncio.run(recrawl_service.recrawl_bot(7))
+
+    assert calls.released == ["https://a.test/gone"]  # attempted, then rolled back
+    assert summary["removed_pages"] == 0
+    assert summary["chunks_removed"] == 0
+    assert summary["failed"] == 1
+    assert summary["failed_urls"] == ["https://a.test/gone"]
+    assert summary["status"] == "partial"
+
+
+def test_persist_summary_records_the_removed_count_in_history(monkeypatch):
+    bot = SimpleNamespace(
+        last_recrawl_at=None,
+        last_recrawl_status=None,
+        last_recrawl_summary=None,
+        next_recrawl_at=None,
+        recrawl_history=None,
+    )
+    session = MagicMock()
+    session.get.return_value = bot
+    monkeypatch.setattr(recrawl_service, "get_session", lambda: _ctx(session))
+    now = datetime(2026, 9, 5, 12, 0, tzinfo=UTC)
+    summary = {
+        "total_urls": 6,
+        "changed_pages": 1,
+        "unchanged_pages": 3,
+        "failed": 0,
+        "failed_urls": [],
+        "chunks_updated": 8,
+        "removed_pages": 2,
+        "removed_urls": ["https://a.test/x", "https://a.test/y"],
+        "chunks_removed": 9,
+    }
+
+    recrawl_service._persist_summary(7, summary, "success", now)
+
+    assert bot.recrawl_history == [
+        {
+            "ran_at": now.isoformat(),
+            "status": "success",
+            "total": 6,
+            "unchanged": 3,
+            "changed": 1,
+            "failed": 0,
+            "removed": 2,
+        }
+    ]
+    assert bot.last_recrawl_summary["removed_pages"] == 2
+    session.commit.assert_called_once()
+
+
+@needs_db
+def test_recrawl_bot_removes_a_page_the_site_confirms_gone_from_real_rows(db, monkeypatch):
+    """The core case against real rows: the gone page's chunks are deleted, its
+    characters are handed back to the account's quota, and the run is recorded
+    as a success with the removal in the history entry."""
+    c = _mk_client(db, "rc-gone@test.example")
+    c.kb_characters_used = 300
+    bot = _mk_bot(
+        db,
+        c.id,
+        "bot-rc-gone",
+        recrawl_enabled=True,
+        next_recrawl_at=datetime.now(UTC) - timedelta(hours=1),
+    )
+    _mk_doc(db, bot.id, c.id, "https://a.test/kept", chars=100)
+    _mk_doc(db, bot.id, c.id, "https://a.test/kept", chars=100)  # second chunk of the same page
+    _mk_doc(db, bot.id, c.id, "https://a.test/retired", chars=200)
+    db.commit()
+
+    monkeypatch.setattr(recrawl_service, "get_session", lambda: _ctx(db))
+
+    async def _fake_fetch(urls, **kw):
+        return {"results": [{"url": "https://a.test/kept", "content": "same as before"}]}
+
+    async def _fake_alive(urls, **kw):
+        return {u: u != "https://a.test/retired" for u in urls}
+
+    monkeypatch.setattr(recrawl_service, "fetch_urls", _fake_fetch)
+    monkeypatch.setattr(recrawl_service, "check_urls_alive", _fake_alive)
+    monkeypatch.setattr(recrawl_service, "batch_web_ingestion", _ingest_nothing_changed)
+
+    summary = asyncio.run(recrawl_service.recrawl_bot(bot.id))
+
+    assert summary["status"] == "success"
+    assert summary["removed_pages"] == 1
+    assert summary["removed_urls"] == ["https://a.test/retired"]
+    assert summary["chunks_removed"] == 1
+    assert summary["failed"] == 0
+    assert summary["unchanged_pages"] == 1
+
+    remaining = {row[0] for row in db.query(Document.document_name).filter(Document.bot_id == bot.id).all()}
+    assert remaining == {"https://a.test/kept"}
+    db.refresh(c)
+    assert c.kb_characters_used == 100  # 300 - the retired page's 200
+    db.refresh(bot)
+    assert bot.last_recrawl_summary["removed_pages"] == 1
+    assert bot.recrawl_history[0]["removed"] == 1
+
+
 # ── worker tasks ──────────────────────────────────────────────────────────────
 
 
+@needs_db
 def test_sweep_enqueues_only_due_enabled_active_bots(db, monkeypatch):
     import app.db.session as db_session_mod
     import app.worker.enqueue as enqueue_mod
@@ -352,6 +658,7 @@ def test_sweep_enqueues_only_due_enabled_active_bots(db, monkeypatch):
     ]
 
 
+@needs_db
 def test_sweep_caps_enqueues_per_tick_and_picks_oldest_first(db, monkeypatch):
     """B, the per-hour cap. Ten bots come due in the same tick; with the
     module-level ``_SWEEP_HOURLY_CAP`` at 3 the sweep enqueues exactly 3,
@@ -400,6 +707,7 @@ def test_sweep_caps_enqueues_per_tick_and_picks_oldest_first(db, monkeypatch):
     assert actual_ids == expected_first_three_ids, "sweep must pick the oldest-due bots first"
 
 
+@needs_db
 def test_per_bot_task_force_disables_on_plan_downgrade(db, monkeypatch):
     import app.db.session as db_session_mod
     import app.services.plan_entitlements_service as ents_mod
@@ -437,6 +745,7 @@ def test_per_bot_task_force_disables_on_plan_downgrade(db, monkeypatch):
     assert bot.next_recrawl_at is None
 
 
+@needs_db
 def test_per_bot_task_skips_when_toggle_already_off(db, monkeypatch):
     import app.db.session as db_session_mod
     from app.worker import tasks as worker_tasks
@@ -478,6 +787,7 @@ def _build_app(db, monkeypatch, client_id, *, has_feature):
     return TestClient(app)
 
 
+@needs_db
 def test_get_recrawl_status_is_tenant_isolated(db, monkeypatch):
     owner = _mk_client(db, "rc-own@test.example")
     intruder = _mk_client(db, "rc-intr@test.example")
@@ -488,6 +798,7 @@ def test_get_recrawl_status_is_tenant_isolated(db, monkeypatch):
     assert tc.get(f"/bots/{bot.id}/recrawl").status_code == 404
 
 
+@needs_db
 def test_patch_enable_without_entitlement_is_structured_403(db, monkeypatch):
     c = _mk_client(db, "rc-lock@test.example")
     bot = _mk_bot(db, c.id, "bot-rc-lock")
@@ -504,6 +815,7 @@ def test_patch_enable_without_entitlement_is_structured_403(db, monkeypatch):
     assert bot.recrawl_enabled is False  # nothing persisted
 
 
+@needs_db
 def test_patch_toggle_contract(db, monkeypatch):
     c = _mk_client(db, "rc-toggle@test.example")
     bot = _mk_bot(db, c.id, "bot-rc-toggle")
@@ -531,6 +843,7 @@ def test_patch_toggle_contract(db, monkeypatch):
     assert body["recrawl_history"] == [{"ran_at": "2026-07-01T00:00:00+00:00", "status": "success"}]
 
 
+@needs_db
 def test_disable_always_allowed_even_without_entitlement(db, monkeypatch):
     # A downgraded customer must always be able to turn the toggle off.
     c = _mk_client(db, "rc-downoff@test.example")
