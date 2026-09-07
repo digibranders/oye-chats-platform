@@ -1001,8 +1001,14 @@ def _bot_to_cache_dict(bot: Bot) -> dict:
         # public settings endpoint publishes them, and the round-trip guard
         # holds that line rather than letting the two answers diverge on a
         # cache hit.
-        "install_platform": bot.install_platform,
-        "install_platform_source": bot.install_platform_source,
+        #
+        # ``getattr`` with a default, like ``session_share_domain`` and the
+        # heartbeat above: this function is also handed stand-in objects that
+        # carry only the fields a given test cares about, and a bare
+        # ``bot.install_platform`` raises on those instead of serializing a
+        # column nobody set.
+        "install_platform": getattr(bot, "install_platform", None),
+        "install_platform_source": getattr(bot, "install_platform_source", None),
         # Three more the public settings endpoint publishes and this dict
         # forgot, found by the round-trip test rather than by inspection:
         #  * calcom_url, the widget's meeting-booking link simply vanishes on
