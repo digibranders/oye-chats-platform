@@ -76,8 +76,10 @@ export interface LeadEnrichmentSectionProps {
  * up). Presentational only: the toggles read from and write to the Experience
  * draft, and this component holds no data source of its own.
  *
- * Both default OFF. Enrichment spends credits, so it is an explicit opt-in
- * rather than a paid feature left running until the customer finds this page.
+ * Both default ON (`b1000005enrichon`). They were OFF for a while so that a
+ * paid feature would be an explicit opt-in, but a customer whose plan included
+ * enrichment then saw nothing happen until they found this tab. The plan gate
+ * limits who can spend; this switch is how a customer turns either off.
  *
  * Each switch is the third of three independent gates, all enforced
  * server-side: the plan, the super-admin kill switch (`feature.<name>_enabled`),
@@ -102,7 +104,7 @@ function LeadEnrichmentSectionInner({
         size="sm"
         titleAs="h2"
         title="Lead enrichment"
-        description="Both spend credits, so both are off by default."
+        description="Both are on by default and spend credits when they run. Turn either off here."
       />
       <CardBody flush>
         <EnrichmentRow

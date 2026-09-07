@@ -1,16 +1,16 @@
-"""The per-agent enrichment toggles: default OFF, and a real server-side gate.
+"""The per-agent enrichment toggles: default ON, and a real server-side gate.
 
 Two metered enrichments (Reoon email verification and the IP→company lookup)
 each sit behind THREE independent gates: the plan, the super-admin kill switch
 (`feature.<name>_enabled`), and the customer's own toggle. All three must pass
 before a credit is spent.
 
-Both toggles default OFF (migration `b3d9f1a7c2e5`, which reversed the earlier
-`c3f7a91b2d84`). Enrichment spends credits, so it is an explicit opt-in the
-customer switches on rather than a metered feature left running until they
-find the Advanced tab. The trade-off accepted here is discoverability: a
-Standard or Professional customer sees nothing happen until they opt in, which
-is what the Usage page's credit-cost rows and their deep link exist to solve.
+Both toggles default ON (migration `b1000005enrichon`). They were ON at first
+(`c3f7a91b2d84`), then OFF (`b3d9f1a7c2e5`) so that a paid feature would be an
+explicit opt-in; the discoverability cost of that turned out to be real, since a
+Standard or Professional customer saw nothing happen until they found the tab.
+The plan gate already limits who can spend, and the toggle is how a customer
+who does not want the credits spent turns either off.
 
 `company_lookup_enabled` did not exist at all before this: the company lookup
 had no customer control, only a super-admin switch and the plan gate, so a
@@ -43,13 +43,13 @@ def _bot(db, bot_id: int, **overrides) -> Bot:
     ("action", "column"),
     [("email_verification", "email_verification_enabled"), ("company_name", "company_lookup_enabled")],
 )
-def test_both_toggles_default_off(db, action, column):
-    """A newly created agent has both enrichments OFF; enrichment is opt-in."""
+def test_both_toggles_default_on(db, action, column):
+    """A newly created agent has both enrichments ON; the plan gate still applies."""
     bot = _bot(db, 60 if action == "email_verification" else 61)
-    assert getattr(bot, column) is False
+    assert getattr(bot, column) is True
 
     with patch("app.api.chat_routes.get_session", return_value=_Ctx(db)):
-        assert _agent_enrichment_opt_in(bot.id, action) is False
+        assert _agent_enrichment_opt_in(bot.id, action) is True
 
 
 @pytest.mark.parametrize(

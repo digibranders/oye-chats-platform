@@ -882,12 +882,12 @@ class BotResponse(BaseModel):
     orb_color: str | None
     lead_form_enabled: bool = False
     lead_form_fields: list[dict] | None = None
-    # Default FALSE, matching the column. Both construction sites pass explicit
+    # Default TRUE, matching the column. Both construction sites pass explicit
     # values today, so this is only a fallback, but a fallback pointing the
-    # wrong way is how a future construction that omits them would publish ON
-    # for a row that is OFF, and the frontend renders the switch on `=== true`.
-    email_verification_enabled: bool = False
-    company_lookup_enabled: bool = False
+    # wrong way is how a future construction that omits them would publish OFF
+    # for a row that is ON, and the frontend renders the switch on `=== true`.
+    email_verification_enabled: bool = True
+    company_lookup_enabled: bool = True
     notification_email: str | None = None
     notification_emails: dict | None = None
     reply_to_email: str | None = None

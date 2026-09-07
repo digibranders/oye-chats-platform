@@ -444,11 +444,15 @@ class Bot(Base):
     lead_form_enabled = Column(Boolean, default=False, server_default="false", nullable=False)
     lead_form_fields = Column(JSONB, nullable=True)  # e.g. [{"field":"name","required":true}]
 
-    # ── Metered lead-enrichment opt-ins (AI Agent > Advanced) ───────────────
+    # ── Metered lead-enrichment toggles (Experience > Leads) ────────────────
     #
-    # Both default OFF. Enrichment spends credits, so it is an explicit opt-in
-    # the customer turns on when they want it, not a paid feature left running
-    # until they happen to find a settings page. Each is one of THREE
+    # Both default ON (migration ``b1000005enrichon``). They have flipped
+    # twice: ON at first, OFF in ``b3d9f1a7c2e5`` on the theory that a paid
+    # feature must be an explicit opt-in, and back ON now because the
+    # discoverability cost was real: customers on a plan that included
+    # enrichment saw nothing happen until they found this tab. The plan gate
+    # already limits who can spend, and the switch here is how a customer who
+    # does not want the credits spent turns either off. Each is one of THREE
     # independent gates, all of which must pass before a credit is spent:
     #   1. the plan  (Standard/Professional, enforced server-side)
     #   2. the super-admin kill switch (``feature.<name>_enabled``)
@@ -456,10 +460,10 @@ class Bot(Base):
     #
     # Verification runs via Reoon at ``credit_cost.email_verification`` per
     # captured lead.
-    email_verification_enabled = Column(Boolean, default=False, server_default="false", nullable=False)
+    email_verification_enabled = Column(Boolean, default=True, server_default="true", nullable=False)
     # The IP-to-company lookup, at ``credit_cost.company_name``, charged only
     # when a company is actually identified (see chat_routes).
-    company_lookup_enabled = Column(Boolean, default=False, server_default="false", nullable=False)
+    company_lookup_enabled = Column(Boolean, default=True, server_default="true", nullable=False)
 
     # Email notification settings
     notification_email = Column(String, nullable=True)  # Legacy single recipient (kept for backward compat)
