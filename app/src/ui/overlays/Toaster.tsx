@@ -38,10 +38,28 @@ import { buttonClass } from '../primitives/buttonStyles';
 export function Toaster() {
   return (
     <SonnerToaster
-      // Not bottom-right: this app embeds the OyeChats widget on itself, and
-      // its launcher lives in that corner. Bottom-centre clears both the
-      // launcher and the navigation rail.
-      position="bottom-center"
+      /*
+       * Top-right, and every other corner is taken.
+       *
+       * - Bottom-right is the OyeChats widget's launcher. This app embeds its
+       *   own widget, so that corner is never ours.
+       * - Bottom-centre was the previous answer, and it landed square on the
+       *   inbox composer: the live-chat toasts ("You are now talking to X",
+       *   an accepted invitation, a transfer) fire at exactly the moment an
+       *   operator is typing a reply, and covered the box they were typing in.
+       * - Bottom-left and the left edge generally are the navigation rail.
+       *
+       * The offset clears the top bar (`--spacing-topbar`) so a toast sits in
+       * the content area rather than over the breadcrumb and the search field,
+       * and it stays above the feedback tab, which is pinned to the right edge
+       * at the vertical centre.
+       */
+      position="top-right"
+      // Only the top is pushed down; the side gap stays the ordinary one. A
+      // single scalar offset would apply to every edge and float the toast an
+      // odd 68px in from the right.
+      offset={{ top: 'calc(var(--spacing-topbar) + 0.75rem)', right: '1rem' }}
+      mobileOffset={{ top: 'calc(var(--spacing-topbar) + 0.5rem)', right: '0.75rem', left: '0.75rem' }}
       style={{ zIndex: 'var(--z-toast)' }}
       // Sonner's own theming is bypassed entirely: `unstyled` plus our classes
       // means a toast is built from the same tokens as everything else instead
