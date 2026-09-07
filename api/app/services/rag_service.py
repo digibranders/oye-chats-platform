@@ -37,11 +37,12 @@ from app.db.repository import (
 from app.db.session import get_session
 from app.ingestion.embedder import embed_chunks, embed_chunks_async
 from app.security.injection_patterns import compile_detection_pattern
+from app.services import meeting_gate as _meeting_gate
 from app.services import plan_entitlements_service, runtime_config
 from app.services import pricing_gate as _pricing_gate
 from app.services.email_service import send_qualified_lead_email
 from app.services.groundedness_gate import check_groundedness, should_sample
-from app.services.intent_router import route_intent
+from app.services.intent_router import route_intent, strip_greeting_lead
 from app.services.intent_service import detect_handoff_intent, detect_handoff_intent_keywords
 from app.services.llm_service import (
     _apply_model_family_kwargs,
@@ -1750,6 +1751,60 @@ def _contact_url_from_answer_links(answer_links: object) -> str | None:
             continue
         return candidate
     return None
+
+
+def resolve_contact_url(bot: object, session: object = None) -> str | None:
+    """The contact page to hand a visitor, preferring what the admin configured.
+
+    Two sources, in strict precedence order:
+
+    1. A ``contact`` Smart Link in ``bot.answer_links``, typed deliberately by
+       an admin.
+    2. The contact page found among the bot's OWN crawled pages, which the
+       crawler already stored in ``documents``.
+
+    Explicit beats inferred, so an admin who HAS configured a Smart Link never
+    has it silently overridden by a page a crawl happened to find. In practice
+    the fallback is what fires: 0 of 18 bots on the development database had a
+    ``contact`` Smart Link, which is why the Free pricing pivot -- whose entire
+    job is to hand this page over -- never fired, and every Free bot fell
+    through to answering pricing questions from its unrestricted knowledge base.
+
+    The DB lookup is skipped entirely when a Smart Link answers, and only runs
+    on turns that actually need a contact URL. Uploads are excluded: an uploaded
+    file named "contact-us" is not a URL a visitor can open, and
+    ``document_name`` holds a bare filename for them.
+
+    Best-effort: any lookup failure returns the Smart Link answer (or None)
+    rather than breaking the turn. ``session`` is optional so pure callers and
+    tests can resolve the configured half without a database.
+    """
+    configured = _contact_url_from_answer_links(getattr(bot, "answer_links", None))
+    if configured:
+        return configured
+    bot_id = getattr(bot, "id", None)
+    if session is None or not bot_id:
+        return None
+    try:
+        from sqlalchemy import distinct, select
+
+        from app.db.models import Document
+        from app.services.knowledge_links import detect_contact_url
+
+        urls = (
+            session.execute(
+                select(distinct(Document.document_name)).where(
+                    Document.bot_id == bot_id,
+                    Document.source == "crawl",
+                )
+            )
+            .scalars()
+            .all()
+        )
+    except Exception:  # noqa: BLE001  A contact link is never worth failing a turn over
+        logger.warning("contact-url derivation failed for bot %s", bot_id, exc_info=True)
+        return None
+    return detect_contact_url(urls)
 
 
 def _no_info_pivot(company_name: str | None, support_enabled: bool = True, *, contact_url: str | None = None) -> str:
@@ -4237,7 +4292,10 @@ def _maybe_append_name_ask(
             # is by definition a returning visitor rather than one who just
             # introduced themselves.
             opener = _name_ack_prefix(known, False, language, returning=_is_first_bot_reply(hist))
-            return opener + text.lstrip() if opener and text else text
+            # The welcome-back opener IS the greeting, so drop the canned reply's
+            # own greeting lead ("Hey. Happy to help.") to avoid doubling it.
+            # No-op for non-greeting replies (e.g. QA-cache hits).
+            return opener + strip_greeting_lead(text) if opener and text else text
         if _should_ask_visitor_name(None, hist) and not _is_name_ask_message(text):
             return (text.rstrip() if text else "") + f"\n\n{_name_ask_text(language)}"
     except Exception:  # noqa: BLE001  Personalization is best-effort, never fatal
@@ -7018,7 +7076,7 @@ def rag_pipeline(
             # ``_no_info_pivot`` for why handing over a public page on the
             # customer's own website is not a paywall leak. ``getattr`` covers
             # the unknown-bot case (no bot, no links, no URL).
-            _contact_url = _contact_url_from_answer_links(getattr(bot, "answer_links", None))
+            _contact_url = resolve_contact_url(bot, session)
 
             ensure_chat_session(session, session_id, client_id=cid, bot_id=bid, location=location, device=device)
 
@@ -7276,6 +7334,14 @@ def rag_pipeline(
                     # change was made for.
                     contact_url=_contact_url,
                 )
+            ) or (
+                # Same reasoning for the MEETING gate: it intercepts a
+                # scheduling request on a bot with no scheduler, so a pre-gate
+                # cached answer served ahead of it would reinstate exactly the
+                # broken promise the gate exists to remove.
+                not _lang_is_non_english(language)
+                and not _meeting_gate.scheduler_is_configured(bot)
+                and _meeting_gate.is_meeting_question(question)
             )
             # Read ahead of the QA-cache lookup, which needs to know whether the
             # conversation has prior visitor turns. The visitor's own message is
@@ -7618,6 +7684,64 @@ def rag_pipeline(
                     _mark_card_shown(chat_session, "leave_message")
                 session.commit()
                 return _pivot_result
+
+            # ── Meeting gate ─────────────────────────────────────────────
+            # A scheduling request on a bot with NO usable online scheduler is
+            # answered HERE, deterministically, instead of by an instruction in
+            # the system prompt.
+            #
+            # Placement is the whole point. It sits AFTER the pricing gate, which
+            # returns first when it fires, so a priced question is never re-read
+            # as a scheduling one; and BEFORE the CRAG relevance gate, because a
+            # scheduling request is never IN the knowledge base, so the judge
+            # scores it off-topic and its refusal returns before generation is
+            # ever reached. That ordering is why the previous prompt-only
+            # handling could not work: measured end to end, the model promised a
+            # form on both paid and Free and rendered one on neither, and the
+            # leave-message safety net cannot rescue it because scheduling
+            # phrasing matches neither of its predicates.
+            #
+            # A bot WITH a scheduler configured falls through untouched to the
+            # existing booking-card flow, which is the better answer.
+            if not _meeting_gate.scheduler_is_configured(bot) and _meeting_gate.is_meeting_question(_gate_question):
+                _safety_net_metric(
+                    "meeting_gate_pivot",
+                    path="nonstream",
+                    support_enabled=str(_plan_support_allowed),
+                    session=session_id,
+                    bot_id=bid,
+                )
+                _mtg = _meeting_gate.meeting_pivot(
+                    company_name=_company_name,
+                    support_enabled=_plan_support_allowed,
+                    live_chat_enabled=live_chat_on,
+                    contact_url=_contact_url,
+                )
+                _mtg_text = (
+                    _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + _mtg.text
+                )
+                _bot_msg = add_chat_message(
+                    session,
+                    session_id,
+                    client_id=cid,
+                    role="bot",
+                    content=_mtg_text,
+                    bot_id=bid,
+                    is_unanswered=True,
+                    source_language=_lang_base(language),
+                )
+                _mtg_result = {
+                    "answer": _mtg_text,
+                    "sources": [],
+                    "session_id": session_id,
+                    "message_id": _bot_msg.id,
+                    "suggest_handoff": _mtg.suggest_handoff,
+                }
+                if _mtg.needs_message_card:
+                    _mtg_result["show_leave_message"] = True
+                    _mark_card_shown(chat_session, "leave_message")
+                session.commit()
+                return _mtg_result
 
             # ── Phase 4A: CRAG relevance gate ────────────────────────────
             # BYPASSED for a non-English conversation, for the same reason
@@ -8626,7 +8750,7 @@ async def rag_pipeline_stream(
             # ``_no_info_pivot`` for why handing over a public page on the
             # customer's own website is not a paywall leak. ``getattr`` covers
             # the unknown-bot case (no bot, no links, no URL).
-            _contact_url = _contact_url_from_answer_links(getattr(bot, "answer_links", None))
+            _contact_url = resolve_contact_url(bot, session)
 
             ensure_chat_session(session, session_id, client_id=cid, bot_id=bid, location=location, device=device)
 
@@ -8884,6 +9008,14 @@ async def rag_pipeline_stream(
                     # change was made for.
                     contact_url=_contact_url,
                 )
+            ) or (
+                # Same reasoning for the MEETING gate: it intercepts a
+                # scheduling request on a bot with no scheduler, so a pre-gate
+                # cached answer served ahead of it would reinstate exactly the
+                # broken promise the gate exists to remove.
+                not _lang_is_non_english(language)
+                and not _meeting_gate.scheduler_is_configured(bot)
+                and _meeting_gate.is_meeting_question(question)
             )
             # Materialize history to detached role/content objects HERE, ahead of
             # the QA-cache lookup (which needs to know whether the conversation
@@ -9343,6 +9475,62 @@ async def rag_pipeline_stream(
                 return
 
             sources = [doc.document_name for doc in final_results]
+
+            # ── Meeting gate ─────────────────────────────────────────────
+            # A scheduling request on a bot with NO usable online scheduler is
+            # answered HERE, deterministically, instead of by an instruction in
+            # the system prompt.
+            #
+            # Placement is the whole point. It sits AFTER the pricing gate, which
+            # returns first when it fires, so a priced question is never re-read
+            # as a scheduling one; and BEFORE the CRAG relevance gate, because a
+            # scheduling request is never IN the knowledge base, so the judge
+            # scores it off-topic and its refusal returns before generation is
+            # ever reached. That ordering is why the previous prompt-only
+            # handling could not work: measured end to end, the model promised a
+            # form on both paid and Free and rendered one on neither, and the
+            # leave-message safety net cannot rescue it because scheduling
+            # phrasing matches neither of its predicates.
+            #
+            # A bot WITH a scheduler configured falls through untouched to the
+            # existing booking-card flow, which is the better answer.
+            if not _meeting_gate.scheduler_is_configured(bot) and _meeting_gate.is_meeting_question(_gate_question):
+                _safety_net_metric(
+                    "meeting_gate_pivot",
+                    path="stream",
+                    support_enabled=str(_plan_support_allowed),
+                    session=session_id,
+                    bot_id=bid,
+                )
+                _mtg = _meeting_gate.meeting_pivot(
+                    company_name=_company_name,
+                    support_enabled=_plan_support_allowed,
+                    live_chat_enabled=live_chat_on,
+                    contact_url=_contact_url,
+                )
+                _mtg_text = (
+                    _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + _mtg.text
+                )
+                yield _stream_metadata(session_id, [], language)
+                yield _mtg_text
+                _bot_msg = add_chat_message(
+                    session,
+                    session_id,
+                    client_id=cid,
+                    role="bot",
+                    content=_mtg_text,
+                    bot_id=bid,
+                    is_unanswered=True,
+                    source_language=_lang_base(language),
+                )
+                session.flush()
+                _mtg_meta = {"message_id": _bot_msg.id, "suggest_handoff": _mtg.suggest_handoff}
+                if _mtg.needs_message_card:
+                    _mtg_meta["show_leave_message"] = True
+                    _mark_card_shown(chat_session, "leave_message")
+                session.commit()
+                yield f"\nFINAL_METADATA:{json.dumps(_mtg_meta)}\n"
+                return
 
             # ── Phase 4A: CRAG relevance gate (streaming path) ───────────────
             # BYPASSED for a non-English conversation, for the same reason

@@ -268,12 +268,37 @@ def _co(company_name: str | None) -> str:
     return f"**{company_name}**" if company_name else "us"
 
 
+# The greeting reply is two parts: a warm lead and a body that offers the next
+# step. They are kept separable so a returning visitor's "Welcome back, {name}!"
+# opener (prepended in rag_service._maybe_append_name_ask) can drop the lead,
+# which would otherwise double the greeting: "Welcome back, Steve! Hey. Happy to
+# help." See strip_greeting_lead below.
+_GREETING_LEAD = "Hey. Happy to help."
+
+
 def _greeting(company_name: str | None) -> IntentResponse:
     co = _co(company_name)
     return IntentResponse(
-        answer=f"Hey. Happy to help. Want to hear about our services, see recent work, or chat with the team at {co}?",
+        answer=f"{_GREETING_LEAD} Want to hear about our services, see recent work, or chat with the team at {co}?",
         intent="greeting",
     )
+
+
+def strip_greeting_lead(text: str) -> str:
+    """Return ``text`` without the greeting's warm lead when it opens with it.
+
+    Used when a returning-visitor "Welcome back, {name}!" opener is prepended to
+    the canned greeting reply: that opener is itself the greeting, so the lead
+    ("Hey. Happy to help.") would double it. A no-op for any text that does not
+    start with the lead, so it is safe to call on non-greeting early-return
+    replies (e.g. QA-cache hits) too.
+    """
+    if not text:
+        return text
+    stripped = text.lstrip()
+    if stripped.startswith(_GREETING_LEAD):
+        return stripped[len(_GREETING_LEAD) :].lstrip()
+    return stripped
 
 
 def _ack(company_name: str | None) -> IntentResponse:
