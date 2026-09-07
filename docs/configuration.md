@@ -34,6 +34,25 @@ All configuration is managed through environment variables. Each application has
 | `RELEVANCE_GATE_ENABLED` | No | `true` | CRAG relevance gate — **blocking**. This is the control behind "answers only from your knowledge base". An **empty** value is treated as unset and falls back to `true` |
 | `RERANK_ENABLED` | No | `false` | FlashRank cross-encoder rerank |
 | `GROUNDEDNESS_CHECK_ENABLED` | No | `true` | Post-answer groundedness audit. **Observability only** — never blocks or rewrites a delivered answer |
+| `GATE_MAX_CHUNKS` | No | `5` | Chunks the CRAG relevance judge sees. It decides a visitor-facing refusal, so judging far fewer chunks than generation receives makes it refuse on evidence the answer would have used |
+| `GATE_CHUNK_PREVIEW_CHARS` | No | `500` | Characters per chunk shown to the relevance judge |
+| `GROUNDEDNESS_MAX_CHUNKS` | No | `5` | Chunks the groundedness judge sees. Too few and it scores good answers as hallucinations |
+| `GROUNDEDNESS_CHUNK_PREVIEW_CHARS` | No | `500` | Characters per chunk shown to the groundedness judge |
+
+### Request-path deadlines
+
+Every one of these bounds an LLM call that sits between the visitor's message and
+their first token. Each degrades rather than fails: the turn continues with a
+cheaper signal instead of holding the stream open.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `LLM_FIRST_TOKEN_TIMEOUT_S` | No | `10` | Deadline covering the streaming request **and** its first chunk. On expiry the fallback model is tried, since nothing has reached the visitor yet. Without it a primary that accepts the connection and stalls holds the visitor until LiteLLM's own multi-hour default |
+| `LLM_TIMEOUT_S` | No | `60` | Per-request client timeout for non-streaming calls |
+| `QUERY_REWRITE_TIMEOUT_S` | No | `3` | Follow-up query rewrite. Past it, retrieval runs on the raw question |
+| `HANDOFF_INTENT_TIMEOUT_S` | No | `4` | Handoff-intent classifier. Past it, the keyword signal decides |
+| `GATE_LLM_TIMEOUT_S` | No | `2` | Relevance judge. Fails open (treats the chunks as relevant) |
+| `GROUNDEDNESS_LLM_TIMEOUT_S` | No | `3` | Groundedness judge. Fails open; it is observability only |
 
 ### Document Ingestion
 

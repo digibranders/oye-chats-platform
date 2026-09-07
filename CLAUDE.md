@@ -52,6 +52,22 @@ preview`, not the dev server, so what is under test is what ships.
 | Format | `cd api && uv run ruff format .` |
 | Tests | `cd api && uv run pytest` |
 
+**Answer quality is a separate gate, and pytest is not it.** The suite mocks
+every LLM call, so a prompt edit that makes the bot hedge on prices, or a gate
+change that starts refusing pricing questions, passes it. That class of
+regression is caught by the golden-set harness in `api/eval/`, which drives the
+real `POST /chat` of a deployed bot and scores the answers with an LLM judge:
+
+```bash
+cd api && uv run python -m eval.run_eval --dry-run   # validate the set, no network, no keys
+cd api && GOOGLE_API_KEY=... uv run python -m eval.run_eval \
+  --api-url https://api.oyechats.com --bot-key bot-xxx
+```
+
+Run it after changing the system prompt, the relevance gate, retrieval, or the
+qualification prompts. It also runs nightly (`.github/workflows/eval-nightly.yml`,
+informational, blocks nothing). See [`docs/eval/README.md`](docs/eval/README.md).
+
 ### Rules
 1. **Scope checks to what changed** — don't lint the entire monorepo if you only touched the widget.
 2. **Fix before reporting/pushing** — if lint, format, or build fails, fix all errors and re-run until clean. Do not push breaking or unformatted code!
