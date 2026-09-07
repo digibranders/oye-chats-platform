@@ -27,6 +27,37 @@
   pointer-events: auto;
 }
 
+/* Pointing-hand cursor on everything clickable.
+   Browsers default <button> to the arrow cursor (only <a href> gets the hand),
+   so the launcher bubble and the header's history / menu / close controls read
+   as inert on hover. Most in-chat controls already carry Tailwind's
+   `cursor-pointer`, which is exactly the problem: the affordance depended on
+   whoever wrote each component remembering it, and the launcher -- the first
+   thing anybody hovers -- was one of the ones that did not.
+
+   `:where()` keeps the scope selector at ZERO specificity, so the whole rule
+   weighs only as much as a bare element selector. Any component that sets its
+   own cursor (`cursor-zoom-in` on an image, `disabled:cursor-not-allowed` on a
+   send button) is a class at higher specificity and still wins. It is a
+   default, not an override.
+
+   Scoped to the render target rather than written bare so the dev-server entry,
+   which mounts without a shadow root, cannot restyle the host page. */
+:where(#oyechats-shadow-inner) button,
+:where(#oyechats-shadow-inner) [role="button"],
+:where(#oyechats-shadow-inner) a[href],
+:where(#oyechats-shadow-inner) summary,
+:where(#oyechats-shadow-inner) label[for] {
+  cursor: pointer;
+}
+
+/* A control that cannot be used must not invite the click. Carries the
+   `:disabled` / attribute pseudo-class, so it outweighs the rule above. */
+:where(#oyechats-shadow-inner) button:disabled,
+:where(#oyechats-shadow-inner) [role="button"][aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
 /* RTL language support inside Shadow DOM */
 :host([dir="rtl"]),
 #oyechats-shadow-inner[dir="rtl"] {
