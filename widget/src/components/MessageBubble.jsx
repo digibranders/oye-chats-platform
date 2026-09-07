@@ -179,6 +179,13 @@ const MessageBubble = ({
     streamingId,
     settings,
     onFeedback,
+    // Half of the messages area's flex `gap`, as a negative number, when this
+    // message follows another from the SAME sender. A burst of messages from
+    // one person is a single thought broken across bubbles, so the full
+    // between-speakers gap reads as four separate turns; halving it groups them
+    // without merging them. Passed in rather than derived here because only the
+    // caller knows what preceded this message and which theme's gap applies.
+    tightTopPx = 0,
 }) => {
     // Hover-revealed action toolbar state. Local to each bot message so the
     // copied-confirmation flash on one reply doesn't bleed into siblings.
@@ -341,10 +348,10 @@ const MessageBubble = ({
 
     // User message. Light blue bubble with dark text
     return (
-        <div className="flex flex-col items-end">
+        <div className="flex flex-col items-end" style={tightTopPx ? { marginTop: `${tightTopPx}px` } : undefined}>
             <div className="flex justify-end w-full">
                 <div
-                    className={`max-w-[85%] px-4 py-3 text-[14px] ${currentTheme.userBubble}`}
+                    className={`max-w-[85%] px-4 py-[6.72px] text-[14px] ${currentTheme.userBubble}`}
                     style={{ backgroundColor: sanitizeColor(settings?.user_bubble_color, currentTheme.userBubbleDefaultBg || '#DBE9FF') }}
                 >
                     <div dir="auto" className="prose prose-sm max-w-none break-words">
