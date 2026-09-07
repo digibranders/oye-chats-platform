@@ -369,11 +369,75 @@ class TestFailedGenerationIsNotBilledOrCached:
         bot = _make_bot(db, client)
         _make_session(db, bot, client, "sess-fail-4")
         cap = _stub_pipeline(monkeypatch, retrieved=(_doc("Acme opens at 9."),), chunks=("We open at 9.",))
+        _anonymous_visitor(monkeypatch)
 
         frames = await _drive_stream(bot, "when do you open", "sess-fail-4")
 
         assert len(cap["cache"].store) == 1
         assert _final_meta(frames)["generation_failed"] is False
+
+
+def _anonymous_visitor(monkeypatch):
+    """No known name and no by-name opener: the only visitor whose impersonal
+    answer the shared QA cache may keep (see ``rs._answer_is_cacheable``).
+    The default stub simulates a RETURNING visitor called Tester, whose
+    "Welcome back, Tester!" opener must never be cached."""
+    monkeypatch.setattr(rs, "resolve_name_flow", lambda *a, **k: (None, None, None, False))
+    monkeypatch.setattr(rs, "resolve_visitor_name", lambda *a, **k: None)
+
+
+# ── Defect 10: the shared QA cache must never hold personalised or context-bound text
+
+
+class TestQaCacheNeverHoldsPersonalisedText:
+    """The cache is keyed on bot + question and replayed to ANY visitor of the
+    bot. A returning visitor's "Welcome back, Tester!" opener and an answer
+    that used the visitor's name were both being cached and served to
+    strangers; a follow-up such as "tell me more about it" was served from a
+    cache that knows nothing about what "it" meant in this conversation."""
+
+    @pytest.mark.asyncio
+    async def test_returning_visitor_opener_is_streamed_but_not_cached(self, db, monkeypatch):
+        client = _make_client(db)
+        bot = _make_bot(db, client)
+        _make_session(db, bot, client, "sess-pii-1")
+        cap = _stub_pipeline(monkeypatch, retrieved=(_doc("Acme opens at 9."),), chunks=("We open at 9.",))
+
+        frames = await _drive_stream(bot, "when do you open", "sess-pii-1")
+
+        assert "Welcome back, Tester!" in _answer_text(frames)
+        assert cap["cache"].store == {}, "a by-name opener must never be replayed to another visitor"
+
+    @pytest.mark.asyncio
+    async def test_answer_that_uses_the_visitor_name_is_not_cached(self, db, monkeypatch):
+        client = _make_client(db)
+        bot = _make_bot(db, client)
+        _make_session(db, bot, client, "sess-pii-2")
+        cap = _stub_pipeline(monkeypatch, retrieved=(_doc("Acme opens at 9."),), chunks=("Sure Tester, we open at 9.",))
+        # Known name, no opener this turn (not just introduced, not returning).
+        monkeypatch.setattr(rs, "resolve_name_flow", lambda *a, **k: (None, None, None, False))
+
+        await _drive_stream(bot, "when do you open", "sess-pii-2")
+
+        assert cap["cache"].store == {}
+
+    @pytest.mark.asyncio
+    async def test_follow_up_shaped_question_bypasses_the_cache(self, db, monkeypatch):
+        client = _make_client(db)
+        bot = _make_bot(db, client)
+        _make_session(db, bot, client, "sess-pii-3")
+        cap = _stub_pipeline(monkeypatch, retrieved=(_doc("Pro costs $49."),), chunks=("Pro is $49/month.",))
+        _anonymous_visitor(monkeypatch)
+        key = rs.qa_response_key(bot.id, rs.hashlib.sha256(b"tell me more about it").hexdigest()[:32], None)
+        cap["cache"].store[key] = {"answer": "STALE ANSWER FROM ANOTHER CONVERSATION", "sources": []}
+
+        frames = await _drive_stream(bot, "tell me more about it", "sess-pii-3")
+
+        assert "STALE ANSWER" not in _answer_text(frames)
+        assert cap["prompts"], "a context-dependent question must be generated, not served from the cache"
+        assert cap["cache"].store[key]["answer"] == "STALE ANSWER FROM ANOTHER CONVERSATION", (
+            "and its fresh answer must not overwrite the entry either"
+        )
 
 
 # ── Defect 3: off-topic refusals must be persisted + emit FINAL_METADATA ─────
@@ -511,6 +575,7 @@ class TestMediaBotQaCache:
         bot = _make_bot(db, client)
         _make_session(db, bot, client, "sess-media-1")
         cap = _stub_pipeline(monkeypatch, retrieved=(_doc("Acme opens at 9."),), chunks=("We open at 9.",))
+        _anonymous_visitor(monkeypatch)
         monkeypatch.setattr(
             rs,
             "get_bot_media_urls",
