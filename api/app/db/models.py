@@ -444,6 +444,24 @@ class Bot(Base):
     lead_form_enabled = Column(Boolean, default=False, server_default="false", nullable=False)
     lead_form_fields = Column(JSONB, nullable=True)  # e.g. [{"field":"name","required":true}]
 
+    # ── What the customer's site is built on (Deploy > platform picker) ─────
+    #
+    # Provenance, exactly like ``bot_logo_source``: the value alone cannot say
+    # whether anyone chose it, and a guess must never overwrite a choice.
+    #
+    # ``detected`` is written by the install probe, which reads it off the same
+    # fetch it already does (``install_detection.detect_platform``). ``manual``
+    # is written when the customer picks from the dropdown themselves, and the
+    # probe then leaves both columns alone forever: a site mid-migration, or one
+    # whose framework we fingerprint wrongly, must not have the customer's
+    # answer taken away from it on the next check.
+    #
+    # NULL means nobody knows yet, and the picker shows its default. The IDs are
+    # the frontend's (``app/src/data/platformIntegrations.ts``); an unknown one
+    # simply does not match there and falls back to the same default.
+    install_platform = Column(String(24), nullable=True)
+    install_platform_source = Column(String(16), nullable=True)  # detected | manual
+
     # ── Metered lead-enrichment toggles (Experience > Leads) ────────────────
     #
     # Both default ON (migration ``b1000005enrichon``). They have flipped

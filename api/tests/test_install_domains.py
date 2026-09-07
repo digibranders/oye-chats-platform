@@ -278,3 +278,78 @@ class TestOwnDomainsAreNotCustomerInstalls:
             request = SimpleNamespace(base_url="https://api.oyechats.com/", headers={"origin": f"https://{host}"})
             assert (bot_routes._external_install_hostname(request) is not None) is external
             assert (not bot_routes._is_internal_widget_host(host, request)) is external
+
+
+class TestPlatformFingerprint:
+    """What the site is built on, read off the probe's existing fetch.
+
+    Only ever the initial value of the Deploy page's picker, which the customer
+    can change, so the bar is "right often enough to save a click" and never
+    "authoritative". What matters more than any single fingerprint is the
+    ORDER: a Next.js page is also a React page, and a WordPress page can carry
+    almost anything, so the specific markers have to win over the generic ones.
+    """
+
+    @staticmethod
+    def _detect(html: str):
+        from app.services.install_detection import detect_platform
+
+        return detect_platform(html)
+
+    def test_nothing_matches_plain_html(self):
+        # The common case, and the reason None is not a failure: hand-written
+        # HTML leaves no marker, and the picker's own default covers it.
+        assert self._detect("<html><body><h1>Acme</h1></body></html>") is None
+
+    def test_empty_page(self):
+        assert self._detect("") is None
+
+    def test_nextjs(self):
+        assert self._detect('<script id="__NEXT_DATA__" type="application/json">{}</script>') == "nextjs"
+        assert self._detect('<link rel="preload" href="/_next/static/chunks/main.js">') == "nextjs"
+
+    def test_wordpress(self):
+        assert self._detect('<link href="https://acme.com/wp-content/themes/x/style.css">') == "wordpress"
+        assert self._detect('<meta name="generator" content="WordPress 6.5">') == "wordpress"
+
+    def test_shopify(self):
+        assert self._detect('<script src="https://cdn.shopify.com/s/files/x.js">') == "shopify"
+
+    def test_the_site_builders(self):
+        assert self._detect('<div data-wf-page="abc">') == "webflow"
+        assert self._detect('<meta name="generator" content="Framer">') == "framer"
+        assert self._detect('<script src="https://static.parastorage.com/x.js">') == "wix"
+        assert self._detect("<!-- This is Squarespace. -->") == "squarespace"
+
+    def test_a_next_page_is_not_reported_as_react(self):
+        # Both markers on one page, which is every Next.js app that hydrates.
+        # `react` exists for a bare CRA-style build and must not swallow the
+        # more specific answer, which is the one whose instructions differ.
+        html = '<div data-reactroot=""></div><script id="__NEXT_DATA__">{}</script>'
+        assert self._detect(html) == "nextjs"
+
+    def test_a_wordpress_page_running_react_is_still_wordpress(self):
+        # Where the customer installs the snippet is decided by the CMS, not by
+        # whatever the theme renders with.
+        html = '<link href="/wp-content/plugins/x.css"><div data-reactroot=""></div>'
+        assert self._detect(html) == "wordpress"
+
+    def test_case_is_not_load_bearing(self):
+        assert self._detect('<META NAME="GENERATOR" CONTENT="WordPress 6.5">') == "wordpress"
+
+    def test_every_id_it_can_return_exists_in_the_frontend_list(self):
+        """The ids are the picker's, and a value it does not know renders nothing.
+
+        Reads the frontend's own module rather than restating the list here:
+        two copies of an id set is how they drift, and the drift is silent —
+        the picker just falls back to its default and nobody learns why.
+        """
+        import re
+        from pathlib import Path
+
+        from app.services.install_detection import _PLATFORM_FINGERPRINTS
+
+        source = Path(__file__).resolve().parents[2] / "app" / "src" / "data" / "platformIntegrations.ts"
+        known = set(re.findall(r"^\s{4}id: '([a-z]+)',", source.read_text(), re.M))
+        assert known, "could not read the frontend platform ids"
+        assert {p for p, _ in _PLATFORM_FINGERPRINTS} <= known

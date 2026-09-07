@@ -621,4 +621,38 @@ describe('the install panel opens on a platform', () => {
     expect(DEFAULT_PLATFORM_ID).toBe('html');
     expect(platforms.some((p) => p.id === DEFAULT_PLATFORM_ID)).toBe(true);
   });
+
+  /**
+   * ...and on the REMEMBERED one once there is one.
+   *
+   * The picker reset to HTML on every visit, so a customer on Next.js re-picked
+   * it every time they opened Deploy. `DeployPage` resolves the value as
+   * "this session's choice, else the stored one, else HTML"; these pin that
+   * precedence as pure logic, since the page itself needs the whole chatbot
+   * query, the access slice and a router to render.
+   */
+  const resolve = (choice: string | null, stored: string | null): string => {
+    const known = platforms.some((p) => p.id === stored) ? stored : null;
+    return choice ?? known ?? DEFAULT_PLATFORM_ID;
+  };
+
+  it('opens on the stored platform, not the default', () => {
+    expect(resolve(null, 'nextjs')).toBe('nextjs');
+  });
+
+  it('falls back to HTML when nothing is stored yet', () => {
+    expect(resolve(null, null)).toBe(DEFAULT_PLATFORM_ID);
+  });
+
+  it('ignores a stored id this build does not know', () => {
+    // Two independent producers write it: the customer, and the install
+    // probe's fingerprint. A platform removed from the list between deploys
+    // must fall back to the default rather than render an empty panel.
+    expect(resolve(null, 'geocities')).toBe(DEFAULT_PLATFORM_ID);
+  });
+
+  it('lets this session\'s choice win over the stored one', () => {
+    // The dropdown has to switch on the keystroke, not after the write lands.
+    expect(resolve('wordpress', 'nextjs')).toBe('wordpress');
+  });
 });

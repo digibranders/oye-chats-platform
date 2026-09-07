@@ -118,6 +118,59 @@ class WidgetScan:
         return "missing"
 
 
+# ── Which platform the site is built on ──────────────────────────────────────
+#
+# Read off the SAME fetch the install probe already does, so this costs nothing
+# extra. Its only job is to pre-select the right entry in the Deploy page's
+# "What is your website built on?" list, which the customer can change: a wrong
+# guess costs one click, so the fingerprints below are the well-known ones and
+# nothing is inferred from a weak signal.
+#
+# ORDER IS LOAD-BEARING. Site builders and CMSes come first because their
+# markers are unambiguous, then the meta-frameworks, and the bare view
+# libraries last: a Next.js page is also a React page and would match `react`
+# too, so `react` may only be reached once `nextjs` has been ruled out.
+#
+# The IDs are the frontend's (`app/src/data/platformIntegrations.ts`). A value
+# here that does not exist there simply fails to match and the picker falls
+# back to its default, which is the right failure: never a wrong instruction.
+_PLATFORM_FINGERPRINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("wordpress", ("/wp-content/", "/wp-includes/", 'content="WordPress')),
+    ("shopify", ("cdn.shopify.com", "myshopify.com", "Shopify.theme")),
+    ("wix", ("static.parastorage.com", 'content="Wix.com')),
+    ("squarespace", ("static1.squarespace.com", "squarespace.com/universal", "This is Squarespace")),
+    ("webflow", ("data-wf-page", "data-wf-site", "assets.website-files.com")),
+    ("framer", ("framerusercontent.com", 'content="Framer')),
+    ("bubble", ("bubble_page_load_id", "cdn.bubble.io")),
+    ("nextjs", ("__NEXT_DATA__", "/_next/static/", "/_next/image")),
+    ("astro", ("astro-island", 'content="Astro')),
+    ("svelte", ("__sveltekit", "/_app/immutable/")),
+    ("vue", ("__NUXT__", "data-v-app", "/_nuxt/")),
+    ("angular", ("ng-version=", "<app-root")),
+    ("react", ("data-reactroot", "__REACT_DEVTOOLS_GLOBAL_HOOK__")),
+)
+
+
+def detect_platform(html: str) -> str | None:
+    """Best-effort guess at what a page is built with, or ``None``.
+
+    ``None`` whenever nothing matches, which is the common case for hand-written
+    HTML and for anything served behind a framework that leaves no mark. The
+    caller must treat it as a hint and never as a fact: it decides a dropdown's
+    initial value, nothing else.
+    """
+    if not html:
+        return None
+    # One lowercase copy, not thirteen `in` scans over mixed case. Attribute
+    # names and asset paths are lowercase in practice; the two `content="..."`
+    # generator strings are matched case-insensitively for the same reason.
+    haystack = html.lower()
+    for platform, markers in _PLATFORM_FINGERPRINTS:
+        if any(marker.lower() in haystack for marker in markers):
+            return platform
+    return None
+
+
 def scan_html(html: str) -> WidgetScan:
     """Find OyeChats widget snippets in served markup.
 
@@ -202,6 +255,9 @@ class ProbeResult:
     status: str  # installed | foreign | missing | unreachable
     bot_key: str | None = None
     detail: str | None = None
+    # What the page looks built with, for the Deploy page's platform picker.
+    # ``None`` when nothing matched, which is not a failure: see detect_platform.
+    platform: str | None = None
 
 
 async def _fetch_page(session, hostname: str) -> tuple[int, str] | None:
@@ -251,6 +307,7 @@ async def probe_domain(session, hostname: str, bot_key: str) -> ProbeResult:
     status_code, html = fetched
     scan = scan_html(html)
     verdict = scan.verdict_for(bot_key)
+    platform = detect_platform(html)
 
     if verdict == "installed":
         return ProbeResult(
@@ -267,6 +324,7 @@ async def probe_domain(session, hostname: str, bot_key: str) -> ProbeResult:
                 if scan.client_injected
                 else None
             ),
+            platform=platform,
         )
     if verdict == "foreign":
         found = scan.bot_keys[0] if scan.bot_keys else None
@@ -275,6 +333,7 @@ async def probe_domain(session, hostname: str, bot_key: str) -> ProbeResult:
             "foreign",
             bot_key=found,
             detail="An OyeChats widget is on this page, but it belongs to a different chatbot.",
+            platform=platform,
         )
     return ProbeResult(
         hostname,
@@ -287,4 +346,9 @@ async def probe_domain(session, hostname: str, bot_key: str) -> ProbeResult:
             "tag manager, which fetches its container in the browser, and any "
             "code that builds the script tag at runtime."
         ),
+        # Reported even here, in fact ESPECIALLY here: a customer whose snippet
+        # is missing is the one about to follow the platform instructions, so
+        # knowing the page is Next.js is worth more on this branch than on the
+        # one where they are already done.
+        platform=platform,
     )

@@ -996,6 +996,13 @@ def _bot_to_cache_dict(bot: Bot) -> dict:
         # itself.
         "email_verification_enabled": bot.email_verification_enabled,
         "company_lookup_enabled": bot.company_lookup_enabled,
+        # What the site is built on, for the Deploy page's platform picker.
+        # Nothing on the widget path reads these; they are here because the
+        # public settings endpoint publishes them, and the round-trip guard
+        # holds that line rather than letting the two answers diverge on a
+        # cache hit.
+        "install_platform": bot.install_platform,
+        "install_platform_source": bot.install_platform_source,
         # Three more the public settings endpoint publishes and this dict
         # forgot, found by the round-trip test rather than by inspection:
         #  * calcom_url, the widget's meeting-booking link simply vanishes on
