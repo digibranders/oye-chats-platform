@@ -331,15 +331,13 @@ export function DeployPage() {
     deploy.retry();
   };
 
-  // A broken install opens on the checklist; everyone else opens on the steps
-  // for their own stack. The reader's own choice always wins once they make one.
-  // `stale` counts as broken: a widget that has not loaded in a week has the
-  // same causes and the same checklist as one that never loaded at all.
-  const activeHelpTab: HelpTab =
-    helpTab ??
-    (deploy.status.state === 'not-detected' || deploy.status.state === 'stale'
-      ? 'troubleshoot'
-      : 'platform');
+  // Always opens on the steps for the reader's own stack. It used to open on
+  // the troubleshooting checklist whenever the install was not detected, which
+  // is every chatbot's state until its first real visitor, so the page led
+  // with "what is wrong" before the reader had been shown what to do. The
+  // status card's "What to check" still switches here explicitly, and the
+  // reader's own choice always wins once they make one.
+  const activeHelpTab: HelpTab = helpTab ?? 'platform';
 
   return (
     <Page>

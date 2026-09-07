@@ -220,11 +220,15 @@ class TestTheRegistry:
 class TestOwnDomainsAreNotCustomerInstalls:
     """``counts_as_install``, and the single rule behind it.
 
-    Our marketing site runs the widget, so its snippet probes as installed and
-    its heartbeat is refused, deliberately: our own traffic must never tick a
-    customer's setup step. The card then said "no visitor has opened the
-    chatbot here yet" forever, which is how this got reported as a bug against
-    a mechanism that was working exactly as designed.
+    The surfaces that render OTHER accounts' chatbots (the dashboard's previews,
+    the API-hosted demo pages, local dev) must never stamp an install: that is
+    us looking at a customer's chatbot, not the customer installing it.
+
+    The marketing site is not one of them. It only ever embeds our own chatbot,
+    so a bootstrap from it can only stamp our own row. It used to be excluded
+    too, which left that one real install permanently "not detected" and its
+    setup step permanently open: a mechanism refusing the exact case it exists
+    to record.
 
     The rule lives in one function so the two callers cannot drift. A payload
     that claimed a host counts while the heartbeat refused it would reproduce
@@ -237,16 +241,17 @@ class TestOwnDomainsAreNotCustomerInstalls:
 
     @pytest.fixture(autouse=True)
     def _our_hosts(self, monkeypatch):
-        # The env under test has no APP_URL/MARKETING_URL, so the set would be
-        # just localhost. Pin it to its production shape instead.
+        # The env under test has no APP_URL, so the set would be just localhost.
+        # Pin it to its production shape instead.
         monkeypatch.setattr(
             bot_routes,
             "_INTERNAL_WIDGET_HOSTS",
-            {"www.oyechats.com", "app.oyechats.com", "localhost", "127.0.0.1"},
+            {"app.oyechats.com", "localhost", "127.0.0.1"},
         )
 
-    def test_our_marketing_site_is_ours(self):
-        assert bot_routes._is_internal_widget_host("www.oyechats.com", self._request()) is True
+    def test_our_marketing_site_is_a_real_install(self):
+        # It embeds only our own chatbot, so it can only ever stamp our own row.
+        assert bot_routes._is_internal_widget_host("www.oyechats.com", self._request()) is False
 
     def test_the_dashboard_is_ours(self):
         assert bot_routes._is_internal_widget_host("app.oyechats.com", self._request()) is True
@@ -269,7 +274,7 @@ class TestOwnDomainsAreNotCustomerInstalls:
     def test_the_heartbeat_and_the_payload_agree(self):
         # Both sides of the rule, driven through their real entry points. If
         # these ever disagree the UI reports a fault that does not exist.
-        for host, external in (("www.oyechats.com", False), ("acme.com", True)):
+        for host, external in (("app.oyechats.com", False), ("www.oyechats.com", True), ("acme.com", True)):
             request = SimpleNamespace(base_url="https://api.oyechats.com/", headers={"origin": f"https://{host}"})
             assert (bot_routes._external_install_hostname(request) is not None) is external
             assert (not bot_routes._is_internal_widget_host(host, request)) is external

@@ -18,6 +18,9 @@ import { useSetupChecklist } from './useSetupChecklist';
  * away when the work is done or when asked.
  */
 vi.mock('./useSetupChecklist', () => ({ useSetupChecklist: vi.fn() }));
+// Mounted here outside `AgentScope`, so the route-resolved chatbot is stubbed;
+// what it resolves to is `useSetupChecklist`'s concern, and that is mocked above.
+vi.mock('../context/AgentContext', () => ({ useAgent: () => ({ agent: null, agentId: null }) }));
 
 const STEPS = [
   { id: 'create', label: 'Create your chatbot', description: '', done: true, to: '/welcome' },

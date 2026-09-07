@@ -44,12 +44,21 @@ export interface SetupStep {
 /** Seeded on every new chatbot (`Bot.avatar_type`). */
 const DEFAULT_AVATAR_TYPE = 'upload';
 
-export function useSetupChecklist() {
-  const { bots, loading: botsLoading } = useBotContext();
+/**
+ * @param scope The chatbot the checklist is about. `SetupJourney` passes the
+ *   one whose pages it sits above; the rail's ring, Home and `/setup` pass
+ *   nothing and get the chatbot the sidebar is scoped to, else the first.
+ *
+ *   This used to be `bots[0]` unconditionally, on the theory that a workspace
+ *   with several chatbots is past the checklist. It is not: the strip renders
+ *   above EVERY chatbot's pages, so a brand-new second chatbot with nothing
+ *   indexed, no branding and no leads opened with four of five steps struck
+ *   through, all of them earned by the first chatbot.
+ */
+export function useSetupChecklist(scope?: Bot | null) {
+  const { bots, selectedBot, loading: botsLoading } = useBotContext();
 
-  // The first chatbot is the one onboarding is about. A workspace that already
-  // has several is past this checklist by definition.
-  const primary: Bot | null = bots[0] ?? null;
+  const primary: Bot | null = scope ?? selectedBot ?? bots[0] ?? null;
 
   const leads = useQuery({
     queryKey: keys.leads.stats(primary?.id ?? null, null),

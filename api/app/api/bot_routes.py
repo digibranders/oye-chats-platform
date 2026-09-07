@@ -38,7 +38,6 @@ from app.config import (
     DEMO_SCREENSHOT_ENABLED,
     DEMO_SCREENSHOT_TTL_DAYS,
     FRONTEND_URL,
-    MARKETING_URL,
 )
 from app.config import WIDGET_SCRIPT_URL as CONFIGURED_WIDGET_SCRIPT_URL
 from app.core.cache import (
@@ -238,12 +237,21 @@ def _normalize_session_share_domain(raw: str | None) -> str | None:
 
 logger = logging.getLogger(__name__)
 
-# Hostnames that are OUR OWN surfaces (dashboard preview, marketing site, demo
-# pages, local dev). A widget bootstrap from one of these is not a real customer
-# install, so it must never stamp ``Bot.widget_installed_at``.
-_INTERNAL_WIDGET_HOSTS = {
-    h for h in (extract_hostname(APP_URL), extract_hostname(MARKETING_URL), extract_hostname(FRONTEND_URL)) if h
-} | {"localhost", "127.0.0.1"}
+# Hostnames that render OTHER accounts' chatbots: the dashboard (the Experience
+# and Deploy previews bootstrap whichever chatbot is open), local dev, and the
+# API's own host for the hosted demo/preview pages (added per request in
+# ``_is_internal_widget_host``). A bootstrap from one of these must never stamp
+# ``Bot.widget_installed_at``: it is us looking at a customer's chatbot, not a
+# customer installing it.
+#
+# The marketing site is deliberately NOT here. It only ever embeds our own
+# chatbot, so a bootstrap from it can only ever stamp our own row, and refusing
+# it left that one install permanently "not detected" and its setup step
+# permanently open, which is how this was reported as a bug.
+_INTERNAL_WIDGET_HOSTS = {h for h in (extract_hostname(APP_URL), extract_hostname(FRONTEND_URL)) if h} | {
+    "localhost",
+    "127.0.0.1",
+}
 
 
 # How long one bot suppresses further heartbeat writes.
@@ -323,7 +331,7 @@ def _is_internal_widget_host(hostname: str, request: Request) -> bool:
     The request is a parameter because the set is not static: the hosted demo
     and preview pages are served by the API itself, so a widget embedded there
     reports the API's own host as its origin. That has to be excluded whatever
-    ``APP_URL``/``MARKETING_URL`` happen to resolve to.
+    ``APP_URL`` happens to resolve to.
 
     Shared by the heartbeat, which must not stamp an install for one of these,
     and by ``GET /bots/{bot_id}/install-domains``, which has to be able to say
@@ -345,7 +353,7 @@ def _external_install_hostname(request: Request) -> str | None:
     excluded too, because the hosted demo/preview pages are served by the API
     itself, a widget embedded there reports the API host as its origin, which
     must not count as a customer install regardless of how the
-    ``APP_URL``/``MARKETING_URL`` config resolves.
+    ``APP_URL`` config resolves.
 
     The hostname is returned rather than discarded because it is what
     ``Bot.widget_last_origin`` stores. It is browser-forgeable and must stay
