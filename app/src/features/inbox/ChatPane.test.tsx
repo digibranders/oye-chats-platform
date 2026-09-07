@@ -60,6 +60,7 @@ const SOCKET: OperatorSocketApi = {
   clearUnread: vi.fn(),
   applyTranslation: vi.fn(),
   clearConnectResolution: vi.fn(),
+  reclaim: vi.fn(),
 };
 
 const ITEM: InboxItem = {
