@@ -321,11 +321,14 @@ test.describe('Phase 5A - the working language is a property of the operator', (
     await mockBackend(page, { history: [], operatorLocale: 'en-IN', online: false });
     await page.goto('/inbox?view=yours');
 
-    // Offline: the availability switch reads as off. Asserting the state
-    // rather than the presence of an opposite-facing button is what survives
-    // the control being a toggle instead of two buttons.
+    // Opening the inbox puts the operator on duty, so being off duty is now
+    // something they ask for rather than something they arrive in. Asserting
+    // the switch's state rather than the presence of an opposite-facing button
+    // is what survives the control being a toggle instead of two buttons.
     const availability = page.getByRole('switch', { name: 'Taking chats' });
     await expect(availability).toBeVisible({ timeout: 20_000 });
+    await expect(availability).toBeChecked();
+    await availability.click();
     await expect(availability).not.toBeChecked();
 
     const picker = page.getByRole('combobox', { name: 'Read live chat in' });
@@ -342,6 +345,10 @@ test.describe('Phase 5A - the working language is a property of the operator', (
 
     const availability = page.getByRole('switch', { name: 'Taking chats' });
     await expect(availability).toBeVisible({ timeout: 20_000 });
+    // On duty on arrival, then off by their own hand — the state this test is
+    // actually about.
+    await expect(availability).toBeChecked();
+    await availability.click();
     await expect(availability).not.toBeChecked();
     const picker = page.getByRole('combobox', { name: 'Read live chat in' });
     await expect(picker).toHaveText(/Do not translate/, { timeout: 20_000 });
@@ -353,8 +360,16 @@ test.describe('Phase 5A - the working language is a property of the operator', (
     await mockBackend(page, { history: [], operatorLocale: 'en-IN', online: false });
     await page.goto('/inbox?view=yours');
 
-    await page.getByRole('combobox', { name: 'Read live chat in' }).click();
-    const options = page.getByRole('option');
+    const picker = page.getByRole('combobox', { name: 'Read live chat in' });
+    await picker.click();
+    // Scoped to the picker's own popup. A bare `getByRole('option')` also
+    // matched the conversation rows, which are options in the list's listbox —
+    // it only looked right while the operator arrived off duty and the list
+    // was empty.
+    const options = page
+      .locator('[role="listbox"]')
+      .filter({ hasText: 'Do not translate' })
+      .getByRole('option');
     await expect(options).toHaveText([/Do not translate/, /English \(India\)/, /Hindi \(India\)/]);
   });
 });

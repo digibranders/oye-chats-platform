@@ -73,6 +73,36 @@ class TestValidateEmailEndpointGating:
         assert response.json()["valid"] is False
         mock_verify.assert_called_once()
 
+    def test_blocks_a_disabled_mailbox(self, monkeypatch):
+        """End to end for the reported bypass: a deactivated mailbox is
+        ``status: disabled``, not ``status: invalid``. The endpoint must
+        answer ``valid: false`` so the widget's handoff form refuses to
+        submit it, instead of connecting the visitor to a live operator."""
+        from app.api import chat_routes
+
+        monkeypatch.setattr(chat_routes, "is_email_validation_enabled_for_bot", lambda *_a, **_k: True)
+        monkeypatch.setattr(chat_routes, "_agent_enrichment_opt_in", lambda *_a, **_k: True)
+        with patch(
+            "app.services.reoon_service.verify_email",
+            return_value={
+                "status": "disabled",
+                "overall_score": 4,
+                "is_safe_to_send": False,
+                "is_disposable": False,
+                "is_deliverable": False,
+                "is_valid_syntax": True,
+                "is_spamtrap": False,
+                "mx_accepts_mail": True,
+            },
+        ) as mock_verify:
+            response = TestClient(_build_app(_bot())).post(
+                "/chat/validate-email", json={"email": "adm@digibranders.test"}
+            )
+
+        assert response.status_code == 200
+        assert response.json()["valid"] is False
+        mock_verify.assert_called_once()
+
     def test_skips_reoon_when_agent_opted_out(self, monkeypatch):
         """Plan allows it, but the agent's Advanced toggle is off → no Reoon."""
         from app.api import chat_routes

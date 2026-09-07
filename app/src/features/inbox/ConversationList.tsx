@@ -109,7 +109,12 @@ function Row({
       <div className="relative shrink-0">
         <Avatar size="md" name={item.name} />
         {item.online ? (
-          <span className="absolute -bottom-0.5 -end-0.5 rounded-full bg-surface p-0.5">
+          // `flex`, not the default inline: padding on an INLINE box is drawn
+          // from the font's content area, so the `bg-surface` ring rendered as
+          // a tall oval sitting off the avatar's corner instead of a circle
+          // around the dot. A flex box's padding is symmetric on all four
+          // sides, which is the ring this wants.
+          <span className="absolute -bottom-0.5 -end-0.5 flex rounded-full bg-surface p-0.5">
             <StatusDot tone="success" pulse label={t('inbox.onlineNow') || 'Online now'} />
           </span>
         ) : null}

@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { t as translateNow } from '../../i18n/i18n';
-import Markdown from 'react-markdown';
 import { useQuery } from '@tanstack/react-query';
 import { Star } from 'lucide-react';
 import {
@@ -26,6 +25,7 @@ import {
   formatRelative,
   formatTime,
   type PropertyItem,
+  Markdown,
 } from '../../ui';
 import { getSessionAuditTrail } from '../../services/api';
 import { formatDayLabel, isNewDay } from '../../lib/messageDay';
@@ -260,9 +260,7 @@ function Bubble({ message }: { message: TranscriptMessage }) {
             // as markdown would reformat their own words.
             <p className="whitespace-pre-wrap break-words text-prose text-text-primary">{text}</p>
           ) : (
-            <div className="break-words text-prose text-text-primary [&_a]:text-accent-600 [&_a]:underline [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:ps-4 [&_p]:my-0 [&_strong]:font-semibold [&_ul]:my-1 [&_ul]:list-disc [&_ul]:ps-4">
-              <Markdown>{text}</Markdown>
-            </div>
+            <Markdown className="text-prose text-text-primary">{text}</Markdown>
           )
         ) : (
           <p className="text-prose text-text-tertiary">{t('leads.noTextInThisMessage') || 'No text in this message.'}</p>

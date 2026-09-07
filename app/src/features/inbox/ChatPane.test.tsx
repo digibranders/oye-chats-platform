@@ -109,3 +109,98 @@ describe('ChatPane — the visitor-details toggle', () => {
     expect(screen.queryByRole('button', { name: 'Show visitor details' })).not.toBeInTheDocument();
   });
 });
+
+/**
+ * The read receipt, which nothing asserted before this.
+ *
+ * The chain that turns the visitor's grey double-tick green is long — the
+ * console reads the message's db id off the socket frame, takes the highest
+ * one a visitor sent, sends `read_receipt`, the server checks the operator
+ * really holds that conversation and relays it, and the widget upgrades every
+ * message at or below that id. `sendReadReceipt` was mocked in this file and
+ * never asserted, so any break in the console's half of it would have shipped
+ * silently: the operator sees nothing missing, and only the visitor's own
+ * screen is wrong.
+ */
+describe('ChatPane — telling the visitor their message was read', () => {
+  const liveItem: InboxItem = { ...ITEM, kind: 'live' };
+
+  function renderLive(socket: Partial<OperatorSocketApi>) {
+    return render(
+      <InboxSocketContext.Provider value={{ ...SOCKET, ...socket } as OperatorSocketApi}>
+        <ChatPane
+          item={liveItem}
+          draft=""
+          onDraftChange={vi.fn()}
+          snippets={[]}
+          onManageSnippets={vi.fn()}
+          now={Date.parse('2026-08-19T12:00:00Z')}
+          onLeft={vi.fn()}
+        />
+      </InboxSocketContext.Provider>,
+    );
+  }
+
+  it('reports the highest visitor message id on screen', () => {
+    const sendReadReceipt = vi.fn();
+    renderLive({
+      sendReadReceipt,
+      messagesBySession: {
+        'session-1': [
+          { key: 'srv-273', dbId: 273, role: 'user', content: 'hello', timestamp: null },
+          // The operator's own reply is not something to mark as read, and its
+          // id must not be what gets reported.
+          { key: 'srv-276', dbId: 276, role: 'operator', content: 'Okay', timestamp: null },
+          { key: 'srv-275', dbId: 275, role: 'user', content: 'i need 100 images', timestamp: null },
+        ],
+      },
+    });
+
+    expect(sendReadReceipt).toHaveBeenCalledWith('session-1', 275);
+  });
+
+  it('says nothing when the socket is not connected', () => {
+    // The frame would be dropped on the floor, and recording it as sent would
+    // mean the reconnect never re-sends it.
+    const sendReadReceipt = vi.fn();
+    renderLive({
+      status: 'reconnecting',
+      sendReadReceipt,
+      messagesBySession: {
+        'session-1': [{ key: 'srv-273', dbId: 273, role: 'user', content: 'hello', timestamp: null }],
+      },
+    });
+
+    expect(sendReadReceipt).not.toHaveBeenCalled();
+  });
+
+  it('says nothing for a conversation that is not live', () => {
+    // A waiting or offline item has no visitor socket listening for it.
+    const sendReadReceipt = vi.fn();
+    render(
+      <InboxSocketContext.Provider
+        value={
+          {
+            ...SOCKET,
+            sendReadReceipt,
+            messagesBySession: {
+              'session-1': [{ key: 'srv-273', dbId: 273, role: 'user', content: 'hi', timestamp: null }],
+            },
+          } as OperatorSocketApi
+        }
+      >
+        <ChatPane
+          item={ITEM}
+          draft=""
+          onDraftChange={vi.fn()}
+          snippets={[]}
+          onManageSnippets={vi.fn()}
+          now={Date.parse('2026-08-19T12:00:00Z')}
+          onLeft={vi.fn()}
+        />
+      </InboxSocketContext.Provider>,
+    );
+
+    expect(sendReadReceipt).not.toHaveBeenCalled();
+  });
+});

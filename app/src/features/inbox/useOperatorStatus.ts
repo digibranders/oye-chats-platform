@@ -19,12 +19,31 @@ export interface OperatorStatusState {
   refresh: () => Promise<void>;
 }
 
+export interface OperatorStatusOptions {
+  /**
+   * Go on duty as soon as the status is known, if the operator is off.
+   *
+   * The inbox passes this: opening it IS the act of sitting down at it, and
+   * an operator who had to flip the switch every visit spent the first minute
+   * of every session invisible to the queue.
+   *
+   * It fires at most ONCE per mount, which is the whole safety of it: an
+   * operator who then switches themselves off stays off, because the guard has
+   * already been spent. Nothing re-arms it until they leave the page and come
+   * back, which is the same gesture as arriving.
+   */
+  enableOnMount?: boolean;
+}
+
 /**
  * useOperatorStatus - reads and flips the current user's live-chat availability
  * for the active bot. When the user isn't an operator, the backend returns null;
  * we surface that as `unavailable` so the UI can explain rather than mislead.
  */
-export function useOperatorStatus(botId: number | undefined): OperatorStatusState {
+export function useOperatorStatus(
+  botId: number | undefined,
+  { enableOnMount = false }: OperatorStatusOptions = {},
+): OperatorStatusState {
   const [isOnline, setIsOnline] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -85,6 +104,17 @@ export function useOperatorStatus(botId: number | undefined): OperatorStatusStat
       setSaving(false);
     }
   }, [saving, unavailable, isOnline, botId]);
+
+  // Going on duty on arrival. Deliberately NOT folded into `load`: `load` also
+  // runs on every window focus, and re-enabling there would overrule an
+  // operator who had just switched themselves off and tabbed away.
+  const autoEnabledRef = useRef(false);
+  useEffect(() => {
+    if (!enableOnMount || autoEnabledRef.current) return;
+    if (loading || unavailable || isOnline || saving) return;
+    autoEnabledRef.current = true;
+    void toggle();
+  }, [enableOnMount, loading, unavailable, isOnline, saving, toggle]);
 
   return { isOnline, loading, saving, unavailable, error, toggle, refresh: load };
 }

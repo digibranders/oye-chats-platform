@@ -47,6 +47,8 @@ export type { ColorInputProps } from './primitives/ColorInput';
 export { Badge, StatusDot, WorkingDots } from './primitives/Badge';
 export type { BadgeProps, BadgeTone, StatusDotProps, Tone } from './primitives/Badge';
 export { Avatar } from './primitives/Avatar';
+export { Markdown } from './primitives/Markdown';
+export type { MarkdownProps } from './primitives/Markdown';
 export type { AvatarProps, AvatarSize } from './primitives/Avatar';
 export { Field, FieldSet } from './primitives/Field';
 export type { FieldProps } from './primitives/Field';
