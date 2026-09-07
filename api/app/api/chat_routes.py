@@ -28,6 +28,7 @@ from app.api.auth import (
 from app.core.chat_concurrency import chat_gate
 from app.core.exceptions import SessionOwnershipError
 from app.core.langfuse_client import get_langfuse
+from app.core.metrics import record_latency_ms
 from app.core.rate_limit import consume_vendor_budget, key_from_bot_key, limiter
 from app.core.thread_pool import submit_background
 from app.core.visitor_privacy import format_visitor_location
@@ -252,11 +253,15 @@ def _resolve_session_id(provided: str | None, bot_id: int) -> str:
 _detection_is_trusted = detection_is_trusted
 
 # Tiers whose resolved locale a trusted message detection is allowed to
-# replace. ``browser`` is a header every browser sends and ``persisted`` is a
-# locale this same chain resolved earlier; neither outranks the visitor
-# actually typing in a script. ``explicit`` and ``site`` are choices and are
-# absent from this tuple deliberately.
-_DETECTION_OVERRIDABLE_SOURCES = ("default", "browser", "persisted")
+# replace. ``browser`` is a header every browser sends, ``persisted`` is a
+# locale this same chain resolved earlier, and ``html_lang`` is what the host
+# page declares about ITSELF: a ``<html lang="en">`` site is read by visitors
+# who do not write English, and the widget sends that attribute on nearly every
+# install, so leaving it out of this tuple made a Devanagari first message land
+# as English on any page that declared a language at all. None of the three
+# outranks the visitor actually typing in a script. ``explicit`` and ``site``
+# are choices and are absent from this tuple deliberately.
+_DETECTION_OVERRIDABLE_SOURCES = ("default", "browser", "persisted", "html_lang")
 
 
 def _visitor_language_switch_allowed(lang_cfg: dict) -> bool:
@@ -1302,6 +1307,34 @@ def _deduct_ai_chat_credit_sync(bot: Bot) -> int:
     return cost
 
 
+def _is_answer_chunk(chunk: str) -> bool:
+    """True for a chunk that carries answer text the visitor will see, as
+    opposed to a protocol frame (``METADATA:`` / ``FINAL_METADATA:``) or bare
+    whitespace. Used to time the first token a visitor actually reads."""
+    stripped = chunk.strip()
+    return bool(stripped) and not stripped.startswith(("METADATA:", "FINAL_METADATA:"))
+
+
+def _record_stream_latency(name: str, started_at: float) -> None:
+    """Record ``now - started_at`` into the ``name`` latency histogram, off the
+    event loop.
+
+    ``record_latency_ms`` is one Redis round trip per histogram bucket (up to
+    twelve) on a synchronous client, so it is handed to the shared background
+    pool rather than run inline: the stream generator that calls this is on the
+    event loop that is streaming every other visitor's chat. Recorded globally
+    (no ``bot_id``): the question this answers is "is the platform slow right
+    now", and the super-admin read defaults to that scope.
+
+    Never raises. The pool refusing work (shutdown) must not end a stream.
+    """
+    try:
+        elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+        submit_background(record_latency_ms, name, elapsed_ms)
+    except Exception:  # noqa: BLE001 - metrics must never break the caller
+        logger.debug("latency metric %s not recorded", name, exc_info=True)
+
+
 def _final_metadata_failure_flag(chunk: str) -> bool | None:
     """If ``chunk`` IS a terminal ``FINAL_METADATA`` frame, return its
     ``generation_failed`` flag (bool); otherwise return None.
@@ -1332,12 +1365,21 @@ def _final_metadata_failure_flag(chunk: str) -> bool | None:
 @router.post("/chat")
 @impersonation_writable
 @limiter.limit("30/minute", key_func=key_from_bot_key)
-def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_bot_for_chat)):
+async def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_bot_for_chat)):
     """
     RAG Endpoint: Analyzes the question, retrieves relevant documents for the bot,
     and generates a standalone answer.
     Authenticated via X-Bot-Key or X-API-Key (resolves default bot). Owner-preview
     requests (Build Studio: ?preview=true&bot_id=) resolve any owned bot and are free.
+
+    ``async def`` on purpose, with every blocking step offloaded to a worker
+    thread: the endpoint has to *await* the chat concurrency gate, which a
+    threadpool-run ``def`` endpoint cannot do. Until it did, this legacy
+    non-streaming path bypassed the gate ``/chat/stream`` acquires, so a burst
+    of ``/chat`` calls could drive the DB pool to exhaustion (the collapse mode
+    the gate was measured against) and then charge a credit for a reply that
+    ended as a 504. The pipeline itself runs through ``chat_gate.run_sync``,
+    which keeps the slot until the worker thread has actually finished.
 
     Marked writable for a super-admin impersonation session (design §6.1,
     "Preview-mode test chat"): an owner-preview reply skips credit deduction
@@ -1359,7 +1401,12 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_bo
     # message instead of a 4xx error. The visitor sees a polite "we're
     # away" reply; nothing on the customer's website breaks. Credits are
     # not deducted on this path.
-    owner_status = bot_subscription_status(bot.client_id, subscription_id=getattr(bot, "subscription_id", None))
+    #
+    # Synchronous SQLAlchemy work, so it runs on a worker thread: this
+    # coroutine shares the event loop with every stream in flight.
+    owner_status = await asyncio.to_thread(
+        bot_subscription_status, bot.client_id, subscription_id=getattr(bot, "subscription_id", None)
+    )
     if owner_status not in ("trialing", "active", "past_due"):
         logger.info(
             "chat_blocked_inactive_subscription bot_id=%s client_id=%s status=%s",
@@ -1379,42 +1426,13 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_bo
     if is_preview:
         from app.services.preview_quota import check_and_increment_preview
 
-        if not check_and_increment_preview(bot.id):
+        if not await asyncio.to_thread(check_and_increment_preview, bot.id):
             logger.info("chat_preview_quota_exceeded bot_id=%s", bot.id)
             raise HTTPException(status_code=429, detail="preview_daily_limit_reached")
     else:
-        from app.services import credit_service
-
-        with get_session() as db:
-            cost = credit_service.get_credit_cost(db, "ai_chat")
-            try:
-                credit_service.check_and_deduct(
-                    db,
-                    bot.client_id,
-                    cost,
-                    reason="ai_chat",
-                    reference_id=bot.id,
-                    bot_id=credit_service.resolve_bot_ledger_bot_id(bot),  # scope. None when pooled
-                    attributed_bot_id=bot.id,  # attribution. Always the real bot
-                )
-                db.commit()
-            except credit_service.InsufficientCredits as exc:
-                db.rollback()
-                raise HTTPException(
-                    status_code=402,
-                    detail={
-                        "error": "insufficient_credits",
-                        "required": exc.required,
-                        "available": exc.available,
-                        "message": "You're out of credits. Upgrade your plan or buy a top-up to keep chatting.",
-                    },
-                ) from exc
-            except credit_service.KillSwitchActive as exc:
-                db.rollback()
-                raise HTTPException(
-                    status_code=503,
-                    detail={"error": "billing_paused", "message": "Billing is temporarily paused for maintenance."},
-                ) from exc
+        # The same deduction ``/chat/stream`` makes (HTTP 402 on an empty
+        # balance, 503 on the billing kill switch), off the event loop.
+        cost = await asyncio.to_thread(_deduct_ai_chat_credit_sync, bot)
 
     refund_done = False
 
@@ -1434,8 +1452,10 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_bo
         ip_address, formatted_device = _parse_request_context(request)
         location = f"IP: {ip_address}"
         visitor_country = _visitor_country_from_request(request)
-        session_id = _resolve_session_id(body.session_id, bot.id)
-        language_ctx = _resolve_visitor_language_and_update_session(request, body, bot, session_id)
+        session_id = await asyncio.to_thread(_resolve_session_id, body.session_id, bot.id)
+        language_ctx = await asyncio.to_thread(
+            _resolve_visitor_language_and_update_session, request, body, bot, session_id
+        )
 
         # Fire-and-forget geolocation (saves 2-8s per request)
         submit_background(_resolve_and_update_location, session_id, ip_address, bot.id)
@@ -1447,7 +1467,15 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_bo
         logger.info("visitor_country header | bot_id=%s | cf_ipcountry=%s", bot.id, visitor_country)
         logger.info(f"Chat request | bot_id={bot.id} | bot_name={bot.name} | session={session_id}")
 
-        result = rag_pipeline(
+        # ── Backpressure: the same gate, and the same shed, as /chat/stream ──
+        # Acquired after the cheap subscription/credit/session steps so their
+        # early exits never hold a slot, and around the pipeline only. A shed
+        # request surfaces as the gate's HTTP 503 + Retry-After and lands in the
+        # ``except HTTPException`` below, which refunds the credit just taken.
+        # The slot is held until the worker thread finishes, even if this
+        # coroutine is cancelled first (see ``ChatConcurrencyGate.run_sync``).
+        result = await chat_gate.run_sync(
+            rag_pipeline,
             bot,
             body.question,
             session_id=session_id,
@@ -1464,16 +1492,16 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_bo
         # Refund the credit when the pipeline only produced a canned error
         # message (both LLMs exhausted), the visitor got no real answer.
         if result.get("generation_failed"):
-            _refund_once()
+            await asyncio.to_thread(_refund_once)
         return result
     except HTTPException:
-        _refund_once()
+        await asyncio.to_thread(_refund_once)
         raise
     except SessionOwnershipError:
-        _refund_once()
+        await asyncio.to_thread(_refund_once)
         raise
     except Exception as e:
-        _refund_once()
+        await asyncio.to_thread(_refund_once)
         bot_id = getattr(bot, "id", "?")
         err_type = type(e).__name__
         logger.error(f"Chat failed for bot {bot_id}: {err_type}: {e}", exc_info=True)
@@ -1520,6 +1548,11 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
     owner-preview-only constraint is enforced in
     ``auth._resolve_preview_client`` rather than by the marker.
     """
+    # Latency clock for ``chat_ttft_ms`` / ``chat_stream_total_ms``: started
+    # here, before the subscription and credit checks, because a visitor's wait
+    # begins when the request lands, not when generation starts.
+    started_at = time.perf_counter()
+
     # ── Subscription gate (widget side) ──
     # Mirror ``/chat``. When the bot owner's subscription is inactive,
     # stream the offline message rather than running the RAG pipeline. No
@@ -1625,8 +1658,16 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
 
         Always releases the concurrency slot on exit (success, error, or the
         GeneratorExit raised on client disconnect), so a shed/cancelled stream
-        can never leak a slot and starve the gate."""
+        can never leak a slot and starve the gate.
+
+        Also the latency instrument for the stream. ``chat_ttft_ms`` is request
+        start to the first answer chunk, the wait a visitor actually feels, and
+        ``chat_stream_total_ms`` is request start to the end of the stream.
+        Only a stream that ran to completion records a total: a failed or
+        abandoned one has no total to speak of, and would only make the
+        distribution look faster than the service is."""
         generation_failed = False
+        first_answer_seen = False
         try:
             async for chunk in rag_pipeline_stream(
                 bot,
@@ -1645,7 +1686,11 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
                         # Last genuine terminal frame wins; the real one is emitted
                         # last, so it overrides any earlier (even forged) frame.
                         generation_failed = flag
+                    elif not first_answer_seen and _is_answer_chunk(chunk):
+                        first_answer_seen = True
+                        _record_stream_latency("chat_ttft_ms", started_at)
                 yield chunk
+            _record_stream_latency("chat_stream_total_ms", started_at)
             # Never refund a preview (nothing was charged); otherwise refund a
             # confirmed failed generation.
             if generation_failed:

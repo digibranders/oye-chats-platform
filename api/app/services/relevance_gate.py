@@ -10,7 +10,10 @@ Feature flag: ``RELEVANCE_GATE_ENABLED`` (default: true. Scope-enforcement on by
 Model:        resolved per-call via ``runtime_config.get_gate_model()`` (DB-backed,
               super-admin tunable via the ``gate_model`` setting); falls back to
               ``GATE_MODEL`` env default (gemini/gemini-2.5-flash. Cheap & fast)
-Threshold:    ``RELEVANCE_THRESHOLD`` (default: 0.55. Tunable per-bot via ``Bot.relevance_threshold``)
+Threshold:    per-bot ``Bot.relevance_threshold`` → super-admin runtime knob
+              ``rag.relevance_threshold`` → ``RELEVANCE_THRESHOLD`` env default (0.55)
+Judge input:  ``GATE_MAX_CHUNKS`` (default 5) chunks × ``GATE_CHUNK_PREVIEW_CHARS``
+              (default 500) characters each
 
 Gate results are cached in Redis to avoid redundant LLM calls for repeated
 questions against the same knowledge base state.
@@ -20,6 +23,7 @@ Key: ``oyechats:gate:{bot_id}:{question_hash}`` (TTL: 3600s)
 
 import hashlib
 import logging
+import math
 import os
 
 import litellm
@@ -27,6 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.cache import cache_get, cache_set
 from app.core.langfuse_client import langfuse_generation
+from app.core.metrics import increment_metric_counter
 from app.services import runtime_config
 
 logger = logging.getLogger(__name__)
@@ -77,8 +82,21 @@ GATE_MODEL: str = os.getenv("GATE_MODEL", "gemini/gemini-2.5-flash")
 RELEVANCE_THRESHOLD: float = float(os.getenv("RELEVANCE_THRESHOLD", "0.55"))
 
 _GATE_TTL = 3600  # 1 hour. Safe: same question + same bot KB = same result
-_MAX_CHUNKS_TO_JUDGE = 3  # Only judge top-3 chunks (cost control)
-_MAX_CHUNK_PREVIEW = 300  # Characters per chunk shown to the judge
+
+# How much of the retrieved context the judge sees. This was hardcoded to the
+# top 3 chunks at 300 characters each while generation received the full
+# top-k (15 chunks of up to CHUNK_SIZE=1000 characters): the judge scored a
+# ~900-character keyhole view of the context the generator would answer from,
+# so a question whose answer sat in chunk 4, or past character 300 of chunk 1,
+# could be refused as off-topic when generation would have answered it fine.
+# 5 × 500 covers the first half of every default-size chunk for the top five,
+# at a cost of a few hundred extra gate-tier input tokens per uncached
+# question. ``or`` rather than a getenv default for the same reason as
+# ``RELEVANCE_GATE_ENABLED`` above (an empty-but-present value must mean the
+# default, not a crash on import); floored at 1 so the judge always sees
+# something.
+GATE_MAX_CHUNKS: int = max(1, int(os.getenv("GATE_MAX_CHUNKS") or "5"))
+GATE_CHUNK_PREVIEW_CHARS: int = max(1, int(os.getenv("GATE_CHUNK_PREVIEW_CHARS") or "500"))
 # Hard cap on the gate LLM call. Without this, a stalled Gemini blocks the
 # entire SSE stream for ~30s before the first token reaches the visitor.
 # The existing `except Exception` below fails open on timeout, so a slow
@@ -107,9 +125,9 @@ def _gate_cache_key(bot_id: int | None, client_id: int | None, question: str) ->
 
 def _build_gate_prompt(question: str, chunks: list) -> str:
     chunk_previews = []
-    for i, doc in enumerate(chunks[:_MAX_CHUNKS_TO_JUDGE], 1):
+    for i, doc in enumerate(chunks[:GATE_MAX_CHUNKS], 1):
         content = getattr(doc, "content", "") or ""
-        preview = content[:_MAX_CHUNK_PREVIEW].replace("\n", " ")
+        preview = content[:GATE_CHUNK_PREVIEW_CHARS].replace("\n", " ")
         chunk_previews.append(f"Chunk {i}: {preview}")
 
     chunks_text = "\n".join(chunk_previews)
@@ -151,13 +169,27 @@ No explanation, no other text."""
 def _resolve_threshold(bot_threshold: float | None) -> float:
     """Pick the active threshold for this call.
 
-    Per-bot override (``Bot.relevance_threshold``) wins; falls back to the
-    env default. Out-of-range values are clamped to [0.0, 1.0] so a bad
-    DB value can never disable the gate or make it impossible to pass.
+    Resolution order: per-bot override (``Bot.relevance_threshold``) → the
+    super-admin runtime knob (``rag.relevance_threshold`` in pricing_config,
+    read through ``runtime_config`` so a dashboard edit is live within its
+    cache TTL) → the ``RELEVANCE_THRESHOLD`` env default. The runtime knob was
+    previously never consulted here: the dashboard control saved a value
+    nothing read, so an admin loosening the gate during an incident saw a
+    successful save and no change in behaviour, the same decorative-control
+    shape as the AR-05 gate-model bug.
+
+    Out-of-range values are clamped to [0.0, 1.0] and a non-numeric or NaN
+    value falls back to the env default, so a bad DB value can never disable
+    the gate or make it impossible to pass.
     """
-    if bot_threshold is None:
-        return RELEVANCE_THRESHOLD
-    return max(0.0, min(1.0, float(bot_threshold)))
+    raw = bot_threshold if bot_threshold is not None else runtime_config.get_relevance_threshold(RELEVANCE_THRESHOLD)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = RELEVANCE_THRESHOLD
+    if math.isnan(value):
+        value = RELEVANCE_THRESHOLD
+    return max(0.0, min(1.0, value))
 
 
 def check_relevance(
@@ -173,7 +205,8 @@ def check_relevance(
     ----------
     threshold
         Optional per-bot override (typically ``Bot.relevance_threshold``).
-        ``None`` falls back to the ``RELEVANCE_THRESHOLD`` env default.
+        ``None`` falls back to the super-admin runtime knob, then the
+        ``RELEVANCE_THRESHOLD`` env default (see :func:`_resolve_threshold`).
 
     Returns
     -------
@@ -257,6 +290,13 @@ def check_relevance(
         # branch a chunk's content can deliberately trigger to force
         # fail-open the same way a successfully-manipulated score would.
         logger.warning("Relevance gate failed (non-blocking, fail-open): %s", exc)
+        # AR-13 shape: this branch was a WARNING and nothing else, which is how
+        # the reasoning-budget outage (see the ``max_tokens`` comment above) ran
+        # to 41 consecutive fail-opens unnoticed. Every fail-open means the
+        # scope guarantee was NOT enforced for that answer; the hourly counter
+        # makes a sustained run of them visible on the safety-net metrics
+        # endpoint instead of only in logs nobody is reading.
+        increment_metric_counter("gate_failed_open")
         return True, 1.0
 
     is_relevant = score >= active_threshold

@@ -1,0 +1,104 @@
+name: Answer-Quality Eval
+
+# Nightly LLM-as-judge run of the golden set (api/eval/golden_set.jsonl) against
+# a live bot that has the fixture knowledge base loaded. INFORMATIONAL ONLY:
+# nothing calls this workflow (no ``workflow_call``) and no deploy depends on
+# it, so a red run here never blocks a merge or a release. A red run means the
+# bot's answers regressed (or the judge/API was unreachable). Read the report
+# artifact (report.md) or the job summary before changing a threshold.
+#
+# Secrets:  EVAL_API_URL  (e.g. https://api.oyechats.com)
+#           EVAL_BOT_KEY  (public key of the dedicated eval bot)
+#           GOOGLE_API_KEY / OPENAI_API_KEY (the judge model's provider key)
+# Variable: EVAL_ORIGIN (optional; only if the eval bot enforces allowed domains)
+#
+# The schedule runs the workflow file on the default branch (main). Each run
+# spends ~75 AI-chat credits on the eval bot (one per request, including the
+# name-gate reply that opens every session) and a few cents of judge tokens.
+# See docs/eval/README.md.
+
+on:
+  schedule:
+    - cron: '30 2 * * *'  # 02:30 UTC nightly
+  workflow_dispatch:
+    inputs:
+      min_pass_rate:
+        description: 'Share of cases that must pass for a green run (0..1)'
+        required: false
+        default: '0.8'
+        type: string
+      judge_model:
+        description: 'LiteLLM judge model'
+        required: false
+        default: 'gemini/gemini-2.5-flash'
+        type: string
+      limit:
+        description: 'Run only the first N cases (blank = all)'
+        required: false
+        default: ''
+        type: string
+
+# Least-privilege GITHUB_TOKEN, as in ci.yml: the job only reads the repo.
+permissions:
+  contents: read
+
+# One run at a time against the shared eval bot: two overlapping runs would
+# share the bot's 30 requests/minute chat budget and rate-limit each other.
+concurrency:
+  group: eval-nightly
+  cancel-in-progress: false
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    # ~75 paced chat requests plus judging take about 10 minutes; the cap
+    # exists so a hung API cannot hold a runner all night.
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'  # Match production server (same as ci.yml)
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Install dependencies
+        working-directory: api
+        run: ~/.local/bin/uv sync
+
+      # Validates the golden file and prints the plan. Fails fast on a broken
+      # JSONL line without spending a single credit.
+      - name: Validate the golden set
+        working-directory: api
+        run: ~/.local/bin/uv run python -m eval.run_eval --dry-run
+
+      - name: Run the eval against the live bot
+        working-directory: api
+        env:
+          EVAL_API_URL: ${{ secrets.EVAL_API_URL }}
+          EVAL_BOT_KEY: ${{ secrets.EVAL_BOT_KEY }}
+          EVAL_ORIGIN: ${{ vars.EVAL_ORIGIN }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          EVAL_JUDGE_MODEL: ${{ inputs.judge_model || 'gemini/gemini-2.5-flash' }}
+          EVAL_MIN_PASS_RATE: ${{ inputs.min_pass_rate || '0.8' }}
+          EVAL_LIMIT: ${{ inputs.limit }}
+        run: |
+          args=(--min-pass-rate "$EVAL_MIN_PASS_RATE" --out eval-report)
+          if [ -n "$EVAL_LIMIT" ]; then
+            args+=(--limit "$EVAL_LIMIT")
+          fi
+          ~/.local/bin/uv run python -m eval.run_eval "${args[@]}"
+
+      # Uploaded even when the run failed: the failures section of report.md
+      # is the whole point of a red run.
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: eval-report-${{ github.run_id }}
+          path: api/eval-report/
+          retention-days: 30
+          if-no-files-found: warn

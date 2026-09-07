@@ -27,6 +27,8 @@ matching the original ~8MB-model intent, and confirmed to load successfully
 import logging
 import os
 
+from app.services import runtime_config
+
 logger = logging.getLogger(__name__)
 
 # AR-39 decision: kept the DEFAULT at false. A manual A/B check after fixing
@@ -40,7 +42,26 @@ logger = logging.getLogger(__name__)
 # this env var for a real production A/B once the fixed model name has
 # baked, rather than flipping the default here.
 RERANK_ENABLED: bool = os.getenv("RERANK_ENABLED", "false").lower() in ("1", "true", "yes")
+# Env default only. The effective value is resolved per call by
+# ``_resolve_top_n`` through the super-admin runtime knob.
 RERANK_TOP_N: int = int(os.getenv("RERANK_TOP_N", "5"))
+
+
+def _resolve_top_n(top_n: int | None) -> int:
+    """How many documents to keep for this call.
+
+    An explicit ``top_n`` wins. Otherwise the super-admin runtime knob
+    (``rag.rerank_top_n`` in pricing_config, read through ``runtime_config``)
+    applies, falling back to the ``RERANK_TOP_N`` env default. Resolved per
+    call, not at import: the knob was previously never read here, so the
+    dashboard control saved a value nothing used, the same decorative-control
+    shape as the AR-05 gate-model bug. Floored at 1 so a bad value can never
+    empty the context handed to generation.
+    """
+    if top_n is not None:
+        return max(1, int(top_n))
+    return max(1, runtime_config.get_rerank_top_n(RERANK_TOP_N))
+
 
 # Lazy singleton. Loaded once on first rerank() call
 _ranker = None
@@ -99,7 +120,9 @@ def rerank(query: str, documents: list, top_n: int | None = None) -> list:
     documents:
         List of OyeChats ``Document`` model objects (must have ``.content``).
     top_n:
-        How many to keep. Defaults to ``RERANK_TOP_N`` env var (5).
+        How many to keep. Defaults to the super-admin runtime knob
+        (``rag.rerank_top_n``), then the ``RERANK_TOP_N`` env var (5); see
+        :func:`_resolve_top_n`.
 
     Returns
     -------
@@ -107,10 +130,10 @@ def rerank(query: str, documents: list, top_n: int | None = None) -> list:
         Reranked subset of *documents* (most relevant first).
         Returns the original list (up to top_n) unchanged if reranking fails.
     """
-    if not RERANK_ENABLED or not documents:
-        return documents[: top_n or RERANK_TOP_N]
+    effective_top_n = _resolve_top_n(top_n)
 
-    effective_top_n = top_n if top_n is not None else RERANK_TOP_N
+    if not RERANK_ENABLED or not documents:
+        return documents[:effective_top_n]
 
     ranker = _get_ranker()
     if ranker is None:

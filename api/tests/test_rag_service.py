@@ -75,7 +75,34 @@ class TestBackgroundGroundednessCheck:
         ):
             _background_groundedness_check("Q", "A", [MagicMock()], bot_id=5, client_id=None)
 
-        mock_metric.assert_called_once_with("groundedness_check", bot_id=5, client_id=None, score=0.2, grounded=False)
+        mock_metric.assert_any_call("groundedness_check", bot_id=5, client_id=None, score=0.2, grounded=False)
+        # The verdict travels as its own counter: the metric store keeps
+        # counters by name only, so a tag-only verdict was never countable.
+        mock_metric.assert_any_call("groundedness_low", bot_id=5, client_id=None, score=0.2)
+
+    def test_grounded_answer_emits_no_low_counter(self):
+        from app.services.rag_service import _background_groundedness_check
+
+        with (
+            patch("app.services.rag_service.check_groundedness", return_value=(True, 0.9)),
+            patch("app.services.rag_service._safety_net_metric") as mock_metric,
+        ):
+            _background_groundedness_check("Q", "A", [MagicMock()], bot_id=5, client_id=None)
+
+        assert [c.args[0] for c in mock_metric.call_args_list] == ["groundedness_check"]
+
+    def test_scores_the_langfuse_trace_when_a_trace_id_is_known(self):
+        from app.services.rag_service import _background_groundedness_check
+
+        lf = MagicMock()
+        with (
+            patch("app.services.rag_service.check_groundedness", return_value=(False, 0.2)),
+            patch("app.services.rag_service._safety_net_metric"),
+            patch("app.services.rag_service.get_langfuse", return_value=lf),
+        ):
+            _background_groundedness_check("Q", "A", [MagicMock()], bot_id=5, client_id=None, trace_id="trace-1")
+
+        lf.create_score.assert_called_once_with(trace_id="trace-1", name="groundedness", value=0.2, data_type="NUMERIC")
 
     def test_never_raises_even_if_check_groundedness_raises(self):
         """A fire-and-forget background task raising would surface as an

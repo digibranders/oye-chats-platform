@@ -327,13 +327,19 @@ class TestNonEnglishIsNotRefusedAsOffTopic:
 
         for fn in (rs.rag_pipeline, rs.rag_pipeline_stream):
             src = inspect.getsource(fn)
+            # The bypass is resolved once per turn (``_judges_bypassed``) from
+            # BOTH the session language and the message's own script, so a
+            # Devanagari question on a multilingual-off bot is covered too.
+            assert "_judges_bypassed = _english_judges_bypassed(language, question)" in src, (
+                f"{fn.__name__} must resolve the non-English judge bypass from the language AND the question"
+            )
             # The streaming path hands `check_relevance` to `asyncio.to_thread`
             # as a reference, so match the NAME rather than a call paren.
             call = src.index("check_relevance,") if "check_relevance," in src else src.index("check_relevance(")
             # Anchored on the call site, not on a comment, so rewording a
             # comment can neither break this nor let a regression slip through.
             preceding = src[max(0, call - 2000) : call]
-            assert "_lang_is_non_english(language)" in preceding, (
+            assert "if _judges_bypassed:" in preceding, (
                 f"{fn.__name__} must not run the English-tuned relevance gate on a non-English conversation"
             )
 

@@ -1024,10 +1024,18 @@ async def run_full_crawl(
         # (``useCrawlDiscovery``) is a first crawl and carries no
         # ``replace_source`` at all. The old ``not ordered_urls`` guard
         # therefore did not protect a partial crawl, it just made the sweep
-        # unreachable from the only UI that starts one. Deleting is still
-        # gated on ``check_urls_alive`` confirming a 404/410 below, so a
-        # discovery shortfall can never mass-delete live pages.
-        if replace_source and total_chunks > 0:
+        # unreachable from the only UI that starts one.
+        #
+        # The gate is "this run fetched at least one page", NOT "this run wrote
+        # chunks". ``total_chunks`` is zero exactly when every surviving page
+        # dedup-skipped as unchanged, which is the "customer removed a page and
+        # changed nothing else" re-crawl this sweep exists for; gating on it
+        # made the sweep unreachable in its primary case, and the bot went on
+        # quoting the deleted page. A run that fetched nothing has proven
+        # nothing about the site, so it never sweeps. Deleting is still gated
+        # on ``check_urls_alive`` confirming a 404/410 below, so a discovery
+        # shortfall can never mass-delete live pages.
+        if replace_source and valid_pages:
             newly_crawled_urls = [p["url"] for p in valid_pages]
             from sqlalchemy import func as sa_func
 

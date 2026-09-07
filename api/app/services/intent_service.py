@@ -1,12 +1,25 @@
 import logging
 import re
 
+from app.services import runtime_config
 from app.services.llm_service import generate_response
 
 logger = logging.getLogger(__name__)
 
+# Budget for the per-turn handoff classifier. It sits on the visitor's critical
+# path: ``rag_service`` awaits it (with its own 4s ceiling) before retrieval can
+# proceed, so the call gets ONE attempt and a bound that fits inside that
+# ceiling. A same-model retry could not finish in time anyway; it would only
+# pin the worker thread past the point where the caller has already given up
+# and fallen back to the keyword result.
+_HANDOFF_LLM_TIMEOUT_S = 3.0
+_HANDOFF_LLM_NUM_RETRIES = 0
+
 # Compiled regex for fast keyword-based handoff detection.
-# Used as a fallback when the LLM intent call times out or fails.
+#
+# A match is the decision in ``detect_handoff_intent`` (no LLM call is made),
+# and ``rag_service`` also uses it directly as the fallback when the LLM task
+# exceeds its ceiling.
 #
 # Two design notes:
 #   • Use \s+ (not literal spaces) so noisy whitespace / typos like
@@ -85,6 +98,13 @@ def detect_sales_intent(question: str) -> bool:
     Analyzes the user's question to determine if it has 'Business Intent' or 'Sales Intent'.
     Returns True if the user is asking about services, pricing, partnership, or business solutions.
     LiteLLM auto-instruments with Langfuse via callbacks.
+
+    No production caller today: ``rag_service`` imports only the handoff
+    detectors, so this still runs on the primary model with the default LLM
+    budget. Any future caller on a hot path must route it to
+    ``runtime_config.get_gate_model()`` with a tight ``timeout``/``num_retries``,
+    exactly as :func:`_detect_handoff_intent_raw` does; a YES/NO classification
+    is gate-tier work (AR-10).
     """
     try:
         return _detect_intent_raw(question)
@@ -94,7 +114,17 @@ def detect_sales_intent(question: str) -> bool:
 
 
 def _detect_handoff_intent_raw(question: str) -> bool:
-    """Detect human handoff intent via LLM. Same pattern as sales intent detection."""
+    """Detect human handoff intent via LLM. Same prompt shape as sales intent detection.
+
+    Runs on the gate-tier model (AR-10) with a single tightly bounded attempt.
+    This ran on the PRIMARY model with the default 60s × 3-attempt budget on
+    every turn, for a one-word YES/NO: the most expensive tier in the platform
+    doing the cheapest classification, and the same reasoning tier the
+    relevance gate already proved adequate for exactly this kind of judgement.
+    No cross-provider fallback: :func:`detect_handoff_intent` degrades to "no
+    handoff" on any error, which is the right answer for a message the keyword
+    regex has already cleared.
+    """
     prompt = f"""You are a handoff-intent classifier for a customer-facing chatbot.
 
 TASK: Determine whether the user wants to be connected to a live human operator or support team member.
@@ -119,7 +149,13 @@ User message: "{question}"
 
 Respond with ONLY the word YES or NO. No explanation."""
     response = generate_response(
-        prompt, temperature=0, max_tokens=16, metadata={"generation_name": "handoff-intent-detection"}
+        prompt,
+        temperature=0,
+        max_tokens=16,
+        metadata={"generation_name": "handoff-intent-detection"},
+        model=runtime_config.get_gate_model(),
+        timeout=_HANDOFF_LLM_TIMEOUT_S,
+        num_retries=_HANDOFF_LLM_NUM_RETRIES,
     )
     result = response.strip().upper()
     has_intent = "YES" in result
@@ -130,43 +166,33 @@ Respond with ONLY the word YES or NO. No explanation."""
 def detect_handoff_intent_keywords(question: str) -> bool:
     """Fast keyword-based handoff detection, no LLM call.
 
-    Returns True if the message matches common handoff phrases.
-    Used as a fallback when the LLM-based detection times out or errors.
+    Returns True if the message matches common handoff phrases. A match is
+    authoritative in :func:`detect_handoff_intent`; ``rag_service`` also calls
+    this directly as the fallback when the LLM task exceeds its ceiling.
     """
     return bool(_HANDOFF_KEYWORDS_RE.search(question))
 
 
 def detect_handoff_intent(question: str) -> bool:
-    """Hybrid handoff detection: keyword signal + LLM decision.
+    """Hybrid handoff detection: keyword match first, LLM only for the rest.
 
     Flow:
-        1. Keyword regex pre-screens (instant, zero cost).
-        2. LLM makes the final YES/NO decision.
-        3. If LLM says YES → return True.
-        4. If LLM says NO but keywords matched → trust the explicit
-           keyword signal (override). Users who type "connect me with
-           your team" should never be silently ignored.
-        5. If LLM fails → fall back to keyword result.
+        1. Keyword regex (instant, zero cost). A match IS the decision. The
+           previous version still asked the LLM here and then overrode its NO
+           with the keyword result, so on exactly the turns where the answer
+           was already known the LLM call was pure latency and cost. Users who
+           type "connect me with your team" are never silently ignored.
+        2. No keyword match → the LLM makes the YES/NO call.
+        3. LLM fails → False. There is no keyword signal to fall back on, and
+           a missed handoff offer is recoverable (the visitor can rephrase)
+           while a blocked turn is not.
     """
-    has_keyword = detect_handoff_intent_keywords(question)
-    if has_keyword:
-        logger.info("Handoff keywords matched for: '%s'. Requesting LLM confirmation", question)
+    if detect_handoff_intent_keywords(question):
+        logger.info("Handoff keywords matched for: '%s'", question)
+        return True
 
     try:
-        llm_result = _detect_handoff_intent_raw(question)
-        if llm_result:
-            return True
-        # LLM said NO, but if keywords matched, trust the explicit signal
-        if has_keyword:
-            logger.info(
-                "LLM declined handoff for '%s' but keywords matched. Overriding to YES",
-                question,
-            )
-            return True
-        return False
+        return _detect_handoff_intent_raw(question)
     except Exception as e:
-        if has_keyword:
-            logger.error("Handoff LLM failed for '%s': %s. Trusting keyword match", question, e)
-            return True
         logger.error("Handoff LLM failed for '%s': %s, no keyword signal, skipping", question, e)
         return False
