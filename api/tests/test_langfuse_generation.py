@@ -118,6 +118,96 @@ def test_generation_prompt_is_redacted_before_being_sent_as_input(monkeypatch):
     assert fake.kw["input"] == [{"role": "user", "content": "my email is [REDACTED_EMAIL]"}]
 
 
+def test_message_shaped_input_is_redacted_per_message(monkeypatch):
+    """``llm_service`` traces the exact ``messages`` list it sends to LiteLLM so
+    a system/user split is diagnosable per role. Both roles routinely carry
+    PII (the system prompt embeds the business's contact details, the user
+    turn the visitor's), so every ``content`` is scrubbed, and the caller's
+    list, which is what actually goes to the model, is left untouched."""
+    fake = _FakeLF(_FakeSpan())
+    monkeypatch.setattr(lc, "get_langfuse", lambda: fake)
+    messages = [
+        {"role": "system", "content": "Escalate billing to ops@example.com"},
+        {"role": "user", "content": "call me on +1 415-555-0100"},
+    ]
+
+    with lc.langfuse_generation("gen", model="m", input=messages):
+        pass
+
+    assert fake.kw["input"] == [
+        {"role": "system", "content": "Escalate billing to [REDACTED_EMAIL]"},
+        {"role": "user", "content": "call me on [REDACTED_PHONE]"},
+    ]
+    assert messages[0]["content"] == "Escalate billing to ops@example.com"
+    assert messages[1]["content"] == "call me on +1 415-555-0100"
+
+
+def test_message_input_takes_precedence_over_prompt(monkeypatch):
+    fake = _FakeLF(_FakeSpan())
+    monkeypatch.setattr(lc, "get_langfuse", lambda: fake)
+
+    with lc.langfuse_generation("gen", model="m", prompt="ignored", input=[{"role": "user", "content": "used"}]):
+        pass
+
+    assert fake.kw["input"] == [{"role": "user", "content": "used"}]
+
+
+def test_non_message_input_shapes_pass_through_unchanged(monkeypatch):
+    """The documented escape hatch: anything that is not a messages list is
+    the caller's responsibility to redact."""
+    fake = _FakeLF(_FakeSpan())
+    monkeypatch.setattr(lc, "get_langfuse", lambda: fake)
+    raw = {"query": "jane@example.com"}
+
+    with lc.langfuse_generation("gen", model="m", input=raw):
+        pass
+
+    assert fake.kw["input"] == raw
+
+    entries = ["plain jane@example.com", {"role": "user", "content": None}, {"role": "user", "content": "x@y.io"}]
+    with lc.langfuse_generation("gen", model="m", input=entries):
+        pass
+
+    assert fake.kw["input"] == [
+        "plain jane@example.com",
+        {"role": "user", "content": None},
+        {"role": "user", "content": "[REDACTED_EMAIL]"},
+    ]
+
+
+class TestLitellmUsage:
+    """One extraction shape for both the non-streaming ``record_litellm`` path
+    and the streaming path in ``llm_service``, which only ever holds the final
+    usage-bearing chunk."""
+
+    def test_extracts_the_langfuse_usage_shape(self):
+        assert lc.litellm_usage(_Resp()) == {"input": 10, "output": 5}
+
+    def test_none_when_the_object_carries_no_usage(self):
+        assert lc.litellm_usage(object()) is None
+
+        class _NoUsage:
+            usage = None
+
+        assert lc.litellm_usage(_NoUsage()) is None
+
+    def test_missing_counts_default_to_zero(self):
+        class _Partial:
+            class usage:  # noqa: N801 - mirrors the LiteLLM attribute name
+                prompt_tokens = None
+                completion_tokens = 7
+
+        assert lc.litellm_usage(_Partial()) == {"input": 0, "output": 7}
+
+    def test_never_raises(self):
+        class _Garbage:
+            class usage:  # noqa: N801 - mirrors the LiteLLM attribute name
+                prompt_tokens = "not a number"
+                completion_tokens = 5
+
+        assert lc.litellm_usage(_Garbage()) is None
+
+
 def test_generation_output_is_redacted_via_update(monkeypatch):
     span = _FakeSpan()
     fake = _FakeLF(span)

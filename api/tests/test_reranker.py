@@ -140,3 +140,86 @@ class TestRerank:
         docs = [FakeDoc(i, f"doc {i}") for i in range(5)]
 
         assert reranker.rerank("query", docs) == docs[:2]
+
+
+class TestRerankTopNRuntimeKnob:
+    """The super-admin ``rag.rerank_top_n`` knob was decorative: ``rerank()``
+    read only the import-time ``RERANK_TOP_N`` env constant, so a dashboard
+    save changed nothing. The default must now resolve per call through
+    ``runtime_config.get_rerank_top_n`` with the env value as its fallback."""
+
+    def test_default_top_n_comes_from_the_runtime_knob(self, monkeypatch):
+        monkeypatch.setattr(reranker, "RERANK_ENABLED", False)
+        monkeypatch.setattr(reranker, "RERANK_TOP_N", 5)
+        monkeypatch.setattr(reranker.runtime_config, "get_rerank_top_n", lambda default: 3)
+        docs = [FakeDoc(i, f"doc {i}") for i in range(10)]
+
+        assert reranker.rerank("query", docs) == docs[:3]
+
+    def test_knob_receives_the_env_default_as_its_fallback(self, monkeypatch):
+        monkeypatch.setattr(reranker, "RERANK_ENABLED", False)
+        monkeypatch.setattr(reranker, "RERANK_TOP_N", 7)
+        seen: dict = {}
+
+        def fake_get_rerank_top_n(default):
+            seen["default"] = default
+            return default
+
+        monkeypatch.setattr(reranker.runtime_config, "get_rerank_top_n", fake_get_rerank_top_n)
+        docs = [FakeDoc(i, f"doc {i}") for i in range(10)]
+
+        assert reranker.rerank("query", docs) == docs[:7]
+        assert seen["default"] == 7
+
+    def test_explicit_top_n_wins_over_the_knob(self, monkeypatch):
+        monkeypatch.setattr(reranker, "RERANK_ENABLED", False)
+        monkeypatch.setattr(reranker.runtime_config, "get_rerank_top_n", lambda default: 3)
+        docs = [FakeDoc(i, f"doc {i}") for i in range(10)]
+
+        assert reranker.rerank("query", docs, top_n=6) == docs[:6]
+
+    def test_knob_applies_on_the_reranking_path_too(self, monkeypatch):
+        monkeypatch.setattr(reranker, "RERANK_ENABLED", True)
+        monkeypatch.setattr(reranker.runtime_config, "get_rerank_top_n", lambda default: 2)
+        docs = [FakeDoc(i, f"doc {i}") for i in range(4)]
+        mock_ranker = MagicMock()
+        mock_ranker.rerank.return_value = [{"id": 3, "score": 0.9}, {"id": 1, "score": 0.8}, {"id": 0, "score": 0.2}]
+        monkeypatch.setattr(reranker, "_get_ranker", lambda: mock_ranker)
+
+        result = reranker.rerank("query", docs)
+
+        assert [d.id for d in result] == [3, 1]
+
+    def test_knob_is_read_per_call_not_at_import(self, monkeypatch):
+        monkeypatch.setattr(reranker, "RERANK_ENABLED", False)
+        docs = [FakeDoc(i, f"doc {i}") for i in range(10)]
+
+        monkeypatch.setattr(reranker.runtime_config, "get_rerank_top_n", lambda default: 2)
+        assert reranker.rerank("query", docs) == docs[:2]
+        monkeypatch.setattr(reranker.runtime_config, "get_rerank_top_n", lambda default: 4)
+        assert reranker.rerank("query", docs) == docs[:4]
+
+    def test_knob_reads_the_right_pricing_config_key(self, monkeypatch):
+        """Through the real ``get_rerank_top_n``, so a renamed key would fail here."""
+        monkeypatch.setattr(reranker, "RERANK_ENABLED", False)
+        monkeypatch.setattr(
+            reranker.runtime_config, "get", lambda key, default=None: 3 if key == "rag.rerank_top_n" else default
+        )
+        docs = [FakeDoc(i, f"doc {i}") for i in range(10)]
+
+        assert reranker.rerank("query", docs) == docs[:3]
+
+    def test_a_bad_knob_value_can_never_empty_the_context(self, monkeypatch):
+        monkeypatch.setattr(reranker, "RERANK_ENABLED", False)
+        monkeypatch.setattr(reranker.runtime_config, "get_rerank_top_n", lambda default: 0)
+        docs = [FakeDoc(i, f"doc {i}") for i in range(10)]
+
+        assert reranker.rerank("query", docs) == docs[:1]
+
+    def test_a_non_numeric_knob_value_falls_back_to_the_env_default(self, monkeypatch):
+        monkeypatch.setattr(reranker, "RERANK_ENABLED", False)
+        monkeypatch.setattr(reranker, "RERANK_TOP_N", 4)
+        monkeypatch.setattr(reranker.runtime_config, "get", lambda key, default=None: "garbage")
+        docs = [FakeDoc(i, f"doc {i}") for i in range(10)]
+
+        assert reranker.rerank("query", docs) == docs[:4]

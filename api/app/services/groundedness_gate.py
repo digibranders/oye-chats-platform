@@ -26,19 +26,46 @@ Sample rate:  ``GROUNDEDNESS_CHECK_SAMPLE_RATE`` (default: 1.0. Check every
 Model:        resolved per-call via ``runtime_config.get_gate_model()``,
               same cheap tier as the relevance gate
 Threshold:    ``GROUNDEDNESS_THRESHOLD`` (default: 0.5)
+Judge input:  ``GROUNDEDNESS_MAX_CHUNKS`` (default 5) chunks ×
+              ``GROUNDEDNESS_CHUNK_PREVIEW_CHARS`` (default 500) characters each
 """
 
-import json
 import logging
 import os
 import random
 
 import litellm
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.langfuse_client import langfuse_generation
 from app.services import runtime_config
 
 logger = logging.getLogger(__name__)
+
+
+class _GroundednessScoreResult(BaseModel):
+    """Strict structured output for the groundedness judge, the same shape as
+    ``relevance_gate._RelevanceScoreResult`` (AR-33) for the same reason.
+
+    The loose ``json_object`` format this replaced enforced no schema: a
+    malformed or wrong-shaped verdict raised at parse time and fell through to
+    the blanket ``except Exception`` as a fail-open, indistinguishable from a
+    judge that scored the answer 1.0, and an out-of-range score was silently
+    clamped into a "legitimate" boundary value. With a strict schema the
+    provider guarantees valid, in-schema JSON or raises, so there is no
+    parse-exception branch left that generated text can trigger, and an
+    out-of-range value is a validation failure (fail-open, logged) rather than
+    a metric point that looks like a real judgement.
+    """
+
+    # ``extra='forbid'`` → ``additionalProperties: false`` in the emitted JSON
+    # schema, required by OpenAI/Gemini structured-output strict mode.
+    model_config = ConfigDict(extra="forbid")
+
+    score: float = Field(
+        ge=0.0, le=1.0, description="Groundedness score from 0.0 (fabricated claims) to 1.0 (fully supported)"
+    )
+
 
 GROUNDEDNESS_CHECK_ENABLED: bool = os.getenv("GROUNDEDNESS_CHECK_ENABLED", "true").lower() in (
     "1",
@@ -48,8 +75,17 @@ GROUNDEDNESS_CHECK_ENABLED: bool = os.getenv("GROUNDEDNESS_CHECK_ENABLED", "true
 GROUNDEDNESS_CHECK_SAMPLE_RATE: float = float(os.getenv("GROUNDEDNESS_CHECK_SAMPLE_RATE", "1.0"))
 GROUNDEDNESS_THRESHOLD: float = float(os.getenv("GROUNDEDNESS_THRESHOLD", "0.5"))
 
-_MAX_CHUNKS_TO_JUDGE = 3  # cost control, matches relevance_gate.py
-_MAX_CHUNK_PREVIEW = 500
+# How much of the retrieved context the judge sees, mirroring the relevance
+# gate's ``GATE_MAX_CHUNKS`` / ``GATE_CHUNK_PREVIEW_CHARS``. Generation answers
+# from the full top-k (15 chunks of up to CHUNK_SIZE=1000 characters); a judge
+# shown only the top 3 cannot see a claim the generator drew from chunk 4 and
+# has to call it fabricated, so the metric this module exists to produce
+# over-reports hallucination on exactly the answers that used the wider
+# context. ``or`` rather than a getenv default so an empty-but-present deploy
+# value means the default, not a crash on import; floored at 1 so the judge
+# always sees something.
+GROUNDEDNESS_MAX_CHUNKS: int = max(1, int(os.getenv("GROUNDEDNESS_MAX_CHUNKS") or "5"))
+GROUNDEDNESS_CHUNK_PREVIEW_CHARS: int = max(1, int(os.getenv("GROUNDEDNESS_CHUNK_PREVIEW_CHARS") or "500"))
 _MAX_ANSWER_PREVIEW = 1500
 _GROUNDEDNESS_LLM_TIMEOUT_S = float(os.getenv("GROUNDEDNESS_LLM_TIMEOUT_S", "3.0"))
 
@@ -74,9 +110,9 @@ def should_sample() -> bool:
 
 def _build_groundedness_prompt(question: str, answer: str, chunks: list) -> str:
     chunk_previews = []
-    for i, doc in enumerate(chunks[:_MAX_CHUNKS_TO_JUDGE], 1):
+    for i, doc in enumerate(chunks[:GROUNDEDNESS_MAX_CHUNKS], 1):
         content = getattr(doc, "content", "") or ""
-        preview = content[:_MAX_CHUNK_PREVIEW].replace("\n", " ")
+        preview = content[:GROUNDEDNESS_CHUNK_PREVIEW_CHARS].replace("\n", " ")
         chunk_previews.append(f"Chunk {i}: {preview}")
     chunks_text = "\n".join(chunk_previews) if chunk_previews else "(no chunks were retrieved for this turn)"
 
@@ -153,17 +189,25 @@ def check_groundedness(
                 # cannot resurrect the bug.
                 reasoning_effort="disable",
                 max_tokens=64,
-                response_format={"type": "json_object"},
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "GroundednessScoreResult",
+                        "strict": True,
+                        "schema": _GroundednessScoreResult.model_json_schema(),
+                    },
+                },
                 timeout=_GROUNDEDNESS_LLM_TIMEOUT_S,
                 metadata={"generation_name": "groundedness-gate"},
             )
             raw = (response.choices[0].message.content or "").strip()
             gen.record_litellm(response, output=raw)
-        data = json.loads(raw)
-        score = float(data.get("score", 1.0))
-        score = max(0.0, min(1.0, score))  # clamp to [0, 1]
+        # Validated against the same schema the provider was held to: an
+        # out-of-range or wrong-shaped verdict is a failure to log, not a value
+        # to clamp (see ``_GroundednessScoreResult``).
+        score = _GroundednessScoreResult.model_validate_json(raw).score
     except Exception as exc:
-        # Timeout, rate limit, JSON parse error, network. All fail open.
+        # Timeout, rate limit, schema/parse failure, network. All fail open.
         logger.warning("Groundedness gate failed (non-blocking, fail-open): %s", exc)
         return True, 1.0
 

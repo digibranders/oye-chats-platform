@@ -1546,6 +1546,8 @@ _KNOWN_CRAWL_PROVIDERS = [
 def get_model_config(_admin: Client = Depends(get_superadmin)):
     """Return the active model + RAG knobs and the catalog of selectable models."""
     from app.services import runtime_config
+    from app.services.relevance_gate import RELEVANCE_THRESHOLD
+    from app.services.reranker import RERANK_TOP_N
 
     crawl_primary = runtime_config.get_crawl_provider_primary()
     return {
@@ -1555,8 +1557,12 @@ def get_model_config(_admin: Client = Depends(get_superadmin)):
         "rag": {
             "chunk_size": runtime_config.get_chunk_size(),
             "chunk_overlap": runtime_config.get_chunk_overlap(),
-            "rerank_top_n": runtime_config.get_rerank_top_n(),
-            "relevance_threshold": runtime_config.get_relevance_threshold(),
+            # Shown with the SAME fallback the gate and reranker use when the
+            # knob is unset (their env defaults), not runtime_config's own
+            # placeholder defaults, so the dashboard never displays a value the
+            # request path is not actually applying.
+            "rerank_top_n": runtime_config.get_rerank_top_n(RERANK_TOP_N),
+            "relevance_threshold": runtime_config.get_relevance_threshold(RELEVANCE_THRESHOLD),
         },
         "embed": {
             "concurrency": runtime_config.get_embed_concurrency(),
@@ -1734,6 +1740,27 @@ _SAFETY_NET_METRIC_NAMES = [
     # AR-40: how often the zero-result multi-query fallback actually
     # recovers chunks a single embedding shot missed.
     "multi_query_fallback_recovered",
+    # The two ways an answer reaches a visitor without the "only from your
+    # knowledge base" check having actually held: a groundedness verdict under
+    # the floor (rag_service.py) and the relevance gate failing OPEN on a
+    # provider error (relevance_gate.py).
+    "groundedness_low",
+    "gate_failed_open",
+    # Exact-question answer cache (rag_service.py). The hit rate is the share
+    # of replies that cost no generation at all.
+    "qa_cache_hit",
+    "qa_cache_miss",
+    # Chat-stream latency histograms (chat_routes.py via ``record_latency_ms``).
+    # A histogram has no counter under its bare name: it is written as
+    # ``<name>_count`` (observations), ``<name>_le_<edge>`` (cumulative
+    # buckets) and ``<name>_over`` (slower than the largest edge, 10s). The
+    # count and the overflow are the two that read as plain totals here; a
+    # percentile needs ``metrics.get_latency_percentile`` and is not served by
+    # this endpoint.
+    "chat_ttft_ms_count",
+    "chat_ttft_ms_over",
+    "chat_stream_total_ms_count",
+    "chat_stream_total_ms_over",
 ]
 
 

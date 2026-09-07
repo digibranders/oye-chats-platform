@@ -57,6 +57,49 @@ def redact_pii(text: str | None) -> str | None:
         return text
 
 
+def _redact_messages(messages: list) -> list:
+    """Redact the ``content`` of every chat-message dict in ``messages``.
+
+    Returns a new list with new dicts. ``messages`` is typically the very list
+    about to be handed to LiteLLM, so mutating it in place would send the
+    redacted text to the model instead of the visitor's actual words. Entries
+    that are not message-shaped (no ``str`` content) pass through unchanged.
+    """
+    redacted = []
+    for message in messages:
+        if isinstance(message, dict) and isinstance(message.get("content"), str):
+            redacted.append({**message, "content": redact_pii(message["content"])})
+        else:
+            redacted.append(message)
+    return redacted
+
+
+def litellm_usage(response) -> dict[str, int] | None:
+    """Langfuse ``usage`` payload (``{"input": …, "output": …}``) from a LiteLLM
+    response, or from the usage-bearing chunk of a stream.
+
+    ``None`` when the object carries no usage, so a caller can pass the result
+    straight to :meth:`_GenerationRecorder.update`, which ignores ``usage=None``.
+
+    Shared by :meth:`_GenerationRecorder.record_litellm` (non-streaming) and the
+    streaming path in ``llm_service``, which has no response object to hand
+    over, only the final ``stream_options={"include_usage": True}`` chunk, so
+    the extraction shape lives in exactly one place. Never raises: this runs in
+    a ``finally`` on the streaming path, where an exception would mask the
+    stream's own error.
+    """
+    try:
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return None
+        return {
+            "input": int(getattr(usage, "prompt_tokens", 0) or 0),
+            "output": int(getattr(usage, "completion_tokens", 0) or 0),
+        }
+    except Exception:  # noqa: BLE001 - tracing must never break an LLM path
+        return None
+
+
 def get_langfuse():
     """
     Return the Langfuse client singleton, or None if disabled.
@@ -108,11 +151,10 @@ class _GenerationRecorder:
         with contextlib.suppress(Exception):
             if output is None:
                 output = response.choices[0].message.content
-            usage = getattr(response, "usage", None)
             self.update(
                 output=output or "",
                 model=getattr(response, "model", None) or self._model,
-                usage=({"input": usage.prompt_tokens, "output": usage.completion_tokens} if usage else None),
+                usage=litellm_usage(response),
             )
 
 
@@ -126,10 +168,12 @@ def langfuse_generation(name: str, *, model: str | None = None, prompt: str | No
     disabled or the SDK is unavailable, so call sites need no conditionals.
 
     AR-30: ``prompt`` is redacted (emails, phone numbers) before being sent as
-    ``input=``. Every call site in this codebase passes ``prompt=``, not the
-    raw ``input=`` escape hatch, so this covers every *generation* span today.
-    A caller that ever passes pre-built ``input=`` directly is responsible for
-    redacting it itself first.
+    a single ``role: user`` message. ``input`` given as a chat ``messages``
+    list (the same list handed to LiteLLM, which is how ``llm_service`` traces
+    a system/user split so a prompt regression is diagnosable per role) is
+    redacted per message ``content`` in the same pass, so a call site cannot
+    forget it. Any other ``input`` shape is passed through untouched and that
+    caller owns its redaction.
 
     It does not, however, cover observations built against the SDK directly.
     The ``rag-pipeline`` / ``rag-pipeline-stream`` chain spans in
@@ -150,9 +194,12 @@ def langfuse_generation(name: str, *, model: str | None = None, prompt: str | No
         yield _GenerationRecorder(None, model)
         return
 
-    resolved_input = (
-        input if input is not None else ([{"role": "user", "content": redact_pii(prompt)}] if prompt else None)
-    )
+    if input is not None:
+        resolved_input = _redact_messages(input) if isinstance(input, list) else input
+    elif prompt:
+        resolved_input = [{"role": "user", "content": redact_pii(prompt)}]
+    else:
+        resolved_input = None
     mgr = None
     span = None
     try:
