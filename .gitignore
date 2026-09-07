@@ -53,6 +53,10 @@ api/emails/.backup/
 # Email rendering preview (generated artifact, not source-of-truth)
 api/emails/preview/
 
+# Answer-quality eval output (report.json holds every answer of a run verbatim,
+# so a run against a production bot is customer data. Regenerated per run.)
+api/eval-report/
+
 # Personal local-dev launcher (API + ARQ worker side-by-side, env overrides)
 api/dev.sh
 
