@@ -7,6 +7,7 @@ import { lazyWithRetry } from '../services/lazyWithRetry';
 import { t } from '../i18n/i18n.js';
 import { sanitizeColor } from '../services/sanitize';
 import { formatBotMarkdown } from '../services/botMarkdown';
+import { splitTrailingFollowUp } from '../lib/followUp';
 import { isSmartLink, isSmartLinkClicked, markSmartLinkClicked } from '../services/smartLinks';
 
 // MediaCard (YouTube/downloadable-file cards) is lazy-loaded: it only renders on
@@ -172,28 +173,6 @@ const MessageActionButton = ({ children, label, onClick, active = false, success
     </button>
 );
 
-// When a bot reply renders a media card (YouTube / downloadable file) below the
-// answer, a trailing follow-up question (the qualification probe the bot weaves
-// in on its own line) would otherwise sit ABOVE the card, in the middle. Split
-// that trailing question off so it can render AFTER the card and always land
-// last. The backend puts the follow-up on its own line separated by a blank line
-// (``_ensure_followup_spacing`` + the prompt's EMBEDDING RULES), so the last
-// paragraph is a reliable anchor. Conservative: only a short, single-line
-// question with no list marker is treated as the follow-up.
-const _splitTrailingFollowUp = (text) => {
-    const src = (text || '').trimEnd();
-    const idx = src.lastIndexOf('\n\n');
-    if (idx === -1) return { body: text, followUp: '' };
-    const tail = src.slice(idx + 2).trim();
-    const isFollowUp =
-        tail.endsWith('?') &&
-        !tail.includes('\n') &&
-        tail.length <= 160 &&
-        !/^[-*+>#]|^\d+[.)]/.test(tail);
-    if (!isFollowUp) return { body: text, followUp: '' };
-    return { body: src.slice(0, idx).trimEnd(), followUp: tail };
-};
-
 const MessageBubble = ({
     msg,
     currentTheme,
@@ -259,9 +238,18 @@ const MessageBubble = ({
         // keys off), so splitting the raw text would never see the separator.
         const hasCard = !!msg.media_card && !isStreaming;
         const formattedText = formatBotMarkdown(msg.text);
-        const { body, followUp } = hasCard
-            ? _splitTrailingFollowUp(formattedText)
-            : { body: formattedText, followUp: '' };
+        // Split on every FINISHED reply, not only card turns. The follow-up is
+        // the bot's own question back to the visitor rather than part of the
+        // answer, and italics are what say so at a glance.
+        //
+        // Never mid-stream: the trailing text is still growing, so a sentence
+        // would flip into the italic block the moment a "?" arrived and back out
+        // as more text followed it, flickering on every token. Waiting for the
+        // final text costs nothing, because the split only ever affects the last
+        // paragraph, which is the last thing to arrive anyway.
+        const { body, followUp } = isStreaming
+            ? { body: formattedText, followUp: '' }
+            : splitTrailingFollowUp(formattedText);
         // AI message. Avatar + plain text, NO bubble
         return (
             <div className="group flex items-start gap-2 w-full">
@@ -298,10 +286,12 @@ const MessageBubble = ({
                                 </Suspense>
                             </ErrorBoundary>
                         )}
-                        {/* Follow-up question, split off the answer so it renders
-                            AFTER the card (never sandwiched above it). */}
+                        {/* Follow-up question. Split off the answer so it renders
+                            AFTER any card (never sandwiched above it), and set in
+                            italics to mark it as the bot asking rather than
+                            answering. */}
                         {followUp && (
-                            <div className="prose prose-sm max-w-none break-words font-light mt-3">
+                            <div className="prose prose-sm max-w-none break-words font-light italic mt-3">
                                 <ReactMarkdown
                                     components={{
                                         a: SafeLink,

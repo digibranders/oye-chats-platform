@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, Suspense } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback, Suspense } from 'react';
 import { X, Plus, Clock, Mail, CheckCircle2, AlertCircle, User, Phone, MessageSquare, LogOut, Star, XCircle, ChevronDown, Headphones, Globe, History, Trash2, Check, Menu, Calendar } from 'lucide-react';
 import { isAbortError, sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, cancelHandoff, getSessionStatus, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail, getPendingConnectRequest, respondToConnectRequest, submitFeedback, markChatEvent, validateEmail as checkEmailWithServer, getQuotationState, changeSessionLanguage, restoreVisitorName } from '../services/api';
 import { getController } from '../widget-controller.js';
@@ -2929,7 +2929,22 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
     // who hasn't shown up yet. Once the operator sends their first
     // message, ticks light up on the visitor's prior live messages too,
     // the existing read_receipt handler upgrades their status as usual.
-    const operatorHasEngaged = liveMessages.some((m) => m.sender === 'operator');
+    // Id of the visitor's MOST RECENT outgoing live message. The receipt is a
+    // word now, not a glyph, and a word under every bubble stacks into a column
+    // of "Read / Read / Read" that is louder than the ticks it replaced. One
+    // label on the newest message says the same thing and moves down the thread
+    // as the visitor sends (the iMessage pattern).
+    //
+    // This replaces an ``operatorHasEngaged`` gate that hid receipts entirely
+    // until the operator had SENT something. That left the visitor with no
+    // delivery feedback during the wait -- exactly when they are most unsure
+    // anyone heard them -- so the receipt now shows from the first send.
+    const lastOutgoingId = useMemo(() => {
+        for (let i = liveMessages.length - 1; i >= 0; i -= 1) {
+            if (liveMessages[i].sender === 'user') return liveMessages[i].id;
+        }
+        return null;
+    }, [liveMessages]);
 
     // ── Inline live message renderer ─────────────────────────────────────────────
     const renderLiveMessage = (msg) => {
@@ -2992,7 +3007,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                                 <AlertCircle className="w-3 h-3" />{' '}
                                 {t('system.not_sent_retry') || 'Not sent · Retry'}
                             </button>
-                        ) : operatorHasEngaged ? (
+                        ) : msg.id === lastOutgoingId ? (
                             <MessageStatus
                                 status={msg.status || 'sending'}
                                 sentAt={msg.sentAt || msg.timestamp}

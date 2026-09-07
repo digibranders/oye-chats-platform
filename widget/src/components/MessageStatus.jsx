@@ -2,23 +2,35 @@ import React, { useMemo } from 'react';
 import { t } from '../i18n/i18n.js';
 
 /**
- * WhatsApp-style message receipt indicator.
+ * Delivery receipt for a visitor's outgoing live-chat message.
  *
- * Renders a small status glyph for a visitor's outgoing live-chat message:
- *   - "sending"  . Single hollow check, dimmed; subtle pulse while in flight
- *   - "sent"     . Single check, muted gray (server persisted the message)
- *   - "delivered" (double check, muted gray (operator's WS got it)
- *   - "read") double check, vivid green (operator viewed the chat)
- *   - "failed"   . Caller renders its own retry UI; this component renders nothing
+ * Renders the state as a WORD rather than a tick glyph:
+ *   - "sending"   . in flight, not yet acknowledged by the server
+ *   - "sent"      . the server persisted it
+ *   - "delivered" . the operator's socket received it
+ *   - "read"      . the operator opened the chat
+ *   - "failed"    . the caller renders its own retry UI; this renders nothing
  *
- * The glyph carries a localized timestamp tooltip + an aria-label so screen
- * readers and hover users both get the same information shown in the UI.
+ * WHY WORDS AND NOT TICKS. A tick is a convention the visitor has to already
+ * know, and a double tick and a single tick differ by a few pixels at 14px.
+ * "Delivered" and "Read" need no decoding, and every string is already
+ * translated in every locale (they were written for the old glyph's tooltip),
+ * so this costs nothing in i18n and inherits RTL for free.
+ *
+ * WHY IT IS DELIBERATELY QUIET. Words are read; glyphs are skimmed. Rendered
+ * under every message this would be a stuttering column of "Read / Read /
+ * Read" beside the thread -- louder than the ticks it replaces. The caller
+ * therefore renders it on the LAST outgoing message only (the iMessage
+ * pattern), and the type here is small, italic and low-contrast so it reads as
+ * an annotation rather than as content.
+ *
+ * One neutral grey for every state, "read" included. Colour-coding the final
+ * state would make the receipt compete with the message above it, and the word
+ * already carries the meaning that the colour would only be repeating.
  */
 
-const READ_COLOR = '#22C55E';      // Tailwind green-500. Vivid, accessible
-const READ_GLOW = 'rgba(34,197,94,0.35)';
 const NEUTRAL_COLOR = '#9CA3AF';   // gray-400. Calm, low-contrast
-const SENDING_COLOR = '#CBD5E1';   // slate-300, even softer for in-flight
+const SENDING_COLOR = '#CBD5E1';   // slate-300, softer still while in flight
 
 const formatTimestamp = (iso) => {
     if (!iso) return null;
@@ -37,7 +49,7 @@ const formatTimestamp = (iso) => {
 const labelFor = (status, readAt, deliveredAt, sentAt) => {
     switch (status) {
         case 'sending':
-            return t('status.sending') || 'Sending\u2026';
+            return t('status.sending') || 'Sending…';
         case 'sent': {
             const time = formatTimestamp(sentAt);
             return time
@@ -60,85 +72,36 @@ const labelFor = (status, readAt, deliveredAt, sentAt) => {
     }
 };
 
-const SingleCheck = ({ color, strokeWidth = 2.2 }) => (
-    <svg
-        width="14"
-        height="14"
-        viewBox="0 0 16 16"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-        aria-hidden="true"
-        focusable="false"
-    >
-        <path
-            d="M2.5 8.6 L6 12 L13.5 4"
-            stroke={color}
-            strokeWidth={strokeWidth}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-        />
-    </svg>
-);
-
-const DoubleCheck = ({ color, glow, strokeWidth = 2.2 }) => (
-    <svg
-        width="18"
-        height="14"
-        viewBox="0 0 20 16"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-        aria-hidden="true"
-        focusable="false"
-        style={glow ? { filter: `drop-shadow(0 0 2px ${glow})` } : undefined}
-    >
-        <path
-            d="M1.5 8.6 L5 12 L12.5 4"
-            stroke={color}
-            strokeWidth={strokeWidth}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-        />
-        <path
-            d="M7.5 8.6 L11 12 L18.5 4"
-            stroke={color}
-            strokeWidth={strokeWidth}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-        />
-    </svg>
-);
-
 const MessageStatus = ({ status = 'sending', sentAt, deliveredAt, readAt, className = '' }) => {
     const label = useMemo(
         () => labelFor(status, readAt, deliveredAt, sentAt),
         [status, readAt, deliveredAt, sentAt],
     );
 
-    if (status === 'failed') return null;
+    if (status === 'failed' || !label) return null;
 
-    const isRead = status === 'read';
     const isSending = status === 'sending';
-    const color = isRead ? READ_COLOR : isSending ? SENDING_COLOR : NEUTRAL_COLOR;
 
     return (
         <span
-            className={`oyechats-msg-status inline-flex items-center select-none transition-colors duration-300 ease-out ${className}`}
+            className={`oyechats-msg-status select-none transition-colors duration-300 ease-out ${className}`}
+            // `title` kept even though the text is now visible: the label is
+            // truncated to the bubble's width on a narrow viewport, and hover
+            // is the only way back to the timestamp when it is.
             title={label}
             aria-label={label}
             role="status"
             data-status={status}
             style={{
-                opacity: isSending ? 0.7 : 1,
+                fontSize: '10px',
+                fontStyle: 'italic',
+                fontWeight: 400,
+                lineHeight: 1.4,
+                color: isSending ? SENDING_COLOR : NEUTRAL_COLOR,
                 animation: isSending ? 'oyechatsTickPulse 1.4s ease-in-out infinite' : undefined,
             }}
         >
-            {status === 'sent' ? (
-                <SingleCheck color={color} />
-            ) : status === 'sending' ? (
-                <SingleCheck color={color} strokeWidth={2} />
-            ) : (
-                <DoubleCheck color={color} glow={isRead ? READ_GLOW : undefined} />
-            )}
+            {label}
         </span>
     );
 };
