@@ -608,10 +608,27 @@ def select_next_probe_dimension(
 ) -> tuple[str | None, list[str]]:
     """Pick the next qualification dimension to probe, human-style.
 
-    Returns ``(next_dimension, missing_dimensions)`` where ``missing_dimensions``
-    is every enabled dimension still below 60% of its max score (in
-    ``conversation_order``), and ``next_dimension`` is the first of those that
-    was NOT probed on a recent turn.
+    Returns ``(next_dimension, missing_dimensions)``. The two halves answer
+    DIFFERENT questions and are deliberately computed from different tests:
+
+    * ``missing_dimensions`` -- every enabled dimension still below 60% of its
+      max score. This is a QUALIFICATION judgement ("is this lead good enough
+      yet?") and drives scoring and CTA-chip eligibility.
+    * ``next_dimension`` -- the next dimension that has neither a recorded
+      answer nor an ``asked`` flag. This is a CONVERSATION judgement ("have we
+      already put this to them?"), and it is satisfied by the ASKING, not by
+      the answer: a dimension the visitor met with "yes", "no" or a shrug
+      yields no signal and stores no value, but it has still been asked, and
+      raising it again is repetition rather than qualification.
+
+    Conflating the two was a real bug. Selecting the next probe from the
+    below-60% list meant a visitor who ANSWERED was still re-asked whenever
+    their answer scored low, and on every framework the two lowest rubric
+    options score 5 and 10 against a threshold of 15. So "Just browsing",
+    "No budget yet" and "6-12 months" -- honest answers, recorded, visible to
+    the admin -- all left the dimension queued, and the least-engaged visitor
+    was interrogated the hardest about things they had already told us. A
+    low-scoring answer must still count as ANSWERED; it just does not qualify.
 
     Two behaviours this encodes that ``missing_dims[0]`` alone could not:
 
@@ -631,6 +648,7 @@ def select_next_probe_dimension(
     recent = {d for d in recently_probed if d}
 
     missing: list[str] = []
+    unanswered: list[str] = []
     for dim in order:
         dim_cfg = framework_config.get(dim, {}) if isinstance(framework_config.get(dim), dict) else {}
         if not dim_cfg.get("enabled", True):
@@ -641,8 +659,39 @@ def select_next_probe_dimension(
         score = int(state.get(f"{dim}_score", 0) or 0)
         if score < assess_threshold:
             missing.append(dim)
+        # "Do we still need to raise this?" -- NOT "did it score?".
+        # A dimension is done once it has EITHER a recorded answer or an
+        # ``asked`` flag. The flag is what covers a reply that yields no signal
+        # ("yes", "no", "not sure"): the visitor was asked and did respond, so
+        # asking again is repetition, not qualification.
+        value = state.get(dim)
+        answered = isinstance(value, str) and bool(value.strip())
+        # Three independent ways a dimension is finished with. Any one is
+        # enough; requiring a stored VALUE alone was wrong, because a dimension
+        # can reach its threshold through scoring while the text value lives
+        # only in the legacy per-column state the caller flattens.
+        if not answered and not state.get(f"{dim}_asked") and score < assess_threshold:
+            unanswered.append(dim)
 
-    fresh = [dim for dim in missing if dim not in recent]
+    # Rotate: resume scanning AFTER the most recently probed dimension rather
+    # than restarting at the head of ``conversation_order`` every turn.
+    #
+    # Without this the selector always returned the FIRST eligible dimension,
+    # so with a one-turn ``recently_probed`` memory it oscillated between the
+    # first two forever -- need, timeline, need, timeline -- and the third and
+    # fourth dimensions were never asked at all, no matter how long the
+    # conversation ran. Rotating gives the "ask, let it breathe, revisit"
+    # rhythm this function's contract already promised, using the same
+    # one-turn memory and no extra session state.
+    candidates = unanswered
+    if recent:
+        last = next((d for d in reversed(order) if d in recent), None)
+        if last is not None and last in order:
+            cut = order.index(last) + 1
+            rotated = order[cut:] + order[:cut]
+            candidates = [d for d in rotated if d in unanswered]
+
+    fresh = [dim for dim in candidates if dim not in recent]
     next_dimension = fresh[0] if fresh else None
     return next_dimension, missing
 
