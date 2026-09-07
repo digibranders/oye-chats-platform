@@ -34,10 +34,17 @@ CONFIG
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import functools
 import logging
 import os
+from collections.abc import Callable
+from typing import ParamSpec, TypeVar
 
 from fastapi import HTTPException
+
+P = ParamSpec("P")
+T = TypeVar("T")
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +166,42 @@ class ChatConcurrencyGate:
         """Async context manager: ``async with gate.slot():`` holds one slot for
         the block and releases it on any exit (success, error, client cancel)."""
         return _Slot(self)
+
+    async def run_sync(self, fn: Callable[P, T], /, *args: P.args, **kwargs: P.kwargs) -> T:
+        """Hold one slot while ``fn`` runs on a worker thread, for the synchronous
+        chat path (``POST /chat``), whose pipeline is blocking code.
+
+        Acquires exactly like :meth:`slot` (same wait, same 503 on timeout) but
+        RELEASES WHEN THE THREAD FINISHES, not when the awaiting coroutine exits.
+        The two differ under cancellation. A worker thread cannot be interrupted,
+        so when ``TimeoutMiddleware`` gives up on the request (504) the pipeline
+        keeps running, and keeps its DB connection, until it returns on its own.
+        Releasing at cancellation would let the gate admit a fresh generation
+        while the abandoned one still occupies the pool, which is the exhaustion
+        the gate exists to prevent, and in a burst of timeouts it would happen
+        once per request.
+
+        Mechanics: the work is submitted to the loop's default executor with the
+        caller's context (what :func:`asyncio.to_thread` does), the release is a
+        done-callback on the executor future so it runs on the loop thread (the
+        only place an :class:`asyncio.Semaphore` may be touched), and the await
+        is shielded so a cancelled caller cannot cancel that future underneath
+        it. Unshielded, the cancellation would resolve the future at once, firing
+        the release while the thread still runs, or, for a work item the executor
+        had not started yet, skipping ``fn`` entirely.
+        """
+        await self._acquire()
+        loop = asyncio.get_running_loop()
+        call = functools.partial(contextvars.copy_context().run, fn, *args, **kwargs)
+        try:
+            future = loop.run_in_executor(None, call)
+        except BaseException:
+            # The executor refused the work (shutting down): nothing will run,
+            # so nothing will release. Give the slot back here.
+            self._release()
+            raise
+        future.add_done_callback(lambda _f: self._release())
+        return await asyncio.shield(future)
 
 
 class _Slot:

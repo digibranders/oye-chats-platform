@@ -1,6 +1,9 @@
 """Tests for app.api.chat_routes. Chat endpoint functionality."""
 
-from contextlib import contextmanager
+import asyncio
+import contextlib
+import time
+from contextlib import ExitStack, contextmanager
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -9,7 +12,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.auth import get_bot_for_chat, get_current_bot, get_current_client_or_operator
-from app.api.chat_routes import router
+from app.api.chat_routes import _is_answer_chunk, _record_stream_latency, router
+from app.core.chat_concurrency import ChatConcurrencyGate
+from app.core.metrics import record_latency_ms
 
 
 @contextmanager
@@ -138,6 +143,218 @@ class TestChatEndpoint:
         )
 
         assert response.status_code == 422
+
+
+# ── Chat concurrency gate on POST /chat ──────────────────────────────────────
+
+
+def _saturated_gate(acquire_timeout_s: float = 0.05) -> ChatConcurrencyGate:
+    """A gate whose only slot is already taken, so the next acquire sheds after
+    ``acquire_timeout_s``. Taking it outside the app's loop is fine: an
+    uncontended acquire returns at once and binds the semaphore to no loop."""
+    gate = ChatConcurrencyGate(limit=1, acquire_timeout_s=acquire_timeout_s)
+    asyncio.run(gate.slot().__aenter__())
+    return gate
+
+
+def _charged_chat_patches(refunds: list[int], pipeline):
+    """Patches for a ``POST /chat`` that gets past the subscription and credit
+    gates with one credit charged, and whose refunds land in ``refunds``."""
+    return (
+        patch("app.api.chat_routes.get_session", side_effect=lambda: _session_ctx(MagicMock())),
+        patch("app.services.credit_service.get_credit_cost", return_value=1),
+        patch("app.services.credit_service.check_and_deduct"),
+        patch("app.api.chat_routes._refund_ai_chat_credit", side_effect=lambda _bot, cost: refunds.append(cost)),
+        patch("app.api.chat_routes._resolve_session_id", return_value="session-1"),
+        patch("app.api.chat_routes._parse_request_context", return_value=("1.2.3.4", "Desktop Chrome")),
+        patch("app.api.chat_routes._resolve_visitor_language_and_update_session", return_value=None),
+        patch("app.api.chat_routes.submit_background"),
+        patch("app.api.chat_routes.rag_pipeline", pipeline),
+    )
+
+
+class TestChatConcurrencyGate:
+    """``POST /chat`` used to bypass the backpressure gate ``/chat/stream``
+    acquires, so a burst on the legacy endpoint could exhaust the DB pool the
+    gate exists to protect. These pin that the two endpoints now share one
+    ceiling and one shed contract: HTTP 503 + Retry-After, and the credit
+    charged before the gate comes back."""
+
+    def _post(self, tc: TestClient):
+        return tc.post("/chat", json={"question": "Hello"}, headers={"X-Bot-Key": "bot-test123"})
+
+    def test_returns_503_with_retry_after_when_the_gate_is_full(self):
+        bot = _default_bot()
+        tc = TestClient(_build_app(bot_override=bot))
+        refunds: list[int] = []
+        pipeline = MagicMock(return_value={"answer": "never", "sources": [], "session_id": "session-1"})
+
+        with ExitStack() as stack:
+            for cm in _charged_chat_patches(refunds, pipeline):
+                stack.enter_context(cm)
+            stack.enter_context(patch("app.api.chat_routes.chat_gate", _saturated_gate()))
+            response = self._post(tc)
+
+        assert response.status_code == 503
+        assert response.headers["retry-after"] == "1"
+        assert response.json()["detail"]["error"] == "server_busy"
+        pipeline.assert_not_called()
+        # A shed request is never charged: the credit taken before the gate comes back.
+        assert refunds == [1]
+
+    def test_a_shed_preview_request_refunds_nothing(self):
+        """Owner-preview replies are free, so there is nothing to give back."""
+        bot = _default_bot(_is_preview=True)
+        tc = TestClient(_build_app(bot_override=bot))
+        refunds: list[int] = []
+
+        with ExitStack() as stack:
+            for cm in _charged_chat_patches(refunds, MagicMock()):
+                stack.enter_context(cm)
+            stack.enter_context(patch("app.services.preview_quota.check_and_increment_preview", return_value=True))
+            stack.enter_context(patch("app.api.chat_routes.chat_gate", _saturated_gate()))
+            response = self._post(tc)
+
+        assert response.status_code == 503
+        assert refunds == []
+
+    def test_the_pipeline_runs_inside_a_slot_that_is_released_afterwards(self):
+        bot = _default_bot()
+        tc = TestClient(_build_app(bot_override=bot))
+        gate = ChatConcurrencyGate(limit=2, acquire_timeout_s=1.0)
+        refunds: list[int] = []
+        seen: dict[str, int] = {}
+
+        def pipeline(*_args, **_kwargs):
+            seen["in_flight"] = gate.stats()["in_flight"]
+            return {"answer": "Hello!", "sources": [], "session_id": "session-1"}
+
+        with ExitStack() as stack:
+            for cm in _charged_chat_patches(refunds, pipeline):
+                stack.enter_context(cm)
+            stack.enter_context(patch("app.api.chat_routes.chat_gate", gate))
+            response = self._post(tc)
+
+        assert response.status_code == 200
+        assert response.json()["answer"] == "Hello!"
+        assert seen["in_flight"] == 1
+        assert gate.stats()["in_flight"] == 0
+        assert refunds == []
+
+    def test_the_slot_is_released_when_the_pipeline_raises(self):
+        bot = _default_bot()
+        tc = TestClient(_build_app(bot_override=bot), raise_server_exceptions=False)
+        gate = ChatConcurrencyGate(limit=1, acquire_timeout_s=1.0)
+        refunds: list[int] = []
+
+        with ExitStack() as stack:
+            for cm in _charged_chat_patches(refunds, MagicMock(side_effect=RuntimeError("pipeline exploded"))):
+                stack.enter_context(cm)
+            stack.enter_context(patch("app.api.chat_routes.chat_gate", gate))
+            response = self._post(tc)
+
+        assert response.status_code == 500
+        assert gate.stats()["in_flight"] == 0
+        assert refunds == [1]
+
+
+# ── Stream latency metrics ───────────────────────────────────────────────────
+
+
+class TestStreamLatencyMetrics:
+    """``/chat/stream`` records ``chat_ttft_ms`` (request start to the first
+    answer chunk) and ``chat_stream_total_ms`` (request start to the end of the
+    stream) as latency histograms, handed to the background pool so the event
+    loop never waits on Redis."""
+
+    def _patches(self, stream, submitted: list):
+        return (
+            patch("app.api.chat_routes._deduct_ai_chat_credit_sync", return_value=1),
+            patch("app.api.chat_routes._refund_ai_chat_credit"),
+            patch("app.api.chat_routes._resolve_session_id", return_value="session-1"),
+            patch("app.api.chat_routes._parse_request_context", return_value=("1.2.3.4", "Desktop Chrome")),
+            patch("app.api.chat_routes._resolve_visitor_language_and_update_session", return_value=None),
+            patch("app.api.chat_routes.submit_background", side_effect=lambda fn, *a, **k: submitted.append((fn, a))),
+            patch("app.api.chat_routes.rag_pipeline_stream", stream),
+        )
+
+    def _latencies(self, submitted: list) -> list[tuple[str, float]]:
+        return [(args[0], args[1]) for fn, args in submitted if fn is record_latency_ms]
+
+    def _stream(self, tc: TestClient):
+        return tc.post("/chat/stream", json={"question": "Hello"}, headers={"X-Bot-Key": "bot-test123"})
+
+    def test_records_ttft_on_the_first_answer_chunk_and_total_at_the_end(self):
+        async def stream(*_args, **_kwargs):
+            yield 'METADATA:{"session_id": "session-1"}\n'
+            yield "\n"  # whitespace is not an answer
+            yield "Hello"
+            yield " there"
+            yield '\nFINAL_METADATA:{"message_id": 1}\n'
+
+        submitted: list = []
+        tc = TestClient(_build_app(bot_override=_default_bot()))
+        with ExitStack() as stack:
+            for cm in self._patches(stream, submitted):
+                stack.enter_context(cm)
+            response = self._stream(tc)
+
+        assert response.status_code == 200
+        latencies = self._latencies(submitted)
+        assert [name for name, _ in latencies] == ["chat_ttft_ms", "chat_stream_total_ms"]
+        (_, ttft), (_, total) = latencies
+        assert 0 <= ttft <= total
+
+    def test_no_ttft_when_the_stream_carries_no_answer_text(self):
+        async def stream(*_args, **_kwargs):
+            yield "METADATA:{}\n"
+            yield '\nFINAL_METADATA:{"generation_failed": true}\n'
+
+        submitted: list = []
+        tc = TestClient(_build_app(bot_override=_default_bot()))
+        with ExitStack() as stack:
+            for cm in self._patches(stream, submitted):
+                stack.enter_context(cm)
+            self._stream(tc)
+
+        assert [name for name, _ in self._latencies(submitted)] == ["chat_stream_total_ms"]
+
+    def test_a_stream_that_dies_midway_records_ttft_but_no_total(self):
+        """A total for a stream that never finished would only make the
+        distribution look faster than the service is."""
+
+        async def stream(*_args, **_kwargs):
+            yield "METADATA:{}\n"
+            yield "Hel"
+            raise RuntimeError("provider died")
+
+        submitted: list = []
+        tc = TestClient(_build_app(bot_override=_default_bot()))
+        with ExitStack() as stack:
+            for cm in self._patches(stream, submitted):
+                stack.enter_context(cm)
+            with contextlib.suppress(RuntimeError):
+                self._stream(tc)
+
+        assert [name for name, _ in self._latencies(submitted)] == ["chat_ttft_ms"]
+
+    def test_recording_never_raises_when_the_pool_refuses_work(self):
+        with patch("app.api.chat_routes.submit_background", side_effect=RuntimeError("shutting down")):
+            _record_stream_latency("chat_ttft_ms", time.perf_counter())  # must not raise
+
+    @pytest.mark.parametrize(
+        ("chunk", "expected"),
+        [
+            ("Hello", True),
+            ("  Hello\n", True),
+            ('METADATA:{"a": 1}\n', False),
+            ('\nFINAL_METADATA:{"message_id": 1}\n', False),
+            ("", False),
+            ("\n  \n", False),
+        ],
+    )
+    def test_is_answer_chunk(self, chunk, expected):
+        assert _is_answer_chunk(chunk) is expected
 
 
 # ── Lead capture ─────────────────────────────────────────────────────────────

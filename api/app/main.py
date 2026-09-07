@@ -5,6 +5,8 @@ import os
 import sys
 import threading
 import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
 
 # AR-43: this predates the Spider.cloud/Jina Reader crawl stack, it was
 # originally needed for Playwright's subprocess-based browser automation on
@@ -382,6 +384,196 @@ def _llm_probe() -> tuple[bool, str | None]:
     return ok, detail
 
 
+@dataclass
+class _ProbeRun:
+    """One in-flight execution of a :class:`_TtlProbe`."""
+
+    started: float
+    done: threading.Event = field(default_factory=threading.Event)
+    report: dict = field(default_factory=dict)
+
+
+class _TtlProbe:
+    """A TTL-cached, wall-clock-bounded dependency probe for the health payload.
+
+    ``run(report)`` makes one real call against a dependency and may put fields
+    worth surfacing (the model it hit, say) into ``report``; raising is how it
+    reports failure. It executes on a daemon thread and gets ``deadline_s`` to
+    finish. ``result()`` never raises and returns ``{"ok", "latency_ms",
+    "error"}`` plus whatever ``run`` put in ``report``.
+
+    * TTL, for the same reason ``_llm_probe`` above caches: both external
+      monitors poll every ~60s and the deploy gate polls in a loop, and a probe
+      is a real, sometimes paid, provider call. (``_llm_probe`` keeps its
+      hand-rolled cache only because its tests reach into it.)
+    * A deadline, because not every dependency call has a timeout knob. The
+      embedding client retries six times with backoff of up to 30s (65s on a
+      429) on top of a 60s HTTP timeout, which is right for ingestion and
+      ruinous here: a health endpoint that hangs for minutes reads to a monitor
+      as "API down" when the truth is that one provider is slow. A run that
+      outlives its deadline is reported as failed and left to finish on its own.
+    * One run at a time, so a hung provider cannot pile up a thread per health
+      hit. Every caller waits on the run in flight; once it has outlived the
+      deadline they are told its age instead of starting another.
+    """
+
+    _VERDICT_KEYS = frozenset({"ok", "latency_ms", "error"})
+
+    def __init__(self, name: str, run: Callable[[dict], None], *, ttl_s: float, deadline_s: float) -> None:
+        self._name = name
+        self._run = run
+        self._ttl_s = ttl_s
+        self._deadline_s = deadline_s
+        self._lock = threading.Lock()
+        self._value: dict | None = None
+        self._ts = 0.0
+        self._pending: _ProbeRun | None = None
+
+    def reset(self) -> None:
+        """Forget the cached verdict and any run in flight (for tests)."""
+        with self._lock:
+            self._value = None
+            self._ts = 0.0
+            self._pending = None
+
+    def result(self) -> dict:
+        now = time.monotonic()
+        with self._lock:
+            if self._value is not None and now - self._ts < self._ttl_s:
+                return dict(self._value)
+            if self._pending is None or self._pending.done.is_set():
+                self._pending = self._start()
+            run = self._pending
+
+        remaining = self._deadline_s - (time.monotonic() - run.started)
+        run.done.wait(max(0.0, remaining))
+        if run.done.is_set():
+            value = dict(run.report)
+        else:
+            # ``dict(...)`` copies under the GIL; iterating the live dict while
+            # the worker may still write to it would not be safe.
+            extras = {k: v for k, v in dict(run.report).items() if k not in self._VERDICT_KEYS}
+            age = time.monotonic() - run.started
+            value = {
+                **extras,
+                "ok": False,
+                "latency_ms": None,
+                "error": f"probe still running after {age:.0f}s (deadline {self._deadline_s:.0f}s)",
+            }
+
+        with self._lock:
+            if self._pending is run:
+                self._ts = time.monotonic()
+                self._value = value
+                if run.done.is_set():
+                    self._pending = None
+        return dict(value)
+
+    def _start(self) -> _ProbeRun:
+        run = _ProbeRun(started=time.monotonic())
+
+        def _worker() -> None:
+            t0 = time.perf_counter()
+            try:
+                self._run(run.report)
+                run.report.update(ok=True, error=None)
+            except Exception as exc:  # noqa: BLE001 - any failure is the finding
+                run.report.update(ok=False, error=f"{type(exc).__name__}: {exc}"[:200])
+            finally:
+                run.report["latency_ms"] = int((time.perf_counter() - t0) * 1000)
+                run.done.set()
+
+        threading.Thread(target=_worker, name=f"health-probe-{self._name}", daemon=True).start()
+        return run
+
+
+# Relevance-gate model probe. The gate is the control behind "answers only from
+# your knowledge base": when its model is down the gate fails open and every
+# reply skips the check, while the primary-model probe above stays green and
+# chats keep flowing. That is a degradation nobody sees without this. Five
+# tokens is plenty for "ping" once reasoning is off; the 16 the primary probe
+# needs is headroom for hidden reasoning tokens, and the gate never runs with
+# reasoning on.
+_GATE_PROBE_MAX_TOKENS = int(os.getenv("HEALTH_GATE_PROBE_MAX_TOKENS", "5"))
+
+
+def _run_gate_probe(report: dict) -> None:
+    from app.services import runtime_config
+    from app.services.llm_service import _apply_model_family_kwargs
+
+    model = runtime_config.get_gate_model()
+    report["model"] = model
+    kwargs: dict = {}
+    # The same per-family "no reasoning" sentinel the gate's own calls use
+    # (gemini-2.5 spends the whole token budget thinking otherwise). Probing
+    # with reasoning on would fail a call the application never makes.
+    _apply_model_family_kwargs(kwargs, model)
+    _litellm.completion(
+        model=model,
+        messages=[{"role": "user", "content": "ping"}],
+        max_tokens=_GATE_PROBE_MAX_TOKENS,
+        timeout=_LLM_PROBE_TIMEOUT_SECONDS,
+        **kwargs,
+    )
+
+
+_gate_probe_state = _TtlProbe(
+    "gate-model",
+    _run_gate_probe,
+    ttl_s=_LLM_PROBE_TTL_SECONDS,
+    # litellm's own timeout fires first; the deadline is the backstop.
+    deadline_s=_LLM_PROBE_TIMEOUT_SECONDS + 2.0,
+)
+
+
+def _gate_probe() -> dict:
+    """TTL-cached completion probe of the relevance-gate model.
+
+    Short-circuits like ``_llm_probe`` when litellm is a hollow install: there is
+    no completion API to call, so no network call is attempted.
+    """
+    if not _llm_ready():
+        return {
+            "ok": False,
+            "latency_ms": None,
+            "error": "litellm.completion missing. Partial/namespace install",
+            "model": None,
+        }
+    return _gate_probe_state.result()
+
+
+# Embedding endpoint probe. When embeddings fail, retrieval silently degrades to
+# keyword-only search (rag_service) and answer quality drops on every bot at
+# once, with nothing in the request path raising. ``max_wait_s`` is the query
+# path's own ceiling on queueing behind bulk-ingestion rate-limit debt, so a
+# saturated limiter reads as the degradation it is for visitors too.
+_EMBED_PROBE_MAX_WAIT_SECONDS = float(os.getenv("HEALTH_EMBED_PROBE_MAX_WAIT_SECONDS", "2"))
+_EMBED_PROBE_DEADLINE_SECONDS = float(os.getenv("HEALTH_EMBED_PROBE_DEADLINE_SECONDS", "5"))
+
+
+def _run_embedding_probe(report: dict) -> None:
+    from app.ingestion.embedder import embed_chunks
+    from app.services.gemini_embedding import GEMINI_EMBED_MODEL
+
+    report["model"] = GEMINI_EMBED_MODEL
+    vectors = embed_chunks(["health probe"], max_wait_s=_EMBED_PROBE_MAX_WAIT_SECONDS)
+    if not vectors or not vectors[0]:
+        raise RuntimeError("embedding endpoint returned no vector")
+
+
+_embedding_probe_state = _TtlProbe(
+    "embedding",
+    _run_embedding_probe,
+    ttl_s=_LLM_PROBE_TTL_SECONDS,
+    deadline_s=_EMBED_PROBE_DEADLINE_SECONDS,
+)
+
+
+def _embedding_probe() -> dict:
+    """TTL-cached probe of the embedding endpoint (one tiny real embed call)."""
+    return _embedding_probe_state.result()
+
+
 def _fallback_count_1h() -> int | None:
     """Rolling count of primary->fallback LLM degradations in the last hour
     (AR-16). Surfaced here so a flaky primary provider recovering silently
@@ -458,6 +650,14 @@ def _gather_health() -> tuple[dict, bool, bool]:
         API is importable. A hollow-litellm install (see :func:`_llm_ready`)
         flips ``fully_ok`` to False so ``/health/full`` 503s and pages oncall,
         which the 2026-07-01 outage did not.
+
+    The payload also carries ``degraded``: True when the relevance-gate model
+    or the embedding endpoint fails its probe (``llm.gate_probe``,
+    ``embedding.probe``). Both are degradations, not outages: chats still flow,
+    with the KB-only check skipped or retrieval reduced to keyword search. They
+    are deliberately NOT folded into ``fully_ok``, whose HTTP code is the deploy
+    gate (deploy-api.yml polls ``/health/full`` and rolls back on 503): a slow
+    third-party model must not fail or roll back a deploy.
     """
     from datetime import UTC, datetime
 
@@ -520,6 +720,11 @@ def _gather_health() -> tuple[dict, bool, bool]:
     # short-circuits on a hollow litellm install.
     llm_ok, llm_detail = _llm_probe()
 
+    # -- Gate model + embedding probes (degradation signals, see docstring) --
+    gate_probe = _gate_probe()
+    embedding_probe = _embedding_probe()
+    degraded = not (gate_probe.get("ok") and embedding_probe.get("ok"))
+
     ready_to_serve = db_ok and redis_ok
     worker_required_ok = worker_status in ("alive", "disabled")
     fully_ok = ready_to_serve and worker_required_ok and llm_ok
@@ -547,7 +752,13 @@ def _gather_health() -> tuple[dict, bool, bool]:
             "probe_ok": llm_ok,
             "detail": llm_detail,
             "fallback_count_1h": _fallback_count_1h(),
+            "gate_probe": gate_probe,
         },
+        "embedding": {"probe": embedding_probe},
+        # Either dependency probe failing. Kept apart from ``status`` on purpose:
+        # that label tracks the HTTP code (``degraded`` there means /health/full
+        # is 503ing), and this is a 200 with something worth looking at.
+        "degraded": degraded,
         "pool": pool_stats,
         # Chat concurrency gate (backpressure), in-flight vs the configured
         # ceiling, plus how many requests have queued/been shed. Observability

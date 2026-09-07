@@ -146,6 +146,28 @@ class TestSafetyNetMetricsEndpoint:
         assert "moderation_block" in body["totals"]
         assert "injection_attempt" in body["series"]
 
+    def test_reports_the_kb_guarantee_cache_and_chat_latency_counters(self):
+        """Names other subsystems emit must be readable here, or they are the
+        log-line-with-no-consumer this endpoint exists to end. The latency
+        histograms are listed by the two counters that read as totals
+        (``_count`` and ``_over``): a histogram has no key under its bare name."""
+        client = self._client()
+        with patch("app.core.metrics.get_redis", return_value=None):
+            body = client.get("/superadmin/safety-net-metrics").json()
+
+        for name in (
+            "groundedness_low",
+            "gate_failed_open",
+            "qa_cache_hit",
+            "qa_cache_miss",
+            "chat_ttft_ms_count",
+            "chat_ttft_ms_over",
+            "chat_stream_total_ms_count",
+            "chat_stream_total_ms_over",
+        ):
+            assert name in body["totals"], name
+            assert name in body["series"], name
+
     def test_scoped_to_a_single_bot(self):
         client = self._client()
         with patch("app.core.metrics.get_redis", return_value=None):

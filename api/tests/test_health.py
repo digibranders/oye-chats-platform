@@ -13,13 +13,15 @@ takes the LB down with it.
 """
 
 import json
+import threading
+import time
 from contextlib import ExitStack
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import Request
 
-from app.main import _gather_health, health_check, health_check_full
+from app.main import _gather_health, _TtlProbe, health_check, health_check_full
 
 # The health endpoints only emit the full subsystem payload (DB pool internals,
 # version, chat-gate ceiling, billing state) to a caller presenting a valid
@@ -33,6 +35,23 @@ TEST_HEALTH_TOKEN = "test-health-detail-token"
 @pytest.fixture(autouse=True)
 def _enable_health_detail():
     with patch("app.main.HEALTH_DETAIL_TOKEN", TEST_HEALTH_TOKEN):
+        yield
+
+
+GATE_PROBE_OK = {"ok": True, "latency_ms": 40, "error": None, "model": "gemini/gemini-2.5-flash"}
+EMBED_PROBE_OK = {"ok": True, "latency_ms": 30, "error": None, "model": "gemini-embedding-001"}
+
+
+@pytest.fixture(autouse=True)
+def _dependency_probes_healthy():
+    """The gate-model and embedding probes make real provider calls. Default
+    them to healthy so every DB/Redis/worker/LLM scenario below stays about
+    what it tests; ``TestDependencyProbes`` overrides this to reach the real
+    probes, and ``TestDegradedSignal`` patches over it per test."""
+    with (
+        patch("app.main._gate_probe", return_value=dict(GATE_PROBE_OK)),
+        patch("app.main._embedding_probe", return_value=dict(EMBED_PROBE_OK)),
+    ):
         yield
 
 
@@ -388,6 +407,309 @@ class TestGatherHealth:
         assert ready_to_serve is False
 
 
+# ── Gate-model + embedding probes (degradation signals) ────────────────────
+
+
+class TestTtlProbe:
+    """The cache-and-deadline wrapper both new probes run through. A probe is
+    a real provider call, so it is cached; and not every dependency call has a
+    timeout knob (the embedding client retries for minutes), so a run that
+    outlives its deadline is reported as failed rather than hanging the health
+    endpoint until a monitor gives up on it."""
+
+    @staticmethod
+    def _until(predicate, timeout_s: float = 3.0) -> bool:
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            if predicate():
+                return True
+            time.sleep(0.01)
+        return predicate()
+
+    def test_reports_ok_latency_and_the_fields_the_run_surfaced(self):
+        def run(report):
+            report["model"] = "m"
+
+        result = _TtlProbe("t", run, ttl_s=30.0, deadline_s=1.0).result()
+        assert result["ok"] is True
+        assert result["error"] is None
+        assert result["model"] == "m"
+        assert isinstance(result["latency_ms"], int)
+
+    def test_reports_failure_with_the_exception_and_still_surfaces_the_fields(self):
+        def run(report):
+            report["model"] = "m"
+            raise RuntimeError("insufficient_quota")
+
+        result = _TtlProbe("t", run, ttl_s=30.0, deadline_s=1.0).result()
+        assert result["ok"] is False
+        assert result["error"] == "RuntimeError: insufficient_quota"
+        assert result["model"] == "m"  # an operator needs to know WHICH model failed
+
+    def test_serves_the_cached_verdict_within_the_ttl_and_reprobes_after(self):
+        runs: list[int] = []
+        probe = _TtlProbe("t", lambda report: runs.append(1), ttl_s=30.0, deadline_s=1.0)
+
+        probe.result()
+        probe.result()
+        assert len(runs) == 1  # second call served from cache, no re-probe
+
+        probe._ts -= 31.0  # age the cache past the TTL
+        probe.result()
+        assert len(runs) == 2
+
+    def test_a_run_past_its_deadline_reads_as_failed_and_is_never_duplicated(self):
+        release = threading.Event()
+        runs: list[int] = []
+
+        def run(report):
+            runs.append(1)
+            report["model"] = "m"
+            release.wait(5.0)
+
+        # ttl 0: every call re-evaluates, so the second call below is a real
+        # decision about the hung run rather than a cache hit.
+        probe = _TtlProbe("t", run, ttl_s=0.0, deadline_s=0.05)
+        first = probe.result()
+        assert first["ok"] is False
+        assert first["latency_ms"] is None
+        assert "still running" in first["error"]
+        assert first["model"] == "m"
+
+        second = probe.result()
+        assert second["ok"] is False
+        assert len(runs) == 1  # a hung provider gets one thread, not one per health hit
+
+        release.set()
+        assert self._until(lambda: probe.result()["ok"] is True)
+        assert len(runs) == 2  # once the hung run ended, the next call probed afresh
+
+
+class TestDependencyProbes:
+    """The real ``_gate_probe`` / ``_embedding_probe``: what they call, with
+    what, and that they cache."""
+
+    @pytest.fixture(autouse=True)
+    def _dependency_probes_healthy(self):
+        """Override the module fixture: this class exercises the real probes.
+        Each test starts and ends with an empty cache so order cannot leak."""
+        import app.main as main_module
+
+        main_module._gate_probe_state.reset()
+        main_module._embedding_probe_state.reset()
+        yield
+        main_module._gate_probe_state.reset()
+        main_module._embedding_probe_state.reset()
+
+    def test_gate_probe_calls_the_gate_model_small_with_reasoning_off(self):
+        import app.main as main_module
+        from app.main import _gate_probe
+
+        with (
+            patch("app.main._llm_ready", return_value=True),
+            patch("app.services.runtime_config.get_gate_model", return_value="gemini/gemini-2.5-flash"),
+            patch("app.main._litellm.completion", return_value=MagicMock()) as completion,
+        ):
+            result = _gate_probe()
+
+        assert result["ok"] is True
+        assert result["error"] is None
+        assert result["model"] == "gemini/gemini-2.5-flash"
+        assert isinstance(result["latency_ms"], int)
+        completion.assert_called_once()
+        kwargs = completion.call_args.kwargs
+        assert kwargs["model"] == "gemini/gemini-2.5-flash"
+        assert kwargs["max_tokens"] == 5
+        assert kwargs["timeout"] == main_module._LLM_PROBE_TIMEOUT_SECONDS
+        # gemini-2.5 reasons by default and spends the whole budget doing so;
+        # the gate's own calls turn it off, and so must the probe.
+        assert kwargs["reasoning_effort"] == "disable"
+
+    def test_gate_probe_uses_the_family_sentinel_for_an_openai_gate_model(self):
+        from app.main import _gate_probe
+
+        with (
+            patch("app.main._llm_ready", return_value=True),
+            patch("app.services.runtime_config.get_gate_model", return_value="openai/gpt-5.4-mini"),
+            patch("app.main._litellm.completion", return_value=MagicMock()) as completion,
+        ):
+            assert _gate_probe()["ok"] is True
+
+        assert completion.call_args.kwargs["reasoning_effort"] == "none"
+
+    def test_gate_probe_reports_a_provider_failure_with_the_model(self):
+        from app.main import _gate_probe
+
+        with (
+            patch("app.main._llm_ready", return_value=True),
+            patch("app.services.runtime_config.get_gate_model", return_value="gemini/gemini-2.5-flash"),
+            patch("app.main._litellm.completion", side_effect=RuntimeError("insufficient_quota")),
+        ):
+            result = _gate_probe()
+
+        assert result["ok"] is False
+        assert "insufficient_quota" in result["error"]
+        assert result["model"] == "gemini/gemini-2.5-flash"
+
+    def test_gate_probe_short_circuits_on_a_hollow_litellm(self):
+        from app.main import _gate_probe
+
+        with (
+            patch("app.main._llm_ready", return_value=False),
+            patch("app.main._litellm.completion") as completion,
+        ):
+            result = _gate_probe()
+
+        assert result["ok"] is False
+        assert result["error"]
+        completion.assert_not_called()
+
+    def test_gate_probe_is_cached_within_the_ttl(self):
+        from app.main import _gate_probe
+
+        with (
+            patch("app.main._llm_ready", return_value=True),
+            patch("app.services.runtime_config.get_gate_model", return_value="gemini/gemini-2.5-flash"),
+            patch("app.main._litellm.completion", return_value=MagicMock()) as completion,
+        ):
+            _gate_probe()
+            _gate_probe()
+
+        completion.assert_called_once()
+
+    def test_embedding_probe_embeds_one_text_within_the_query_wait_ceiling(self):
+        from app.main import _embedding_probe
+        from app.services.gemini_embedding import GEMINI_EMBED_MODEL
+
+        with patch("app.ingestion.embedder.embed_chunks", return_value=[[0.1, 0.2, 0.3]]) as embed:
+            result = _embedding_probe()
+
+        assert result["ok"] is True
+        assert result["error"] is None
+        assert result["model"] == GEMINI_EMBED_MODEL
+        assert isinstance(result["latency_ms"], int)
+        # The query path's own ceiling on queueing behind bulk-ingestion debt:
+        # a saturated limiter must read as the degradation it is for visitors.
+        embed.assert_called_once_with(["health probe"], max_wait_s=2.0)
+
+    def test_embedding_probe_treats_an_empty_vector_as_failure(self):
+        from app.main import _embedding_probe
+
+        with patch("app.ingestion.embedder.embed_chunks", return_value=[[]]):
+            result = _embedding_probe()
+
+        assert result["ok"] is False
+        assert "no vector" in result["error"]
+
+    def test_embedding_probe_reports_a_provider_failure(self):
+        from app.main import _embedding_probe
+
+        with patch("app.ingestion.embedder.embed_chunks", side_effect=RuntimeError("Gemini embedding failed")):
+            result = _embedding_probe()
+
+        assert result["ok"] is False
+        assert "Gemini embedding failed" in result["error"]
+
+    def test_embedding_probe_is_cached_within_the_ttl(self):
+        from app.main import _embedding_probe
+
+        with patch("app.ingestion.embedder.embed_chunks", return_value=[[0.1]]) as embed:
+            _embedding_probe()
+            _embedding_probe()
+
+        embed.assert_called_once()
+
+
+class TestDegradedSignal:
+    """A failing gate-model or embedding probe is a degradation, not an
+    outage: chats still flow, with the KB-only check skipped or retrieval
+    reduced to keyword search. It is reported as ``degraded: true`` and must
+    NOT move ``fully_ok``. That HTTP code is the deploy gate (deploy-api.yml
+    polls ``/health/full`` and rolls back on 503), and a slow third-party
+    model must never fail or roll back a deploy."""
+
+    GATE_DOWN = {
+        "ok": False,
+        "latency_ms": None,
+        "error": "APIConnectionError: down",
+        "model": "gemini/gemini-2.5-flash",
+    }
+    EMBED_DOWN = {
+        "ok": False,
+        "latency_ms": 2004,
+        "error": "EmbedWaitExceeded: limiter",
+        "model": "gemini-embedding-001",
+    }
+
+    @staticmethod
+    def _all_green(healthy_engine):
+        from datetime import UTC, datetime
+
+        recent = datetime.now(UTC).isoformat()
+        return (
+            patch("app.main.engine", healthy_engine),
+            patch("app.core.cache.get_redis", return_value=_redis_with_heartbeat(recent)),
+            patch("app.worker.enqueue.WORKER_ENABLED", True),
+            patch("app.main._llm_probe", return_value=(True, None)),
+        )
+
+    def _full(self, healthy_engine, *extra):
+        with ExitStack() as stack:
+            for cm in (*self._all_green(healthy_engine), *extra):
+                stack.enter_context(cm)
+            response = health_check_full(_authed_request())
+        return response, json.loads(response.body)
+
+    def test_healthy_probes_report_not_degraded(self, healthy_engine):
+        response, body = self._full(healthy_engine)
+        assert response.status_code == 200
+        assert body["degraded"] is False
+        assert body["llm"]["gate_probe"] == GATE_PROBE_OK
+        assert body["embedding"]["probe"] == EMBED_PROBE_OK
+
+    def test_gate_model_failure_is_degraded_but_health_full_stays_200(self, healthy_engine):
+        response, body = self._full(healthy_engine, patch("app.main._gate_probe", return_value=dict(self.GATE_DOWN)))
+        assert response.status_code == 200
+        assert body["status"] == "healthy"  # the label tracks the HTTP code, see _gather_health
+        assert body["degraded"] is True
+        assert body["llm"]["gate_probe"] == self.GATE_DOWN
+        assert body["llm"]["probe_ok"] is True  # the primary model is a separate signal
+        assert body["embedding"]["probe"]["ok"] is True
+
+    def test_embedding_failure_is_degraded_but_health_full_stays_200(self, healthy_engine):
+        response, body = self._full(
+            healthy_engine, patch("app.main._embedding_probe", return_value=dict(self.EMBED_DOWN))
+        )
+        assert response.status_code == 200
+        assert body["degraded"] is True
+        assert body["embedding"]["probe"] == self.EMBED_DOWN
+        assert body["llm"]["gate_probe"]["ok"] is True
+
+    def test_fully_ok_is_unaffected_when_both_probes_fail(self, healthy_engine):
+        with ExitStack() as stack:
+            for cm in (
+                *self._all_green(healthy_engine),
+                patch("app.main._gate_probe", return_value=dict(self.GATE_DOWN)),
+                patch("app.main._embedding_probe", return_value=dict(self.EMBED_DOWN)),
+            ):
+                stack.enter_context(cm)
+            payload, ready_to_serve, fully_ok = _gather_health()
+        assert ready_to_serve is True
+        assert fully_ok is True
+        assert payload["degraded"] is True
+
+    def test_readiness_endpoint_is_unaffected_too(self, healthy_engine):
+        with ExitStack() as stack:
+            for cm in (
+                *self._all_green(healthy_engine),
+                patch("app.main._gate_probe", return_value=dict(self.GATE_DOWN)),
+            ):
+                stack.enter_context(cm)
+            response = health_check(_authed_request())
+        assert response.status_code == 200
+        assert json.loads(response.body)["degraded"] is True
+
+
 # ── _fallback_count_1h (AR-16) ──────────────────────────────────────────────
 
 
@@ -448,7 +770,18 @@ class TestHealthDetailGate:
     anonymous response. `status` is the only key that always ships.
     """
 
-    _DETAIL_ONLY_KEYS = ("database", "redis", "worker", "llm", "pool", "chat_gate", "billing", "version")
+    _DETAIL_ONLY_KEYS = (
+        "database",
+        "redis",
+        "worker",
+        "llm",
+        "embedding",
+        "degraded",
+        "pool",
+        "chat_gate",
+        "billing",
+        "version",
+    )
 
     def test_anonymous_caller_gets_only_status_label(self, healthy_engine):
         """No token → body is exactly {"status": ...}, code still correct."""
