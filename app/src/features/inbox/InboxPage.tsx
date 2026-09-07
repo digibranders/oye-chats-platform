@@ -365,7 +365,23 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
   const offlineLive = isLiveView(view) && !operator.isOnline;
 
   const emptyOverride =
-    liveChat && offlineLive && isLiveView(view)
+    // A superseded tab first: it is the only one of these where the lists are
+    // empty because this tab is not listening, rather than because there is
+    // nothing to hear. Saying "nobody is waiting" there is a claim about the
+    // world, and it is false — a visitor can be waiting in the other tab.
+    liveChat && socket.status === 'duplicate' && isLiveView(view)
+      ? {
+          title: t('inbox.thisTabIsNotTheLiveOne') || 'This tab is not the live one',
+          description:
+            t('inbox.theInboxIsOpenInAnother') ||
+            'The inbox is open in another tab, and only one can hold the connection. Take it over here to see who is waiting.',
+          action: (
+            <Button onClick={() => socket.reclaim()}>
+              {t('inbox.useThisTab') || 'Use this tab'}
+            </Button>
+          ),
+        }
+      : liveChat && offlineLive && isLiveView(view)
       ? {
           title: t('inbox.youAreNotTakingChats') || 'You are not taking chats',
           description:

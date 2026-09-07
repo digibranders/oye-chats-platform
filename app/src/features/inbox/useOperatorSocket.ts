@@ -88,6 +88,16 @@ export interface OperatorSocketApi extends OperatorSocketState {
   sendFile: (sessionId: string, file: OutboundFile) => boolean;
   sendTyping: (sessionId: string) => void;
   sendReadReceipt: (sessionId: string, lastReadId: number) => void;
+  /**
+   * Claim the operator channel for THIS tab.
+   *
+   * Only one socket per operator: a second tab supersedes the first, and the
+   * superseded one is closed with 4001 and deliberately never reconnects, or
+   * the two would fight over the connection forever. That leaves the losing
+   * tab with no queue and no active chats, which is correct but invisible —
+   * so the tab has to be able to ask for the channel back on purpose.
+   */
+  reclaim: () => void;
   loadHistory: (sessionId: string) => Promise<void>;
   /** Fetch and prepend the previous page of history for a session. */
   loadOlder: (sessionId: string) => Promise<void>;
@@ -800,6 +810,15 @@ export function useOperatorSocket({ enabled, isOperator }: UseOperatorSocketOpti
     [send],
   );
 
+  const reclaim = useCallback((): void => {
+    // Clearing the terminal flag is the whole of it: the connect effect keys
+    // off `reconnectNonce`, and the focus-wake handler refuses to revive a
+    // terminally closed socket precisely so this stays a deliberate act.
+    terminalCloseRef.current = false;
+    reconnectAttemptsRef.current = 0;
+    setReconnectNonce((n) => n + 1);
+  }, []);
+
   const loadHistory = useCallback(async (sessionId: string): Promise<void> => {
     try {
       const history = await getChatHistory(sessionId, { limit: HISTORY_PAGE_SIZE });
@@ -891,5 +910,6 @@ export function useOperatorSocket({ enabled, isOperator }: UseOperatorSocketOpti
     clearUnread,
     clearConnectResolution,
     applyTranslation,
+    reclaim,
   };
 }
