@@ -37,6 +37,7 @@ from app.db.repository import (
 from app.db.session import get_session
 from app.ingestion.embedder import embed_chunks, embed_chunks_async
 from app.security.injection_patterns import compile_detection_pattern
+from app.services import currency_scoring as _currency_scoring
 from app.services import meeting_gate as _meeting_gate
 from app.services import plan_entitlements_service, runtime_config
 from app.services import pricing_gate as _pricing_gate
@@ -1024,6 +1025,52 @@ _LEAVE_MESSAGE_RESPONSE_RE = re.compile(
 )
 
 
+def _states_budget_amount(text: object) -> bool:
+    """True when the visitor's turn states a money amount, i.e. discloses a budget.
+
+    A budget disclosure is a CONVERSATIONAL turn, not a knowledge-base question:
+    "€2000 per month" is never answerable from the customer's documents, so
+    retrieval returns nothing relevant and the off-scope guard refuses it. The
+    visitor is then told "I don't have that specific detail on hand" in reply to
+    telling us their budget, and offered a handoff.
+
+    Whether that happened used to depend on whether the currency the visitor
+    typed happened to appear somewhere in the knowledge base -- observed live,
+    "$5,000 per month" and "50,000 rupees per month" were answered sensibly
+    while "€2000 per month" and "£1,500 per month" were refused, on the same
+    bot, in the same position in the conversation. Deciding it on a detected
+    money amount makes it deterministic and currency-independent.
+
+    Reuses the same detector that normalises the amount for scoring, so the
+    reply path and the scoring path agree on what counts as a budget statement.
+    """
+    return _currency_scoring.detect_money(text) is not None
+
+
+def _is_pure_budget_disclosure(text: object) -> bool:
+    """True when the turn ONLY states the visitor's budget and asks nothing.
+
+    Such a turn must not be answered from the knowledge base. Retrieval on
+    "our budget is EUR 2000 per month" surfaces whatever pricing content the
+    bot holds, and the model then quotes it back as a comparison -- observed
+    live, and wrong every time it tried:
+
+        "EUR 2,000/month sits above the $500-1000/month support tier and
+         below the $9,300/year subscription example."
+
+    Three faults in one sentence: it compares a MONTHLY figure to an ANNUAL one
+    without converting the period, it gets the direction backwards (EUR 2,000/mo
+    is roughly $26,000/year, well ABOVE $9,300/year), and it volunteers the
+    business's internal pricing to someone who was disclosing their own budget,
+    not asking what things cost.
+
+    Turns that state a budget AND ask something ("our budget is EUR 2000, what
+    do you support?") are excluded: the question half is a genuine
+    knowledge-base query and must keep its context.
+    """
+    return _states_budget_amount(text) and not _text_is_question(str(text or ""))
+
+
 def _question_suggests_leave_message(text: str) -> bool:
     """Safety net: detect 'I want to contact the team' intent in the user's turn.
 
@@ -1077,6 +1124,37 @@ def _mark_card_shown(chat_session, card_key: str) -> None:
     shown = dict(getattr(chat_session, "inline_cards_shown", None) or {})
     shown[card_key] = True
     chat_session.inline_cards_shown = shown
+
+
+#: Namespace for probe flags inside ``ChatSession.inline_cards_shown``, keeping
+#: them from colliding with real card keys.
+_PROBE_ASKED_PREFIX = "probe:"
+
+
+def _mark_dimension_asked(chat_session, dimension: str | None) -> None:
+    """Record that ``dimension`` was put to the visitor on this turn.
+
+    Stored in ``inline_cards_shown`` (the session's "already shown once, do not
+    repeat" ledger) rather than in ``dimension_scores``. That column belongs to
+    the background extraction thread, which rewrites it under a row lock so
+    concurrent turns cannot clobber one another; writing to it from the request
+    thread bypasses that lock and the stale copy wins, wiping the scores the
+    extractor had just committed. A probe flag is the same KIND of fact the
+    card ledger already holds, so it lives there and races with nothing.
+
+    ONE ASK PER DIMENSION is the policy this enables. A qualification question
+    is a conversational cost paid to the visitor, and paying it twice for the
+    same dimension reads as an interrogation -- especially to the least-engaged
+    visitor, who is exactly the one whose vague reply ("yes", "no", "not sure")
+    extracts no signal and therefore used to re-arm the same question forever.
+    Asking once and moving on trades a little coverage for not annoying people.
+
+    SQLAlchemy tracks JSONB mutations only on reassignment, so the dict is
+    rebuilt before assignment (same rule as ``_mark_card_shown``).
+    """
+    if chat_session is None or not dimension:
+        return
+    _mark_card_shown(chat_session, _PROBE_ASKED_PREFIX + dimension)
 
 
 def _media_card_key(card: dict | None) -> str | None:
@@ -3043,6 +3121,34 @@ def _build_bant_state(chat_session: ChatSession | None) -> dict:
                 continue
             state[dim] = payload.get("value")
             state[f"{dim}_score"] = int(payload.get("score", 0) or 0)
+    # Whether each dimension was ever PUT to the visitor, independent of whether
+    # their reply yielded a score. A dimension answered with "yes", "no" or a
+    # shrug extracts no signal and stores no value, and without this flag it
+    # looks un-asked forever and is raised again on later turns -- the
+    # interrogation loop.
+    #
+    # Read from ``inline_cards_shown`` and NOT from ``dimension_scores``. The
+    # latter is owned by the background extraction thread, which rewrites it
+    # under ``SELECT ... FOR UPDATE`` precisely so two concurrent turns cannot
+    # clobber each other's dimensions. A main-thread write into that same
+    # column bypasses the lock, and the request thread's stale copy lands last:
+    # it silently ERASED every score the extractor had just written. Keeping the
+    # flag in the main thread's own session-flag store removes the race
+    # entirely, and "shown once this session, do not repeat" is what that store
+    # already means.
+    # Derived from whatever probe keys the ledger actually holds rather than a
+    # hard-coded dimension list: the framework is configurable (MEDDIC bots have
+    # metrics/economic_buyer/... , not need/timeline/authority/budget), so a
+    # fixed tuple would both miss their dimensions and inject four irrelevant
+    # keys into their state.
+    # ``getattr`` because callers legitimately pass lightweight session stand-ins
+    # that carry only the BANT columns, the same reason ``_mark_card_shown``
+    # reads this attribute defensively.
+    cards = getattr(chat_session, "inline_cards_shown", None)
+    cards = cards if isinstance(cards, dict) else {}
+    for key, asked in cards.items():
+        if asked and isinstance(key, str) and key.startswith(_PROBE_ASKED_PREFIX):
+            state[f"{key[len(_PROBE_ASKED_PREFIX) :]}_asked"] = True
     return state
 
 
@@ -3162,6 +3268,17 @@ So the user's latest message is, in context, most likely their {_probed.upper()}
         else:
             frame_hint = ""
 
+        # Budget rubrics are denominated in ONE currency, but visitors state
+        # budgets in their own. Matching the raw magnitude against those bands
+        # scored "50,000 rupees per month" (~$600) as 25/25, the top "$20K+/mo"
+        # band -- a ~30x over-valuation, invisible in the transcript because the
+        # number is quoted back correctly and only the SCORE is wrong. The
+        # conversion is computed in code and handed over as a fact; the model is
+        # explicitly told not to convert anything itself. None when no currency
+        # was recognised or the visitor already used the rubric's currency, in
+        # which case the prompt is byte-identical to before.
+        currency_hint = _currency_scoring.normalization_hint(question) or ""
+
         extraction_prompt = f"""You are a STRICT signal extractor. Your job is to decide whether the user's latest message contains NEW, EXPLICITLY-STATED qualification signals. Default to NO SIGNAL.
 
 CONVERSATION HISTORY:
@@ -3170,6 +3287,7 @@ CONVERSATION HISTORY:
 LATEST EXCHANGE:
 User: {question}
 Bot: {bot_answer}
+{currency_hint}
 {frame_hint}
 CURRENT QUALIFICATION STATE AND SCORING RUBRIC:
 {rubric_text}
@@ -3849,6 +3967,24 @@ _NAME_INTRO_PATTERNS = [
     ),
 ]
 
+# The subset of intro phrasings that EXPLICITLY name the visitor. "my name is
+# Alex" / "call me Alex" state a name and nothing else, so they are safe to
+# overwrite a stored name with. The bare copula ("I'm Alex") is deliberately
+# NOT here: it is grammatically identical to a self-description ("I'm the
+# engineering manager"), which is how a real lead named Steve was renamed to
+# "The Engineering". A copula intro can still CAPTURE a first name (see
+# ``_extract_name_change``); it just may not REPLACE one.
+_NAME_EXPLICIT_INTRO_PATTERNS = [
+    re.compile(
+        r"\bmy name(?:'s| is)\s+([A-Za-z][A-Za-z'.\-]*(?:\s+[A-Za-z][A-Za-z'.\-]*)?)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:call me|you can call me|name's)\s+([A-Za-z][A-Za-z'.\-]*(?:\s+[A-Za-z][A-Za-z'.\-]*)?)",
+        re.IGNORECASE,
+    ),
+]
+
 _NAME_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z'.\-]*$")
 
 # Role / title / relationship words a visitor uses to describe WHO THEY ARE,
@@ -4083,9 +4219,20 @@ def _clean_visitor_name(raw: str) -> str | None:
     lowered = [t.lower() for t in tokens]
     if len(lowered) == 2 and lowered[1] in _TRAILING_NON_NAME_WORDS:
         return None
-    # Drop a single leading article so "the manager" / "a customer" reduce to
-    # the role word for the check below.
-    core = lowered[1:] if len(lowered) == 2 and lowered[0] in _LEADING_ARTICLES else lowered
+    # A name never BEGINS with an article, so an article-led candidate is a
+    # noun phrase the capture clipped, not a name.
+    #
+    # This used to strip the article and test only what followed, which worked
+    # for "the manager" (role word, rejected) but not for "I'm the engineering
+    # manager": the capture group is capped at two words, so the guard only ever
+    # saw "the engineering" -- "manager", the token that would have rejected it,
+    # was never in the string. "The Engineering" was then stored as the lead's
+    # name, overwriting the real one. Rejecting article-led candidates outright
+    # closes the whole class ("the engineering", "the platform", "the security")
+    # without maintaining a list of every department noun in existence.
+    if lowered[0] in _LEADING_ARTICLES:
+        return None
+    core = lowered
     # Reject self-described roles ("manager", "the owner"), common non-name
     # words ("urgent", "good", "monthly"), and bare articles: they aren't the
     # visitor's name. When every meaningful token is one of these, leave the
@@ -4099,6 +4246,31 @@ def _clean_visitor_name(raw: str) -> str | None:
     # Title-case only tokens the visitor left lowercase; preserve intentional
     # inner capitals (e.g. "McCarthy", "O'Brien").
     return " ".join(t if t[:1].isupper() else t[:1].upper() + t[1:] for t in tokens)
+
+
+def _extract_explicit_rename(question: str) -> str | None:
+    """Detect ONLY an explicit request to change an ALREADY-STORED name
+    ("rename it to Jason", "actually I'm Jason").
+
+    Deliberately excludes the intro patterns ``_extract_name_change`` also
+    scans. An intro is how a name is first GIVEN, not how it is changed, and
+    treating the two the same let an ordinary self-description overwrite a name
+    the visitor had already provided: a visitor who said "Steve", then later
+    "I'm the engineering manager and I own this decision", was renamed on the
+    admin's Leads list. Once a name is known, only a clear rename request may
+    replace it -- which is exactly what ``_NAME_RENAME_PATTERNS`` was split out
+    to express.
+    """
+    q = (question or "").strip()
+    if not q:
+        return None
+    for pattern in (*_NAME_RENAME_PATTERNS, *_NAME_EXPLICIT_INTRO_PATTERNS):
+        match = pattern.search(q)
+        if match:
+            cleaned = _clean_visitor_name(match.group(1))
+            if cleaned:
+                return cleaned
+    return None
 
 
 def _extract_name_change(question: str) -> str | None:
@@ -4598,7 +4770,9 @@ def resolve_name_flow(session, session_id, bot_id, client_id, question, company_
         # Mid-chat rename: an EXPLICIT "rename it to X" / "call me X" overwrites the
         # stored name so the visitor is never locked to the first one they gave.
         if bot_id is not None:
-            renamed = _extract_name_change(question)
+            # An unknown name may be captured from an intro ("I'm Alex"); an
+            # ESTABLISHED one may only be replaced by an explicit rename.
+            renamed = _extract_explicit_rename(question) if known else _extract_name_change(question)
             if renamed and renamed != known:
                 create_or_update_lead_info(session, session_id=session_id, bot_id=bot_id, name=renamed)
                 # First name capture phrased as "I'm Alex" / "call me Alex" /
@@ -7749,6 +7923,25 @@ def rag_pipeline(
                 session.commit()
                 return _mtg_result
 
+            # ── Budget-disclosure context strip ──────────────────────────
+            # A turn that only states the visitor's budget is answered by
+            # ACKNOWLEDGING it, never by comparing it to our prices. Emptying the
+            # context is what makes that reliable: with no chunks in front of it
+            # the model has nothing to quote, so it cannot assemble a comparison.
+            # Same instrument the pricing gate uses, for the same reason, and
+            # deterministic because a prompt rule is not -- the model
+            # demonstrably ignores those. The turn still reaches generation
+            # (``_answering_probe`` covers a volunteered budget), so the visitor
+            # gets a warm acknowledgement rather than a refusal.
+            if _is_pure_budget_disclosure(question) and final_results:
+                _safety_net_metric(
+                    "budget_disclosure_context_stripped",
+                    path="nonstream",
+                    session=session_id,
+                    bot_id=bid,
+                )
+                final_results = []
+
             # ── Phase 4A: CRAG relevance gate ────────────────────────────
             # BYPASSED for a non-English conversation, for the same reason
             # ``route_intent`` and the FlashRank reranker above are: it is an
@@ -7788,7 +7981,16 @@ def rag_pipeline(
             # Same reasoning for a free-typed answer to the bot's own question:
             # "what's your role?" → "I'm the manager" has no KB match, so the
             # gate would refuse it and lose the thread. Let it reach generation.
-            _answering_probe = not _is_relevant and not _trusted_cta and _is_answer_to_bot_question(question, history)
+            # A volunteered budget counts alongside an answer to our own probe:
+            # both are the visitor telling us about THEM, which no knowledge base
+            # can answer, and both must reach generation rather than the
+            # off-scope refusal. Folded in here so every guard keyed on
+            # ``_answering_probe`` below inherits it rather than drifting.
+            _answering_probe = (
+                not _is_relevant
+                and not _trusted_cta
+                and (_is_answer_to_bot_question(question, history) or _states_budget_amount(question))
+            )
             if _answering_probe:
                 _safety_net_metric(
                     "gate_relaxed_answer_to_probe",
@@ -7922,7 +8124,20 @@ def rag_pipeline(
             # on. Refuse before invoking the LLM. This closes the "free
             # ChatGPT" loophole where the model would otherwise be told to
             # "craft a helpful natural answer" from general knowledge.
-            if not final_results and not _trusted_cta and not _answering_probe and not _affirmed_handoff:
+            if (
+                not final_results
+                and not _trusted_cta
+                and not _answering_probe
+                and not _affirmed_handoff
+                # A budget disclosure arrives here with EMPTY context by design
+                # (we stripped it above so no pricing can be quoted back). It
+                # must not be mistaken for a retrieval miss and refused: the
+                # visitor told us their budget and deserves an acknowledgement.
+                # ``_answering_probe`` cannot carry this, because it is conjoined
+                # with ``not _is_relevant`` and is therefore False exactly when
+                # the gate judged the turn relevant.
+                and not _is_pure_budget_disclosure(question)
+            ):
                 # Same on-scope check. Empty retrieval on an on-scope
                 # question gets the graceful pivot instead of the refusal.
                 # (A qualification-chip answer skips this: it needs no KB
@@ -8367,6 +8582,7 @@ def rag_pipeline(
                 chat_session.last_probed_dimension = (
                     None if (_show_qualified_popup or _team_connect_offer) else _next_probe
                 )
+                _mark_dimension_asked(chat_session, chat_session.last_probed_dimension)
 
             # Flush so the INSERT runs and the id is assigned, then read both
             # before the commit expires the row: afterwards each costs a SELECT.
@@ -9540,6 +9756,19 @@ async def rag_pipeline_stream(
                 yield f"\nFINAL_METADATA:{json.dumps(_mtg_meta)}\n"
                 return
 
+            # ── Budget-disclosure context strip (streaming) ──────────────
+            # See the non-streaming path: a pure budget statement is answered by
+            # acknowledgement, and emptying the context is what stops the model
+            # quoting our pricing back at the visitor with the arithmetic wrong.
+            if _is_pure_budget_disclosure(question) and final_results:
+                _safety_net_metric(
+                    "budget_disclosure_context_stripped",
+                    path="stream",
+                    session=session_id,
+                    bot_id=bid,
+                )
+                final_results = []
+
             # ── Phase 4A: CRAG relevance gate (streaming path) ───────────────
             # BYPASSED for a non-English conversation, for the same reason
             # ``route_intent`` and the FlashRank reranker above are: it is an
@@ -9568,7 +9797,16 @@ async def rag_pipeline_stream(
             # Qualification-chip answer, or a free-typed answer to the bot's own
             # question → bypass the off-topic gate; see the non-streaming path
             # for the full rationale.
-            _answering_probe = not _is_relevant and not _trusted_cta and _is_answer_to_bot_question(question, history)
+            # A volunteered budget counts alongside an answer to our own probe:
+            # both are the visitor telling us about THEM, which no knowledge base
+            # can answer, and both must reach generation rather than the
+            # off-scope refusal. Folded in here so every guard keyed on
+            # ``_answering_probe`` below inherits it rather than drifting.
+            _answering_probe = (
+                not _is_relevant
+                and not _trusted_cta
+                and (_is_answer_to_bot_question(question, history) or _states_budget_amount(question))
+            )
             if _answering_probe:
                 _safety_net_metric(
                     "gate_relaxed_answer_to_probe",
@@ -9690,7 +9928,20 @@ async def rag_pipeline_stream(
 
             # ── Empty-context short-circuit (streaming path) ─────────────────
             # Skipped for qualification-chip answers (they need no KB grounding).
-            if not final_results and not _trusted_cta and not _answering_probe and not _affirmed_handoff:
+            if (
+                not final_results
+                and not _trusted_cta
+                and not _answering_probe
+                and not _affirmed_handoff
+                # A budget disclosure arrives here with EMPTY context by design
+                # (we stripped it above so no pricing can be quoted back). It
+                # must not be mistaken for a retrieval miss and refused: the
+                # visitor told us their budget and deserves an acknowledgement.
+                # ``_answering_probe`` cannot carry this, because it is conjoined
+                # with ``not _is_relevant`` and is therefore False exactly when
+                # the gate judged the turn relevant.
+                and not _is_pure_budget_disclosure(question)
+            ):
                 if _question_looks_on_scope(question, _company_name) or (
                     search_query != question and _question_looks_on_scope(search_query, _company_name)
                 ):
@@ -10304,6 +10555,7 @@ async def rag_pipeline_stream(
                         chat_session.last_probed_dimension = (
                             None if (_show_qualified_popup or _team_connect_offer) else _next_probe
                         )
+                        _mark_dimension_asked(chat_session, chat_session.last_probed_dimension)
 
                     # Flush first to execute the INSERT and populate bot_msg.id.
                     # This lets us capture the id before commit so FINAL_METADATA
