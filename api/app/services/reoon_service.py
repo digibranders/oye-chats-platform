@@ -109,6 +109,27 @@ def verify_email(email: str, *, timeout: float = REOON_BACKGROUND_TIMEOUT_S) -> 
     }
 
 
+#: Reoon ``status`` values that mean the mailbox CANNOT receive mail.
+#:
+#: ``status`` is the vendor's own summary, and "invalid" is only one of the
+#: ways it says no. ``disabled`` is a mailbox the provider has deactivated or
+#: that its SMTP server rejects outright, and it was the hole this set closes:
+#: ``adm@digibranders.com`` came back ``disabled`` with ``is_deliverable``
+#: False and a score of 4/100, and a gate testing only ``== "invalid"`` let it
+#: through to a live operator AND stamped the lead "verified".
+#:
+#: What is deliberately NOT here:
+#:
+#: - ``catch_all`` and ``unknown``: Reoon cannot prove deliverability either
+#:   way, and plenty of real B2B domains sit behind such gateways. Blocking
+#:   them rejects genuine visitors, which this gate exists not to do.
+#: - ``role_account``: ``admin@``, ``sales@`` and friends are real, contactable
+#:   business addresses. Reoon scores them 93/100.
+#: - ``inbox_full``: a real person whose mailbox is temporarily over quota. A
+#:   soft bounce is not a fake lead.
+_UNDELIVERABLE_STATUSES = frozenset({"invalid", "disabled", "spamtrap"})
+
+
 def is_obviously_undeliverable(validation: dict) -> bool:
     """True only for addresses Reoon flags as unambiguously bad.
 
@@ -116,7 +137,9 @@ def is_obviously_undeliverable(validation: dict) -> bool:
     the widget's real-time blur check (``/chat/validate-email``) and the
     background enrichment that persists ``LeadInfo.is_valid_email``.
 
-    Deliberately lenient, it does NOT use Reoon's ``is_safe_to_send``.
+    Blocks on the vendor statuses in :data:`_UNDELIVERABLE_STATUSES`, plus the
+    explicit junk flags. Deliberately lenient otherwise, it does NOT use
+    Reoon's ``is_safe_to_send``.
     That flag is False for catch-all and ``unknown`` results, which is
     correct for "can Reoon *prove* deliverability?" but wrong as a gate on
     real B2B leads: plenty of legitimate corporate domains run catch-all
@@ -135,6 +158,6 @@ def is_obviously_undeliverable(validation: dict) -> bool:
         not validation.get("is_valid_syntax", True)
         or validation.get("is_disposable") is True
         or validation.get("is_spamtrap") is True
-        or validation.get("status") == "invalid"
+        or validation.get("status") in _UNDELIVERABLE_STATUSES
         or validation.get("mx_accepts_mail") is False
     )

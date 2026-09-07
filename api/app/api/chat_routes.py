@@ -1902,6 +1902,25 @@ def _email_verdict(bot: Bot, request: Request, email: str) -> bool | None:
         # attempt should retry rather than inherit an outage.
         return None
     undeliverable = is_obviously_undeliverable(validation)
+
+    # The ONLY record of what this gate decided and why. Without it a report
+    # of "the validator let a bad address through" is unfalsifiable from the
+    # logs: the route answers 200 either way, and the three ways it can end up
+    # saying "valid" (vendor says fine, budget spent, vendor unreachable) are
+    # indistinguishable after the fact. That cost a whole round of guessing on
+    # the `disabled`-status hole. Logs the vendor's own verdict, never the
+    # address: the fingerprint is the same hash the cache key is built from,
+    # so a specific report can still be traced to its line.
+    logger.info(
+        "reoon_verdict | bot=%s fp=%s status=%s deliverable=%s score=%s -> %s",
+        bot.id,
+        fingerprint,
+        validation.get("status"),
+        validation.get("is_deliverable"),
+        validation.get("overall_score"),
+        "blocked" if undeliverable else "allowed",
+    )
+
     ttl = _REOON_BLOCKED_TTL_S if undeliverable else _REOON_VERDICT_TTL_S
     cache_set(cache_key, {"undeliverable": undeliverable}, ttl)
     return undeliverable

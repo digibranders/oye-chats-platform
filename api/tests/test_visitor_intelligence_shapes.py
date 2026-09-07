@@ -138,6 +138,58 @@ class TestSharedValidityPredicate:
         }
         assert is_obviously_undeliverable(unknown) is False
 
+    def test_disabled_mailbox_is_undeliverable(self):
+        """The regression. A mailbox the provider has deactivated is not
+        ``status: invalid``, it is ``status: disabled``, and a gate testing
+        only for "invalid" let it reach a live operator and stamped the lead
+        "verified" in the Leads table. Payload captured from a live power-mode
+        call on ``adm@digibranders.com``."""
+        disabled = {
+            "status": "disabled",
+            "overall_score": 4,
+            "is_safe_to_send": False,
+            "is_disposable": False,
+            "is_deliverable": False,
+            "is_valid_syntax": True,
+            "is_spamtrap": False,
+            "mx_accepts_mail": True,
+        }
+        assert is_obviously_undeliverable(disabled) is True
+
+    def test_spamtrap_status_is_undeliverable(self):
+        """Reoon reports a spamtrap in two places. The flag was already
+        covered; the status was not."""
+        assert is_obviously_undeliverable({"status": "spamtrap", "is_spamtrap": False}) is True
+
+    def test_role_account_is_deliverable(self):
+        """``admin@`` / ``sales@`` are real, contactable business addresses.
+        Live power-mode call on ``admin@digibranders.com`` scores this 93/100,
+        so widening the blocked-status set must not swallow it."""
+        role_account = {
+            "status": "role_account",
+            "overall_score": 93,
+            "is_safe_to_send": True,
+            "is_disposable": False,
+            "is_deliverable": True,
+            "is_valid_syntax": True,
+            "is_spamtrap": False,
+            "mx_accepts_mail": True,
+        }
+        assert is_obviously_undeliverable(role_account) is False
+
+    def test_full_inbox_is_deliverable(self):
+        """A real person over quota is a soft bounce, not a fake lead."""
+        inbox_full = {
+            "status": "inbox_full",
+            "is_safe_to_send": False,
+            "is_disposable": False,
+            "is_deliverable": True,
+            "is_valid_syntax": True,
+            "is_spamtrap": False,
+            "mx_accepts_mail": True,
+        }
+        assert is_obviously_undeliverable(inbox_full) is False
+
     def test_disposable_is_undeliverable(self):
         assert is_obviously_undeliverable({"status": "disposable", "is_disposable": True}) is True
 
