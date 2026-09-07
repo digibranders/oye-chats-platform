@@ -128,15 +128,17 @@ function List({
   onSelect,
   error = null,
   initialView = 'yours',
+  online = false,
 }: {
   onSelect: (row: InboxItem) => void;
   error?: string | null;
   initialView?: InboxView;
+  online?: boolean;
 }) {
   const [view, setView] = useState<InboxView>(initialView);
   const [selected, setSelected] = useState('s.a');
   const rows = [
-    item({ id: 's.a', name: 'Ada', at: '2026-08-19T11:59:00Z' }),
+    item({ id: 's.a', name: 'Ada', at: '2026-08-19T11:59:00Z', online }),
     item({ id: 's.b', name: 'Bea', at: '2026-08-19T11:58:00Z' }),
     item({ id: 's.c', name: 'Cy', at: '2026-08-19T11:57:00Z' }),
   ];
@@ -175,6 +177,29 @@ describe('ConversationList', () => {
     const scope = screen.getByRole('combobox', { name: /conversation scope/i });
     expect(scope).toHaveTextContent('Messages');
     expect(scope).not.toHaveTextContent('Messages (0)');
+  });
+
+  /**
+   * The online dot's ring, which rendered as an oval.
+   *
+   * The dot sits in a `bg-surface` ring so it reads against the avatar behind
+   * it. That ring was a plain `<span>` — display `inline` — and padding on an
+   * inline box is drawn from the FONT's content area, not from the 8px child:
+   * measured in a real browser it came out 12x21, a tall white blob hanging
+   * off the avatar's corner. A flex box pads symmetrically, so 12x12.
+   *
+   * jsdom computes no layout, so what is pinned here is the box type that
+   * decides it.
+   */
+  it('rings the online dot with a box that can actually be a circle', () => {
+    render(<List onSelect={vi.fn()} online />);
+    // The label sits inside `StatusDot`'s own root, and the ring is the box
+    // wrapping that: label -> StatusDot -> ring.
+    const label = screen.getAllByText('Online now')[0];
+    const ring = label.parentElement?.parentElement;
+    expect(ring).not.toBeNull();
+    expect(ring!.className).toContain('rounded-full');
+    expect(ring!.className).toMatch(/(^|\s)flex(\s|$)/);
   });
 
   it('keeps the count for a scope that loaded', () => {
@@ -366,5 +391,39 @@ describe('Transcript', () => {
   it('announces the visitor typing rather than showing three silent dots', () => {
     render(<Transcript visitorName="Ada" messages={[]} visitorTyping />);
     expect(screen.getByRole('status', { name: /ada is typing/i })).toBeInTheDocument();
+  });
+
+  /**
+   * The AI writes markdown; a person writes what they typed.
+   *
+   * The transcript printed every message verbatim, so the operator read
+   * `**Clean Images**` where the visitor had been shown bold. Fixing it for
+   * everyone would have been worse than the bug: a visitor's asterisks are
+   * their own text, and an operator's reply is typed into a plain box with no
+   * markdown affordance anywhere near it.
+   */
+  it('renders the AI\'s markdown as formatting', () => {
+    render(
+      <Transcript
+        visitorName="Ada"
+        messages={[message({ key: '1', role: 'bot', content: '- **Clean Images**' })]}
+      />,
+    );
+    expect(screen.getByText('Clean Images').tagName).toBe('STRONG');
+    expect(screen.queryByText(/\*\*/)).toBeNull();
+  });
+
+  it('leaves what a person typed exactly as they typed it', () => {
+    render(
+      <Transcript
+        visitorName="Ada"
+        messages={[
+          message({ key: '1', role: 'user', content: 'is it **really** free?' }),
+          message({ key: '2', role: 'operator', content: 'the *plan* covers it' }),
+        ]}
+      />,
+    );
+    expect(screen.getByText('is it **really** free?')).toBeInTheDocument();
+    expect(screen.getByText('the *plan* covers it')).toBeInTheDocument();
   });
 });

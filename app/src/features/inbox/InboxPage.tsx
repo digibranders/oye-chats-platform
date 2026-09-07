@@ -88,7 +88,9 @@ export function InboxPage() {
   const botId = selectedBot?.id;
   const { hasFeature, loading: planLoading } = useEntitlements();
   const liveChat = hasFeature('live_chat');
-  const operator = useOperatorStatus(liveChat ? botId : undefined);
+  // `enableOnMount`: opening the inbox is the act of sitting down at it. See
+  // the option's own note for why it can only fire once per visit.
+  const operator = useOperatorStatus(liveChat ? botId : undefined, { enableOnMount: true });
 
   // Connect only when this operator is genuinely on duty. A socket opened while
   // they are away routes visitors to a desk nobody is sitting at.

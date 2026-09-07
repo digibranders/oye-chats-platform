@@ -10,6 +10,7 @@ import {
   Spinner,
   cn,
   formatTime,
+  Markdown,
 } from '../../ui';
 import { dayKey, formatDayLabel } from '../../lib/messageDay';
 import { isSafeFileUrl, resolveDisplay, translationMissing } from './liveChatHelpers';
@@ -366,15 +367,27 @@ export function Transcript({
                       {groupStart ? (
                         <span className="sr-only">{roleLabel(message.role)}: </span>
                       ) : null}
-                      {/* `whitespace-pre-wrap` and nothing else: message bodies are
-                          visitor-authored text and are never parsed as markup. */}
+                      {/* Two renderings, split by who wrote the words.
+                          `dir` follows the text being rendered on both, not the
+                          conversation: a translated Arabic message inside an
+                          English thread still has to lay out right-to-left.
+
+                          The AI writes markdown, so an operator reading its
+                          answer saw `**Clean Images**` where the visitor saw
+                          bold. A PERSON's message stays `whitespace-pre-wrap`
+                          and nothing else: a visitor's text is never parsed as
+                          markup, and reformatting an operator's own asterisks
+                          would be rewriting what they typed. */}
                       {display.text ? (
-                        // `dir` follows the text being rendered, not the
-                        // conversation: a translated Arabic message inside an
-                        // English thread still has to lay out right-to-left.
-                        <p dir={display.direction} className="whitespace-pre-wrap break-words">
-                          {display.text}
-                        </p>
+                        message.role === 'bot' ? (
+                          <Markdown dir={display.direction} className="text-prose">
+                            {display.text}
+                          </Markdown>
+                        ) : (
+                          <p dir={display.direction} className="whitespace-pre-wrap break-words">
+                            {display.text}
+                          </p>
+                        )
                       ) : null}
                       {message.fileUrl ? <Attachment message={message} /> : null}
                     </div>
