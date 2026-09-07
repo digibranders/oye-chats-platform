@@ -18,6 +18,17 @@ logger = logging.getLogger(__name__)
 
 _pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="oyechats-bg")
 
+# Outbound email gets its own workers. The shared pool above runs the per-turn
+# BANT extraction (an LLM call with a 45s timeout, retried on a second model)
+# and the groundedness judge, so under a burst of chat turns its queue is
+# minutes deep; a signup or password-reset code (15-minute expiry) submitted
+# behind that arrived late or not at all. Four workers, sized for an HTTP call
+# to Brevo, not an LLM. This pool is deliberately NOT touched by
+# :func:`shutdown_pool`: a BANT task still running after the app's shutdown
+# event sends the qualified-lead email from here, and the interpreter joins
+# these workers at exit so anything already queued is still delivered.
+_email_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="oyechats-email")
+
 # Every task in flight, by future, with the name of what it runs. Kept so the
 # pool can be DRAINED: the test harness truncates every table between tests,
 # and a task from an earlier test still holding a transaction turned that
@@ -52,6 +63,27 @@ def submit_background(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> None
     that it does in production, where the work it wraps is an HTTP round trip.
     """
 
+    _submit(_pool, fn, args, kwargs)
+
+
+def submit_email(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> None:
+    """Submit an outbound email send to the dedicated email pool.
+
+    Same fire-and-forget contract as :func:`submit_background` (own Sentry
+    scope, failures logged, tracked for the test harness's drain), on workers
+    that never queue behind LLM work. Once the interpreter has begun shutting
+    the executor down, a submit raises ``RuntimeError``; the send then runs on
+    a plain thread instead of being dropped, which is what the caller was
+    promised when it fired and forgot.
+    """
+    try:
+        _submit(_email_pool, fn, args, kwargs)
+    except RuntimeError:
+        logger.warning("Email pool is shut down; sending %s on a fallback thread", getattr(fn, "__name__", fn))
+        threading.Thread(target=_isolated(fn, args, kwargs), name="oyechats-email-fallback", daemon=True).start()
+
+
+def _isolated(fn: Callable[..., Any], args: tuple, kwargs: dict) -> Callable[[], None]:
     def _wrapper() -> None:
         with sentry_sdk.isolation_scope():
             try:
@@ -59,7 +91,11 @@ def submit_background(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> None
             except Exception as exc:
                 logger.warning(f"Background task {fn.__name__} failed: {exc}")
 
-    future = _pool.submit(_wrapper)
+    return _wrapper
+
+
+def _submit(pool: ThreadPoolExecutor, fn: Callable[..., Any], args: tuple, kwargs: dict) -> None:
+    future = pool.submit(_isolated(fn, args, kwargs))
     name = getattr(fn, "__name__", repr(fn))
     with _inflight_lock:
         _inflight[future] = name
@@ -94,5 +130,9 @@ def drain_background(timeout: float) -> bool:
 
 
 def shutdown_pool() -> None:
-    """Gracefully drain the pool on application shutdown."""
+    """Gracefully drain the pool on application shutdown.
+
+    Only the shared pool. The email pool stays open so a task still finishing
+    here can send its notification; the interpreter joins it at exit.
+    """
     _pool.shutdown(wait=False)

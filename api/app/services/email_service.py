@@ -492,16 +492,17 @@ def send_email_async(
             to_email, subject, html_body, reply_to=reply_to, sender_name=sender_name, attachments=attachments
         )
 
-    # The shared bounded pool, never a bare daemon thread: pool workers are
+    # The dedicated email pool (``thread_pool.submit_email``). Its workers are
     # joined at interpreter exit, so an email accepted seconds before a restart
-    # is still delivered, where a daemon thread died mid-send and a qualified
-    # lead's notification silently never went out. The loop's default executor
-    # is deliberately not used either; that pool serves every
-    # ``asyncio.to_thread`` on the chat path and outbound mail must not queue
-    # a visitor's turn behind a slow SMTP relay.
-    from app.core.thread_pool import submit_background
+    # is still delivered, and it is separate from the shared background pool,
+    # whose three workers run the per-turn BANT and groundedness LLM calls: a
+    # signup or password-reset code must not wait minutes behind those. The
+    # loop's default executor is not used either; it serves every
+    # ``asyncio.to_thread`` on the chat path and outbound mail must not queue a
+    # visitor's turn behind a slow SMTP relay.
+    from app.core.thread_pool import submit_email
 
-    submit_background(_send)
+    submit_email(_send)
 
 
 def send_template_async(
@@ -524,16 +525,17 @@ def send_template_async(
     def _send():
         _send_brevo_template(to_email, template_id, params, reply_to=reply_to, sender_name=sender_name)
 
-    # The shared bounded pool, never a bare daemon thread: pool workers are
+    # The dedicated email pool (``thread_pool.submit_email``). Its workers are
     # joined at interpreter exit, so an email accepted seconds before a restart
-    # is still delivered, where a daemon thread died mid-send and a qualified
-    # lead's notification silently never went out. The loop's default executor
-    # is deliberately not used either; that pool serves every
-    # ``asyncio.to_thread`` on the chat path and outbound mail must not queue
-    # a visitor's turn behind a slow SMTP relay.
-    from app.core.thread_pool import submit_background
+    # is still delivered, and it is separate from the shared background pool,
+    # whose three workers run the per-turn BANT and groundedness LLM calls: a
+    # signup or password-reset code must not wait minutes behind those. The
+    # loop's default executor is not used either; it serves every
+    # ``asyncio.to_thread`` on the chat path and outbound mail must not queue a
+    # visitor's turn behind a slow SMTP relay.
+    from app.core.thread_pool import submit_email
 
-    submit_background(_send)
+    submit_email(_send)
 
 
 def send_template_to_multiple(
