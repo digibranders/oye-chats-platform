@@ -2534,6 +2534,7 @@ def _answer_is_cacheable(
     visitor_name: str | None,
     opener: str,
     probe_active: bool,
+    prior_turns: bool,
 ) -> bool:
     """Whether a generated answer may be written to the shared, per-bot QA cache.
 
@@ -2556,7 +2557,11 @@ def _answer_is_cacheable(
     * Context-dependent questions. The cache is read BEFORE the follow-up
       rewrite, so "tell me more about it" is keyed on those words alone; an
       answer generated in one conversation about product X would be served to
-      another conversation where "it" meant product Y.
+      another conversation where "it" meant product Y. That only holds when
+      there IS prior conversation (``prior_turns``): on a first turn "how much
+      does it cost?" has nothing for "it" to refer back to, it is the plain
+      FAQ the cache exists for, and every other first-turn asker shares that
+      exact context.
 
     Everything else (the plain, impersonal FAQ answer that is the whole point
     of the cache) still caches exactly as before.
@@ -2565,7 +2570,7 @@ def _answer_is_cacheable(
         return False
     if probe_active:
         return False
-    if _looks_like_follow_up(question):
+    if prior_turns and _looks_like_follow_up(question):
         return False
     return not _answer_mentions_visitor_name(answer, visitor_name)
 
@@ -2576,6 +2581,19 @@ def _has_prior_visitor_turns(history: list) -> bool:
     it always contains that question; only a second visitor turn means there
     is earlier conversation the model may reflect back in its reply."""
     return sum(1 for m in history or () if _msg_role(m) == "user") > 1
+
+
+def _qa_cache_lookup(cache_key: str, bot_id: int | None):
+    """Read the QA cache and count the outcome, as one unit of blocking work.
+
+    Both are synchronous Redis round trips. The streaming pipeline runs this
+    on a worker thread; keeping the counter inside the same hop matters
+    because a counter left on the event loop would stall every other stream
+    for exactly the Redis latency the thread hop was added to hide.
+    """
+    cached = cache_get(cache_key)
+    increment_metric_counter("qa_cache_hit" if cached else "qa_cache_miss", bot_id=bot_id)
+    return cached
 
 
 def _expand_company_query(question: str, company_name: str | None) -> str:
@@ -3138,9 +3156,13 @@ SCORING DISCIPLINE
                             "schema": result_model.model_json_schema(),
                         },
                     },
-                    # A handful of short JSON signals never needs more; the cap
-                    # bounds what a model that ignores the schema can cost.
-                    "max_tokens": 800,
+                    # Sized for a rich turn, not a typical one: each signal
+                    # carries an exact quote, a summary, a confidence and a
+                    # dimension (~120 tokens), and a MEDDIC message touching six
+                    # dimensions is real. Truncated JSON fails validation on BOTH
+                    # models and silently loses the turn's signals, so the cap
+                    # is a runaway guard, not a budget.
+                    "max_tokens": 2048,
                     "metadata": {"generation_name": "bant-extraction-v2"},
                 }
                 # Reasoning off for the gate-tier model, exactly as every other
@@ -3156,6 +3178,12 @@ SCORING DISCIPLINE
                     response = litellm.completion(**_kwargs)
                     resp_text = response.choices[0].message.content
                     gen.record_litellm(response, output=resp_text)
+                    if getattr(response.choices[0], "finish_reason", None) == "length":
+                        # Distinct from a parse failure in the logs: the cap
+                        # is the cause, and the retry below shares it.
+                        logger.warning(
+                            "[bant] extraction hit its output cap (model=%s); signals may be truncated", _model
+                        )
 
                 if not resp_text:
                     logger.debug("[bant] extraction empty response (model=%s) question=%r", _model, question[:80])
@@ -7125,11 +7153,22 @@ def rag_pipeline(
                     contact_url=_contact_url,
                 )
             )
+            # Read ahead of the QA-cache lookup, which needs to know whether the
+            # conversation has prior visitor turns. The visitor's own message is
+            # already persisted, so it is the last entry.
+            history = get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
+            _prior_turns = _has_prior_visitor_turns(history)
+
             # Never serve a follow-up-shaped question from the context-free
-            # cache; see the streaming path and ``_answer_is_cacheable``.
-            if _cache_key and not _affirmed_handoff and not _gate_may_intercept and not _looks_like_follow_up(question):
-                cached_qa = cache_get(_cache_key)
-                increment_metric_counter("qa_cache_hit" if cached_qa else "qa_cache_miss", bot_id=bid)
+            # cache once the conversation has prior turns for it to depend on;
+            # see the streaming path and ``_answer_is_cacheable``.
+            if (
+                _cache_key
+                and not _affirmed_handoff
+                and not _gate_may_intercept
+                and not (_prior_turns and _looks_like_follow_up(question))
+            ):
+                cached_qa = _qa_cache_lookup(_cache_key, bid)
                 if cached_qa:
                     # Detect handoff intent even on cache hit. ``live_chat_on``
                     # is the plan-aware value resolved once at the top of this
@@ -7195,7 +7234,7 @@ def rag_pipeline(
             # this turn's probe at the end of the turn.
             _last_probed_for_cta = getattr(chat_session, "last_probed_dimension", None)
             _trusted_cta = cta_dimension if (cta_dimension and cta_dimension == _last_probed_for_cta) else None
-            history = get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
+            # ``history`` was read above, before the QA-cache lookup.
             # A visitor whose name we already had when this session opened (the
             # widget re-seeds it from the previous conversation) gets welcomed
             # back by name on our FIRST reply. Excludes someone who introduced
@@ -8068,6 +8107,8 @@ def rag_pipeline(
                     None if (_show_qualified_popup or _team_connect_offer) else _next_probe
                 )
 
+            # Read before the commit expires the row; afterwards it costs a SELECT.
+            _bot_msg_trace_id = getattr(bot_msg, "trace_id", None)
             session.commit()
 
             _cta_signal = _score_cta_answer(_trusted_cta, question, bant_config)
@@ -8104,7 +8145,7 @@ def rag_pipeline(
                     final_results,
                     bid,
                     cid,
-                    getattr(bot_msg, "trace_id", None),
+                    _bot_msg_trace_id,
                 )
 
             result = {
@@ -8241,7 +8282,8 @@ def rag_pipeline(
                     question=question,
                     visitor_name=visitor_name,
                     opener=_opener,
-                    probe_active=_next_probe is not None and _has_prior_visitor_turns(history),
+                    probe_active=_next_probe is not None and _prior_turns,
+                    prior_turns=_prior_turns,
                 )
             ):
                 cache_set(_cache_key, {"answer": answer, "sources": result["sources"]}, QA_RESPONSE_TTL)
@@ -8687,15 +8729,37 @@ async def rag_pipeline_stream(
                     contact_url=_contact_url,
                 )
             )
+            # Materialize history to detached role/content objects HERE, ahead of
+            # the QA-cache lookup (which needs to know whether the conversation
+            # has prior visitor turns) and ahead of the connection-release commit
+            # further down, which frees the pooled connection during retrieval
+            # without any later access (notably rewrite_query, which runs on a
+            # worker thread) triggering a cross-thread lazy reload on the
+            # request-scoped session. Every consumer reads only .role / .content,
+            # so SimpleNamespace is a faithful, session-free stand-in. The
+            # visitor's own message is already persisted, so it is the last entry.
+            history = [
+                SimpleNamespace(role=m.role, content=m.content)
+                for m in get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
+            ]
+            _prior_turns = _has_prior_visitor_turns(history)
+
             # A follow-up-shaped question ("tell me more about it") depends on
             # this conversation's history, while the cache is keyed on the words
             # alone and is read before the rewrite resolves them; never serve one
-            # from the cache. ``_answer_is_cacheable`` keeps the write side
-            # consistent. The Redis round-trips run on a worker thread so a slow
-            # Redis cannot stall every other stream on this event loop.
-            if _cache_key and not _affirmed_handoff and not _gate_may_intercept and not _looks_like_follow_up(question):
-                cached_qa = await asyncio.to_thread(cache_get, _cache_key)
-                increment_metric_counter("qa_cache_hit" if cached_qa else "qa_cache_miss", bot_id=bid)
+            # from the cache when there IS such history. On a first turn nothing
+            # precedes it for "it" to refer back to, so "how much does it cost?"
+            # is the plain FAQ the cache exists for. ``_answer_is_cacheable``
+            # keeps the write side consistent. The Redis round-trips, hit counter
+            # included, run on a worker thread so a slow Redis cannot stall every
+            # other stream on this event loop.
+            if (
+                _cache_key
+                and not _affirmed_handoff
+                and not _gate_may_intercept
+                and not (_prior_turns and _looks_like_follow_up(question))
+            ):
+                cached_qa = await asyncio.to_thread(_qa_cache_lookup, _cache_key, bid)
                 if cached_qa:
                     # Run handoff detection even on cache hit so the widget can
                     # trigger the handoff form when appropriate. ``live_chat_on``
@@ -8764,16 +8828,8 @@ async def rag_pipeline_stream(
             # this turn's probe at the end of the turn.
             _last_probed_for_cta = getattr(chat_session, "last_probed_dimension", None)
             _trusted_cta = cta_dimension if (cta_dimension and cta_dimension == _last_probed_for_cta) else None
-            # Materialize history to detached role/content objects RIGHT HERE, so
-            # the connection-release commit below can free the pooled connection
-            # during retrieval without any later access (notably rewrite_query,
-            # which runs on a worker thread) triggering a cross-thread lazy reload
-            # on the request-scoped session. Every consumer reads only .role /
-            # .content, so SimpleNamespace is a faithful, session-free stand-in.
-            history = [
-                SimpleNamespace(role=m.role, content=m.content)
-                for m in get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
-            ]
+            # ``history`` was materialised above, before the QA-cache lookup, as
+            # detached role/content objects; see the comment there.
             # Streaming twin of the non-streaming welcome-back flag. See there.
             # Never for preview: the owner isn't a returning visitor, their name
             # is simply seeded, so the reply addresses them naturally rather than
@@ -9889,6 +9945,9 @@ async def rag_pipeline_stream(
                     # always carries message_id even if the commit later fails.
                     session.flush()
                     bot_msg_id = bot_msg.id
+                    # Captured with the id, for the same reason: the commit
+                    # expires the row and reading it afterwards costs a SELECT.
+                    _bot_msg_trace_id = getattr(bot_msg, "trace_id", None)
                     session.commit()
 
                     # Only cache a real LLM answer, never cache the zero-chunk
@@ -9924,7 +9983,8 @@ async def rag_pipeline_stream(
                             question=question,
                             visitor_name=visitor_name,
                             opener=_opener,
-                            probe_active=_next_probe is not None and _has_prior_visitor_turns(history),
+                            probe_active=_next_probe is not None and _prior_turns,
+                            prior_turns=_prior_turns,
                         )
                     ):
                         await asyncio.to_thread(
@@ -9964,7 +10024,7 @@ async def rag_pipeline_stream(
                             final_results,
                             bid,
                             cid,
-                            getattr(bot_msg, "trace_id", None),
+                            _bot_msg_trace_id,
                         )
 
                     if bot_msg_id:

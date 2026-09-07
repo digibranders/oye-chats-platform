@@ -30,6 +30,38 @@ class ExtractionError(Exception):
 # ── PDF ─────────────────────────────────────────────────────────────────────
 
 
+_PDF_MISSING_CRYPTO_MESSAGE = (
+    "This PDF is encrypted and the server is missing the library needed to open it. "
+    "Please contact support, or re-save the PDF without encryption and re-upload."
+)
+_PDF_UNSUPPORTED_ENCRYPTION_MESSAGE = (
+    "This PDF uses an encryption scheme we cannot open. "
+    "Re-save it without encryption (for example, print it to a new PDF) and re-upload."
+)
+
+
+def _open_pdf(handle) -> PdfReader:
+    """Construct the reader, turning pypdf's encryption failures into messages
+    the customer can act on.
+
+    pypdf reads the /Encrypt dictionary and tries the empty user password
+    inside ``PdfReader.__init__`` itself, so a missing crypto dependency
+    (``DependencyError``) or an unsupported scheme (``NotImplementedError``,
+    the only exception ``pypdf/_encryption.py`` raises for an unknown /V,
+    /SubFilter or crypt-filter method) surfaces HERE, not on the first
+    ``.pages`` access. Catching those only in ``_unlock_pdf`` left its branches
+    unreachable and the upload UI on its generic "something went wrong". A
+    ``PdfReadError`` from the constructor is a corrupt or non-PDF file, never
+    an encryption problem, and propagates unchanged.
+    """
+    try:
+        return PdfReader(handle)
+    except DependencyError as exc:
+        raise ExtractionError(_PDF_MISSING_CRYPTO_MESSAGE) from exc
+    except NotImplementedError as exc:
+        raise ExtractionError(_PDF_UNSUPPORTED_ENCRYPTION_MESSAGE) from exc
+
+
 def _unlock_pdf(reader: PdfReader) -> None:
     """Open an encrypted PDF that needs no password; reject one that does.
 
@@ -39,7 +71,9 @@ def _unlock_pdf(reader: PdfReader) -> None:
     outcome inspectable: a PDF that genuinely needs a password used to surface
     as pypdf's ``FileNotDecryptedError`` on the first ``.pages`` access, a
     generic failure the upload UI rendered as "something went wrong", leaving
-    the customer with nothing to act on.
+    the customer with nothing to act on. The dependency and unsupported-scheme
+    cases are normally caught by ``_open_pdf`` already; they are kept here for
+    a reader constructed elsewhere.
     """
     try:
         outcome = reader.decrypt("")
@@ -47,15 +81,9 @@ def _unlock_pdf(reader: PdfReader) -> None:
         # AES-encrypted files need the ``cryptography`` package. It is a
         # declared dependency, so this only fires on a broken install; say so
         # rather than blaming the customer's file.
-        raise ExtractionError(
-            "This PDF is encrypted and the server is missing the library needed to open it. "
-            "Please contact support, or re-save the PDF without encryption and re-upload."
-        ) from exc
+        raise ExtractionError(_PDF_MISSING_CRYPTO_MESSAGE) from exc
     except (PdfReadError, NotImplementedError) as exc:
-        raise ExtractionError(
-            "This PDF uses an encryption scheme we cannot open. "
-            "Re-save it without encryption (for example, print it to a new PDF) and re-upload."
-        ) from exc
+        raise ExtractionError(_PDF_UNSUPPORTED_ENCRYPTION_MESSAGE) from exc
     if outcome == PasswordType.NOT_DECRYPTED:
         raise ExtractionError(
             "This PDF is password-protected. Remove the password "
@@ -74,7 +102,7 @@ def load_pdf(file_path: str) -> list[dict]:
             PDF. Run OCR before upload.
     """
     with open(file_path, "rb") as f:
-        reader = PdfReader(f)
+        reader = _open_pdf(f)
         if reader.is_encrypted:
             _unlock_pdf(reader)
         total_pages = len(reader.pages)

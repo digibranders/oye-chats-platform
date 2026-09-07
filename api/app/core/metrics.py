@@ -95,10 +95,20 @@ def increment_metric_counter_by(name: str, amount: int, bot_id: int | None = Non
         client = get_redis()
         if client is None:
             return
-        key = _counter_key(name, bot_id, _hour_bucket())
+        bucket = _hour_bucket()
+        key = _counter_key(name, bot_id, bucket)
         pipe = client.pipeline()
         pipe.incrby(key, amount)
         pipe.expire(key, _COUNTER_TTL_SECONDS)
+        if bot_id:
+            # A per-bot event is also a platform event. The super-admin
+            # safety-net read defaults to the global scope, and a counter that
+            # only ever landed under ``b{bot_id}`` read there as a permanent
+            # zero, which is what the QA-cache hit rate and the groundedness
+            # verdicts did. Same pipeline, so it is still one round trip.
+            global_key = _counter_key(name, None, bucket)
+            pipe.incrby(global_key, amount)
+            pipe.expire(global_key, _COUNTER_TTL_SECONDS)
         pipe.execute()
     except Exception as exc:  # noqa: BLE001 - metrics must never break the caller
         logger.debug("increment_metric_counter_by failed (non-blocking): %s", exc)

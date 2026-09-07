@@ -153,8 +153,15 @@ _DEDUP_META_LINE_PREFIX = re.compile(
     re.IGNORECASE,
 )
 
-# "© 2026 Acme Inc", "(c) 2026", "Copyright © 2019-2026 Acme Inc. All rights reserved."
-_DEDUP_COPYRIGHT_LINE = re.compile(_DEDUP_LINE_LEAD + r"(?:copyright\b|©|\(c\))", re.IGNORECASE)
+# "© 2026 Acme Inc", "(c) 2026", "Copyright © 2019-2026 Acme Inc. All rights
+# reserved.", "Copyright 2025 Acme". The year must follow the marker directly:
+# "(c) Since 2019, all refunds are processed within 14 days" and "Copyright of
+# all content produced in 2020 belongs to the client" are policy clauses, and
+# hiding them from the hash would hide an edit to them from the re-crawl.
+_DEDUP_COPYRIGHT_LINE = re.compile(
+    _DEDUP_LINE_LEAD + r"(?:copyright\s*(?:©|\(c\))?|©|\(c\))\s*(?:19|20)\d{2}\b",
+    re.IGNORECASE,
+)
 _DEDUP_YEAR = re.compile(r"\b(?:19|20)\d{2}\b")
 
 # A price, a discount, a rate: never metadata, whatever the line starts with.
@@ -193,6 +200,9 @@ _DEDUP_DATE_TOKEN_PATTERNS = (
 )
 
 _DEDUP_ALNUM = re.compile(r"[^\W_]")
+# One line at a time, newline excluded, so a matched line can be blanked in
+# place while its line ending (``\n`` or ``\r\n``) survives untouched.
+_DEDUP_ANY_LINE = re.compile(r"(?m)^(.*)$")
 
 
 def _is_dedup_metadata_line(line: str) -> bool:
@@ -207,8 +217,10 @@ def _is_dedup_metadata_line(line: str) -> bool:
       tokens and the line is metadata only if nothing alphanumeric survives,
       so "Updated pricing: the Pro plan is now $99/month" and "Created for
       teams of 5-50 people" are kept.
-    * A copyright notice that carries a year: the year is the only part of it
-      that changes, and it changes on every site every January.
+    * A copyright notice whose year follows the marker directly ("© 2026
+      Acme"): the year is the only part of it that changes, and it changes on
+      every site every January. A clause that merely starts with "(c)" or
+      "Copyright" and mentions a year further along is prose and is kept.
 
     A line over ``_DEDUP_META_LINE_MAX_CHARS`` is prose; a line containing a
     currency symbol or a percentage is a price. Both are always kept.
@@ -219,7 +231,7 @@ def _is_dedup_metadata_line(line: str) -> bool:
     # Checked before the length cap: a trademark-laden footer runs well past
     # 120 chars and its year still ticks over every January.
     if _DEDUP_COPYRIGHT_LINE.match(stripped):
-        return _DEDUP_YEAR.search(stripped) is not None
+        return True
     if len(stripped) > _DEDUP_META_LINE_MAX_CHARS:
         return False
     match = _DEDUP_META_LINE_PREFIX.match(stripped)
@@ -242,11 +254,17 @@ def _normalize_for_dedup_hash(text: str) -> str:
         → page is re-ingested → updated content reaches the KB. ✓
 
     Conservative on purpose: only lines ``_is_dedup_metadata_line`` classes
-    as metadata are dropped, and only patterns that are reliably date-shaped
+    as metadata are blanked, and only patterns that are reliably date-shaped
     get scrubbed. Numbers embedded in prose ("Q4 2026 revenue grew 12%") are
     untouched because they could be substantive content.
     """
-    out = "\n".join(line for line in text.splitlines() if not _is_dedup_metadata_line(line))
+    # A metadata line is blanked, not deleted, and every line keeps its own
+    # ending. That is the exact shape the previous regex produced (it
+    # substituted "" for the line and left the newline), and every stored
+    # dedup hash was computed from it. Reproducing it byte for byte keeps
+    # those hashes valid, so the first crawl after this change does not
+    # re-embed, and re-bill, every page that carries a "Last updated" line.
+    out = _DEDUP_ANY_LINE.sub(lambda m: "" if _is_dedup_metadata_line(m.group(1)) else m.group(1), text)
     for pattern in _DEDUP_DATE_PATTERNS:
         out = pattern.sub("<DATE>", out)
     # Collapse the whitespace we may have left behind so the hash is stable

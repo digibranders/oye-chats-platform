@@ -332,3 +332,39 @@ class TestDecodeTextBytes:
 
     def test_plain_ascii_is_unchanged(self):
         assert decode_text_bytes(b"plain ascii") == "plain ascii"
+
+
+class TestPdfConstructorFailures:
+    """pypdf reads /Encrypt and tries the empty password inside
+    ``PdfReader.__init__``, so a missing crypto dependency or an unsupported
+    scheme raises from the constructor, before ``_unlock_pdf`` ever runs. Those
+    must reach the customer as actionable messages too."""
+
+    def test_missing_crypto_dependency_on_construction(self):
+        with (
+            patch("builtins.open", mock_open()),
+            patch("app.ingestion.extraction.PdfReader", side_effect=DependencyError("cryptography>=3.1 is required")),
+            pytest.raises(ExtractionError, match="missing the library"),
+        ):
+            load_pdf("x.pdf")
+
+    def test_unsupported_scheme_on_construction(self):
+        with (
+            patch("builtins.open", mock_open()),
+            patch("app.ingestion.extraction.PdfReader", side_effect=NotImplementedError("Unsupported /V value")),
+            pytest.raises(ExtractionError, match="encryption scheme"),
+        ):
+            load_pdf("x.pdf")
+
+    def test_a_corrupt_file_keeps_its_original_error(self):
+        # A constructor PdfReadError is a corrupt or non-PDF file, never an
+        # encryption problem: the generic handling upstream must still see
+        # pypdf's own exception, not a misleading encryption message.
+        from pypdf.errors import PdfReadError
+
+        with (
+            patch("builtins.open", mock_open()),
+            patch("app.ingestion.extraction.PdfReader", side_effect=PdfReadError("EOF marker not found")),
+            pytest.raises(PdfReadError),
+        ):
+            load_pdf("x.pdf")

@@ -123,3 +123,13 @@ class TestRunSync:
         assert gate.stats()["in_flight"] == 1
         release.set()
         assert await _eventually(lambda: gate.stats()["in_flight"] == 0)
+
+
+@pytest.mark.asyncio
+async def test_run_sync_uses_the_gates_own_threads_not_the_default_executor():
+    """The blocking pipeline must never occupy the loop's default executor: that
+    pool is what every ``asyncio.to_thread`` on the streaming path shares, and
+    it has only a handful of threads on a small host."""
+    gate = ChatConcurrencyGate(limit=2, acquire_timeout_s=1.0)
+    name = await gate.run_sync(lambda: threading.current_thread().name)
+    assert name.startswith("oyechats-chat-sync")

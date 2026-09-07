@@ -39,6 +39,7 @@ import functools
 import logging
 import os
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import ParamSpec, TypeVar
 
 from fastapi import HTTPException
@@ -112,6 +113,14 @@ class ChatConcurrencyGate:
         self._in_flight = 0
         self._rejected = 0
         self._waited = 0
+        # Dedicated threads for ``run_sync``. The blocking pipeline must not run
+        # on the loop's default executor, which every ``asyncio.to_thread`` on
+        # the streaming path shares (vector search, cache reads, credit
+        # deduction, session resolution). On a 2-vCPU host that pool has six
+        # threads, so six concurrent /chat pipelines, each up to a minute long,
+        # would queue every streaming visitor's small hops behind them.
+        # ``limit`` workers is exact: the gate never admits more than that.
+        self._executor = ThreadPoolExecutor(max_workers=limit, thread_name_prefix="oyechats-chat-sync")
 
     @property
     def limit(self) -> int:
@@ -181,8 +190,9 @@ class ChatConcurrencyGate:
         the gate exists to prevent, and in a burst of timeouts it would happen
         once per request.
 
-        Mechanics: the work is submitted to the loop's default executor with the
-        caller's context (what :func:`asyncio.to_thread` does), the release is a
+        Mechanics: the work is submitted to the gate's own executor (``limit``
+        threads, see ``__init__``) with the caller's context (as
+        :func:`asyncio.to_thread` would, but off the shared pool), the release is a
         done-callback on the executor future so it runs on the loop thread (the
         only place an :class:`asyncio.Semaphore` may be touched), and the await
         is shielded so a cancelled caller cannot cancel that future underneath
@@ -194,7 +204,7 @@ class ChatConcurrencyGate:
         loop = asyncio.get_running_loop()
         call = functools.partial(contextvars.copy_context().run, fn, *args, **kwargs)
         try:
-            future = loop.run_in_executor(None, call)
+            future = loop.run_in_executor(self._executor, call)
         except BaseException:
             # The executor refused the work (shutting down): nothing will run,
             # so nothing will release. Give the slot back here.

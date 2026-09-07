@@ -422,22 +422,42 @@ class TestQaCacheNeverHoldsPersonalisedText:
         assert cap["cache"].store == {}
 
     @pytest.mark.asyncio
-    async def test_follow_up_shaped_question_bypasses_the_cache(self, db, monkeypatch):
+    async def test_follow_up_shaped_question_bypasses_the_cache_once_there_is_history(self, db, monkeypatch):
         client = _make_client(db)
         bot = _make_bot(db, client)
         _make_session(db, bot, client, "sess-pii-3")
         cap = _stub_pipeline(monkeypatch, retrieved=(_doc("Pro costs $49."),), chunks=("Pro is $49/month.",))
         _anonymous_visitor(monkeypatch)
+        # A first turn, so "tell me more about it" below has prior context.
+        await _drive_stream(bot, "what plans do you offer", "sess-pii-3")
         key = rs.qa_response_key(bot.id, rs.hashlib.sha256(b"tell me more about it").hexdigest()[:32], None)
         cap["cache"].store[key] = {"answer": "STALE ANSWER FROM ANOTHER CONVERSATION", "sources": []}
 
         frames = await _drive_stream(bot, "tell me more about it", "sess-pii-3")
 
         assert "STALE ANSWER" not in _answer_text(frames)
-        assert cap["prompts"], "a context-dependent question must be generated, not served from the cache"
+        assert len(cap["prompts"]) == 2, "a context-dependent question must be generated, not served from the cache"
         assert cap["cache"].store[key]["answer"] == "STALE ANSWER FROM ANOTHER CONVERSATION", (
             "and its fresh answer must not overwrite the entry either"
         )
+
+    @pytest.mark.asyncio
+    async def test_follow_up_shaped_first_turn_is_served_from_the_cache(self, db, monkeypatch):
+        """ "How much does it cost?" as an opening message has nothing for "it"
+        to refer back to; it is the plain FAQ the cache exists for, and every
+        other first-turn asker shares that exact context."""
+        client = _make_client(db)
+        bot = _make_bot(db, client)
+        _make_session(db, bot, client, "sess-pii-4")
+        cap = _stub_pipeline(monkeypatch, retrieved=(_doc("Pro costs $49."),), chunks=("SHOULD NOT REGENERATE",))
+        _anonymous_visitor(monkeypatch)
+        key = rs.qa_response_key(bot.id, rs.hashlib.sha256(b"how much does it cost").hexdigest()[:32], None)
+        cap["cache"].store[key] = {"answer": "Pro is $49/month.", "sources": ["kb.txt"]}
+
+        frames = await _drive_stream(bot, "how much does it cost?", "sess-pii-4")
+
+        assert "Pro is $49/month." in _answer_text(frames)
+        assert cap["prompts"] == [], "a first-turn FAQ must be served from the cache"
 
 
 # ── Defect 3: off-topic refusals must be persisted + emit FINAL_METADATA ─────

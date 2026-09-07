@@ -45,7 +45,13 @@ class TestAnswerMentionsVisitorName:
 
 
 class TestAnswerIsCacheable:
-    _BASE = {"question": "What do you charge?", "visitor_name": None, "opener": "", "probe_active": False}
+    _BASE = {
+        "question": "What do you charge?",
+        "visitor_name": None,
+        "opener": "",
+        "probe_active": False,
+        "prior_turns": False,
+    }
 
     def test_plain_impersonal_answer_is_cacheable(self):
         assert rs._answer_is_cacheable(answer="Our Pro plan is $49/month.", **self._BASE)
@@ -62,9 +68,16 @@ class TestAnswerIsCacheable:
             answer="Two months is a comfortable runway.", **{**self._BASE, "probe_active": True}
         )
 
-    def test_follow_up_shaped_question_blocks_caching(self):
+    def test_follow_up_shaped_question_blocks_caching_once_there_is_history(self):
         assert not rs._answer_is_cacheable(
-            answer="It costs $49.", **{**self._BASE, "question": "tell me more about it"}
+            answer="It costs $49.", **{**self._BASE, "question": "tell me more about it", "prior_turns": True}
+        )
+
+    def test_follow_up_shaped_first_turn_still_caches(self):
+        # "How much does it cost?" as an opening message has nothing for "it"
+        # to refer back to; it is the plain FAQ the cache exists for.
+        assert rs._answer_is_cacheable(
+            answer="Pro is $49/month.", **{**self._BASE, "question": "how much does it cost?"}
         )
 
     def test_answer_using_the_visitor_name_blocks_caching(self):

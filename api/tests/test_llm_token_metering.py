@@ -30,11 +30,16 @@ class TestIncrementMetricCounterBy:
         with patch("app.core.metrics.get_redis", return_value=mock_redis):
             increment_metric_counter_by("llm_tokens_prompt", 250, bot_id=7)
 
-        mock_pipe.incrby.assert_called_once()
-        key_arg, amount_arg = mock_pipe.incrby.call_args[0]
+        # Per-bot key AND the global key, in one pipeline: the platform-wide
+        # token total is the per-bot events summed, and the super-admin read
+        # defaults to the global scope.
+        assert mock_pipe.incrby.call_count == 2
+        (key_arg, amount_arg), (global_key, global_amount) = (c[0] for c in mock_pipe.incrby.call_args_list)
         assert "llm_tokens_prompt" in key_arg
         assert "b7" in key_arg
         assert amount_arg == 250
+        assert "llm_tokens_prompt" in global_key and "global" in global_key
+        assert global_amount == 250
 
     def test_skips_redis_call_for_zero_or_negative_amount(self):
         mock_redis = MagicMock()

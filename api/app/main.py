@@ -436,12 +436,31 @@ class _TtlProbe:
             self._ts = 0.0
             self._pending = None
 
+    def prime(self) -> None:
+        """Start a run now if the cached verdict is stale and nothing is in
+        flight, without waiting for it. ``_gather_health`` primes every probe
+        before it waits on any, so a cold cache costs the slowest probe's
+        deadline rather than the sum of all of them: sequential waits pushed
+        the worst case past the 10s timeout most monitors use, which reads as
+        "API down" for a degradation that deliberately does not touch the
+        status code."""
+        now = time.monotonic()
+        with self._lock:
+            if self._value is not None and now - self._ts < self._ttl_s:
+                return
+            if self._pending is None:
+                self._pending = self._start()
+
     def result(self) -> dict:
         now = time.monotonic()
         with self._lock:
             if self._value is not None and now - self._ts < self._ttl_s:
                 return dict(self._value)
-            if self._pending is None or self._pending.done.is_set():
+            # A run that already finished (primed, or one that outlived its
+            # deadline and completed later) is consumed below rather than
+            # replaced: its report is a real measurement, and starting another
+            # would pay for a second provider call to learn the same thing.
+            if self._pending is None:
                 self._pending = self._start()
             run = self._pending
 
@@ -713,6 +732,15 @@ def _gather_health() -> tuple[dict, bool, bool]:
                     worker_status = "alive"
             except Exception:
                 pass
+
+    # Kick the gate-model and embedding probes off first so their deadlines
+    # overlap with the primary probe below instead of being paid one after the
+    # other. On a cold cache this endpoint then answers in about the slowest
+    # probe's deadline rather than the sum of three, which is what keeps a slow
+    # provider from reading as "API down" to a monitor with a 10s timeout.
+    if _llm_ready():
+        _gate_probe_state.prime()
+    _embedding_probe_state.prime()
 
     # -- LLM readiness check --
     # Real, TTL-cached completion call. See _llm_probe docstring. Falls back

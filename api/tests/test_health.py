@@ -482,7 +482,12 @@ class TestTtlProbe:
 
         release.set()
         assert self._until(lambda: probe.result()["ok"] is True)
-        assert len(runs) == 2  # once the hung run ended, the next call probed afresh
+        # The hung run's own report is consumed once it finishes: it is a real
+        # measurement, and replacing it would pay for a second provider call to
+        # learn the same thing. With ttl 0 the call after that probes afresh.
+        assert len(runs) == 1
+        assert probe.result()["ok"] is True
+        assert len(runs) == 2
 
 
 class TestDependencyProbes:
@@ -838,3 +843,67 @@ class TestHealthDetailGate:
             response = health_check(_request_with_token(b""))
         body = json.loads(response.body)
         assert body == {"status": "healthy"}
+
+
+class TestTtlProbePriming:
+    """``prime()`` starts a run without waiting so the health payload can pay
+    every probe's deadline at once instead of one after another. A primed run
+    that finishes before ``result()`` is asked must be consumed, never
+    duplicated by a second provider call."""
+
+    @staticmethod
+    def _until(predicate, timeout_s: float = 3.0) -> bool:
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            if predicate():
+                return True
+            time.sleep(0.01)
+        return predicate()
+
+    def test_primed_run_is_consumed_not_repeated(self):
+        calls = []
+
+        def run(report):
+            calls.append(1)
+            report["model"] = "m"
+
+        probe = _TtlProbe("t", run, ttl_s=30.0, deadline_s=1.0)
+        probe.prime()
+        assert self._until(lambda: len(calls) == 1)
+        # The run has finished by now; result() must use it, not start another.
+        assert self._until(lambda: probe._pending is not None and probe._pending.done.is_set())
+        result = probe.result()
+        assert result["ok"] is True and result["model"] == "m"
+        assert calls == [1]
+        assert probe.result()["ok"] is True  # cached within the TTL
+        assert calls == [1]
+
+    def test_prime_is_a_noop_while_the_verdict_is_fresh(self):
+        calls = []
+
+        def run(report):
+            calls.append(1)
+
+        probe = _TtlProbe("t", run, ttl_s=30.0, deadline_s=1.0)
+        probe.result()
+        probe.prime()
+        probe.prime()
+        assert calls == [1]
+
+    def test_two_primed_probes_wait_concurrently(self):
+        gate = threading.Event()
+
+        def slow(report):
+            gate.wait(2.0)
+
+        a = _TtlProbe("a", slow, ttl_s=30.0, deadline_s=0.3)
+        b = _TtlProbe("b", slow, ttl_s=30.0, deadline_s=0.3)
+        t0 = time.monotonic()
+        a.prime()
+        b.prime()
+        ra, rb = a.result(), b.result()
+        elapsed = time.monotonic() - t0
+        gate.set()
+        assert ra["ok"] is False and rb["ok"] is False
+        # Both deadlines overlapped: well under the 0.6s a sequential wait costs.
+        assert elapsed < 0.5

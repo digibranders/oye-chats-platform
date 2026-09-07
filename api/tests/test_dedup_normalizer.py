@@ -19,6 +19,10 @@ KEPT = [
     "Created for teams of 5-50 people, our Growth plan includes SSO.",
     "Published research from our lab shows 3x faster onboarding.",
     "| Posted price | $49 |",
+    # A clause that merely opens with the copyright marker: the year is not
+    # adjacent to it, so this is policy text whose edits must reach the hash.
+    "(c) Since 2019, all refunds are processed within 14 days",
+    "Copyright of all content produced in 2020 belongs to the client.",
     # A month name inside prose is not a date line.
     "Updated guidance for March: our lab now supports 3 new assays.",
     # Copyright as a topic, not a notice: no year, so nothing volatile in it.
@@ -101,8 +105,11 @@ def test_a_kept_label_line_still_has_its_date_normalised():
 
 
 def test_only_the_metadata_lines_leave_the_hash_input():
+    """A metadata line is blanked in place (its newline stays, collapsing to
+    one blank line), exactly as the previous normaliser did, so stored hashes
+    stay valid; see ``TestHashShapeIsStableAcrossTheRewrite``."""
     page = "# Pricing\nLast updated: 12 March 2026\nPro is $99.\nPublished on March 3, 2026 by Jane Doe\n© 2026 Acme"
-    assert _normalize_for_dedup_hash(page) == "# Pricing\nPro is $99.\nPublished on <DATE> by Jane Doe"
+    assert _normalize_for_dedup_hash(page) == "# Pricing\n\nPro is $99.\nPublished on <DATE> by Jane Doe"
 
 
 def test_pages_that_differ_only_by_an_event_date_still_collide():
@@ -112,3 +119,24 @@ def test_pages_that_differ_only_by_an_event_date_still_collide():
     spring = "# Quarterly Webinar\nJoin us on 2026-03-14 for the quarterly product webinar."
     summer = "# Quarterly Webinar\nJoin us on 2026-06-20 for the quarterly product webinar."
     assert _hash(spring) == _hash(summer)
+
+
+class TestHashShapeIsStableAcrossTheRewrite:
+    """The dedup hash of every already-ingested page was computed by the
+    previous normaliser, which substituted "" for a metadata line and left its
+    newline in place. The rewritten classifier must reproduce that exact shape
+    for the lines both versions drop, or the first crawl after deploy re-embeds
+    and re-bills every page carrying a "Last updated" line as changed."""
+
+    def test_a_blanked_line_keeps_its_newline(self):
+        text = "Welcome\nWe sell widgets.\nLast updated: 2026-01-15\nContact us."
+        assert _normalize_for_dedup_hash(text) == "Welcome\nWe sell widgets.\n\nContact us."
+
+    def test_crlf_endings_survive_on_kept_lines(self):
+        text = "Welcome\r\nLast updated: 2026-01-15\r\nContact us."
+        assert _normalize_for_dedup_hash(text) == "Welcome\r\n\nContact us."
+
+    def test_a_year_bump_in_a_blanked_line_does_not_change_the_hash(self):
+        before = _normalize_for_dedup_hash("Intro\n© 2025 Acme Inc\nBody")
+        after = _normalize_for_dedup_hash("Intro\n© 2026 Acme Inc\nBody")
+        assert before == after == "Intro\n\nBody"
