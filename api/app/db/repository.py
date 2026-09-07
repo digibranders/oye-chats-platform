@@ -1863,6 +1863,23 @@ AVATAR_SOURCE_MANUAL = "manual"
 AVATAR_SOURCE_DERIVED = "derived"
 
 
+def stamp_manual_platform(bot, update_data: dict) -> None:
+    """Mark the site's platform as the customer's own, if this patch sets it.
+
+    The sibling of :func:`stamp_manual_avatar`, and for the same reason. The
+    install probe fingerprints the served HTML and writes ``detected``; once the
+    customer has chosen from the Deploy page's picker, that guess must never
+    replace their answer, however confident it is. A site mid-migration, or one
+    behind a proxy that hides its framework, is exactly where a fingerprint is
+    wrong and exactly where the customer has already told us the truth.
+
+    Called BEFORE the patch is applied, so the value being stamped is the one
+    about to be written.
+    """
+    if "install_platform" in update_data:
+        bot.install_platform_source = "manual"
+
+
 def stamp_manual_avatar(bot, update_data: dict) -> None:
     """Mark the bot's avatar as the customer's own, if this patch touches it.
 

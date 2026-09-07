@@ -135,6 +135,34 @@ async def _probe_all(bot_key: str, hostnames: list[str]):
         return await asyncio.gather(*[_one(h) for h in hostnames])
 
 
+def _record_detected_platform(session, bot_id: int, results) -> None:
+    """Remember what the site is built with, unless the customer has said.
+
+    Only the domains that answered can vote, and the first one that
+    fingerprinted anything wins. A run typically probes the customer's own site
+    plus whatever else is on the allow-list, and ordering follows
+    ``probe_targets`` — allow-list, then the bot's own ``website``, then
+    observed hostnames — so a stray staging host cannot outrank the site the
+    customer actually configured.
+
+    Silent no-op when nothing matched, and when ``install_platform_source`` is
+    already ``manual``: a guess must never overwrite an answer. Best-effort like
+    everything else on this path, so a failure here cannot lose the probe
+    verdicts committed alongside it.
+    """
+    platform = next((r.platform for r in results if r.platform), None)
+    if not platform:
+        return
+    bot = session.get(Bot, bot_id)
+    if bot is None or bot.install_platform_source == "manual":
+        return
+    if bot.install_platform == platform:
+        return
+    bot.install_platform = platform
+    bot.install_platform_source = "detected"
+    logger.info("install probe for bot %s detected platform=%s", bot_id, platform)
+
+
 async def probe_bot_installs(bot_id: int) -> dict:
     """Check every domain for one chatbot and store the verdicts.
 
@@ -167,6 +195,7 @@ async def probe_bot_installs(bot_id: int) -> dict:
                     bot_key=result.bot_key,
                     detail=result.detail,
                 )
+            _record_detected_platform(session, bot_id, results)
             session.commit()
 
         summary: dict = {"checked": len(results)}

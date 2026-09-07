@@ -130,14 +130,15 @@ export function DeployPage() {
   const { t } = useTranslation();
   const { agent, loading: agentLoading } = useAgent();
   const deploy = useDeployData();
-  // Opens on HTML rather than on nothing. The panel's whole job is to show
-  // steps, and an empty select showed a reader who had just been told to
-  // install something a second thing to choose first. HTML because it is the
-  // one answer that is never wrong - the field's own hint already says "Not
-  // sure? Pick HTML" - and because a reader who does know their stack changes
-  // it in one keystroke, which is cheaper than the state where nobody sees
-  // anything.
-  const [platformId, setPlatformId] = useState<string | null>(DEFAULT_PLATFORM_ID);
+  // The picker's value, remembered on the chatbot rather than re-asked.
+  //
+  // `null` here means "nothing chosen in this session yet", which is NOT the
+  // same as HTML: the stored answer arrives with the chatbot a beat later, and
+  // starting at HTML would make a Next.js customer watch their answer flip.
+  // `resolvedPlatformId` below picks the first of: this session's choice, the
+  // stored one, then HTML — the default being the one answer that is never
+  // wrong, as the field's own hint says.
+  const [platformChoice, setPlatformChoice] = useState<string | null>(null);
   const [helpTab, setHelpTab] = useState<HelpTab | null>(null);
   const [confirmingLockout, setConfirmingLockout] = useState(false);
 
@@ -177,7 +178,31 @@ export function DeployPage() {
   );
 
   const bot = deploy.bot;
+  // The stored id is written by two independent producers (the customer, and
+  // the install probe's fingerprint), so it is validated against the list
+  // rather than trusted: an id this build does not know about falls back to
+  // the default instead of rendering an empty panel.
+  const storedPlatformId = deploy.bot?.install_platform ?? null;
+  const knownStored = platforms.some((p) => p.id === storedPlatformId) ? storedPlatformId : null;
+  const platformId = platformChoice ?? knownStored ?? DEFAULT_PLATFORM_ID;
   const platform = platforms.find((p) => p.id === platformId) ?? null;
+
+  /**
+   * Remember the choice on the chatbot, so the next visit opens on it.
+   *
+   * Fire-and-forget: the picker must switch instantly, and a failed write is
+   * not worth an error banner on a page about installing a script tag. The
+   * worst case is the old value next time, which is exactly where the customer
+   * was before this was remembered at all. `save` re-reads the chatbot on
+   * success, so the stored value and the panel converge on their own.
+   */
+  const choosePlatform = useCallback(
+    (next: string | null) => {
+      setPlatformChoice(next);
+      if (next && next !== storedPlatformId) void deploy.save({ install_platform: next }).catch(() => {});
+    },
+    [deploy, storedPlatformId],
+  );
 
   const header = (
     <PageHeader
@@ -433,7 +458,7 @@ export function DeployPage() {
                       botKey={botKey}
                       env={deploy.env}
                       platformId={platformId}
-                      onPlatformChange={setPlatformId}
+                      onPlatformChange={choosePlatform}
                     />
                   </CardBody>
                 </TabPanel>

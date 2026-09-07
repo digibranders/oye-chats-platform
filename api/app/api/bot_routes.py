@@ -53,7 +53,7 @@ from app.core.origin_check import extract_hostname, is_origin_allowed, normalize
 from app.core.rate_limit import limiter
 from app.core.ssrf import SSRFError, validate_public_url
 from app.db.models import ActivationEvent, Bot, BotGrowthEvent
-from app.db.repository import stamp_manual_avatar
+from app.db.repository import stamp_manual_avatar, stamp_manual_platform
 from app.db.session import get_session
 from app.schemas.validators import (
     MAX_URL,
@@ -727,6 +727,10 @@ class UpdateBotRequest(BaseModel):
     # toggle); see Bot.email_verification_enabled / Bot.company_lookup_enabled.
     email_verification_enabled: bool | None = None
     company_lookup_enabled: bool | None = None
+    # The Deploy page's platform picker. Setting it marks the value ``manual``
+    # (see the write below), which stops the install probe's fingerprint from
+    # ever overwriting it.
+    install_platform: str | None = None
     # Live chat settings
     live_chat_enabled: bool | None = None
     operator_timeout_seconds: int | None = Field(None, ge=5, le=3600)
@@ -888,6 +892,8 @@ class BotResponse(BaseModel):
     # for a row that is ON, and the frontend renders the switch on `=== true`.
     email_verification_enabled: bool = True
     company_lookup_enabled: bool = True
+    install_platform: str | None = None
+    install_platform_source: str | None = None
     notification_email: str | None = None
     notification_emails: dict | None = None
     reply_to_email: str | None = None
@@ -1056,6 +1062,8 @@ def _bot_to_response(bot: Bot, request: Request, *, plan_slug: str = "free", pla
         lead_form_fields=bot.lead_form_fields,
         email_verification_enabled=bool(bot.email_verification_enabled),
         company_lookup_enabled=bool(bot.company_lookup_enabled),
+        install_platform=bot.install_platform,
+        install_platform_source=bot.install_platform_source,
         notification_email=bot.notification_email,
         notification_emails=bot.notification_emails,
         reply_to_email=bot.reply_to_email,
@@ -1404,6 +1412,8 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         "lead_form_enabled": bot.lead_form_enabled,
         "email_verification_enabled": bool(bot.email_verification_enabled),
         "company_lookup_enabled": bool(bot.company_lookup_enabled),
+        "install_platform": bot.install_platform,
+        "install_platform_source": bot.install_platform_source,
         "lead_form_fields": bot.lead_form_fields,
         "live_chat_enabled": effective_live_chat_enabled,
         # Plan half of the human-support gate: does this bot's plan include the
@@ -2420,6 +2430,8 @@ def list_bots(
                     lead_form_enabled=b.lead_form_enabled,
                     email_verification_enabled=bool(b.email_verification_enabled),
                     company_lookup_enabled=bool(b.company_lookup_enabled),
+                    install_platform=b.install_platform,
+                    install_platform_source=b.install_platform_source,
                     lead_form_fields=b.lead_form_fields,
                     notification_email=b.notification_email,
                     notification_emails=b.notification_emails,
@@ -3744,6 +3756,10 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
             # Any avatar write here is the customer's, including clearing it,
             # which is what stops the crawl re-deriving a deleted avatar.
             stamp_manual_avatar(bot, update_data)
+
+            # Same rule for the Deploy page's platform picker: choosing one
+            # stops the install probe's fingerprint from overwriting it.
+            stamp_manual_platform(bot, update_data)
 
             # Merge feature_flags. Partial updates must not wipe existing flags
             if "feature_flags" in update_data and update_data["feature_flags"] is not None:

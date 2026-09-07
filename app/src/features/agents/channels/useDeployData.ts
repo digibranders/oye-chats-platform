@@ -33,6 +33,14 @@ export interface DeployBot extends Bot {
   /** Who the install briefing was last emailed to, and when. */
   dev_invite_email?: string | null;
   dev_invite_sent_at?: string | null;
+  /**
+   * What the site is built on, for the platform picker: a platform id, or null
+   * when nobody knows yet. `install_platform_source` says who decided —
+   * `detected` (the install probe fingerprinted the served HTML) or `manual`
+   * (the customer picked it, and the probe leaves it alone from then on).
+   */
+  install_platform?: string | null;
+  install_platform_source?: 'detected' | 'manual' | null;
 }
 
 /** Why a section cannot be shown, when it cannot. */
