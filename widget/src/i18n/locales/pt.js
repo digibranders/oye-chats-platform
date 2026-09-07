@@ -193,7 +193,7 @@ export default {
             title: 'Falar com uma pessoa',
             subtitle: 'Nossa equipe entrará em contato em instantes',
             submit: 'Solicitar atendente',
-            cancel: 'Voltar para o bot',
+            cancel: 'Voltar para o chat',
             email_placeholder: 'Endereço de e-mail *',
             name_placeholder: 'Seu nome *',
             invalid_email: 'Informe um endereço de e-mail válido.',

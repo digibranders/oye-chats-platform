@@ -193,7 +193,7 @@ export default {
             title: 'Porozmawiaj z konsultantem',
             subtitle: 'Nasz zespół skontaktuje się z Tobą za chwilę',
             submit: 'Poproś o konsultanta',
-            cancel: 'Wróć do bota',
+            cancel: 'Wróć do czatu',
             email_placeholder: 'Adres e-mail *',
             name_placeholder: 'Twoje imię *',
             invalid_email: 'Podaj prawidłowy adres e-mail.',

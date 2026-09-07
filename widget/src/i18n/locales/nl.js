@@ -193,7 +193,7 @@ export default {
             title: 'Spreek een medewerker',
             subtitle: 'Ons team neemt zo contact met je op',
             submit: 'Medewerker aanvragen',
-            cancel: 'Terug naar de bot',
+            cancel: 'Terug naar de chat',
             email_placeholder: 'E-mailadres *',
             name_placeholder: 'Je naam *',
             invalid_email: 'Vul een geldig e-mailadres in.',

@@ -91,7 +91,7 @@ export default {
             title: 'Talk to a human',
             subtitle: 'Our team will connect with you shortly',
             submit: 'Request Operator',
-            cancel: 'Back to bot',
+            cancel: 'Back to chat',
             email_placeholder: 'Email address *',
             name_placeholder: 'Your name *',
             invalid_email: 'Please enter a valid email address.',

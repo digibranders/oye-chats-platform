@@ -193,7 +193,7 @@ export default {
             title: 'Parla con una persona',
             subtitle: 'Il nostro team ti contatterà a breve',
             submit: 'Richiedi un operatore',
-            cancel: 'Torna al bot',
+            cancel: 'Torna alla chat',
             email_placeholder: 'Indirizzo e-mail *',
             name_placeholder: 'Il tuo nome *',
             invalid_email: 'Inserisci un indirizzo e-mail valido.',

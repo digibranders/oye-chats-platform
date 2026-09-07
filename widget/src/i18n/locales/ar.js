@@ -197,7 +197,7 @@ export default {
             title: 'التحدث إلى موظف',
             subtitle: 'سيتواصل معك فريقنا خلال لحظات',
             submit: 'طلب موظف خدمة',
-            cancel: 'العودة إلى المساعد الآلي',
+            cancel: 'العودة إلى المحادثة',
             email_placeholder: 'البريد الإلكتروني *',
             name_placeholder: 'اسمك *',
             invalid_email: 'يرجى إدخال بريد إلكتروني صحيح.',

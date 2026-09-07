@@ -193,7 +193,7 @@ export default {
             title: 'คุยกับเจ้าหน้าที่',
             subtitle: 'ทีมงานของเราจะติดต่อกลับในไม่ช้า',
             submit: 'ขอคุยกับเจ้าหน้าที่',
-            cancel: 'กลับไปคุยกับบอท',
+            cancel: 'กลับไปที่แชท',
             email_placeholder: 'อีเมล *',
             name_placeholder: 'ชื่อของคุณ *',
             invalid_email: 'กรุณากรอกอีเมลที่ถูกต้อง',

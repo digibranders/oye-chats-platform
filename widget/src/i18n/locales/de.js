@@ -193,7 +193,7 @@ export default {
             title: 'Mit einer Person sprechen',
             subtitle: 'Unser Team meldet sich in Kürze bei Ihnen',
             submit: 'Mitarbeiter anfordern',
-            cancel: 'Zurück zum Bot',
+            cancel: 'Zurück zum Chat',
             email_placeholder: 'E-Mail-Adresse *',
             name_placeholder: 'Ihr Name *',
             invalid_email: 'Bitte geben Sie eine gültige E-Mail-Adresse ein.',
