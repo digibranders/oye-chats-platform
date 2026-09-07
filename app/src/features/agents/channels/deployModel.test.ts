@@ -16,7 +16,6 @@ import {
   widgetHeartbeat,
 } from './deployModel';
 import { formatDateTime } from '../../../ui';
-import { attributionAnchorHtml } from '../../../data/widgetEmbed';
 import { developerEmail } from './developerEmail';
 
 const BOT_KEY = 'bot-11a026a4b8b3';
@@ -226,26 +225,22 @@ describe('widgetHeartbeat', () => {
 });
 
 describe('embedSnippet', () => {
-  it('carries the script tag and the crawlable anchor by default', () => {
-    const snippet = embedSnippet({ botKey: BOT_KEY, env: 'production', attribution: true });
+  it('is the script tag and nothing else', () => {
+    const snippet = embedSnippet({ botKey: BOT_KEY, env: 'production' });
     expect(snippet).toContain(`data-bot-key="${BOT_KEY}"`);
     expect(snippet).toContain('https://cdn.oyechats.com/oyechats-widget.js');
-    expect(snippet).toContain(attributionAnchorHtml(BOT_KEY));
-    expect(snippet).toContain('rel="nofollow"');
-    expect(snippet.split('\n')).toHaveLength(2);
-  });
-
-  it('drops the anchor entirely for a plan that may remove branding', () => {
-    const snippet = embedSnippet({ botKey: BOT_KEY, env: 'production', attribution: false });
-    expect(snippet).not.toContain('nofollow');
-    expect(snippet).not.toContain('oyechats.com/?');
     expect(snippet.split('\n')).toHaveLength(1);
   });
 
+  it('writes no markup of our own into the customer page', () => {
+    const snippet = embedSnippet({ botKey: BOT_KEY, env: 'production' });
+    expect(snippet).not.toContain('<a ');
+    expect(snippet).not.toContain('nofollow');
+    expect(snippet).not.toContain('Powered by OyeChats');
+  });
+
   it('points at the local preview bundle when the console talks to a local API', () => {
-    expect(embedSnippet({ botKey: BOT_KEY, env: 'development', attribution: false })).toContain(
-      'localhost:4173',
-    );
+    expect(embedSnippet({ botKey: BOT_KEY, env: 'development' })).toContain('localhost:4173');
   });
 });
 
@@ -481,8 +476,8 @@ describe('developerEmail', () => {
   };
 
   it('carries the exact snippet, the placement and both CSP origins', () => {
-    const snippet = embedSnippet({ botKey: BOT_KEY, env: 'production', attribution: true });
-    const mail = developerEmail({ ...base, snippet, platformName: 'WordPress', attribution: true });
+    const snippet = embedSnippet({ botKey: BOT_KEY, env: 'production' });
+    const mail = developerEmail({ ...base, snippet, platformName: 'WordPress' });
     expect(mail.subject).toContain('Acme Support');
     expect(mail.body).toContain(snippet);
     expect(mail.body).toContain('</body>');
@@ -493,9 +488,9 @@ describe('developerEmail', () => {
     expect(decodeURIComponent(mail.href)).toContain(snippet);
   });
 
-  it('does not ask a developer to preserve a credit link the plan does not include', () => {
-    const snippet = embedSnippet({ botKey: BOT_KEY, env: 'production', attribution: false });
-    const mail = developerEmail({ ...base, snippet, attribution: false });
+  it('never asks a developer to keep a credit link on their own page', () => {
+    const snippet = embedSnippet({ botKey: BOT_KEY, env: 'production' });
+    const mail = developerEmail({ ...base, snippet });
     expect(mail.body).not.toContain('Powered by OyeChats');
     expect(mail.body).not.toContain('do not hide it with CSS');
   });

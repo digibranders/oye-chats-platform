@@ -1,5 +1,14 @@
 # Crawlable Attribution & Backlinks Implementation Plan
 
+> **WITHDRAWN 2026-09-07.** Phase B shipped and was then removed in full. The
+> anchor did what it was designed to do, but it put a line of our own markup
+> into pages whose layout we do not control, and on real installs it rendered
+> as a stray strip under the customer's footer. We do not write into a
+> customer's page: attribution is the in-widget badge, which is not crawlable,
+> and that is the accepted trade. Phase A (the badge honouring `branding_text`
+> / `branding_url` and carrying `?ref=`) stands. Kept as a record of the
+> reasoning, not as work to pick up.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make OyeChats attribution visible to search engines and AI crawlers by emitting a server-rendered `<a>` in the customer's install snippet, and fix the widget's dead `branding_url` / `branding_text` fields while adding `?ref=` attribution to the badge.

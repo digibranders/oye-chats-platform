@@ -1395,7 +1395,6 @@ def send_install_invite_email(
     snippet: str,
     script_origin: str,
     api_origin: str,
-    attribution: bool,
     requester_name: str | None,
     reply_to: str,
     platform_name: str | None = None,
@@ -1412,9 +1411,9 @@ def send_install_invite_email(
     recipient is a third party who never signed up with us, so a reply asking
     "did you actually ask for this?" has to reach the colleague who did.
 
-    The snippet is built by the caller from the bot's OWN entitlement, never
-    accepted from a request body: nothing downstream re-checks a string a
-    customer has already pasted into their repository.
+    The snippet is built by the caller, never accepted from a request body:
+    nothing downstream re-checks a string a customer has already pasted into
+    their repository.
     """
     asker = esc(requester_name) if requester_name else "A colleague"
     safe_bot = esc(bot_name)
@@ -1436,16 +1435,6 @@ def send_install_invite_email(
         + p(
             "2. If the site sends a Content-Security-Policy header, it needs "
             f"{strong(esc('script-src ' + script_origin))} and {strong(esc('connect-src ' + api_origin))}."
-        )
-        + (
-            p(
-                "The second line is a small visible &ldquo;Powered by OyeChats&rdquo; credit link. Please keep it "
-                "in the served HTML and do not hide it with CSS: a hidden link is a Google policy violation "
-                "against your own domain.",
-                top=8,
-            )
-            if attribution
-            else ""
         )
         + p(f"Questions? Just reply to this email and it goes straight back to {esc(reply_to)}.", top=8)
     )

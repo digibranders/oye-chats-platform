@@ -64,7 +64,7 @@ sequenceDiagram
 | [`api/app/services/plan_service.py`](../../../../api/app/services/plan_service.py) | `assign_default_plan_to_client` — picks the `trial` row |
 | [`app/src/pages/Register.tsx`](../../../../app/src/pages/Register.tsx) | Sign-up form |
 | [`app/src/onboarding/`](../../../../app/src/onboarding) | First-run / setup flow |
-| [`app/src/features/agents/channels/DeployPage.tsx`](../../../../app/src/features/agents/channels/DeployPage.tsx) | Embed snippet UI (variants in [`app/src/data/widgetEmbed.ts`](../../../../app/src/data/widgetEmbed.ts)) |
+| [`app/src/features/agents/channels/DeployPage.tsx`](../../../../app/src/features/agents/channels/DeployPage.tsx) | Embed snippet UI (the snippet itself in [`app/src/features/agents/channels/deployModel.ts`](../../../../app/src/features/agents/channels/deployModel.ts)) |
 | [`app/src/features/agents/knowledge/`](../../../../app/src/features/agents/knowledge) | Upload + crawl UI |
 
 ## Failure modes

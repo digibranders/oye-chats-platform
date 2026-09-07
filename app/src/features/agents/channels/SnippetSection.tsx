@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { Bot as BotIcon, Check, Mail, Send } from 'lucide-react';
 import {
   Alert,
@@ -12,14 +11,11 @@ import {
   CopyField,
   Field,
   Input,
-  Skeleton,
   Tooltip,
-  buttonClass,
   formatRelative,
   useClipboard,
 } from '../../../ui';
 import { recordActivationEvent, sendInstallInvite } from '../../../services/api';
-import { ATTRIBUTION_TEXT } from '../../../data/widgetEmbed';
 import type { Platform, PlatformEnv } from '../../../data/platformIntegrations';
 import { embedSnippet } from './deployModel';
 import { developerEmail } from './developerEmail';
@@ -35,10 +31,6 @@ export interface SnippetSectionProps {
   apiBaseUrl: string;
   /** The platform chosen in the guide below, so the prompt and email match it. */
   platform: Platform | null;
-  /** True when the snippet must carry the crawlable attribution anchor. */
-  attribution: boolean;
-  /** Entitlements have not resolved, so we do not yet know which snippet is right. */
-  resolving: boolean;
   /** `Bot.dev_invite_email` — who the briefing last went to, or null. */
   devInviteEmail: string | null;
   /** `Bot.dev_invite_sent_at` — when it went, or null. */
@@ -55,22 +47,9 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 /**
  * The snippet, and the two ways it leaves this page without being pasted here.
  *
- * **Nothing is rendered until entitlements resolve.** The entitlements fallback
- * defaults `branding_removable` to `false`, so an unresolved fetch would compute
- * "include the attribution anchor" even for a workspace entitled to remove it —
- * and unlike a gated *action*, which the backend re-checks, nothing re-verifies
- * a string the customer has already copied into their own repository. So this
- * waits rather than guesses.
- *
- * The attribution anchor is stated, never hidden. It is a visible, `nofollow`
- * link in the customer's served HTML, and it is the only attribution a crawler
- * can ever see: the widget mounts into a shadow root from JavaScript after a
- * visitor clicks the launcher, so its in-widget badge is invisible to every
- * crawler — non-rendering crawlers run no JS, and rendering ones never click.
- * A customer who finds that out later, from their SEO agency, is a customer we
- * have lost. It is one alert of 24 words now, not 58 plus a 44-word twin for the
- * plans that do not get it — the `CodeBlock`'s own caption already says which
- * snippet this is.
+ * The snippet is one script tag and nothing else. It does not vary by plan, and
+ * we write no markup of our own into a customer's page: OyeChats branding lives
+ * inside the widget, where the `branding_removable` entitlement governs it.
  */
 export function SnippetSection({
   botKey,
@@ -79,8 +58,6 @@ export function SnippetSection({
   env,
   apiBaseUrl,
   platform,
-  attribution,
-  resolving,
   devInviteEmail,
   devInviteSentAt,
 }: SnippetSectionProps) {
@@ -99,14 +76,13 @@ export function SnippetSection({
   // The one case worth a second look: the same person, twice.
   const [confirming, setConfirming] = useState(false);
 
-  const snippet = embedSnippet({ botKey, env, attribution });
+  const snippet = embedSnippet({ botKey, env });
   const email = developerEmail({
     botName,
     snippet,
     env,
     apiBaseUrl,
     platformName: platform?.name ?? null,
-    attribution,
   });
 
   function reveal() {
@@ -159,10 +135,7 @@ export function SnippetSection({
   }
 
   async function copyPrompt() {
-    // Belt-and-braces alongside the disabled state: never build a briefing from
-    // an unresolved entitlement.
-    if (resolving) return;
-    await prompt.copy(buildInstallPrompt({ botKey, apiBaseUrl, env, platform, attribution }));
+    await prompt.copy(buildInstallPrompt({ botKey, apiBaseUrl, env, platform }));
     // Recorded on intent, not on clipboard success: the customer asked for the
     // snippet, and whether the browser let us write it is a browser fact, not an
     // activation fact. `recordActivationEvent` never throws by design.
@@ -178,45 +151,11 @@ export function SnippetSection({
         description={t('agents.oneTagInYourSites') || 'One tag, in your site’s shared layout.'}
       />
       <CardBody className="space-y-5">
-        {resolving ? (
-          <div aria-busy aria-label={t('agents.workingOutWhichSnippetYour') || 'Working out which snippet your plan needs'} className="space-y-2">
-            <Skeleton className="h-4 w-48" />
-            <Skeleton className="h-32 w-full rounded-md" />
-          </div>
-        ) : (
-          <CodeBlock
-            code={snippet}
-            label={t('agents.embedSnippet') || 'embed snippet'}
-            caption={
-              attribution
-                ? t('agents.pasteBeforeBodyBothLines') || 'Paste before </body>: both lines, the script and the credit link'
-                : t('agents.pasteBeforeBodyYourPlan') || 'Paste before </body>. Your plan removes the credit link'
-            }
-          />
-        )}
-
-        {!resolving && attribution ? (
-          <Alert
-            tone="plan"
-            title={
-              t('agents.theSecondLineIsYourLink', { text: ATTRIBUTION_TEXT }) ||
-              `The second line is your “${ATTRIBUTION_TEXT}” link`
-            }
-            action={
-              <Link to="/billing" className={buttonClass('secondary', 'sm')}>
-                {t('agents.seePlans') || 'See plans'}
-              </Link>
-            }
-          >
-            <Trans
-              k="agents.itIsAVisibleNofollowLink"
-              fallback="It is a visible {nofollow} link and has to stay in the HTML your server sends. White-label plans get a snippet without it."
-              // @i18n-exempt: `nofollow` is the literal HTML attribute value,
-              // rendered as code. It is the same word in every language.
-              values={{ nofollow: <code className="figure">nofollow</code> }}
-            />
-          </Alert>
-        ) : null}
+        <CodeBlock
+          code={snippet}
+          label={t('agents.embedSnippet') || 'embed snippet'}
+          caption={t('agents.pasteBeforeBody') || 'Paste before </body> in your site’s shared layout'}
+        />
 
         <div>
           {/* Not masked. The key is a public identifier — it is visible in the
@@ -264,7 +203,6 @@ export function SnippetSection({
               variant="secondary"
               size="sm"
               onClick={() => void copyPrompt()}
-              disabled={resolving}
               iconLeft={
                 prompt.state === 'copied' ? (
                   <Check aria-hidden className="text-success" />

@@ -20,7 +20,6 @@ import {
   buttonClass,
 } from '../../../ui';
 import { useAgent } from '../../../context/AgentContext';
-import { useEntitlements } from '../../../hooks/useEntitlements';
 import { getBotDemoUrl, getClientSettings, updateBot } from '../../../services/api';
 import { DEFAULT_PLATFORM_ID, platforms } from '../../../data/platformIntegrations';
 import { useSettingsDraft } from '../advanced/useSettingsDraft';
@@ -131,7 +130,6 @@ export function DeployPage() {
   const { t } = useTranslation();
   const { agent, loading: agentLoading } = useAgent();
   const deploy = useDeployData();
-  const { hasFeature, loading: entitlementsLoading } = useEntitlements();
   // Opens on HTML rather than on nothing. The panel's whole job is to show
   // steps, and an empty select showed a reader who had just been told to
   // install something a second thing to choose first. HTML because it is the
@@ -177,12 +175,6 @@ export function DeployPage() {
     }) => updateAccess((previous) => ({ ...previous, ...patch })),
     [updateAccess],
   );
-
-  // The snippet variant is entitlement-driven and keys off the plan, not off the
-  // chatbot's own `show_branding` flag: a paid customer who chooses to keep the
-  // badge still gets an anchor-free snippet, because the anchor and the badge
-  // are different things.
-  const attribution = !hasFeature('branding_removable');
 
   const bot = deploy.bot;
   const platform = platforms.find((p) => p.id === platformId) ?? null;
@@ -373,8 +365,6 @@ export function DeployPage() {
             env={deploy.env}
             apiBaseUrl={deploy.apiBaseUrl}
             platform={platform}
-            attribution={attribution}
-            resolving={entitlementsLoading}
             devInviteEmail={bot.dev_invite_email ?? null}
             devInviteSentAt={bot.dev_invite_sent_at ?? null}
           />
@@ -444,8 +434,6 @@ export function DeployPage() {
                       env={deploy.env}
                       platformId={platformId}
                       onPlatformChange={setPlatformId}
-                      attribution={attribution}
-                      resolving={entitlementsLoading}
                     />
                   </CardBody>
                 </TabPanel>

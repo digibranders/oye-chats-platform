@@ -48,25 +48,23 @@ The customer can adjust, with a live preview:
   - `mascot` — a generic bot icon rendered on the brand color as a background.
 - **Launcher name** — the short prompt text shown near the chat bubble before a visitor opens it (default: "Have Questions?").
 
-**One-line install** [T1, root `CLAUDE.md`, `app/src/data/widgetEmbed.ts`]
-- The full production embed is two tags:
+**One-line install** [T1, root `CLAUDE.md`, `app/src/features/agents/channels/deployModel.ts`]
+- The full production embed is one tag:
   ```html
   <script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>
-  <a href="https://www.oyechats.com/?ref=bot-xxx&utm_source=widget&utm_medium=referral"
-     rel="nofollow" style="font-size:11px;color:inherit;opacity:0.7;text-decoration:none">Powered by OyeChats</a>
   ```
 - The script the customer pastes is **not** the chat app — it is a deliberately tiny **loader**, budgeted at 8 KB gzipped and enforced in CI (`widget/package.json`, `size-limit`). It reads its own `data-bot-key` attribute, exposes `window.OyeChats` so the host page can queue calls before the app exists, then fetches a hashed chunk manifest and imports the real ESM app, which creates the DOM container, attaches a shadow root, injects the hashed stylesheet and mounts an isolated React app talking to the backend via an `X-Bot-Key` header. Chat, live chat, the forms, Sentry and each non-English locale are separate lazy chunks, so a visitor who never opens the widget downloads only the launcher. From the customer's side nothing changes: no build step, no npm install, no SDK integration. [T1 — `widget/src/loader.js`, `widget/src/app-entry.jsx`, `widget/package.json` size budgets]
 
   *(An earlier revision of this document described a "self-contained ~416KB IIFE." That was the pre-split architecture and is no longer what ships — do not quote a single bundle size for the embed.)*
 - It genuinely works on any platform with a `<body>` tag — same integration pattern as Intercom, Crisp, or Drift [T1].
-- Workspaces with a `branding_removable` entitlement get a variant snippet *without* the visible "Powered by OyeChats" attribution line [T1]. This is a real, code-level gated capability. As of 2026-08-26 it is **a separately purchased add-on, not a plan inclusion**: every plan seeds `branding_removable: false`, and the entitlement is granted only by an authorized add-on mandate (`Subscription.branding_addon_active`) billed on its own Razorpay subscription. The price is ₹499/month or $5/month, and like every OyeChats price it is a base price: an Indian customer is charged ₹588.82 once GST is added, an international customer $5.00 (an export, no Indian GST).
-- **Why the attribution line is a real `<a>` tag, not a rendered widget element:** the widget mounts into a shadow root from JavaScript after a visitor *clicks* the launcher — so anything the widget itself renders, including any in-widget "Powered by" mark, is invisible to search crawlers (non-rendering crawlers execute no JS; rendering ones don't click). The `<a>` tag sitting directly in the customer's served HTML is the only attribution surface that's actually crawlable.
+- Workspaces with a `branding_removable` entitlement get a widget *without* the "Powered by OyeChats" badge [T1]. This is a real, code-level gated capability. As of 2026-08-26 it is **a separately purchased add-on, not a plan inclusion**: every plan seeds `branding_removable: false`, and the entitlement is granted only by an authorized add-on mandate (`Subscription.branding_addon_active`) billed on its own Razorpay subscription. The price is ₹499/month or $5/month, and like every OyeChats price it is a base price: an Indian customer is charged ₹588.82 once GST is added, an international customer $5.00 (an export, no Indian GST).
+- **Attribution lives inside the widget, not in the customer's page.** A 2026-08 revision added a second line to the snippet, a crawlable `<a>` tag, so that attribution would be visible to search crawlers (the widget mounts into a shadow root from JavaScript after a visitor clicks, so nothing it renders is crawlable). That was withdrawn on 2026-09-07: it placed a stray line of our text into pages whose layout we do not control. Attribution is not crawlable, and that is the accepted trade.
 
 ## 4. What It Looks Like
 
 - **During setup (Customize step):** a two-color picker (brand color, user-bubble color) with clickable swatches, plus an avatar selector showing three tabs/options (upload / orb / mascot), all reflected instantly in a **live preview pane** on the same screen — the customer sees the actual widget update in real time as they adjust settings, not a static mockup [T1].
 - **The widget itself, once live:** a floating launcher button (bottom-right convention, matching Intercom/Crisp/Drift-style placement) [T1, root `CLAUDE.md`], carrying either the uploaded logo, the colored orb, or the mascot icon, in the chosen brand color. A greeting/prompt bubble ("Have Questions?" by default) appears near the launcher.
-- **The install snippet UI:** shown as copyable code in the dashboard's Deploy step — a visible two-line block the customer copies into their site.
+- **The install snippet UI:** shown as copyable code in the dashboard's Deploy step — a single line the customer copies into their site.
 
 ## 5. A Real Scenario Walkthrough
 
@@ -76,7 +74,7 @@ A skincare brand signs up for OyeChats and points the setup flow at their existi
 2. It finds the site's Apple touch icon in the page `<head>`, downloads it, and processes it into a clean 512×512 avatar.
 3. It classifies the site's copy tone as closest to "Luxury/Premium" and quietly sets that as the AI's starting personality.
 4. When the business owner reaches the Customize step, they don't start from a blank template — the widget preview already shows their green, their icon, and a premium tone in the sample replies. They tweak the user-message-bubble color slightly and switch the avatar from "upload" to a colored "orb" instead because they'd rather not use their icon at chat scale.
-5. At Deploy, they copy a two-line snippet and paste it into their Shopify theme's HTML.
+5. At Deploy, they copy a one-line snippet and paste it into their Shopify theme's HTML.
 6. The widget goes live immediately — recognizably *their* brand, not a generic AI chat plugin — with no design work required from them and no involvement from a developer beyond pasting one snippet.
 
 ## 6. Capabilities vs Limits
@@ -97,7 +95,7 @@ A skincare brand signs up for OyeChats and points the setup flow at their existi
 
 ## 7. Evidence & Open [VERIFY] Items
 
-- All core mechanics (color extraction, favicon extraction, tone presets, manual customization UI, one-line install, platform breadth, paid attribution removal) are [T1] — confirmed directly in `api/app/services/brand_color_extractor.py`, `favicon_extractor.py`, `brand_tone.py`, `app/src/features/launch-studio/steps/CustomizeStep.tsx`, `app/src/data/widgetEmbed.ts`, `app/src/design-system/icons/platformLogos.ts`, and root `CLAUDE.md`.
+- All core mechanics (color extraction, favicon extraction, tone presets, manual customization UI, one-line install, platform breadth, paid attribution removal) are [T1] — confirmed directly in `api/app/services/brand_color_extractor.py`, `favicon_extractor.py`, `brand_tone.py`, `app/src/features/launch-studio/steps/CustomizeStep.tsx`, `app/src/features/agents/channels/deployModel.ts`, `app/src/design-system/icons/platformLogos.ts`, and root `CLAUDE.md`.
 - **[VERIFY]** Whether brand-color/tone extraction happens automatically during the standard Launch Studio Train step for every new bot, or whether it requires an explicit action — the service modules confirm the *capability* exists and is wired to the crawl orchestrator, but this doc does not independently trace the exact trigger point in `crawl_orchestrator.py`.
 - **[VERIFY]** No font/typography-matching capability was found in code — only color and a raster avatar are confirmed.
 - Per this session's platform-wide brand guidance: never depict the widget's `branding_removable` attribution-free variant as the default for all customers. It is confirmed to require a paid add-on, and is not universal.

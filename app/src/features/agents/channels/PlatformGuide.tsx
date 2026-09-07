@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { CodeBlock, Combobox, EmptyState, Field, Skeleton, type ComboboxOption } from '../../../ui';
+import { CodeBlock, Combobox, EmptyState, Field, type ComboboxOption } from '../../../ui';
 import {
   categoryLabels,
   categoryOrder,
@@ -15,9 +15,6 @@ export interface PlatformGuideProps {
   env: PlatformEnv;
   platformId: string | null;
   onPlatformChange: (id: string | null) => void;
-  attribution: boolean;
-  /** Entitlements have not resolved, so the steps could quote the wrong snippet. */
-  resolving: boolean;
 }
 
 /** The picker's options, grouped by category the way the data module orders them. */
@@ -58,13 +55,11 @@ export function PlatformGuide({
   env,
   platformId,
   onPlatformChange,
-  attribution,
-  resolving,
 }: PlatformGuideProps) {
   const { t } = useTranslation();
   const options = useMemo(() => platformOptions(), []);
   const platform: Platform | null = platforms.find((p) => p.id === platformId) ?? null;
-  const steps = platform && !resolving ? platform.getSteps(botKey, env, { attribution }) : [];
+  const steps = platform ? platform.getSteps(botKey, env) : [];
 
   return (
     <div className="space-y-5">
@@ -87,12 +82,6 @@ export function PlatformGuide({
           flush
           title={t('agents.chooseAPlatformToSee') || 'Choose a platform to see the steps'}
         />
-      ) : resolving ? (
-        <div aria-busy aria-label={t('agents.workingOutWhichSnippetYour') || 'Working out which snippet your plan needs'} className="space-y-3">
-          <Skeleton className="h-16 w-full rounded-md" />
-          <Skeleton className="h-16 w-full rounded-md" />
-          <Skeleton className="h-16 w-full rounded-md" />
-        </div>
       ) : (
         <ol className="space-y-5">
           {steps.map((step, index) => (

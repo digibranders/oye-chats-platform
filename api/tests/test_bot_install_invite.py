@@ -54,13 +54,12 @@ def _make_bot(db, client: Client, *, key: str = "bot-invite-1") -> Bot:
 class _Harness:
     """The route, wired to the test session with the email send captured."""
 
-    def __init__(self, db, client: Client, *, entitled: bool = False):
+    def __init__(self, db, client: Client):
         from app.api import auth, bot_routes
 
         self.sent: list[dict] = []
         self.db = db
         self.mod = bot_routes
-        self.entitled = entitled
 
         app = FastAPI()
         app.state.limiter = limiter
@@ -81,10 +80,6 @@ class _Harness:
         self._patches = [
             patch.object(self.mod, "get_session", lambda: _session_cm(self.db)),
             patch.object(self.mod, "send_install_invite_email", _capture),
-            # Deny-by-default entitlement resolution needs a real subscription
-            # otherwise; the snippet's attribution is what we are asserting on,
-            # so the branding answer is stated directly.
-            patch.object(self.mod, "_bot_has_branding_addon", lambda *a, **k: self.entitled),
         ]
         for p in self._patches:
             p.start()
@@ -178,25 +173,32 @@ def test_an_invalid_address_sends_nothing(db):
     assert bot.dev_invite_sent_at is None
 
 
-def test_the_snippet_carries_attribution_unless_the_plan_removes_it(db):
+def test_the_snippet_is_the_script_tag_and_nothing_else(db):
+    """We put no markup of our own into a customer's page.
+
+    Branding lives inside the widget, where the add-on governs it. The mailed
+    snippet is one line: a second one would end up pasted into the customer's
+    template, where nothing we ship can take it back out.
+    """
     client = _make_client(db, email="owner6@acme.com", api_key="inv-key-7")
     bot = _make_bot(db, client, key="bot-invite-6")
 
-    with _Harness(db, client, entitled=False) as h:
+    with _Harness(db, client) as h:
         h.post(bot.id, "dev@acme.com")
-    assert "Powered by OyeChats" in h.sent[0]["snippet"]
 
-    with _Harness(db, client, entitled=True) as h2:
-        h2.post(bot.id, "dev@acme.com")
-    assert "Powered by OyeChats" not in h2.sent[0]["snippet"]
+    snippet = h.sent[0]["snippet"]
+    assert snippet.splitlines() == [snippet]
+    assert "Powered by OyeChats" not in snippet
+    assert "<a " not in snippet
+    assert f'data-bot-key="{bot.bot_key}"' in snippet
 
 
 def test_the_snippet_is_never_taken_from_the_caller(db):
-    """A client cannot mail itself a white-label snippet it is not entitled to."""
+    """A client cannot dictate the snippet we mail to their developer."""
     client = _make_client(db, email="owner7@acme.com", api_key="inv-key-8")
     bot = _make_bot(db, client, key="bot-invite-7")
 
-    with _Harness(db, client, entitled=False) as h:
+    with _Harness(db, client) as h:
         res = h.api.post(
             f"/bots/{bot.id}/install-invite",
             json={"email": "dev@acme.com", "snippet": "<script>anything</script>"},
@@ -204,7 +206,7 @@ def test_the_snippet_is_never_taken_from_the_caller(db):
 
     assert res.status_code == 200, res.text
     assert "anything" not in h.sent[0]["snippet"]
-    assert "Powered by OyeChats" in h.sent[0]["snippet"]
+    assert f'data-bot-key="{bot.bot_key}"' in h.sent[0]["snippet"]
 
 
 def test_a_send_is_recorded_as_an_activation_milestone(db):

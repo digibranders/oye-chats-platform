@@ -26,7 +26,6 @@ import {
   type Platform,
   type PlatformEnv,
 } from '../../../data/platformIntegrations';
-import { attributionAnchorHtml } from '../../../data/widgetEmbed';
 
 export interface BuildInstallPromptOptions {
   /** The agent's public embed key (`data-bot-key`). */
@@ -37,8 +36,6 @@ export interface BuildInstallPromptOptions {
   env: PlatformEnv;
   /** The platform the user picked; when null the prompt asks the agent to detect it. */
   platform?: Platform | null;
-  /** Include the crawlable attribution anchor in the briefing. Defaults to true. */
-  attribution?: boolean;
 }
 
 /** Render one install step as a numbered markdown block with its code fence. */
@@ -49,7 +46,7 @@ function renderStep(step: { title: string; description: string; code: string | n
 }
 
 /** Steps to use when the user hasn't picked a platform yet. */
-function genericSteps(botKey: string, scriptUrl: string, { attribution }: { attribution: boolean }): string {
+function genericSteps(botKey: string, scriptUrl: string): string {
   return [
     'This prompt was generated without a platform selected, so **detect the stack yourself** by inspecting the repository, then install the snippet the way that stack expects:',
     '',
@@ -67,16 +64,6 @@ function genericSteps(botKey: string, scriptUrl: string, { attribution }: { attr
     '```html',
     `<script src="${scriptUrl}" data-bot-key="${botKey}"></script>`,
     '```',
-    ...(attribution
-      ? [
-          '',
-          'And directly beside it, this visible attribution link:',
-          '',
-          '```html',
-          attributionAnchorHtml(botKey),
-          '```',
-        ]
-      : []),
   ].join('\n');
 }
 
@@ -89,15 +76,14 @@ export function buildInstallPrompt({
   apiBaseUrl,
   env,
   platform,
-  attribution = true,
 }: BuildInstallPromptOptions): string {
   const scriptUrl = widgetScriptUrl(env);
   const api = apiBaseUrl.replace(/\/+$/, '');
   const target = platform ? platform.name : 'my website';
 
   const steps = platform
-    ? platform.getSteps(botKey, env, { attribution }).map(renderStep).join('\n\n')
-    : genericSteps(botKey, scriptUrl, { attribution });
+    ? platform.getSteps(botKey, env).map(renderStep).join('\n\n')
+    : genericSteps(botKey, scriptUrl);
 
   return `# Task: Install OyeChats AI Chat Widget on ${target}
 
@@ -120,15 +106,10 @@ ${steps}
 1. **Load Site-wide:** Include the snippet once in the root layout or main template before \`</body>\`. Do not duplicate it.
 2. **Public Key:** \`${botKey}\` is safe to commit in client code.
 3. **No Local Bundling:** Do not vendor or npm install the bundle; load directly from \`${scriptUrl}\`.
-4. **Attribution Link:** ${
-    attribution
-      ? 'The anchor text and `rel="nofollow"` must appear in the HTML the server sends, visible to a normal reader - verify with `curl` on the page (before any JavaScript runs) and confirm the text is there. Non-exhaustive examples of what breaks this: CSS that hides an element or its content, the `hidden`/`aria-hidden` attributes or a visually-hidden ("sr-only") class, `next/dynamic(..., { ssr: false })`, lazy-loading, or any client-only component.'
-      : 'Do not add an attribution link for this account, and leave any existing one on the site untouched - this only controls what gets added, not what is already there.'
-  }
-5. **Verification:**
+4. **Verification:**
    - Public info probe: \`GET ${api}/bots/settings/public\` (H: X-Bot-Key: ${botKey})
    - AI chat probe (consumes one message credit): \`POST ${api}/chat\` (H: X-Bot-Key: ${botKey}). Do not add an \`Origin\` or \`Referer\` header when testing via curl.
-6. **CSP Allowances (if CSP is active):** \`script-src ${new URL(scriptUrl).origin}\` and \`connect-src ${api}\`.
+5. **CSP Allowances (if CSP is active):** \`script-src ${new URL(scriptUrl).origin}\` and \`connect-src ${api}\`.
 
 ## Known Failure Modes
 Check these before reporting the install as done. Each one produces a page that

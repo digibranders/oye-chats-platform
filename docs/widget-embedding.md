@@ -30,13 +30,11 @@ Add this before the closing `</body>` tag:
 
 ```html
 <script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>
-<a href="https://www.oyechats.com/?ref=bot-xxx&utm_source=widget&utm_medium=referral"
-   rel="nofollow" style="font-size:11px;color:inherit;opacity:0.7;text-decoration:none">Powered by OyeChats</a>
 ```
 
 Replace `bot-xxx` with the bot key from the admin dashboard. That's it — the widget handles everything else automatically.
 
-> **The `<a>` is not decoration, and it is not optional on branded plans.** The widget mounts into a shadow root from JS *after* the visitor clicks the launcher, so its in-widget "Powered by" badge is invisible to every crawler. This anchor is the only attribution that lands in the customer's served HTML. It is visible (hidden text would penalise the *customer's* domain), `nofollow` (a sitewide self-placed link is a named link scheme), and `color:inherit` so it can never render invisible on a dark host background. Workspaces with the `branding_removable` entitlement get a snippet without it — the dashboard emits both variants from `app/src/data/widgetEmbed.ts`.
+> **One tag, and nothing else.** Attribution is the in-widget badge, governed by the `branding_removable` entitlement. Earlier snippets carried a second line, a crawlable "Powered by OyeChats" anchor, for backlinks; it was withdrawn because it put a stray line of our text into pages whose layout we do not control. Sites installed before that still have the anchor in their own templates, and removing it is theirs to do.
 
 ## What the Visitor Sees
 
