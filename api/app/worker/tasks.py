@@ -181,121 +181,50 @@ async def task_ingest_web_batch(
     return result
 
 
-# ── Embedding Backfill ──────────────────────────────────────────────────────
+# ── Embedding profiles ──────────────────────────────────────────────────────
 
 
-# AR-44: how many batches run concurrently in task_reembed_all_documents.
-# Each embed_chunks() call is itself internally concurrent (a ThreadPoolExecutor
-# inside gemini_embedding.py), but consecutive BATCHES previously ran strictly
-# sequentially. Batch N+1 waited for batch N's full embed+commit even though
-# the network-bound embed calls could overlap under the same project-wide
-# rate limiter (embed_rate_limiter paces requests regardless of how many
-# concurrent callers there are, so widening this is safe, not just faster).
-# Kept small. This is an offline backfill task, not latency-sensitive; the
-# win is fewer idle gaps waiting on one batch's DB round-trip while the next
-# batch's embed call could already be in flight.
-_REEMBED_CONCURRENT_BATCHES = 3
+async def task_migrate_embedding_profile(ctx: dict, bot_id: int | None = None, batch_size: int | None = None) -> dict:
+    """Move bots onto the current embedding profile (``app/core/embedding_profiles.py``).
 
+    One bot (``bot_id``) or, by default, every bot that is not on the current
+    profile or still owns a chunk that is not. Bots run one after another,
+    each in a worker thread: the work is network-and-DB bound and paces itself
+    against the shared embed rate limiter, so a real corpus takes hours (the
+    task is registered with a 24h timeout). One bot failing does not stop the
+    others, and a re-run resumes: batches already committed stay stamped.
 
-async def _reembed_one_batch(batch_ids: list[int]) -> tuple[int, int]:
-    """Embed + persist one batch of documents. Returns (succeeded, failed)
-    counts for this batch, never raises; a batch-level failure is caught
-    and counted as fully failed so one bad batch doesn't abort the run.
+    The mechanics (batches, the row lock, the flip) live in
+    ``services/embedding_profile_service.py``. Enqueue this with
+    ``scripts/migrate_embedding_profile.py``.
     """
     import asyncio
 
-    from sqlalchemy import text
+    from app.services import embedding_profile_service as svc
 
-    from app.db.session import get_session
-    from app.ingestion.embedder import embed_chunks
+    size = batch_size or svc.MIGRATION_BATCH
+    bot_ids = [bot_id] if bot_id is not None else await asyncio.to_thread(svc.bots_needing_migration)
+    logger.info("task_migrate_embedding_profile: %d bot(s) to migrate (batch_size=%d)", len(bot_ids), size)
 
-    with get_session() as session:
-        rows = session.execute(
-            text("SELECT id, content FROM documents WHERE id = ANY(:ids)"),
-            {"ids": batch_ids},
-        ).fetchall()
+    results: list[dict] = []
+    for target in bot_ids:
+        try:
+            result = await asyncio.to_thread(svc.migrate_bot, target, batch_size=size)
+        except Exception as exc:
+            logger.exception("task_migrate_embedding_profile: bot %s raised", target)
+            result = {"bot_id": target, "status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+        results.append(result)
 
-    contents = [r[1] for r in rows]
-
-    try:
-        embeddings = await asyncio.to_thread(embed_chunks, contents)
-    except Exception as exc:
-        logger.error(
-            "task_reembed_all_documents: batch starting id=%d failed - %s: %s",
-            batch_ids[0],
-            type(exc).__name__,
-            exc,
-        )
-        return 0, len(batch_ids)
-
-    with get_session() as session:
-        for row, embedding in zip(rows, embeddings, strict=True):
-            emb_str = "[" + ",".join(str(v) for v in embedding) + "]"
-            session.execute(
-                text("UPDATE documents SET embedding = CAST(:emb AS vector) WHERE id = :id"),
-                {"emb": emb_str, "id": row[0]},
-            )
-        session.commit()
-
-    return len(batch_ids), 0
-
-
-async def task_reembed_all_documents(ctx: dict, batch_size: int = 50) -> dict:
-    """Re-embed all documents using the current embed_chunks() provider.
-
-    Run this once after the a1b2c3d4e5f6 migration to backfill 768-dim vectors
-    for every document that has a NULL embedding (i.e. all rows post-migration).
-
-    Batches run in windows of ``_REEMBED_CONCURRENT_BATCHES`` concurrently
-    (AR-44) rather than strictly one at a time. Safe because the shared
-    project-wide embed rate limiter paces actual request volume regardless
-    of how many concurrent batches are in flight.
-
-    Returns a summary dict with total, succeeded, and failed counts.
-    """
-    import asyncio
-
-    from sqlalchemy import text
-
-    from app.db.session import get_session
-
-    logger.info(
-        "task_reembed_all_documents: starting (batch_size=%d, concurrent_batches=%d)",
-        batch_size,
-        _REEMBED_CONCURRENT_BATCHES,
-    )
-
-    with get_session() as session:
-        # Fetch IDs of all documents with NULL embedding in ascending order.
-        id_rows = session.execute(text("SELECT id FROM documents WHERE embedding IS NULL ORDER BY id")).fetchall()
-        doc_ids = [r[0] for r in id_rows]
-
-    total = len(doc_ids)
-    logger.info("task_reembed_all_documents: %d documents to embed", total)
-
-    batches = [doc_ids[i : i + batch_size] for i in range(0, total, batch_size)]
-    succeeded = failed = 0
-
-    for window_start in range(0, len(batches), _REEMBED_CONCURRENT_BATCHES):
-        window = batches[window_start : window_start + _REEMBED_CONCURRENT_BATCHES]
-        results = await asyncio.gather(*(_reembed_one_batch(b) for b in window))
-        for batch_succeeded, batch_failed in results:
-            succeeded += batch_succeeded
-            failed += batch_failed
-        logger.info(
-            "task_reembed_all_documents: %d/%d done (failed=%d)",
-            succeeded,
-            total,
-            failed,
-        )
-
-    logger.info(
-        "task_reembed_all_documents: complete. Total=%d succeeded=%d failed=%d",
-        total,
-        succeeded,
-        failed,
-    )
-    return {"total": total, "succeeded": succeeded, "failed": failed}
+    summary = {
+        "bots": len(results),
+        "reembedded": sum(int(r.get("reembedded") or 0) for r in results),
+        "migrated": sum(1 for r in results if r.get("status") == "migrated"),
+        "already_current": sum(1 for r in results if r.get("status") == "already_current"),
+        "retry": sum(1 for r in results if r.get("status") == "retry"),
+        "failed": sum(1 for r in results if r.get("status") in ("failed", "not_found")),
+    }
+    logger.info("task_migrate_embedding_profile: complete %s", summary)
+    return {**summary, "results": results}
 
 
 async def task_reembed_document(ctx: dict, document_id: int) -> dict:
@@ -303,33 +232,18 @@ async def task_reembed_document(ctx: dict, document_id: int) -> dict:
 
     Documents are stored one chunk per row (``documents.content`` +
     ``documents.embedding``). Super-admin "reindex" recomputes the chunk's
-    vector with the current embedding provider, useful after a provider /
-    dimension change or when a row's embedding is stale or NULL.
+    vector under the owning bot's embedding profile and stamps the row with
+    it, useful when a row's vector is stale.
 
     Returns a summary dict the ARQ result store keeps for status polling.
     """
     import asyncio
 
-    from sqlalchemy import text
-
-    from app.db.session import get_session
-    from app.ingestion.embedder import embed_chunks
+    from app.services.embedding_profile_service import reembed_document
 
     logger.info("task_reembed_document: document_id=%d", document_id)
-
-    with get_session() as session:
-        row = session.execute(
-            text("SELECT content FROM documents WHERE id = :id"),
-            {"id": document_id},
-        ).fetchone()
-
-    if row is None:
-        logger.warning("task_reembed_document: document %d not found", document_id)
-        return {"document_id": document_id, "status": "not_found"}
-
-    content = row[0] or ""
     try:
-        embeddings = await asyncio.to_thread(embed_chunks, [content])
+        result = await asyncio.to_thread(reembed_document, document_id)
     except Exception as exc:
         logger.error(
             "task_reembed_document: embedding failed for document %d - %s: %s",
@@ -338,17 +252,11 @@ async def task_reembed_document(ctx: dict, document_id: int) -> dict:
             exc,
         )
         return {"document_id": document_id, "status": "failed", "error": str(exc)}
-
-    emb_str = "[" + ",".join(str(v) for v in embeddings[0]) + "]"
-    with get_session() as session:
-        session.execute(
-            text("UPDATE documents SET embedding = CAST(:emb AS vector) WHERE id = :id"),
-            {"emb": emb_str, "id": document_id},
-        )
-        session.commit()
-
-    logger.info("task_reembed_document: document %d re-embedded", document_id)
-    return {"document_id": document_id, "status": "complete"}
+    if result["status"] == "not_found":
+        logger.warning("task_reembed_document: document %d not found", document_id)
+    else:
+        logger.info("task_reembed_document: document %d re-embedded", document_id)
+    return result
 
 
 # ── Webhook Delivery ────────────────────────────────────────────────────────

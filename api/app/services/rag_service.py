@@ -16,6 +16,7 @@ from sqlalchemy.orm import joinedload
 
 from app import config
 from app.core.cache import QA_RESPONSE_TTL, cache_delete, cache_get, cache_set, qa_response_key
+from app.core.embedding_profiles import EMBEDDING_PROFILE_LEGACY, normalize_profile, query_task_type
 from app.core.langfuse_client import get_langfuse, langfuse_generation, redact_pii
 from app.core.metrics import forward_to_sentry_if_alertable, increment_metric_counter
 from app.core.thread_pool import submit_background
@@ -2398,19 +2399,30 @@ def _vector_search(
     query_embedding: list,
     k: int = 15,
     max_distance: float | None = None,
+    embedding_profile: str | None = None,
 ) -> list:
     """Run vector similarity search in its own DB session (thread-safe).
 
     ``max_distance`` is forwarded only when provided, so the default path stays
     byte-identical to ``search_similar_documents``'s own English-tuned default.
     Phase 3 passes a relaxed value for non-English sessions (see
-    ``CROSS_LINGUAL_MAX_DISTANCE``)."""
+    ``CROSS_LINGUAL_MAX_DISTANCE``). ``embedding_profile`` is the profile
+    ``query_embedding`` was made under; only chunks on the same profile are
+    candidates (``app/core/embedding_profiles.py``)."""
     import time as _t
 
     _start = _t.perf_counter()
     _extra = {} if max_distance is None else {"max_distance": max_distance}
     with get_session() as s:
-        results = search_similar_documents(s, client_id=cid, query_embedding=query_embedding, k=k, bot_id=bid, **_extra)
+        results = search_similar_documents(
+            s,
+            client_id=cid,
+            query_embedding=query_embedding,
+            k=k,
+            bot_id=bid,
+            embedding_profile=embedding_profile,
+            **_extra,
+        )
     logger.info(
         "[retrieval] vector_search bot=%s k=%d hits=%d elapsed_ms=%.1f",
         bid,
@@ -2438,24 +2450,40 @@ def _keyword_search(cid: int | None, bid: int | None, query: str, k: int = 15) -
     return results
 
 
-def _query_embed_cache_key(bid: int | None, cid: int | None, search_query: str) -> str:
-    return f"oyechats:emb:{bid or cid}:{hashlib.sha256(search_query.encode()).hexdigest()[:32]}"
+def _query_embed_cache_key(
+    bid: int | None, cid: int | None, search_query: str, embedding_profile: str | None = None
+) -> str:
+    # The profile is part of the key: a vector cached while a bot was on one
+    # profile is not comparable to its chunks once the migration task has
+    # moved it, and the cache would otherwise serve it for the rest of its TTL.
+    profile = normalize_profile(embedding_profile)
+    return f"oyechats:emb:{bid or cid}:{profile}:{hashlib.sha256(search_query.encode()).hexdigest()[:32]}"
 
 
-def _embed_query_cached(bid: int | None, cid: int | None, search_query: str) -> list | None:
+def _embed_query_cached(
+    bid: int | None, cid: int | None, search_query: str, embedding_profile: str | None = None
+) -> list | None:
     """Embed the query (with short-TTL cache), returning None on any embedding
     failure so the caller degrades to keyword-only retrieval. A Gemini embeddings
     outage must not take down every chat, the hybrid pipeline survives one half
     being unavailable.
+
+    ``embedding_profile`` is the bot's (``app/core/embedding_profiles.py``): it
+    decides the query task type, so the vector is made the way the chunks it
+    will be compared against were.
     """
-    emb_key = _query_embed_cache_key(bid, cid, search_query)
+    emb_key = _query_embed_cache_key(bid, cid, search_query, embedding_profile)
     cached = cache_get(emb_key)
     if cached and isinstance(cached, list):
         return cached
     try:
         # Small wait ceiling: a bulk crawl's rate-limiter debt must not pin
         # this request thread (EmbedWaitExceeded lands in the except below).
-        embs = embed_chunks([search_query], max_wait_s=config.EMBED_QUERY_MAX_WAIT_S)
+        embs = embed_chunks(
+            [search_query],
+            task_type=query_task_type(normalize_profile(embedding_profile)),
+            max_wait_s=config.EMBED_QUERY_MAX_WAIT_S,
+        )
     except Exception as exc:
         logger.warning(
             "Query embedding failed (%s). Falling back to keyword-only retrieval",
@@ -2468,7 +2496,9 @@ def _embed_query_cached(bid: int | None, cid: int | None, search_query: str) -> 
     return query_embedding
 
 
-async def _embed_query_cached_async(bid: int | None, cid: int | None, search_query: str) -> list | None:
+async def _embed_query_cached_async(
+    bid: int | None, cid: int | None, search_query: str, embedding_profile: str | None = None
+) -> list | None:
     """Async twin of :func:`_embed_query_cached` for the streaming path.
 
     ``cache_get``/``cache_set`` use the sync redis-py client (``app/core/cache.py``
@@ -2477,12 +2507,16 @@ async def _embed_query_cached_async(bid: int | None, cid: int | None, search_que
     mirroring the ``asyncio.to_thread`` pattern already used elsewhere in this
     function for blocking calls.
     """
-    emb_key = _query_embed_cache_key(bid, cid, search_query)
+    emb_key = _query_embed_cache_key(bid, cid, search_query, embedding_profile)
     cached = await asyncio.to_thread(cache_get, emb_key)
     if cached and isinstance(cached, list):
         return cached
     try:
-        embs = await embed_chunks_async([search_query], max_wait_s=config.EMBED_QUERY_MAX_WAIT_S)
+        embs = await embed_chunks_async(
+            [search_query],
+            task_type=query_task_type(normalize_profile(embedding_profile)),
+            max_wait_s=config.EMBED_QUERY_MAX_WAIT_S,
+        )
     except Exception as exc:
         logger.warning(
             "Query embedding failed (%s). Streaming with keyword-only retrieval",
@@ -6106,7 +6140,14 @@ Respond with EXACTLY {n} lines, one paraphrase per line, nothing else, no number
         return []
 
 
-def _zero_result_multi_query_fallback(question: str, cid: int | None, bid: int | None, retrieval_k: int) -> list:
+def _zero_result_multi_query_fallback(
+    question: str,
+    cid: int | None,
+    bid: int | None,
+    retrieval_k: int,
+    *,
+    embedding_profile: str | None = None,
+) -> list:
     """AR-40: when the primary single-embedding retrieval finds ZERO chunks,
     try a small multi-query fan-out before giving up.
 
@@ -6132,10 +6173,12 @@ def _zero_result_multi_query_fallback(question: str, cid: int | None, bid: int |
 
         best_by_id: dict[int, tuple] = {}
         for paraphrase in paraphrases:
-            embedding = _embed_query_cached(bid, cid, paraphrase)
+            embedding = _embed_query_cached(bid, cid, paraphrase, embedding_profile=embedding_profile)
             if embedding is None:
                 continue
-            for doc, distance in _vector_search(cid, bid, embedding, k=retrieval_k):
+            for doc, distance in _vector_search(
+                cid, bid, embedding, k=retrieval_k, embedding_profile=embedding_profile
+            ):
                 if doc.id not in best_by_id or distance < best_by_id[doc.id][1]:
                     best_by_id[doc.id] = (doc, distance)
 
@@ -6304,6 +6347,7 @@ async def _resolve_search_query_and_embedding(
     bid: int | None,
     cid: int | None,
     company_name: str | None,
+    embedding_profile: str | None = None,
 ) -> tuple[str, list | None]:
     """Resolve the retrieval query (rewritten + company-expanded) and its
     embedding, overlapping the query-rewrite LLM call with a speculative embed
@@ -6324,7 +6368,9 @@ async def _resolve_search_query_and_embedding(
     """
     raw_expanded_query = _expand_company_query(question, company_name)
     rewrite_task = asyncio.create_task(asyncio.to_thread(rewrite_query, session_id, question, history))
-    speculative_embed_task = asyncio.create_task(_embed_query_cached_async(bid, cid, raw_expanded_query))
+    speculative_embed_task = asyncio.create_task(
+        _embed_query_cached_async(bid, cid, raw_expanded_query, embedding_profile=embedding_profile)
+    )
 
     search_query = await _await_rewrite(rewrite_task, question)
     search_query = _expand_company_query(search_query, company_name)
@@ -6337,7 +6383,7 @@ async def _resolve_search_query_and_embedding(
         # failure), so awaiting both concurrently is safe; only the second
         # result is used.
         query_embedding, _ = await asyncio.gather(
-            _embed_query_cached_async(bid, cid, search_query),
+            _embed_query_cached_async(bid, cid, search_query, embedding_profile=embedding_profile),
             speculative_embed_task,
         )
 
@@ -6944,6 +6990,15 @@ def rag_pipeline(
             #
             # Deny-by-default (False) when the bot is unknown.
             _has_bot = bot is not None and getattr(bot, "id", None) is not None
+            # The embedding profile this bot's vectors live under. The query is
+            # embedded with the profile's query task type and vector search is
+            # restricted to chunks carrying the same profile, so a query is never
+            # ranked against vectors from another space (see
+            # app/core/embedding_profiles.py). A bot-less turn (legacy
+            # client-scoped rows) uses the legacy profile those rows carry.
+            _embedding_profile = (
+                normalize_profile(getattr(bot, "embedding_profile", None)) if _has_bot else EMBEDDING_PROFILE_LEGACY
+            )
             _plan_support_allowed = (
                 plan_entitlements_service.is_live_chat_enabled_for_bot(bot.id, session) if _has_bot else False
             )
@@ -7344,7 +7399,7 @@ def rag_pipeline(
                 search_query = _expand_company_query(search_query, _company_name)
 
                 # ── Phase 4B: embedding cache (degrades to keyword-only) ──────
-                query_embedding = _embed_query_cached(bid, cid, search_query)
+                query_embedding = _embed_query_cached(bid, cid, search_query, embedding_profile=_embedding_profile)
 
                 # List/count questions ("how many clients", "list all
                 # services") used to be boosted to k=30 so the bot saw the
@@ -7365,6 +7420,7 @@ def rag_pipeline(
                         query_embedding=query_embedding,
                         k=_retrieval_k,
                         bot_id=bid,
+                        embedding_profile=_embedding_profile,
                         **_xling_extra,
                     )
                     if query_embedding is not None
@@ -7382,7 +7438,9 @@ def rag_pipeline(
                 final_results = reciprocal_rank_fusion(vector_results, keyword_results)
                 final_results = _trim_results(final_results, top_k=_retrieval_k)
                 if not final_results:
-                    final_results = _zero_result_multi_query_fallback(question, cid, bid, _retrieval_k)
+                    final_results = _zero_result_multi_query_fallback(
+                        question, cid, bid, _retrieval_k, embedding_profile=_embedding_profile
+                    )
                 if RERANK_ENABLED and not _judges_bypassed:
                     final_results = rerank(search_query, final_results, top_n=_retrieval_k)
 
@@ -8540,6 +8598,15 @@ async def rag_pipeline_stream(
             #
             # Deny-by-default (False) when the bot is unknown.
             _has_bot = bot is not None and getattr(bot, "id", None) is not None
+            # The embedding profile this bot's vectors live under. The query is
+            # embedded with the profile's query task type and vector search is
+            # restricted to chunks carrying the same profile, so a query is never
+            # ranked against vectors from another space (see
+            # app/core/embedding_profiles.py). A bot-less turn (legacy
+            # client-scoped rows) uses the legacy profile those rows carry.
+            _embedding_profile = (
+                normalize_profile(getattr(bot, "embedding_profile", None)) if _has_bot else EMBEDDING_PROFILE_LEGACY
+            )
             _plan_support_allowed = (
                 plan_entitlements_service.is_live_chat_enabled_for_bot(bot.id, session) if _has_bot else False
             )
@@ -8987,7 +9054,7 @@ async def rag_pipeline_stream(
             else:
                 handoff_task = asyncio.create_task(asyncio.to_thread(detect_handoff_intent, question))
                 search_query, query_embedding = await _resolve_search_query_and_embedding(
-                    session_id, question, history, bid, cid, _company_name
+                    session_id, question, history, bid, cid, _company_name, embedding_profile=_embedding_profile
                 )
 
                 try:
@@ -9015,7 +9082,15 @@ async def rag_pipeline_stream(
                 _xling_max_distance = CROSS_LINGUAL_MAX_DISTANCE if _judges_bypassed else None
                 if query_embedding is not None:
                     vector_results, keyword_results = await asyncio.gather(
-                        asyncio.to_thread(_vector_search, cid, bid, query_embedding, _retrieval_k, _xling_max_distance),
+                        asyncio.to_thread(
+                            _vector_search,
+                            cid,
+                            bid,
+                            query_embedding,
+                            _retrieval_k,
+                            _xling_max_distance,
+                            embedding_profile=_embedding_profile,
+                        ),
                         asyncio.to_thread(_keyword_search, cid, bid, search_query, _retrieval_k),
                     )
                 else:
@@ -9049,7 +9124,12 @@ async def rag_pipeline_stream(
                 final_results = _trim_results(final_results, top_k=_retrieval_k)
                 if not final_results:
                     final_results = await asyncio.to_thread(
-                        _zero_result_multi_query_fallback, question, cid, bid, _retrieval_k
+                        _zero_result_multi_query_fallback,
+                        question,
+                        cid,
+                        bid,
+                        _retrieval_k,
+                        embedding_profile=_embedding_profile,
                     )
                 _fuse_ms = (_t.perf_counter() - _fuse_start) * 1000
 

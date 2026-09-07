@@ -39,7 +39,9 @@ def _patch_pipeline(monkeypatch, db):
 
     monkeypatch.setattr(pipeline, "get_session", _fake_session)
     monkeypatch.setattr(
-        pipeline, "embed_chunks", lambda chunk_content_list, progress_cb=None: [[0.0] * 8 for _ in chunk_content_list]
+        pipeline,
+        "embed_chunks",
+        lambda chunk_content_list, task_type=None, progress_cb=None: [[0.0] * 8 for _ in chunk_content_list],
     )
     monkeypatch.setattr(pipeline, "insert_documents", lambda *a, **k: None)
     monkeypatch.setattr(pipeline, "delete_chunks_for_url", lambda *a, **k: None)

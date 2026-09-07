@@ -64,7 +64,7 @@ class TestZeroResultMultiQueryFallback:
     def test_merges_and_dedupes_across_paraphrases_keeping_best_distance(self):
         doc_a, doc_b, doc_c = _FakeDoc(1), _FakeDoc(2), _FakeDoc(3)
 
-        def fake_vector_search(cid, bid, embedding, k):
+        def fake_vector_search(cid, bid, embedding, k, embedding_profile=None):
             # First paraphrase finds doc_a (far) and doc_b (farther still).
             # Deliberately in the OPPOSITE of final sorted order, so a test
             # that passed merely by accidental dict-insertion order would
@@ -89,7 +89,7 @@ class TestZeroResultMultiQueryFallback:
     def test_respects_retrieval_k_cap(self):
         docs = [_FakeDoc(i) for i in range(10)]
 
-        def fake_vector_search(cid, bid, embedding, k):
+        def fake_vector_search(cid, bid, embedding, k, embedding_profile=None):
             return [(d, i * 0.01) for i, d in enumerate(docs)]
 
         with (
@@ -105,7 +105,7 @@ class TestZeroResultMultiQueryFallback:
     def test_skips_paraphrase_when_embedding_fails(self):
         doc_a = _FakeDoc(1)
 
-        def fake_vector_search(cid, bid, embedding, k):
+        def fake_vector_search(cid, bid, embedding, k, embedding_profile=None):
             return [(doc_a, 0.1)]
 
         with (

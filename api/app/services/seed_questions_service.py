@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 
+from app.core.embedding_profiles import normalize_profile, query_task_type
 from app.db.models import Bot
 from app.db.repository import count_documents_for_bot, search_similar_documents
 from app.ingestion.embedder import embed_chunks
@@ -34,10 +35,18 @@ _VERIFY_MIN_CHUNKS = 1
 _MAX_SEED_QUESTIONS = 3
 
 
-def _is_answerable(session, *, bot_id: int | None, client_id: int | None, question: str) -> bool:
-    """True when retrieval surfaces a strongly on-topic chunk for ``question``."""
+def _is_answerable(
+    session, *, bot_id: int | None, client_id: int | None, question: str, embedding_profile: str | None
+) -> bool:
+    """True when retrieval surfaces a strongly on-topic chunk for ``question``.
+
+    ``embedding_profile`` is the bot's: the question is embedded with that
+    profile's query task type and matched only against chunks on it, exactly
+    as the live chat path does.
+    """
+    profile = normalize_profile(embedding_profile)
     try:
-        embs = embed_chunks([question])
+        embs = embed_chunks([question], task_type=query_task_type(profile))
     except Exception as exc:  # embedding outage / rate-limit debt. Treat as unverifiable
         logger.warning("seed-question verify embed failed (%s)", type(exc).__name__)
         return False
@@ -51,6 +60,7 @@ def _is_answerable(session, *, bot_id: int | None, client_id: int | None, questi
         k=_VERIFY_MIN_CHUNKS,
         bot_id=bot_id,
         max_distance=_VERIFY_MAX_DISTANCE,
+        embedding_profile=profile,
     )
     return len(results or []) >= _VERIFY_MIN_CHUNKS
 
@@ -64,6 +74,7 @@ def build_seed_questions(session, bot: Bot) -> list[str]:
     """
     bot_id = bot.id
     client_id = getattr(bot, "client_id", None)
+    embedding_profile = getattr(bot, "embedding_profile", None)
 
     # No indexed content → nothing is answerable → no seeds.
     if count_documents_for_bot(session, bot_id=bot_id, client_id=client_id) <= 0:
@@ -79,7 +90,9 @@ def build_seed_questions(session, bot: Bot) -> list[str]:
 
     verified: list[str] = []
     for question in candidates:
-        if _is_answerable(session, bot_id=bot_id, client_id=client_id, question=question):
+        if _is_answerable(
+            session, bot_id=bot_id, client_id=client_id, question=question, embedding_profile=embedding_profile
+        ):
             verified.append(question)
             if len(verified) >= _MAX_SEED_QUESTIONS:
                 break

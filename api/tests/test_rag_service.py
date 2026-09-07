@@ -1280,7 +1280,7 @@ class TestResolveSearchQueryAndEmbedding:
 
         embed_calls = []
 
-        async def fake_embed(bid, cid, search_query):
+        async def fake_embed(bid, cid, search_query, embedding_profile=None):
             embed_calls.append(search_query)
             return [0.1] * 768
 
@@ -1306,7 +1306,7 @@ class TestResolveSearchQueryAndEmbedding:
 
         embed_calls = []
 
-        async def fake_embed(bid, cid, search_query):
+        async def fake_embed(bid, cid, search_query, embedding_profile=None):
             embed_calls.append(search_query)
             return {"What about the price of that?": [0.1] * 768, "What is the price of the software?": [0.9] * 768}[
                 search_query
@@ -1336,7 +1336,7 @@ class TestResolveSearchQueryAndEmbedding:
 
         embed_calls = []
 
-        async def fake_embed(bid, cid, search_query):
+        async def fake_embed(bid, cid, search_query, embedding_profile=None):
             embed_calls.append(search_query)
             return [0.1] * 768
 
