@@ -193,7 +193,7 @@ export default {
             title: 'Bicara dengan staf kami',
             subtitle: 'Tim kami akan segera menghubungi Anda',
             submit: 'Minta staf',
-            cancel: 'Kembali ke bot',
+            cancel: 'Kembali ke chat',
             email_placeholder: 'Alamat email *',
             name_placeholder: 'Nama Anda *',
             invalid_email: 'Masukkan alamat email yang valid.',

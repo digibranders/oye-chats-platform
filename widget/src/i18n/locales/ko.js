@@ -193,7 +193,7 @@ export default {
             title: '상담원과 대화하기',
             subtitle: '담당자가 곧 연락드리겠습니다',
             submit: '상담원 요청',
-            cancel: '봇으로 돌아가기',
+            cancel: '채팅으로 돌아가기',
             email_placeholder: '이메일 주소 *',
             name_placeholder: '이름 *',
             invalid_email: '올바른 이메일 주소를 입력해 주세요.',

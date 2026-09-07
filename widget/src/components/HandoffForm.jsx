@@ -201,7 +201,7 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
                             className="w-full flex items-center justify-center gap-1 py-1.5 text-[12px] text-gray-400 hover:text-gray-600 transition-colors"
                         >
                             <ArrowLeft className="w-3 h-3" />
-                            {t('handoff.cancel') || 'Back to bot'}
+                            {t('handoff.cancel') || 'Back to chat'}
                         </button>
                     )}
                 </form>

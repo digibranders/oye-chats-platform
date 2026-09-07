@@ -193,7 +193,7 @@ export default {
             title: 'Trò chuyện với nhân viên',
             subtitle: 'Đội ngũ của chúng tôi sẽ liên hệ với bạn ngay',
             submit: 'Yêu cầu nhân viên hỗ trợ',
-            cancel: 'Quay lại trợ lý ảo',
+            cancel: 'Quay lại trò chuyện',
             email_placeholder: 'Địa chỉ email *',
             name_placeholder: 'Tên của bạn *',
             invalid_email: 'Vui lòng nhập địa chỉ email hợp lệ.',

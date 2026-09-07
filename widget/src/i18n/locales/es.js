@@ -193,7 +193,7 @@ export default {
             title: 'Hablar con una persona',
             subtitle: 'Nuestro equipo se pondrá en contacto contigo enseguida',
             submit: 'Solicitar un agente',
-            cancel: 'Volver al bot',
+            cancel: 'Volver al chat',
             email_placeholder: 'Correo electrónico *',
             name_placeholder: 'Tu nombre *',
             invalid_email: 'Introduce una dirección de correo válida.',

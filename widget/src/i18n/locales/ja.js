@@ -193,7 +193,7 @@ export default {
             title: '担当者と話す',
             subtitle: '担当者よりまもなくご連絡いたします',
             submit: '担当者を呼ぶ',
-            cancel: 'ボットに戻る',
+            cancel: 'チャットに戻る',
             email_placeholder: 'メールアドレス *',
             name_placeholder: 'お名前 *',
             invalid_email: '有効なメールアドレスを入力してください。',

@@ -193,7 +193,7 @@ export default {
             title: 'Bir yetkiliyle görüşün',
             subtitle: 'Ekibimiz kısa süre içinde sizinle iletişime geçecek',
             submit: 'Temsilci talep et',
-            cancel: 'Bota geri dön',
+            cancel: 'Sohbete geri dön',
             email_placeholder: 'E-posta adresi *',
             name_placeholder: 'Adınız *',
             invalid_email: 'Lütfen geçerli bir e-posta adresi girin.',
