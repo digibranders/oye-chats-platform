@@ -193,7 +193,7 @@ export default {
             title: 'एजेंट से बात करें',
             subtitle: 'हमारी टीम शीघ्र ही आपसे जुड़ेगी',
             submit: 'ऑपरेटर का अनुरोध करें',
-            cancel: 'वापस बॉट पर जाएं',
+            cancel: 'वापस चैट पर जाएं',
             email_placeholder: 'ईमेल पता *',
             name_placeholder: 'आपका नाम *',
             invalid_email: 'कृपया एक मान्य ईमेल पता दर्ज करें।',

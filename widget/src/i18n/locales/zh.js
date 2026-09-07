@@ -193,7 +193,7 @@ export default {
             title: '联系人工客服',
             subtitle: '我们的团队会尽快与您联系',
             submit: '请求人工客服',
-            cancel: '返回机器人',
+            cancel: '返回聊天',
             email_placeholder: '邮箱地址 *',
             name_placeholder: '您的姓名 *',
             invalid_email: '请输入有效的邮箱地址。',

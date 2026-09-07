@@ -193,7 +193,7 @@ export default {
             title: 'Parler à un conseiller',
             subtitle: 'Notre équipe vous contactera dans un instant',
             submit: 'Demander un conseiller',
-            cancel: 'Revenir au bot',
+            cancel: 'Revenir au chat',
             email_placeholder: 'Adresse e-mail *',
             name_placeholder: 'Votre nom *',
             invalid_email: 'Saisissez une adresse e-mail valide.',
