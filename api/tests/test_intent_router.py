@@ -123,3 +123,39 @@ def test_none_input():
 
 def test_non_string_input():
     assert route_intent(123, COMPANY) is None  # type: ignore[arg-type]
+
+
+# ── Tenant facts the canned replies must not assert for every tenant ────────
+
+
+class TestCannedRepliesFollowTheTenant:
+    """The identity replies used to name the platform and offer a human
+    handoff for every tenant. Branding removal is a paid add-on and the human
+    path is a plan entitlement; neither is a platform fact."""
+
+    def test_platform_name_is_dropped_for_a_branding_removed_workspace(self):
+        branded = route_intent("who made you", COMPANY)
+        unbranded = route_intent("who made you", COMPANY, platform_branded=False)
+        assert branded is not None and "OyeChats" in branded.answer
+        assert unbranded is not None and "OyeChats" not in unbranded.answer
+        assert unbranded.intent == "who_made_you"
+        assert f"**{COMPANY}**" in unbranded.answer
+
+    def test_handoff_offers_are_dropped_without_a_human_path(self):
+        with_support = route_intent("are you AI?", COMPANY)
+        without = route_intent("are you AI?", COMPANY, support_enabled=False)
+        assert with_support is not None and "talk to a human" in with_support.answer
+        assert without is not None and "talk to a human" not in without.answer
+        assert without.intent == "is_ai"
+
+    def test_recorded_reply_keeps_the_fact_and_drops_the_offer(self):
+        without = route_intent("is this conversation recorded", COMPANY, support_enabled=False)
+        assert without is not None
+        assert "Chats are saved" in without.answer  # transcripts are stored for every bot
+        assert "connect you" not in without.answer
+        with_support = route_intent("is this conversation recorded", COMPANY)
+        assert with_support is not None and "connect you" in with_support.answer
+
+    def test_defaults_are_the_branded_supported_replies(self):
+        # Callers that pass nothing (the name-flow probes) get the historical copy.
+        assert "OyeChats" in route_intent("what platform are you built on?", COMPANY).answer

@@ -237,7 +237,8 @@ Document Upload/Crawl
   → Extraction      (PDF via pypdf · DOCX via python-docx · TXT — extraction.py)
   → Cleaning        (cleaner.py)
   → Chunking        (recursive splitting, default 1000 chars, 200 overlap — chunking.py, env-configurable)
-  → Embedding       (Google gemini-embedding-001, 768-dim — embedder.py)
+  → Embedding       (Google gemini-embedding-001, 768-dim — embedder.py; task type from the bot's
+                     embedding profile: RETRIEVAL_DOCUMENT on the current profile, none on legacy)
   → Storage         (PostgreSQL pgvector + TSVECTOR — repository.py)
 
 User Question
@@ -493,7 +494,7 @@ npm install && npm run dev       # Dev server (localhost:3000)
 | LLM (primary) | OpenAI `gpt-5.4-mini` | Routed via LiteLLM |
 | LLM (fallback) | Google `gemini-2.5-flash` | Auto-fallback in LiteLLM |
 | Gate / enrichment LLM | `gemini-2.5-flash` | CRAG relevance gate (`RELEVANCE_GATE_ENABLED`, **on** by default — it is the control behind the "answers only from your knowledge base" guarantee) + chunk enrichment (`CHUNK_ENRICHMENT_ENABLED`, off by default). Effective gate model is resolved at call time by `runtime_config.get_gate_model()`, not by the `GATE_MODEL` env constant. |
-| Embeddings | Google `gemini-embedding-001` | 768-dim, Matryoshka-truncated, client-side L2-normalized; batched **100 texts/call** via `batchEmbedContents`, 8-way concurrent (`EMBED_CONCURRENCY`). Quota is counted **per content item, not per HTTP call**, so batching saves round-trips, not quota — sustained throughput is capped by `EMBED_RPM_LIMIT` (default 2850). Model is now marked **Legacy** by Google; `gemini-embedding-2` is current (8192 input tokens vs 2048, auto-normalizes truncated dims) but its embedding space is **incompatible** — adopting it means re-embedding the whole corpus. |
+| Embeddings | Google `gemini-embedding-001` | 768-dim, Matryoshka-truncated, client-side L2-normalized; batched **100 texts/call** via `batchEmbedContents`, 8-way concurrent (`EMBED_CONCURRENCY`). Quota is counted **per content item, not per HTTP call**, so batching saves round-trips, not quota — sustained throughput is capped by `EMBED_RPM_LIMIT` (default 2850). **Embedding profiles** (`api/app/core/embedding_profiles.py`): every chunk (`documents.embedding_profile`) and every bot (`bots.embedding_profile`) records how its vectors were made, vector search only compares a query against chunks on the bot's profile, and a bot moves to a newer profile via `task_migrate_embedding_profile` (`api/scripts/migrate_embedding_profile.py`), which re-embeds its chunks then flips the bot under a row lock. Rows that predate profiles are on `…/768/v1` (no task type); the current `…/768/v2` embeds chunks as `RETRIEVAL_DOCUMENT` and questions as `RETRIEVAL_QUERY`. Model is now marked **Legacy** by Google; `gemini-embedding-2` is current (8192 input tokens vs 2048, auto-normalizes truncated dims) but its embedding space is **incompatible** — adopting it is a new profile plus a full migration run. |
 | Vector DB | PostgreSQL 16 + pgvector | Hybrid search: `Vector(768)` + `TSVECTOR` |
 | Backend | FastAPI · SQLAlchemy 2.0 · Alembic | Python 3.11; `uv` for deps |
 | Background queue | ARQ on Redis | `oyechats-worker.service` |

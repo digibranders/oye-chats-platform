@@ -24,7 +24,7 @@ def _session_ctx(session):
     yield session
 
 
-def _fake_embed_with_progress(chunk_content_list, *, progress_cb=None):
+def _fake_embed_with_progress(chunk_content_list, *, task_type=None, progress_cb=None):
     """Stand-in for embed_chunks that drives progress like the real (concurrent) one."""
     if progress_cb is not None:
         progress_cb(len(chunk_content_list), len(chunk_content_list))

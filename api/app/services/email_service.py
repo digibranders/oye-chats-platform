@@ -9,7 +9,6 @@ templates in the send path anymore, so the design lives in one place and the gal
 (``scripts/build_email_gallery``) renders these same functions.
 """
 
-import asyncio
 import base64
 import contextlib
 import json
@@ -493,13 +492,16 @@ def send_email_async(
             to_email, subject, html_body, reply_to=reply_to, sender_name=sender_name, attachments=attachments
         )
 
-    try:
-        loop = asyncio.get_event_loop()
-        loop.run_in_executor(None, _send)
-    except RuntimeError:
-        import threading
+    # The shared bounded pool, never a bare daemon thread: pool workers are
+    # joined at interpreter exit, so an email accepted seconds before a restart
+    # is still delivered, where a daemon thread died mid-send and a qualified
+    # lead's notification silently never went out. The loop's default executor
+    # is deliberately not used either; that pool serves every
+    # ``asyncio.to_thread`` on the chat path and outbound mail must not queue
+    # a visitor's turn behind a slow SMTP relay.
+    from app.core.thread_pool import submit_background
 
-        threading.Thread(target=_send, daemon=True).start()
+    submit_background(_send)
 
 
 def send_template_async(
@@ -522,13 +524,16 @@ def send_template_async(
     def _send():
         _send_brevo_template(to_email, template_id, params, reply_to=reply_to, sender_name=sender_name)
 
-    try:
-        loop = asyncio.get_event_loop()
-        loop.run_in_executor(None, _send)
-    except RuntimeError:
-        import threading
+    # The shared bounded pool, never a bare daemon thread: pool workers are
+    # joined at interpreter exit, so an email accepted seconds before a restart
+    # is still delivered, where a daemon thread died mid-send and a qualified
+    # lead's notification silently never went out. The loop's default executor
+    # is deliberately not used either; that pool serves every
+    # ``asyncio.to_thread`` on the chat path and outbound mail must not queue
+    # a visitor's turn behind a slow SMTP relay.
+    from app.core.thread_pool import submit_background
 
-        threading.Thread(target=_send, daemon=True).start()
+    submit_background(_send)
 
 
 def send_template_to_multiple(
@@ -602,8 +607,19 @@ def send_qualified_lead_email(
     tier: str = "sql",
     *,
     reply_to: str | None = None,
+    qualification: list[tuple[str, str | None]] | None = None,
+    framework_label: str = "BANT",
 ):
-    """Send email when a lead reaches a BANT qualification tier."""
+    """Send email when a lead reaches a qualification tier.
+
+    ``qualification`` is the ``(label, captured value)`` row per dimension of
+    the bot's ACTIVE framework, as built by ``rag_service._qualification_rows``;
+    ``framework_label`` names that framework in the section heading. Without
+    it the legacy ``bant`` dict is rendered as the four BANT rows, which is
+    what every caller did before frameworks existed and what a MEDDIC or CHAMP
+    bot used to receive: an empty table, because none of its dimensions has a
+    BANT column.
+    """
     tier_key = (tier or "sql").lower()
     tier_label = {
         "mql": "Marketing Qualified Lead",
@@ -621,9 +637,11 @@ def send_qualified_lead_email(
             f"A visitor on {strong(safe_bot)} has reached {esc(tier_label)} status. They match your "
             f"qualification criteria. &nbsp;{ed.chip(tier_label, chip_kind)}"
         )
-        + ed.section_label("Qualification (BANT)")
+        + ed.section_label(f"Qualification ({esc(framework_label)})")
         + info_table(
-            [
+            [(esc(label), esc(value)) for label, value in qualification]
+            if qualification
+            else [
                 ("Need", esc(bant.get("bant_need"))),
                 ("Budget", esc(bant.get("bant_budget"))),
                 ("Authority", esc(bant.get("bant_authority"))),

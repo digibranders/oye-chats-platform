@@ -22,6 +22,8 @@ from sqlalchemy.dialects.postgresql import ENUM as PG_ENUM
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
 
+from app.core.embedding_profiles import EMBEDDING_PROFILE_CURRENT, EMBEDDING_PROFILE_LEGACY
+
 Base = declarative_base()
 
 
@@ -422,6 +424,19 @@ class Bot(Base):
     # Higher = stricter (more refusals, more risk of false positives on legit questions).
     # Reasonable range: 0.40 (lenient). 0.70 (strict). Out-of-range is clamped at runtime.
     relevance_threshold = Column(Float, nullable=True)
+    # How this bot's vectors are made: the embedding profile its QUERIES and
+    # its NEW chunks are embedded under (app/core/embedding_profiles.py).
+    # Vector search compares a query only against chunks carrying the same
+    # profile, and ``task_migrate_embedding_profile`` flips this once every
+    # chunk of the bot is on the current profile. New bots start on the
+    # current profile; rows that predate the column were backfilled to the
+    # legacy one, which is what their vectors were made with.
+    embedding_profile = Column(
+        String(48),
+        nullable=False,
+        default=EMBEDDING_PROFILE_CURRENT,
+        server_default=EMBEDDING_PROFILE_LEGACY,
+    )
     avatar_type = Column(String, default="upload", server_default="upload", nullable=False)
     orb_color = Column(String, nullable=True)
 
@@ -817,6 +832,15 @@ class Document(Base):
     source_char_count = Column(Integer, nullable=True)
     metadata_info = Column(JSONB, nullable=True)
     embedding = Column(Vector(768), nullable=False)  # NOT NULL restored after 768-dim re-embed backfill (NB-2)
+    # The embedding profile ``embedding`` was made under. Written by
+    # ``insert_documents`` from the owning bot's profile; vector search
+    # filters on it so vectors from two spaces are never ranked together.
+    embedding_profile = Column(
+        String(48),
+        nullable=False,
+        default=EMBEDDING_PROFILE_CURRENT,
+        server_default=EMBEDDING_PROFILE_LEGACY,
+    )
     search_vector = Column(TSVECTOR)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())

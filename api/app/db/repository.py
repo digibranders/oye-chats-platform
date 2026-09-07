@@ -697,12 +697,20 @@ def insert_documents(
     bot_id: int | None = None,
     source: str = "upload",
     source_char_count: int | None = None,
+    embedding_profile: str | None = None,
 ):
     """Batch insert documents. Supports both client_id (legacy) and bot_id (new).
 
     ``chunks``, ``embeddings`` and ``metadatas`` MUST be the same length,
     a partial embedding failure that returns fewer vectors than chunks would
     otherwise silently truncate (paid embeddings discarded, no error).
+
+    ``embedding_profile`` is REQUIRED: the profile the vectors were made under
+    (``app/core/embedding_profiles.py``), read from the owning bot by the
+    caller that embedded them. There is no default because a wrong one is
+    worse than an error: a row stamped with a profile its vector was not made
+    under is ranked against vectors from another space, or filtered out of
+    every search for the rest of its life.
 
     ``source`` tags each row as ``"upload"`` or ``"crawl"`` (M7) so the
     documents quota counts uploaded files without sniffing ``document_name``.
@@ -721,6 +729,8 @@ def insert_documents(
             f"insert_documents length mismatch: chunks={len(chunks)}, "
             f"embeddings={len(embeddings)}, metadatas={len(metadatas)}"
         )
+    if not embedding_profile:
+        raise ValueError("insert_documents requires embedding_profile (the profile the vectors were made under)")
 
     data = []
     for chunk, embedding, meta in zip(chunks, embeddings, metadatas, strict=True):
@@ -731,6 +741,7 @@ def insert_documents(
             "content": chunk,
             "metadata_info": meta,
             "embedding": embedding if isinstance(embedding, list) else embedding.tolist(),
+            "embedding_profile": embedding_profile,
         }
         if bot_id:
             row["bot_id"] = bot_id
@@ -825,12 +836,27 @@ def search_keyword_documents(session, client_id: int = None, query: str = "", k=
 
 
 def search_similar_documents(
-    session, client_id: int = None, query_embedding=None, k=5, bot_id: int = None, max_distance: float = 0.78
+    session,
+    client_id: int = None,
+    query_embedding=None,
+    k=5,
+    bot_id: int = None,
+    max_distance: float = 0.78,
+    embedding_profile: str | None = None,
 ):
     """Find top-k most similar documents using vector similarity with distance threshold.
 
     Uses raw SQL for the vector distance calculation to bypass pgvector Python
     package version incompatibilities with the Vector type processor.
+
+    ``embedding_profile`` restricts the candidates to chunks whose vectors were
+    made under that profile (the bot's own, see
+    ``app/core/embedding_profiles.py``). A query embedded under one profile is
+    only comparable to chunks embedded under the same one, so while a bot is
+    being migrated its not-yet-re-embedded chunks drop out of the vector arm
+    (the keyword arm still finds them) rather than being ranked from a
+    different space. ``None`` applies no filter, for callers that predate
+    profiles and for tests.
 
     ``max_distance`` is **cosine** distance (the ``<=>`` operator). The sole
     embedding provider is Google ``gemini-embedding-001`` (768-dim,
@@ -869,12 +895,16 @@ def search_similar_documents(
     # a future caller passing an attacker-influenced bot_id with a fixed
     # client_id would otherwise have no second gate.
     params = {"emb": emb_str, "max_dist": max_distance, "k": k}
+    # A fixed fragment, never caller text: the profile VALUE is bound below.
+    profile_clause = " AND embedding_profile = :profile" if embedding_profile else ""
+    if embedding_profile:
+        params["profile"] = embedding_profile
     if bot_id and client_id:
         sql = text(
-            """SELECT id, client_id, bot_id, document_name, content, metadata_info,
+            f"""SELECT id, client_id, bot_id, document_name, content, metadata_info,
                       embedding <=> CAST(:emb AS vector) AS distance
                FROM documents
-               WHERE bot_id = :bot_id AND client_id = :client_id AND is_active
+               WHERE bot_id = :bot_id AND client_id = :client_id AND is_active{profile_clause}
                      AND embedding <=> CAST(:emb AS vector) < :max_dist
                ORDER BY distance
                LIMIT :k"""
@@ -883,10 +913,10 @@ def search_similar_documents(
         params["client_id"] = client_id
     elif bot_id:
         sql = text(
-            """SELECT id, client_id, bot_id, document_name, content, metadata_info,
+            f"""SELECT id, client_id, bot_id, document_name, content, metadata_info,
                       embedding <=> CAST(:emb AS vector) AS distance
                FROM documents
-               WHERE bot_id = :owner_id AND is_active
+               WHERE bot_id = :owner_id AND is_active{profile_clause}
                      AND embedding <=> CAST(:emb AS vector) < :max_dist
                ORDER BY distance
                LIMIT :k"""
@@ -894,10 +924,10 @@ def search_similar_documents(
         params["owner_id"] = bot_id
     else:
         sql = text(
-            """SELECT id, client_id, bot_id, document_name, content, metadata_info,
+            f"""SELECT id, client_id, bot_id, document_name, content, metadata_info,
                       embedding <=> CAST(:emb AS vector) AS distance
                FROM documents
-               WHERE client_id = :owner_id AND is_active
+               WHERE client_id = :owner_id AND is_active{profile_clause}
                      AND embedding <=> CAST(:emb AS vector) < :max_dist
                ORDER BY distance
                LIMIT :k"""
