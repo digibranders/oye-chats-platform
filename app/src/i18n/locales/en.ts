@@ -1271,6 +1271,7 @@ const en = {
     createChatbot: 'Create chatbot',
     createYourFirstChatbot: 'Create your first chatbot',
     currency: 'Currency',
+    customDelaySeconds: '{seconds} seconds',
     customInstructions: 'Custom instructions',
     customTextIsShownUnchanged: 'Custom text is shown unchanged in all languages.',
     day: 'Day',

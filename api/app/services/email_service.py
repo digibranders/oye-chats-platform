@@ -1182,7 +1182,7 @@ def send_quotation_document_email(
     *,
     reply_to: str | None = None,
 ) -> None:
-    """Send the visitor their finalized quotation, ~10 min after the request.
+    """Send the visitor their finalized quotation, after the bot's own configured delay.
 
     Unlike the immediate "Your quote request" acknowledgement, this one carries
     the full pricing: each selected service with its quantity, per-unit price

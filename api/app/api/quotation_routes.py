@@ -1225,7 +1225,8 @@ def accept_quote(
         lines, total = _compute_quote(catalog, state)
         # Notify the owner immediately (full itemised quote), acknowledge to the
         # visitor immediately ("Your quote request", no pricing), and defer the
-        # priced "Your quotation" document (PDF) by ~10 min per spec.
+        # priced "Your quotation" document (PDF) by the bot's own configured
+        # delay (quotation_catalog.document_delay_seconds).
         # Best-effort; the quote is already saved, so a dispatch/scheduling
         # failure must never fail the accept. Runs as a background task so the
         # three Redis enqueues do not sit in front of the visitor's response.

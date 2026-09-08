@@ -37,6 +37,7 @@ import {
   bantDimensionLabel,
   CURRENCIES,
   currencyLabel,
+  customDelayLabel,
   DOCUMENT_DELAY_OPTIONS,
   documentDelayLabel,
   MAX_SERVICES,
@@ -130,6 +131,16 @@ function QuotationContent({ agentId }: { agentId: number }) {
   if (!catalog) return <QuotationSkeleton />;
 
   const ceiling = thresholdCeiling(catalog.required_categories);
+  const delayPresetOptions = DOCUMENT_DELAY_OPTIONS.map((option) => ({
+    value: String(option.value),
+    label: documentDelayLabel(option),
+  }));
+  const delayOptions = DOCUMENT_DELAY_OPTIONS.some((option) => option.value === catalog.document_delay_seconds)
+    ? delayPresetOptions
+    : [
+        ...delayPresetOptions,
+        { value: String(catalog.document_delay_seconds), label: customDelayLabel(catalog.document_delay_seconds) },
+      ];
   // The catalog stays readable with quoting switched off — the reader is about
   // to decide whether to turn it on, and an inert page tells them nothing about
   // what they would be turning on. Editing is what is blocked, not reading.
@@ -299,10 +310,7 @@ function QuotationContent({ agentId }: { agentId: number }) {
                     <Select
                       label={t('agents.sendThePricedQuote') || 'Send the priced quote'}
                       value={String(catalog.document_delay_seconds)}
-                      options={DOCUMENT_DELAY_OPTIONS.map((option) => ({
-                        value: String(option.value),
-                        label: documentDelayLabel(option),
-                      }))}
+                      options={delayOptions}
                       disabled={configDisabled}
                       onValueChange={(value) =>
                         update((previous) => ({

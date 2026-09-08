@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   EMPTY_CATALOG,
   blockedReason,
+  customDelayLabel,
   parseCatalog,
   toPayload,
   type QuotationCatalog,
@@ -141,6 +142,12 @@ describe('reading a stored blob back', () => {
   it('clamps an out-of-range document_delay_seconds into [0, 86400]', () => {
     expect(parseCatalog({ services: [], document_delay_seconds: -5 }).document_delay_seconds).toBe(0);
     expect(parseCatalog({ services: [], document_delay_seconds: 999999 }).document_delay_seconds).toBe(86400);
+  });
+});
+
+describe('a delay value outside the six presets', () => {
+  it('falls back to a plain "N seconds" label', () => {
+    expect(customDelayLabel(900)).toBe('900 seconds');
   });
 });
 

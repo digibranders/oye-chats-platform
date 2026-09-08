@@ -951,6 +951,7 @@ const ar = {
     yourPassword: "كلمة المرور الخاصة بك",
   },
   agents: {
+    customDelaySeconds: "{seconds} ثانية",
     documentDelayHint: "يتم إرسال بريد التأكيد فورًا. هذا هو الوقت الذي يصل بعده عرض السعر النهائي بالتفصيل.",
     documentDelayOption: {
       hour1: "ساعة واحدة",

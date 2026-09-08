@@ -141,6 +141,14 @@ export const DOCUMENT_DELAY_OPTIONS: { value: number; key: string; label: string
   { value: 86400, key: 'hour24', label: '24 hours' },
 ];
 
+/** A fallback label for a document_delay_seconds value set outside the six
+ * presets (e.g. via a direct API call, or a non-preset QUOTATION_EMAIL_DELAY_SECONDS
+ * env default) — so the select always has a matching option instead of
+ * rendering blank. */
+export function customDelayLabel(seconds: number): string {
+  return translateNow('agents.customDelaySeconds', { seconds }) || `${seconds} seconds`;
+}
+
 export function requirementTypeLabel(r: { value: string; label: string }): string {
   return translateNow(`agents.requirementType.${r.value}`) || r.label;
 }

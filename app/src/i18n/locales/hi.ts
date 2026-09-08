@@ -1241,6 +1241,7 @@ const hi = {
     yourPassword: 'आपका पासवर्ड',
   },
   agents: {
+    customDelaySeconds: '{seconds} सेकंड',
     documentDelayHint: 'पुष्टि ईमेल तुरंत भेज दी जाती है। यह वह समय है जब कीमत वाला कोटेशन उसके बाद भेजा जाता है।',
     documentDelayOption: {
       hour1: '1 घंटा',
