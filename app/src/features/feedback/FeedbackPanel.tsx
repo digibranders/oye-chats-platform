@@ -20,7 +20,7 @@ import {
   formatNumber,
 } from '../../ui';
 import { agentPath } from '../../shell/nav';
-import { errorMessage, useLiveSupportRatings } from '../analytics/useAnalyticsData';
+import { errorMessage, useLiveSupportRatings, useOperatorRatings } from '../analytics/useAnalyticsData';
 import type { ResolvedRange } from '../analytics/range';
 import { FeedbackFilterTabs } from './FeedbackFilterTabs';
 import { FeedbackList } from './FeedbackList';
@@ -37,6 +37,16 @@ import {
 } from './feedback-helpers';
 import { type FeedbackFilter } from './types';
 import { useFeedback } from './useFeedback';
+
+/**
+ * Ratings below which an operator's average is shown muted rather than stated.
+ *
+ * Not a hidden row: excluding a new operator entirely would be worse, because
+ * they would simply be absent from a list their manager is reading. The figure
+ * still appears, it just stops looking like a verdict. Five is the point where
+ * a single bad chat stops dominating the mean.
+ */
+const MIN_CONFIDENT_RATINGS = 5;
 
 export interface FeedbackPanelProps {
   /** The chatbot whose ratings these are. `null` while the agent list resolves. */
@@ -79,6 +89,9 @@ export function FeedbackPanel({ botId, range }: FeedbackPanelProps) {
   // population from the thumbs below: thumbs score one AI answer, this scores
   // the conversation a person handled.
   const { ratings: liveRatings, loading: liveLoading } = useLiveSupportRatings(botId, range);
+  // Per-operator breakdown. `forbidden` is a plain operator being told this is
+  // not their view; the section simply does not render for them.
+  const { operators, forbidden: operatorsForbidden } = useOperatorRatings(botId, range);
   const [filter, setFilter] = useState<FeedbackFilter>('all');
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [selectedQuestion, setSelectedQuestion] = useState<string | null>(null);
@@ -289,6 +302,63 @@ export function FeedbackPanel({ botId, range }: FeedbackPanelProps) {
               title="No live chat ratings yet"
               description="Visitors are asked to rate the chat once an operator closes it. Ratings appear here as they come in."
             />
+          </CardBody>
+        ) : null}
+
+        {/* Per-operator breakdown, owners and admins only.
+            A list rather than a filter: the question this answers is "how do my
+            operators compare?", and a dropdown turns a comparison into one
+            lookup per click plus a memory test. Ordered best-first by the
+            server, so it reads as a ranking without any interaction.
+            The rating COUNT sits beside every average on purpose. This is
+            performance data about named people, and an average without its
+            sample size invites a judgement the sample cannot support: below
+            `MIN_CONFIDENT_RATINGS` the average is muted and labelled rather
+            than printed as if it settled anything. */}
+        {!operatorsForbidden && operators.length > 0 ? (
+          <CardBody>
+            <Stack>
+              <p className="text-caption text-text-secondary">By operator</p>
+              {operators.map((op) => {
+                const thin = op.total < MIN_CONFIDENT_RATINGS;
+                return (
+                  <div key={op.operatorId} className="flex items-center gap-3">
+                    <span className="flex min-w-0 flex-1 items-baseline gap-2">
+                      <span className="truncate text-body">{op.name}</span>
+                      {op.disambiguator ? (
+                        <span className="truncate text-caption text-text-tertiary">
+                          {op.disambiguator}
+                        </span>
+                      ) : null}
+                    </span>
+                    <span
+                      className={
+                        thin
+                          ? 'w-16 text-end text-body text-text-tertiary'
+                          : 'w-16 text-end text-body font-medium'
+                      }
+                      title={thin ? 'Too few ratings to draw a conclusion from' : undefined}
+                    >
+                      {op.average !== null ? `${op.average.toFixed(1)} / 5` : '-'}
+                    </span>
+                    <span className="w-24 text-end text-caption text-text-secondary">
+                      {formatNumber(op.total)} rated
+                    </span>
+                    <span className="w-20 text-end text-caption">
+                      {op.unhappy > 0 ? (
+                        <Badge tone="danger">{formatNumber(op.unhappy)} unhappy</Badge>
+                      ) : null}
+                    </span>
+                  </div>
+                );
+              })}
+              {operators.some((op) => op.total < MIN_CONFIDENT_RATINGS) ? (
+                <p className="text-caption text-text-tertiary">
+                  Greyed averages come from fewer than {MIN_CONFIDENT_RATINGS} ratings, which is too
+                  small a sample to judge anyone by.
+                </p>
+              ) : null}
+            </Stack>
           </CardBody>
         ) : null}
       </Card>

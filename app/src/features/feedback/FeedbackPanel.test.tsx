@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FeedbackPanel } from './FeedbackPanel';
 import { resolveRange } from '../analytics/range';
-import { getFeedbackData } from '../../services/api';
+import { getFeedbackData, getOperatorRatings, getRatingsSummary } from '../../services/api';
 import type { FeedbackItem } from './types';
 
 /**
@@ -22,6 +22,8 @@ import type { FeedbackItem } from './types';
 
 vi.mock('../../services/api', () => ({
   getFeedbackData: vi.fn(),
+  getRatingsSummary: vi.fn(),
+  getOperatorRatings: vi.fn(),
 }));
 
 const DAY_MS = 86_400_000;
@@ -51,6 +53,11 @@ function renderPanel(rangeKey: '7d' | '30d' | '90d' | 'all' = '30d', botId: numb
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The live-support card is not what most of these tests are about, so it is
+  // given a quiet default: no ratings, no operators. Tests that DO exercise it
+  // override these.
+  vi.mocked(getRatingsSummary).mockResolvedValue({ average: null, total: 0, breakdown: {} });
+  vi.mocked(getOperatorRatings).mockResolvedValue([]);
   // Two browser APIs jsdom does not implement, both used by click-to-jump: the
   // scroll itself, and the reduced-motion query that decides whether it
   // animates. Missing environment, not a missing guard — the component is right
@@ -199,5 +206,107 @@ describe('FeedbackPanel — reading the numbers without the picture', () => {
       'aria-checked',
       'true',
     );
+  });
+});
+
+
+/**
+ * The per-operator breakdown inside the live-support card.
+ *
+ * Two things here are easy to get wrong in ways no diff shows. The first is
+ * that an average without its count reads as a verdict: 2.0 from a single chat
+ * looks identical to 2.0 from fifty, and this list is about named people. The
+ * second is that operator names are NOT unique — a workspace can hold two
+ * seats with the same display name, and a list that prints it twice is a
+ * ranking the reader cannot act on.
+ */
+describe('FeedbackPanel — the per-operator breakdown', () => {
+  const opRow = (over: Record<string, unknown> = {}) => ({
+    operator_id: 1,
+    name: 'Ana',
+    email: 'ana@example.com',
+    total: 6,
+    avg: 4.5,
+    unhappy: 0,
+    ...over,
+  });
+
+  function withRatings() {
+    vi.mocked(getFeedbackData).mockResolvedValue([item()]);
+    vi.mocked(getRatingsSummary).mockResolvedValue({
+      average: 4.2,
+      total: 9,
+      breakdown: { '5': 5, '4': 3, '3': 1, '2': 0, '1': 0 },
+    });
+  }
+
+  it('shows each operator with the rating count beside the average', async () => {
+    withRatings();
+    vi.mocked(getOperatorRatings).mockResolvedValue([
+      opRow({ operator_id: 1, name: 'Ana', total: 6, avg: 4.5 }),
+      opRow({ operator_id: 2, name: 'Bo', email: 'bo@example.com', total: 8, avg: 3.1, unhappy: 2 }),
+    ]);
+    renderPanel();
+
+    await screen.findByText('By operator');
+    expect(screen.getByText('Ana')).toBeInTheDocument();
+    expect(screen.getByText('4.5 / 5')).toBeInTheDocument();
+    expect(screen.getByText('6 rated')).toBeInTheDocument();
+    expect(screen.getByText('2 unhappy')).toBeInTheDocument();
+  });
+
+  it('adds the email only when two operators share a display name', async () => {
+    withRatings();
+    vi.mocked(getOperatorRatings).mockResolvedValue([
+      opRow({ operator_id: 1, name: 'Sam Rae', email: 'sam@example.com' }),
+      opRow({ operator_id: 2, name: 'Sam Rae', email: 'sam.rae@example.com', avg: 3.9 }),
+      opRow({ operator_id: 3, name: 'Ana', email: 'ana@example.com', avg: 3.2 }),
+    ]);
+    renderPanel();
+
+    await screen.findByText('By operator');
+    expect(screen.getByText('sam@example.com')).toBeInTheDocument();
+    expect(screen.getByText('sam.rae@example.com')).toBeInTheDocument();
+    // Ana is already unambiguous, so her row stays a name and nothing else.
+    expect(screen.queryByText('ana@example.com')).not.toBeInTheDocument();
+  });
+
+  it('falls back to the seat id when the same person holds two seats', async () => {
+    // A real case: one person added to the workspace twice. The email repeats,
+    // so it cannot separate the rows and the id has to.
+    withRatings();
+    vi.mocked(getOperatorRatings).mockResolvedValue([
+      opRow({ operator_id: 238, name: 'Sam Rae', email: 'sam@example.com' }),
+      opRow({ operator_id: 228, name: 'Sam Rae', email: 'sam@example.com', avg: 3.5 }),
+    ]);
+    renderPanel();
+
+    await screen.findByText('By operator');
+    expect(screen.getByText('#238')).toBeInTheDocument();
+    expect(screen.getByText('#228')).toBeInTheDocument();
+  });
+
+  it('says so when an average rests on too few ratings to mean anything', async () => {
+    withRatings();
+    vi.mocked(getOperatorRatings).mockResolvedValue([opRow({ total: 2, avg: 2.0 })]);
+    renderPanel();
+
+    await screen.findByText('By operator');
+    expect(screen.getByText(/too small a sample to judge anyone by/i)).toBeInTheDocument();
+  });
+
+  it('omits the section entirely for someone the endpoint refuses', async () => {
+    // A plain operator gets a 403. That is an answer, not a failure: the
+    // section disappears rather than showing them an error about data they
+    // were never meant to see.
+    withRatings();
+    vi.mocked(getOperatorRatings).mockRejectedValue(Object.assign(new Error('forbidden'), { status: 403 }));
+    renderPanel();
+
+    await screen.findByText('How did the team do?');
+    await waitFor(() => {
+      expect(screen.queryByText('By operator')).not.toBeInTheDocument();
+    });
+    expect(screen.queryByText(/Failed to load operator ratings/i)).not.toBeInTheDocument();
   });
 });

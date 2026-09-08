@@ -1241,6 +1241,18 @@ const hi = {
     yourPassword: 'आपका पासवर्ड',
   },
   agents: {
+    customDelaySeconds: '{seconds} सेकंड',
+    documentDelayHint: 'पुष्टि ईमेल तुरंत भेज दी जाती है। यह वह समय है जब कीमत वाला कोटेशन उसके बाद भेजा जाता है।',
+    documentDelayOption: {
+      hour1: '1 घंटा',
+      hour24: '24 घंटे',
+      immediate: 'तुरंत',
+      min10: '10 मिनट',
+      min30: '30 मिनट',
+      min5: '5 मिनट',
+    },
+    sendThePricedQuote: 'कीमत वाला कोटेशन भेजें',
+    whenToSendTheQuotation: 'कोटेशन कब भेजें',
     aboutNWordsStored: 'लगभग {words} शब्द का टेक्स्ट संग्रहीत है।',
     access: 'पहुँच',
     addCreditsAndTrainAgain: 'क्रेडिट जोड़ें और दोबारा प्रशिक्षित करें: जो पेज पहले से हैं उनका दोबारा शुल्क नहीं लगता।',
