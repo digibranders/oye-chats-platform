@@ -37,6 +37,16 @@ live chat, markdown rendering, the lead/handoff/quotation forms, Sentry, and eac
 locale are all lazy. Budgets are enforced by `size-limit` (`npm run size`): the loader is
 capped at 8KB gzipped and the eager path (loader + entry + vendor) at roughly 90KB gzipped.
 
+**The eager-path total is the promise; the per-chunk limits are only how it is
+policed.** When one of them trips, check that total before trimming anything: a
+chunk can grow legitimately while the number a visitor actually pays stays well
+inside budget. The app-entry limit went 12KB → 13KB on exactly that basis. It
+holds the FAB and the state machine, nothing lazy had leaked into it (the
+`ChatWindow` and `Sentry` strings in that chunk are `React.lazy` import sites,
+not their code), and the eager path measured **80.9KB of the ~90KB target**.
+Shrinking it further would have meant lazy-loading the launcher itself and
+delaying the bubble's first paint to save ~200 bytes.
+
 > If the loader's boot fails (CORS, CDN blip, a manifest 404 mid-deploy) it clears its cached
 > promise so a later `OyeChats.init()` can retry without a full page reload.
 
