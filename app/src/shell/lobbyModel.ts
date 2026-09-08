@@ -7,14 +7,21 @@ import type { ActiveChat, OperatorMessage, QueueItem } from '../features/inbox/l
  * the ones that go wrong quietly. Two of them exist to protect a click rather
  * than to look tidy, and neither can be checked by looking at a screenshot:
  *
- * - **Arrivals append.** A new visitor never takes the top slot. An operator
- *   moving a pointer toward "Take it" must not have a different person slide
- *   under it on the way. This console has already shipped two defects in that
- *   family this week (a reflow swallowing a click on the auth pages, and
- *   `sr-only` extending a scroll container), so it is a rule here rather than
- *   an accident of ordering.
+ * - **Arrivals append.** A new visitor never takes the top slot, and no card
+ *   ever swaps places with another while it is on screen. An operator moving a
+ *   pointer toward "Take it" must not have a different person slide under it on
+ *   the way. This console has already shipped two defects in that family this
+ *   week (a reflow swallowing a click on the auth pages, and `sr-only`
+ *   extending a scroll container), so it is a rule here rather than an accident
+ *   of ordering.
  * - **Dismissal is per visitor.** Closing one card must not close the queue.
  *   A global "hide alerts" would recreate the reported bug in a new place.
+ *
+ * Ordering is by the server's own timestamps rather than by when this tab
+ * happened to see each session. That is not a shortcut: the browser's clock may
+ * be minutes off the server's, but two SERVER timestamps still order correctly
+ * relative to each other, which is all a sort needs. Skew only distorts
+ * durations, and `waitedMs` is where that is handled.
  */
 
 /** How urgent a wait has become. Drives the card's stripe, never alone. */
@@ -33,10 +40,14 @@ export interface LobbyAlert {
   detail: string | null;
   /** Their last message, or why they are waiting. */
   preview: string | null;
-  /** When the wait started, ISO. Null when the payload carried no time. */
+  /**
+   * When the wait started, ISO, or null when the payload carried no time.
+   *
+   * Null is rendered as no timer at all rather than as "0s". A card that
+   * invents a duration it does not know is worse than one that admits it: the
+   * operator reads the number and decides who to answer first.
+   */
   since: string | null;
-  /** First seen by THIS tab, so a card that arrives without a time still ages. */
-  seenAt: number;
 }
 
 /**
@@ -56,14 +67,13 @@ export function ageBand(waitedMs: number): LobbyBand {
   return 'fresh';
 }
 
-/** How long this alert has been waiting, at `now`. */
-export function waitedMs(alert: LobbyAlert, now: number): number {
+/** How long this alert has been waiting at `now`, or null when nobody knows. */
+export function waitedMs(alert: LobbyAlert, now: number): number | null {
   const started = alert.since ? Date.parse(alert.since) : Number.NaN;
-  // `seenAt` is the floor, not merely a fallback: a server clock a few seconds
-  // ahead of the browser would otherwise produce a negative wait and a card
-  // that reads "0s" for a minute.
-  const from = Number.isFinite(started) ? Math.min(started, alert.seenAt) : alert.seenAt;
-  return Math.max(0, now - from);
+  if (!Number.isFinite(started)) return null;
+  // Clamped at zero: a server clock a few seconds ahead of the browser would
+  // otherwise produce a negative wait, and a card counting backwards.
+  return Math.max(0, now - started);
 }
 
 export interface LobbySources {
@@ -71,17 +81,17 @@ export interface LobbySources {
   activeChats: Record<string, ActiveChat>;
   unreadBySession: Record<string, number>;
   messagesBySession: Record<string, OperatorMessage[]>;
-  /** Session ids the operator has closed the card for, per visitor. */
-  dismissed: ReadonlySet<string>;
   /**
-   * The order sessions were first seen by this tab, oldest first.
+   * Cards the operator has closed, as `sessionId -> the `since` it applied to`.
    *
-   * Held by the caller across renders. Without it "append" is not expressible:
-   * the queue payload is a snapshot with no arrival order of its own, and
-   * sorting by timestamp reorders the stack the moment a server clock disagrees
-   * with a browser one.
+   * Keyed on the moment rather than the session because a widget session
+   * survives in the visitor's browser: somebody who asks for a person, is
+   * dismissed, gives up, and asks again ten minutes later comes back under the
+   * SAME session id. A plain set of ids would swallow that second request in
+   * silence, which is the reported bug wearing a different hat. A `since` that
+   * no longer matches is a new request, and the card returns.
    */
-  arrivals: ReadonlyMap<string, number>;
+  dismissed: ReadonlyMap<string, string | null>;
   /** Nothing is raised while off duty, or on the page that already shows it. */
   enabled: boolean;
   onInboxPage: boolean;
@@ -101,14 +111,19 @@ function firstLine(text: string | null | undefined): string | null {
  * holds: nobody owns the first one, and they are the one who leaves.
  */
 export function alertsFrom(sources: LobbySources): LobbyAlert[] {
-  const { queue, activeChats, unreadBySession, messagesBySession, dismissed, arrivals } = sources;
+  const { queue, activeChats, unreadBySession, messagesBySession, dismissed } = sources;
   if (!sources.enabled || sources.onInboxPage) return [];
 
-  const seen = (sessionId: string): number => arrivals.get(sessionId) ?? Number.MAX_SAFE_INTEGER;
-  const byArrival = (a: LobbyAlert, b: LobbyAlert): number => seen(a.sessionId) - seen(b.sessionId);
+  const at = (since: string | null): number => {
+    const parsed = since ? Date.parse(since) : Number.NaN;
+    // Undated last, not first: an unknown wait is not an infinite one, and
+    // putting it on top would push somebody with a real, long wait down.
+    return Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER;
+  };
+  const oldestFirst = (a: LobbyAlert, b: LobbyAlert): number => at(a.since) - at(b.since);
 
   const waiting: LobbyAlert[] = queue
-    .filter((entry) => !dismissed.has(entry.session_id))
+    .filter((entry) => dismissed.get(entry.session_id) !== (entry.created_at ?? null))
     .map((entry) => ({
       key: `w.${entry.session_id}`,
       sessionId: entry.session_id,
@@ -117,62 +132,47 @@ export function alertsFrom(sources: LobbySources): LobbyAlert[] {
       detail: entry.bot_name?.trim() || null,
       preview: firstLine(entry.reason),
       since: entry.created_at ?? null,
-      seenAt: seen(entry.session_id),
     }))
-    .sort(byArrival);
+    .sort(oldestFirst);
 
   const messages: LobbyAlert[] = Object.values(activeChats)
-    .filter((chat) => (unreadBySession[chat.session_id] ?? 0) > 0)
-    .filter((chat) => !dismissed.has(chat.session_id))
-    .map((chat) => {
-      const thread = messagesBySession[chat.session_id];
-      const last = thread && thread.length > 0 ? thread[thread.length - 1] : undefined;
+    .map((chat): LobbyAlert | null => {
+      const unread = unreadBySession[chat.session_id] ?? 0;
+      if (unread <= 0) return null;
+      const thread = messagesBySession[chat.session_id] ?? [];
+      const last = thread.length > 0 ? thread[thread.length - 1] : undefined;
+      // The OLDEST unread, not the newest. "How long have they been waiting for
+      // a reply" is the question, and it is also the only answer that does not
+      // move: dating the card from their latest message would re-sort the stack
+      // every time somebody typed another line, under whatever pointer was on
+      // its way to a button.
+      const firstUnread = thread.length >= unread ? thread[thread.length - unread] : thread[0];
+      const since = firstUnread?.timestamp ?? null;
+      if (dismissed.get(chat.session_id) === since) return null;
       return {
         key: `m.${chat.session_id}`,
         sessionId: chat.session_id,
         kind: 'message' as const,
         name: chat.visitor_name?.trim() || '',
         detail: chat.bot_name?.trim() || null,
+        // The preview is the LATEST thing they said, which is what an operator
+        // needs to decide; the timer is how long the first one has gone
+        // unanswered. Different questions, different messages.
         preview: firstLine(last?.content),
-        // The wait that matters is since THEIR message, not since the chat
-        // opened: a two-hour conversation is not a two-hour wait.
-        since: last?.timestamp ?? null,
-        seenAt: seen(chat.session_id),
+        since,
       };
     })
-    .sort(byArrival);
+    .filter((alert): alert is LobbyAlert => alert !== null)
+    .sort(oldestFirst);
 
   return [...waiting, ...messages];
 }
 
-/**
- * Arrival order, carried forward.
- *
- * Returns the same Map when nothing changed, so a caller can hold it in a ref
- * and not re-render on every socket frame. Sessions that have left are dropped:
- * a visitor who gives up and comes back an hour later is a new arrival, and
- * keeping their old slot would file them above people who have waited longer.
- */
-export function trackArrivals(
-  previous: ReadonlyMap<string, number>,
-  present: readonly string[],
-  now: number,
-): ReadonlyMap<string, number> {
-  const live = new Set(present);
-  let changed = previous.size !== live.size;
-  const next = new Map<string, number>();
-  for (const sessionId of present) {
-    const existing = previous.get(sessionId);
-    if (existing === undefined) changed = true;
-    next.set(sessionId, existing ?? now);
-  }
-  if (!changed) {
-    for (const sessionId of previous.keys()) {
-      if (!live.has(sessionId)) {
-        changed = true;
-        break;
-      }
-    }
-  }
-  return changed ? next : previous;
+/** The wait as a word. Seconds matter here in a way they do not in a table. */
+export function waitWords(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }

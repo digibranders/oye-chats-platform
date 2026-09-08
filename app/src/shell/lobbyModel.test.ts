@@ -4,7 +4,6 @@ import {
   OVERDUE_MS,
   ageBand,
   alertsFrom,
-  trackArrivals,
   waitedMs,
   type LobbyAlert,
   type LobbySources,
@@ -49,8 +48,7 @@ function sources(over: Partial<LobbySources> = {}): LobbySources {
     activeChats: {},
     unreadBySession: {},
     messagesBySession: {},
-    dismissed: new Set(),
-    arrivals: new Map(),
+    dismissed: new Map(),
     enabled: true,
     onInboxPage: false,
     ...over,
@@ -68,21 +66,21 @@ describe('ageBand', () => {
 });
 
 describe('waitedMs', () => {
+  const dated = (since: string | null): LobbyAlert => ({ since }) as LobbyAlert;
+
   it('measures from when the visitor started waiting', () => {
-    const alert = { since: new Date(NOW - 90_000).toISOString(), seenAt: NOW } as LobbyAlert;
-    expect(waitedMs(alert, NOW)).toBe(90_000);
+    expect(waitedMs(dated(new Date(NOW - 90_000).toISOString()), NOW)).toBe(90_000);
   });
 
-  it('falls back to when this tab first saw them', () => {
-    const alert = { since: null, seenAt: NOW - 5_000 } as LobbyAlert;
-    expect(waitedMs(alert, NOW)).toBe(5_000);
+  it('admits it does not know, rather than inventing a zero', () => {
+    // The card renders no timer at all for this. "0s" beside somebody who has
+    // been there two minutes is worse than saying nothing.
+    expect(waitedMs(dated(null), NOW)).toBeNull();
+    expect(waitedMs(dated('not a date'), NOW)).toBeNull();
   });
 
-  it('never reads as a negative wait when the server clock runs ahead', () => {
-    // A server a few seconds fast would otherwise put the start in the future
-    // and the card would sit at "0s" until the browser caught up.
-    const alert = { since: new Date(NOW + 4_000).toISOString(), seenAt: NOW - 1_000 } as LobbyAlert;
-    expect(waitedMs(alert, NOW)).toBe(1_000);
+  it('never counts backwards when the server clock runs ahead', () => {
+    expect(waitedMs(dated(new Date(NOW + 4_000).toISOString()), NOW)).toBe(0);
   });
 });
 
@@ -102,36 +100,63 @@ describe('alertsFrom', () => {
   });
 
   it('appends an arrival below, so nothing moves under a travelling pointer', () => {
-    // The whole reason arrival order is tracked. An operator reaching for
-    // "Take it" on the first card must not have a second person slide into
-    // that slot on the way.
-    const arrivals = new Map([
-      ['s1', NOW - 30_000],
-      ['s2', NOW - 1_000],
-    ]);
+    // An operator reaching for "Take it" on the first card must not have a
+    // second person slide into that slot on the way. Oldest first does that on
+    // its own: a new arrival is by definition the newest.
     const alerts = alertsFrom(
       sources({
         // Deliberately the wrong way round on the wire: the payload is a
-        // snapshot and carries no arrival order of its own.
-        queue: [queued({ session_id: 's2' }), queued({ session_id: 's1' })],
-        arrivals,
+        // snapshot and carries no order of its own.
+        queue: [
+          queued({ session_id: 's2', created_at: new Date(NOW - 1_000).toISOString() }),
+          queued({ session_id: 's1', created_at: new Date(NOW - 30_000).toISOString() }),
+        ],
       }),
     );
     expect(alerts.map((a) => a.sessionId)).toEqual(['s1', 's2']);
   });
 
-  it('closes one card without closing the queue', () => {
+  it('files a visitor with no start time last, not first', () => {
+    // An unknown wait is not an infinite one. Sorting it to the top would push
+    // somebody with a real, long wait underneath it.
     const alerts = alertsFrom(
       sources({
-        queue: [queued({ session_id: 's1' }), queued({ session_id: 's2' })],
-        arrivals: new Map([
-          ['s1', NOW - 30_000],
-          ['s2', NOW - 1_000],
-        ]),
-        dismissed: new Set(['s1']),
+        queue: [
+          queued({ session_id: 'undated', created_at: null }),
+          queued({ session_id: 's1', created_at: new Date(NOW - 30_000).toISOString() }),
+        ],
+      }),
+    );
+    expect(alerts.map((a) => a.sessionId)).toEqual(['s1', 'undated']);
+  });
+
+  it('closes one card without closing the queue', () => {
+    const first = new Date(NOW - 30_000).toISOString();
+    const alerts = alertsFrom(
+      sources({
+        queue: [
+          queued({ session_id: 's1', created_at: first }),
+          queued({ session_id: 's2', created_at: new Date(NOW - 1_000).toISOString() }),
+        ],
+        dismissed: new Map([['s1', first]]),
       }),
     );
     expect(alerts.map((a) => a.sessionId)).toEqual(['s2']);
+  });
+
+  it('lets a dismissed visitor back in when they ask again', () => {
+    // A widget session survives in the visitor's browser, so somebody who asks
+    // for a person, is dismissed, gives up and asks again ten minutes later
+    // comes back under the SAME session id. Keyed on the id alone, that second
+    // request would be swallowed in silence, which is the reported bug wearing
+    // a different hat.
+    const alerts = alertsFrom(
+      sources({
+        queue: [queued({ session_id: 's1', created_at: new Date(NOW - 5_000).toISOString() })],
+        dismissed: new Map([['s1', new Date(NOW - 600_000).toISOString()]]),
+      }),
+    );
+    expect(alerts.map((a) => a.sessionId)).toEqual(['s1']);
   });
 
   it('ranks somebody nobody owns above a message in a chat you hold', () => {
@@ -139,17 +164,21 @@ describe('alertsFrom', () => {
     // yours and knows somebody is there.
     const alerts = alertsFrom(
       sources({
-        queue: [queued({ session_id: 'lobby' })],
+        queue: [queued({ session_id: 'lobby', created_at: new Date(NOW - 1_000).toISOString() })],
         activeChats: { mine: chat({ session_id: 'mine' }) },
         unreadBySession: { mine: 2 },
         messagesBySession: {
-          mine: [{ key: 'k', dbId: 9, role: 'user', content: 'is that price with GST?', timestamp: null }],
+          mine: [
+            {
+              key: 'k',
+              dbId: 9,
+              role: 'user',
+              content: 'is that price with GST?',
+              // Older than the lobby visitor: time alone would rank it first.
+              timestamp: new Date(NOW - 60_000).toISOString(),
+            },
+          ],
         },
-        // Arrival order alone would put the held chat first.
-        arrivals: new Map([
-          ['mine', NOW - 60_000],
-          ['lobby', NOW - 1_000],
-        ]),
       }),
     );
     expect(alerts.map((a) => a.kind)).toEqual(['waiting', 'message']);
@@ -162,18 +191,29 @@ describe('alertsFrom', () => {
     expect(alerts).toEqual([]);
   });
 
-  it('dates a held chat from their message, not from when the chat opened', () => {
-    // A two-hour conversation is not a two-hour wait, and an overdue stripe on
-    // a message sent ten seconds ago is a lie.
-    const at = new Date(NOW - 20_000).toISOString();
+  it('dates a held chat from the oldest thing you have not answered', () => {
+    // Not from the newest. "How long have they waited for a reply" is the
+    // question, and it is also the only answer that stays still: dating from
+    // their latest line would re-sort the stack every time somebody typed.
+    const older = new Date(NOW - 90_000).toISOString();
+    const newer = new Date(NOW - 5_000).toISOString();
     const alerts = alertsFrom(
       sources({
         activeChats: { mine: chat({ session_id: 'mine' }) },
-        unreadBySession: { mine: 1 },
-        messagesBySession: { mine: [{ key: 'k', dbId: 9, role: 'user', content: 'hello?', timestamp: at }] },
+        unreadBySession: { mine: 2 },
+        messagesBySession: {
+          mine: [
+            { key: 'read', dbId: 1, role: 'user', content: 'hi', timestamp: new Date(NOW - 200_000).toISOString() },
+            { key: 'a', dbId: 2, role: 'user', content: 'hello?', timestamp: older },
+            { key: 'b', dbId: 3, role: 'user', content: 'are you there?', timestamp: newer },
+          ],
+        },
       }),
     );
-    expect(alerts[0].since).toBe(at);
+    expect(alerts[0].since).toBe(older);
+    // The preview is still the latest thing they said, which is what an
+    // operator reads to decide.
+    expect(alerts[0].preview).toBe('are you there?');
   });
 
   it('keeps a preview to one line, so a pasted essay cannot become the card', () => {
@@ -181,30 +221,5 @@ describe('alertsFrom', () => {
       sources({ queue: [queued({ session_id: 's1', reason: 'line one\nline two\nline three' })] }),
     );
     expect(alerts[0].preview).toBe('line one');
-  });
-});
-
-describe('trackArrivals', () => {
-  it('stamps a session the first time it is seen and never again', () => {
-    const first = trackArrivals(new Map(), ['s1'], 1_000);
-    const second = trackArrivals(first, ['s1', 's2'], 2_000);
-    expect(second.get('s1')).toBe(1_000);
-    expect(second.get('s2')).toBe(2_000);
-  });
-
-  it('returns the same map when nothing changed, so a socket frame is not a render', () => {
-    const first = trackArrivals(new Map(), ['s1'], 1_000);
-    expect(trackArrivals(first, ['s1'], 5_000)).toBe(first);
-  });
-
-  it('forgets a session that has left', () => {
-    // A visitor who gives up and returns an hour later is a new arrival.
-    // Keeping their old slot would file them above people who have waited
-    // longer than they have.
-    const first = trackArrivals(new Map(), ['s1'], 1_000);
-    const gone = trackArrivals(first, [], 2_000);
-    expect(gone.has('s1')).toBe(false);
-    const back = trackArrivals(gone, ['s1'], 9_000);
-    expect(back.get('s1')).toBe(9_000);
   });
 });

@@ -7,6 +7,7 @@ import { Rail } from './Rail';
 import { TopBar } from './TopBar';
 import { CommandPalette } from './CommandPalette';
 import { ShellBanners } from './ShellBanners';
+import { LobbyAlerts } from './LobbyAlerts';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { getMyWaitingCount } from '../services/api';
 import { keys } from '../query/keys';
@@ -216,6 +217,10 @@ export function AppShell() {
       </div>
 
       {isOperator ? null : <CommandPalette open={searchOpen} onOpenChange={setSearchOpen} />}
+      {/* Outside the grid, like the toaster: this is positioned chrome, and a
+          card that pushed the page down would swallow whatever click the
+          operator was in the middle of making. */}
+      <LobbyAlerts />
       <Toaster />
     </TooltipProvider>
   );

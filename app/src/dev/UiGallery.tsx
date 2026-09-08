@@ -203,6 +203,8 @@ import {
   type SortState,
   type StateSize,
 } from '../ui';
+import { LobbyCard } from '../shell/LobbyCard';
+import type { LobbyAlert } from '../shell/lobbyModel';
 
 /**
  * The component gallery, at `/dev/ui`.
@@ -916,6 +918,12 @@ function PrimitivesPanel() {
 
   return (
     <Stack>
+      <Section
+        title="Lobby card"
+        description="Floating, never a layout row: a banner arriving between a mousedown and a mouseup swallows the click."
+      >
+        <LobbyCards />
+      </Section>
       <Section title="Buttons" description="Intent, not decoration. At most one primary per view.">
         <Card>
           <CardBody className="flex flex-wrap items-center gap-2">
@@ -2662,6 +2670,47 @@ function makeSampleImage(): string {
     ctx.fillText('Crop me', 140, 195);
   }
   return canvas.toDataURL('image/png');
+}
+
+/**
+ * The lobby card, at all three ages and in both kinds.
+ *
+ * Static props rather than the live hook: the gallery is where somebody checks
+ * that the three bands are actually distinguishable side by side, which is the
+ * one thing a running console never shows you — in real use they arrive one at
+ * a time, minutes apart.
+ */
+function LobbyCards() {
+  const now = Date.parse('2026-09-08T12:00:00Z');
+  const sample = (over: Partial<LobbyAlert>): LobbyAlert => ({
+    key: 'k',
+    sessionId: 's1',
+    kind: 'waiting',
+    name: 'Siddique',
+    detail: 'Eventus Security',
+    preview: 'i want to knwo amore abt the pricing for SOC',
+    since: new Date(now - 8_000).toISOString(),
+    ...over,
+  });
+  const noop = () => {};
+  const cards: Array<[string, LobbyAlert, Record<string, unknown>]> = [
+    ['Fresh', sample({}), {}],
+    ['Ageing', sample({ since: new Date(now - 72_000).toISOString() }), {}],
+    ['Overdue', sample({ since: new Date(now - 232_000).toISOString() }), { onToggleMute: noop }],
+    ['No start time', sample({ since: null }), {}],
+    ['Held chat', sample({ kind: 'message', name: 'Priya Raman', preview: 'is that price with GST?' }), {}],
+    ['Taken by a colleague', sample({}), { resolution: 'Asha took this one' }],
+  ];
+  return (
+    <div className="flex flex-wrap gap-4">
+      {cards.map(([label, alert, extra]) => (
+        <div key={label} className="space-y-2">
+          <p className="font-mono text-2xs uppercase tracking-eyebrow text-text-tertiary">{label}</p>
+          <LobbyCard alert={alert} now={now} onTake={noop} onOpenInbox={noop} onDismiss={noop} {...extra} />
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function OverlaysPanel() {

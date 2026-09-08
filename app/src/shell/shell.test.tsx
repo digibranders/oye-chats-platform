@@ -106,17 +106,19 @@ describe('the rail', () => {
     const paperStatus = /\b(?:bg|text|stroke|border)-(?:success|warning|danger)(?:-fill|-tint)?\b/;
     const offenders = SHELL_FILES.filter(
       ({ name, source }) =>
-        // The impersonation bar is paper on purpose: it is a canvas-side banner,
-        // not rail chrome. The feedback dialog is the same case — it renders in
-        // a `Dialog` on the paper canvas, not on the rail; it lives under
-        // `shell/` only because its launcher tab is shell chrome. The
-        // entitlements banner is a third: a flex child of the shell rendered
-        // above the top bar on the paper canvas, sharing the page gutter, and
-        // it carries a status colour because a plan that could not be read is
-        // a warning rather than a decorative accent.
+        // Four files under `shell/` are paper, not rail, which is what this
+        // rule is really about: the impersonation bar and the entitlements
+        // banner are canvas-side rows above the top bar; the feedback dialog
+        // renders in a `Dialog` on the canvas and lives here only because its
+        // launcher tab is shell chrome; and the lobby card is a floating panel
+        // on the canvas, whose whole job is to age from accent through warning
+        // to danger as a visitor waits. If a fifth arrives, this predicate
+        // should start asking whether a file renders on the rail rather than
+        // listing the ones that do not.
         !name.includes('ImpersonationBanner') &&
         !name.includes('FeedbackModal') &&
         !name.includes('EntitlementsErrorBanner') &&
+        !name.includes('LobbyCard') &&
         paperStatus.test(source),
     ).map((f) => f.name);
     expect(offenders).toEqual([]);
