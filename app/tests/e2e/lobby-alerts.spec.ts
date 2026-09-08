@@ -23,7 +23,12 @@ function waiting(sessionId: string, name: string, secondsAgo: number) {
     reason: 'i want to know more abt the pricing for SOC',
     bot_id: BOT_ID,
     bot_name: 'Acme Bot',
-    created_at: new Date(Date.now() - secondsAgo * 1000).toISOString(),
+    // `waiting_since`, not `created_at`. The server sends the moment the
+    // visitor entered the QUEUE; `created_at` was when they opened the widget,
+    // and the server never actually put it on a queue row at all, which is why
+    // the card's escalation never ran in production.
+    waiting_since: new Date(Date.now() - secondsAgo * 1000).toISOString(),
+    requeue_reason: 'handoff',
   };
 }
 
