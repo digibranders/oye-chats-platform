@@ -2011,6 +2011,10 @@ const en = {
     zoomOut: 'Zoom out',
   },
   inbox: {
+    acceptChat: 'Accept',
+    replyToAcceptThisConversation: 'Reply to accept this conversation…',
+    theyStayWithTheAi: 'They stay with the AI until you reply.',
+    acceptWithoutReplying: 'Accept without replying',
     acceptedYourInvitation: '{who} accepted your invitation',
     aColleague: 'a colleague',
     aDepartmentNotOnePerson: 'A department, not one person',

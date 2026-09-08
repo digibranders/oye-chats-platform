@@ -138,7 +138,7 @@ export function LobbyCard({
               operator choose between two things of equal weight: taking the
               conversation is the action, the inbox is a way out, and the mute
               is a preference. */}
-          <Button size="sm" onClick={onTake} loading={busy} disabled={busy}>
+          <Button size="sm" variant="primary" onClick={onTake} loading={busy} disabled={busy}>
             {alert.kind === 'waiting'
               ? t('shell.lobbyTakeIt') || 'Take it'
               : t('shell.lobbyReply') || 'Reply'}

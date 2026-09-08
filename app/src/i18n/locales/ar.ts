@@ -1995,6 +1995,10 @@ const ar = {
     zoomOut: "تصغير",
   },
   inbox: {
+    acceptChat: "قبول",
+    replyToAcceptThisConversation: "ردّ لقبول هذه المحادثة…",
+    theyStayWithTheAi: "يبقى الزائر مع الروبوت حتى ترد عليه.",
+    acceptWithoutReplying: "القبول دون الرد",
     acceptedYourInvitation: "قبل {who} دعوتك",
     aColleague: "أحد الزملاء",
     aDepartmentNotOnePerson: "قسم، وليس شخصًا واحدًا",

@@ -1,6 +1,7 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import * as api from '../../services/api';
 import { ChatPane } from './ChatPane';
 import { InboxSocketContext } from './inboxSocket';
 import type { OperatorSocketApi } from './useOperatorSocket';
@@ -77,13 +78,14 @@ const ITEM: InboxItem = {
   online: false,
 };
 
-function renderPane(onShowDetails?: () => void) {
-  return render(
+function renderPane(onShowDetails?: () => void, overrides: Partial<InboxItem> = {}, draft = '') {
+  const onDraftChange = vi.fn();
+  const view = render(
     <InboxSocketContext.Provider value={SOCKET}>
       <ChatPane
-        item={ITEM}
-        draft=""
-        onDraftChange={vi.fn()}
+        item={{ ...ITEM, ...overrides }}
+        draft={draft}
+        onDraftChange={onDraftChange}
         snippets={[]}
         onManageSnippets={vi.fn()}
         now={Date.parse('2026-08-19T12:00:00Z')}
@@ -92,7 +94,113 @@ function renderPane(onShowDetails?: () => void) {
       />
     </InboxSocketContext.Provider>,
   );
+  return { ...view, onDraftChange };
 }
+
+/**
+ * Taking a waiting visitor, and where the control for it lives.
+ *
+ * It used to be a primary button in the header's actions cluster, at the far
+ * top-right of the pane, sharing a row with the visitor's name and a wait
+ * badge — while the bottom of the pane, where an operator's eye and hand
+ * actually end up after reading a transcript, held a grey line reading "Accept
+ * the conversation to reply." That is a dead end: it names the precondition
+ * instead of offering the action that satisfies it, about 900px diagonally
+ * from the control that does. The person who built this console could not find
+ * it.
+ *
+ * Nobody thinks "I will accept this conversation". They think "I will answer
+ * this person", so answering is what accepts.
+ */
+describe('ChatPane — taking a waiting visitor', () => {
+  beforeEach(() => {
+    vi.mocked(api.acceptChat).mockReset();
+    vi.mocked(api.acceptChat).mockResolvedValue(undefined as never);
+    vi.mocked(SOCKET.sendMessage).mockClear();
+    vi.mocked(SOCKET.sendMessage).mockReturnValue(true);
+  });
+
+  it('offers a real composer, not a notice about one', () => {
+    renderPane();
+    expect(screen.getByRole('textbox', { name: /reply to this visitor/i })).toBeEnabled();
+    expect(screen.queryByText(/Accept the conversation to reply/i)).toBeNull();
+  });
+
+  it('says what the send button is about to do, given what is in the box', () => {
+    // Accepting takes a seat against the operator's concurrent-chat limit and
+    // tells a visitor somebody is here. That is not a thing to learn from a
+    // paper-plane glyph — and the label has to follow the draft, because
+    // pressing it with an empty box does something different.
+    const empty = renderPane();
+    expect(screen.getByRole('button', { name: 'Accept' })).toBeEnabled();
+    empty.unmount();
+
+    renderPane(undefined, {}, 'hello');
+    expect(screen.getByRole('button', { name: 'Accept and reply' })).toBeEnabled();
+  });
+
+  it('leaves the primary live on arrival, when nothing has been typed', () => {
+    // The whole reported defect was not finding the control. A greyed-out
+    // button is not a thing anybody hunts for, so the empty state accepts
+    // rather than disabling: claim the visitor now, write in a moment.
+    renderPane();
+    expect(screen.getByRole('button', { name: 'Accept' })).not.toBeDisabled();
+  });
+
+  it('accepts and sends in one action', async () => {
+    const user = userEvent.setup();
+    const { onDraftChange } = renderPane(undefined, {}, 'hello, how can I help?');
+
+    await user.click(screen.getByRole('button', { name: 'Accept and reply' }));
+
+    await waitFor(() => expect(api.acceptChat).toHaveBeenCalledWith('session-1', 1));
+    expect(SOCKET.sendMessage).toHaveBeenCalledWith('session-1', 'hello, how can I help?');
+    expect(onDraftChange).toHaveBeenCalledWith('');
+  });
+
+  it('keeps the draft when a colleague got there first', async () => {
+    // Losing the conversation is bad enough. Throwing away what they had
+    // written on top of it is the wrong way to be told.
+    vi.mocked(api.acceptChat).mockRejectedValue(new Error('Asha is already on this conversation'));
+    const user = userEvent.setup();
+    const { onDraftChange } = renderPane(undefined, {}, 'hello, how can I help?');
+
+    await user.click(screen.getByRole('button', { name: 'Accept and reply' }));
+
+    expect(await screen.findByText(/Asha is already on this conversation/)).toBeInTheDocument();
+    expect(SOCKET.sendMessage).not.toHaveBeenCalled();
+    expect(onDraftChange).not.toHaveBeenCalledWith('');
+  });
+
+  it('claims the visitor without sending an empty message', async () => {
+    // Take it before a colleague does, compose afterwards. There is nothing to
+    // send, and sending an empty line to the visitor would be worse than
+    // sending nothing.
+    const user = userEvent.setup();
+    renderPane();
+    await user.click(screen.getByRole('button', { name: 'Accept' }));
+    await waitFor(() => expect(api.acceptChat).toHaveBeenCalledWith('session-1', 1));
+    expect(SOCKET.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('offers one accept control, not two', () => {
+    // `DESIGN.md`: at most one primary per view. The header used to carry a
+    // copy of this button, and an earlier pass at this fix put a second,
+    // quieter one beside the hint — which puts the operator in front of a
+    // choice they did not ask for.
+    renderPane();
+    expect(screen.getAllByRole('button', { name: /^Accept/ })).toHaveLength(1);
+  });
+
+  it('does not tell the visitor somebody is typing before anyone has accepted', async () => {
+    // A typing indicator from an operator who has not taken the conversation
+    // is a promise the console has not made.
+    const user = userEvent.setup();
+    renderPane();
+    await user.type(screen.getByRole('textbox', { name: /reply to this visitor/i }), 'hi');
+    expect(SOCKET.sendTyping).not.toHaveBeenCalled();
+  });
+});
 
 describe('ChatPane — the visitor-details toggle', () => {
   it('offers a way back to visitor details when the pane is not on screen beside it', async () => {

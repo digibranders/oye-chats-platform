@@ -706,6 +706,10 @@ const hi = {
     yourPlan: 'आपका प्लान',
   },
   inbox: {
+    acceptChat: 'स्वीकार करें',
+    replyToAcceptThisConversation: 'जवाब देकर यह बातचीत स्वीकार करें…',
+    theyStayWithTheAi: 'जब तक आप जवाब नहीं देते, वे AI के साथ ही रहते हैं।',
+    acceptWithoutReplying: 'बिना जवाब दिए स्वीकार करें',
     acceptedYourInvitation: '{who} ने आपका निमंत्रण स्वीकार किया',
     aColleague: 'एक सहकर्मी',
     aDepartmentNotOnePerson: 'एक विभाग, कोई एक व्यक्ति नहीं',

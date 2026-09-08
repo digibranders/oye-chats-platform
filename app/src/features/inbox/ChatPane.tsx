@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRightLeft,
   Bot,
@@ -6,7 +6,6 @@ import {
   MoreHorizontal,
   PanelRight,
   Sparkles,
-  UserPlus,
   X,
 } from 'lucide-react';
 import {
@@ -151,7 +150,6 @@ export function ChatPane({
   const sessionId = item.sessionId ?? '';
   const live = item.kind === 'live';
 
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [transferOpen, setTransferOpen] = useState(false);
   const [confirm, setConfirm] = useState<PendingAction>(null);
@@ -193,6 +191,16 @@ export function ChatPane({
 
   // A resolved connect-request is a one-shot event: report it, then clear it so
   // it cannot re-announce itself every time this pane re-renders.
+  //
+  // The compiler's "setState synchronously within an effect" rule fires on the
+  // line below, and it only started firing when a dead `run`/`busy` pair was
+  // removed from this component and the analysis could see further. It is a
+  // false positive here rather than a defect: the effect consumes an event and
+  // clears its own trigger in the same pass, so `resolution` is undefined on
+  // the next render and there is nothing to cascade into. Both updates batch
+  // into one extra render. Restructuring `invited` to be derived would mean
+  // never clearing the socket's resolution, which is what stops a second
+  // invitation to the same visitor reading a stale one.
   useEffect(() => {
     if (!resolution || !sessionId) return;
     const { outcome, visitorName } = resolution;
@@ -200,35 +208,10 @@ export function ChatPane({
     if (outcome === 'accepted') toast.success(t('inbox.acceptedYourInvitation', { who }) || `${who} accepted your invitation`);
     else if (outcome === 'declined') toast.info(t('inbox.declinedYourInvitation', { who }) || `${who} declined your invitation`);
     else if (outcome === 'expired') toast.info(t('inbox.yourInvitationExpired', { who }) || `Your invitation to ${who} expired`);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- see above
     setInvited(false);
     socket.clearConnectResolution(sessionId);
   }, [resolution, sessionId, socket, t]);
-
-  const run = useCallback(
-    async (label: string, action: () => Promise<unknown>): Promise<void> => {
-      if (busy) return;
-      setBusy(true);
-      setError(null);
-      try {
-        await action();
-      } catch (err) {
-        setError(err instanceof Error ? `${label}: ${err.message}` : label);
-      } finally {
-        setBusy(false);
-      }
-    },
-    [busy],
-  );
-
-  const accept = (): void => {
-    void run(t('inbox.couldNotAcceptThisConversation') || 'Could not accept this conversation', async () => {
-      await acceptChat(sessionId, socket.operatorId);
-      // The socket's `chat_accepted` moves it onto the board and into "Yours".
-      toast.success(
-        t('inbox.youAreNowTalkingTo', { name: item.name }) || `You are now talking to ${item.name}`,
-      );
-    });
-  };
 
   const invite = (): void => {
     setConnecting(true);
@@ -265,7 +248,31 @@ export function ChatPane({
       .finally(() => setConnecting(false));
   };
 
-  const send = (text: string): void => {
+  const send = async (text: string): Promise<void> => {
+    // Replying to a waiting visitor IS accepting them. Nobody thinks "I will
+    // accept this conversation"; they think "I will answer this person", and
+    // the control they reach for is the composer. Accepting on SEND rather
+    // than on focus or on the first keystroke keeps it a deliberate act: it
+    // takes a seat against this operator's concurrent-chat limit and tells the
+    // visitor somebody is here.
+    if (item.kind === 'waiting') {
+      try {
+        await acceptChat(sessionId, socket.operatorId);
+      } catch (err) {
+        // The draft is NOT cleared. Almost always a colleague got there first,
+        // and throwing away what they had written on top of losing the
+        // conversation is the wrong way to be told.
+        setError(
+          err instanceof Error && err.message
+            ? err.message
+            : t('inbox.couldNotAcceptThisConversation') || 'Could not accept this conversation',
+        );
+        return;
+      }
+    }
+    // An empty box is a valid press on a waiting conversation: it means
+    // "claim this visitor, I will write in a moment". There is nothing to send.
+    if (!text) return;
     if (!socket.sendMessage(sessionId, text)) {
       setError(t('inbox.thatMessageDidNotSend') || 'That message did not send. You are not connected right now.');
       return;
@@ -298,13 +305,6 @@ export function ChatPane({
   return (
     <section aria-label={t('inbox.conversationWith', { name: item.name }) || `Conversation with ${item.name}`} className="flex h-full min-h-0 flex-col bg-canvas">
       <Header item={item} online={online} now={now} onShowDetails={onShowDetails}>
-        {item.kind === 'waiting' ? (
-          <Button size="sm" variant="primary" onClick={accept} loading={busy} disabled={busy}>
-            <UserPlus aria-hidden />
-            {t('inbox.acceptAndReply') || 'Accept and reply'}
-          </Button>
-        ) : null}
-
         {item.kind === 'qualified' ? (
           invited ? (
             <Button
@@ -340,7 +340,7 @@ export function ChatPane({
             <MenuRoot>
               <MenuTrigger
                 render={
-                  <Button size="icon-sm" variant="ghost" aria-label={t('inbox.moreActions') || 'More actions'} disabled={busy}>
+                  <Button size="icon-sm" variant="ghost" aria-label={t('inbox.moreActions') || 'More actions'}>
                     <MoreHorizontal aria-hidden />
                   </Button>
                 }
@@ -354,7 +354,7 @@ export function ChatPane({
                 </MenuItem>
               </MenuContent>
             </MenuRoot>
-            <Button size="sm" onClick={() => setConfirm('resolve')} disabled={busy}>
+            <Button size="sm" onClick={() => setConfirm('resolve')}>
               <CheckCircle2 aria-hidden />
               {t('inbox.resolve') || 'Resolve'}
             </Button>
@@ -366,12 +366,6 @@ export function ChatPane({
         <Alert tone="danger" live className="mx-cell mt-3">
           {error}
         </Alert>
-      ) : null}
-
-      {item.kind === 'waiting' ? (
-        <p className="border-b border-border bg-surface-sunken px-cell py-2 text-xs text-text-secondary">
-          {t('inbox.readWhatTheyHaveAlready') || 'Read what they have already said before you take the conversation. They are still with the AI until you accept.'}
-        </p>
       ) : null}
 
       <Transcript
@@ -420,24 +414,54 @@ export function ChatPane({
         }
       />
 
-      {live && !ended ? (
+      {/* A waiting conversation gets a real composer, not a notice.
+          The action used to be a button in the header's actions cluster, at the
+          far top-right of the pane, sharing a row with the visitor's name and a
+          wait badge — while the bottom of the pane, where an operator's eye and
+          hand actually end up after reading a transcript, held a grey line
+          saying "Accept the conversation to reply." That is a dead end: it
+          names the precondition instead of offering the action that satisfies
+          it, roughly 900px diagonally from the control that does. */}
+      {(live || item.kind === 'waiting') && !ended ? (
         <Composer
           value={draft}
           onChange={onDraftChange}
           onSend={send}
           onAttach={attach}
-          onTyping={() => socket.sendTyping(sessionId)}
+          onTyping={() => (item.kind === 'waiting' ? undefined : socket.sendTyping(sessionId))}
           snippets={snippets}
           onManageSnippets={onManageSnippets}
-          disabledReason={composerBlock}
+          disabledReason={item.kind === 'waiting' ? null : composerBlock}
+          placeholder={
+            item.kind === 'waiting'
+              ? t('inbox.replyToAcceptThisConversation') || 'Reply to accept this conversation…'
+              : undefined
+          }
+          // One control, and its label is the truth about what pressing it
+          // will do given what is in the box. Two of them — a primary that
+          // greys out until you type, beside a ghost "Accept without replying"
+          // — put the operator in front of a choice they did not ask for, and
+          // left the prominent one inert at the moment they were looking for
+          // it.
+          sendLabel={
+            item.kind === 'waiting'
+              ? draft.trim()
+                ? t('inbox.acceptAndReply') || 'Accept and reply'
+                : t('inbox.acceptChat') || 'Accept'
+              : undefined
+          }
+          allowEmpty={item.kind === 'waiting'}
+          hint={
+            item.kind === 'waiting'
+              ? t('inbox.theyStayWithTheAi') || 'They stay with the AI until you reply.'
+              : null
+          }
         />
       ) : (
         <div className="shrink-0 border-t border-border bg-surface px-cell py-3 text-xs text-text-secondary">
-          {item.kind === 'waiting'
-            ? t('inbox.acceptTheConversationToReply') || 'Accept the conversation to reply.'
-            : item.kind === 'qualified'
-              ? t('inbox.youAreWatchingTheAi') || 'You are watching the AI answer. Offer to take over to start replying yourself.'
-              : t('inbox.thisConversationIsClosed') || 'This conversation is closed.'}
+          {item.kind === 'qualified'
+            ? t('inbox.youAreWatchingTheAi') || 'You are watching the AI answer. Offer to take over to start replying yourself.'
+            : t('inbox.thisConversationIsClosed') || 'This conversation is closed.'}
         </div>
       )}
 

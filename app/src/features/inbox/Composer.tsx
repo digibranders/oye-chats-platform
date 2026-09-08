@@ -10,13 +10,39 @@ const MAX_FILE_BYTES = 10 * 1024 * 1024;
 export interface ComposerProps {
   value: string;
   onChange: (value: string) => void;
-  onSend: (text: string) => void;
+  /**
+   * Send it. May be async: on a waiting conversation this accepts the chat
+   * first, and the button stays busy until both have happened, so nobody
+   * presses it twice and takes a second seat.
+   */
+  onSend: (text: string) => void | Promise<void>;
   onAttach: (file: File) => Promise<void>;
   onTyping: () => void;
   snippets: CannedResponse[];
   /** Blocks sending, with the reason shown in place of the hint. */
   disabledReason?: string | null;
   placeholder?: string;
+  /**
+   * What the send button will do, when it is not simply "send".
+   *
+   * A waiting conversation is accepted by replying to it, so the button reads
+   * "Accept and reply" there. Naming the consequence is the whole point: the
+   * operator is about to take a seat against their concurrent-chat limit and
+   * tell a visitor somebody is here.
+   */
+  sendLabel?: string;
+  /**
+   * Let the button fire with an empty box.
+   *
+   * For a send that means something on its own. Accepting a waiting visitor
+   * does: an operator may want to claim them before a colleague can and
+   * compose afterwards. It also keeps the primary control LIVE on arrival —
+   * a greyed-out button is not a thing anybody hunts for, and being hard to
+   * find is the whole defect this is fixing.
+   */
+  allowEmpty?: boolean;
+  /** One short line under the composer. Not a place for a paragraph. */
+  hint?: string | null;
   /** Opens the snippet manager, so the operator never leaves the conversation. */
   onManageSnippets?: () => void;
 }
@@ -60,6 +86,9 @@ export function Composer({
   snippets,
   disabledReason = null,
   placeholder,
+  sendLabel,
+  allowEmpty = false,
+  hint = null,
   onManageSnippets,
 }: ComposerProps) {
   const { t } = useTranslation();
@@ -69,6 +98,7 @@ export function Composer({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [sending, setSending] = useState(false);
   const [highlight, setHighlight] = useState(0);
   // Escape closes the menu. It used to call `onChange('')`, which destroyed the
   // whole draft — in every other combobox in the console Escape closes and
@@ -97,17 +127,27 @@ export function Composer({
     node.style.height = `${Math.min(node.scrollHeight, 180)}px`;
   }, [value]);
 
-  const disabled = Boolean(disabledReason);
+  const disabled = Boolean(disabledReason) || sending;
 
   function insertSnippet(snippet: CannedResponse): void {
     onChange(snippet.content);
     requestAnimationFrame(() => textareaRef.current?.focus());
   }
 
-  function submit(): void {
+  async function submit(): Promise<void> {
     const text = value.trim();
-    if (!text || disabled) return;
-    onSend(text);
+    if (disabled) return;
+    if (!text && !allowEmpty) return;
+    // Awaited, and the control is held busy meanwhile. Sending used to be
+    // fire-and-forget, which was fine while it was one websocket frame; on a
+    // waiting conversation it is an HTTP accept followed by that frame, and a
+    // second press in the gap would try to take the visitor twice.
+    setSending(true);
+    try {
+      await onSend(text);
+    } finally {
+      setSending(false);
+    }
   }
 
   function onKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>): void {
@@ -272,29 +312,41 @@ export function Composer({
         <Tooltip
           content={
             <span className="flex items-center gap-1.5">
-              {t('inbox.send') || 'Send'} <Kbd>{t('inbox.enterKey') || 'Enter'}</Kbd>
+              {sendLabel ?? (t('inbox.send') || 'Send')} <Kbd>{t('inbox.enterKey') || 'Enter'}</Kbd>
             </span>
           }
         >
+          {/* Icon-only when it just sends; labelled when it does something the
+              operator should be told about first. Accepting takes a seat
+              against their chat limit and tells a visitor somebody is here,
+              which is not a thing to learn from a paper-plane glyph. */}
           <Button
-            size="icon-sm"
-            aria-label={t('inbox.sendReply') || 'Send reply'}
-            disabled={disabled || value.trim().length === 0}
-            onClick={submit}
+            size="sm"
+            // Primary only when it is carrying a label. The bare paper-plane
+            // stays secondary: it is the end of a sentence the operator is
+            // already writing, not a thing to be drawn toward.
+            variant={sendLabel ? 'primary' : 'secondary'}
+            className={sendLabel ? undefined : 'w-control-sm px-0'}
+            aria-label={sendLabel ?? (t('inbox.sendReply') || 'Send reply')}
+            disabled={disabled || (value.trim().length === 0 && !allowEmpty)}
+            loading={sending}
+            onClick={() => void submit()}
           >
-            <Send aria-hidden className="rtl:-scale-x-100" />
+            {sendLabel ? sendLabel : <Send aria-hidden className="rtl:-scale-x-100" />}
           </Button>
         </Tooltip>
       </div>
 
-      {/* Only the disabled reason. The permanent "Enter sends · Shift+Enter
-          starts a line · / inserts a saved reply" line was learned in a day and
-          read for a year; the keys live on the send button's tooltip and in the
-          placeholder now. */}
+      {/* The disabled reason, or the one line a surface is allowed. The
+          permanent "Enter sends · Shift+Enter starts a line · / inserts a saved
+          reply" line was learned in a day and read for a year; the keys live on
+          the send button's tooltip and in the placeholder now. */}
       {disabledReason ? (
         <p role="status" className="mt-1.5 text-2xs text-warning">
           {disabledReason}
         </p>
+      ) : hint ? (
+        <p className="mt-1.5 text-2xs text-text-tertiary">{hint}</p>
       ) : null}
     </div>
   );
