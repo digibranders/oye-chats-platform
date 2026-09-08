@@ -34,6 +34,7 @@ from sqlalchemy.orm import Session
 from app.db.models import Base, Client, CreditLedger, Invoice, Plan, Subscription
 from app.services import credit_service
 from app.services import razorpay_service as rzp
+from tests.throwaway_db import drop_stale, throwaway_db_name
 
 _TEST_DB_SUFFIX = "_backfilltest"
 
@@ -64,9 +65,10 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def pg_engine():
-    test_db = (_BASE_URL.database or "postgres") + _TEST_DB_SUFFIX
+    test_db = throwaway_db_name(_BASE_URL.database or "postgres", _TEST_DB_SUFFIX)
     admin = create_engine(_BASE_URL.set(database="postgres"), isolation_level="AUTOCOMMIT")
     with admin.connect() as conn:
+        drop_stale(conn, _BASE_URL.database or "postgres", _TEST_DB_SUFFIX)
         conn.exec_driver_sql(f'DROP DATABASE IF EXISTS "{test_db}"')
         conn.exec_driver_sql(f'CREATE DATABASE "{test_db}"')
     admin.dispose()
