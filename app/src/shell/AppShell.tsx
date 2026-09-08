@@ -6,7 +6,6 @@ import { Toaster, TooltipProvider, cn, useMediaQuery } from '../ui';
 import { Rail } from './Rail';
 import { TopBar } from './TopBar';
 import { CommandPalette } from './CommandPalette';
-import { FeedbackLauncher } from './FeedbackLauncher';
 import { ShellBanners } from './ShellBanners';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { getMyWaitingCount } from '../services/api';
@@ -217,7 +216,6 @@ export function AppShell() {
       </div>
 
       {isOperator ? null : <CommandPalette open={searchOpen} onOpenChange={setSearchOpen} />}
-      <FeedbackLauncher />
       <Toaster />
     </TooltipProvider>
   );

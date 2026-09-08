@@ -31,6 +31,7 @@ import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 import { SetupProgress } from './SetupProgress';
 import { TrialCard } from './TrialCard';
 import { AccountMenu } from './AccountMenu';
+import { FeedbackRailItem } from './FeedbackRailItem';
 
 /**
  * The navigation rail.
@@ -209,6 +210,12 @@ export function Rail({
 
   const footer = (
     <div className="flex flex-col gap-0.5">
+      {/* Above the trial card and Billing rather than between them: that
+          adjacency (the fact and the place to act on it) is deliberate, and
+          Feedback is not part of it. */}
+      <ul className="flex flex-col gap-0.5">
+        <FeedbackRailItem collapsed={collapsed} />
+      </ul>
       {/* Directly above Billing: the fact and the place to act on it, adjacent.
           Operators never see it; a trial is a fact about the workspace owner's
           account, not about the person answering chats in it. */}
