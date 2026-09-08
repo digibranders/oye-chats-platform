@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
@@ -2002,6 +2003,27 @@ def system_health_full(_admin: Client = Depends(get_superadmin)):
         health["worker"] = "connected" if worker_alive else "unreachable"
         if not worker_alive:
             health["status"] = "degraded"
+
+    # -- Email verification (Reoon) --
+    #
+    # A vendor whose absence is silent. Every caller of ``verify_email`` fails
+    # OPEN by design, so when the account runs dry the anti-fraud gate becomes
+    # a no-op and nothing user-facing breaks: on 2026-09-08 that state ran for
+    # an unknown stretch while this endpoint reported "healthy", because it
+    # checked the database, Redis and the worker and nothing else.
+    #
+    # ``no_credits`` degrades, ``not_configured`` does not. A missing key is a
+    # deployment that never bought the feature; an empty balance is one that
+    # did, and stopped getting it.
+    from app.services import reoon_service
+
+    if not os.getenv("REOON_API_KEY", "").strip():
+        health["email_verification"] = "not_configured"
+    elif reoon_service.credits_exhausted():
+        health["email_verification"] = "no_credits"
+        health["status"] = "degraded"
+    else:
+        health["email_verification"] = "connected"
 
     # ``app.config`` is a module of top-level constants, not a settings
     # object, the previous ``getattr(settings, …)`` lookups would have

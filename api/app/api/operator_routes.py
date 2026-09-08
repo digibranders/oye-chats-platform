@@ -12,6 +12,7 @@ from sqlalchemy import func, or_, select, update
 
 from app.api.auth import get_current_bot, get_current_client_or_operator, impersonation_writable
 from app.api.bot_routes import BusinessHours
+from app.api.chat_routes import email_verdict_for
 from app.api.invite_routes import _map_invite_error
 from app.api.quotation_routes import build_quotation_summary
 from app.core.rate_limit import key_from_operator_credential, limiter
@@ -185,6 +186,12 @@ class HandoffRequest(BaseModel):
     session_id: SessionId
     reason: ShortText | None = None
     department_id: RowId | None = None
+    #: The address the visitor typed into the handoff form, so the SERVER can
+    #: apply the gate its own widget already applies. Optional on purpose:
+    #: widget builds cached on customers' pages do not send it, and rejecting
+    #: those would take live chat away from real visitors to close a hole
+    #: against a caller who can simply omit the field anyway.
+    email: EmailAddress | None = None
 
 
 class CreateOperatorRequest(BaseModel):
@@ -940,8 +947,30 @@ def delete_operator(operator_id: RowId, auth=Depends(get_current_client_or_opera
 # ── Live Chat Flow Endpoints ──
 
 
+def _handoff_email_is_blocked(*, bot, request, email: str | None) -> bool:
+    """Should this handoff be refused on the address the visitor gave?
+
+    True ONLY for an address the vendor calls unambiguously undeliverable, the
+    same bar ``/chat/validate-email`` applies, so a visitor who got past the
+    widget's own form never meets a second, stricter opinion here.
+
+    Everything else passes. No address, a lower plan, a customer opt-out, a
+    spent budget, an exhausted vendor balance, an outage, or an exception
+    inside the gate itself: all fail OPEN. The gate exists to stop obvious junk
+    reaching an operator, and it must never be the reason a real visitor cannot
+    reach a human. That asymmetry is the whole design.
+    """
+    if not email or not email.strip():
+        return False
+    try:
+        return email_verdict_for(bot, request, email.strip().lower()) is True
+    except Exception:  # noqa: BLE001 - a broken gate must not cost a live chat
+        logger.warning("Handoff email gate failed open for bot=%s", getattr(bot, "id", None), exc_info=True)
+        return False
+
+
 @router.post("/handoff")
-async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_current_bot)):
+async def request_handoff(request: HandoffRequest, http_request: Request, bot: Bot = Depends(get_current_bot)):
     """Visitor-initiated live chat request. Runs through the state machine.
 
     The state machine ``LiveChatAvailabilityService`` decides what the widget
@@ -961,6 +990,20 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
     state machine has already decided to fall back to the form.
     """
     from app.services import live_chat_availability_service as availability_svc
+
+    # The same gate the widget's own form applies, applied where it cannot be
+    # skipped. `HandoffForm` refuses to submit an undeliverable address, but
+    # `X-Bot-Key` is embedded in every customer's page, so that check lived
+    # entirely on the client until now.
+    #
+    # Before anything is created or queued: past this point an operator has
+    # been woken and a row exists.
+    if _handoff_email_is_blocked(bot=bot, request=http_request, email=request.email):
+        logger.info("Handoff refused on an undeliverable address | bot=%s", bot.id)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This email address doesn't look right. Mind double-checking it?",
+        )
 
     with get_session() as session:
         chat_session = session.execute(

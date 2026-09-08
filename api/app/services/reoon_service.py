@@ -10,6 +10,7 @@ costs the same 1 credit per call as quick mode, confirmed empirically.
 import json
 import logging
 import os
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -41,6 +42,80 @@ REOON_INTERACTIVE_TIMEOUT_S = 5.0
 _MISSING_KEY_METRIC = "reoon_api_key_missing"
 
 _missing_key_reported = False
+
+#: Counter name for the OTHER "configured to run, cannot possibly run" state:
+#: the key is valid, the vendor is up, and the account has no credits left.
+CREDITS_METRIC = "reoon_credits_exhausted"
+
+#: Reoon says this in the body of a 403 when the balance is spent. Matched on
+#: the phrase rather than the status code alone, because 403 also covers a
+#: revoked or mistyped key -- a different incident with a different fix, and
+#: one that must not be reported as a billing problem.
+_CREDITS_EXHAUSTED_MARKER = "not enough credits"
+
+_credits_exhausted = False
+_credits_reported = False
+
+
+def credits_exhausted() -> bool:
+    """True when Reoon last told us the account is out of credits.
+
+    Process-local and best-effort: it exists so ``/health/full`` and the
+    superadmin console can SAY the feature is off, not to gate anything. The
+    verification path itself keeps failing open regardless.
+    """
+    return _credits_exhausted
+
+
+def reset_credit_state() -> None:
+    """Test seam. Clears the flag and the once-only report latch."""
+    global _credits_exhausted, _credits_reported
+    _credits_exhausted = False
+    _credits_reported = False
+
+
+def _note_credits_exhausted() -> None:
+    """Record, and report ONCE, that the vendor account has run dry.
+
+    Once, not once per call: a dry account fails on every address, so a
+    per-call report would bury the incident in the noise it generates. This is
+    one incident with one fix (recharge), and the counter is what makes it
+    countable in the meantime.
+
+    Deliberately ERROR, where every other vendor failure here is WARNING. A
+    timeout resolves itself; a balance does not, and until somebody tops it up
+    a paid anti-fraud feature is switched off for every bot on every plan while
+    every visitor sails through. No address is logged: the incident is about
+    our account, not about whoever happened to trigger it.
+    """
+    global _credits_exhausted, _credits_reported
+    _credits_exhausted = True
+    if _credits_reported:
+        return
+    _credits_reported = True
+    logger.error(
+        "reoon.metric name=%s. Reoon reports no credits remaining; email verification is "
+        "failing open for every bot on every plan until the account is recharged",
+        CREDITS_METRIC,
+    )
+    increment_metric_counter(CREDITS_METRIC)
+    forward_to_sentry_if_alertable(CREDITS_METRIC)
+
+
+def _looks_like_credits_exhausted(exc: Exception) -> bool:
+    """Is this failure the account balance rather than the network?
+
+    Reads the 403's body, which is where Reoon puts the reason. ``HTTPError``
+    is itself a readable file object, so this consumes it -- fine, because the
+    caller only logs the exception afterwards and never reads its body.
+    """
+    if not isinstance(exc, urllib.error.HTTPError) or exc.code != 403:
+        return False
+    try:
+        body = exc.read().decode(errors="replace")
+    except Exception:  # noqa: BLE001 - a body we cannot read tells us nothing
+        return False
+    return _CREDITS_EXHAUSTED_MARKER in body.lower()
 
 
 def check_configuration() -> bool:
@@ -90,12 +165,24 @@ def verify_email(email: str, *, timeout: float = REOON_BACKGROUND_TIMEOUT_S) -> 
         with urllib.request.urlopen(req, timeout=timeout) as response:
             data = json.loads(response.read().decode())
     except Exception as exc:
+        # Classify before logging: an unpaid bill and a read timeout are the
+        # same code path here (both fail open) but not the same incident, and
+        # for a long time they were indistinguishable in the logs too.
+        if _looks_like_credits_exhausted(exc):
+            _note_credits_exhausted()
         logger.warning(f"Reoon verification failed for {email}: {exc}")
         return None
 
     if "status" not in data:
         logger.warning(f"Reoon returned unexpected payload for {email}: {data}")
         return None
+
+    # A verdict came back, so the account has credits again. Clearing here
+    # rather than on a timer means a recharge takes effect on the next real
+    # verification, with no restart and nothing to remember to reset.
+    if _credits_exhausted:
+        reset_credit_state()
+        logger.info("reoon.metric name=%s_cleared. Verification is answering again", CREDITS_METRIC)
 
     return {
         "status": data.get("status"),
