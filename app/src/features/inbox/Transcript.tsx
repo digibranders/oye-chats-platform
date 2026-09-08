@@ -280,6 +280,7 @@ export function Transcript({
           const showsOriginal = originals[message.key] === true;
           const display = resolveDisplay(message, readerLanguage, showsOriginal);
           const mine = message.role === 'operator';
+          const ai = message.role === 'bot';
           const system = message.role === 'system';
           const groupStart = grouping.starts[index] || showDivider;
           const groupEnd = grouping.ends[index];
@@ -322,44 +323,68 @@ export function Transcript({
                       group; the rest of the run is indented past the gap. */}
                   {mine || !groupStart ? (
                     <span aria-hidden className="w-5 shrink-0" />
-                  ) : message.role === 'bot' ? (
+                  ) : ai ? (
+                    // Now that the AI's words sit on the pane rather than in
+                    // a box, this mark is the ONLY thing identifying them, so
+                    // it is drawn to be seen: `border-strong` and secondary
+                    // ink, not the decorative hairline and tertiary glyph it
+                    // could get away with while a bubble carried the identity.
                     <span
                       aria-hidden
-                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border bg-surface-sunken"
+                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border-strong bg-surface"
                     >
-                      <Bot className="h-3 w-3 text-text-tertiary" />
+                      <Bot className="h-3 w-3 text-text-secondary" />
                     </span>
                   ) : (
                     <Avatar size="xs" name={visitorName} className="shrink-0" />
                   )}
-                  <div className={cn('flex min-w-0 max-w-[min(42rem,80%)] flex-col', mine && 'items-end')}>
+                  {/* 34rem, not 42. A bubble at 42rem carries about 95
+                      characters of `text-prose`, and comfortable prose is 45
+                      to 75 — a measure the AI's answers, the longest messages
+                      on this screen, broke worst. */}
+                  <div className={cn('flex min-w-0 max-w-[min(34rem,82%)] flex-col', mine && 'items-end')}>
                     <div
                       className={cn(
-                        // `rounded-md` (8), not `rounded-lg` (10) — that is the
-                        // card radius, and a message is not a card. 8 → 4 on
-                        // the tail is a half step, which reads as a tail rather
-                        // than as a nick.
-                        'rounded-md px-3 py-2 text-prose',
-                        mine
-                          ? cn('bg-ink text-rail-text', groupEnd && 'rounded-ee-xs')
-                          : message.role === 'bot'
-                            ? cn(
-                                // The bubble is bordered as well as filled.
-                                // `--color-surface-sunken` is 1.8 L* off the
-                                // `bg-canvas` ground this transcript sits on —
-                                // under the 2.4 L* step tokens.css sets as the
-                                // floor for a felt difference — so on a support
-                                // operator's panel the AI's bubble had no edge
-                                // at all and its text read as loose type on the
-                                // pane. The hairline draws the shape; the fill
-                                // still separates it from the visitor's white.
-                                'border border-border bg-surface-sunken text-text-primary',
-                                groupEnd && 'rounded-es-xs',
-                              )
-                            : cn(
-                                'border border-border bg-surface text-text-primary',
-                                groupEnd && 'rounded-es-xs',
-                              ),
+                        'text-prose',
+                        // The AI is not a bubble.
+                        //
+                        // Three speakers were three fills: ink for the
+                        // operator, white for the visitor, and
+                        // `--color-surface-sunken` for the AI — which is 1.8
+                        // L* off the `bg-canvas` ground this sits on, under
+                        // the 2.4 L* step tokens.css sets as the floor for a
+                        // felt difference. So the AI's box barely read as a
+                        // box, and beside the visitor's white it barely read
+                        // as different. A third fill would have been answering
+                        // the wrong question: what separates a machine from a
+                        // person is not a shade, and the widget and the lead
+                        // drawer both already say so by giving the AI its
+                        // avatar and plain text instead. This is the console
+                        // agreeing with them.
+                        //
+                        // It also fixes the measure for free: text takes the
+                        // reading width above, where a bubble took a
+                        // percentage of a pane that can be 900px wide.
+                        ai
+                          ? 'text-text-primary'
+                          : cn(
+                              // `rounded-md` (8), not `rounded-lg` (10) — that
+                              // is the card radius, and a message is not a
+                              // card. 8 → 4 on the tail is a half step, which
+                              // reads as a tail rather than as a nick.
+                              'rounded-md px-3 py-2',
+                              mine
+                                ? cn('bg-ink text-rail-text', groupEnd && 'rounded-ee-xs')
+                                : cn(
+                                    // `border-strong`, not `border`. The white
+                                    // bubble used a decorative hairline that
+                                    // was doing nothing against the canvas; it
+                                    // was legible only because a grey bubble
+                                    // sat beside it, and that grey is gone.
+                                    'border border-border-strong bg-surface text-text-primary',
+                                    groupEnd && 'rounded-es-xs',
+                                  ),
+                            ),
                       )}
                     >
                       {/* The speaker, once per group, for the reader who cannot
@@ -379,7 +404,7 @@ export function Transcript({
                           markup, and reformatting an operator's own asterisks
                           would be rewriting what they typed. */}
                       {display.text ? (
-                        message.role === 'bot' ? (
+                        ai ? (
                           <Markdown dir={display.direction} className="text-prose">
                             {display.text}
                           </Markdown>
