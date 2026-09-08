@@ -400,8 +400,11 @@ export function JourneyDiagram({
         width={CENTER.r * 2}
         height={CENTER.r * 2}
       >
-        <div className="flex h-full w-full flex-col items-center justify-center text-center text-white">
-          <div className="mb-1 flex h-10 w-10 items-center justify-center rounded-full bg-white/15">
+        {/* `text-white` and `bg-white/15` here compiled to nothing: `tokens.css`
+            drops Tailwind's default palette with `--color-*: initial`, so this
+            label inherited near-black ink on an accent-500 circle. */}
+        <div className="flex h-full w-full flex-col items-center justify-center text-center text-text-inverse">
+          <div className="mb-1 flex h-10 w-10 items-center justify-center rounded-full bg-surface/15">
             <Bot aria-hidden className="h-6 w-6" strokeWidth={1.75} />
           </div>
           <p className="text-2xs font-medium leading-tight opacity-90">{center}</p>
