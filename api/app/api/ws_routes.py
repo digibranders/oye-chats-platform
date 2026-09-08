@@ -415,7 +415,11 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
         if origin_check_applies(domain_check_enabled=bot.domain_check_enabled, allowed=allowed_domains):
             origin_header = ws.headers.get("origin") or ws.headers.get("referer")
             hostname = extract_hostname(origin_header)
-            if not is_origin_allowed(hostname, allowed_domains):
+            # Same ``own_host`` exemption as the HTTP path, for the same reason
+            # the comment above gives: a visitor on the hosted demo page asking
+            # for a person was closed with 4403 while the page itself loaded.
+            own_host = extract_hostname(str(getattr(ws, "base_url", "") or ""))
+            if not is_origin_allowed(hostname, allowed_domains, own_host=own_host):
                 logger.info(
                     "Widget WS rejected by origin check: bot_id=%s origin=%r hostname=%r",
                     bot_id,

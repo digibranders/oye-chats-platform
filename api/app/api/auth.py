@@ -1143,7 +1143,15 @@ def _enforce_bot_origin(bot: Bot, request: Request | None) -> None:
 
     origin = request.headers.get("origin") or request.headers.get("referer")
     hostname = extract_hostname(origin)
-    if not is_origin_allowed(hostname, allowed):
+    # Our own host is allowed: the API serves the hosted demo page, so a widget
+    # on it reports the API as its origin. See ``is_origin_allowed``.
+    #
+    # ``getattr`` rather than ``request.base_url``: this helper is documented as
+    # callable programmatically, and its callers include tests that hand it a
+    # minimal stub. A missing attribute must degrade to "no exemption" -- an
+    # AttributeError inside a security check is a 500 where a 403 was owed.
+    own_host = extract_hostname(str(getattr(request, "base_url", "") or ""))
+    if not is_origin_allowed(hostname, allowed, own_host=own_host):
         logger.info(
             "Widget request rejected by origin check: bot_id=%s origin=%r hostname=%r",
             getattr(bot, "id", None),

@@ -262,3 +262,31 @@ def test_a_hostname_at_the_dns_limit_still_parses():
     """The bound is the DNS limit, not an arbitrary short cap."""
     host = "a" * 249 + ".com"
     assert extract_hostname(f"https://{host}") == host
+
+
+# ``own_host``: the API serves the hosted demo page, so a widget on it reports
+# the API as its origin. See ``is_origin_allowed``.
+
+
+def test_own_host_is_allowed_even_when_not_on_the_list():
+    assert is_origin_allowed("api.oyechats.com", ["acme.com"], own_host="api.oyechats.com") is True
+
+
+def test_own_host_is_case_insensitive():
+    assert is_origin_allowed("API.OyeChats.com", ["acme.com"], own_host="api.oyechats.com") is True
+
+
+def test_own_host_does_not_widen_to_anything_else():
+    assert is_origin_allowed("evil.com", ["acme.com"], own_host="api.oyechats.com") is False
+    assert is_origin_allowed("api.oyechats.com.evil.com", ["acme.com"], own_host="api.oyechats.com") is False
+
+
+def test_no_own_host_changes_nothing():
+    # Every caller that does not pass one behaves exactly as before.
+    assert is_origin_allowed("acme.com", ["acme.com"]) is True
+    assert is_origin_allowed("evil.com", ["acme.com"]) is False
+
+
+def test_blank_own_host_is_ignored_rather_than_matching_a_blank_origin():
+    assert is_origin_allowed("evil.com", ["acme.com"], own_host="") is False
+    assert is_origin_allowed("evil.com", ["acme.com"], own_host="   ") is False
