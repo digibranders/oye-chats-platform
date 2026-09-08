@@ -48,6 +48,7 @@ from app.services import invite_service, plan_entitlements_service
 from app.services import translation_service as translation_svc
 from app.services.invite_service import InviteError
 from app.services.language_service import language_from_locale, normalize_locale
+from app.services.live_chat_queue_service import mark_session_waiting
 from app.services.live_chat_service import manager
 from app.services.push_service import muted_push_preferences
 from app.services.qualification_service import (
@@ -1193,8 +1194,9 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
                 bot.id,
             )
 
-        # Update session status
-        chat_session.status = "waiting"
+        # Update session status. The helper stamps ``waiting_since``, which is
+        # what the operator's lobby card counts from.
+        mark_session_waiting(chat_session, reason="handoff")
         chat_session.handoff_reason = (
             request.reason.replace("<", "&lt;").replace(">", "&gt;") if request.reason else None
         )
@@ -1850,7 +1852,12 @@ async def transfer_chat(session_id: SessionId, request: TransferRequest, auth=De
             raise HTTPException(status_code=404, detail="Target department not found.")
 
         old_operator_id = chat_session.assigned_operator_id
-        chat_session.status = "waiting"
+        # A transfer is a fresh queue in a different department, so the clock
+        # restarts. Clearing the stamp first is load-bearing: the helper
+        # declines to re-stamp a session that is already waiting, which is the
+        # right default everywhere except here.
+        chat_session.waiting_since = None
+        mark_session_waiting(chat_session, reason="transfer")
         chat_session.assigned_operator_id = None
         chat_session.department_id = request.target_department_id
         # Audit log. Transferred to department

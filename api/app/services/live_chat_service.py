@@ -14,6 +14,7 @@ from app.db.models import Bot, ChatSession, Operator
 from app.db.repository import get_lead_info_by_session
 from app.db.session import get_session
 from app.services import operator_presence_service as presence
+from app.services.live_chat_queue_service import mark_session_waiting
 from app.services.session_state_machine import InvalidTransitionError, transition_session
 
 logger = logging.getLogger(__name__)
@@ -835,7 +836,11 @@ class ConnectionManager:
                             .all()
                         )
                         for cs in live_sessions:
-                            cs.status = "waiting"
+                            # These were ``live``, never ``waiting``, so the
+                            # helper always stamps them. The reason is what
+                            # lets the card tell the next operator this visitor
+                            # has already been let down once.
+                            mark_session_waiting(cs, reason="operator_dropped")
                             cs.assigned_operator_id = None
                             if cs.client_id is not None:
                                 self._session_client_ids[cs.id] = cs.client_id
@@ -947,7 +952,9 @@ class ConnectionManager:
                     .all()
                 )
                 for cs in live_sessions:
-                    cs.status = "waiting"
+                    # See the other disconnect path above: live, so always
+                    # stamped, and flagged as a drop rather than an arrival.
+                    mark_session_waiting(cs, reason="operator_dropped")
                     cs.assigned_operator_id = None
                     if cs.client_id is not None:
                         self._session_client_ids[cs.id] = cs.client_id
@@ -2277,6 +2284,17 @@ class ConnectionManager:
                         "reason": chat_session.handoff_reason,
                         "bot_id": chat_session.bot_id,
                         "bot_name": bot.name if bot else None,
+                        # ISO 8601, because the operator's lobby card parses
+                        # this with ``Date.parse``. A raw datetime would arrive
+                        # as a Python repr and parse to NaN, which renders as
+                        # no timer -- the same symptom as the field being
+                        # absent, which is how this went unnoticed for so long.
+                        # NULL is a session queued before the column existed;
+                        # the card shows no timer rather than inventing a zero.
+                        "waiting_since": (
+                            chat_session.waiting_since.isoformat() if chat_session.waiting_since else None
+                        ),
+                        "requeue_reason": chat_session.requeue_reason,
                     }
                 )
             return visible

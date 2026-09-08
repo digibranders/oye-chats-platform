@@ -1090,6 +1090,18 @@ class ChatSession(Base):
     status = Column(String, default="bot", server_default="bot", nullable=False)  # bot|waiting|live|closed
     assigned_operator_id = Column(Integer, ForeignKey("operators.id", ondelete="SET NULL"), nullable=True)
     handoff_reason = Column(Text, nullable=True)
+    # When this visitor entered the waiting queue, and why. NOT ``created_at``:
+    # that is when they opened the widget, so somebody who talks to the bot for
+    # twenty minutes before asking for a human would arrive already overdue.
+    # The operator's lobby card derives its whole escalation from this, and it
+    # was missing for long enough that the escalation never once ran in
+    # production. Written only through
+    # ``live_chat_queue_service.mark_session_waiting``.
+    waiting_since = Column(DateTime(timezone=True), nullable=True)
+    # handoff | transfer | operator_dropped. Distinguishes a visitor who has
+    # already been let down once from one who has only just arrived, without
+    # making ``waiting_since`` lie about how long the current wait has been.
+    requeue_reason = Column(String(24), nullable=True)
     department_id = Column(Integer, ForeignKey("departments.id", ondelete="SET NULL"), nullable=True)
     visitor_metadata = Column(JSONB, nullable=True)  # parsed user-agent: browser, os, etc.
     # Per-session record of inline cards already surfaced to the visitor.

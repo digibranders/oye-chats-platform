@@ -23,6 +23,7 @@ function alert(over: Partial<LobbyAlert> = {}): LobbyAlert {
     detail: 'Acme Bot',
     preview: 'i want to know more abt the pricing',
     since: new Date(NOW - 8_000).toISOString(),
+    requeueReason: null,
     ...over,
   };
 }
@@ -137,15 +138,20 @@ describe('LobbyCard', () => {
   });
 
   it('carries the urgency on the wait itself, not on a coloured rule', () => {
-    // The first version painted a 3px accent bar across the top of the card.
-    // It said "urgent" without saying how urgent, and the number underneath
-    // already did. `Badge` always carries a word, so the tone never works
-    // alone — which is the reason the bar could go.
-    card({ since: new Date(NOW - OVERDUE_MS - 40_000).toISOString() });
-    // `Badge` truncates its label in an inner span, so the tone lives on the
-    // element above the text node.
-    const badge = screen.getByText('3m 40s').closest('[class*="bg-danger"]');
-    expect(badge).not.toBeNull();
+    // The first version painted a 3px accent bar across the top of the card. It
+    // said "urgent" without saying how urgent, and the number underneath
+    // already did.
+    //
+    // The wait is no longer a `Badge` either. `Badge` maps `warning` to
+    // `bg-warning-tint`, the exact colour the ageing card uses as its ground,
+    // so the number was the same colour as the card it sat on. It is a plain
+    // figure now, coloured by band, and the duration is always spelled out, so
+    // the tone still never works alone.
+    card({ since: new Date(NOW - AGEING_MS - 12_000).toISOString() });
+
+    const wait = screen.getByText('1m 12s');
+    expect(wait.className).toContain('tabular-nums');
+    expect(wait.className).not.toContain('bg-warning-tint');
     expect(document.querySelector('[data-lobby-card] [class*="bg-accent-500"]')).toBeNull();
   });
 
@@ -163,5 +169,48 @@ describe('LobbyCard', () => {
     card({}, { onTake, busy: true });
     await user.click(screen.getByRole('button', { name: 'Take it' }));
     expect(onTake).not.toHaveBeenCalled();
+  });
+});
+
+describe('escalation', () => {
+  it('carries more than hue, so the step survives a reader who cannot see it', () => {
+    const fresh = card({ since: new Date(NOW - 8_000).toISOString() });
+    expect(document.querySelector('[data-lobby-card]')?.className).not.toContain('border-2');
+    fresh.unmount();
+
+    card({ since: new Date(NOW - AGEING_MS - 12_000).toISOString() });
+    expect(document.querySelector('[data-lobby-card]')?.className).toContain('border-2');
+  });
+
+  it('inverts at overdue, the state to be caught from across a room', () => {
+    card({ since: new Date(NOW - OVERDUE_MS - 40_000).toISOString() });
+
+    expect(document.querySelector('[data-lobby-card]')?.className).toContain('bg-danger-fill');
+    // The ink has to come with the ground, or the card ships unreadable. These
+    // are `text-inverse`, not `white`: `tokens.css` deletes Tailwind's default
+    // palette, so `text-white` compiles to nothing and this card shipped once
+    // with near-black text on solid red. `deletedPalette.test.ts` guards the
+    // class names; this guards that the ink is applied at all.
+    expect(screen.getByText('Siddique').className).toContain('text-text-inverse');
+    expect(screen.getByText('3m 40s').className).toContain('text-text-inverse');
+  });
+
+  it('leaves ageing tinted, so the last step still registers', () => {
+    // A stack where every card is solid colour has no step left to take.
+    card({ since: new Date(NOW - AGEING_MS - 12_000).toISOString() });
+
+    expect(document.querySelector('[data-lobby-card]')?.className).not.toContain('bg-danger-fill');
+  });
+
+  it('says why a visitor is waiting again, rather than letting the clock imply it', () => {
+    card({ requeueReason: 'operator_dropped' });
+
+    expect(screen.getByText(/waiting again/i)).toBeInTheDocument();
+  });
+
+  it('says nothing extra for a visitor who simply asked', () => {
+    card({ requeueReason: 'handoff' });
+
+    expect(screen.queryByText(/waiting again/i)).toBeNull();
   });
 });

@@ -48,6 +48,15 @@ export interface LobbyAlert {
    * operator reads the number and decides who to answer first.
    */
   since: string | null;
+  /**
+   * Why they are in the queue: `handoff`, `transfer` or `operator_dropped`.
+   *
+   * An operator dropping their live chats re-queues them, which restarts the
+   * clock. Rather than let the timer lie about it, the card says so in words:
+   * this visitor has already been let down once, even though the wait it is
+   * counting right now is short.
+   */
+  requeueReason: string | null;
 }
 
 /**
@@ -123,7 +132,10 @@ export function alertsFrom(sources: LobbySources): LobbyAlert[] {
   const oldestFirst = (a: LobbyAlert, b: LobbyAlert): number => at(a.since) - at(b.since);
 
   const waiting: LobbyAlert[] = queue
-    .filter((entry) => dismissed.get(entry.session_id) !== (entry.created_at ?? null))
+    // Keyed on the same field the sort reads. It used to key on `created_at`,
+    // which the server never sent, so every dismissal keyed on null and a
+    // visitor who was dismissed once could never raise a card again.
+    .filter((entry) => dismissed.get(entry.session_id) !== (entry.waiting_since ?? null))
     .map((entry) => ({
       key: `w.${entry.session_id}`,
       sessionId: entry.session_id,
@@ -131,7 +143,8 @@ export function alertsFrom(sources: LobbySources): LobbyAlert[] {
       name: entry.name?.trim() || '',
       detail: entry.bot_name?.trim() || null,
       preview: firstLine(entry.reason),
-      since: entry.created_at ?? null,
+      since: entry.waiting_since ?? null,
+      requeueReason: entry.requeue_reason ?? null,
     }))
     .sort(oldestFirst);
 
@@ -160,6 +173,8 @@ export function alertsFrom(sources: LobbySources): LobbyAlert[] {
         // unanswered. Different questions, different messages.
         preview: firstLine(last?.content),
         since,
+        // A held chat is not a queue event; nobody re-queued this visitor.
+        requeueReason: null,
       };
     })
     .filter((alert): alert is LobbyAlert => alert !== null)
