@@ -71,6 +71,29 @@ export function LanguageSection({
    * exist in a smaller set. Offering the difference produces an experience
    * nobody would choose on purpose — answers in Spanish, interface in English.
    */
+  /**
+   * Every language the widget can actually render, current selection included.
+   *
+   * What turning the master switch ON selects. A customer who has just said
+   * "answer visitors in more than one language" has told us the answer is
+   * "more than one"; making them then pick them one at a time from a
+   * twenty-entry combobox is asking the same question again in a slower form.
+   * The useful default is everything, and removing the handful they do not
+   * want is a much shorter job than adding the ones they do.
+   */
+  const everyTranslated = useMemo(
+    () => [
+      // The current selection stays first so `defaultLocale` keeps pointing at
+      // a listed entry — the default picker is built from this list, and a
+      // default that is not in it renders as an empty control.
+      ...draft.supportedLocales,
+      ...locales
+        .filter((locale) => uiTranslatedFor(locale.code) && !draft.supportedLocales.includes(locale.locale))
+        .map((locale) => locale.locale),
+    ],
+    [locales, uiTranslatedFor, draft.supportedLocales],
+  );
+
   const addable = useMemo(
     () =>
       locales
@@ -127,6 +150,14 @@ export function LanguageSection({
                   // Translation is meaningless without the master switch, and
                   // leaving it set would silently re-enable it later.
                   operatorTranslation: next ? draft.operatorTranslation : false,
+                  // Switching on selects every language the widget can render.
+                  // Guarded on "still at one", which is the only state that
+                  // means the customer has never chosen: somebody who narrowed
+                  // to four, switched off and switched on again gets their four
+                  // back, not a silent reset to everything.
+                  ...(next && draft.supportedLocales.length <= 1
+                    ? { supportedLocales: everyTranslated }
+                    : {}),
                 })
               }
               label={t('agents.answerVisitorsInMoreThan') || 'Answer visitors in more than one language'}
