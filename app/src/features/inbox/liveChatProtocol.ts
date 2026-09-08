@@ -39,6 +39,17 @@ export interface QueueItem {
   location?: string | null;
   device?: string | null;
   created_at?: string | null;
+  /**
+   * When this visitor entered the waiting queue, ISO.
+   *
+   * Absent on a session queued before the column existed, and the lobby card
+   * then shows no timer rather than inventing a zero. This is what the card's
+   * whole accent-to-amber-to-danger escalation counts from; the server did not
+   * send it for a long time, so none of that escalation ever ran.
+   */
+  waiting_since?: string | null;
+  /** `handoff` | `transfer` | `operator_dropped`. */
+  requeue_reason?: string | null;
 }
 
 /** One of the operator's assigned live conversations. */

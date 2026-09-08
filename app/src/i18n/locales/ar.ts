@@ -564,6 +564,8 @@ const ar = {
     lobbyUnmuteAlerts: "تشغيل صوت التنبيه",
     lobbyVisitor: "زائر",
     lobbyWaitingForAPerson: "في انتظار شخص",
+    lobbyOperatorDropped: "غادر المشغّل · في الانتظار مجددًا",
+    lobbyTransferred: "تم التحويل · في الانتظار مجددًا",
     close: "إغلاق",
     creditsLeftInYourTrial: "{count} أرصدة متبقية في فترتك التجريبية",
     daysLeft: "{count} أيام متبقية",

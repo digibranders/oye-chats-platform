@@ -27,7 +27,9 @@ function queued(over: Partial<QueueItem> & Pick<QueueItem, 'session_id'>): Queue
     reason: 'Asked to speak to a person',
     bot_id: 1,
     bot_name: 'Acme Bot',
-    created_at: new Date(NOW - 10_000).toISOString(),
+    // The wait, and the only field the model reads for it. It used to be
+    // `created_at`, which the server never actually sent on a queue row.
+    waiting_since: new Date(NOW - 10_000).toISOString(),
     ...over,
   };
 }
@@ -108,8 +110,8 @@ describe('alertsFrom', () => {
         // Deliberately the wrong way round on the wire: the payload is a
         // snapshot and carries no order of its own.
         queue: [
-          queued({ session_id: 's2', created_at: new Date(NOW - 1_000).toISOString() }),
-          queued({ session_id: 's1', created_at: new Date(NOW - 30_000).toISOString() }),
+          queued({ session_id: 's2', waiting_since: new Date(NOW - 1_000).toISOString() }),
+          queued({ session_id: 's1', waiting_since: new Date(NOW - 30_000).toISOString() }),
         ],
       }),
     );
@@ -122,8 +124,8 @@ describe('alertsFrom', () => {
     const alerts = alertsFrom(
       sources({
         queue: [
-          queued({ session_id: 'undated', created_at: null }),
-          queued({ session_id: 's1', created_at: new Date(NOW - 30_000).toISOString() }),
+          queued({ session_id: 'undated', waiting_since: null }),
+          queued({ session_id: 's1', waiting_since: new Date(NOW - 30_000).toISOString() }),
         ],
       }),
     );
@@ -135,13 +137,53 @@ describe('alertsFrom', () => {
     const alerts = alertsFrom(
       sources({
         queue: [
-          queued({ session_id: 's1', created_at: first }),
-          queued({ session_id: 's2', created_at: new Date(NOW - 1_000).toISOString() }),
+          queued({ session_id: 's1', waiting_since: first }),
+          queued({ session_id: 's2', waiting_since: new Date(NOW - 1_000).toISOString() }),
         ],
         dismissed: new Map([['s1', first]]),
       }),
     );
     expect(alerts.map((a) => a.sessionId)).toEqual(['s2']);
+  });
+
+  it('takes the wait from waiting_since', () => {
+    const [card] = alertsFrom(
+      sources({ queue: [queued({ session_id: 's1', waiting_since: '2026-09-08T11:58:00Z' })] }),
+    );
+
+    expect(card.since).toBe('2026-09-08T11:58:00Z');
+    expect(waitedMs(card, NOW)).toBe(120_000);
+  });
+
+  it('admits it does not know when the payload predates the column', () => {
+    // Every queue row sent before the column existed. The card shows no timer
+    // rather than a zero it made up.
+    const [card] = alertsFrom(sources({ queue: [queued({ session_id: 's1', waiting_since: null })] }));
+
+    expect(card.since).toBeNull();
+    expect(waitedMs(card, NOW)).toBeNull();
+  });
+
+  it('carries why they are back in the queue', () => {
+    const [card] = alertsFrom(
+      sources({ queue: [queued({ session_id: 's1', requeue_reason: 'operator_dropped' })] }),
+    );
+
+    expect(card.requeueReason).toBe('operator_dropped');
+  });
+
+  it('keys a dismissal on the same field it sorts by', () => {
+    // These were different fields once: dismissal keyed on `created_at`, which
+    // the server never sent, so every dismissal keyed on null. The two have to
+    // agree or a visitor dismissed once can never raise a card again.
+    const queue = [queued({ session_id: 's1', waiting_since: '2026-09-08T11:58:00Z' })];
+
+    expect(
+      alertsFrom(sources({ queue, dismissed: new Map([['s1', '2026-09-08T11:58:00Z']]) })),
+    ).toHaveLength(0);
+    expect(
+      alertsFrom(sources({ queue, dismissed: new Map([['s1', '2026-09-08T11:00:00Z']]) })),
+    ).toHaveLength(1);
   });
 
   it('lets a dismissed visitor back in when they ask again', () => {
@@ -152,7 +194,7 @@ describe('alertsFrom', () => {
     // a different hat.
     const alerts = alertsFrom(
       sources({
-        queue: [queued({ session_id: 's1', created_at: new Date(NOW - 5_000).toISOString() })],
+        queue: [queued({ session_id: 's1', waiting_since: new Date(NOW - 5_000).toISOString() })],
         dismissed: new Map([['s1', new Date(NOW - 600_000).toISOString()]]),
       }),
     );
@@ -164,7 +206,7 @@ describe('alertsFrom', () => {
     // yours and knows somebody is there.
     const alerts = alertsFrom(
       sources({
-        queue: [queued({ session_id: 'lobby', created_at: new Date(NOW - 1_000).toISOString() })],
+        queue: [queued({ session_id: 'lobby', waiting_since: new Date(NOW - 1_000).toISOString() })],
         activeChats: { mine: chat({ session_id: 'mine' }) },
         unreadBySession: { mine: 2 },
         messagesBySession: {

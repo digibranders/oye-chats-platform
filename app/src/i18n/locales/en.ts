@@ -566,6 +566,8 @@ const en = {
     lobbyUnmuteAlerts: 'Unmute alert sound',
     lobbyVisitor: 'Visitor',
     lobbyWaitingForAPerson: 'Waiting for a person',
+    lobbyOperatorDropped: 'Operator dropped · waiting again',
+    lobbyTransferred: 'Transferred · waiting again',
     close: 'close',
     creditsLeftInYourTrial: '{count} credits left in your trial',
     daysLeft: '{count} days left',

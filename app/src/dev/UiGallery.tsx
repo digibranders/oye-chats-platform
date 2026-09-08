@@ -2690,6 +2690,7 @@ function LobbyCards() {
     detail: 'Eventus Security',
     preview: 'i want to knwo amore abt the pricing for SOC',
     since: new Date(now - 8_000).toISOString(),
+    requeueReason: null,
     ...over,
   });
   const noop = () => {};

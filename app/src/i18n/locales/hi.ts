@@ -561,6 +561,8 @@ const hi = {
     lobbyUnmuteAlerts: 'सूचना ध्वनि चालू करें',
     lobbyVisitor: 'आगंतुक',
     lobbyWaitingForAPerson: 'किसी व्यक्ति की प्रतीक्षा में',
+    lobbyOperatorDropped: 'ऑपरेटर ने छोड़ा · फिर से प्रतीक्षा में',
+    lobbyTransferred: 'स्थानांतरित · फिर से प्रतीक्षा में',
     close: 'बंद करें',
     creditsLeftInYourTrial: 'आपके ट्रायल में {count} क्रेडिट बाकी',
     daysLeft: '{count} दिन बाकी',
