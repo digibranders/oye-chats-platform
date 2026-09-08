@@ -1095,20 +1095,29 @@ def get_dashboard_stats(session, client_id: int = None, bot_id: int = None, days
     }
 
 
-def get_ratings_summary(session, client_id: int = None, bot_id: int = None, days: int = None):
+def get_ratings_summary(session, client_id: int = None, bot_id: int = None, days: int = None, live_only: bool = False):
     """Fetch post-chat visitor rating summary (avg, total, distribution by 1 to 5 stars).
 
     ``days`` optionally restricts to conversations started in the last N days;
     omitting it keeps the all-time figure. The window is cut on
     ``ChatSession.created_at`` because the rating has no timestamp of its own -
     it is written back onto the session when the visitor closes the chat.
+
+    ``live_only`` narrows the set to conversations an operator actually took,
+    keyed on ``assigned_operator_id``. The same post-chat star prompt runs at
+    the end of a bot-only chat and at the end of a live one, so the unfiltered
+    average blends "how good was the AI" with "how good was the person" - two
+    different questions with two different owners. The default stays False so
+    every existing caller (the Overview and Conversations tabs) keeps the
+    all-conversations figure it has always shown.
     """
     sf = _session_owner_filter(bot_id, client_id)
     time_filter = _session_window_filter(days)
+    scope_filter = [ChatSession.assigned_operator_id.isnot(None)] if live_only else []
 
     rows = session.execute(
         select(ChatSession.visitor_rating, func.count(ChatSession.id).label("cnt"))
-        .where(sf, ChatSession.visitor_rating.isnot(None), *time_filter)
+        .where(sf, ChatSession.visitor_rating.isnot(None), *time_filter, *scope_filter)
         .group_by(ChatSession.visitor_rating)
     ).all()
 

@@ -310,17 +310,22 @@ def get_visitors_endpoint(
 def get_ratings_summary_endpoint(
     bot_id: RowId | None = Query(None),
     days: int | None = Query(None, ge=1, le=365, description="Restrict to conversations started in the last N days"),
+    live_only: bool = Query(False, description="Only conversations an operator took (live support)"),
     auth: dict = Depends(get_current_client_or_operator),
 ):
     """Retrieve post-chat visitor rating summary (avg, total, distribution).
 
     ``days`` is optional; omitting it returns the all-time figure this endpoint
-    has always returned.
+    has always returned. ``live_only`` narrows to conversations handled by an
+    operator, which is the rating of the PERSON rather than of the bot; it
+    defaults False so existing callers are unchanged.
     """
     try:
         _verify_bot_ownership(bot_id, auth["client_id"])
         with get_session() as session:
-            return get_ratings_summary(session, client_id=auth["client_id"], bot_id=bot_id, days=days)
+            return get_ratings_summary(
+                session, client_id=auth["client_id"], bot_id=bot_id, days=days, live_only=live_only
+            )
     except HTTPException:
         raise
     except Exception as e:

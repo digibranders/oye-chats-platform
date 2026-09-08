@@ -1578,9 +1578,23 @@ export const getActivityStats = async (
     }
 };
 
-export const getRatingsSummary = async (botId?: number): Promise<Record<string, unknown>> => {
+/**
+ * Post-chat star ratings. `liveOnly` narrows to conversations an operator
+ * actually took: the same prompt runs after a bot-only chat and after a live
+ * one, so the unfiltered average blends the AI's score with the team's.
+ */
+export const getRatingsSummary = async (
+    botId?: number,
+    liveOnly = false,
+    days?: number | null,
+): Promise<Record<string, unknown>> => {
     try {
-        const url = botId ? `/analytics/ratings-summary?bot_id=${botId}` : '/analytics/ratings-summary';
+        const params = new URLSearchParams();
+        if (botId) params.set('bot_id', String(botId));
+        if (liveOnly) params.set('live_only', 'true');
+        if (days) params.set('days', String(days));
+        const qs = params.toString();
+        const url = qs ? `/analytics/ratings-summary?${qs}` : '/analytics/ratings-summary';
         const response = await api.get(url);
         return response.data;
     } catch (error) {
