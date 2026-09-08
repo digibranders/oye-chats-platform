@@ -487,14 +487,23 @@ export const requestHandoff = async (sessionId, formData) => {
                 session_id: sessionId,
                 reason: formData.reason || null,
                 department_id: formData.department_id || null,
+                // Sent so the SERVER can apply the same gate this widget
+                // already applies. `HandoffForm` refuses to submit an
+                // undeliverable address, but the bot key is embedded in the
+                // page, so until the server saw the address that check was
+                // advice rather than a rule. The server treats it as optional
+                // and fails open on anything but an unambiguously bad address.
+                email: formData.email || null,
             }),
         });
         if (!response.ok) throw new Error('Handoff request failed');
 
-        // Save lead info fire-and-forget. Handoff success should not
-        // depend on lead capture success, and email validation (Reoon)
-        // runs entirely server-side in the background, never blocking
-        // this request. See api/app/api/chat_routes.py lead_capture_endpoint.
+        // Save lead info fire-and-forget. Handoff success should not depend on
+        // lead capture success: `lead_capture_endpoint` deliberately never
+        // blocks on validation, because Reoon has confirmed false positives
+        // and hard-rejecting a lead somebody is actively submitting risks
+        // losing a real one. The blocking check happens above, on the handoff
+        // itself, at the unambiguous-junk bar only.
         if (formData.name || formData.email) {
             submitLeadCapture(sessionId, {
                 name: formData.name,

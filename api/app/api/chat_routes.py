@@ -1926,6 +1926,17 @@ def _email_verdict(bot: Bot, request: Request, email: str) -> bool | None:
     return undeliverable
 
 
+def email_verdict_for(bot: Bot, request: Request, email: str) -> bool | None:
+    """Public name for :func:`_email_verdict`, for callers outside this module.
+
+    ``operators/handoff`` needs the same answer the widget's own form gets, and
+    a third caller reaching for a private name across modules is how two gates
+    drift apart. The semantics are unchanged and so is the contract: ``None``
+    means "not checked" and MUST be treated as pass.
+    """
+    return _email_verdict(bot, request, email)
+
+
 @router.post("/chat/validate-email")
 @limiter.limit(_REOON_REQUEST_LIMIT, key_func=key_from_bot_key)
 def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: Bot = Depends(get_current_bot)):
