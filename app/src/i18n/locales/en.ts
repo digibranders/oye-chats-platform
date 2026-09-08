@@ -585,6 +585,7 @@ const en = {
     closeNavigation: 'Close navigation',
     closeThisTabAndIssue: 'Close this tab and issue a new impersonation link from the platform console.',
     collapseNavigation: 'Collapse navigation',
+    contactUs: 'Contact us',
     describeYourFeedback: 'Describe your feedback',
     dontIncludePasswordsApiKeys: 'Don\'t include passwords, API keys, or any sensitive information.',
     esc: 'ESC',
@@ -2219,6 +2220,12 @@ const en = {
     unreadInThisScope: 'Unread in this scope',
     upgradeToAnswerVisitorsYourself: 'Upgrade to answer visitors yourself, take over from the AI, and see who is on your site right now.',
     view: {
+      all: {
+        label: 'All',
+        blurb: 'Every conversation in this inbox, newest first.',
+        emptyTitle: 'Nothing here yet',
+        emptyBody: 'Waiting visitors, your open chats, messages left overnight and leads the AI has qualified all land here.',
+      },
       waiting: {
         label: 'Waiting',
         blurb: 'Visitors who have asked for a person and nobody has taken yet.',
