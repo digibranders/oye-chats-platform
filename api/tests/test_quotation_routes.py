@@ -831,6 +831,25 @@ class TestAdminCatalogCrud:
             assert body["services"][0]["requirements"][0]["price"] == 8000.0
             assert body["services"][0]["requirements"][1]["quantity"] == 3
 
+    def test_document_delay_seconds_roundtrips(self, db):
+        client = _make_client(db, email="a4@example.com", api_key="a4")
+        bot = _make_bot(db, client.id, bot_key="bot-a4")
+        api = _client_api(_app(), client)
+        with _patch_session(db):
+            r = api.put(f"/bots/{bot.id}/quotation-catalog", json=_catalog(document_delay_seconds=1800))
+            assert r.status_code == 200
+            assert r.json()["document_delay_seconds"] == 1800
+            r = api.get(f"/bots/{bot.id}/quotation-catalog")
+            assert r.json()["document_delay_seconds"] == 1800
+
+    def test_document_delay_seconds_out_of_range_is_a_422(self, db):
+        client = _make_client(db, email="a5@example.com", api_key="a5")
+        bot = _make_bot(db, client.id, bot_key="bot-a5")
+        api = _client_api(_app(), client)
+        with _patch_session(db):
+            r = api.put(f"/bots/{bot.id}/quotation-catalog", json=_catalog(document_delay_seconds=86401))
+            assert r.status_code == 422
+
     def test_cross_tenant_404(self, db):
         owner = _make_client(db, email="a3@example.com", api_key="a3")
         other = _make_client(db, email="a3b@example.com", api_key="a3b")
