@@ -96,6 +96,11 @@ describe('the payload the server actually stores', () => {
     catalog.services[0].requirements[0].quantity = 0;
     expect(toPayload(catalog).services[0].requirements[0].quantity).toBe(1);
   });
+
+  it('clamps document_delay_seconds the same way on save', () => {
+    const catalog = catalogWith({ document_delay_seconds: -5 });
+    expect(toPayload(catalog).document_delay_seconds).toBe(0);
+  });
 });
 
 describe('reading a stored blob back', () => {
@@ -126,6 +131,16 @@ describe('reading a stored blob back', () => {
     });
     expect(parsed.services[0].requirements).toEqual([]);
     expect(parsed.services[0].name).toBe('Photography');
+  });
+
+  it('defaults document_delay_seconds to 600 seconds when the field is missing', () => {
+    const parsed = parseCatalog({ services: [] });
+    expect(parsed.document_delay_seconds).toBe(600);
+  });
+
+  it('clamps an out-of-range document_delay_seconds into [0, 86400]', () => {
+    expect(parseCatalog({ services: [], document_delay_seconds: -5 }).document_delay_seconds).toBe(0);
+    expect(parseCatalog({ services: [], document_delay_seconds: 999999 }).document_delay_seconds).toBe(86400);
   });
 });
 
