@@ -58,6 +58,10 @@ export const keys = {
       ['analytics', 'unanswered', agentId, days] as const,
     feedback: (agentId: number | null) => ['analytics', 'feedback', agentId] as const,
     ratings: (agentId: number | null) => ['analytics', 'ratings', agentId] as const,
+    // Separate cache slot: the live-support figure is a different population
+    // from the all-conversations one and must not share an entry with it.
+    liveRatings: (agentId: number | null, days: number | null) =>
+      ['analytics', 'ratings', 'live', agentId, days] as const,
     resolution: (agentId: number | null) => ['analytics', 'resolution', agentId] as const,
     visitors: (agentId: number | null) => ['analytics', 'visitors', agentId] as const,
     byBot: (days: number) => ['analytics', 'by-bot', days] as const,

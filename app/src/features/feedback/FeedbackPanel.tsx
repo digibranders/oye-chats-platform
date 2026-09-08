@@ -20,7 +20,7 @@ import {
   formatNumber,
 } from '../../ui';
 import { agentPath } from '../../shell/nav';
-import { errorMessage } from '../analytics/useAnalyticsData';
+import { errorMessage, useLiveSupportRatings } from '../analytics/useAnalyticsData';
 import type { ResolvedRange } from '../analytics/range';
 import { FeedbackFilterTabs } from './FeedbackFilterTabs';
 import { FeedbackList } from './FeedbackList';
@@ -75,6 +75,10 @@ export interface FeedbackPanelProps {
  */
 export function FeedbackPanel({ botId, range }: FeedbackPanelProps) {
   const { items, loading, error, refetch } = useFeedback(botId);
+  // The star rating visitors leave after a LIVE support chat. A separate
+  // population from the thumbs below: thumbs score one AI answer, this scores
+  // the conversation a person handled.
+  const { ratings: liveRatings, loading: liveLoading } = useLiveSupportRatings(botId, range);
   const [filter, setFilter] = useState<FeedbackFilter>('all');
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [selectedQuestion, setSelectedQuestion] = useState<string | null>(null);
@@ -192,6 +196,101 @@ export function FeedbackPanel({ botId, range }: FeedbackPanelProps) {
             loading={loading}
           />
         </CardBody>
+      </Card>
+
+      {/* Live support satisfaction. Deliberately its OWN card rather than more
+          figures in the one above: a thumb rates a single AI answer, a star
+          rates a whole conversation a person handled, and averaging the two
+          into one "satisfaction" number would describe neither. Kept adjacent
+          so the tab answers "what did visitors think?" in full — the star
+          figure otherwise lives only on Overview and Conversations, which is
+          not where anyone looks for feedback. */}
+      <Card>
+        <CardHeader
+          eyebrow="Live support"
+          title="How did the team do?"
+          titleAs="h2"
+          description="Stars visitors left after talking to an operator"
+        />
+        <CardBody flush>
+          <StatRow
+            label="Live chat ratings"
+            period={range.label}
+            columns={3}
+            loading={liveLoading}
+            items={[
+              {
+                label: 'Average rating',
+                value:
+                  liveRatings && liveRatings.total > 0 && liveRatings.average !== null
+                    ? `${liveRatings.average.toFixed(1)} / 5`
+                    : undefined,
+                hint: 'Out of 5 stars',
+                tone:
+                  !liveRatings || liveRatings.total === 0
+                    ? 'neutral'
+                    : (liveRatings.average ?? 0) >= 4
+                      ? 'success'
+                      : (liveRatings.average ?? 0) >= 3
+                        ? 'warning'
+                        : 'danger',
+              },
+              {
+                label: 'Chats rated',
+                value:
+                  liveRatings && liveRatings.total > 0 ? formatNumber(liveRatings.total) : undefined,
+              },
+              {
+                label: 'Unhappy (1-2 stars)',
+                value:
+                  liveRatings && liveRatings.total > 0
+                    ? formatNumber(liveRatings.distribution[1] + liveRatings.distribution[2])
+                    : undefined,
+                tone:
+                  liveRatings && liveRatings.distribution[1] + liveRatings.distribution[2] > 0
+                    ? 'danger'
+                    : 'neutral',
+              },
+            ]}
+          />
+        </CardBody>
+        {liveRatings && liveRatings.total > 0 ? (
+          <CardBody>
+            <Stack>
+              {([5, 4, 3, 2, 1] as const).map((star) => {
+                const count = liveRatings.distribution[star];
+                const pct = liveRatings.total > 0 ? (count / liveRatings.total) * 100 : 0;
+                return (
+                  <div key={star} className="flex items-center gap-3">
+                    <span className="w-10 shrink-0 text-caption text-text-secondary">
+                      {star} star
+                    </span>
+                    <span
+                      className="h-2 flex-1 overflow-hidden rounded-full bg-surface-sunken"
+                      role="img"
+                      aria-label={`${star} stars: ${count} of ${liveRatings.total}`}
+                    >
+                      <span
+                        className="block h-full rounded-full bg-warning"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </span>
+                    <span className="w-8 shrink-0 text-end text-caption text-text-secondary">
+                      {count}
+                    </span>
+                  </div>
+                );
+              })}
+            </Stack>
+          </CardBody>
+        ) : !liveLoading ? (
+          <CardBody>
+            <EmptyState
+              title="No live chat ratings yet"
+              description="Visitors are asked to rate the chat once an operator closes it. Ratings appear here as they come in."
+            />
+          </CardBody>
+        ) : null}
       </Card>
 
       {/* Stretched, not `align="start"`. `Grid` says `start` is wrong for a row

@@ -2867,6 +2867,75 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
     // bot brand should anchor the widget consistently. Operator presence
     // is communicated in-band via the "<Name> joined" system line and the
     // per-message author labels.
+    // Live-mode counterpart to ``renderAgentBadge``. Same pill, the person's
+    // identity instead of the bot's.
+    //
+    // The badge used to be hidden outright once an operator joined, on the
+    // reasoning that the in-stream "<Operator> joined the chat" pill already
+    // said who was there. It does, once — then it scrolls away, and what is
+    // left is an empty bar above the conversation for the rest of the chat.
+    // Handing the header to the operator keeps the answer to "who am I talking
+    // to?" on screen where it was before the handoff, which is also the moment
+    // the question matters most.
+    //
+    // Falls back to the bot badge when the operator's name has not arrived yet
+    // (the WebSocket carries it a beat after the status flips), so the header
+    // never blanks in the gap.
+    const renderOperatorBadge = () => {
+        if (!operatorName) return renderAgentBadge();
+        const badgePrimary = sanitizeColor(settings.primary_color, '#3A0CA3');
+        const avatarUrl = sanitizeImageUrl(operatorAvatar);
+        const initials = operatorName
+            .split(/\s+/)
+            .filter(Boolean)
+            .slice(0, 2)
+            .map((part) => part[0].toUpperCase())
+            .join('');
+        return (
+            <div
+                className="oyechats-bot-pill inline-flex items-center gap-2 rounded-full pl-1.5 pr-3.5 py-1.5 shadow-lg border pointer-events-auto"
+                style={{
+                    background: 'rgba(255,255,255,0.92)',
+                    backdropFilter: 'blur(12px)',
+                    WebkitBackdropFilter: 'blur(12px)',
+                    '--oyechats-brand': badgePrimary,
+                }}
+            >
+                <span className="oyechats-bot-pill-avatar">
+                    {avatarUrl ? (
+                        <img
+                            src={avatarUrl}
+                            alt=""
+                            className="w-6 h-6 rounded-full object-cover"
+                        />
+                    ) : (
+                        <span
+                            aria-hidden="true"
+                            className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-semibold text-white"
+                            style={{ backgroundColor: badgePrimary }}
+                        >
+                            {initials}
+                        </span>
+                    )}
+                </span>
+                {/* Not split per letter like the bot pill: that animation exists
+                    to reveal the brand name on hover, and a person's name is not
+                    a brand reveal. `dir="auto"` for the same bidi reason. */}
+                <span
+                    dir="auto"
+                    className="text-[12px] font-semibold text-[#16202C] leading-tight"
+                >
+                    {operatorName}
+                </span>
+                {operatorDepartment ? (
+                    <span dir="auto" className="text-[11px] text-gray-500 leading-tight">
+                        {operatorDepartment}
+                    </span>
+                ) : null}
+            </div>
+        );
+    };
+
     const renderAgentBadge = () => {
         // Brand-coloured border (admin's primary colour) + the hover
         // micro-interaction. The reactions themselves live as plain CSS in
@@ -3385,16 +3454,18 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                 regardless of mode. Hidden during waiting/unavailable where
                 dedicated state screens own the header, and during
                 initialization/lead form where chrome is suppressed.
-                ALSO hidden when an operator has joined (chatMode === 'live'):
-                the in-stream "<Operator> joined the chat" pill + per-message
-                author label already communicate identity, and keeping the
-                AI Assistant badge floating above an active human conversation
-                reads as a stale notification ("are you still talking to the
-                bot?"). Restored automatically when the operator leaves and
-                chatMode falls back to 'bot'. */}
-            {!isInitializing && !showLeadForm && chatMode === 'bot' && (
+                In live mode the badge SWITCHES to the operator rather than
+                disappearing. Keeping the AI Assistant pill above an active
+                human conversation would read as a stale notification ("am I
+                still talking to the bot?"), which is why it used to be hidden
+                outright — but hiding it left an empty bar, since the in-stream
+                "<Operator> joined the chat" pill that was meant to carry the
+                identity scrolls away after a few messages. Swapping the
+                occupant answers both. Reverts to the bot badge automatically
+                when the operator leaves and chatMode falls back to 'bot'. */}
+            {!isInitializing && !showLeadForm && (chatMode === 'bot' || chatMode === 'live') && (
                 <div className="shrink-0 flex justify-center -mt-3 -mb-5 relative z-30" style={{ animation: 'fadeUp 0.4s ease-out' }}>
-                    {renderAgentBadge()}
+                    {chatMode === 'live' ? renderOperatorBadge() : renderAgentBadge()}
                 </div>
             )}
 
