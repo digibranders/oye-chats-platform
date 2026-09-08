@@ -19,13 +19,23 @@ import { useTranslation } from '../i18n/useTranslation';
  * is missed. This one leaves when the visitor is answered or gives up, and not
  * before.
  *
- * **The wait is the whole signal.** The first version carried a 3px accent bar
- * across its top, an uppercase mono eyebrow, and two outlined buttons of equal
- * width. The bar was decoration doing information's job: it said "urgent"
- * without saying how urgent, and the number underneath already did. The urgency
- * now rides on the wait itself as a `Badge` — the design system's own component
- * for a short state, which brings its own tabular figures and, because it
- * always carries a word, never leaves colour working alone.
+ * **The wait is the signal; the card is the alarm.** An earlier version carried
+ * a 3px accent bar across its top, an uppercase mono eyebrow, and two outlined
+ * buttons of equal width. The bar was decoration doing information's job: it
+ * said "urgent" without saying how urgent, and the number underneath already
+ * did. The urgency still rides on the wait itself as a `Badge`, which brings
+ * its own tabular figures and, because it always carries a word, never leaves
+ * colour working alone.
+ *
+ * What that version got wrong was PRESENCE. A white card with a hairline is a
+ * fine way to render a fact, and a poor way to interrupt somebody who is deep
+ * in the quotation editor — which is the entire job here. So the whole surface
+ * now carries the band: it arrives tinted and bordered in the accent, warms to
+ * amber, then to danger, and a pulse beside the name says the visitor is still
+ * unanswered. The colour is not decoration, it is the same escalation the badge
+ * states in words, made large enough to catch an eye that is looking somewhere
+ * else. It also enters with a short slide, because a thing that was not there a
+ * moment ago is the cheapest attention there is.
  */
 
 export interface LobbyCardProps {
@@ -47,9 +57,27 @@ export interface LobbyCardProps {
 /** The wait's tone. The badge's own word is what a reader who cannot separate
  *  the amber from the red is left with, which is why it is a number. */
 const TONE: Record<ReturnType<typeof ageBand>, BadgeTone> = {
-  fresh: 'neutral',
+  // `ink`, not `neutral`: `--color-neutral-tint` is a warm grey and the fresh
+  // card's ground is a cool accent, which reads as a smudge on it. Ink is the
+  // figure colour this console already uses when a number has to stay crisp on
+  // a tinted band, and it keeps the amber/red step below meaningful.
+  fresh: 'ink',
   ageing: 'warning',
   overdue: 'danger',
+};
+
+/**
+ * The card's own ground, by band.
+ *
+ * Tinted from the first second rather than only once a wait turns bad. A
+ * visitor who has just arrived is not an emergency, but the card still has to
+ * be seen, and accent is the console's "this concerns you" colour rather than a
+ * severity. Amber and red then mean what they always mean.
+ */
+const SURFACE: Record<ReturnType<typeof ageBand>, string> = {
+  fresh: 'border-accent-500 bg-accent-50',
+  ageing: 'border-warning bg-warning-tint',
+  overdue: 'border-danger bg-danger-tint',
 };
 
 export function LobbyCard({
@@ -90,16 +118,30 @@ export function LobbyCard({
       // typing something else. Polite is the right register for "somebody is
       // here", and the card does not go away on its own.
       role="status"
-      className="pointer-events-auto w-80 rounded-lg border border-border bg-surface p-3.5 shadow-md"
+      className={cn(
+        // `shadow-md`, not `lg`: DESIGN.md reserves `lg` for modals and
+        // drawers. The tint and the border are what make this card carry.
+        'motion-arrive pointer-events-auto w-80 rounded-lg border p-3.5 shadow-md',
+        SURFACE[band],
+      )}
     >
+      {/* The name shares its line with the wait and the dismiss; the context
+          gets a line of its own. Nested under the name, the two controls took
+          about 110px of a 320px card and truncated the subtitle to
+          "Eventussecurity · Waiting for ...", which is where the useful half
+          of that sentence lives.
+
+          No pulsing dot here, though it was the obvious reach. `StatusDot`
+          reserves the pulse for state that is live right now and warns that one
+          which never stops stops meaning anything — and its tone union has no
+          accent, so a fresh card would have had to borrow grey or amber and lie
+          about severity. The tint, the border and the arrival carry the
+          attention instead. */}
       <div className="flex items-start gap-2.5">
         <Avatar size="sm" name={visitorName} className="mt-0.5 shrink-0" />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-prose font-semibold leading-tight text-text-primary">
-            {visitorName}
-          </p>
-          <p className="truncate text-2xs text-text-secondary">{context}</p>
-        </div>
+        <p className="min-w-0 flex-1 truncate text-prose font-semibold leading-tight text-text-primary">
+          {visitorName}
+        </p>
         {/* The number, always, whatever the tone. A card whose payload carried
             no timestamp shows nothing rather than "0s": an invented duration is
             worse than an absent one. */}
@@ -120,6 +162,8 @@ export function LobbyCard({
           <X aria-hidden className="h-3.5 w-3.5" />
         </button>
       </div>
+
+      <p className="mt-1 truncate text-2xs text-text-secondary">{context}</p>
 
       {/* What they said, which is most of how an operator decides who to take
           first. It was cut from the first version to make room for the bar. */}

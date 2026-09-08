@@ -268,7 +268,7 @@ export default {
             name_placeholder: '이름',
             phone_placeholder: '전화번호(선택)',
             submit: '메시지 보내기',
-            continue_with_ai: '대신 AI와 계속하기',
+            continue_with_ai: '채팅으로 돌아가기',
             sent_title: '메시지를 보냈습니다.',
             reply_by_email: '최대한 빨리 이메일로 회신드리겠습니다.',
             not_now: '나중에',
@@ -352,7 +352,7 @@ export default {
             actions_aria: '메시지 작업',
             connect_team_aria: '담당 팀에 연결',
             want_to_talk: '담당자와 이야기하시겠어요?',
-            continue_with_ai: 'AI와 계속하기',
+            continue_with_ai: '채팅으로 돌아가기',
             open_service_title: '서비스 페이지 열기',
         },
         language: {

@@ -268,7 +268,7 @@ export default {
             name_placeholder: 'Nama Anda',
             phone_placeholder: 'Nomor telepon (opsional)',
             submit: 'Kirim pesan',
-            continue_with_ai: 'Lanjutkan dengan AI saja',
+            continue_with_ai: 'Kembali ke chat',
             sent_title: 'Pesan terkirim!',
             reply_by_email: 'Kami akan membalas lewat email secepatnya.',
             not_now: 'Nanti saja',
@@ -352,7 +352,7 @@ export default {
             actions_aria: 'Tindakan pesan',
             connect_team_aria: 'Hubungkan dengan tim kami',
             want_to_talk: 'Ingin berbicara dengan tim kami?',
-            continue_with_ai: 'Lanjutkan dengan AI',
+            continue_with_ai: 'Kembali ke chat',
             open_service_title: 'Buka halaman layanan',
         },
         language: {

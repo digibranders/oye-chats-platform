@@ -268,7 +268,7 @@ export default {
             name_placeholder: 'Ваше имя',
             phone_placeholder: 'Номер телефона (необязательно)',
             submit: 'Отправить сообщение',
-            continue_with_ai: 'Продолжить с ИИ',
+            continue_with_ai: 'Вернуться к чату',
             sent_title: 'Сообщение отправлено!',
             reply_by_email: 'Мы ответим по электронной почте как можно скорее.',
             not_now: 'Не сейчас',
@@ -352,7 +352,7 @@ export default {
             actions_aria: 'Действия с сообщением',
             connect_team_aria: 'Связаться с нашей командой',
             want_to_talk: 'Хотите поговорить с нашей командой?',
-            continue_with_ai: 'Продолжить с ИИ',
+            continue_with_ai: 'Вернуться к чату',
             open_service_title: 'Открыть страницу услуги',
         },
         language: {

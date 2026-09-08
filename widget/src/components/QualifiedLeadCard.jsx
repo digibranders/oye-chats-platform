@@ -84,7 +84,7 @@ const QualifiedLeadCard = ({
                 onClick={onDismiss}
                 className="self-start px-0.5 text-[12px] font-medium text-gray-400 hover:text-gray-600 transition-colors"
             >
-                {t('message.continue_with_ai') || 'Continue with AI'}
+                {t('message.continue_with_ai') || 'Back to chat'}
             </button>
         </div>
     );

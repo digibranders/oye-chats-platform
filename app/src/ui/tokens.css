@@ -618,6 +618,17 @@
   .motion-pop[data-closed] { animation: pop-out var(--dur-fast) var(--ease-console); }
   .motion-pop { transform-origin: var(--transform-origin, center); }
 
+  /* Arrives on its own schedule, so it announces itself.
+     Unconditional rather than keyed on `[data-open]` like the overlays above:
+     nothing toggles this element, it simply appears when a visitor does, and
+     an operator deep in another page has to notice a card that was not there a
+     moment ago. Enters from the trailing edge, mirrored under RTL like its
+     neighbours, so the card only ever names an EDGE. */
+  @keyframes arrive-x-in     { from { opacity: 0; translate:  16px 0; } to { opacity: 1; translate: 0 0; } }
+  @keyframes arrive-x-neg-in { from { opacity: 0; translate: -16px 0; } to { opacity: 1; translate: 0 0; } }
+  .motion-arrive { animation: arrive-x-in var(--dur-slow) var(--ease-console-out); }
+  [dir='rtl'] .motion-arrive { animation-name: arrive-x-neg-in; }
+
   /* -----------------------------------------------------------------------------
      In-progress motion.
 
@@ -671,6 +682,7 @@
     .motion-slide-end,
     .motion-slide-start,
     .motion-pop,
+    .motion-arrive,
     .typing-dot {
       animation: none !important;
       opacity: 1;

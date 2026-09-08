@@ -268,7 +268,7 @@ export default {
             name_placeholder: 'Twoje imię',
             phone_placeholder: 'Numer telefonu (opcjonalnie)',
             submit: 'Wyślij wiadomość',
-            continue_with_ai: 'Kontynuuj jednak z AI',
+            continue_with_ai: 'Wróć do czatu',
             sent_title: 'Wiadomość wysłana!',
             reply_by_email: 'Odpowiemy e-mailem tak szybko, jak to możliwe.',
             not_now: 'Nie teraz',
@@ -352,7 +352,7 @@ export default {
             actions_aria: 'Działania dla wiadomości',
             connect_team_aria: 'Połącz z naszym zespołem',
             want_to_talk: 'Chcesz porozmawiać z naszym zespołem?',
-            continue_with_ai: 'Kontynuuj z AI',
+            continue_with_ai: 'Wróć do czatu',
             open_service_title: 'Otwórz stronę usługi',
         },
         language: {
