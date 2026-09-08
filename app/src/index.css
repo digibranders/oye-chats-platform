@@ -26,6 +26,35 @@
 
 @import "./ui/tokens.css";
 
+/* -----------------------------------------------------------------------------
+   `sr-only`, with the one declaration Tailwind's own version leaves out.
+
+   Tailwind's visually-hidden utility is `position: absolute` with no inset, so
+   the element stays at its STATIC position — the spot it would have occupied in
+   flow. That is fine until the flow it came from is inside a scroll container
+   that is not the element's containing block: an absolutely positioned box is
+   laid out against its nearest positioned ancestor and is neither clipped by
+   nor scrolled with anything in between. A screen-reader label on the thirtieth
+   message of a transcript is therefore placed 1200px below the top of the pane
+   that holds the transcript, and adds 1200px of scrollable overflow to it. The
+   operator scrolls their conversation and the whole console — status strip,
+   pane headers, composer — slides up with it.
+
+   The shell already made its scroll container a containing block for this
+   reason (see `AppShell`), which stopped the document scrolling and moved the
+   symptom one level in. This fixes the cause instead: an element nobody can see
+   has no business being anywhere in particular, so it is pinned to the origin
+   of whatever contains it and contributes no overflow from any depth.
+
+   Tailwind's own declarations are merged in, so only the addition is written
+   here. `inset-inline-start` rather than `left`, because the console is served
+   RTL for Arabic and the origin has to follow the writing direction.
+   -------------------------------------------------------------------------- */
+@utility sr-only {
+  top: 0;
+  inset-inline-start: 0;
+}
+
 @keyframes wave {
   0%, 60%, 100% { transform: rotate(0deg); }
   10%, 30% { transform: rotate(14deg); }
