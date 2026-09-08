@@ -951,6 +951,17 @@ const ar = {
     yourPassword: "كلمة المرور الخاصة بك",
   },
   agents: {
+    documentDelayHint: "يتم إرسال بريد التأكيد فورًا. هذا هو الوقت الذي يصل بعده عرض السعر النهائي بالتفصيل.",
+    documentDelayOption: {
+      hour1: "ساعة واحدة",
+      hour24: "24 ساعة",
+      immediate: "فورًا",
+      min10: "10 دقائق",
+      min30: "30 دقيقة",
+      min5: "5 دقائق",
+    },
+    sendThePricedQuote: "إرسال عرض السعر النهائي",
+    whenToSendTheQuotation: "متى يتم إرسال عرض السعر",
     aboutNWordsStored: "نحو {words} كلمات من النص مخزَّنة.",
     access: "الوصول",
     addCreditsAndTrainAgain: "أضف أرصدة ودرّبه مرة أخرى: الصفحات المتوفرة لديه بالفعل لا تُحتسب مرتين.",
