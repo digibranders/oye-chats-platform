@@ -189,6 +189,34 @@ export function useUnansweredQuestions(botId: number | null, days: number | null
   };
 }
 
+/**
+ * Post-chat ratings for conversations an OPERATOR handled — the score visitors
+ * gave the live-support experience, as opposed to `useRatings`, which counts
+ * every rated conversation including bot-only ones.
+ */
+export function useLiveSupportRatings(botId: number | null, range: ResolvedRange) {
+  const query = useQuery({
+    // The window is part of the key. Without it the 7-day and 90-day answers
+    // would share one cache entry and the card would show whichever arrived
+    // first under whatever label the page happens to be displaying.
+    queryKey: keys.analytics.liveRatings(botId, range.days),
+    queryFn: () => getRatingsSummary(scope(botId), true, range.days),
+    select: parseRatingsSummary,
+    // Gated on `botId` alone, NOT on `useScopeReady`. This hook is consumed by
+    // `FeedbackPanel`, which reaches no other analytics hook and therefore has
+    // never required `BotProvider`; pulling `useScopeReady` in would have made
+    // the whole panel un-renderable without that context. Matches `useFeedback`,
+    // its neighbour in the same panel.
+    enabled: botId != null,
+  });
+  return {
+    ratings: query.data ?? null,
+    loading: query.isPending,
+    error: query.error,
+    refetch: query.refetch,
+  };
+}
+
 export function useRatings(botId: number | null) {
   const ready = useScopeReady(botId);
   const query = useQuery({

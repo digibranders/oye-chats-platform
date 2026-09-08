@@ -12,6 +12,14 @@ name: Answer-Quality Eval
 #           GOOGLE_API_KEY / OPENAI_API_KEY (the judge model's provider key)
 # Variable: EVAL_ORIGIN (optional; only if the eval bot enforces allowed domains)
 #
+# UNTIL THOSE TWO SECRETS EXIST THIS WORKFLOW SKIPS RATHER THAN FAILS. It
+# shipped with the schedule live and no eval bot behind it, so every nightly
+# run died in seconds on ``--api-url is required`` — a red badge that says
+# nothing about answer quality. A nightly that always fails is a nightly
+# everybody learns to ignore, and this one is meant to be read. The guard below
+# ends the run green with a summary saying exactly what is missing; the eval
+# itself only reports red when the ANSWERS regressed.
+#
 # The schedule runs the workflow file on the default branch (main). Each run
 # spends ~75 AI-chat credits on the eval bot (one per request, including the
 # name-gate reply that opens every session) and a few cents of judge tokens.
@@ -68,13 +76,52 @@ jobs:
         working-directory: api
         run: ~/.local/bin/uv sync
 
+      # Is there anything to run against? Checked before the eval so an
+      # unconfigured repo ends green with an explanation instead of an argparse
+      # crash. Secrets are not readable in a job-level ``if:``, hence a step
+      # that publishes an output for the later steps to gate on.
+      - name: Check the eval target is configured
+        id: target
+        env:
+          EVAL_API_URL: ${{ secrets.EVAL_API_URL }}
+          EVAL_BOT_KEY: ${{ secrets.EVAL_BOT_KEY }}
+        run: |
+          missing=()
+          [ -n "$EVAL_API_URL" ] || missing+=("EVAL_API_URL")
+          [ -n "$EVAL_BOT_KEY" ] || missing+=("EVAL_BOT_KEY")
+          if [ ${#missing[@]} -eq 0 ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "configured=false" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Answer-Quality Eval did not run"
+            echo
+            echo "Missing repository secret(s): \`${missing[*]}\`."
+            echo
+            echo "This measures a **deployed** bot, so it needs one to talk to:"
+            echo "a dedicated eval bot on a workspace with an active"
+            echo "subscription, carrying the \`api/eval/fixtures/acme\`"
+            echo "knowledge base. Each run spends about 75 chat credits, which"
+            echo "is why it should not point at a customer's bot."
+            echo
+            echo "Setup is in docs/eval/README.md."
+            echo
+            echo "Nothing is wrong with the harness or the golden set: the"
+            echo "validation step still checks both on every run."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Eval skipped::Set ${missing[*]} to enable the nightly answer-quality eval."
+
       # Validates the golden file and prints the plan. Fails fast on a broken
-      # JSONL line without spending a single credit.
+      # JSONL line without spending a single credit. Runs even with no target:
+      # a broken golden set is worth catching on a repo that has not provisioned
+      # its eval bot yet, and it costs nothing.
       - name: Validate the golden set
         working-directory: api
         run: ~/.local/bin/uv run python -m eval.run_eval --dry-run
 
       - name: Run the eval against the live bot
+        if: steps.target.outputs.configured == 'true'
         working-directory: api
         env:
           EVAL_API_URL: ${{ secrets.EVAL_API_URL }}
@@ -95,7 +142,7 @@ jobs:
       # Uploaded even when the run failed: the failures section of report.md
       # is the whole point of a red run.
       - name: Upload report
-        if: always()
+        if: always() && steps.target.outputs.configured == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: eval-report-${{ github.run_id }}

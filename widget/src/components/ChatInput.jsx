@@ -713,9 +713,19 @@ const ChatInput = ({
                 must stay geometrically centered in the composer whether or not
                 the privacy link is rendered — with flex it would drift right on
                 the phone, where privacy is absent. Column 3 is a deliberate
-                empty counterweight. Hidden in live/waiting modes where consent
-                is implied by the handoff. */}
-            {!isLive && !isWaiting && !pendingConfirm && (
+                empty counterweight.
+
+                The ROW survives a handoff; only the privacy notice inside it
+                stands down. Hiding the whole row in live/waiting took the
+                "Powered by" credit with it, and the credit is not a consent
+                affordance — it is the attribution, governed by the
+                ``branding_removable`` entitlement. Dropping it the moment an
+                operator joined handed branding removal, a paid feature, to
+                every workspace for the duration of every live chat, and left
+                the composer looking unfinished besides. The privacy line is
+                what the handoff actually implies consent for, so that is what
+                the mode now gates (see its own condition below). */}
+            {!pendingConfirm && (
                 <div className="grid grid-cols-3 items-center gap-3 mt-1 pt-0 md:mt-3.5 md:pt-1 px-1">
                     {/* The privacy notice, bottom-left, and the one thing it must
                         not do: vanish before the visitor has decided anything.
@@ -738,7 +748,7 @@ const ChatInput = ({
                         so it never sits under the send button on a phone, where
                         thumbs aiming for Send kept opening oyechats.com. Column
                         3 is the empty counterweight that keeps it centred. */}
-                    <p className={`col-start-1 text-[10px] text-gray-400 leading-snug justify-self-start ${userMessageCount > 0 ? 'hidden' : ''}`}>
+                    <p className={`col-start-1 text-[10px] text-gray-400 leading-snug justify-self-start ${userMessageCount > 0 || isLive || isWaiting ? 'hidden' : ''}`}>
                         <a
                             href="https://www.oyechats.com/legal/privacy"
                             target="_blank"
