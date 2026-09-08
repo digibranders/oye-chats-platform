@@ -7970,6 +7970,11 @@ def rag_pipeline(
                     bot_id=bid,
                     client_id=cid,
                     threshold=_bot_threshold,
+                    # Under CAG-lite ``final_results`` is the whole knowledge
+                    # base in alphabetical order, not a ranked top-k, so the
+                    # judge must see all of it. Its default 5-chunk window is
+                    # only meaningful when position means relevance.
+                    max_chunks=len(final_results) if _use_cag_lite else None,
                 )
             # ``_trusted_cta`` set → the visitor tapped a qualification chip
             # (budget/authority/timeline/need answer), NOT a KB question. Skip
@@ -9792,7 +9797,15 @@ async def rag_pipeline_stream(
                 _is_relevant, _gate_score = True, 1.0
             else:
                 _is_relevant, _gate_score = await asyncio.to_thread(
-                    check_relevance, question, final_results, bid, cid, _bot_threshold
+                    check_relevance,
+                    question,
+                    final_results,
+                    bid,
+                    cid,
+                    _bot_threshold,
+                    # See the non-streaming path: an unranked CAG-lite bundle
+                    # must not be truncated to an arbitrary alphabetical five.
+                    len(final_results) if _use_cag_lite else None,
                 )
             # Qualification-chip answer, or a free-typed answer to the bot's own
             # question → bypass the off-topic gate; see the non-streaming path

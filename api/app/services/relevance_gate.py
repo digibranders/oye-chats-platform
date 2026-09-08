@@ -13,12 +13,14 @@ Model:        resolved per-call via ``runtime_config.get_gate_model()`` (DB-back
 Threshold:    per-bot ``Bot.relevance_threshold`` → super-admin runtime knob
               ``rag.relevance_threshold`` → ``RELEVANCE_THRESHOLD`` env default (0.55)
 Judge input:  ``GATE_MAX_CHUNKS`` (default 5) chunks × ``GATE_CHUNK_PREVIEW_CHARS``
-              (default 500) characters each
+              (default 500) characters each. A caller whose chunk list is NOT
+              ranked passes ``max_chunks`` to widen that window; see
+              :func:`_build_gate_prompt`.
 
 Gate results are cached in Redis to avoid redundant LLM calls for repeated
 questions against the same knowledge base state.
 
-Key: ``oyechats:gate:{bot_id}:{question_hash}`` (TTL: 3600s)
+Key: ``oyechats:gate:v{prompt_version}:{bot_id}:{question_hash}`` (TTL: 3600s)
 """
 
 import hashlib
@@ -83,6 +85,12 @@ RELEVANCE_THRESHOLD: float = float(os.getenv("RELEVANCE_THRESHOLD", "0.55"))
 
 _GATE_TTL = 3600  # 1 hour. Safe: same question + same bot KB = same result
 
+# Bump whenever the judge prompt or its scoring scale changes. The cache key
+# is (bot, question), so without this a prompt fix keeps serving verdicts the
+# OLD prompt produced for up to an hour after deploy -- and any before/after
+# measurement of a prompt change silently reads its own baseline back.
+_GATE_PROMPT_VERSION = 2
+
 # How much of the retrieved context the judge sees. This was hardcoded to the
 # top 3 chunks at 300 characters each while generation received the full
 # top-k (15 chunks of up to CHUNK_SIZE=1000 characters): the judge scored a
@@ -120,12 +128,22 @@ def _gate_model() -> str:
 def _gate_cache_key(bot_id: int | None, client_id: int | None, question: str) -> str:
     scope = f"b{bot_id}" if bot_id else f"c{client_id}"
     q_hash = hashlib.sha256(question.lower().strip().encode()).hexdigest()[:16]
-    return f"oyechats:gate:{scope}:{q_hash}"
+    return f"oyechats:gate:v{_GATE_PROMPT_VERSION}:{scope}:{q_hash}"
 
 
-def _build_gate_prompt(question: str, chunks: list) -> str:
+def _build_gate_prompt(question: str, chunks: list, max_chunks: int | None = None) -> str:
+    # ``max_chunks`` overrides the cap for a caller that knows the list is not
+    # ranked. Under CAG-lite there is no retrieval at all: ``rag_service``
+    # injects the WHOLE knowledge base, ordered by ``(document_name, id)``,
+    # i.e. alphabetically. Taking the first five of that is taking five
+    # arbitrary chunks and asking whether they answer the question, and on a
+    # 14-chunk bot it meant `pricing.md`, `services.md` and `team.md` were
+    # never shown to this judge for ANY question, so every question they
+    # answered was refused as off-topic. On the retrieval path the cap is
+    # right: there the first five ARE the five most relevant.
+    limit = max_chunks if max_chunks and max_chunks > 0 else GATE_MAX_CHUNKS
     chunk_previews = []
-    for i, doc in enumerate(chunks[:GATE_MAX_CHUNKS], 1):
+    for i, doc in enumerate(chunks[:limit], 1):
         content = getattr(doc, "content", "") or ""
         preview = content[:GATE_CHUNK_PREVIEW_CHARS].replace("\n", " ")
         chunk_previews.append(f"Chunk {i}: {preview}")
@@ -145,17 +163,24 @@ def _build_gate_prompt(question: str, chunks: list) -> str:
     # reranker. This wording stays because it is correct guidance and may help a
     # future judge model, but do not rely on it to make cross-lingual gating
     # safe on its own.
-    return f"""You are a relevance judge. Given a user question and retrieved document chunks, rate how relevant the chunks are to answering the question.
+    return f"""You are a relevance judge. Given a user question and retrieved document chunks, decide whether the chunks contain the information needed to answer it.
 
 User question: {question}
 
 Retrieved chunks:
 {chunks_text}
 
-Rate the overall relevance of these chunks to the question on a scale from 0.0 to 1.0.
-- 1.0: chunks directly answer the question
-- 0.5: chunks are somewhat related and could help answer the question
-- 0.0: chunks are completely unrelated to the question
+Score by the BEST-MATCHING chunk, not by how many of them are on topic. The
+chunks are a bundle handed to you by a retriever, not a claim that all of them
+are relevant: one chunk that answers the question scores 1.0 even when every
+other chunk is about something else entirely. Averaging over the bundle is what
+this judge must not do -- it turns "one document answers this" into "somewhat
+related" and refuses a question the knowledge base can answer.
+
+Rate from 0.0 to 1.0:
+- 1.0: at least one chunk directly answers the question
+- 0.5: no chunk answers it outright, but at least one is related enough to help
+- 0.0: no chunk bears on the question at all
 
 IMPORTANT: the question and the chunks may be written in DIFFERENT languages.
 That is normal and expected. Judge only whether the chunks contain the
@@ -198,6 +223,7 @@ def check_relevance(
     bot_id: int | None = None,
     client_id: int | None = None,
     threshold: float | None = None,
+    max_chunks: int | None = None,
 ) -> tuple[bool, float]:
     """Determine whether retrieved chunks are relevant enough to answer the question.
 
@@ -207,6 +233,12 @@ def check_relevance(
         Optional per-bot override (typically ``Bot.relevance_threshold``).
         ``None`` falls back to the super-admin runtime knob, then the
         ``RELEVANCE_THRESHOLD`` env default (see :func:`_resolve_threshold`).
+    max_chunks
+        How many chunks the judge may see. ``None`` uses ``GATE_MAX_CHUNKS``,
+        which is correct whenever ``chunks`` is RANKED. A caller passing an
+        unranked list -- CAG-lite hands over the whole knowledge base in
+        alphabetical order -- must pass its length, or the judge sees an
+        arbitrary slice. See :func:`_build_gate_prompt`.
 
     Returns
     -------
@@ -232,7 +264,7 @@ def check_relevance(
         logger.debug("Gate cache hit | score=%.2f relevant=%s", score, is_relevant)
         return is_relevant, score
 
-    prompt = _build_gate_prompt(question, chunks)
+    prompt = _build_gate_prompt(question, chunks, max_chunks)
     model = _gate_model()
     try:
         with langfuse_generation("relevance-gate", model=model, prompt=prompt) as gen:
