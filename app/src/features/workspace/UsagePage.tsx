@@ -50,7 +50,6 @@ import {
   formatCredits,
   formatDate,
   formatPeriod,
-  resolveScopedPool,
   type LedgerRow,
   type PoolCredit,
 } from './usage-model';
@@ -154,7 +153,10 @@ export function UsagePage() {
       : pageRows.length === HISTORY_PAGE_SIZE;
 
   const balance = usage.balance.data ?? null;
-  const pool = balance ? resolveScopedPool(balance, botId) : null;
+  // From the hook, which is what the ledger and the trend were actually asked
+  // for. Resolving it a second time here is how the cards came to be labelled
+  // "Shared credits" while querying a per-bot ledger that does not exist.
+  const pool = usage.pool;
   const scopeLabel = botId === null ? 'this workspace' : (pool?.name ?? 'this chatbot');
 
 

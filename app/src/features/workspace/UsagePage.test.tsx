@@ -381,3 +381,67 @@ describe('running out', () => {
     expect(await screen.findByText(/stopped answering/i)).toBeInTheDocument();
   });
 });
+
+/**
+ * The scope the cards are LABELLED with has to be the scope they were QUERIED
+ * with. It was not.
+ *
+ * Most chatbots have no ledger of their own: they drain the shared account
+ * pool, and their consumption rows carry `bot_id IS NULL`. `resolveScopedPool`
+ * knows that and falls back to the account pool, which is why the balance card
+ * reads "Shared credits" with real figures on it. The ledger and the trend were
+ * handed the raw selection instead and asked for a per-bot ledger that does not
+ * exist, so both came back empty and the page said "No credits spent in the
+ * last 90 days" next to "Spent this period 1,841" taken from the same table.
+ */
+describe('the ledger is scoped to the pool, not to the rail', () => {
+  it('asks for the shared pool when the selected chatbot drains it', async () => {
+    // This chatbot has no entry in `bots`, so it has no ledger of its own.
+    state.selectedBot = { id: 5, name: 'Eventussecurity' };
+    api.getCreditBalance.mockResolvedValue({ ...BALANCE, bots: [] });
+
+    renderPage();
+
+    await waitFor(() => expect(api.getCreditHistory).toHaveBeenCalled());
+    // `undefined`, not `5`: the rows it is after carry no bot id.
+    expect(api.getCreditHistory).not.toHaveBeenCalledWith(expect.objectContaining({ botId: 5 }));
+    expect(api.getCreditDaily).not.toHaveBeenCalledWith(expect.objectContaining({ botId: 5 }));
+  });
+
+  it('still asks for a chatbot that does have its own ledger', async () => {
+    // The behaviour the scoping exists for, which must survive the fix.
+    state.selectedBot = { id: 7, name: 'Acme Support' };
+
+    renderPage();
+
+    await waitFor(() =>
+      expect(api.getCreditHistory).toHaveBeenCalledWith(expect.objectContaining({ botId: 7 })),
+    );
+    await waitFor(() =>
+      expect(api.getCreditDaily).toHaveBeenCalledWith(expect.objectContaining({ botId: 7 })),
+    );
+  });
+
+  it('does not ask before it knows which pool it is asking about', async () => {
+    // Firing first and refetching would flash one pool's history under
+    // another's name, which is a smaller version of the same bug.
+    state.selectedBot = { id: 7, name: 'Acme Support' };
+    let releaseBalance: (value: unknown) => void = () => {};
+    api.getCreditBalance.mockReturnValue(
+      new Promise((resolve) => {
+        releaseBalance = resolve;
+      }),
+    );
+
+    renderPage();
+
+    await waitFor(() => expect(api.getCreditBalance).toHaveBeenCalled());
+    expect(api.getCreditHistory).not.toHaveBeenCalled();
+    expect(api.getCreditDaily).not.toHaveBeenCalled();
+
+    releaseBalance(BALANCE);
+    await waitFor(() =>
+      expect(api.getCreditHistory).toHaveBeenCalledWith(expect.objectContaining({ botId: 7 })),
+    );
+  });
+});
