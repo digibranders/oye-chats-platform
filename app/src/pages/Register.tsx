@@ -165,7 +165,10 @@ export default function Register() {
 
   const form = useForm<RegisterValues>({
     resolver: zodResolver(buildSchema()),
-    mode: 'onTouched',
+    // See `Login` for why this is not `onTouched`: a blur-time error reflows
+    // the page between a link's mousedown and mouseup and swallows the click.
+    mode: 'onSubmit',
+    reValidateMode: 'onChange',
     // `billing_country: ''` rather than left undefined: the schema's own
     // message ("Choose the country you are billed in.") only fires on a string,
     // and an undefined value reports a type error instead, which is the wrong
