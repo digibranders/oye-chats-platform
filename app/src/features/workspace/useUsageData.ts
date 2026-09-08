@@ -6,8 +6,10 @@ import {
   parseCreditBalance,
   parseLedgerPage,
   parseTrend,
+  resolveScopedPool,
   type CreditBalance,
   type LedgerPage,
+  type PoolCredit,
   type TrendPoint,
 } from './usage-model';
 
@@ -40,6 +42,14 @@ export interface UseUsageDataResult {
   balance: UseQueryResult<CreditBalance>;
   ledger: UseQueryResult<LedgerPage>;
   trend: UseQueryResult<TrendPoint[]>;
+  /**
+   * The pool the ledger and the trend are actually reporting on.
+   *
+   * Returned so the page LABELS what it QUERIED. It used to resolve this
+   * itself, in parallel, and the two answers were not the same: see the note on
+   * the hook.
+   */
+  pool: PoolCredit | null;
   refreshAll: () => void;
 }
 
@@ -53,6 +63,21 @@ export interface UseUsageDataResult {
  * both take `bot_id` - and until now neither ever received it, so a customer
  * with per-agent subscriptions read a workspace-wide history under an agent's
  * name and had no way to see which agent had spent what.
+ *
+ * **The scope is the resolved POOL, not the chatbot in the rail**, and the
+ * difference is a bug this page shipped. Most chatbots have no ledger of their
+ * own: they drain the shared account pool, and their consumption rows carry
+ * `bot_id IS NULL`. `resolveScopedPool` already knows that -- it falls back to
+ * the account pool, which is why the balance card reads "Shared credits" -- but
+ * the ledger and the trend were handed the raw selection and asked the database
+ * for a per-bot ledger that does not exist. Both came back empty, so the page
+ * said "No credits spent in the last 90 days" and "No credit movements yet" in
+ * cards headed "Shared credits", six inches from "Spent this period 1,841"
+ * taken from the same table at account scope.
+ *
+ * Resolving it here rather than in the page is the point. Two independent
+ * resolutions of "which pool is this" are what allowed the label and the query
+ * to disagree.
  */
 export function useUsageData(scope: UsageScope): UseUsageDataResult {
   const client = useQueryClient();
@@ -63,29 +88,41 @@ export function useUsageData(scope: UsageScope): UseUsageDataResult {
     staleTime: 15_000,
   });
 
+  const pool = balance.data ? resolveScopedPool(balance.data, scope.botId) : null;
+  const ledgerBotId = pool?.botId ?? null;
+  // Held until the balance settles, success or failure, because the balance is
+  // what says which pool this chatbot drains. Firing first would ask the wrong
+  // scope and then refetch, flashing one pool's history under another's name --
+  // a smaller version of the bug being fixed. On failure the scope resolves to
+  // the account pool, which is a superset rather than a wrong answer, and the
+  // page already reports the balance error.
+  const scopeSettled = !balance.isPending;
+
   const ledger = useQuery({
-    queryKey: [...keys.billing.creditHistory(scope.botId), scope.page] as const,
+    queryKey: [...keys.billing.creditHistory(ledgerBotId), scope.page] as const,
     queryFn: async () =>
       parseLedgerPage(
         await getCreditHistory({
           page: scope.page,
           limit: HISTORY_PAGE_SIZE,
-          botId: scope.botId ?? undefined,
+          botId: ledgerBotId ?? undefined,
         }),
       ),
+    enabled: scopeSettled,
     // The previous page stays on screen while the next one loads rather than
     // the table collapsing to a skeleton and back on every click.
     placeholderData: (previous) => previous,
   });
 
   const trend = useQuery({
-    queryKey: [...keys.billing.creditDaily(scope.botId), scope.days] as const,
-    queryFn: async () => parseTrend(await getCreditDaily({ days: scope.days, botId: scope.botId ?? undefined })),
+    queryKey: [...keys.billing.creditDaily(ledgerBotId), scope.days] as const,
+    queryFn: async () => parseTrend(await getCreditDaily({ days: scope.days, botId: ledgerBotId ?? undefined })),
+    enabled: scopeSettled,
   });
 
   const refreshAll = useCallback(() => {
     void client.invalidateQueries({ queryKey: ['billing'] });
   }, [client]);
 
-  return { balance, ledger, trend, refreshAll };
+  return { balance, ledger, trend, pool, refreshAll };
 }
