@@ -143,6 +143,69 @@ test.describe('Lobby alerts', () => {
     await expect(card(page)).toHaveCount(0);
   });
 
+  test('clears the chrome even when a banner sits above the top bar', async ({ page }) => {
+    // The reported overlap. The stack used to be `fixed` at
+    // `--spacing-topbar + 0.75rem`, which assumes the top bar is the only
+    // chrome above the page. With a trial banner present the card landed ON
+    // the bar, covering search and the notification bell.
+    const socket = await mockBackend(page, {
+      trial: {
+        status: 'trialing',
+        trial_end_at: '2026-09-11T00:00:00.000Z',
+        days_remaining: 2,
+        trial_days: 14,
+        credits_granted: 500,
+      },
+    });
+    await goOnDutyThenLeave(page);
+    socket.send({ type: 'queue_update', count: 1, waiting: [waiting('s1', 'Siddique', 8)] });
+    await expect(card(page)).toHaveCount(1);
+
+    const gap = await page.evaluate(() => {
+      const search = document.querySelector('button[aria-label*="Search" i], input[type="search"]');
+      const first = document.querySelector('[data-lobby-card]');
+      if (!search || !first) throw new Error('missing search or card');
+      return first.getBoundingClientRect().top - search.getBoundingClientRect().bottom;
+    });
+    expect(gap).toBeGreaterThan(0);
+  });
+
+  test('pushes toasts below itself instead of sharing the coordinates', async ({ page }) => {
+    // The other half of the overlap: the toaster is `fixed` in the same corner.
+    // The stack publishes its height and the toasts read it, so the cards stay
+    // put and the toasts move — a toast arriving must not shift a button an
+    // operator is reaching for.
+    const socket = await mockBackend(page);
+    await goOnDutyThenLeave(page);
+
+    const before = await page.evaluate(() =>
+      getComputedStyle(document.documentElement).getPropertyValue('--overlay-stack-height').trim(),
+    );
+    expect(before).toBe('');
+
+    socket.send({ type: 'queue_update', count: 1, waiting: [waiting('s1', 'Siddique', 8)] });
+    await expect(card(page)).toHaveCount(1);
+
+    const published = await page.evaluate(() => {
+      const value = getComputedStyle(document.documentElement)
+        .getPropertyValue('--overlay-stack-height')
+        .trim();
+      const height = document.querySelector('[data-lobby-card]')!.parentElement!.getBoundingClientRect().height;
+      return { value, height: Math.ceil(height) };
+    });
+    expect(published.value).toBe(`${published.height}px`);
+
+    socket.send({ type: 'queue_update', count: 0, waiting: [] });
+    await expect(card(page)).toHaveCount(0);
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          getComputedStyle(document.documentElement).getPropertyValue('--overlay-stack-height').trim(),
+        ),
+      )
+      .toBe('');
+  });
+
   test('closing one card does not close the queue', async ({ page }) => {
     const socket = await mockBackend(page);
     await goOnDutyThenLeave(page);

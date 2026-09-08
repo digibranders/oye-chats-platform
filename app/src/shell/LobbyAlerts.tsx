@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { acceptChat } from '../services/api';
 import { useInboxSocket } from '../features/inbox/inboxSocket';
@@ -16,12 +16,19 @@ import { useTranslation } from '../i18n/useTranslation';
  * this console shipped on the auth pages and fixed the same week. Nothing here
  * touches the document flow.
  *
- * Top-right, below the bar, because every other corner is spoken for:
- * bottom-right is the OyeChats widget's own launcher (the console embeds its
- * own widget), bottom-centre is the inbox composer, and the leading edge is the
- * navigation rail. It shares that corner with the toaster, and sits below it,
- * because a toast is a reply to something the operator just did and this is
- * not.
+ * **Anchored to the content area, not to the window.** The first version was
+ * `fixed` at `--spacing-topbar` plus a gap, which assumes the top bar is the
+ * only chrome above the page. It is not: `ShellBanners` renders a trial or
+ * upgrade row ABOVE the bar, and with one present the cards landed on the bar
+ * itself, covering search and the notification bell. Anchoring to the box that
+ * holds `main` puts them below whatever chrome exists, and keeps them off the
+ * rail without knowing how wide it is.
+ *
+ * That is also what stops them fighting the toaster, which is `fixed` in the
+ * same corner: `--overlay-stack-height` is published from here so the toasts
+ * sit below the cards rather than on top of them. The cards are the fixed
+ * point and the toasts move, not the other way round — a toast arriving and
+ * leaving must not shift a button an operator is reaching for.
  */
 
 /** How long a resolved card stays before it leaves. */
@@ -53,6 +60,30 @@ export function LobbyAlerts() {
     }, RESOLVED_MS);
     return () => window.clearTimeout(timer);
   }, [resolutions, dismiss]);
+
+  // Publish the stack's height so the toaster can sit under it. A layout
+  // effect and a `ResizeObserver` rather than a guess: the stack is one to
+  // three cards, each a different height depending on whether the visitor said
+  // anything, and a hardcoded offset would either overlap or leave a gap.
+  const stackRef = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const node = stackRef.current;
+    const root = document.documentElement;
+    if (!node) {
+      root.style.removeProperty('--overlay-stack-height');
+      return undefined;
+    }
+    const publish = (): void => {
+      root.style.setProperty('--overlay-stack-height', `${Math.ceil(node.getBoundingClientRect().height)}px`);
+    };
+    publish();
+    const observer = new ResizeObserver(publish);
+    observer.observe(node);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty('--overlay-stack-height');
+    };
+  });
 
   const openConversation = useCallback(
     (sessionId: string) => {
@@ -100,11 +131,11 @@ export function LobbyAlerts() {
 
   return (
     <div
+      ref={stackRef}
       // `pointer-events-none` on the column and `auto` on each card: the gaps
       // between them are 12px of dead space over the page, and an operator
       // aiming at something underneath should not be blocked by a container.
-      className="pointer-events-none fixed end-4 z-[var(--z-toast)] flex flex-col gap-3"
-      style={{ top: 'calc(var(--spacing-topbar) + 0.75rem)' }}
+      className="pointer-events-none absolute end-4 top-3 z-[var(--z-toast)] flex flex-col gap-3"
       aria-label={t('shell.lobbyAlerts') || 'Waiting visitors'}
     >
       {visible.map((alert, index) => (

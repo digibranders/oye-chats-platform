@@ -1,4 +1,5 @@
 import { Toaster as SonnerToaster } from 'sonner';
+import { useTranslation } from '../../i18n/useTranslation';
 import { AlertCircle, CheckCircle2, Info, TriangleAlert } from 'lucide-react';
 import { buttonClass } from '../primitives/buttonStyles';
 
@@ -35,7 +36,28 @@ import { buttonClass } from '../primitives/buttonStyles';
  * z-index, which happened to work and meant `--z-banner` could never be above a
  * toast as `tokens.css` claims. The ladder is enforced, not aspirational.
  */
+/**
+ * The top gap: clear of the top bar, and of the lobby stack when it is up.
+ *
+ * `--overlay-stack-height` is published by the shell's lobby cards, which own
+ * this corner while anybody is waiting. Unset, it resolves to 0 and a toast
+ * sits exactly where it always did. The cards are the fixed point and the
+ * toasts move, not the other way round: a toast arriving and leaving must not
+ * shift a button an operator is reaching for.
+ *
+ * Only the top is pushed. A single scalar `offset` applies to every edge and
+ * floated the toast an odd 68px in from the side.
+ */
+const TOP_OFFSET = 'calc(var(--spacing-topbar) + 0.75rem + var(--overlay-stack-height, 0px))';
+const MOBILE_TOP_OFFSET = 'calc(var(--spacing-topbar) + 0.5rem + var(--overlay-stack-height, 0px))';
+
 export function Toaster() {
+  // Subscribed, not read once: the language switcher changes `dir` without a
+  // navigation, and a toast fired after that must land on the new leading side.
+  useTranslation();
+  const rtl = typeof document !== 'undefined' && document.documentElement.dir === 'rtl';
+  const side = rtl ? 'left' : 'right';
+
   return (
     <SonnerToaster
       /*
@@ -54,12 +76,19 @@ export function Toaster() {
        * and it stays above the feedback tab, which is pinned to the right edge
        * at the vertical centre.
        */
-      position="top-right"
-      // Only the top is pushed down; the side gap stays the ordinary one. A
-      // single scalar offset would apply to every edge and float the toast an
-      // odd 68px in from the right.
-      offset={{ top: 'calc(var(--spacing-topbar) + 0.75rem)', right: '1rem' }}
-      mobileOffset={{ top: 'calc(var(--spacing-topbar) + 0.5rem)', right: '0.75rem', left: '0.75rem' }}
+      // The corner follows the writing direction. Under `dir="rtl"` the rail is
+      // on the RIGHT, so a toast pinned physically right lands on top of it —
+      // and Sonner's `position` and `offset` are both physical, with no logical
+      // option. This was not caught earlier because the offset lived on one
+      // line and the RTL guard only scans a line whose FIRST token is a
+      // physical side; splitting it for readability is what surfaced it.
+      position={rtl ? 'top-left' : 'top-right'}
+      // rtl-ok: `side` is computed from the document's direction just above,
+      // so this IS the logical inline-end; Sonner simply has no logical prop to
+      // say so.
+      offset={{ top: TOP_OFFSET, [side]: '1rem' }}
+      // rtl-ok: symmetric on a phone, so there is nothing to mirror.
+      mobileOffset={{ top: MOBILE_TOP_OFFSET, right: '0.75rem', left: '0.75rem' }}
       style={{ zIndex: 'var(--z-toast)' }}
       // Sonner's own theming is bypassed entirely: `unstyled` plus our classes
       // means a toast is built from the same tokens as everything else instead

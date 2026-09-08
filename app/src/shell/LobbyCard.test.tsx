@@ -52,10 +52,13 @@ describe('waitWords', () => {
 });
 
 describe('LobbyCard', () => {
-  it('names who is waiting and what they said', () => {
+  it('names who is waiting, where from, and what they said', () => {
     card();
     expect(screen.getByText('Siddique')).toBeInTheDocument();
-    expect(screen.getByText('Acme Bot')).toBeInTheDocument();
+    // The chatbot and the state share one subtitle. They used to be an
+    // uppercase mono eyebrow above the name and a chatbot line below it, which
+    // is two rows of furniture on a 320px card for one sentence.
+    expect(screen.getByText('Acme Bot · Waiting for a person')).toBeInTheDocument();
     expect(screen.getByText(/i want to know more abt the pricing/)).toBeInTheDocument();
   });
 
@@ -129,8 +132,21 @@ describe('LobbyCard', () => {
     // "0s" would be a claim. A card that does not know how long somebody has
     // been waiting says nothing, and stays on the calm end of the scale.
     card({ since: null });
-    expect(screen.getByText(/Waiting for a person/)).not.toHaveTextContent('·');
+    expect(screen.queryByText(/^\d+[smh]/)).toBeNull();
     expect(document.querySelector('[data-lobby-card]')).toHaveAttribute('data-band', 'fresh');
+  });
+
+  it('carries the urgency on the wait itself, not on a coloured rule', () => {
+    // The first version painted a 3px accent bar across the top of the card.
+    // It said "urgent" without saying how urgent, and the number underneath
+    // already did. `Badge` always carries a word, so the tone never works
+    // alone — which is the reason the bar could go.
+    card({ since: new Date(NOW - OVERDUE_MS - 40_000).toISOString() });
+    // `Badge` truncates its label in an inner span, so the tone lives on the
+    // element above the text node.
+    const badge = screen.getByText('3m 40s').closest('[class*="bg-danger"]');
+    expect(badge).not.toBeNull();
+    expect(document.querySelector('[data-lobby-card] [class*="bg-accent-500"]')).toBeNull();
   });
 
   it('is announced politely, not as an interruption', () => {

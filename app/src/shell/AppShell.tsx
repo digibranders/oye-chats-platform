@@ -210,17 +210,23 @@ export function AppShell() {
               shell, rail included, then scrolls away on the first focus or
               trackpad flick (seen on /account, 309px). Making the scroll
               container the containing block keeps those elements inside it. */}
-          <main id="main" className="relative min-h-0 min-w-0 flex-1 overflow-y-auto">
-            <Outlet />
-          </main>
+          {/* The content area, and the overlay chrome that belongs to it.
+              `relative` so `LobbyAlerts` can anchor to this box rather than to
+              the window: a fixed panel offset by `--spacing-topbar` assumes the
+              bar is the only chrome above it, and the moment a `ShellBanners`
+              row appears the panel lands ON the bar, covering search and the
+              notification bell. Anchoring here also keeps it off the rail for
+              free. */}
+          <div className="relative min-h-0 min-w-0 flex-1">
+            <main id="main" className="absolute inset-0 overflow-y-auto">
+              <Outlet />
+            </main>
+            <LobbyAlerts />
+          </div>
         </div>
       </div>
 
       {isOperator ? null : <CommandPalette open={searchOpen} onOpenChange={setSearchOpen} />}
-      {/* Outside the grid, like the toaster: this is positioned chrome, and a
-          card that pushed the page down would swallow whatever click the
-          operator was in the middle of making. */}
-      <LobbyAlerts />
       <Toaster />
     </TooltipProvider>
   );

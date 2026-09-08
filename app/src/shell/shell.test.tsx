@@ -428,7 +428,14 @@ describe('the scroll container', () => {
     const main = source.match(/<main id="main" className="([^"]+)"/);
     expect(main).not.toBeNull();
     const classes = main![1].split(/\s+/);
-    expect(classes).toContain('relative');
+    // `absolute`, not `relative`, since the lobby cards moved in: the scroll
+    // container is now absolutely filling a positioned wrapper, so the cards
+    // can anchor to the content area without scrolling with it. What this test
+    // is actually about is unchanged — an absolutely positioned element is a
+    // containing block for its abspos descendants exactly as a relative one is,
+    // which is what keeps every `sr-only` live region from extending the
+    // shell's scroll height.
+    expect(classes.some((c) => c === 'relative' || c === 'absolute')).toBe(true);
     expect(classes).toContain('overflow-y-auto');
   });
 
