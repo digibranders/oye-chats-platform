@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { InstallStatusCard } from './InstallStatusCard';
-import { SnippetSection } from './SnippetSection';
+import { InstallHandoff } from './InstallHandoff';
 import { PlatformGuide } from './PlatformGuide';
 import { installStatus, widgetHeartbeat } from './deployModel';
 import type { DomainInstall } from './installDomainsModel';
@@ -316,7 +316,7 @@ describe('PlatformGuide', () => {
  * state comes from the server and so survives a reload, and that a repeat send
  * to the same person is confirmed rather than blocked.
  */
-describe('SnippetSection — emailing the developer', () => {
+describe('InstallHandoff — emailing the developer', () => {
   const base = {
     botKey: BOT_KEY,
     botName: 'Acme Assistant',
@@ -335,7 +335,7 @@ describe('SnippetSection — emailing the developer', () => {
 
   it('opens a field instead of navigating away', async () => {
     const user = userEvent.setup();
-    renderWithRouter(<SnippetSection {...base} />);
+    renderWithRouter(<InstallHandoff {...base} />);
 
     expect(screen.queryByRole('textbox', { name: /developer'?s email/i })).not.toBeInTheDocument();
     await open(user);
@@ -344,7 +344,7 @@ describe('SnippetSection — emailing the developer', () => {
 
   it('does not spend a request on an address that cannot be one', async () => {
     const user = userEvent.setup();
-    renderWithRouter(<SnippetSection {...base} />);
+    renderWithRouter(<InstallHandoff {...base} />);
 
     const field = await open(user);
     await user.type(field, 'not-an-email');
@@ -361,7 +361,7 @@ describe('SnippetSection — emailing the developer', () => {
       sent_at: new Date().toISOString(),
       resent: false,
     });
-    renderWithRouter(<SnippetSection {...base} />);
+    renderWithRouter(<InstallHandoff {...base} />);
 
     const field = await open(user);
     await user.type(field, 'dev@acme.com');
@@ -377,7 +377,7 @@ describe('SnippetSection — emailing the developer', () => {
     // The whole point of storing this server-side: a reload, or another
     // device, still knows.
     renderWithRouter(
-      <SnippetSection {...base} devInviteEmail="dev@acme.com" devInviteSentAt="2026-08-20T09:00:00Z" />,
+      <InstallHandoff {...base} devInviteEmail="dev@acme.com" devInviteSentAt="2026-08-20T09:00:00Z" />,
     );
 
     expect(screen.getByText('dev@acme.com')).toBeInTheDocument();
@@ -392,7 +392,7 @@ describe('SnippetSection — emailing the developer', () => {
       resent: true,
     });
     renderWithRouter(
-      <SnippetSection {...base} devInviteEmail="dev@acme.com" devInviteSentAt="2026-08-20T09:00:00Z" />,
+      <InstallHandoff {...base} devInviteEmail="dev@acme.com" devInviteSentAt="2026-08-20T09:00:00Z" />,
     );
 
     await user.click(screen.getByRole('button', { name: /send again/i }));
@@ -414,7 +414,7 @@ describe('SnippetSection — emailing the developer', () => {
       resent: false,
     });
     renderWithRouter(
-      <SnippetSection {...base} devInviteEmail="dev@acme.com" devInviteSentAt="2026-08-20T09:00:00Z" />,
+      <InstallHandoff {...base} devInviteEmail="dev@acme.com" devInviteSentAt="2026-08-20T09:00:00Z" />,
     );
 
     await user.click(screen.getByRole('button', { name: /send again/i }));
@@ -430,7 +430,7 @@ describe('SnippetSection — emailing the developer', () => {
   it('keeps the typed address when the send fails', async () => {
     const user = userEvent.setup();
     vi.mocked(sendInstallInvite).mockRejectedValue(new Error('The mail service did not answer.'));
-    renderWithRouter(<SnippetSection {...base} />);
+    renderWithRouter(<InstallHandoff {...base} />);
 
     const field = await open(user);
     await user.type(field, 'dev@acme.com');
@@ -442,7 +442,7 @@ describe('SnippetSection — emailing the developer', () => {
 
   it('still offers the customer their own mail client', async () => {
     const user = userEvent.setup();
-    renderWithRouter(<SnippetSection {...base} />);
+    renderWithRouter(<InstallHandoff {...base} />);
 
     await open(user);
     const mailto = screen.getByRole('link', { name: /my mail app/i });

@@ -356,7 +356,7 @@ npm install && npm run dev       # Dev server (localhost:3000)
 | Admin app router | `app/src/app/routes.tsx` (+ `App.tsx`, `ProtectedLayout.tsx`) |
 | Admin shell (rail · topbar · switcher) | `app/src/shell/` |
 | Admin API client | `app/src/services/api.ts` |
-| Admin embed / deploy UI | `app/src/features/agents/channels/DeployPage.tsx` (+ `SnippetSection.tsx`); the snippet itself in `app/src/features/agents/channels/deployModel.ts` |
+| Admin embed / deploy UI | `app/src/features/agents/channels/DeployPage.tsx` (+ `PlatformGuide.tsx` for the per-stack steps, `InstallHandoff.tsx` for the key and the developer hand-off); the snippet itself in `app/src/features/agents/channels/deployModel.ts` |
 | Admin widget appearance & messages | `app/src/features/agents/experience/ExperiencePage.tsx` |
 | Admin knowledge base / crawl | `app/src/features/agents/knowledge/` |
 | Admin live-chat operator console | `app/src/features/inbox/InboxPage.tsx` |

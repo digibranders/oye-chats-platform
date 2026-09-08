@@ -4,6 +4,7 @@ import { ExternalLink } from 'lucide-react';
 import {
   Card,
   CardBody,
+  CardSection,
   ConfirmDialog,
   EmptyState,
   ErrorState,
@@ -35,7 +36,7 @@ import {
 } from './accessModel';
 import { DemoLinkCard } from './DemoLinkCard';
 import { InstallStatusCard } from './InstallStatusCard';
-import { SnippetSection } from './SnippetSection';
+import { InstallHandoff } from './InstallHandoff';
 import { PlatformGuide } from './PlatformGuide';
 import { TroubleshootSection } from './TroubleshootSection';
 import { useTranslation } from '../../../i18n/useTranslation';
@@ -361,40 +362,109 @@ export function DeployPage() {
       {header}
 
       <Stack>
-        {/* A row-paired 2-up. Each left card has its right neighbour locked to
-            the same row, which two independent columns could not guarantee: the
-            platform instructions sit beside the snippet, and the live install
-            reading sits beside Access — the allow-list most likely to be keeping
-            that reading empty. `align="start"` lets each card keep its own
-            height rather than stretching to the tallest in its row. */}
         {/* Two INDEPENDENT columns, not a row-paired 2-up. Pairing looked
             tidier on paper and cost a large hole in whichever column was
             shorter, because the second row cannot start until the tallest cell
-            of the first has finished. The install-help card is the problem: it
-            is 273px with no platform chosen and roughly 850px once one is, so
-            with the snippet at ~506px the dead space was 233px on the right
-            before a choice and about 350px on the LEFT after it. Independent
-            columns let each card follow the one above it.
+            of the first has finished. Independent columns let each card follow
+            the one above it.
 
-            The reading pairs the old layout enforced still hold in practice:
-            the help card sits beside the snippet, and the install reading beside
-            Access, because that is the order they are written in. What is gone
-            is the guarantee, and with it the hole. */}
+            LEFT is the job: how to install this, then where it is allowed to
+            run. RIGHT is the answer: whether it is actually running, then a
+            hosted page to show someone while it is not.
+
+            There used to be a third card, first in the left column and headed
+            "Add this to your website", which printed the script tag above the
+            hand-off controls. It printed a snippet the platform guide beside it
+            already opened with — and opened with in the form the customer's own
+            stack needs, a `<script>` for HTML, a `<Script>` for Next, a
+            theme-editor path for Shopify. All fifteen platforms carry the code
+            in their own steps, so the generic copy was the one nobody should
+            follow, printed first and largest. What it held that was NOT
+            duplicated — the embed key and the two ways to hand this to somebody
+            else — is now the foot of the guide, where a reader who has just
+            read the steps and cannot do them is standing. */}
         <Grid cols={2} align="start">
           <Stack>
-            {/* The artefact, then the allow-list that governs where it may run. */}
-            <SnippetSection
-            botKey={botKey}
-            botName={bot.name || 'OyeChats'}
-            botId={agentId}
-            env={deploy.env}
-            apiBaseUrl={deploy.apiBaseUrl}
-            platform={platform}
-            devInviteEmail={bot.dev_invite_email ?? null}
-            devInviteSentAt={bot.dev_invite_sent_at ?? null}
-          />
+            {/* First on the page, because it is the job. Two tabs over one
+                card: the steps for your stack, and what to check when nothing
+                appears. */}
+            {/* The tab row lives INSIDE the card, as its header. Outside it,
+                the strip floated above a separate bordered card: the snippet
+                card opposite began at the top of its column while this one
+                started a tab-row lower, so the two cards never lined up, and
+                the strip read as detached furniture rather than a control
+                belonging to the panel under it.
 
-            {/* Row 2, left — Access. `scroll-mt` keeps the heading clear of the
+                Two spacing corrections come with the move. `TAB_LIST` carries
+                `-mx-3` to sit flush with page copy when it is naked, so the
+                wrapper is padded by the card's own gutter and the negative
+                margin is cancelled. `TabPanel`'s `pt-6` is the gap under a
+                page-level tab row; the panels here are `CardBody`, which
+                brings its own, so it is dropped. */}
+            <Card>
+              {/* `data-card-band` on the wrapper, not decoration: `Card` draws
+                  its hairlines with an adjacent-sibling rule between two bands,
+                  and `Tabs` is not one. Without the marker the hand-off below
+                  butted straight onto the last install step with no rule, and
+                  the embed key read as step three. */}
+              <div data-card-band>
+                <Tabs
+                  className="[&>div:first-child]:px-cell [&>div:first-child>*]:mx-0"
+                  label={t('agents.installHelp') || 'Install help'}
+                  value={activeHelpTab}
+                  onValueChange={(next) => setHelpTab(next as HelpTab)}
+                  items={[
+                    { value: 'platform', label: t('agents.instructionsForYourPlatform') || 'Instructions for your platform' },
+                    { value: 'troubleshoot', label: t('agents.notShowingUp') || 'Not showing up' },
+                  ]}
+                >
+                  <TabPanel value="platform" className="pt-0">
+                    <CardBody>
+                      <PlatformGuide
+                        botKey={botKey}
+                        env={deploy.env}
+                        platformId={platformId}
+                        onPlatformChange={choosePlatform}
+                      />
+                    </CardBody>
+                  </TabPanel>
+                  <TabPanel value="troubleshoot" className="pt-0">
+                    <CardBody flush>
+                      <TroubleshootSection
+                        botKey={botKey}
+                        env={deploy.env}
+                        apiBaseUrl={deploy.apiBaseUrl}
+                        website={website}
+                        domains={domains}
+                        domainsConfigured={domains.length}
+                        domainCheckEnabled={Boolean(bot.domain_check_enabled)}
+                      />
+                    </CardBody>
+                  </TabPanel>
+                </Tabs>
+              </div>
+
+              {/* Outside the tabs on purpose. The key and the hand-off are
+                  facts about this install, not about whichever set of
+                  instructions is open, so switching tabs must not move them —
+                  and "email this to my developer" is at least as useful to
+                  somebody on the troubleshooting tab, who has just worked out
+                  that they cannot do this themselves. */}
+              <CardSection>
+                <InstallHandoff
+                  botKey={botKey}
+                  botName={bot.name || 'OyeChats'}
+                  botId={agentId}
+                  env={deploy.env}
+                  apiBaseUrl={deploy.apiBaseUrl}
+                  platform={platform}
+                  devInviteEmail={bot.dev_invite_email ?? null}
+                  devInviteSentAt={bot.dev_invite_sent_at ?? null}
+                />
+              </CardSection>
+            </Card>
+
+            {/* Access, under the instructions. `scroll-mt` keeps the heading clear of the
                 sticky topbar when the status card's "Allowed domains" link jumps
                 here. The cell always renders — a skeleton while the access slice
                 loads — so the row pairing does not collapse mid-load. */}
@@ -425,63 +495,11 @@ export function DeployPage() {
           </Stack>
 
           <Stack>
-            {/* Row 1, right — help beside the snippet: a reader who has just
-                copied the tag wants their platform's steps next, and a broken
-                install opens on the checklist. Two tabs over one card. */}
-            {/* The tab row lives INSIDE the card, as its header. Outside it,
-                the strip floated above a separate bordered card: the snippet
-                card opposite began at the top of its column while this one
-                started a tab-row lower, so the two cards never lined up, and
-                the strip read as detached furniture rather than a control
-                belonging to the panel under it.
-
-                Two spacing corrections come with the move. `TAB_LIST` carries
-                `-mx-3` to sit flush with page copy when it is naked, so the
-                wrapper is padded by the card's own gutter and the negative
-                margin is cancelled. `TabPanel`'s `pt-6` is the gap under a
-                page-level tab row; the panels here are `CardBody`, which
-                brings its own, so it is dropped. */}
-            <Card>
-              <Tabs
-                className="[&>div:first-child]:px-cell [&>div:first-child>*]:mx-0"
-                label={t('agents.installHelp') || 'Install help'}
-                value={activeHelpTab}
-                onValueChange={(next) => setHelpTab(next as HelpTab)}
-                items={[
-                  { value: 'platform', label: t('agents.instructionsForYourPlatform') || 'Instructions for your platform' },
-                  { value: 'troubleshoot', label: t('agents.notShowingUp') || 'Not showing up' },
-                ]}
-              >
-                <TabPanel value="platform" className="pt-0">
-                  <CardBody>
-                    <PlatformGuide
-                      botKey={botKey}
-                      env={deploy.env}
-                      platformId={platformId}
-                      onPlatformChange={choosePlatform}
-                    />
-                  </CardBody>
-                </TabPanel>
-                <TabPanel value="troubleshoot" className="pt-0">
-                  <CardBody flush>
-                    <TroubleshootSection
-                      botKey={botKey}
-                      env={deploy.env}
-                      apiBaseUrl={deploy.apiBaseUrl}
-                      website={website}
-                      domains={domains}
-                      domainsConfigured={domains.length}
-                      domainCheckEnabled={Boolean(bot.domain_check_enabled)}
-                    />
-                  </CardBody>
-                </TabPanel>
-              </Tabs>
-            </Card>
-
-            {/* The live install reading, then the shareable hosted demo. The
-                `mt-14` that used to sit here was compensating for the Access
-                heading in the paired row; there is no row to align against now,
-                so the card simply follows the help card above it. */}
+            {/* The live install reading first, and it is the right thing to
+                lead this column with: "is it actually running" is the question
+                the customer came to answer, and it used to sit below a help
+                card tall enough to push it off the fold. Then the hosted demo,
+                which is what to send somebody while the answer is still no. */}
             <Stack>
               <InstallStatusCard
                 status={deploy.status}
