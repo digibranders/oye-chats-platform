@@ -112,9 +112,20 @@ export default function Login() {
 
   const form = useForm<LoginValues>({
     resolver: zodResolver(buildSchema()),
-    // Errors appear once a field has been visited and left, not while the user
-    // is still typing the value that would clear them.
-    mode: 'onTouched',
+    // Errors on submit, then live as they are fixed. NOT on blur, and the
+    // reason is a bug rather than a preference: validating on blur renders the
+    // error between a link's `mousedown` and its `mouseup`, the page reflows by
+    // the height of that one line, and `mouseup` lands on whatever moved into
+    // its place. No `click` is ever dispatched. Measured on /register: the
+    // "Sign in" link sat at y=663, mousedown blurred the empty name field, the
+    // error pushed the link to y=680, and the first click did nothing. The
+    // second worked, because by then the error was already on screen.
+    //
+    // Submitting is also the moment the user has actually claimed to be
+    // finished, so it is the first moment they have earned a red line. Merely
+    // passing through a field they have not filled in is not a mistake.
+    mode: 'onSubmit',
+    reValidateMode: 'onChange',
     defaultValues: { email: invitedEmail, password: '' },
   });
 

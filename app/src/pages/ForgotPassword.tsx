@@ -71,13 +71,19 @@ export default function ForgotPassword() {
 
   const requestForm = useForm<RequestValues>({
     resolver: zodResolver(buildRequestSchema()),
-    mode: 'onTouched',
+    // See `Login` for why this is not `onTouched`: a blur-time error reflows
+    // the page between a link's mousedown and mouseup and swallows the click.
+    mode: 'onSubmit',
+    reValidateMode: 'onChange',
     defaultValues: { email: '' },
   });
 
   const resetForm = useForm<ResetValues>({
     resolver: zodResolver(buildResetSchema()),
-    mode: 'onTouched',
+    // See `Login` for why this is not `onTouched`: a blur-time error reflows
+    // the page between a link's mousedown and mouseup and swallows the click.
+    mode: 'onSubmit',
+    reValidateMode: 'onChange',
     defaultValues: { code: '', password: '' },
   });
 
