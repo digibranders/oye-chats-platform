@@ -11,13 +11,21 @@
  *   with no ids, oldest-first and silently truncated, so a long conversation
  *   showed its beginning and hid its end — which is the half that matters;
  * - the conversation's post-chat rating, which lives on the operator session
- *   endpoint and is absent for every visitor who did not rate.
+ *   endpoint and is absent for every visitor who did not rate;
+ * - the audit trail, which the replay interleaves into the transcript as the
+ *   moments the conversation changed hands.
  *
- * A failure in the second or third does not take the drawer down with it.
+ * A failure in any but the first does not take the drawer down with it.
  */
 import { useCallback } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { getChatHistory, getLeadDetail, getSessionDetails } from '../../services/api';
+import {
+  getChatHistory,
+  getLeadDetail,
+  getSessionAuditTrail,
+  getSessionDetails,
+  type SessionAuditEntry,
+} from '../../services/api';
 import { keys } from '../../query/keys';
 import type { ChatMessage, Lead } from '../../types/domain';
 
@@ -58,6 +66,16 @@ export interface LeadDetailData {
   transcript: LeadTranscript;
   /** 1–5, or `null` when this visitor never rated the conversation. */
   visitorRating: number | null;
+  /** Who held the live conversation, when anyone did. */
+  operatorName: string | null;
+  /**
+   * Handoffs, joins and closures, for interleaving into the transcript.
+   *
+   * Empty on failure and no error is surfaced: these are annotation on a
+   * conversation that renders perfectly well without them, and an error state
+   * over a readable transcript would be the wrong trade.
+   */
+  audit: SessionAuditEntry[];
 }
 
 /**
@@ -121,8 +139,18 @@ export function useLeadDetail(sessionId: string | null): LeadDetailData {
     void transcript.fetchNextPage();
   }, [transcript]);
 
+  const auditTrail = useQuery({
+    queryKey: [...detailKey, 'audit'],
+    queryFn: () => getSessionAuditTrail(sessionId as string),
+    enabled,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+
   const rawRating = session.data?.visitor_rating;
   const visitorRating = typeof rawRating === 'number' && rawRating > 0 ? rawRating : null;
+  const rawOperator = session.data?.operator_name;
+  const operatorName = typeof rawOperator === 'string' && rawOperator.trim() ? rawOperator : null;
 
   return {
     detail: detail.data ?? null,
@@ -142,5 +170,7 @@ export function useLeadDetail(sessionId: string | null): LeadDetailData {
       retry: () => void transcript.refetch(),
     },
     visitorRating,
+    operatorName,
+    audit: auditTrail.data?.entries ?? [],
   };
 }

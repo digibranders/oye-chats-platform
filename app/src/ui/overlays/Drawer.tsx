@@ -167,23 +167,6 @@ export function Drawer({
             className,
           )}
         >
-          {resizable ? (
-            <div
-              {...separatorProps}
-              className={cn(
-                // The hit area straddles the panel's leading border so the
-                // border stays where the eye expects it and the target is still
-                // 12px. `translate-x-1/2` is a transform and never
-                // direction-aware, so RTL reverses it to keep the handle centred
-                // on the (logical) `start-0` edge.
-                // rtl-ok: paired with rtl:translate-x-1/2, see above.
-                'absolute inset-y-0 start-0 z-10 hidden w-3 -translate-x-1/2 rtl:translate-x-1/2',
-                'cursor-col-resize touch-none select-none sm:block',
-                'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent-500',
-                dragging && 'bg-accent-50',
-              )}
-            />
-          ) : null}
           <OverlayHeader
             hairline={headerHairline}
             close={
@@ -210,6 +193,29 @@ export function Drawer({
           <div className={cn(OVERLAY_BODY, flush && 'p-0')}>{children}</div>
 
           {footer ? <div className={OVERLAY_FOOTER}>{footer}</div> : null}
+
+          {/* Last in the DOM, deliberately. The handle is absolutely
+              positioned, so its place here costs nothing visually — and first
+              in the DOM it was the first focusable thing in the panel, which
+              meant the drawer opened with a focus ring on its own edge and a
+              keyboard user met "resize" before the close button and the tabs. */}
+          {resizable ? (
+            <div
+              {...separatorProps}
+              className={cn(
+                // The hit area straddles the panel's leading border so the
+                // border stays where the eye expects it and the target is still
+                // 12px. `translate-x-1/2` is a transform and never
+                // direction-aware, so RTL reverses it to keep the handle centred
+                // on the (logical) `start-0` edge.
+                // rtl-ok: paired with rtl:translate-x-1/2, see above.
+                'absolute inset-y-0 start-0 z-10 hidden w-3 -translate-x-1/2 rtl:translate-x-1/2',
+                'cursor-col-resize touch-none select-none sm:block',
+                'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent-500',
+                dragging && 'bg-accent-50',
+              )}
+            />
+          ) : null}
         </BaseDialog.Popup>
       </BaseDialog.Portal>
     </BaseDialog.Root>

@@ -18,6 +18,17 @@ export interface TabsProps {
   /** Names the tab set, e.g. "Analytics views". */
   label: string;
   children: ReactNode;
+  /**
+   * Fill the height of the parent, with only the panel scrolling.
+   *
+   * For a tab set inside a fixed-height surface — a drawer, a pane — where the
+   * row is chrome and must stay put. Without it the row is just the first thing
+   * in the scroller and slides away as the reader goes down the panel, which
+   * inside a drawer means losing the only way back to the other tab.
+   */
+  fill?: boolean;
+  /** Padding for the row when a `flush` surface has removed the body's own. */
+  listClassName?: string;
   className?: string;
 }
 
@@ -42,16 +53,25 @@ export interface TabsProps {
  * Its geometry comes from `tabStyles`, shared with `NavTabs`: the two rows have
  * to be indistinguishable, because to the reader they are one control.
  */
-export function Tabs({ items, value, onValueChange, label, children, className }: TabsProps) {
+export function Tabs({
+  items,
+  value,
+  onValueChange,
+  label,
+  children,
+  fill = false,
+  listClassName,
+  className,
+}: TabsProps) {
   return (
     <BaseTabs.Root
       value={value}
       onValueChange={(next) => onValueChange(String(next))}
-      className={className}
+      className={cn(fill && 'flex h-full min-h-0 flex-col', className)}
     >
       {/* The hairline is on a wrapper, not on the scroller: on the scroller its
           own `overflow-x-auto` clips the rule at both ends. */}
-      <div className="border-b border-border">
+      <div className={cn('border-b border-border', fill && 'shrink-0', listClassName)}>
         <BaseTabs.List aria-label={label} activateOnFocus={false} className={TAB_LIST}>
           {items.map((item) => (
             <BaseTabs.Tab
@@ -80,14 +100,20 @@ export function Tabs({ items, value, onValueChange, label, children, className }
 export function TabPanel({
   value,
   children,
+  scroll = false,
   className,
 }: {
   value: string;
   children: ReactNode;
+  /** This panel is the scroller, under a `fill` row that stays put. */
+  scroll?: boolean;
   className?: string;
 }) {
   return (
-    <BaseTabs.Panel value={value} className={cn('pt-6 focus:outline-none', className)}>
+    <BaseTabs.Panel
+      value={value}
+      className={cn('pt-6 focus:outline-none', scroll && 'min-h-0 flex-1 overflow-y-auto', className)}
+    >
       {children}
     </BaseTabs.Panel>
   );

@@ -1,13 +1,10 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { t as translateNow } from '../../i18n/i18n';
-import { useQuery } from '@tanstack/react-query';
 import { Star } from 'lucide-react';
 import {
   Alert,
   Badge,
   Button,
-  DayDivider,
-  Disclosure,
   Drawer,
   ErrorState,
   Field,
@@ -20,15 +17,17 @@ import {
   Tabs,
   TagInput,
   Textarea,
+  WidgetTranscript,
+  appearanceFromBot,
   cn,
   formatDateTime,
   formatRelative,
   formatTime,
   type PropertyItem,
-  Markdown,
 } from '../../ui';
-import { getSessionAuditTrail } from '../../services/api';
-import { formatDayLabel, isNewDay } from '../../lib/messageDay';
+import { formatDayLabel } from '../../lib/messageDay';
+import { useBotContext } from '../../context/BotContext';
+import { replayMessages } from './replayModel';
 import type { Lead } from '../../types/domain';
 import { LeadJourney } from './LeadInsights';
 import { asRecord, asText, engagementBand, truncate } from './leadSource';
@@ -36,7 +35,7 @@ import { LeadSection } from './LeadSection';
 import { LeadQualification } from './LeadQualification';
 import { LeadQuotation } from './LeadQuotation';
 import { VisitorIntelligenceSection } from './VisitorIntelligenceSection';
-import { TRANSCRIPT_PAGE_SIZE, useLeadDetail, type TranscriptMessage } from './useLeadDetail';
+import { TRANSCRIPT_PAGE_SIZE, useLeadDetail } from './useLeadDetail';
 import type { LeadAnnotationController, LeadAnnotationsStore } from './useLeadAnnotations';
 import type { DrawerTab } from './leadsUrl';
 import {
@@ -179,11 +178,16 @@ function VisitorRating({ rating }: { rating: number }) {
 /** Company and recency, as the drawer's one-line subtitle. */
 function subtitle(lead: Lead): string | undefined {
   const company = companyDisplay(lead.contact)?.value;
+  // The chatbot, because the Conversation tab is painted in ITS colours and
+  // shows ITS avatar. Without the name the reader is looking at a stranger's
+  // brand with nothing to attach it to — and a workspace with six chatbots has
+  // six different-looking transcripts.
+  const bot = lead.bot_name?.trim() || null;
   const active = lead.last_active_at
     ? translateNow('leads.lastActiveWhen', { when: formatRelative(lead.last_active_at) }) ||
       `Last active ${formatRelative(lead.last_active_at)}`
     : null;
-  return [company, active].filter(Boolean).join(' · ') || undefined;
+  return [company, bot, active].filter(Boolean).join(' · ') || undefined;
 }
 
 function ScoreBand({ lead, rating }: { lead: Lead; rating: number | null }) {
@@ -213,60 +217,6 @@ function ScoreBand({ lead, rating }: { lead: Lead; rating: number | null }) {
       />
       <p className="mt-2 text-xs text-text-secondary">{tier.hint}</p>
     </div>
-  );
-}
-
-/**
- * When a message was sent, whichever field carried it.
- *
- * `GET /chat/history/{id}` sends `timestamp` and the lead endpoint sends
- * `created_at`, and this drawer renders pages from both.
- */
-function sentAt(message: TranscriptMessage | undefined): string | null {
-  return message?.timestamp ?? message?.created_at ?? null;
-}
-
-function Bubble({ message }: { message: TranscriptMessage }) {
-  const { t } = useTranslation();
-  const text = message.content ?? message.message ?? '';
-  const visitor = message.role === 'user';
-  const operator = message.role === 'operator';
-  const who = visitor ? t('leads.visitor') || 'Visitor' : operator ? t('leads.operator') || 'Operator' : t('leads.chatbot') || 'Chatbot';
-  const at = message.created_at ?? message.timestamp ?? null;
-
-  return (
-    <li className={cn('flex', visitor ? 'justify-end' : 'justify-start')}>
-      {/* One radius and one ground per speaker role, matching the first-run
-          transcript. The visitor used to sit on `bg-accent-50`, which is accent
-          used as a status — blue means interactive in this system and nothing
-          else. */}
-      <div
-        className={cn(
-          'max-w-[85%] rounded-md px-3 py-2',
-          visitor
-            ? 'bg-surface-sunken'
-            : operator
-              ? 'bg-neutral-tint'
-              : 'border border-border bg-surface',
-        )}
-      >
-        <p className="mb-0.5 flex items-center gap-2 font-mono text-2xs uppercase tracking-eyebrow text-text-tertiary">
-          <span>{who}</span>
-          {at ? <span className="figure normal-case tracking-normal">{formatTime(at)}</span> : null}
-        </p>
-        {text ? (
-          visitor ? (
-            // Verbatim: this is exactly what the visitor typed, and rendering it
-            // as markdown would reformat their own words.
-            <p className="whitespace-pre-wrap break-words text-prose text-text-primary">{text}</p>
-          ) : (
-            <Markdown className="text-prose text-text-primary">{text}</Markdown>
-          )
-        ) : (
-          <p className="text-prose text-text-tertiary">{t('leads.noTextInThisMessage') || 'No text in this message.'}</p>
-        )}
-      </div>
-    </li>
   );
 }
 
@@ -365,47 +315,19 @@ const ACTION_LABELS: Record<string, { key: string; text: string }> = {
   visitor_cancelled: { key: 'leads.visitorLeftTheQueue', text: 'Visitor left the queue' },
 };
 
+/**
+ * What an audit action says, inside the transcript.
+ *
+ * These used to be an "Activity" disclosure filed under the last message. They
+ * are moments in the conversation, not a footnote to it, so they are now quiet
+ * centred lines at the time they happened — which is also how the widget showed
+ * them to the visitor.
+ */
 function humanizeAction(action: string): string {
   const known = ACTION_LABELS[action];
   // An unrecognised action falls back to its own de-underscored name rather
   // than to a key: it is a server string we have no copy for at all.
   return known ? translateNow(known.key) || known.text : action.replace(/_/g, ' ');
-}
-
-function LeadAuditTrail({ sessionId }: { sessionId: string }) {
-  const { t } = useTranslation();
-  const { data } = useQuery({
-    queryKey: ['lead-audit', sessionId],
-    queryFn: () => getSessionAuditTrail(sessionId),
-  });
-
-  const entries = data?.entries ?? [];
-  if (entries.length === 0) return null;
-
-  return (
-    <LeadSection title={t('leads.activity') || 'Activity'}>
-      <Disclosure summary="Activity" regionLabel="Activity">
-        <ol>
-          {entries.map((entry, index) => {
-            const label = humanizeAction(entry.action);
-            return (
-              <li
-                key={`${entry.action}-${entry.created_at ?? index}`}
-                aria-label={label}
-                className="flex items-start gap-2 border-t border-border py-1.5 text-xs first:border-t-0"
-              >
-                <span className="figure shrink-0 text-text-tertiary">
-                  {entry.created_at ? formatRelative(entry.created_at) : '—'}
-                </span>
-                <span className="text-text-tertiary">—</span>
-                <span className="min-w-0 flex-1 text-text-primary">{label}</span>
-              </li>
-            );
-          })}
-        </ol>
-      </Disclosure>
-    </LeadSection>
-  );
 }
 
 export function LeadDrawer({
@@ -418,11 +340,24 @@ export function LeadDrawer({
   annotations,
 }: LeadDrawerProps) {
   const { t } = useTranslation();
+  const { bots } = useBotContext();
   const data = useLeadDetail(sessionId);
   const { detail, transcript } = data;
   const controller = annotations.controllerFor(sessionId);
 
   const properties: PropertyItem[] = detail ? leadProperties(detail) : [];
+
+  // The chatbot's own colours and mark, because the transcript is a replay of
+  // what the visitor saw on that chatbot's site. A lead outlives the chatbot
+  // that captured it, and `appearanceFromBot` answers `null` with the widget's
+  // own defaults rather than leaving the panel unstyled.
+  const bot = detail?.bot_id != null ? bots.find((candidate) => candidate.id === detail.bot_id) : undefined;
+  const appearance = useMemo(() => appearanceFromBot(bot ?? null), [bot]);
+
+  const replay = useMemo(
+    () => replayMessages(transcript.messages, data.audit, humanizeAction),
+    [transcript.messages, data.audit],
+  );
 
   return (
     <Drawer
@@ -430,29 +365,43 @@ export function LeadDrawer({
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
-      // 768, not 672. A panel holding a property grid *and* a transcript at 672
-      // wraps everything in it, which is most of why every value in here needed
-      // its own line.
+      // The resting width, not the only one. A transcript is read at whatever
+      // width the reader's monitor and habit want, so the leading edge is
+      // draggable and the result is remembered. See `Drawer`'s own stops.
       width="xl"
-      eyebrow="Lead"
+      resizable
+      storageKey="oyechats.leads.drawer-width"
+      // No eyebrow. The page is called Leads and this opened from one of its
+      // rows: "Lead / Siddique / Digibranders" was the record's own name said
+      // three times before the first fact about it.
       title={detail ? leadDisplayName(detail) : t('leads.lead') || 'Lead'}
       // Relative, not `formatDateTime`. The description is 12px secondary text;
       // an absolute timestamp there is neither readable nor scannable.
       description={detail ? subtitle(detail) : undefined}
+      // The tab row directly below draws the header's bottom edge. Two rules
+      // 40px apart, plus the row's own active underline, is three horizontal
+      // lines in the first 80px of the panel.
+      headerHairline={false}
+      // The tab row runs to the panel's edges and the panel below it scrolls,
+      // so the body's own 20px padding moves inside the tabs.
+      flush
     >
       {data.loading ? (
-        <div className="space-y-4">
+        <div className="space-y-4 p-5">
           <Skeleton className="h-24 w-full" />
           <LoadingRows rows={4} />
         </div>
       ) : data.error ? (
         <ErrorState
+          className="p-5"
           title={t('leads.weCouldNotLoadThis') || 'We could not load this lead'}
           description={data.error.message}
           onRetry={data.retry}
         />
       ) : detail ? (
         <Tabs
+          fill
+          listClassName="px-5"
           label={t('leads.leadDetails') || 'Lead details'}
           value={tab}
           onValueChange={(next) => onTabChange(next as DrawerTab)}
@@ -467,7 +416,7 @@ export function LeadDrawer({
             },
           ]}
         >
-          <TabPanel value="profile" className="space-y-5">
+          <TabPanel value="profile" scroll className="space-y-5 px-5 pb-5">
             {/* No second plan notice. The page this drawer opens from carries the
                 page-level one, and the columns are silently absent as a third
                 signal — three statements of one lock on one screen. */}
@@ -492,7 +441,7 @@ export function LeadDrawer({
             {controller ? <Annotations key={detail.session_id} controller={controller} /> : null}
           </TabPanel>
 
-          <TabPanel value="conversation" className="space-y-3">
+          <TabPanel value="conversation" scroll className="space-y-3 px-5 pb-5">
             {transcript.error ? (
               <ErrorState
                 size="panel"
@@ -502,19 +451,23 @@ export function LeadDrawer({
               />
             ) : transcript.loading ? (
               <LoadingRows rows={5} />
-            ) : transcript.messages.length === 0 ? (
+            ) : replay.length === 0 ? (
               <Alert tone="neutral">{t('leads.noMessagesRecorded') || 'No messages recorded.'}</Alert>
             ) : (
               <>
                 {/* Paged backwards from the most recent message. The panel used
                     to render every message it was given, so a 200-message
                     conversation loaded in full into a narrow column and opened
-                    at the part nobody wanted. */}
+                    at the part nobody wanted.
+
+                    A link, not a `Button`: a filled control at the top of a
+                    transcript reads as the panel's primary action, and it is
+                    the least important thing on the screen. */}
                 {transcript.hasEarlier ? (
                   <div className="flex justify-center">
                     <Button
                       size="sm"
-                      variant="secondary"
+                      variant="ghost"
                       loading={transcript.loadingEarlier}
                       onClick={transcript.loadEarlier}
                     >
@@ -527,24 +480,30 @@ export function LeadDrawer({
                     {t('leads.thisIsTheStartOf') || 'This is the start of the conversation.'}
                   </p>
                 )}
-                <ul className="space-y-2.5">
-                  {transcript.messages.map((message, index) => (
-                    <li key={message.id} className="contents">
-                      {/* A widget session survives in the visitor's browser, so
-                          one conversation can span days while every bubble
-                          shows only a clock time. Without this marker, "14:32"
-                          could be an hour ago or last Tuesday. */}
-                      {isNewDay(sentAt(message), sentAt(transcript.messages[index - 1])) ? (
-                        <DayDivider label={formatDayLabel(sentAt(message))} className="pt-1" />
-                      ) : null}
-                      <Bubble message={message} />
-                    </li>
-                  ))}
-                </ul>
+                {/* The conversation as the visitor saw it, in that chatbot's own
+                    colours: their turns in its bubble colour, the AI as its
+                    avatar and rendered markdown, an operator as a name and
+                    plain text. The panel this replaces drew all three in
+                    console greys under an uppercase mono label — 23 of them
+                    down one column.
+
+                    `showTimes`: the widget shows the visitor no clocks, because
+                    they are watching it happen. This is a record read weeks
+                    later, so each run ends with one. A widget session survives
+                    in the visitor's browser and can span days, so the day
+                    dividers are what stop "14:32" meaning last Tuesday. */}
+                <WidgetTranscript
+                  appearance={appearance}
+                  messages={replay}
+                  operatorName={data.operatorName}
+                  showTimes
+                  dayLabel={(at) => formatDayLabel(at) || null}
+                  timeLabel={formatTime}
+                  operatorFallback={t('leads.operator') || 'Operator'}
+                  imageLabel={t('leads.attachment') || 'Attachment'}
+                />
               </>
             )}
-
-            <LeadAuditTrail sessionId={detail.session_id} />
           </TabPanel>
         </Tabs>
       ) : null}

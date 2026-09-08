@@ -190,7 +190,15 @@ describe('LeadsPage', () => {
     );
   });
 
-  it('shows the session’s state transitions in order', async () => {
+  it('shows the session’s state transitions where they happened', async () => {
+    // These used to be an "Activity" disclosure filed under the last message,
+    // which is the wrong shape for them twice over: they are moments IN the
+    // conversation, and read at the bottom they made the operator's first
+    // message look as though it had arrived from nowhere.
+    api.getChatHistory.mockResolvedValue([
+      { id: 1, role: 'user', content: 'is anyone there?', timestamp: '2026-08-20T09:59:00Z' },
+      { id: 2, role: 'operator', content: 'I am, hello', timestamp: '2026-08-20T10:02:00Z' },
+    ]);
     api.getSessionAuditTrail.mockResolvedValue({
       entries: [
         { action: 'handoff_requested', operator_id: null, details: null, created_at: '2026-08-20T10:00:00Z' },
@@ -201,13 +209,53 @@ describe('LeadsPage', () => {
     renderPage('/leads?lead=s1');
 
     await user.click(await screen.findByRole('tab', { name: /conversation/i }));
-    await user.click(await screen.findByRole('button', { name: /activity/i }));
+    await screen.findByText('Requested a person');
 
-    const entries = await screen.findAllByRole('listitem', { name: /requested a person|operator joined/i });
-    expect(entries.map((entry) => entry.textContent)).toEqual([
+    const panel = screen.getByRole('tabpanel');
+    const order = [...panel.querySelectorAll('[data-widget-role]')].map((row) =>
+      (row.textContent || '').trim(),
+    );
+    // Each row carries its own run-ending timestamp, so these are prefixes.
+    expect(order).toEqual([
+      expect.stringContaining('is anyone there?'),
       expect.stringContaining('Requested a person'),
       expect.stringContaining('Operator joined'),
+      expect.stringContaining('I am, hello'),
     ]);
+  });
+
+  it('replays the conversation as the visitor saw it, not as a console list', async () => {
+    // The visitor gets a bubble; the AI and the operator do not. That is the
+    // widget's own anatomy, and it is what makes this a record of what happened
+    // on the customer's site rather than a second inbox.
+    api.getChatHistory.mockResolvedValue([
+      { id: 1, role: 'user', content: 'what is the pricing?', timestamp: '2026-08-20T09:59:00Z' },
+      { id: 2, role: 'bot', content: 'Ask the **team**.', timestamp: '2026-08-20T10:00:00Z' },
+    ]);
+    const user = userEvent.setup();
+    renderPage('/leads?lead=s1');
+
+    await user.click(await screen.findByRole('tab', { name: /conversation/i }));
+    await screen.findByText('what is the pricing?');
+
+    const panel = screen.getByRole('tabpanel');
+    expect(panel.querySelectorAll('[data-widget-bubble]')).toHaveLength(1);
+    // The AI writes markdown, and the visitor saw it rendered.
+    expect(screen.getByText('team').tagName).toBe('STRONG');
+  });
+
+  it('does not say the record’s own name three times before its first fact', async () => {
+    // The header was an eyebrow reading "Lead", the name, and a subtitle
+    // beginning with the company — three restatements of the row the reader
+    // just clicked, above a tab row, before a single fact about them.
+    api.getLeadDetail.mockResolvedValue(scoredLead({ bot_name: 'Acme Support' }));
+    renderPage('/leads?lead=s1');
+    const heading = await screen.findByRole('heading', { name: 'Priya Raman' });
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.textContent?.trimStart().startsWith('Priya Raman')).toBe(true);
+    // The chatbot is named, because the transcript below is painted in its
+    // colours and shows its avatar.
+    expect(heading.parentElement).toHaveTextContent('Acme Support');
   });
 
   it('confirms before clearing every unread mark, without quoting a windowed count', async () => {

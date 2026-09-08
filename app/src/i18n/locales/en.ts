@@ -40,6 +40,7 @@ const en = {
     anonymousOnly: 'Anonymous only',
     anyQuality: 'Any quality',
     anyScore: 'Any score',
+    attachment: 'Attachment',
     captured: 'Captured',
     clearsTheUnreadMark: 'Clears the unread mark on every unread lead for this chatbot, on every page. The date filter above does not narrow it. Cannot be undone.',
     columnCompany: 'Company',

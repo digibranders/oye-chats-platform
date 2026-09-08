@@ -1,12 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import {
-  DEFAULT_APPEARANCE,
-  WidgetTranscript,
-  appearanceFromBot,
-  type WidgetAppearance,
-  type WidgetMessage,
-} from './WidgetTranscript';
+import { WidgetTranscript, type WidgetMessage } from './WidgetTranscript';
+import { DEFAULT_APPEARANCE, appearanceFromBot, type WidgetAppearance } from './widgetAppearance';
 
 vi.mock('./PremiumOrb', () => ({ default: () => <span data-orb /> }));
 

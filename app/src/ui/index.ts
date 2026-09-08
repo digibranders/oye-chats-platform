@@ -53,15 +53,15 @@ export type { MarkdownProps } from './primitives/Markdown';
 /* ------------------------------------------------------------------ chat */
 /* A picture of the embeddable widget, not of the console. See
    `chat/widgetTheme.ts` for why nothing under `chat/` may use a console token. */
-export { WidgetTranscript, WidgetAvatar, appearanceFromBot, DEFAULT_APPEARANCE } from './chat/WidgetTranscript';
+export { WidgetTranscript, WidgetAvatar } from './chat/WidgetTranscript';
 export type {
   WidgetTranscriptProps,
-  WidgetAppearance,
   WidgetMessage,
   WidgetRole,
   WidgetFile,
-  AppearanceSource,
 } from './chat/WidgetTranscript';
+export { appearanceFromBot, DEFAULT_APPEARANCE } from './chat/widgetAppearance';
+export type { WidgetAppearance, AppearanceSource } from './chat/widgetAppearance';
 export { default as PremiumOrb } from './chat/PremiumOrb';
 export type { PremiumOrbProps } from './chat/PremiumOrb';
 export type { AvatarProps, AvatarSize } from './primitives/Avatar';

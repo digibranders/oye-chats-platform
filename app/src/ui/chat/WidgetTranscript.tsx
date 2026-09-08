@@ -2,6 +2,7 @@ import { Fragment, type CSSProperties, type ReactElement } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import { Bot } from 'lucide-react';
 import PremiumOrb from './PremiumOrb';
+import type { WidgetAppearance } from './widgetAppearance';
 import {
   DEFAULT_PRIMARY_COLOR,
   DEFAULT_USER_BUBBLE_COLOR,
@@ -42,52 +43,6 @@ import {
  * record read weeks later does, so the drawer turns them on — one per run, not
  * one per message.
  */
-
-/** How a chatbot paints itself. `appearanceFromBot` builds it from a `Bot`. */
-export interface WidgetAppearance {
-  primaryColor: string;
-  userBubbleColor: string;
-  /** `upload` uses `botLogo`; `orb` uses `orbColor`; `mascot` is the glyph. */
-  avatarType: 'upload' | 'orb' | 'mascot' | null;
-  botLogo: string | null;
-  orbColor: string | null;
-}
-
-export const DEFAULT_APPEARANCE: WidgetAppearance = {
-  primaryColor: DEFAULT_PRIMARY_COLOR,
-  userBubbleColor: DEFAULT_USER_BUBBLE_COLOR,
-  avatarType: null,
-  botLogo: null,
-  orbColor: null,
-};
-
-/** The appearance fields, as the bots endpoint sends them. */
-export interface AppearanceSource {
-  primary_color?: string | null;
-  user_bubble_color?: string | null;
-  avatar_type?: string | null;
-  bot_logo?: string | null;
-  orb_color?: string | null;
-}
-
-/**
- * A chatbot's appearance, or the widget's defaults when it has none.
- *
- * `null` is a real input: a lead outlives the chatbot that captured it, and a
- * conversation from a deleted chatbot still has to render. The widget's own
- * fallbacks are what it renders in.
- */
-export function appearanceFromBot(bot: AppearanceSource | null | undefined): WidgetAppearance {
-  if (!bot) return DEFAULT_APPEARANCE;
-  const avatar = bot.avatar_type;
-  return {
-    primaryColor: bot.primary_color || DEFAULT_PRIMARY_COLOR,
-    userBubbleColor: bot.user_bubble_color || DEFAULT_USER_BUBBLE_COLOR,
-    avatarType: avatar === 'upload' || avatar === 'orb' || avatar === 'mascot' ? avatar : null,
-    botLogo: bot.bot_logo ?? null,
-    orbColor: bot.orb_color ?? null,
-  };
-}
 
 /**
  * Who is speaking.
@@ -246,9 +201,43 @@ function runFlags(messages: readonly WidgetMessage[]): { starts: boolean[]; ends
   return { starts, ends };
 }
 
+/**
+ * Which messages open a new day.
+ *
+ * Derived, not accumulated while rendering: a variable mutated inside `map` is
+ * read again on the next render with whatever the last one left in it, which
+ * puts the divider on the wrong message. The inbox's transcript learned this
+ * the same way.
+ */
+function dayFlags(
+  messages: readonly WidgetMessage[],
+  dayLabel: WidgetTranscriptProps['dayLabel'],
+): Array<string | null> {
+  if (!dayLabel) return messages.map(() => null);
+  let previous: string | null = null;
+  return messages.map((message) => {
+    const day = dayLabel(message.at);
+    if (day === null || day === previous) return null;
+    previous = day;
+    return day;
+  });
+}
+
 /** The gap above a message: full between speakers, half within a run. */
 const GAP_BETWEEN = 20;
 const GAP_WITHIN = 10;
+
+/**
+ * How wide a line of the conversation is allowed to get.
+ *
+ * The widget is 380px, so its longest line is about 50 characters and the
+ * question never comes up. A replay is read in a panel the operator can drag
+ * to 1100, and the AI's answers — which have no bubble to hold them — set to
+ * the full width: measured at 768 the first reply ran 699px, about 110
+ * characters a line, which is roughly twice a comfortable measure and reads as
+ * a wall. The bubbles keep the widget's 85% as well, whichever is smaller.
+ */
+const MAX_MEASURE = '34rem';
 
 export function WidgetTranscript({
   appearance,
@@ -265,8 +254,7 @@ export function WidgetTranscript({
   const visitorBubble = appearance.userBubbleColor || DEFAULT_USER_BUBBLE_COLOR;
   const components = markdownComponents(primary);
   const { starts, ends } = runFlags(messages);
-
-  let lastDay: string | null = null;
+  const days = dayFlags(messages, dayLabel);
 
   return (
     // LTR island, like the mock's panel: this mimics the shipped widget's own
@@ -277,9 +265,7 @@ export function WidgetTranscript({
       {messages.map((message, index) => {
         const groupStart = starts[index];
         const groupEnd = ends[index];
-        const day = dayLabel ? dayLabel(message.at) : null;
-        const showDay = day !== null && day !== lastDay;
-        if (day !== null) lastDay = day;
+        const day = days[index];
 
         const spacing: CSSProperties =
           index === 0 ? {} : { marginTop: groupStart ? GAP_BETWEEN : GAP_WITHIN };
@@ -289,7 +275,7 @@ export function WidgetTranscript({
 
         return (
           <Fragment key={message.key}>
-            {showDay ? (
+            {day !== null ? (
               <p
                 data-widget-day
                 style={{
@@ -315,7 +301,7 @@ export function WidgetTranscript({
                 style={{ ...spacing, textAlign: 'center', fontSize: 12, margin: `${index === 0 ? 0 : 20}px 0 0`, color: WIDGET_TEXT_MUTED }}
               >
                 {message.text}
-                {time ? <span style={{ marginLeft: 6 }}>· {time}</span> : null}
+                {time ? <span style={{ marginInlineStart: 6 }}>· {time}</span> : null}
               </p>
             ) : message.role === 'visitor' ? (
               <div
@@ -325,7 +311,7 @@ export function WidgetTranscript({
                 <div
                   data-widget-bubble
                   style={{
-                    maxWidth: '85%',
+                    maxWidth: `min(85%, ${MAX_MEASURE})`,
                     backgroundColor: visitorBubble,
                     color: WIDGET_TEXT,
                     // 8, not 16. `themeConfigs` gives the visitor bubble
@@ -354,7 +340,7 @@ export function WidgetTranscript({
                 <span style={{ marginTop: 3, flex: 'none', visibility: groupStart ? 'visible' : 'hidden' }}>
                   <WidgetAvatar appearance={appearance} size={20} />
                 </span>
-                <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ minWidth: 0, flex: 1, maxWidth: MAX_MEASURE }}>
                   <div
                     className="[&>*:last-child]:mb-0"
                     style={{ fontSize: 14, lineHeight: 1.6, fontWeight: 300, wordBreak: 'break-word' }}
@@ -372,7 +358,13 @@ export function WidgetTranscript({
             ) : (
               <div
                 data-widget-role="operator"
-                style={{ ...spacing, display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}
+                style={{
+                  ...spacing,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'flex-start',
+                  maxWidth: MAX_MEASURE,
+                }}
               >
                 {groupStart ? (
                   <p style={{ margin: '0 0 2px 1px', fontSize: 11, fontWeight: 600, color: primary }}>

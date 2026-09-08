@@ -1,5 +1,4 @@
-import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Drawer } from './Drawer';
 
@@ -31,6 +30,20 @@ function handle(): HTMLElement {
   return screen.getByRole('separator', { name: /resize the panel/i });
 }
 
+/**
+ * A key press on the handle itself.
+ *
+ * `userEvent.keyboard` goes to `document.activeElement`, and inside a Base UI
+ * dialog jsdom's focus does not always stay where a bare `.focus()` put it —
+ * the trap moves it back to the panel. That is a jsdom artefact, not the
+ * product: the browser suite drives the same handle with a real focus and a
+ * real key press. Here the contract under test is the handler's, so the event
+ * is aimed at the element that carries it.
+ */
+function press(key: string, shiftKey = false): void {
+  fireEvent.keyDown(handle(), { key, shiftKey });
+}
+
 function panelWidth(): string {
   const popup = handle().parentElement as HTMLElement;
   return popup.style.getPropertyValue('--drawer-width');
@@ -54,44 +67,35 @@ describe('a resizable Drawer', () => {
     expect(panelWidth()).toBe('768px');
   });
 
-  it('widens toward the page and narrows back, from the keyboard', async () => {
+  it('widens toward the page and narrows back, from the keyboard', () => {
     // The panel is at the inline end, so the handle is on its left and the key
     // that widens is the one pointing away from the panel: Left, in LTR.
     open({ width: 'xl' });
-    const user = userEvent.setup();
-    handle().focus();
-
-    await user.keyboard('{ArrowLeft}');
+    press('ArrowLeft');
     expect(panelWidth()).toBe('784px');
 
-    await user.keyboard('{ArrowRight}');
+    press('ArrowRight');
     expect(panelWidth()).toBe('768px');
   });
 
-  it('moves in bigger steps with shift held', async () => {
+  it('moves in bigger steps with shift held', () => {
     open({ width: 'xl' });
-    const user = userEvent.setup();
-    handle().focus();
-    await user.keyboard('{Shift>}{ArrowLeft}{/Shift}');
+    press('ArrowLeft', true);
     expect(panelWidth()).toBe('832px');
   });
 
-  it('stops at a width that still leaves the page behind it visible', async () => {
+  it('stops at a width that still leaves the page behind it visible', () => {
     // A drawer that covers everything is a route change wearing a scrim: the
     // reader loses the row they opened it from, which is the reason this is a
     // drawer at all. 1440 viewport, 320 of page kept.
     open({ width: 'xl' });
-    const user = userEvent.setup();
-    handle().focus();
-    await user.keyboard('{End}');
+    press('End');
     expect(panelWidth()).toBe('1120px');
   });
 
-  it('stops at a width a property grid can still lay out in', async () => {
+  it('stops at a width a property grid can still lay out in', () => {
     open({ width: 'xl' });
-    const user = userEvent.setup();
-    handle().focus();
-    await user.keyboard('{Home}');
+    press('Home');
     expect(panelWidth()).toBe('512px');
   });
 
@@ -102,11 +106,9 @@ describe('a resizable Drawer', () => {
     expect(handle()).toHaveAttribute('aria-valuemax', '1120');
   });
 
-  it('remembers the width for next time', async () => {
+  it('remembers the width for next time', () => {
     const first = open({ width: 'xl' });
-    const user = userEvent.setup();
-    handle().focus();
-    await user.keyboard('{ArrowLeft}');
+    press('ArrowLeft');
     expect(window.localStorage.getItem(STORAGE_KEY)).toBe('784');
     first.unmount();
 
@@ -123,16 +125,14 @@ describe('a resizable Drawer', () => {
     expect(panelWidth()).toBe('580px');
   });
 
-  it('still drags when the browser refuses to remember anything', async () => {
+  it('still drags when the browser refuses to remember anything', () => {
     // Private browsing, a full quota, a blocked origin. A remembered width is a
     // convenience and is not worth taking the panel down for.
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
       throw new Error('QuotaExceededError');
     });
     open({ width: 'xl' });
-    const user = userEvent.setup();
-    handle().focus();
-    await user.keyboard('{ArrowLeft}');
+    press('ArrowLeft');
     expect(panelWidth()).toBe('784px');
   });
 
