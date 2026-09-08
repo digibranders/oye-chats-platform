@@ -3509,6 +3509,34 @@ def extract_bant_from_conversation(
     )
 
 
+class _DetachedChunk:
+    """A chunk's text, cut loose from the request's DB session.
+
+    ``final_results`` holds ORM ``Document`` rows bound to the session opened
+    in ``_run_pipeline``. Handing those straight to a background thread means
+    the worker touches that session while the request thread is closing it,
+    which SQLAlchemy answers with "This session is provisioning a new
+    connection; concurrent operations are not permitted" -- usually swallowed
+    as the non-blocking groundedness warning, but the loser of the race is
+    sometimes the request itself, and then the visitor gets a 500.
+
+    The BANT worker already avoids this by taking ids and reloading in its own
+    session (see its call site). The groundedness check needs nothing but the
+    text, so it takes a snapshot instead: ``content`` is already loaded by the
+    time we get here, so reading it costs nothing on the request thread.
+    """
+
+    __slots__ = ("content",)
+
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+
+def _detach_chunks(chunks: list) -> list[_DetachedChunk]:
+    """Snapshot chunk text on the calling thread, before handing it off."""
+    return [_DetachedChunk(getattr(doc, "content", "") or "") for doc in chunks]
+
+
 def _background_groundedness_check(
     question: str,
     answer: str,
@@ -8627,7 +8655,7 @@ def rag_pipeline(
                     _background_groundedness_check,
                     question,
                     answer,
-                    final_results,
+                    _detach_chunks(final_results),
                     bid,
                     cid,
                     _bot_msg_trace_id,
@@ -10651,7 +10679,7 @@ async def rag_pipeline_stream(
                             _background_groundedness_check,
                             question,
                             full_answer,
-                            final_results,
+                            _detach_chunks(final_results),
                             bid,
                             cid,
                             _bot_msg_trace_id,
