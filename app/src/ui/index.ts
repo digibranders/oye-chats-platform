@@ -49,6 +49,21 @@ export type { BadgeProps, BadgeTone, StatusDotProps, Tone } from './primitives/B
 export { Avatar } from './primitives/Avatar';
 export { Markdown } from './primitives/Markdown';
 export type { MarkdownProps } from './primitives/Markdown';
+
+/* ------------------------------------------------------------------ chat */
+/* A picture of the embeddable widget, not of the console. See
+   `chat/widgetTheme.ts` for why nothing under `chat/` may use a console token. */
+export { WidgetTranscript, WidgetAvatar } from './chat/WidgetTranscript';
+export type {
+  WidgetTranscriptProps,
+  WidgetMessage,
+  WidgetRole,
+  WidgetFile,
+} from './chat/WidgetTranscript';
+export { appearanceFromBot, DEFAULT_APPEARANCE } from './chat/widgetAppearance';
+export type { WidgetAppearance, AppearanceSource } from './chat/widgetAppearance';
+export { default as PremiumOrb } from './chat/PremiumOrb';
+export type { PremiumOrbProps } from './chat/PremiumOrb';
 export type { AvatarProps, AvatarSize } from './primitives/Avatar';
 export { Field, FieldSet } from './primitives/Field';
 export type { FieldProps } from './primitives/Field';

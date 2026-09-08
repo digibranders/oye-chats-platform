@@ -40,6 +40,7 @@ const en = {
     anonymousOnly: 'Anonymous only',
     anyQuality: 'Any quality',
     anyScore: 'Any score',
+    attachment: 'Attachment',
     captured: 'Captured',
     clearsTheUnreadMark: 'Clears the unread mark on every unread lead for this chatbot, on every page. The date filter above does not narrow it. Cannot be undone.',
     columnCompany: 'Company',
@@ -675,6 +676,7 @@ const en = {
     setupComplete: 'Setup complete',
     severity: 'Severity',
     signOut: 'Sign out',
+    statusPage: 'System status',
     thisImpersonationSessionExpired: 'This impersonation session expired.',
     tryAChatbotNameA: 'Try a chatbot name, a page, or a setting.',
     tryAgain: 'Try again',
@@ -1980,6 +1982,7 @@ const en = {
     previousPage: 'Previous page',
     resetView: 'Reset view',
     resizeTheList: 'Resize the list',
+    resizeThePanel: 'Resize the panel',
     saveChanges: 'Save changes',
     search: 'Search…',
     selectADate: 'Select a date',
@@ -2219,6 +2222,12 @@ const en = {
     unreadInThisScope: 'Unread in this scope',
     upgradeToAnswerVisitorsYourself: 'Upgrade to answer visitors yourself, take over from the AI, and see who is on your site right now.',
     view: {
+      all: {
+        label: 'All',
+        blurb: 'Every conversation in this inbox, newest first.',
+        emptyTitle: 'Nothing here yet',
+        emptyBody: 'Waiting visitors, your open chats, messages left overnight and leads the AI has qualified all land here.',
+      },
       waiting: {
         label: 'Waiting',
         blurb: 'Visitors who have asked for a person and nobody has taken yet.',

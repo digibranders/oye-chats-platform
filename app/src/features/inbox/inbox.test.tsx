@@ -9,6 +9,7 @@ import { Transcript } from './Transcript';
 import {
   byRecency,
   matchesQuery,
+  mergeViews,
   sessionIdFromItemId,
   shortAgo,
   toOfflineItem,
@@ -124,16 +125,62 @@ describe('inboxModel', () => {
   });
 });
 
+describe('mergeViews', () => {
+  /**
+   * The All scope, and the reason it is a merge rather than a concatenation.
+   *
+   * The four buckets are not disjoint. A visitor the AI has scored is in
+   * `qualified`, and the moment they ask for a person they are in `waiting`
+   * too — same session, same row id, two rows. Concatenated, All showed the
+   * name twice; and because selection is keyed by row id, clicking either copy
+   * selected both and the list drew two highlighted rows.
+   */
+  it('shows a conversation reported by two sources once', () => {
+    const merged = mergeViews({
+      waiting: [item({ id: 's.7', name: 'Ada', kind: 'waiting' })],
+      yours: [],
+      messages: [],
+      qualified: [item({ id: 's.7', name: 'Ada', kind: 'qualified' })],
+    });
+    expect(merged).toHaveLength(1);
+  });
+
+  it('keeps the copy of the row that carries the action', () => {
+    // Which copy survives is not arbitrary. The waiting row is the one with an
+    // Accept button behind it; the qualified row is read-only. Keeping the
+    // wrong one would render a queue the operator cannot answer from.
+    const merged = mergeViews({
+      waiting: [item({ id: 's.7', name: 'Ada', kind: 'waiting' })],
+      yours: [],
+      messages: [],
+      qualified: [item({ id: 's.7', name: 'Ada', kind: 'qualified' })],
+    });
+    expect(merged[0].kind).toBe('waiting');
+  });
+
+  it('carries every distinct row from every bucket', () => {
+    const merged = mergeViews({
+      waiting: [item({ id: 's.1', name: 'Ada' })],
+      yours: [item({ id: 's.2', name: 'Bea' })],
+      messages: [item({ id: 'm.3', name: 'Cy', kind: 'offline' })],
+      qualified: [item({ id: 's.4', name: 'Dee' })],
+    });
+    expect(merged.map((row) => row.id)).toEqual(['s.1', 's.2', 'm.3', 's.4']);
+  });
+});
+
 function List({
   onSelect,
   error = null,
   initialView = 'yours',
   online = false,
+  counts,
 }: {
   onSelect: (row: InboxItem) => void;
   error?: string | null;
   initialView?: InboxView;
   online?: boolean;
+  counts?: Record<InboxView, number | null>;
 }) {
   const [view, setView] = useState<InboxView>(initialView);
   const [selected, setSelected] = useState('s.a');
@@ -146,7 +193,7 @@ function List({
     <ConversationList
       view={view}
       onViewChange={setView}
-      counts={{ waiting: 0, yours: rows.length, messages: 0, qualified: 0 }}
+      counts={counts ?? { all: rows.length, waiting: 0, yours: rows.length, messages: 0, qualified: 0 }}
       items={rows}
       selectedId={selected}
       onSelect={(row) => {
@@ -200,6 +247,29 @@ describe('ConversationList', () => {
     expect(ring).not.toBeNull();
     expect(ring!.className).toContain('rounded-full');
     expect(ring!.className).toMatch(/(^|\s)flex(\s|$)/);
+  });
+
+  it('offers All, which is the scope the inbox opens on', () => {
+    render(<List onSelect={vi.fn()} initialView="all" />);
+    expect(screen.getByRole('combobox', { name: /conversation scope/i })).toHaveTextContent(
+      'All (3)',
+    );
+  });
+
+  it('drops a count it does not have, rather than reporting it as zero', () => {
+    // Reachable from any scope now, not just the one that failed: All is in
+    // front of the operator by default, and a Messages fetch that failed
+    // underneath it used to sit in the switcher as a confident "Messages (0)".
+    render(
+      <List
+        onSelect={vi.fn()}
+        initialView="all"
+        counts={{ all: null, waiting: 0, yours: 3, messages: null, qualified: 0 }}
+      />,
+    );
+    const scope = screen.getByRole('combobox', { name: /conversation scope/i });
+    expect(scope).toHaveTextContent('All');
+    expect(scope).not.toHaveTextContent('All (');
   });
 
   it('keeps the count for a scope that loaded', () => {

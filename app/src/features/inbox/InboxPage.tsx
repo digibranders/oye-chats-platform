@@ -34,7 +34,10 @@ import { useOfflineMessages } from './useOfflineMessages';
 import { useOperatorStatus, type OperatorStatusState } from './useOperatorStatus';
 import { useQualifiedSessions, useSessionDetails } from './inboxQueries';
 import {
+  DEFAULT_INBOX_VIEW,
+  INBOX_SOURCE_VIEWS,
   INBOX_VIEWS,
+  mergeViews,
   viewMeta,
   sessionIdFromItemId,
   toLiveItem,
@@ -42,6 +45,7 @@ import {
   toQualifiedItem,
   toWaitingItem,
   type InboxItem,
+  type InboxSourceView,
   type InboxView,
 } from './inboxModel';
 import type { ConnectionStatus } from './liveChatProtocol';
@@ -65,12 +69,32 @@ const CONNECTION: Record<ConnectionStatus, { label: string; tone: 'neutral' | 's
   duplicate: { label: 'Open in another tab', tone: 'danger' },
 };
 
-function isLiveView(view: InboxView): boolean {
+/**
+ * Scopes that can show live-chat rows, and so speak for the live connection.
+ *
+ * Everything except Messages, which is served over HTTP and keeps working when
+ * the socket does not. This is what decides whether an empty list should
+ * explain itself in terms of the connection ("you are not taking chats")
+ * rather than in terms of the data.
+ */
+function showsLiveChat(view: InboxView): boolean {
   return view !== 'messages';
 }
 
+/**
+ * Scopes that can show NOTHING BUT live-chat rows.
+ *
+ * `all` shows live rows and offline messages together, so an account without
+ * the live-chat feature still has real rows to read there. Locking its centre
+ * pane behind the upgrade wall — which is what treating it as a live-only
+ * scope would do — would leave those messages selectable and unreadable.
+ */
+function isLiveOnlyView(view: InboxView): boolean {
+  return showsLiveChat(view) && view !== 'all';
+}
+
 function parseView(raw: string | null): InboxView {
-  return INBOX_VIEWS.includes(raw as InboxView) ? (raw as InboxView) : 'waiting';
+  return INBOX_VIEWS.includes(raw as InboxView) ? (raw as InboxView) : DEFAULT_INBOX_VIEW;
 }
 
 /**
@@ -220,35 +244,74 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
     [qualified.sessions, matchesBot],
   );
 
-  const byView: Record<InboxView, InboxItem[]> = useMemo(
+  const bySource: Record<InboxSourceView, InboxItem[]> = useMemo(
     () => ({ waiting, yours, messages, qualified: qualifiedItems }),
     [waiting, yours, messages, qualifiedItems],
+  );
+
+  const byView: Record<InboxView, InboxItem[]> = useMemo(
+    () => ({ ...bySource, all: mergeViews(bySource) }),
+    [bySource],
   );
 
   // One quantity: open conversations in the scope. It used to be *unread
   // messages* when anything was unread and *open conversations* otherwise, so
   // the number changed meaning without telling anyone. Unread is a separate
   // signal, carried as a dot on the switcher.
-  const counts: Record<InboxView, number> = useMemo(
+  //
+  // `null` is "not counted", which is not the same as zero and is now visible
+  // from every scope rather than only from the one that failed: with All in
+  // front of the operator, a failed Messages fetch used to sit in the switcher
+  // as a confident "Messages (0)". A total that is missing a source is not a
+  // total either, so All drops its own count when any source is down.
+  const countsUnknown = Boolean(offline.error) || Boolean(qualified.error);
+  const counts: Record<InboxView, number | null> = useMemo(
     () => ({
+      all: countsUnknown ? null : byView.all.length,
       waiting: waiting.length,
       yours: yours.length,
-      messages: offline.total,
-      qualified: qualifiedItems.length,
+      messages: offline.error ? null : offline.total,
+      qualified: qualified.error ? null : qualifiedItems.length,
     }),
-    [waiting.length, yours.length, offline.total, qualifiedItems.length],
+    [
+      countsUnknown,
+      byView.all.length,
+      waiting.length,
+      yours.length,
+      offline.total,
+      offline.error,
+      qualified.error,
+      qualifiedItems.length,
+    ],
   );
 
+  const yoursUnread = yours.some((item) => item.unread > 0);
+  const messagesUnread = messages.some((item) => item.unread > 0);
   const unread: Partial<Record<InboxView, boolean>> = useMemo(
     () => ({
-      yours: yours.some((item) => item.unread > 0),
-      messages: messages.some((item) => item.unread > 0),
+      all: yoursUnread || messagesUnread,
+      yours: yoursUnread,
+      messages: messagesUnread,
     }),
-    [yours, messages],
+    [yoursUnread, messagesUnread],
   );
 
+  // All draws on both HTTP sources, so its retry has to mean both. The two
+  // reloaders are pulled out by name because the hooks return a new state
+  // object every render and depending on those would rebuild this every time.
+  const { reload: reloadOffline } = offline;
+  const { reload: reloadQualified } = qualified;
+  const reloadSources = useCallback(() => {
+    reloadOffline();
+    reloadQualified();
+  }, [reloadOffline, reloadQualified]);
+
   const items = byView[view];
-  const selected = items.find((item) => item.id === selectedId) ?? null;
+  // Without live chat the only rows an account is entitled to are its offline
+  // messages, which All shows alongside the rest. Filtering by kind rather than
+  // by scope keeps that true in both places.
+  const visibleItems = liveChat ? items : items.filter((item) => item.kind === 'offline');
+  const selected = visibleItems.find((item) => item.id === selectedId) ?? null;
 
   const setSelection = useCallback(
     (next: InboxView, itemId: string | null) => {
@@ -267,6 +330,18 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
     [setParams],
   );
 
+  // Whichever scope can show this row, preferring the one the operator is
+  // already in. Without that preference All would never hold a selection: it
+  // contains every row, so every lookup would match a narrower bucket first
+  // and yank the operator out of the scope they chose.
+  const scopeHolding = useCallback(
+    (itemId: string): InboxView | undefined =>
+      byView[view].some((item) => item.id === itemId)
+        ? view
+        : INBOX_SOURCE_VIEWS.find((candidate) => byView[candidate].some((item) => item.id === itemId)),
+    [byView, view],
+  );
+
   // ── Deep links ──
   // `?session=` is what the notification banner and the rail's waiting badge
   // link to. Resolve it to whichever scope actually holds that conversation
@@ -276,9 +351,8 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
   useEffect(() => {
     if (!legacySession) return;
     const target = `s.${legacySession}`;
-    const scope = INBOX_VIEWS.find((candidate) => byView[candidate].some((item) => item.id === target));
-    setSelection(scope ?? view, target);
-  }, [legacySession, byView, view, setSelection]);
+    setSelection(scopeHolding(target) ?? view, target);
+  }, [legacySession, scopeHolding, view, setSelection]);
 
   // A conversation that has left every scope (accepted by someone else,
   // transferred away) must not leave the centre pane showing a stale header.
@@ -293,11 +367,12 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
 
   // Follow a conversation across scopes: accepting a waiting visitor moves the
   // same session from Waiting into Yours, and the operator should stay on it.
+  // In All the row never leaves the list, so this does not fire at all.
   useEffect(() => {
     if (!selectedId || selected) return;
-    const scope = INBOX_VIEWS.find((candidate) => byView[candidate].some((item) => item.id === selectedId));
+    const scope = scopeHolding(selectedId);
     if (scope && scope !== view) setSelection(scope, selectedId);
-  }, [selectedId, selected, byView, view, setSelection]);
+  }, [selectedId, selected, scopeHolding, view, setSelection]);
 
   const sessionId = selected?.sessionId ?? sessionIdFromItemId(selectedId);
   const details = useSessionDetails(selected && selected.kind !== 'offline' ? sessionId : null);
@@ -362,14 +437,39 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
   }
 
   const connection = { ...CONNECTION[socket.status], label: connectionLabel(socket.status) };
-  const offlineLive = isLiveView(view) && !operator.isOnline;
+  const offlineLive = showsLiveChat(view) && !operator.isOnline;
+
+  // Two of the four sources are fetched over HTTP and can fail on their own.
+  // A scope that reads one of them reports that failure directly, because the
+  // failure IS the list. All reads both, and an error state replaces the list
+  // it is drawn over: blanking rows that loaded fine because a second source
+  // is down would hide more than it explains. So there the failure is shown
+  // only when it is the reason there is nothing to read.
+  const listLoading =
+    view === 'all'
+      ? offline.loading || qualified.loading
+      : view === 'messages'
+        ? offline.loading
+        : view === 'qualified'
+          ? qualified.loading
+          : false;
+  const sourceError =
+    view === 'all'
+      ? (offline.error ?? qualified.error)
+      : view === 'messages'
+        ? offline.error
+        : view === 'qualified'
+          ? qualified.error
+          : null;
+  const listError = view === 'all' && visibleItems.length > 0 ? null : sourceError;
+  const listRetry = view === 'messages' ? offline.reload : view === 'qualified' ? qualified.reload : reloadSources;
 
   const emptyOverride =
     // A superseded tab first: it is the only one of these where the lists are
     // empty because this tab is not listening, rather than because there is
     // nothing to hear. Saying "nobody is waiting" there is a claim about the
     // world, and it is false — a visitor can be waiting in the other tab.
-    liveChat && socket.status === 'duplicate' && isLiveView(view)
+    liveChat && socket.status === 'duplicate' && showsLiveChat(view)
       ? {
           title: t('inbox.thisTabIsNotTheLiveOne') || 'This tab is not the live one',
           description:
@@ -381,13 +481,13 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
             </Button>
           ),
         }
-      : liveChat && offlineLive && isLiveView(view)
+      : liveChat && offlineLive && showsLiveChat(view)
       ? {
           title: t('inbox.youAreNotTakingChats') || 'You are not taking chats',
           description:
             t('inbox.turnYourselfOnAboveAnd') || 'Turn yourself on above and waiting visitors will appear here the moment they ask for a person.',
         }
-      : liveChat && operator.unavailable && isLiveView(view)
+      : liveChat && operator.unavailable && showsLiveChat(view)
         ? {
             title: t('inbox.youAreNotSetUp') || 'You are not set up to take chats',
             description: t('inbox.addYourselfAsAnOperator') || 'Add yourself as an operator on this workspace to see and answer live conversations.',
@@ -398,7 +498,7 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
               </Button>
             ),
           }
-        : !liveChat && isLiveView(view)
+        : !liveChat && showsLiveChat(view)
           ? {
               title: t('inbox.liveChatIsNotOn') || 'Live chat is not on your plan',
               description:
@@ -417,7 +517,7 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
       onViewChange={(next) => setSelection(next, null)}
       counts={counts}
       unread={unread}
-      items={liveChat || view === 'messages' ? items : []}
+      items={visibleItems}
       selectedId={selectedId}
       onSelect={(item) => {
         setSelection(view, item.id);
@@ -425,9 +525,9 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
       }}
       query={query}
       onQueryChange={setQuery}
-      loading={view === 'messages' ? offline.loading : view === 'qualified' ? qualified.loading : false}
-      error={view === 'messages' ? offline.error : view === 'qualified' ? qualified.error : null}
-      onRetry={view === 'messages' ? offline.reload : qualified.reload}
+      loading={listLoading}
+      error={listError}
+      onRetry={listRetry}
       now={now}
       emptyOverride={emptyOverride}
       footer={
@@ -462,7 +562,11 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
   );
 
   const centrePane = (() => {
-    if (!liveChat && isLiveView(view)) {
+    // Without live chat the upgrade wall belongs in front of live
+    // conversations, not in front of an offline message the account is
+    // entitled to read. In All that is a per-row distinction, so the selection
+    // decides rather than the scope.
+    if (!liveChat && (isLiveOnlyView(view) || (selected !== null && selected.kind !== 'offline'))) {
       return (
         <div className="flex h-full items-center justify-center bg-canvas p-6">
           <LockedState

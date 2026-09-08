@@ -9,7 +9,7 @@ import type { OfflineMessage } from '../../types/domain';
 import { t as translateNow } from '../../i18n/i18n';
 
 /**
- * The inbox's one list, and the four scopes onto it.
+ * The inbox's one list, and the scopes onto it.
  *
  * The surface this replaces split the same job across three tabs — "Messages",
  * "Live chat" and "Quick replies" — where the first two were the same question
@@ -22,14 +22,43 @@ import { t as translateNow } from '../../i18n/i18n';
  * and Front all settled on. A scope is a filter, not a different screen: rows
  * look the same, keyboard navigation is the same, and the selected conversation
  * survives a scope change if it is still visible.
+ *
+ * `all` is the scope the inbox opens on, and the only one that is not a filter:
+ * it is every other scope at once. Four narrow scopes and no wide one meant the
+ * operator had to know which bucket a conversation was in before they could see
+ * it, so a visitor waiting in the queue was invisible from Yours and a message
+ * left overnight was invisible from both. Opening on a bucket also opens on a
+ * guess about what matters, and the honest default is "everything, newest
+ * first".
  */
 
-export type InboxView = 'waiting' | 'yours' | 'messages' | 'qualified';
+export type InboxView = 'all' | 'waiting' | 'yours' | 'messages' | 'qualified';
+
+/** Every scope but `all` — the buckets a row actually comes from. */
+export type InboxSourceView = Exclude<InboxView, 'all'>;
 
 /** The offline-message lifecycle, as the backend stores it. */
 export type OfflineStatus = 'new' | 'read' | 'replied';
 
-export const INBOX_VIEWS: readonly InboxView[] = ['waiting', 'yours', 'messages', 'qualified'];
+export const INBOX_VIEWS: readonly InboxView[] = ['all', 'waiting', 'yours', 'messages', 'qualified'];
+
+/**
+ * The buckets, in the order a row that appears in two of them is claimed.
+ *
+ * Order is load-bearing twice over. It decides which row wins in `all` when one
+ * conversation is reported by two sources — a visitor the AI has qualified can
+ * also be sitting in the queue, and the queue row is the one carrying the
+ * Accept action — and it decides which scope a deep link resolves to.
+ */
+export const INBOX_SOURCE_VIEWS: readonly InboxSourceView[] = [
+  'waiting',
+  'yours',
+  'messages',
+  'qualified',
+];
+
+/** What the inbox opens on when the URL does not say. */
+export const DEFAULT_INBOX_VIEW: InboxView = 'all';
 
 export interface InboxViewMeta {
   value: InboxView;
@@ -55,6 +84,14 @@ export function viewMeta(view: InboxView): InboxViewMeta {
 // @i18n-exempt: fallbacks, read through viewMeta above. A module constant is
 // evaluated before any locale exists, so it cannot resolve one itself.
 export const VIEW_META: Record<InboxView, InboxViewMeta> = {
+  all: {
+    value: 'all',
+    label: 'All',
+    blurb: 'Every conversation in this inbox, newest first.',
+    emptyTitle: 'Nothing here yet',
+    emptyBody:
+      'Waiting visitors, your open chats, messages left overnight and leads the AI has qualified all land here.',
+  },
   waiting: {
     value: 'waiting',
     label: 'Waiting',
@@ -243,6 +280,33 @@ export function toQualifiedItem(session: QualifiedSession): InboxItem {
     state: { label: humanise(tier), tone: BANT_TONE[tier] ?? 'neutral' },
     online: false,
   };
+}
+
+/**
+ * Every bucket as one list, with each conversation appearing once.
+ *
+ * The buckets are not disjoint. A visitor the AI has scored sits in `qualified`
+ * and, the moment they ask for a person, in `waiting` too — same session id,
+ * same row id, two different rows. Concatenating gave the operator the same
+ * name twice, and because selection is by row id, clicking either one selected
+ * both. First writer wins, so `INBOX_SOURCE_VIEWS` order decides which version
+ * of the row survives: the queue row, which carries the Accept action, beats
+ * the qualified row, which does not.
+ *
+ * Not sorted here — the list sorts by recency at render, along with the search
+ * filter, so a single scope and `all` go through exactly the same path.
+ */
+export function mergeViews(byView: Record<InboxSourceView, InboxItem[]>): InboxItem[] {
+  const merged: InboxItem[] = [];
+  const seen = new Set<string>();
+  for (const view of INBOX_SOURCE_VIEWS) {
+    for (const item of byView[view]) {
+      if (seen.has(item.id)) continue;
+      seen.add(item.id);
+      merged.push(item);
+    }
+  }
+  return merged;
 }
 
 /** Newest first, with rows that have no timestamp last rather than first. */

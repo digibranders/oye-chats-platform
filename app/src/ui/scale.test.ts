@@ -137,7 +137,24 @@ const FILES: SourceFile[] = Object.entries(MODULES)
     source: stripComments(source as string),
   }));
 
+/**
+ * `ui/chat/` is a picture of the embeddable widget, not of the console.
+ *
+ * It is the one directory under `src/ui` that must NOT speak in console tokens:
+ * the widget is a separate product rendering on someone else's website, and a
+ * preview or a replay painted in paper-and-ink would be a faithful picture of
+ * the wrong thing. Its palette is copied from the shipped widget's own theme
+ * (`chat/widgetTheme.ts` carries the mapping, value by value), so the hexes in
+ * there are that product's decisions, already made, not new ones being taken
+ * here.
+ *
+ * The carve-out is this narrow on purpose. Everything else under `src/ui` is
+ * the console, and the rule below is what stopped it accumulating 143 hexes.
+ */
+const WIDGET_PICTURE = 'ui/chat/';
+
 const UI = FILES.filter((file) => file.name.startsWith('ui/'));
+const UI_CONSOLE = UI.filter((file) => !file.name.startsWith(WIDGET_PICTURE));
 const SHELL = FILES.filter((file) => file.name.startsWith('shell/'));
 
 /** Every rung declared in `tokens.css`, plus the prose rung. */
@@ -202,9 +219,20 @@ describe('design system guardrails', () => {
    * is a colour decision wherever it is written.
    */
   it('declares no raw hex inside src/ui', () => {
-    const offenders = UI.filter(({ source }) => /#[0-9a-fA-F]{3,8}\b/.test(source)).map(
+    const offenders = UI_CONSOLE.filter(({ source }) => /#[0-9a-fA-F]{3,8}\b/.test(source)).map(
       (file) => file.name,
     );
+    expect(offenders).toEqual([]);
+  });
+
+  it('keeps the widget picture out of console tokens, which is the other half of that rule', () => {
+    // The carve-out above is not a licence to paint the widget in paper and
+    // ink. A `--color-*` under `ui/chat/` would mean the preview and the lead
+    // replay change colour when the CONSOLE is restyled, which is exactly the
+    // failure `widgetTheme.ts` exists to prevent.
+    const offenders = UI.filter(
+      ({ name, source }) => name.startsWith(WIDGET_PICTURE) && /var\(--color-/.test(source),
+    ).map((file) => file.name);
     expect(offenders).toEqual([]);
   });
 
