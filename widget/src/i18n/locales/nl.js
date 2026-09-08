@@ -268,7 +268,7 @@ export default {
             name_placeholder: 'Je naam',
             phone_placeholder: 'Telefoonnummer (optioneel)',
             submit: 'Bericht versturen',
-            continue_with_ai: 'Toch verdergaan met de AI',
+            continue_with_ai: 'Terug naar de chat',
             sent_title: 'Bericht verstuurd!',
             reply_by_email: 'We reageren zo snel mogelijk per e-mail.',
             not_now: 'Niet nu',
@@ -352,7 +352,7 @@ export default {
             actions_aria: 'Berichtacties',
             connect_team_aria: 'Contact opnemen met ons team',
             want_to_talk: 'Wil je ons team spreken?',
-            continue_with_ai: 'Verdergaan met de AI',
+            continue_with_ai: 'Terug naar de chat',
             open_service_title: 'Servicepagina openen',
         },
         language: {

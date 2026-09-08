@@ -166,7 +166,7 @@ export default {
             name_placeholder: 'Your name',
             phone_placeholder: 'Phone number (optional)',
             submit: 'Send message',
-            continue_with_ai: 'Continue with AI instead',
+            continue_with_ai: 'Back to chat',
             sent_title: 'Message sent!',
             reply_by_email: 'We’ll reply by email as soon as we can.',
             not_now: 'Not now',
@@ -250,7 +250,7 @@ export default {
             actions_aria: 'Message actions',
             connect_team_aria: 'Connect with our team',
             want_to_talk: 'Want to talk to our team?',
-            continue_with_ai: 'Continue with AI',
+            continue_with_ai: 'Back to chat',
             open_service_title: 'Open service page',
         },
         language: {

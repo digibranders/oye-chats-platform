@@ -265,7 +265,7 @@ export default {
             name_placeholder: 'आपका नाम',
             phone_placeholder: 'फ़ोन नंबर (वैकल्पिक)',
             submit: 'संदेश भेजें',
-            continue_with_ai: 'इसके बजाय AI के साथ जारी रखें',
+            continue_with_ai: 'वापस चैट पर जाएं',
             sent_title: 'संदेश भेज दिया गया!',
             reply_by_email: 'हम जल्द से जल्द ई-मेल पर जवाब देंगे।',
             not_now: 'अभी नहीं',
@@ -348,7 +348,7 @@ export default {
             actions_aria: 'संदेश क्रियाएँ',
             connect_team_aria: 'हमारी टीम से जुड़ें',
             want_to_talk: 'हमारी टीम से बात करना चाहेंगे?',
-            continue_with_ai: 'AI के साथ जारी रखें',
+            continue_with_ai: 'वापस चैट पर जाएं',
             open_service_title: 'सेवा पृष्ठ खोलें',
         },
         language: {

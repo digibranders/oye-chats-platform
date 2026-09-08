@@ -268,7 +268,7 @@ export default {
             name_placeholder: 'Il tuo nome',
             phone_placeholder: 'Numero di telefono (facoltativo)',
             submit: 'Invia il messaggio',
-            continue_with_ai: 'Continua invece con l’IA',
+            continue_with_ai: 'Torna alla chat',
             sent_title: 'Messaggio inviato!',
             reply_by_email: 'Ti risponderemo via e-mail appena possibile.',
             not_now: 'Non ora',
@@ -352,7 +352,7 @@ export default {
             actions_aria: 'Azioni sul messaggio',
             connect_team_aria: 'Contatta il nostro team',
             want_to_talk: 'Vuoi parlare con il nostro team?',
-            continue_with_ai: 'Continua con l’IA',
+            continue_with_ai: 'Torna alla chat',
             open_service_title: 'Apri la pagina del servizio',
         },
         language: {

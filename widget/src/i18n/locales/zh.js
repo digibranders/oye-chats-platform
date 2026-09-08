@@ -268,7 +268,7 @@ export default {
             name_placeholder: '您的姓名',
             phone_placeholder: '电话号码（选填）',
             submit: '发送留言',
-            continue_with_ai: '改为继续使用 AI',
+            continue_with_ai: '返回聊天',
             sent_title: '留言已发送！',
             reply_by_email: '我们会尽快通过邮件回复您。',
             not_now: '暂不需要',
@@ -352,7 +352,7 @@ export default {
             actions_aria: '消息操作',
             connect_team_aria: '联系我们的团队',
             want_to_talk: '想和我们的团队聊聊吗？',
-            continue_with_ai: '继续使用 AI',
+            continue_with_ai: '返回聊天',
             open_service_title: '打开服务页面',
         },
         language: {

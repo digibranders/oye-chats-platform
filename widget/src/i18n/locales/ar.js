@@ -272,7 +272,7 @@ export default {
             name_placeholder: 'اسمك',
             phone_placeholder: 'رقم الهاتف (اختياري)',
             submit: 'إرسال الرسالة',
-            continue_with_ai: 'المتابعة مع الذكاء الاصطناعي بدلًا من ذلك',
+            continue_with_ai: 'العودة إلى المحادثة',
             sent_title: 'تم إرسال الرسالة!',
             reply_by_email: 'سنرد عليك عبر البريد الإلكتروني في أقرب وقت ممكن.',
             not_now: 'ليس الآن',
@@ -356,7 +356,7 @@ export default {
             actions_aria: 'إجراءات الرسالة',
             connect_team_aria: 'التواصل مع فريقنا',
             want_to_talk: 'هل تود التحدث إلى فريقنا؟',
-            continue_with_ai: 'المتابعة مع الذكاء الاصطناعي',
+            continue_with_ai: 'العودة إلى المحادثة',
             open_service_title: 'فتح صفحة الخدمة',
         },
         language: {

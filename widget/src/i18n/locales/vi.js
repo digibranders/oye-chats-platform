@@ -268,7 +268,7 @@ export default {
             name_placeholder: 'Tên của bạn',
             phone_placeholder: 'Số điện thoại (không bắt buộc)',
             submit: 'Gửi lời nhắn',
-            continue_with_ai: 'Tiếp tục với AI',
+            continue_with_ai: 'Quay lại trò chuyện',
             sent_title: 'Đã gửi lời nhắn!',
             reply_by_email: 'Chúng tôi sẽ phản hồi qua email sớm nhất có thể.',
             not_now: 'Để sau',
@@ -352,7 +352,7 @@ export default {
             actions_aria: 'Thao tác với tin nhắn',
             connect_team_aria: 'Kết nối với đội ngũ của chúng tôi',
             want_to_talk: 'Bạn có muốn trao đổi với đội ngũ của chúng tôi không?',
-            continue_with_ai: 'Tiếp tục với AI',
+            continue_with_ai: 'Quay lại trò chuyện',
             open_service_title: 'Mở trang dịch vụ',
         },
         language: {

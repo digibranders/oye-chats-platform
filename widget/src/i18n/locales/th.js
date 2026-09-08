@@ -268,7 +268,7 @@ export default {
             name_placeholder: 'ชื่อของคุณ',
             phone_placeholder: 'เบอร์โทรศัพท์ (ไม่บังคับ)',
             submit: 'ส่งข้อความ',
-            continue_with_ai: 'คุยกับ AI ต่อแทน',
+            continue_with_ai: 'กลับไปที่แชท',
             sent_title: 'ส่งข้อความแล้ว',
             reply_by_email: 'เราจะตอบกลับทางอีเมลโดยเร็วที่สุด',
             not_now: 'ไว้ก่อน',
@@ -352,7 +352,7 @@ export default {
             actions_aria: 'ตัวเลือกสำหรับข้อความ',
             connect_team_aria: 'ติดต่อทีมงานของเรา',
             want_to_talk: 'ต้องการคุยกับทีมงานของเราไหม',
-            continue_with_ai: 'คุยกับ AI ต่อ',
+            continue_with_ai: 'กลับไปที่แชท',
             open_service_title: 'เปิดหน้าบริการ',
         },
         language: {

@@ -712,7 +712,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
     // card). Each sits inside <Suspense fallback={null}>, so it mounts empty and
     // *grows* after its chunk resolves — a single scroll-to-bottom fired on
     // injection lands before the card exists and leaves it clipped below the
-    // fold (handoff: the "Continue with AI instead" row cut off; quotation: the
+    // fold (handoff: the "Back to chat" row cut off; quotation: the
     // whole card stuck under the fold). Observing the card's own size and
     // re-pinning the messages area to the bottom on every growth guarantees the
     // whole card ends up in view. Crucially this pin is UNCONDITIONAL — unlike
@@ -3652,7 +3652,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                                                 fontSize: '13px', fontWeight: 500, cursor: 'pointer',
                                             }}
                                         >
-                                            Continue with AI instead
+                                            {/* Was hardcoded English, so every
+                                                non-English visitor read it in
+                                                English while the identical
+                                                button on the leave-message form
+                                                was translated. Same key as that
+                                                one: same action, same label. */}
+                                            {t('offline.continue_with_ai') || 'Back to chat'}
                                         </button>
                                     </div>
                                 </div>
@@ -3777,7 +3783,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                             setShowBooking(true);
                         }}
                         onDismiss={() => {
-                            // "Continue with AI": dismiss the card and surface the
+                            // "Back to chat": dismiss the card and surface the
                             // deferred BANT probe (held back so the answer + card
                             // didn't both carry a question). The probe becomes a
                             // bot bubble; its chips render below via activeCTA.
@@ -4089,7 +4095,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                                                 disabled={offlineSubmitting}
                                                 className="w-full text-center text-[12px] text-gray-500 hover:text-gray-700 transition-colors pt-1 disabled:opacity-60"
                                             >
-                                                {t('offline.continue_with_ai') || 'Continue with AI instead'}
+                                                {t('offline.continue_with_ai') || 'Back to chat'}
                                             </button>
                                         </form>
                                     </>
@@ -4174,7 +4180,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                                         disabled={offlineSubmitting}
                                         className="w-full text-center text-[12px] text-gray-500 hover:text-gray-700 transition-colors pt-1 disabled:opacity-60"
                                     >
-                                        {t('offline.continue_with_ai') || 'Continue with AI instead'}
+                                        {t('offline.continue_with_ai') || 'Back to chat'}
                                     </button>
                                 </form>
                             </>
@@ -4401,7 +4407,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
 
             {/* ── Unified ChatInput. Hidden when any form is active ──
                 Also hidden while the qualified-lead card is up so the visitor's
-                only next action is one of its CTAs (or "Continue with AI"). */}
+                only next action is one of its CTAs (or "Back to chat"). */}
             {!showLeadForm &&
              !showRating &&
              !hasActiveHandoffForm &&
