@@ -34,7 +34,7 @@
  */
 
 import { isHexColor } from './contrast';
-import { DEFAULT_PRIMARY_COLOR, DEFAULT_USER_BUBBLE_COLOR } from './widgetTheme';
+import { DEFAULT_PRIMARY_COLOR, DEFAULT_USER_BUBBLE_COLOR } from '../../../ui/chat/widgetTheme';
 import { t as translateNow } from '../../../i18n/i18n';
 
 // ── The four groups the page is divided into ─────────────────────────────────

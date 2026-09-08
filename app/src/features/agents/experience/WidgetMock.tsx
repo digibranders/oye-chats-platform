@@ -1,7 +1,11 @@
-import { type CSSProperties, type ReactElement, useState } from 'react';
-import Markdown, { type Components } from 'react-markdown';
-import { Bot, Menu, X } from 'lucide-react';
-import PremiumOrb from './PremiumOrb';
+import { type CSSProperties, type ReactElement, useMemo, useState } from 'react';
+import { Menu, X } from 'lucide-react';
+import {
+  WidgetAvatar,
+  WidgetTranscript,
+  type WidgetAppearance,
+  type WidgetMessage,
+} from '../../../ui';
 import {
   DEFAULT_PRIMARY_COLOR,
   DEFAULT_USER_BUBBLE_COLOR,
@@ -23,7 +27,7 @@ import {
   WIDGET_TYPING_BG,
   WIDGET_TYPING_DOT,
   WIDGET_WINDOW_BORDER,
-} from './widgetTheme';
+} from '../../../ui/chat/widgetTheme';
 import { PLACEHOLDERS, type ExperienceDraft } from './experience-model';
 import { useTranslation } from '../../../i18n/useTranslation';
 
@@ -111,33 +115,25 @@ function splitBranding(label: string): { lead: string; brand: string } {
   return { lead: cleaned.slice(0, lastSpace), brand: cleaned.slice(lastSpace + 1) };
 }
 
+/**
+ * The chatbot's mark, from the draft the customer is editing.
+ *
+ * A thin adapter over the design system's `WidgetAvatar`: the transcript, the
+ * identity badge and the launcher must all draw the same mark, and they used to
+ * do it from a copy of this function that lived only in this file.
+ */
+function appearanceOf(draft: ExperienceDraft): WidgetAppearance {
+  return {
+    primaryColor: draft.primaryColor || DEFAULT_PRIMARY_COLOR,
+    userBubbleColor: draft.userBubbleColor || DEFAULT_USER_BUBBLE_COLOR,
+    avatarType: draft.avatarType,
+    botLogo: draft.botLogo,
+    orbColor: draft.orbColor,
+  };
+}
+
 function Avatar({ draft, size }: { draft: ExperienceDraft; size: number }): ReactElement {
-  const primary = draft.primaryColor || DEFAULT_PRIMARY_COLOR;
-  if (draft.avatarType === 'orb') {
-    return <PremiumOrb color={draft.orbColor || primary} size={size} />;
-  }
-  if (draft.avatarType === 'upload' && draft.botLogo) {
-    return (
-      <img
-        src={draft.botLogo}
-        alt=""
-        width={size}
-        height={size}
-        style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover' }}
-      />
-    );
-  }
-  // `mascot`, and `upload` before a logo is chosen, both fall to the brand
-  // circle with a white glyph — exactly what `BotAvatar` renders.
-  return (
-    <span
-      aria-hidden
-      className="flex shrink-0 items-center justify-center"
-      style={{ width: size, height: size, borderRadius: '50%', backgroundColor: primary }}
-    >
-      <Bot size={Math.round(size * 0.55)} color={WIDGET_ON_PRIMARY} />
-    </span>
-  );
+  return <WidgetAvatar appearance={appearanceOf(draft)} size={size} />;
 }
 
 /** The bot's identity, floating over the top of the messages. `renderAgentBadge`. */
@@ -159,71 +155,6 @@ function AgentBadge({ draft, agentName }: { draft: ExperienceDraft; agentName: s
           {agentName}
         </span>
       </span>
-    </div>
-  );
-}
-
-/** A finished bot reply: avatar plus rendered markdown, no bubble.
- *  `MessageBubble` renders the same text through ReactMarkdown, so the mock does
- *  too — otherwise the model's `**bold**`, lists and links show as raw syntax in
- *  the preview while rendering cleanly on the customer's site. Block elements are
- *  given tight, inline-styled spacing (react-markdown emits real `<p>`/`<ul>`
- *  with browser-default margins that read as loose gaps in a chat bubble). */
-function BotRow({ draft, children }: { draft: ExperienceDraft; children: string }): ReactElement {
-  const linkColor = draft.primaryColor || DEFAULT_PRIMARY_COLOR;
-  const components: Components = {
-    p: ({ children: c }) => <p style={{ margin: '0 0 6px' }}>{c}</p>,
-    // rtl-ok: mimics the shipped widget's own markdown rendering (a separate,
-    // LTR-first product — see the file header), not the console's chrome.
-    ul: ({ children: c }) => <ul style={{ margin: '0 0 6px', paddingLeft: 18 }}>{c}</ul>, // rtl-ok: see above
-    ol: ({ children: c }) => <ol style={{ margin: '0 0 6px', paddingLeft: 18 }}>{c}</ol>, // rtl-ok: see above
-    li: ({ children: c }) => <li style={{ margin: '2px 0' }}>{c}</li>,
-    a: ({ href, children: c }) => (
-      <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: linkColor, textDecoration: 'underline' }}>
-        {c}
-      </a>
-    ),
-    code: ({ children: c }) => (
-      <code style={{ backgroundColor: 'rgba(16,32,44,0.06)', borderRadius: 4, padding: '1px 4px', fontSize: 13 }}>
-        {c}
-      </code>
-    ),
-  };
-  return (
-    <div className="flex w-full items-start gap-2">
-      <span className="mt-0.5 shrink-0">
-        <Avatar draft={draft} size={20} />
-      </span>
-      <div
-        className="min-w-0 flex-1 [&>*:last-child]:mb-0"
-        style={{ fontSize: 14, lineHeight: 1.6, fontWeight: 300, color: WIDGET_TEXT, wordBreak: 'break-word' }}
-      >
-        <Markdown components={components}>{children}</Markdown>
-      </div>
-    </div>
-  );
-}
-
-/** A visitor turn: a right-aligned bubble in their chosen colour. */
-function UserBubble({ background, children }: { background: string; children: string }): ReactElement {
-  return (
-    <div className="flex w-full justify-end">
-      <p
-        style={{
-          maxWidth: '85%',
-          backgroundColor: background,
-          color: WIDGET_TEXT,
-          borderRadius: WIDGET_RADIUS.window,
-          padding: '12px 16px',
-          fontSize: 14,
-          lineHeight: 1.5,
-          margin: 0,
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word',
-        }}
-      >
-        {children}
-      </p>
     </div>
   );
 }
@@ -264,7 +195,11 @@ export function WidgetMock({
   const { t } = useTranslation();
   const [composed, setComposed] = useState('');
   const primary = draft.primaryColor || DEFAULT_PRIMARY_COLOR;
-  const visitorBubble = draft.userBubbleColor || DEFAULT_USER_BUBBLE_COLOR;
+  const appearance = appearanceOf(draft);
+  const transcript: WidgetMessage[] = useMemo(
+    () => messages.map((message, index) => ({ key: String(index), role: message.role, text: message.text })),
+    [messages],
+  );
   const suggestions = draft.quickActions.map((s) => s.trim()).filter((s) => s.length > 0);
   const branding = splitBranding(text(brandingText, PLACEHOLDERS.brandingText));
   const isVertical = draft.suggestionsLayout === 'vertical';
@@ -367,17 +302,11 @@ export function WidgetMock({
             </div>
           ) : hasConversation ? (
             <>
-              {messages.map((message, index) =>
-                message.role === 'visitor' ? (
-                  <UserBubble key={index} background={visitorBubble}>
-                    {message.text}
-                  </UserBubble>
-                ) : (
-                  <BotRow key={index} draft={draft}>
-                    {message.text}
-                  </BotRow>
-                ),
-              )}
+              {/* The same renderer the Leads drawer replays a real conversation
+                  through, so the preview and the record cannot disagree about
+                  what the widget looks like. No clocks here: the customer is
+                  choosing colours, not reading a transcript. */}
+              <WidgetTranscript appearance={appearance} messages={transcript} />
               {pending ? <Typing draft={draft} label={t('agents.typing') || 'Typing'} /> : null}
             </>
           ) : (

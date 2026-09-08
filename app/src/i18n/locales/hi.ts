@@ -35,6 +35,7 @@ const hi = {
     anonymousOnly: 'केवल गुमनाम',
     anyQuality: 'कोई भी गुणवत्ता',
     anyScore: 'कोई भी स्कोर',
+    attachment: 'अटैचमेंट',
     captured: 'दर्ज किया गया',
     clearsTheUnreadMark: 'इस चैटबॉट की हर अपठित लीड से, हर पेज पर, अपठित का निशान हटा देता है। ऊपर का तारीख फ़िल्टर इसे सीमित नहीं करता। इसे वापस नहीं किया जा सकता।',
     columnCompany: 'कंपनी',
@@ -670,6 +671,7 @@ const hi = {
     setupComplete: 'सेटअप पूरा',
     severity: 'गंभीरता',
     signOut: 'साइन आउट',
+    statusPage: 'सिस्टम स्थिति',
     thisImpersonationSessionExpired: 'यह इम्परसोनेशन सत्र समाप्त हो गया।',
     tryAChatbotNameA: 'कोई चैटबॉट नाम, पेज या सेटिंग आज़माएँ।',
     tryAgain: 'दोबारा कोशिश करें',
@@ -915,6 +917,12 @@ const hi = {
     unreadInThisScope: 'इस दायरे में अपठित',
     upgradeToAnswerVisitorsYourself: 'स्वयं आगंतुकों को उत्तर देने, AI से बातचीत संभालने और यह देखने के लिए अपग्रेड करें कि अभी आपकी साइट पर कौन है।',
     view: {
+      all: {
+        label: 'सभी',
+        blurb: 'इस इनबॉक्स की हर बातचीत, नई पहले।',
+        emptyTitle: 'यहाँ अभी कुछ नहीं है',
+        emptyBody: 'प्रतीक्षा कर रहे आगंतुक, आपकी खुली चैट, रात में छोड़े गए संदेश और AI द्वारा योग्य पाई गई लीड, सब यहीं आते हैं।',
+      },
       waiting: {
         label: 'प्रतीक्षा में',
         blurb: 'ऐसे आगंतुक जिन्होंने किसी व्यक्ति से बात करने को कहा है और अभी किसी ने नहीं लिया।',
@@ -2257,6 +2265,7 @@ const hi = {
     previousPage: 'पिछला पेज',
     resetView: 'दृश्य रीसेट करें',
     resizeTheList: 'सूची का आकार बदलें',
+    resizeThePanel: 'पैनल का आकार बदलें',
     saveChanges: 'बदलाव सहेजें',
     search: 'खोजें…',
     selectADate: 'तारीख चुनें',

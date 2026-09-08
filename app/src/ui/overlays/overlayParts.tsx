@@ -85,9 +85,25 @@ export const OVERLAY_SCRIM = cn(
   'after:absolute after:inset-0 after:bg-overlay/60 after:content-[""]',
 );
 
-export function OverlayHeader({ children, close }: { children: ReactNode; close?: ReactNode }) {
+/**
+ * `hairline={false}` for a header whose next sibling draws its own rule.
+ *
+ * A tab row directly beneath is the case: keeping both puts two hairlines 40px
+ * apart at the top of the panel, and the tab row's active underline makes a
+ * third horizontal line inside 80px. The row becomes the header's bottom edge
+ * instead.
+ */
+export function OverlayHeader({
+  children,
+  close,
+  hairline = true,
+}: {
+  children: ReactNode;
+  close?: ReactNode;
+  hairline?: boolean;
+}) {
   return (
-    <div className={OVERLAY_HEADER}>
+    <div className={cn(OVERLAY_HEADER, !hairline && 'border-b-0')}>
       <div className={OVERLAY_TITLE_BLOCK}>{children}</div>
       {close ? <div className={OVERLAY_CLOSE}>{close}</div> : null}
     </div>

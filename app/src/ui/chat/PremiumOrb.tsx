@@ -1,5 +1,5 @@
 import { useEffect, useRef, type CSSProperties } from 'react';
-import orbRenderer, { type Orb } from '../../../services/orbRenderer';
+import orbRenderer, { type Orb } from '../../services/orbRenderer';
 
 export interface PremiumOrbProps {
     /** Orb colour as a hex string (e.g. `#2B66BC`); an invalid value falls back to the default. */

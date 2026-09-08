@@ -16,7 +16,7 @@ import {
   Switch,
   buttonClass,
 } from '../../../ui';
-import PremiumOrb from './PremiumOrb';
+import { PremiumOrb } from '../../../ui';
 import { useEntitlements } from '../../../hooks/useEntitlements';
 import { ColorField } from './ColorField';
 import { NON_TEXT_CONTRAST_MIN, TEXT_CONTRAST_MIN } from './contrast';
@@ -27,7 +27,7 @@ import {
   WIDGET_ON_PRIMARY,
   WIDGET_SURFACE,
   WIDGET_TEXT,
-} from './widgetTheme';
+} from '../../../ui/chat/widgetTheme';
 import type { AvatarType, DraftErrors, ExperienceDraft, ExperienceMeta } from './experience-model';
 import { useTranslation } from '../../../i18n/useTranslation';
 

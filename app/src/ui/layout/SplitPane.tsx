@@ -1,38 +1,14 @@
-import {
-  useCallback,
-  useRef,
-  useState,
-  type CSSProperties,
-  type KeyboardEvent,
-  type PointerEvent,
-  type ReactNode,
-} from 'react';
+import { useRef, type CSSProperties, type ReactNode } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { Button } from '../primitives/Button';
+import { useResizeHandle } from './useResizeHandle';
 import { useTranslation } from '../../i18n/useTranslation';
 
 /** Default list widths, in px, so the resize arithmetic has one unit. */
 const LIST_WIDTHS = { sm: 288, md: 320 } as const;
 const MIN_LIST = 240;
 const MAX_LIST = 480;
-
-function clamp(px: number): number {
-  return Math.min(MAX_LIST, Math.max(MIN_LIST, Math.round(px)));
-}
-
-function readStored(key: string | undefined): number | null {
-  if (!key) return null;
-  try {
-    const raw = window.localStorage.getItem(key);
-    const value = raw === null ? Number.NaN : Number.parseInt(raw, 10);
-    return Number.isFinite(value) ? clamp(value) : null;
-  } catch {
-    // Private browsing, a full quota, a blocked origin. A remembered pane width
-    // is not worth taking the inbox down for.
-    return null;
-  }
-}
 
 export interface SplitPaneProps {
   /** The queue: conversations, leads, records. Always the first pane. */
@@ -120,81 +96,17 @@ export function SplitPane({
   // `??` would also swallow an explicit `null`; a default parameter
   // only applies to `undefined`, and callers pass null to opt OUT.
   const backLabel = backLabelProp === undefined ? (t('ds.back') || 'Back') : backLabelProp;
-  const [width, setWidth] = useState<number>(
-    () => readStored(storageKey) ?? LIST_WIDTHS[listWidth],
-  );
-  const [dragging, setDragging] = useState(false);
+  // The list sits at the grid's inline-start track, so its handle is on its
+  // `end` edge and the hook works the direction out from there.
+  const { size: width, dragging, paneRef, separatorProps } = useResizeHandle({
+    initial: LIST_WIDTHS[listWidth],
+    min: MIN_LIST,
+    max: MAX_LIST,
+    storageKey,
+    edge: 'end',
+    label: t('ds.resizeTheList') || 'Resize the list',
+  });
   const listRef = useRef<HTMLElement>(null);
-
-  const commit = useCallback(
-    (next: number) => {
-      const value = clamp(next);
-      setWidth(value);
-      if (!storageKey) return;
-      try {
-        window.localStorage.setItem(storageKey, String(value));
-      } catch {
-        // See `readStored`.
-      }
-    },
-    [storageKey],
-  );
-
-  function onSeparatorKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
-    const step = event.shiftKey ? 64 : 16;
-    // Arrow keys are physical (DOM UI Events never remaps them), but the pane
-    // they resize sits at the grid's inline-start track, which CSS Grid
-    // itself mirrors under `dir="rtl"`. Widening the list is "the key that
-    // points away from the separator toward the pane's outer edge" — Left in
-    // LTR, Right in RTL — so the mapping flips with direction to match what
-    // the user sees move, per the WAI-ARIA separator/slider pattern.
-    const rtl = document.documentElement.dir === 'rtl';
-    let next: number;
-    if (event.key === 'ArrowLeft') next = rtl ? width + step : width - step;
-    else if (event.key === 'ArrowRight') next = rtl ? width - step : width + step;
-    else if (event.key === 'Home') next = MIN_LIST;
-    else if (event.key === 'End') next = MAX_LIST;
-    else return;
-    event.preventDefault();
-    commit(next);
-  }
-
-  function onSeparatorPointerDown(event: PointerEvent<HTMLDivElement>): void {
-    // Pointer capture is what keeps the drag alive once the cursor leaves the
-    // 12px handle, which it does immediately. It is also the one DOM API in
-    // this file jsdom does not implement, so a failure here must not take the
-    // drag — or a test — down with it.
-    try {
-      event.currentTarget.setPointerCapture(event.pointerId);
-    } catch {
-      /* no capture available; the drag still tracks while the pointer is over the handle */
-    }
-    setDragging(true);
-  }
-
-  function onSeparatorPointerMove(event: PointerEvent<HTMLDivElement>): void {
-    if (!dragging) return;
-    const rect = listRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    // `getBoundingClientRect` is always physical, and the list pane occupies
-    // the grid's inline-start track — its physical left in LTR, its physical
-    // right in RTL (CSS Grid mirrors track order with `dir`). The pane's
-    // *outer* edge (away from the separator) sits fixed at the container's
-    // edge either way, so width is the pointer's distance from that fixed
-    // edge, not always "from the left".
-    const rtl = document.documentElement.dir === 'rtl';
-    const next = rtl ? rect.right - event.clientX : event.clientX - rect.left;
-    commit(next);
-  }
-
-  function onSeparatorPointerUp(event: PointerEvent<HTMLDivElement>): void {
-    try {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    } catch {
-      /* nothing was captured */
-    }
-    setDragging(false);
-  }
 
   return (
     <div
@@ -209,7 +121,10 @@ export function SplitPane({
         )}
       >
         <section
-          ref={listRef}
+          ref={(node) => {
+            listRef.current = node;
+            paneRef(node);
+          }}
           aria-label={listLabel}
           className={cn(
             'relative flex min-h-0 min-w-0 flex-col border-border @3xl/page:flex @3xl/page:border-e',
@@ -219,18 +134,7 @@ export function SplitPane({
           <div className="@container/page flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
           {resizable ? (
             <div
-              role="separator"
-              aria-orientation="vertical"
-              aria-label={t('ds.resizeTheList') || 'Resize the list'}
-              aria-valuenow={width}
-              aria-valuemin={MIN_LIST}
-              aria-valuemax={MAX_LIST}
-              tabIndex={0}
-              onKeyDown={onSeparatorKeyDown}
-              onPointerDown={onSeparatorPointerDown}
-              onPointerMove={onSeparatorPointerMove}
-              onPointerUp={onSeparatorPointerUp}
-              onPointerCancel={onSeparatorPointerUp}
+              {...separatorProps}
               className={cn(
                 // A 1px hairline is not a 24px target, so the hit area straddles
                 // the border and the border stays where the eye expects it.

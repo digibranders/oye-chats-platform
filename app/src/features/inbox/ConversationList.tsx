@@ -30,7 +30,8 @@ import { t as translateNow } from '../../i18n/i18n';
 export interface ConversationListProps {
   view: InboxView;
   onViewChange: (view: InboxView) => void;
-  counts: Record<InboxView, number>;
+  /** Open conversations per scope. `null` is “not counted”, which is not zero. */
+  counts: Record<InboxView, number | null>;
   /** True when a scope holds something unread, so the switcher can say so. */
   unread?: Partial<Record<InboxView, boolean>>;
   items: InboxItem[];
@@ -173,11 +174,12 @@ function Row({
  * The scope is a `Select`, not a segmented control. Four segments each carrying
  * a count came to roughly 340px against the 296px this pane has, and
  * `SegmentedControl` neither wraps nor scrolls nor sets `min-w-0`, so it
- * painted straight over the pane's own right border.
+ * painted straight over the pane's own right border. There are five scopes now.
  *
- * Search filters within the current scope only. Searching across all four would
- * be a different feature (and a server-side one); pretending to do it client
- * side over one page of offline messages would be a lie about coverage.
+ * Search filters within the current scope only, which in All means across every
+ * row the console holds. That is still not a search of the account: offline
+ * messages arrive a page at a time, so All searches the page it has, the same
+ * rows it is already showing.
  */
 export function ConversationList({
   view,
@@ -269,7 +271,7 @@ export function ConversationList({
                 options={INBOX_VIEWS.map((value) => ({
                   value,
                   label:
-                    error && value === view
+                    counts[value] == null || (error && value === view)
                       ? viewMeta(value).label
                       : `${viewMeta(value).label} (${counts[value]})`,
                 }))}

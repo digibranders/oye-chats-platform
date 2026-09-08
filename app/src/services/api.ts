@@ -3229,7 +3229,13 @@ export const operatorChangePassword = async (
 export const getOperators = async (): Promise<Operator[]> => {
     try {
         const response = await api.get('/operators');
-        return expectArray(response.data, translateNow('api.failedToLoadOperators') || 'Failed to load operators');
+        // The server wraps the roster in an envelope (`{operators: [...]}`),
+        // not a bare array — see operator_routes.py::list_operators. Unwrap
+        // it before the array check, or every load throws regardless of
+        // roster size.
+        const data = response.data as { operators?: unknown } | unknown;
+        const rows = Array.isArray(data) ? data : (data as { operators?: unknown } | null)?.operators;
+        return expectArray(rows, translateNow('api.failedToLoadOperators') || 'Failed to load operators');
     } catch (error) {
         console.error('API Error fetching operators:', error);
         throw buildApiError(error, translateNow('api.failedToLoadOperators') || 'Failed to load operators');
@@ -3274,7 +3280,11 @@ export const deleteOperator = async (operatorId: number): Promise<Record<string,
 export const getDepartments = async (): Promise<Department[]> => {
     try {
         const response = await api.get('/operators/departments');
-        return expectArray(response.data, translateNow('api.failedToLoadDepartments') || 'Failed to load departments');
+        // Same envelope as getOperators: the server returns
+        // `{departments: [...]}`, not a bare array.
+        const data = response.data as { departments?: unknown } | unknown;
+        const rows = Array.isArray(data) ? data : (data as { departments?: unknown } | null)?.departments;
+        return expectArray(rows, translateNow('api.failedToLoadDepartments') || 'Failed to load departments');
     } catch (error) {
         console.error('API Error fetching departments:', error);
         throw buildApiError(error, translateNow('api.failedToLoadDepartments') || 'Failed to load departments');
