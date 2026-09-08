@@ -7,6 +7,7 @@ import {
   getLeadStats,
   getLanguageBreakdown,
   getQualificationFunnel,
+  getOperatorRatings,
   getRatingsSummary,
   getTopQuestions,
   getUnansweredQuestions,
@@ -186,6 +187,76 @@ export function useUnansweredQuestions(botId: number | null, days: number | null
     loading: query.isPending,
     error: query.error,
     refetch: query.refetch,
+  };
+}
+
+export interface OperatorRating {
+  operatorId: number;
+  name: string;
+  /**
+   * A second identifier, present only when the name alone cannot tell two rows
+   * apart. Operator names are not unique, and a ranking that lists the same
+   * name twice cannot be acted on. Email is preferred because it is what an
+   * admin recognises; when two SEATS share one address — the same person added
+   * twice, which happens — even that repeats, so the seat id is the fallback.
+   * Left `null` whenever the name is already unambiguous, so the ordinary case
+   * stays a clean list rather than a wall of addresses.
+   */
+  disambiguator: string | null;
+  total: number;
+  average: number | null;
+  unhappy: number;
+}
+
+/**
+ * Star ratings grouped by the operator who handled the chat.
+ *
+ * Owners and admins only. A plain operator gets a 403 from the endpoint, and
+ * that is an ANSWER rather than a failure: `forbidden` reports it so the panel
+ * can omit the section entirely instead of showing an error to someone who was
+ * never meant to see the data. React Query is told not to retry it, since a
+ * refusal will not change on a second ask.
+ */
+export function useOperatorRatings(botId: number | null, range: ResolvedRange) {
+  const query = useQuery({
+    queryKey: keys.analytics.operatorRatings(botId, range.days),
+    queryFn: () => getOperatorRatings(scope(botId), range.days),
+    select: (rows): OperatorRating[] => {
+      const mapped = rows.map((row) => ({
+        operatorId: Number(row.operator_id ?? 0),
+        name: typeof row.name === 'string' && row.name.trim() ? row.name : 'Unnamed operator',
+        email: typeof row.email === 'string' && row.email.trim() ? row.email.trim() : null,
+        total: Number(row.total ?? 0),
+        average: typeof row.avg === 'number' ? row.avg : null,
+        unhappy: Number(row.unhappy ?? 0),
+      }));
+      const repeated = new Set<string>();
+      const repeatedWithEmail = new Set<string>();
+      const seenNames = new Set<string>();
+      const seenPairs = new Set<string>();
+      for (const row of mapped) {
+        const pair = `${row.name}\u0000${row.email ?? ''}`;
+        if (seenNames.has(row.name)) repeated.add(row.name);
+        if (seenPairs.has(pair)) repeatedWithEmail.add(pair);
+        seenNames.add(row.name);
+        seenPairs.add(pair);
+      }
+      return mapped.map(({ email, ...row }) => {
+        if (!repeated.has(row.name)) return { ...row, disambiguator: null };
+        const pair = `${row.name}\u0000${email ?? ''}`;
+        const stillAmbiguous = repeatedWithEmail.has(pair) || !email;
+        return { ...row, disambiguator: stillAmbiguous ? `#${row.operatorId}` : email };
+      });
+    },
+    enabled: botId != null,
+    retry: false,
+  });
+  const status = (query.error as { status?: number } | null)?.status;
+  return {
+    operators: query.data ?? [],
+    loading: query.isPending,
+    forbidden: status === 403,
+    error: status === 403 ? null : query.error,
   };
 }
 

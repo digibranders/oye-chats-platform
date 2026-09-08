@@ -18,6 +18,7 @@ from app.db.models import (
     Document,
     Event,
     LeadInfo,
+    Operator,
     PlatformFeedback,
 )
 
@@ -1139,6 +1140,75 @@ def get_ratings_summary(session, client_id: int = None, bot_id: int = None, days
         "total": total,
         "distribution": distribution,
     }
+
+
+def get_operator_ratings_breakdown(
+    session, client_id: int = None, bot_id: int = None, days: int = None, min_ratings: int = 1
+):
+    """Post-chat star ratings grouped by the operator who handled the chat.
+
+    Answers "how do my operators compare?", which is the question a team lead
+    opens the Feedback tab for and which the workspace-wide average cannot
+    answer. Only conversations with an ``assigned_operator_id`` count: a
+    bot-only chat has nobody to attribute the score to.
+
+    Returns a list ordered by average DESCENDING, then by volume, so the list
+    reads as a ranking without the caller having to sort. Each row carries
+    ``total`` alongside ``avg`` deliberately: this is performance data about
+    people, and an average is meaningless without the count behind it. One bad
+    chat out of three reads as a damning 2.0 unless the "3" is equally visible,
+    so the count is part of the row rather than a tooltip.
+
+    ``min_ratings`` drops operators below a volume floor rather than publishing
+    a confident-looking figure drawn from one or two conversations. It defaults
+    to 1 (show everyone who has any rating at all) so the caller decides the
+    policy; the UI passes a higher floor.
+
+    Operators are joined by id, so a DEACTIVATED operator still appears: their
+    past chats happened and excluding them would silently change historical
+    averages the moment somebody leaves the team.
+
+    ``email`` rides along because operator names are not unique. Two people on
+    the same workspace can share a display name, and when they do a name-only
+    list is a ranking the reader cannot act on. The caller decides whether to
+    surface it; the field is always present so it can.
+    """
+    sf = _session_owner_filter(bot_id, client_id)
+    time_filter = _session_window_filter(days)
+
+    rows = session.execute(
+        select(
+            ChatSession.assigned_operator_id.label("operator_id"),
+            Operator.name.label("operator_name"),
+            Operator.email.label("operator_email"),
+            func.count(ChatSession.id).label("total"),
+            func.avg(ChatSession.visitor_rating).label("avg"),
+            func.count(case((ChatSession.visitor_rating <= 2, 1))).label("unhappy"),
+        )
+        .join(Operator, Operator.id == ChatSession.assigned_operator_id)
+        .where(
+            sf,
+            ChatSession.visitor_rating.isnot(None),
+            ChatSession.assigned_operator_id.isnot(None),
+            *time_filter,
+        )
+        .group_by(ChatSession.assigned_operator_id, Operator.name, Operator.email)
+    ).all()
+
+    breakdown = [
+        {
+            "operator_id": row.operator_id,
+            "name": row.operator_name,
+            "email": row.operator_email,
+            "total": int(row.total or 0),
+            "avg": round(float(row.avg), 1) if row.avg is not None else None,
+            "unhappy": int(row.unhappy or 0),
+        }
+        for row in rows
+        if int(row.total or 0) >= max(1, min_ratings)
+    ]
+    breakdown.sort(key=lambda r: (-(r["avg"] or 0), -r["total"], r["name"] or ""))
+    return breakdown
 
 
 def get_resolution_summary(session, client_id: int = None, bot_id: int = None, days: int = None):

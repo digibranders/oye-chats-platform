@@ -20,6 +20,7 @@ from app.db.repository import (
     get_feedback_data,
     get_language_breakdown,
     get_message_activity,
+    get_operator_ratings_breakdown,
     get_queue_summary,
     get_ratings_summary,
     get_resolution_summary,
@@ -331,6 +332,62 @@ def get_ratings_summary_endpoint(
     except Exception as e:
         logger.error(f"Failed to fetch ratings summary: {e}")
         raise HTTPException(status_code=500, detail="Failed to load ratings summary.") from e
+
+
+def _require_workspace_manager(auth: dict) -> None:
+    """Allow the account holder and manager-role operators; refuse the rest.
+
+    Per-operator ratings are performance data about named people, not product
+    analytics like the rest of this module. Every other figure here describes
+    the bot and is safe for anyone who can open Analytics; this one would show
+    an operator how their colleagues scored, which is a management view and
+    belongs to management.
+
+    ``type == "client"`` is the account holder authenticating with the workspace
+    API key, who owns the workspace outright. An operator needs an explicit
+    manager role: ``operator`` is the rank that answers chats, and is exactly
+    who must not read this.
+    """
+    if auth.get("type") == "client":
+        return
+    operator = auth.get("entity")
+    if getattr(operator, "role", None) in ("owner", "admin"):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "error": "manager_role_required",
+            "message": "Per-operator ratings are available to workspace owners and admins.",
+        },
+    )
+
+
+@router.get("/operator-ratings")
+def get_operator_ratings_endpoint(
+    bot_id: RowId | None = Query(None),
+    days: int | None = Query(None, ge=1, le=365, description="Restrict to conversations started in the last N days"),
+    min_ratings: int = Query(1, ge=1, le=100, description="Drop operators with fewer ratings than this"),
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Post-chat star ratings grouped by the operator who handled the chat.
+
+    Owners and admins only (see ``_require_workspace_manager``). Each row
+    carries the rating COUNT beside the average, because an average drawn from
+    two conversations is not a judgement anyone should act on and the count is
+    what says so.
+    """
+    _require_workspace_manager(auth)
+    try:
+        _verify_bot_ownership(bot_id, auth["client_id"])
+        with get_session() as session:
+            return get_operator_ratings_breakdown(
+                session, client_id=auth["client_id"], bot_id=bot_id, days=days, min_ratings=min_ratings
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching operator ratings: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch operator ratings") from e
 
 
 @router.get("/resolution-summary")
