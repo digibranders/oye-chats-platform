@@ -1072,6 +1072,47 @@ class TestQuotationEmailScheduling:
         assert args == ("sch1s", bot.id)
         assert kwargs["_defer_by"] == timedelta(seconds=quotation_routes.QUOTATION_EMAIL_DELAY_SECONDS)
 
+    def test_document_email_deferred_by_the_bots_own_configured_delay(self, db, monkeypatch):
+        from datetime import timedelta
+
+        import app.worker.enqueue as enqueue_mod
+
+        client = _make_client(db, email="sch3@example.com", api_key="sch3")
+        bot = _make_bot(
+            db,
+            client.id,
+            bot_key="bot-sch3",
+            catalog=_catalog(document_delay_seconds=120),
+            notification_email="owner@acme.com",
+        )
+        _make_session(
+            db,
+            session_id="sch3s",
+            bot_id=bot.id,
+            client_id=client.id,
+            need=1,
+            budget=1,
+            quotation_state=dict(_QUOTING_STATE),
+        )
+        _make_message(db, session_id="sch3s")
+        _make_lead(db, session_id="sch3s", bot_id=bot.id, email="jason@buyer.com", name="Jason")
+
+        calls = []
+        monkeypatch.setattr(enqueue_mod, "WORKER_ENABLED", True)
+        monkeypatch.setattr(enqueue_mod, "enqueue_sync", lambda name, *a, **kw: calls.append((name, a, kw)))
+        monkeypatch.setattr(quotation_routes.email_service, "send_quotation_visitor_email", lambda *a, **k: None)
+        monkeypatch.setattr(quotation_routes.email_service, "send_quotation_document_email", lambda *a, **k: None)
+        monkeypatch.setattr(quotation_routes.email_service, "send_quotation_client_email", lambda *a, **k: None)
+
+        api = _bot_api(_app(), bot)
+        with _patch_session(db):
+            api.post("/chat/quotation/accept", json={"session_id": "sch3s"})
+
+        assert len(calls) == 1
+        _, args, kwargs = calls[0]
+        assert args == ("sch3s", bot.id)
+        assert kwargs["_defer_by"] == timedelta(seconds=120)
+
     def test_document_dispatch_helper_sends_only_document(self, db, monkeypatch):
         calls = {"visitor": [], "document": [], "client": []}
         client = _make_client(db, email="sch2@example.com", api_key="sch2")
