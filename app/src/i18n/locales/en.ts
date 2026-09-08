@@ -2023,6 +2023,7 @@ const en = {
     zoomOut: 'Zoom out',
   },
   inbox: {
+    aPersonJoined: 'A person joined',
     acceptChat: 'Accept',
     replyToAcceptThisConversation: 'Reply to accept this conversation…',
     theyStayWithTheAi: 'They stay with the AI until you reply.',

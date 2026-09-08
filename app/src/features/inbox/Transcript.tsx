@@ -219,6 +219,27 @@ export function Transcript({
     return flags;
   }, [messages]);
 
+  /**
+   * Where a person took the conversation off the AI.
+   *
+   * Nothing records it. The backend writes a system message when a chat ENDS
+   * (`ws_routes.py`) and nothing at all when an operator joins, so there is no
+   * stored marker to render — but the boundary is plain in the transcript: the
+   * first message whose role changes from `bot` to `operator`. Deriving it
+   * needs no new request, no backend change, and it works on conversations
+   * that already happened.
+   *
+   * Once, and only where an AI turn is genuinely followed by a person's. A
+   * conversation an operator answered from the first message never had a
+   * handover to mark, and a transfer between two operators is not one either.
+   */
+  const handoverAt = useMemo(() => {
+    const index = messages.findIndex(
+      (message, at) => message.role === 'operator' && messages[at - 1]?.role === 'bot',
+    );
+    return index === -1 ? null : index;
+  }, [messages]);
+
   // A run from one speaker is one block: one avatar at its top, one timestamp
   // at its foot. Four short lines from a visitor used to produce four avatars
   // and four "Visitor 14:32" lines down the left edge — which every reference
@@ -299,6 +320,23 @@ export function Transcript({
                 // from a number, and this is the marker that tells them whether
                 // a lead is still warm.
                 <DayDivider label={formatDayLabel(message.timestamp)} className="my-3" />
+              ) : null}
+
+              {/* Set as the same quiet centred line the `system` role uses,
+                  because that is what it is: a fact about the conversation
+                  rather than something anybody said. Without it the operator's
+                  first ink bubble simply appears, and a replayed conversation
+                  gives no clue when the visitor stopped talking to a machine.
+
+                  "A person", not a name: a transferred conversation holds two
+                  operators and the transcript does not say which sent what. */}
+              {index === handoverAt ? (
+                <p className="py-1 text-center text-2xs text-text-tertiary">
+                  {translateNow('inbox.aPersonJoined') || 'A person joined'}
+                  {message.timestamp ? (
+                    <span className="figure"> · {formatTime(message.timestamp)}</span>
+                  ) : null}
+                </p>
               ) : null}
 
               {system ? (

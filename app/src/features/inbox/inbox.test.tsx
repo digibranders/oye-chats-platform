@@ -516,6 +516,47 @@ describe('Transcript', () => {
     expect(column?.className).toContain('max-w-[min(34rem,82%)]');
   });
 
+  /**
+   * Where a person took over, which nothing records.
+   *
+   * The backend writes a system message when a chat ENDS and nothing when an
+   * operator joins, so this is derived from the transcript: the first operator
+   * turn that follows an AI turn. Without it the operator's first ink bubble
+   * simply appears, and a replayed conversation never says when the visitor
+   * stopped talking to a machine.
+   */
+  it('marks where a person took the conversation off the AI', () => {
+    render(
+      <Transcript
+        visitorName="Ada"
+        messages={[
+          message({ key: '1', role: 'user' }),
+          message({ key: '2', role: 'bot' }),
+          message({ key: '3', role: 'operator' }),
+          message({ key: '4', role: 'operator' }),
+        ]}
+      />,
+    );
+    // Once, on the boundary — not again on the second operator turn.
+    expect(screen.getAllByText(/A person joined/)).toHaveLength(1);
+  });
+
+  it('marks nothing when a person answered from the first message', () => {
+    // No AI turn precedes the operator, so there was no handover to mark.
+    // A conversation an operator took straight from the queue would otherwise
+    // open with an event that never happened.
+    render(
+      <Transcript
+        visitorName="Ada"
+        messages={[
+          message({ key: '1', role: 'user' }),
+          message({ key: '2', role: 'operator' }),
+        ]}
+      />,
+    );
+    expect(screen.queryByText(/A person joined/)).not.toBeInTheDocument();
+  });
+
   it('announces the visitor typing rather than showing three silent dots', () => {
     render(<Transcript visitorName="Ada" messages={[]} visitorTyping />);
     expect(screen.getByRole('status', { name: /ada is typing/i })).toBeInTheDocument();

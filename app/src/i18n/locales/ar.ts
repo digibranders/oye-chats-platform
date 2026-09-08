@@ -2007,6 +2007,7 @@ const ar = {
     zoomOut: "تصغير",
   },
   inbox: {
+    aPersonJoined: "انضم شخص إلى المحادثة",
     acceptChat: "قبول",
     replyToAcceptThisConversation: "ردّ لقبول هذه المحادثة…",
     theyStayWithTheAi: "يبقى الزائر مع الروبوت حتى ترد عليه.",
