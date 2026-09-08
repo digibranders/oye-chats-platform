@@ -37,6 +37,9 @@ from app.api.auth import (
     require_verified_email_for_workspace,
 )
 from app.api.bot_routes import public_router, router
+from tests.throwaway_db import drop_stale, throwaway_db_name
+
+_MIGRATION_DB_SUFFIX = "_widget_heartbeat_migration"
 
 
 @contextmanager
@@ -1157,14 +1160,19 @@ def test_widget_heartbeat_migration_creates_both_columns(monkeypatch):
     import app.config as app_config
     from alembic import command
 
-    tmp_db = "oyechats_widget_heartbeat_migration_test"
     # ``make_url().set(database=...)`` rather than string surgery on DB_URL: a
     # socket-style URL (``...@/db?host=/tmp&port=5433``) carries slashes in its
     # query string, so splitting on the last "/" mangles it.
     base_url = make_url(os.environ["DB_URL"])
+    # The name was the fixed ``oyechats_widget_heartbeat_migration_test``, which
+    # ignored DB_URL entirely: two suite runs collided on it even when they were
+    # deliberately pointed at different databases, and the loser reported one
+    # "database does not exist" at whatever test it was on. See tests/throwaway_db.py.
+    tmp_db = throwaway_db_name(base_url.database or "postgres", _MIGRATION_DB_SUFFIX)
     tmp_url = base_url.set(database=tmp_db)
     admin = create_engine(base_url.set(database="postgres"), isolation_level="AUTOCOMMIT")
     with admin.connect() as conn:
+        drop_stale(conn, base_url.database or "postgres", _MIGRATION_DB_SUFFIX)
         conn.execute(text(f"DROP DATABASE IF EXISTS {tmp_db}"))
         conn.execute(text(f"CREATE DATABASE {tmp_db}"))
 

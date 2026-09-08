@@ -18,6 +18,7 @@ from app.api.auth import (
     get_current_client_strict,
 )
 from app.db.models import Base as _Base
+from tests.throwaway_db import drop_stale, throwaway_db_name
 
 # ── Real-Postgres throwaway DB (for DB-layer tests: locks, ledger, clawback) ──
 #
@@ -48,13 +49,25 @@ def pg_engine():
     Isolation does not depend on the scope: the function-scoped ``db`` fixture
     resets every table and sequence the test touched (``reset_database``), so
     a session-wide database is as clean per test as a per-module one was.
+
+    The name carries this process's pid (``throwaway_db_name``). It used to be
+    the bare ``<db>_pytest``, which meant a second suite run started while this
+    one was in flight dropped THIS run's database out from under it: the FORCE
+    below terminates every backend on it, so the older run failed with one
+    ``server closed the connection unexpectedly`` wherever it had got to, and
+    passed on the next run. Reproduced, and the reason this is per-process now.
     """
     base = _pg_base_url()
     if base is None:
         pytest.skip("needs a reachable Postgres at DB_URL")
-    test_db = (base.database or "postgres") + "_pytest"
+    base_db = base.database or "postgres"
+    test_db = throwaway_db_name(base_db, "_pytest")
     admin = create_engine(base.set(database="postgres"), isolation_level="AUTOCOMMIT")
     with admin.connect() as conn:
+        # A run killed before its teardown leaves its database behind. Clear
+        # those, and only those: a name whose pid is still alive belongs to a
+        # run that is still going.
+        drop_stale(conn, base_db, "_pytest")
         # FORCE so a connection left open by a crashed earlier run cannot
         # wedge the drop; without it the CREATE below inherits a stale schema.
         conn.exec_driver_sql(f'DROP DATABASE IF EXISTS "{test_db}" WITH (FORCE)')

@@ -458,6 +458,105 @@ describe('Transcript', () => {
     expect(screen.getByText('You:')).toBeInTheDocument();
   });
 
+  /**
+   * Three speakers, and only two of them are boxes.
+   *
+   * They used to be three fills: ink for the operator, white for the visitor,
+   * and `--color-surface-sunken` for the AI — 1.8 L* off the canvas this sits
+   * on, under the 2.4 L* step `tokens.css` sets as the floor for a felt
+   * difference. The AI's bubble barely read as a bubble, and beside the
+   * visitor's white it barely read as different, so an AI-handled conversation
+   * was a wall of near-identical boxes.
+   *
+   * The fix is not a third fill. A machine and a person are different KINDS of
+   * turn, which is what the widget and the lead drawer already say by giving
+   * the AI an avatar and plain text. Pinned because "give the AI its own
+   * colour" is the obvious wrong answer and someone will reach for it again.
+   */
+  it('gives the AI plain text where the people get bubbles', () => {
+    const { container } = render(
+      <Transcript
+        visitorName="Ada"
+        messages={[
+          message({ key: '1', role: 'user', content: 'from the visitor' }),
+          message({ key: '2', role: 'bot', content: 'from the AI' }),
+          message({ key: '3', role: 'operator', content: 'from me' }),
+        ]}
+      />,
+    );
+    // Read off the message column rather than walking up from the text: the
+    // AI's words sit inside `Markdown`'s own wrapper, so `closest('div')`
+    // finds that instead of the box under test. Each column's first child IS
+    // the box, in message order.
+    const boxes = [...container.querySelectorAll('div')]
+      .filter((el) => el.className.includes('max-w-[min(34rem'))
+      .map((column) => (column.firstElementChild as HTMLElement).className);
+    expect(boxes).toHaveLength(3);
+    const [visitor, ai, me] = boxes;
+
+    // The two people are filled boxes with a radius.
+    expect(visitor).toMatch(/rounded-md/);
+    expect(visitor).toMatch(/bg-surface/);
+    expect(me).toMatch(/bg-ink/);
+
+    // The AI is not: no fill, no border, no radius, no padding.
+    expect(ai).not.toMatch(/rounded-md/);
+    expect(ai).not.toMatch(/bg-/);
+    expect(ai).not.toMatch(/border/);
+    expect(ai).not.toMatch(/px-3/);
+  });
+
+  it('holds every message to a reading measure', () => {
+    // 34rem is about 73 characters of `text-prose`; comfortable prose is 45 to
+    // 75. It was `min(42rem,80%)` — about 95 characters — and 80% of a pane
+    // that can be 900px wide is wider still. The AI writes the longest
+    // messages here, so it was the AI's answers the measure failed worst.
+    render(<Transcript visitorName="Ada" messages={[message({ key: '1', content: 'measured' })]} />);
+    const column = screen.getByText('measured').closest('div')?.parentElement;
+    expect(column?.className).toContain('max-w-[min(34rem,82%)]');
+  });
+
+  /**
+   * Where a person took over, which nothing records.
+   *
+   * The backend writes a system message when a chat ENDS and nothing when an
+   * operator joins, so this is derived from the transcript: the first operator
+   * turn that follows an AI turn. Without it the operator's first ink bubble
+   * simply appears, and a replayed conversation never says when the visitor
+   * stopped talking to a machine.
+   */
+  it('marks where a person took the conversation off the AI', () => {
+    render(
+      <Transcript
+        visitorName="Ada"
+        messages={[
+          message({ key: '1', role: 'user' }),
+          message({ key: '2', role: 'bot' }),
+          message({ key: '3', role: 'operator' }),
+          message({ key: '4', role: 'operator' }),
+        ]}
+      />,
+    );
+    // Once, on the boundary — not again on the second operator turn.
+    expect(screen.getAllByText(/A person joined/)).toHaveLength(1);
+  });
+
+  it('marks nothing when a person answered from the first message', () => {
+    // No AI turn precedes the operator, so there was no handover to mark.
+    // A conversation an operator took straight from the queue would otherwise
+    // open with an event that never happened.
+    render(
+      <Transcript
+        visitorName="Ada"
+        messages={[
+          message({ key: '1', role: 'user' }),
+          message({ key: '2', role: 'operator' }),
+        ]}
+      />,
+    );
+    expect(screen.queryByText(/A person joined/)).not.toBeInTheDocument();
+  });
+
   it('announces the visitor typing rather than showing three silent dots', () => {
     render(<Transcript visitorName="Ada" messages={[]} visitorTyping />);
     expect(screen.getByRole('status', { name: /ada is typing/i })).toBeInTheDocument();

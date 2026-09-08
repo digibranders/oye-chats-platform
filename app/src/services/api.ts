@@ -1603,6 +1603,31 @@ export const getRatingsSummary = async (
     }
 };
 
+/**
+ * Post-chat star ratings grouped by the operator who handled the chat.
+ *
+ * Owners and admins only: the endpoint answers 403 for a plain operator, since
+ * this is performance data about named colleagues rather than product
+ * analytics. Callers must treat that 403 as "not for you", not as a failure.
+ */
+export const getOperatorRatings = async (
+    botId?: number,
+    days?: number | null,
+): Promise<Array<Record<string, unknown>>> => {
+    try {
+        const params = new URLSearchParams();
+        if (botId) params.set('bot_id', String(botId));
+        if (days) params.set('days', String(days));
+        const qs = params.toString();
+        const url = qs ? `/analytics/operator-ratings?${qs}` : '/analytics/operator-ratings';
+        const response = await api.get(url);
+        return Array.isArray(response.data) ? response.data : [];
+    } catch (error) {
+        console.error('API Error fetching operator ratings:', error);
+        throw buildApiError(error, 'Failed to load operator ratings');
+    }
+};
+
 export const getResolutionSummary = async (botId?: number): Promise<Record<string, unknown>> => {
     try {
         const url = botId ? `/analytics/resolution-summary?bot_id=${botId}` : '/analytics/resolution-summary';

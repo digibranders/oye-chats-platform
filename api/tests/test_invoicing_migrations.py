@@ -11,11 +11,17 @@ full chain up and back down on an isolated database.
 import os
 
 import pytest
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, inspect, make_url, text
+
+from tests.throwaway_db import drop_stale, throwaway_db_name
 
 pytestmark = pytest.mark.skipif(not os.getenv("DB_URL"), reason="needs a reachable Postgres at DB_URL")
 
-_TMP_DB = "oyechats_migration_test"
+# The name was the fixed ``oyechats_migration_test``, which ignored DB_URL
+# entirely: two suite runs collided on it even when they were deliberately
+# pointed at different databases, and the loser reported one "database does
+# not exist" at whatever test it was on. See tests/throwaway_db.py.
+_TMP_DB_SUFFIX = "_invoicing_migration"
 
 
 def _server_url(db_url: str) -> str:
@@ -30,12 +36,15 @@ def test_invoicing_migrations_roundtrip(monkeypatch):
 
     base_url = os.environ["DB_URL"]
     server = _server_url(base_url)
+    base_db = make_url(base_url).database or "postgres"
+    tmp_db = throwaway_db_name(base_db, _TMP_DB_SUFFIX)
     admin = create_engine(f"{server}/postgres", isolation_level="AUTOCOMMIT")
     with admin.connect() as conn:
-        conn.execute(text(f"DROP DATABASE IF EXISTS {_TMP_DB}"))
-        conn.execute(text(f"CREATE DATABASE {_TMP_DB}"))
+        drop_stale(conn, base_db, _TMP_DB_SUFFIX)
+        conn.execute(text(f"DROP DATABASE IF EXISTS {tmp_db}"))
+        conn.execute(text(f"CREATE DATABASE {tmp_db}"))
 
-    tmp_url = f"{server}/{_TMP_DB}"
+    tmp_url = f"{server}/{tmp_db}"
     # Early migrations create pgvector columns, so the extension must exist
     # before the chain runs (the main DB already has it).
     tmp_admin = create_engine(tmp_url, isolation_level="AUTOCOMMIT")
@@ -99,7 +108,7 @@ def test_invoicing_migrations_roundtrip(monkeypatch):
                     "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
                     "WHERE datname = :db AND pid <> pg_backend_pid()"
                 ),
-                {"db": _TMP_DB},
+                {"db": tmp_db},
             )
-            conn.execute(text(f"DROP DATABASE IF EXISTS {_TMP_DB}"))
+            conn.execute(text(f"DROP DATABASE IF EXISTS {tmp_db}"))
         admin.dispose()

@@ -72,6 +72,14 @@ export interface QuotationCatalog {
   /** Empty means "any of the four dimensions counts", not "none of them". */
   required_categories: BantDimension[];
   threshold: number;
+  /**
+   * Seconds after `accept` before the priced "Your quotation" document email
+   * goes out. The owner notification and the visitor's plain acknowledgement
+   * both fire immediately regardless of this value. Mirrors
+   * `QuotationCatalog.document_delay_seconds` server-side, clamped the same
+   * way: `[MIN_DOCUMENT_DELAY_SECONDS, MAX_DOCUMENT_DELAY_SECONDS]`.
+   */
+  document_delay_seconds: number;
   services: Service[];
 }
 
@@ -114,6 +122,33 @@ export const CURRENCIES: { value: string; label: string }[] = [
   { value: 'AED', label: 'AED (UAE Dirham)' },
 ];
 
+export const DEFAULT_DOCUMENT_DELAY_SECONDS = 600;
+export const MIN_DOCUMENT_DELAY_SECONDS = 0;
+export const MAX_DOCUMENT_DELAY_SECONDS = 86400;
+
+/** A delay preset for the "when to send the quotation" select. */
+export function documentDelayLabel(d: { key: string; label: string }): string {
+  return translateNow(`agents.documentDelayOption.${d.key}`) || d.label;
+}
+
+// @i18n-exempt: fallbacks, read through documentDelayLabel above.
+export const DOCUMENT_DELAY_OPTIONS: { value: number; key: string; label: string }[] = [
+  { value: 0, key: 'immediate', label: 'Immediately' },
+  { value: 300, key: 'min5', label: '5 minutes' },
+  { value: 600, key: 'min10', label: '10 minutes' },
+  { value: 1800, key: 'min30', label: '30 minutes' },
+  { value: 3600, key: 'hour1', label: '1 hour' },
+  { value: 86400, key: 'hour24', label: '24 hours' },
+];
+
+/** A fallback label for a document_delay_seconds value set outside the six
+ * presets (e.g. via a direct API call, or a non-preset QUOTATION_EMAIL_DELAY_SECONDS
+ * env default) — so the select always has a matching option instead of
+ * rendering blank. */
+export function customDelayLabel(seconds: number): string {
+  return translateNow('agents.customDelaySeconds', { seconds }) || `${seconds} seconds`;
+}
+
 export function requirementTypeLabel(r: { value: string; label: string }): string {
   return translateNow(`agents.requirementType.${r.value}`) || r.label;
 }
@@ -143,6 +178,7 @@ export const EMPTY_CATALOG: QuotationCatalog = {
   currency: 'INR',
   required_categories: [],
   threshold: 2,
+  document_delay_seconds: DEFAULT_DOCUMENT_DELAY_SECONDS,
   services: [],
 };
 
@@ -238,6 +274,13 @@ export function parseCatalog(raw: unknown): QuotationCatalog {
     currency: (asString(record.currency) || 'INR').toUpperCase(),
     required_categories: categories,
     threshold: Math.min(thresholdCeiling(categories), Math.max(1, Math.floor(asNumber(record.threshold)) || 2)),
+    document_delay_seconds:
+      record.document_delay_seconds === undefined
+        ? DEFAULT_DOCUMENT_DELAY_SECONDS
+        : Math.min(
+            MAX_DOCUMENT_DELAY_SECONDS,
+            Math.max(MIN_DOCUMENT_DELAY_SECONDS, Math.floor(asNumber(record.document_delay_seconds))),
+          ),
     services,
   };
 }
@@ -249,6 +292,10 @@ export function toPayload(catalog: QuotationCatalog): QuotationCatalog {
     currency: (catalog.currency || 'INR').toUpperCase(),
     required_categories: [...catalog.required_categories],
     threshold: Math.min(catalog.threshold, thresholdCeiling(catalog.required_categories)),
+    document_delay_seconds: Math.min(
+      MAX_DOCUMENT_DELAY_SECONDS,
+      Math.max(MIN_DOCUMENT_DELAY_SECONDS, Math.floor(asNumber(catalog.document_delay_seconds))),
+    ),
     services: catalog.services.map((service) => ({
       ...service,
       name: service.name.trim(),

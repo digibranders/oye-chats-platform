@@ -269,6 +269,15 @@ class QuotationCatalog(BaseModel):
     currency: str = "INR"
     required_categories: list[str] = Field(default_factory=list)
     threshold: int = Field(default=2, ge=1, le=4)
+    # How long after `accept` the priced "Your quotation" document email is
+    # deferred. The owner notification and the visitor's plain acknowledgement
+    # ("Your quote request") both fire immediately regardless of this value —
+    # only the priced document follows the delay. Defaults to the
+    # platform-wide QUOTATION_EMAIL_DELAY_SECONDS so every bot saved before
+    # this field existed keeps its current behaviour unchanged. 0 sends the
+    # document alongside the other two; 86400 (24h) is the admin UI's outer
+    # bound.
+    document_delay_seconds: int = Field(default=QUOTATION_EMAIL_DELAY_SECONDS, ge=0, le=86400)
     services: list[Service] = Field(default_factory=list)
 
     @field_validator("currency")
@@ -661,8 +670,9 @@ def _unique_service_names(line_items: list[dict]) -> list[str]:
 def _send_quotation_visitor_email(db, bot: Bot, session: ChatSession) -> None:
     """Confirm to the visitor that their quote request was received. Carries NO
     pricing — it only acknowledges the request. Sent **immediately** at accept;
-    the priced "Your quotation" document follows ~10 min later. Reply-To routes
-    back to the client. Best-effort: any failure is logged, never raised.
+    the priced "Your quotation" document follows later, after the bot's own
+    configured delay. Reply-To routes back to the client. Best-effort: any
+    failure is logged, never raised.
     """
     try:
         summary = build_quotation_summary(bot, session)
@@ -697,8 +707,9 @@ def _send_quotation_visitor_email(db, bot: Bot, session: ChatSession) -> None:
 def _send_quotation_document_email(db, bot: Bot, session: ChatSession) -> None:
     """Send the visitor their finalized, priced quotation inline in the email.
 
-    Deferred ~10 min after accept. Carries the full pricing (per-requirement
-    quantity + subtotal + total) in the email body — no PDF attachment.
+    Deferred after accept, by the bot's own configured delay. Carries the full
+    pricing (per-requirement quantity + subtotal + total) in the email body —
+    no PDF attachment.
     Reply-To routes back to the client. Best-effort: any failure is logged,
     never raised.
     """
@@ -738,7 +749,8 @@ def _send_quotation_document_email(db, bot: Bot, session: ChatSession) -> None:
 def dispatch_quotation_document_email_for_session(session_id: str, bot_id: int) -> None:
     """Re-load the bot + session on a fresh DB session and fire the priced
     "Your quotation" document email. Entry point for the deferred ARQ task
-    ``task_send_quotation_visitor_email``, which runs ~10 minutes after the
+    ``task_send_quotation_visitor_email``, which runs after the bot's own
+    configured delay (``quotation_catalog.document_delay_seconds``) once the
     visitor accepts the quote.
 
     Loading fresh at send time (rather than closing over the request's ORM
@@ -773,8 +785,10 @@ def _schedule_quotation_emails(db, bot: Bot, session: ChatSession) -> None:
       fresh lead never waits.
     * **Visitor acknowledgement** ("Your quote request") — **immediately**, no
       pricing, so the visitor gets an instant "we got it".
-    * **Visitor quotation** ("Your quotation", priced PDF) — deferred by
-      ``QUOTATION_EMAIL_DELAY_SECONDS`` (default 10 min).
+    * **Visitor quotation** ("Your quotation", priced PDF) — deferred by the
+      bot's own ``quotation_catalog.document_delay_seconds`` (admin-configurable;
+      defaults to ``QUOTATION_EMAIL_DELAY_SECONDS``, 10 min, for any bot that has
+      never touched the setting).
 
     The document-email delay is durable via ARQ when the worker is enabled so it
     survives an API restart. When the worker is disabled (local dev without a
@@ -795,7 +809,9 @@ def _schedule_quotation_emails(db, bot: Bot, session: ChatSession) -> None:
     _send_quotation_owner_email(db, bot, session)
     _send_quotation_visitor_email(db, bot, session)
 
-    # Visitor quotation document (priced PDF): deferred ~10 min.
+    # Visitor quotation document (priced PDF): deferred by the bot's own
+    # configured delay (admin-set; defaults to QUOTATION_EMAIL_DELAY_SECONDS).
+    catalog = _normalize(bot.quotation_catalog)
     from app.worker.enqueue import WORKER_ENABLED, enqueue_sync
 
     if WORKER_ENABLED:
@@ -804,7 +820,7 @@ def _schedule_quotation_emails(db, bot: Bot, session: ChatSession) -> None:
                 "task_send_quotation_visitor_email",
                 session.id,
                 bot.id,
-                _defer_by=timedelta(seconds=QUOTATION_EMAIL_DELAY_SECONDS),
+                _defer_by=timedelta(seconds=catalog.document_delay_seconds),
             )
             return
         except Exception:
@@ -1209,7 +1225,8 @@ def accept_quote(
         lines, total = _compute_quote(catalog, state)
         # Notify the owner immediately (full itemised quote), acknowledge to the
         # visitor immediately ("Your quote request", no pricing), and defer the
-        # priced "Your quotation" document (PDF) by ~10 min per spec.
+        # priced "Your quotation" document (PDF) by the bot's own configured
+        # delay (quotation_catalog.document_delay_seconds).
         # Best-effort; the quote is already saved, so a dispatch/scheduling
         # failure must never fail the accept. Runs as a background task so the
         # three Redis enqueues do not sit in front of the visitor's response.

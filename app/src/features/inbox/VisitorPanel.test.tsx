@@ -106,3 +106,59 @@ describe('VisitorPanel — the identified company', () => {
     expect(screen.queryByText('Their network')).toBeNull();
   });
 });
+
+/**
+ * `—` is a measurement, not a placeholder.
+ *
+ * DESIGN.md gives every absent value a dash, and `VisitorProfile.kind` already
+ * applies the limit of that rule: for an offline message, `Department`,
+ * `Assigned to` and the rest are not absent, they cannot exist, and reporting
+ * `—` for them says "we looked and found nothing" about facts nobody could
+ * have. The same reading applies to a session's own state — a live AI
+ * conversation was showing six dashes in a fifteen-row pane — so each of these
+ * rows appears exactly when it becomes answerable.
+ */
+describe('VisitorPanel — rows that cannot hold a value yet', () => {
+  it('does not ask about a rating while the conversation is still running', () => {
+    renderPanel(details({ status: 'live', visitor_rating: null }));
+    expect(screen.queryByText('Rated this chat')).toBeNull();
+  });
+
+  it('states the missing rating once the conversation has ended', () => {
+    // Now the dash is real: they were asked when it closed, and did not answer.
+    renderPanel(details({ status: 'closed', visitor_rating: null }));
+    expect(screen.getByText('Rated this chat')).toBeInTheDocument();
+  });
+
+  it('shows a rating whenever there is one, whatever the status says', () => {
+    renderPanel(details({ status: 'live', visitor_rating: 4 }));
+    expect(screen.getByText('Rated this chat')).toBeInTheDocument();
+    expect(screen.getByText('4.0')).toBeInTheDocument();
+  });
+
+  it('drops "Assigned to" until somebody has taken the conversation', () => {
+    // The pane header says "The AI is handling this" directly above the
+    // transcript, so the dash was the same fact a second time, in a weaker form.
+    renderPanel(details({ operator_name: null }));
+    expect(screen.queryByText('Assigned to')).toBeNull();
+  });
+
+  it('names the operator once there is one', () => {
+    renderPanel(details({ operator_name: 'Asha' }));
+    expect(screen.getByText('Assigned to')).toBeInTheDocument();
+    expect(screen.getByText('Asha')).toBeInTheDocument();
+  });
+
+  it('drops "Department" for a workspace that does not route by department', () => {
+    renderPanel(details({ department_name: null }));
+    expect(screen.queryByText('Department')).toBeNull();
+  });
+
+  it('still dashes a contact detail it genuinely went looking for', () => {
+    // The limit of the rule, and the reason this is not "hide every empty row".
+    // The pane tried to learn the visitor's phone number and did not, and that
+    // is worth reading. Contact details keep their dashes.
+    renderPanel(details());
+    expect(screen.getByText('Phone')).toBeInTheDocument();
+  });
+});

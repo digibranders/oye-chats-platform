@@ -219,6 +219,27 @@ export function Transcript({
     return flags;
   }, [messages]);
 
+  /**
+   * Where a person took the conversation off the AI.
+   *
+   * Nothing records it. The backend writes a system message when a chat ENDS
+   * (`ws_routes.py`) and nothing at all when an operator joins, so there is no
+   * stored marker to render — but the boundary is plain in the transcript: the
+   * first message whose role changes from `bot` to `operator`. Deriving it
+   * needs no new request, no backend change, and it works on conversations
+   * that already happened.
+   *
+   * Once, and only where an AI turn is genuinely followed by a person's. A
+   * conversation an operator answered from the first message never had a
+   * handover to mark, and a transfer between two operators is not one either.
+   */
+  const handoverAt = useMemo(() => {
+    const index = messages.findIndex(
+      (message, at) => message.role === 'operator' && messages[at - 1]?.role === 'bot',
+    );
+    return index === -1 ? null : index;
+  }, [messages]);
+
   // A run from one speaker is one block: one avatar at its top, one timestamp
   // at its foot. Four short lines from a visitor used to produce four avatars
   // and four "Visitor 14:32" lines down the left edge — which every reference
@@ -280,6 +301,7 @@ export function Transcript({
           const showsOriginal = originals[message.key] === true;
           const display = resolveDisplay(message, readerLanguage, showsOriginal);
           const mine = message.role === 'operator';
+          const ai = message.role === 'bot';
           const system = message.role === 'system';
           const groupStart = grouping.starts[index] || showDivider;
           const groupEnd = grouping.ends[index];
@@ -298,6 +320,23 @@ export function Transcript({
                 // from a number, and this is the marker that tells them whether
                 // a lead is still warm.
                 <DayDivider label={formatDayLabel(message.timestamp)} className="my-3" />
+              ) : null}
+
+              {/* Set as the same quiet centred line the `system` role uses,
+                  because that is what it is: a fact about the conversation
+                  rather than something anybody said. Without it the operator's
+                  first ink bubble simply appears, and a replayed conversation
+                  gives no clue when the visitor stopped talking to a machine.
+
+                  "A person", not a name: a transferred conversation holds two
+                  operators and the transcript does not say which sent what. */}
+              {index === handoverAt ? (
+                <p className="py-1 text-center text-2xs text-text-tertiary">
+                  {translateNow('inbox.aPersonJoined') || 'A person joined'}
+                  {message.timestamp ? (
+                    <span className="figure"> · {formatTime(message.timestamp)}</span>
+                  ) : null}
+                </p>
               ) : null}
 
               {system ? (
@@ -322,44 +361,68 @@ export function Transcript({
                       group; the rest of the run is indented past the gap. */}
                   {mine || !groupStart ? (
                     <span aria-hidden className="w-5 shrink-0" />
-                  ) : message.role === 'bot' ? (
+                  ) : ai ? (
+                    // Now that the AI's words sit on the pane rather than in
+                    // a box, this mark is the ONLY thing identifying them, so
+                    // it is drawn to be seen: `border-strong` and secondary
+                    // ink, not the decorative hairline and tertiary glyph it
+                    // could get away with while a bubble carried the identity.
                     <span
                       aria-hidden
-                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border bg-surface-sunken"
+                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border-strong bg-surface"
                     >
-                      <Bot className="h-3 w-3 text-text-tertiary" />
+                      <Bot className="h-3 w-3 text-text-secondary" />
                     </span>
                   ) : (
                     <Avatar size="xs" name={visitorName} className="shrink-0" />
                   )}
-                  <div className={cn('flex min-w-0 max-w-[min(42rem,80%)] flex-col', mine && 'items-end')}>
+                  {/* 34rem, not 42. A bubble at 42rem carries about 95
+                      characters of `text-prose`, and comfortable prose is 45
+                      to 75 — a measure the AI's answers, the longest messages
+                      on this screen, broke worst. */}
+                  <div className={cn('flex min-w-0 max-w-[min(34rem,82%)] flex-col', mine && 'items-end')}>
                     <div
                       className={cn(
-                        // `rounded-md` (8), not `rounded-lg` (10) — that is the
-                        // card radius, and a message is not a card. 8 → 4 on
-                        // the tail is a half step, which reads as a tail rather
-                        // than as a nick.
-                        'rounded-md px-3 py-2 text-prose',
-                        mine
-                          ? cn('bg-ink text-rail-text', groupEnd && 'rounded-ee-xs')
-                          : message.role === 'bot'
-                            ? cn(
-                                // The bubble is bordered as well as filled.
-                                // `--color-surface-sunken` is 1.8 L* off the
-                                // `bg-canvas` ground this transcript sits on —
-                                // under the 2.4 L* step tokens.css sets as the
-                                // floor for a felt difference — so on a support
-                                // operator's panel the AI's bubble had no edge
-                                // at all and its text read as loose type on the
-                                // pane. The hairline draws the shape; the fill
-                                // still separates it from the visitor's white.
-                                'border border-border bg-surface-sunken text-text-primary',
-                                groupEnd && 'rounded-es-xs',
-                              )
-                            : cn(
-                                'border border-border bg-surface text-text-primary',
-                                groupEnd && 'rounded-es-xs',
-                              ),
+                        'text-prose',
+                        // The AI is not a bubble.
+                        //
+                        // Three speakers were three fills: ink for the
+                        // operator, white for the visitor, and
+                        // `--color-surface-sunken` for the AI — which is 1.8
+                        // L* off the `bg-canvas` ground this sits on, under
+                        // the 2.4 L* step tokens.css sets as the floor for a
+                        // felt difference. So the AI's box barely read as a
+                        // box, and beside the visitor's white it barely read
+                        // as different. A third fill would have been answering
+                        // the wrong question: what separates a machine from a
+                        // person is not a shade, and the widget and the lead
+                        // drawer both already say so by giving the AI its
+                        // avatar and plain text instead. This is the console
+                        // agreeing with them.
+                        //
+                        // It also fixes the measure for free: text takes the
+                        // reading width above, where a bubble took a
+                        // percentage of a pane that can be 900px wide.
+                        ai
+                          ? 'text-text-primary'
+                          : cn(
+                              // `rounded-md` (8), not `rounded-lg` (10) — that
+                              // is the card radius, and a message is not a
+                              // card. 8 → 4 on the tail is a half step, which
+                              // reads as a tail rather than as a nick.
+                              'rounded-md px-3 py-2',
+                              mine
+                                ? cn('bg-ink text-rail-text', groupEnd && 'rounded-ee-xs')
+                                : cn(
+                                    // `border-strong`, not `border`. The white
+                                    // bubble used a decorative hairline that
+                                    // was doing nothing against the canvas; it
+                                    // was legible only because a grey bubble
+                                    // sat beside it, and that grey is gone.
+                                    'border border-border-strong bg-surface text-text-primary',
+                                    groupEnd && 'rounded-es-xs',
+                                  ),
+                            ),
                       )}
                     >
                       {/* The speaker, once per group, for the reader who cannot
@@ -379,7 +442,7 @@ export function Transcript({
                           markup, and reformatting an operator's own asterisks
                           would be rewriting what they typed. */}
                       {display.text ? (
-                        message.role === 'bot' ? (
+                        ai ? (
                           <Markdown dir={display.direction} className="text-prose">
                             {display.text}
                           </Markdown>

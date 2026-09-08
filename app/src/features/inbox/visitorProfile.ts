@@ -14,6 +14,18 @@ export interface VisitorProfile {
    * carry instead.
    */
   kind: 'session' | 'offline';
+  /**
+   * The conversation is over, so facts that only exist afterwards can be
+   * stated as absent rather than hidden.
+   *
+   * `Rated this chat` is the one that needs it. While a conversation is
+   * running, a rating is not missing — it is impossible, because the visitor
+   * is asked for one when the chat closes. Reporting `—` for it beside a live
+   * transcript says "we looked and found nothing" about something nobody could
+   * have. After it ends the same dash is real information: they were asked and
+   * did not answer.
+   */
+  ended: boolean;
   name: string;
   email: string | null;
   phone: string | null;
@@ -77,6 +89,9 @@ export function profileFromSession(details: SessionDetails, fallbackName: string
   const lead = details.lead_info;
   return {
     kind: 'session',
+    // `closed` is the terminal status the backend writes; `bot`, `waiting` and
+    // `live` are all still running.
+    ended: details.status === 'closed',
     name: lead?.name?.trim() || fallbackName,
     email: lead?.email ?? null,
     phone: lead?.phone ?? null,

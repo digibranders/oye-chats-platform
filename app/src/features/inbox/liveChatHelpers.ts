@@ -65,7 +65,16 @@ export function parseHistoryMessage(m: ChatMessage): OperatorMessage {
     dbId: typeof m.id === 'number' ? m.id : null,
     role: m.role,
     content,
-    timestamp: m.created_at ?? null,
+    // `timestamp` first, because `GET /chat/history` — the only endpoint that
+    // feeds this parser — is what sends it. Reading `created_at` alone gave
+    // every restored message a null clock, which silently switched off the
+    // four things keyed off it: the time under a message, day dividers,
+    // run grouping (it compares two timestamps and reads a null pair as a
+    // change of speaker, so every message got its own avatar) and "Seen".
+    // `created_at` is kept as the fallback because the lead endpoint sends
+    // that name and the lead drawer has always accepted both; one shape
+    // across the two consoles is what stops them disagreeing again.
+    timestamp: m.timestamp ?? m.created_at ?? null,
     // Carried through so a page refresh does not drop every translation. The
     // socket delivers these live, but history is what rebuilds the thread on
     // reload and on reconnect, so both paths must produce the same view model.

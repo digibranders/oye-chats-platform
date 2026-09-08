@@ -269,6 +269,16 @@ class TestCatalogValidation:
                 services=[{"id": "s1", "name": "x", "requirements": [{"id": "r1", "label": "a", "price": -1}]}]
             )
 
+    def test_document_delay_defaults_to_the_platform_constant(self):
+        cat = QuotationCatalog.model_validate({"services": []})
+        assert cat.document_delay_seconds == quotation_routes.QUOTATION_EMAIL_DELAY_SECONDS
+
+    def test_document_delay_seconds_out_of_range_rejected(self):
+        with pytest.raises(ValueError):
+            QuotationCatalog(document_delay_seconds=-1, services=[])
+        with pytest.raises(ValueError):
+            QuotationCatalog(document_delay_seconds=86401, services=[])
+
     def test_choice_requirement_needs_options(self):
         with pytest.raises(ValueError):
             QuotationCatalog(
@@ -821,6 +831,25 @@ class TestAdminCatalogCrud:
             assert body["services"][0]["requirements"][0]["price"] == 8000.0
             assert body["services"][0]["requirements"][1]["quantity"] == 3
 
+    def test_document_delay_seconds_roundtrips(self, db):
+        client = _make_client(db, email="a4@example.com", api_key="a4")
+        bot = _make_bot(db, client.id, bot_key="bot-a4")
+        api = _client_api(_app(), client)
+        with _patch_session(db):
+            r = api.put(f"/bots/{bot.id}/quotation-catalog", json=_catalog(document_delay_seconds=1800))
+            assert r.status_code == 200
+            assert r.json()["document_delay_seconds"] == 1800
+            r = api.get(f"/bots/{bot.id}/quotation-catalog")
+            assert r.json()["document_delay_seconds"] == 1800
+
+    def test_document_delay_seconds_out_of_range_is_a_422(self, db):
+        client = _make_client(db, email="a5@example.com", api_key="a5")
+        bot = _make_bot(db, client.id, bot_key="bot-a5")
+        api = _client_api(_app(), client)
+        with _patch_session(db):
+            r = api.put(f"/bots/{bot.id}/quotation-catalog", json=_catalog(document_delay_seconds=86401))
+            assert r.status_code == 422
+
     def test_cross_tenant_404(self, db):
         owner = _make_client(db, email="a3@example.com", api_key="a3")
         other = _make_client(db, email="a3b@example.com", api_key="a3b")
@@ -1042,6 +1071,47 @@ class TestQuotationEmailScheduling:
         assert name == "task_send_quotation_visitor_email"
         assert args == ("sch1s", bot.id)
         assert kwargs["_defer_by"] == timedelta(seconds=quotation_routes.QUOTATION_EMAIL_DELAY_SECONDS)
+
+    def test_document_email_deferred_by_the_bots_own_configured_delay(self, db, monkeypatch):
+        from datetime import timedelta
+
+        import app.worker.enqueue as enqueue_mod
+
+        client = _make_client(db, email="sch3@example.com", api_key="sch3")
+        bot = _make_bot(
+            db,
+            client.id,
+            bot_key="bot-sch3",
+            catalog=_catalog(document_delay_seconds=120),
+            notification_email="owner@acme.com",
+        )
+        _make_session(
+            db,
+            session_id="sch3s",
+            bot_id=bot.id,
+            client_id=client.id,
+            need=1,
+            budget=1,
+            quotation_state=dict(_QUOTING_STATE),
+        )
+        _make_message(db, session_id="sch3s")
+        _make_lead(db, session_id="sch3s", bot_id=bot.id, email="jason@buyer.com", name="Jason")
+
+        calls = []
+        monkeypatch.setattr(enqueue_mod, "WORKER_ENABLED", True)
+        monkeypatch.setattr(enqueue_mod, "enqueue_sync", lambda name, *a, **kw: calls.append((name, a, kw)))
+        monkeypatch.setattr(quotation_routes.email_service, "send_quotation_visitor_email", lambda *a, **k: None)
+        monkeypatch.setattr(quotation_routes.email_service, "send_quotation_document_email", lambda *a, **k: None)
+        monkeypatch.setattr(quotation_routes.email_service, "send_quotation_client_email", lambda *a, **k: None)
+
+        api = _bot_api(_app(), bot)
+        with _patch_session(db):
+            api.post("/chat/quotation/accept", json={"session_id": "sch3s"})
+
+        assert len(calls) == 1
+        _, args, kwargs = calls[0]
+        assert args == ("sch3s", bot.id)
+        assert kwargs["_defer_by"] == timedelta(seconds=120)
 
     def test_document_dispatch_helper_sends_only_document(self, db, monkeypatch):
         calls = {"visitor": [], "document": [], "client": []}

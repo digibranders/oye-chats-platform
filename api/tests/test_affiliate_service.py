@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import Affiliate, AffiliateInvite, Base, Client, ReferralClick, ReferralCode
 from app.services import affiliate_service as svc
+from tests.throwaway_db import drop_stale, throwaway_db_name
 
 # ── Throwaway-database fixtures ──────────────────────────────────────────────
 
@@ -58,10 +59,11 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture(scope="module")
 def pg_engine():
     """Create a dedicated test database, build the schema, drop it afterwards."""
-    test_db = f"{_BASE_URL.database}{_TEST_DB_SUFFIX}"
+    test_db = throwaway_db_name(_BASE_URL.database, _TEST_DB_SUFFIX)
 
     admin = create_engine(_BASE_URL, isolation_level="AUTOCOMMIT")
     with admin.connect() as conn:
+        drop_stale(conn, _BASE_URL.database, _TEST_DB_SUFFIX)
         conn.execute(sa.text(f'DROP DATABASE IF EXISTS "{test_db}"'))
         conn.execute(sa.text(f'CREATE DATABASE "{test_db}"'))
 
