@@ -16,22 +16,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+// `getHeaders` reads the bot key off `window`, and `getApiUrl` runs at import
+// time, so both must exist before `api.js` is loaded. Matches the setup in
+// sendMessageStream.test.js.
+globalThis.window = globalThis.window || {};
+globalThis.window.OYECHATS_BOT_KEY = 'bot-test';
+globalThis.localStorage = globalThis.localStorage || {
+    getItem: () => null,
+    setItem: () => {},
+    removeItem: () => {},
+};
+
 async function captureHandoffBody(formData) {
     const calls = [];
-    global.fetch = (url, options) => {
+    const original = globalThis.fetch;
+    globalThis.fetch = (url, options) => {
         calls.push({ url: String(url), body: JSON.parse(options.body) });
         return Promise.resolve({
             ok: true,
             json: () => Promise.resolve({ suggested_action: 'route' }),
         });
     };
-    // `getHeaders` reads the bot key off `window`, and `getApiUrl` runs at
-    // import time, so both have to exist before the module is loaded.
-    global.window = { OYECHATS_BOT_KEY: 'bot-test', location: { origin: 'https://example.com' } };
-    global.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
 
-    const { requestHandoff } = await import('./api.js');
-    await requestHandoff('session-1', formData);
+    try {
+        const { requestHandoff } = await import('./api.js');
+        await requestHandoff('session-1', formData);
+    } finally {
+        globalThis.fetch = original;
+    }
 
     return calls.find((c) => c.url.includes('/operators/handoff'));
 }
