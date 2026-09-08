@@ -39,6 +39,44 @@ from app.services import live_chat_availability_service as availability
 logger = logging.getLogger(__name__)
 
 
+#: Why a session is in the queue. The lobby card maps each of these to a
+#: phrase, so a value outside the set would reach an operator as no explanation
+#: at all. Refused rather than stored.
+REQUEUE_REASONS = frozenset({"handoff", "transfer", "operator_dropped"})
+
+
+def mark_session_waiting(chat_session: ChatSession, *, reason: str) -> None:
+    """Put a session in the waiting queue and start its clock.
+
+    The single writer of ``waiting_since``. Five call sites across three
+    modules set ``status = "waiting"``; stamping by hand at each of them
+    invites the sixth to forget, and a missing stamp is indistinguishable on
+    the operator's lobby card from a visitor who has only just arrived. That is
+    the exact failure this column exists to fix.
+
+    A session that is already waiting AND already stamped keeps its original
+    time. Re-stamping would reset the wait of somebody who has been sitting
+    there for four minutes, which is the one number the operator is deciding
+    on. A session waiting without a stamp -- every row that predates the
+    column -- does get one.
+
+    Callers that genuinely start a new wait for an already-waiting session, a
+    department transfer being the only one, clear ``waiting_since`` first.
+
+    There is deliberately no ``clear_session_waiting``. A session leaving the
+    queue becomes ``live``, the guard below keys on ``status``, so the next
+    queueing stamps it again. A stale timestamp on a live session is read by
+    nothing.
+    """
+    if reason not in REQUEUE_REASONS:
+        raise ValueError(f"unknown requeue reason: {reason!r} (expected one of {sorted(REQUEUE_REASONS)})")
+    if chat_session.status == "waiting" and chat_session.waiting_since is not None:
+        return
+    chat_session.status = "waiting"
+    chat_session.waiting_since = datetime.now(UTC)
+    chat_session.requeue_reason = reason
+
+
 # ── Data types ─────────────────────────────────────────────────────────────
 
 
@@ -100,10 +138,13 @@ def enqueue(session_id: str, bot_id: int, db_session: Session) -> QueueEnqueueRe
     db_session.commit()
     db_session.refresh(entry)
 
-    # Mark session as waiting so the existing ConnectionManager picks it up
+    # Mark session as waiting so the existing ConnectionManager picks it up.
+    # The old ``status != "waiting"`` guard lives inside the helper now, which
+    # also checks the stamp, so a session already waiting but never stamped
+    # (every row that predates the column) finally gets a clock.
     chat_session = db_session.get(ChatSession, session_id)
-    if chat_session is not None and chat_session.status != "waiting":
-        chat_session.status = "waiting"
+    if chat_session is not None:
+        mark_session_waiting(chat_session, reason="handoff")
         db_session.commit()
 
     # Bust the availability cache, the queue size just changed.
