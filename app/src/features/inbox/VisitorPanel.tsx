@@ -263,9 +263,28 @@ export function VisitorPanel({
       });
       return rows;
     }
+    // Three of these are conditional, and the reason is the one already
+    // written on `VisitorProfile.kind`: `—` means "we looked and found
+    // nothing", so a row that CANNOT hold a value in the current state is not
+    // an absent value, it is a slot nobody could ever fill. Six of about
+    // fifteen rows in this pane were dashes on a live AI conversation, which
+    // is a lot of ink spent saying nothing.
+    //
+    // The distinction is per state, not per field: each of these comes back
+    // the moment it becomes answerable.
+    if (profile.departmentName) {
+      // Absent means one of two things — this workspace routes by department
+      // and this conversation was not routed, or it does not use departments
+      // at all — and the pane cannot tell which. Most workspaces are the
+      // second, so a permanent dash is the likelier reading of a shown row.
+      rows.push({ label: t('inbox.department') || 'Department', value: profile.departmentName });
+    }
+    if (profile.operatorName) {
+      // Nobody has taken it. The pane header already says so, in words, above
+      // the transcript: "Waiting for a person", "The AI is handling this".
+      rows.push({ label: t('inbox.assignedTo') || 'Assigned to', value: profile.operatorName });
+    }
     rows.push(
-      { label: t('inbox.department') || 'Department', value: profile.departmentName },
-      { label: t('inbox.assignedTo') || 'Assigned to', value: profile.operatorName },
       { label: t('inbox.started') || 'Started', value: profile.startedAt ? formatDateTime(profile.startedAt) : null },
       {
         label: t('inbox.lastActive') || 'Last active',
@@ -275,7 +294,12 @@ export function VisitorPanel({
         label: t('inbox.messages') || 'Messages',
         value: profile.messageCount != null ? formatNumber(profile.messageCount) : null,
       },
-      {
+    );
+    // A rating is asked for when the chat closes, so before that it is not
+    // missing, it is impossible. Afterwards the dash is real: they were asked
+    // and did not answer.
+    if (profile.ended || profile.rating != null) {
+      rows.push({
         label: t('inbox.ratedThisChat') || 'Rated this chat',
         value:
           profile.rating != null ? (
@@ -284,8 +308,8 @@ export function VisitorPanel({
               <span className="text-text-tertiary"> {t('inbox.outOf5') || 'out of 5'}</span>
             </>
           ) : null,
-      },
-    );
+      });
+    }
     return rows;
   }, [profile, t]);
 

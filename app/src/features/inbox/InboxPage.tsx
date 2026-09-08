@@ -377,6 +377,9 @@ function InboxConsole({ botId, operator, liveChat, planLoading }: ConsoleProps) 
       if (!record) return null;
       return {
         kind: 'offline',
+        // A message left through the form is finished by definition; there is
+        // no live half of it to wait for.
+        ended: true,
         name: selected.name,
         email: record.visitor_email ?? null,
         phone: record.visitor_phone ?? null,
