@@ -268,7 +268,7 @@ export default {
             name_placeholder: 'Adınız',
             phone_placeholder: 'Telefon numarası (isteğe bağlı)',
             submit: 'Mesajı gönder',
-            continue_with_ai: 'Bunun yerine yapay zekâ ile devam et',
+            continue_with_ai: 'Sohbete geri dön',
             sent_title: 'Mesaj gönderildi!',
             reply_by_email: 'En kısa sürede e-posta ile yanıt vereceğiz.',
             not_now: 'Şimdi değil',
@@ -352,7 +352,7 @@ export default {
             actions_aria: 'Mesaj işlemleri',
             connect_team_aria: 'Ekibimize bağlan',
             want_to_talk: 'Ekibimizle görüşmek ister misiniz?',
-            continue_with_ai: 'Yapay zekâ ile devam et',
+            continue_with_ai: 'Sohbete geri dön',
             open_service_title: 'Hizmet sayfasını aç',
         },
         language: {

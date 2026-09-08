@@ -268,7 +268,7 @@ export default {
             name_placeholder: 'お名前',
             phone_placeholder: '電話番号（任意）',
             submit: 'メッセージを送信',
-            continue_with_ai: 'AIとの会話を続ける',
+            continue_with_ai: 'チャットに戻る',
             sent_title: 'メッセージを送信しました。',
             reply_by_email: 'できるだけ早くメールでご返信いたします。',
             not_now: '今はしない',
@@ -352,7 +352,7 @@ export default {
             actions_aria: 'メッセージの操作',
             connect_team_aria: '担当チームにつなぐ',
             want_to_talk: '担当者とお話しになりますか。',
-            continue_with_ai: 'AIとの会話を続ける',
+            continue_with_ai: 'チャットに戻る',
             open_service_title: 'サービスページを開く',
         },
         language: {

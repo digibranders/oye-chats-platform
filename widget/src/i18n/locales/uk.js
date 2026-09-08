@@ -268,7 +268,7 @@ export default {
             name_placeholder: 'Ваше імʼя',
             phone_placeholder: 'Номер телефону (необовʼязково)',
             submit: 'Надіслати повідомлення',
-            continue_with_ai: 'Продовжити зі ШІ',
+            continue_with_ai: 'Повернутися до чату',
             sent_title: 'Повідомлення надіслано!',
             reply_by_email: 'Ми відповімо електронною поштою якнайшвидше.',
             not_now: 'Не зараз',
@@ -352,7 +352,7 @@ export default {
             actions_aria: 'Дії з повідомленням',
             connect_team_aria: 'Звʼязатися з нашою командою',
             want_to_talk: 'Хочете поговорити з нашою командою?',
-            continue_with_ai: 'Продовжити зі ШІ',
+            continue_with_ai: 'Повернутися до чату',
             open_service_title: 'Відкрити сторінку послуги',
         },
         language: {
