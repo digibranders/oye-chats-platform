@@ -269,6 +269,16 @@ class TestCatalogValidation:
                 services=[{"id": "s1", "name": "x", "requirements": [{"id": "r1", "label": "a", "price": -1}]}]
             )
 
+    def test_document_delay_defaults_to_the_platform_constant(self):
+        cat = QuotationCatalog.model_validate({"services": []})
+        assert cat.document_delay_seconds == quotation_routes.QUOTATION_EMAIL_DELAY_SECONDS
+
+    def test_document_delay_seconds_out_of_range_rejected(self):
+        with pytest.raises(ValueError):
+            QuotationCatalog(document_delay_seconds=-1, services=[])
+        with pytest.raises(ValueError):
+            QuotationCatalog(document_delay_seconds=86401, services=[])
+
     def test_choice_requirement_needs_options(self):
         with pytest.raises(ValueError):
             QuotationCatalog(

@@ -269,6 +269,15 @@ class QuotationCatalog(BaseModel):
     currency: str = "INR"
     required_categories: list[str] = Field(default_factory=list)
     threshold: int = Field(default=2, ge=1, le=4)
+    # How long after `accept` the priced "Your quotation" document email is
+    # deferred. The owner notification and the visitor's plain acknowledgement
+    # ("Your quote request") both fire immediately regardless of this value —
+    # only the priced document follows the delay. Defaults to the
+    # platform-wide QUOTATION_EMAIL_DELAY_SECONDS so every bot saved before
+    # this field existed keeps its current behaviour unchanged. 0 sends the
+    # document alongside the other two; 86400 (24h) is the admin UI's outer
+    # bound.
+    document_delay_seconds: int = Field(default=QUOTATION_EMAIL_DELAY_SECONDS, ge=0, le=86400)
     services: list[Service] = Field(default_factory=list)
 
     @field_validator("currency")
