@@ -136,6 +136,7 @@ def is_origin_allowed(
     allowed: list[str],
     *,
     app_env: str | None = None,
+    own_host: str | None = None,
 ) -> bool:
     """Decide whether ``hostname`` is permitted by the bot's ``allowed`` list.
 
@@ -144,6 +145,23 @@ def is_origin_allowed(
     ``localhost``/``127.0.0.1`` are auto-allowed in non-production environments
     so customers don't have to add them while testing locally; production never
     auto-allows -- they must opt in explicitly.
+
+    ``own_host`` is OUR own host, and it is always allowed. The API serves the
+    hosted demo page (``GET /demo/{bot_key}``, the "Share a link instead" URL on
+    Deploy), so a widget on that page reports the API as its origin. Without
+    this the demo link was broken for every bot with an allowlist -- which, since
+    ``create_bot`` defaults ``domain_check_enabled`` on and derives a list from
+    the customer's website, is very nearly every bot. The config call 403'd, the
+    widget fell back to "OyeChats AI" with the default avatar and greeting, and
+    the live-chat socket closed 4403, so nobody could reach a person from it
+    either.
+
+    It admits nothing a browser could not already reach. The allowlist only ever
+    defended against a browser embedding the widget on a foreign site, because a
+    non-browser client sets whatever ``Origin`` it likes and could always forge
+    an allowed customer domain. A browser on evil.com cannot claim to be
+    ``api.oyechats.com``. WHICH site the demo page is allowed to frame is a
+    separate guard (``_demo_url_belongs_to_bot``) and is unchanged.
 
     An exact entry additionally matches its ``www.`` host (``acme.com`` admits
     ``www.acme.com``), because entries are stored ``www.``-stripped and the
@@ -155,6 +173,11 @@ def is_origin_allowed(
     host = hostname.strip().lower()
     if not host:
         return False
+
+    if own_host:
+        our_host = own_host.strip().lower()
+        if our_host and host == our_host:
+            return True
 
     env = (app_env if app_env is not None else os.getenv("APP_ENV", "development")).lower()
     if host in _LOCAL_HOSTS and env != "production":

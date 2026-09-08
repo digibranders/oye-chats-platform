@@ -23,9 +23,17 @@ def _bot(*, enabled: bool, domains: list[str]) -> SimpleNamespace:
     )
 
 
-def _request(headers: dict[str, str]) -> MagicMock:
+def _request(headers: dict[str, str], *, base_url: str = "https://api.oyechats.com/") -> MagicMock:
+    """A widget request. ``base_url`` is OUR host, which serves the demo page.
+
+    Defaulted to a real value rather than left as a ``MagicMock`` attribute so
+    every test states the host it is being served from: the check now treats
+    that host as allowed, and a test whose own host is unreadable would pass for
+    the wrong reason.
+    """
     req = MagicMock()
     req.headers = headers
+    req.base_url = base_url
     return req
 
 
@@ -131,3 +139,48 @@ def test_stale_cache_bot_without_new_attrs_is_treated_as_disabled():
     # cached widgets do not start failing the moment the new code rolls out.
     legacy = SimpleNamespace(id=1)  # no domain_check_enabled attr at all
     _enforce_bot_origin(legacy, _request({"origin": "https://anywhere.com"}))
+
+
+# ---------------------------------------------------------------------------
+# The hosted demo page.
+#
+# ``GET /demo/{bot_key}`` is served BY THE API, so a widget on it reports the
+# API as its origin. That host is in nobody's allowlist, so the config call
+# 403'd: the widget fell back to "OyeChats AI" with the default avatar and
+# greeting instead of the customer's branding, and the live-chat socket closed
+# 4403 so nobody could reach a person from it. Since ``create_bot`` defaults
+# ``domain_check_enabled`` on and derives a list from the customer's website,
+# that was very nearly every bot, and the "Share a link instead" URL printed on
+# Deploy was broken for all of them.
+# ---------------------------------------------------------------------------
+
+
+def test_our_own_host_is_allowed_so_the_demo_page_works():
+    bot = _bot(enabled=True, domains=["eventussecurity.com"])
+    request = _request(
+        {"origin": "https://api.oyechats.com"},
+        base_url="https://api.oyechats.com/",
+    )
+    _enforce_bot_origin(bot, request)  # no exception
+
+
+def test_our_own_host_is_matched_exactly_not_as_a_suffix():
+    # The exemption is an equality test. A host that merely ENDS with ours is a
+    # domain somebody else can register.
+    bot = _bot(enabled=True, domains=["eventussecurity.com"])
+    for forged in ("api.oyechats.com.evil.com", "evil-api.oyechats.com.co", "notapi.oyechats.com"):
+        request = _request({"origin": f"https://{forged}"}, base_url="https://api.oyechats.com/")
+        with pytest.raises(HTTPException) as excinfo:
+            _enforce_bot_origin(bot, request)
+        assert excinfo.value.status_code == 403
+
+
+def test_a_foreign_site_is_still_refused_while_the_demo_works():
+    # The exemption must not become a general fail-open: the whole point of the
+    # allowlist is that a browser on somebody else's site cannot boot this
+    # widget, and a browser cannot claim to be our host.
+    bot = _bot(enabled=True, domains=["eventussecurity.com"])
+    request = _request({"origin": "https://evil.com"}, base_url="https://api.oyechats.com/")
+    with pytest.raises(HTTPException) as excinfo:
+        _enforce_bot_origin(bot, request)
+    assert excinfo.value.status_code == 403
