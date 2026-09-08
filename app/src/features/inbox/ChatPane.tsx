@@ -460,7 +460,11 @@ export function ChatPane({
       ) : (
         <div className="shrink-0 border-t border-border bg-surface px-cell py-3 text-xs text-text-secondary">
           {item.kind === 'qualified'
-            ? t('inbox.youAreWatchingTheAi') || 'You are watching the AI answer. Offer to take over to start replying yourself.'
+            ? // Says what this strip is for and nothing else. It used to add
+              // "Offer to take over to start replying yourself", which is the
+              // header's own sentence ("The AI is handling this") followed by
+              // the label on the button sitting a few pixels above it.
+              t('inbox.youAreWatchingTheAi') || 'The AI is answering. You are watching.'
             : t('inbox.thisConversationIsClosed') || 'This conversation is closed.'}
         </div>
       )}

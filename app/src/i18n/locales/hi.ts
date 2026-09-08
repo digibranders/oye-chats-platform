@@ -992,7 +992,7 @@ const hi = {
     useThisTab: 'इसी टैब का उपयोग करें',
     youAreNotTakingChats: 'आप चैट नहीं ले रहे हैं',
     youAreNowTalkingTo: 'अब आप {name} से बात कर रहे हैं',
-    youAreWatchingTheAi: 'आप AI को उत्तर देते देख रहे हैं। स्वयं उत्तर देना शुरू करने के लिए बातचीत संभालने की पेशकश करें।',
+    youAreWatchingTheAi: 'AI उत्तर दे रहा है। आप देख रहे हैं।',
     youCanNowTakeLive: 'अब आप लाइव चैट ले सकते हैं',
     youHandedThisConversationTo: 'आपने यह बातचीत {who} को सौंप दी। जब तक आप इनबॉक्स से बाहर नहीं जाते, प्रतिलेख यहीं रहेगा।',
     yourInvitationExpired: '{who} को भेजा गया आपका निमंत्रण समाप्त हो गया',

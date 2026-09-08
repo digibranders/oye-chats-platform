@@ -2309,7 +2309,7 @@ const en = {
     useThisTab: 'Use this tab',
     youAreNotTakingChats: 'You are not taking chats',
     youAreNowTalkingTo: 'You are now talking to {name}',
-    youAreWatchingTheAi: 'You are watching the AI answer. Offer to take over to start replying yourself.',
+    youAreWatchingTheAi: 'The AI is answering. You are watching.',
     youCanNowTakeLive: 'You can now take live chats',
     youHandedThisConversationTo: 'You handed this conversation to {who}. The transcript stays here until you leave the inbox.',
     yourInvitationExpired: 'Your invitation to {who} expired',

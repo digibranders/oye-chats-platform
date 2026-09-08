@@ -2293,7 +2293,7 @@ const ar = {
     useThisTab: "استخدم علامة التبويب هذه",
     youAreNotTakingChats: "أنت لا تستقبل محادثات الآن",
     youAreNowTalkingTo: "أنت الآن تتحدث مع {name}",
-    youAreWatchingTheAi: "أنت تشاهد رد الروبوت الآن. اعرض تولّي المحادثة لتبدأ بالرد بنفسك.",
+    youAreWatchingTheAi: "الروبوت يرد الآن، وأنت تشاهد.",
     youCanNowTakeLive: "يمكنك الآن استقبال الدردشات المباشرة",
     youHandedThisConversationTo: "لقد حوّلت هذه المحادثة إلى {who}. يبقى النص الكامل هنا إلى أن تغادر صندوق الوارد.",
     yourInvitationExpired: "انتهت صلاحية دعوتك إلى {who}",
