@@ -16,14 +16,12 @@ import {
 } from '../../ui';
 import { Link } from 'react-router-dom';
 import { addSelfAsOperator, getCannedResponses } from '../../services/api';
-import { useEntitlements } from '../../hooks/useEntitlements';
 import { useBotContext } from '../../context/BotContext';
 import { useSelectedBotPlanSlug } from '../../hooks/useSelectedBotPlanSlug';
 import { planIncludesVisitorIntelligence } from '../../lib/planGates';
 import type { CannedResponse } from '../../types/domain';
 import { ChatPane } from './ChatPane';
 import { ConversationList } from './ConversationList';
-import { InboxSocketProvider } from './InboxSocketContext';
 import { useInboxSocket } from './inboxSocket';
 import { OperatorLanguagePicker } from './OperatorLanguagePicker';
 import { MessagePane } from './MessagePane';
@@ -31,7 +29,9 @@ import { SnippetsDrawer } from './SnippetsDrawer';
 import { VisitorPanel } from './VisitorPanel';
 import { profileFromSession, type VisitorProfile } from './visitorProfile';
 import { useOfflineMessages } from './useOfflineMessages';
-import { useOperatorStatus, type OperatorStatusState } from './useOperatorStatus';
+import type { OperatorStatusState } from './useOperatorStatus';
+import { useGoOnDutyOnArrival } from '../../shell/useGoOnDutyOnArrival';
+import { useOperatorPresence } from '../../shell/operatorPresenceContext';
 import { useQualifiedSessions, useSessionDetails } from './inboxQueries';
 import {
   DEFAULT_INBOX_VIEW,
@@ -100,36 +100,29 @@ function parseView(raw: string | null): InboxView {
 /**
  * The inbox.
  *
- * One page, one socket, one list. The socket is mounted here — above everything
- * that can change — because the connection corresponds to "this operator is at
- * their desk", not to whichever panel happens to be rendered. The console this
- * replaces mounted it inside a conditionally-rendered tab, so switching to
- * Messages closed `/ws/operator` and discarded every transcript, unread count,
- * presence flag and typing state on the board, mid-conversation.
+ * One list, onto one connection it no longer owns. The socket used to be
+ * mounted here, on the reasoning that the page corresponds to "this operator is
+ * at their desk". It does not: an operator reading a lead or a bill has not
+ * stood up. Owning it here meant navigating away closed `/ws/operator`, and
+ * sixty seconds later the server marked them offline and re-queued their live
+ * conversations, while this console still displayed "Taking chats". It lives in
+ * `OperatorPresenceProvider` now, above the router.
  */
 export function InboxPage() {
   const { selectedBot } = useBotContext();
   const botId = selectedBot?.id;
-  const { hasFeature, loading: planLoading } = useEntitlements();
-  const liveChat = hasFeature('live_chat');
-  // `enableOnMount`: opening the inbox is the act of sitting down at it. See
-  // the option's own note for why it can only fire once per visit.
-  const operator = useOperatorStatus(liveChat ? botId : undefined, { enableOnMount: true });
-
-  // Connect only when this operator is genuinely on duty. A socket opened while
-  // they are away routes visitors to a desk nobody is sitting at.
-  const connect = liveChat && !operator.unavailable && operator.isOnline;
-
-  // Having an operator seat is not the same as being at the desk. The
-  // self-service reads that DESCRIBE the operator — their working language —
-  // are theirs whether or not they are taking chats right now, so they are
-  // gated on this rather than on the live connection.
-  const isOperator = liveChat && !operator.loading && !operator.unavailable;
+  const operator = useOperatorPresence();
+  // Opening the inbox IS the act of sitting down at it, so it is still the
+  // gesture that puts an operator on duty. See the hook for why it fires once.
+  useGoOnDutyOnArrival(operator);
 
   return (
-    <InboxSocketProvider enabled={connect} isOperator={isOperator}>
-      <InboxConsole botId={botId} operator={operator} liveChat={liveChat} planLoading={planLoading} />
-    </InboxSocketProvider>
+    <InboxConsole
+      botId={botId}
+      operator={operator}
+      liveChat={operator.liveChat}
+      planLoading={operator.planLoading}
+    />
   );
 }
 

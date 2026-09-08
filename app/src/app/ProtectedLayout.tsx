@@ -9,6 +9,7 @@ import { CurrencyProvider } from '../context/CurrencyContext';
 import { NotificationProvider } from '../context/NotificationContext';
 import { EntitlementsProvider } from '../context/EntitlementsContext';
 import { UpgradeModalProvider } from '../context/UpgradeModalContext';
+import { OperatorPresenceProvider } from '../shell/OperatorPresence';
 import { sessionNeedsEmailVerification, verifyUrlWithNext } from './emailVerificationGate';
 import { VerificationReconciler } from './VerificationReconciler';
 
@@ -65,7 +66,14 @@ export function ProtectedLayout() {
             <NotificationProvider>
               <EntitlementsProvider>
                 <UpgradeModalProvider>
-                  <Outlet />
+                  {/* Below `EntitlementsProvider` and `BotProvider`, which it
+                      reads, and above the router, so an operator holds their
+                      connection wherever they navigate. See
+                      `OperatorPresence` for why that is presence rather than
+                      convenience. */}
+                  <OperatorPresenceProvider>
+                    <Outlet />
+                  </OperatorPresenceProvider>
                 </UpgradeModalProvider>
               </EntitlementsProvider>
             </NotificationProvider>

@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { HelpCircle, LogOut, MessageSquarePlus, User } from 'lucide-react';
+import { Activity, HelpCircle, LogOut, User } from 'lucide-react';
 import {
   Avatar,
   MenuContent,
@@ -103,18 +103,16 @@ export function AccountMenu({
         </MenuItem>
         <MenuSeparator />
         <MenuItem
-          icon={<MessageSquarePlus aria-hidden />}
-          onSelect={() =>
-            window.open('https://www.oyechats.com/contact', '_blank', 'noopener')
-          }
-        >
-          {t('shell.sendFeedback') || 'Send feedback'}
-        </MenuItem>
-        <MenuItem
           icon={<HelpCircle aria-hidden />}
           onSelect={() => window.open('https://www.oyechats.com/docs', '_blank', 'noopener')}
         >
           {t('shell.helpAndDocs') || 'Help and docs'}
+        </MenuItem>
+        <MenuItem
+          icon={<Activity aria-hidden />}
+          onSelect={() => window.open('https://status.oyechats.com', '_blank', 'noopener')}
+        >
+          {t('shell.statusPage') || 'System status'}
         </MenuItem>
         <MenuSeparator />
         <MenuItem icon={<LogOut aria-hidden />} onSelect={signOut}>

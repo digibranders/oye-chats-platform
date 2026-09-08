@@ -1,19 +1,20 @@
 import { useCallback, useEffect, useState, type ReactElement } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { MessageCircle } from 'lucide-react';
+import { RailItem } from '../ui';
 import { FeedbackModal, type FeedbackTab } from './feedback/FeedbackModal';
+import { navLabel } from './navCopy';
 import { useTranslation } from '../i18n/useTranslation';
 
 /**
- * The right-edge "Feedback" tab (desktop-only) that opens the admin →
- * OyeChats product-feedback modal. Mounted once in `AppShell`, so it appears
- * on every authenticated page.
- *
- * `md:flex` rather than a JS viewport check: a fixed vertical tab at 375px
- * would sit over live content with nowhere to go, so it is a CSS-only
- * breakpoint rather than a component that mounts and unmounts.
+ * The rail's "Feedback" row, directly above Billing. It opens the admin →
+ * OyeChats product-feedback modal — the in-app one, with a "my feedback" tab
+ * and status tracking. This used to be a fixed pill on the right edge of every
+ * page; that surface was mounted globally in `AppShell` and read like it lived
+ * outside the product it was reporting on, so it is a rail row like every
+ * other destination now.
  */
-export function FeedbackLauncher(): ReactElement {
+export function FeedbackRailItem({ collapsed }: { collapsed: boolean }): ReactElement {
   const { t } = useTranslation();
   const location = useLocation();
   const navigate = useNavigate();
@@ -50,24 +51,12 @@ export function FeedbackLauncher(): ReactElement {
 
   return (
     <>
-      <button
-        type="button"
+      <RailItem
+        label={navLabel(t('shell.feedback.label') || 'Feedback')}
+        collapsed={collapsed}
         onClick={openLauncher}
-        aria-label={t('shell.feedback.send') || 'Send feedback'}
-        title={t('shell.feedback.send') || 'Send feedback'}
-        // `--z-topbar`, not `--z-overlay`: this button is permanent chrome, not
-        // a transient surface, and it must sit under the scrim the moment any
-        // dialog opens — including its own.
-        className="fixed end-0 top-1/2 z-[var(--z-topbar)] hidden w-11 -translate-y-1/2 flex-col items-center justify-center gap-3.5 rounded-s-lg bg-accent-500 py-6 text-text-inverse shadow-md transition-colors hover:bg-accent-600 focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--color-accent-700)] md:flex"
-      >
-        <MessageCircle aria-hidden className="h-icon-sm w-icon-sm" />
-        <span
-          className="select-none whitespace-nowrap text-sm font-semibold tracking-eyebrow"
-          style={{ writingMode: 'vertical-lr', transform: 'rotate(360deg)' }}
-        >
-          {t('shell.feedback.label') || 'Feedback'}
-        </span>
-      </button>
+        glyph={<MessageCircle aria-hidden className="h-icon-md w-icon-md" />}
+      />
 
       {/* Remounting on tab-change (via `key`) means a fresh instance always
           opens with the requested tab pre-selected, instead of syncing

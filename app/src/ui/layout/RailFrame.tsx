@@ -79,7 +79,8 @@ export function RailFrame({ header, footer, children, navLabel, className }: Rai
 }
 
 export interface RailItemProps {
-  to: string;
+  /** The destination path. Omit when `onClick` is given instead. */
+  to?: string;
   label: string;
   /** Any glyph — an icon, a health dot, a progress ring. Always boxed. */
   glyph: ReactNode;
@@ -100,6 +101,12 @@ export interface RailItemProps {
   /** Closes the mobile drawer. */
   onNavigate?: () => void;
   className?: string;
+  /**
+   * Renders a `<button>` in the same row shape instead of a link — for a row
+   * that opens something in place (a modal) rather than navigating to a route.
+   * Mutually exclusive with `to`; when given, `to`/`end`/`active` are ignored.
+   */
+  onClick?: () => void;
 }
 
 /** A destination in the rail. */
@@ -113,6 +120,7 @@ export function RailItem({
   collapsed = false,
   onNavigate,
   className,
+  onClick,
 }: RailItemProps) {
   function rowClass(isActive: boolean): string {
     return cn(
@@ -159,26 +167,38 @@ export function RailItem({
   // A forced active state is a plain `Link`. `NavLink` computes `aria-current`
   // from its own match and drops the one it was handed, so a shell that decides
   // for itself would have got the fill without the announcement.
-  const link =
-    active === undefined ? (
-      <NavLink
-        to={to}
-        end={end}
-        onClick={onNavigate}
-        className={({ isActive }) => rowClass(isActive)}
-      >
-        {body}
-      </NavLink>
-    ) : (
-      <Link
-        to={to}
-        onClick={onNavigate}
-        aria-current={active ? 'page' : undefined}
-        className={rowClass(active)}
-      >
-        {body}
-      </Link>
-    );
+  const link = onClick ? (
+    // `appearance-none`, `border-0`, `bg-transparent` and `text-start`: a
+    // `<button>` carries UA chrome the `<a>`/`NavLink` rows never had to shed
+    // (WebKit in particular pads and centres a plain `<button>`'s content),
+    // and without stripping it explicitly this row's icon-to-label gap drifts
+    // from every link-based row's even though the two share `rowClass`.
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn('appearance-none border-0 bg-transparent text-start', rowClass(false))}
+    >
+      {body}
+    </button>
+  ) : active === undefined ? (
+    <NavLink
+      to={to!}
+      end={end}
+      onClick={onNavigate}
+      className={({ isActive }) => rowClass(isActive)}
+    >
+      {body}
+    </NavLink>
+  ) : (
+    <Link
+      to={to!}
+      onClick={onNavigate}
+      aria-current={active ? 'page' : undefined}
+      className={rowClass(active)}
+    >
+      {body}
+    </Link>
+  );
 
   return (
     <li>
