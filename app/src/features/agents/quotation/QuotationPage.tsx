@@ -37,7 +37,11 @@ import {
   bantDimensionLabel,
   CURRENCIES,
   currencyLabel,
+  DOCUMENT_DELAY_OPTIONS,
+  documentDelayLabel,
   MAX_SERVICES,
+  MAX_DOCUMENT_DELAY_SECONDS,
+  MIN_DOCUMENT_DELAY_SECONDS,
   type BantDimension,
   type QuotationCatalog,
   type Service,
@@ -273,6 +277,42 @@ function QuotationContent({ agentId }: { agentId: number }) {
                       options={CURRENCIES.map((c) => ({ ...c, label: currencyLabel(c) }))}
                       disabled={configDisabled}
                       onValueChange={(currency) => update((previous) => ({ ...previous, currency }))}
+                    />
+                  </Field>
+                </CardBody>
+              </Card>
+
+              <Card>
+                <CardHeader
+                  title={t('agents.whenToSendTheQuotation') || 'When to send the quotation'}
+                  titleAs="h2"
+                />
+                <CardBody>
+                  <Field
+                    label={t('agents.sendThePricedQuote') || 'Send the priced quote'}
+                    disabled={configDisabled}
+                    hint={
+                      t('agents.documentDelayHint') ||
+                      'The acknowledgement email goes out immediately. This is when the priced quotation follows it.'
+                    }
+                  >
+                    <Select
+                      label={t('agents.sendThePricedQuote') || 'Send the priced quote'}
+                      value={String(catalog.document_delay_seconds)}
+                      options={DOCUMENT_DELAY_OPTIONS.map((option) => ({
+                        value: String(option.value),
+                        label: documentDelayLabel(option),
+                      }))}
+                      disabled={configDisabled}
+                      onValueChange={(value) =>
+                        update((previous) => ({
+                          ...previous,
+                          document_delay_seconds: Math.min(
+                            MAX_DOCUMENT_DELAY_SECONDS,
+                            Math.max(MIN_DOCUMENT_DELAY_SECONDS, Number(value) || 0),
+                          ),
+                        }))
+                      }
                     />
                   </Field>
                 </CardBody>
