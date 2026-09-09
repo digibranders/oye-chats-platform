@@ -3112,16 +3112,28 @@ def _should_skip_bant_extraction(
        and must not be dropped on length. Pure fillers ("ok", "no") still reach
        the strict extractor, which returns no signal for them, so the only cost
        of the lower floor is an occasional wasted call on a probe-reply turn.
-    2. Message is a clear routing request to talk to a human (see
-       ``_HANDOFF_INTENT_PATTERNS``). These previously produced false-positive
-       Need signals and corrupted lead scores via the never-downgrade rule.
+    2. Message is a clear routing request to talk to a human. These produce
+       false-positive Need signals and corrupt lead scores via the
+       never-downgrade rule.
+
+       Two regexes answer that question in this codebase and they disagreed.
+       ``_HANDOFF_INTENT_PATTERNS`` here gates extraction;
+       ``intent_service._HANDOFF_KEYWORDS_RE`` gates whether the widget offers
+       a human. Seven phrasings matched the second and not the first, so
+       "transfer me to support", "escalate this please" and "I need a human"
+       were offered a handoff AND fed to the qualification extractor, which is
+       exactly the corruption this filter was written to prevent.
+
+       The test is the union now: anything the platform treats as asking for a
+       person skips extraction. ``test_handoff_predicates_agree.py`` fails if
+       the two drift apart again.
     3. All dimensions are already saturated (≥ 20/25); further extraction is
        pointless because the post-process rejects equal-or-lower scores.
     """
     min_len = 2 if is_probe_reply else 10
     if len(question.strip()) < min_len:
         return True
-    if _HANDOFF_INTENT_PATTERNS.search(question):
+    if _HANDOFF_INTENT_PATTERNS.search(question) or detect_handoff_intent_keywords(question):
         return True
     dimensions = _framework_dimensions(framework_config) or ["need", "budget", "authority", "timeline"]
     scores = [int(current_bant.get(f"{dim}_score", 0) or 0) for dim in dimensions]
@@ -7130,7 +7142,7 @@ async def rag_pipeline_stream(
             # ── Two-step name capture (ask first, answer next turn) ──────────
             # First message → reply ONLY with a name request and defer the real
             # answer; the following turn (their name) answers the original
-            # question, addressed by name. Mirrors the non-stream path.
+            # question, addressed by name.
             _ask_msg, _deferred_q, _flow_name, _just_named = resolve_name_flow(
                 session, session_id, bid, cid, question, company_name=_company_name, language=language
             )
@@ -7155,7 +7167,7 @@ async def rag_pipeline_stream(
                 question = _deferred_q
 
             # ── Affirmative reply to a handoff offer (B9, streaming) ─────────
-            # Mirror of the non-stream path: "sure"/"yes"/"ok" after "want me to
+            # "sure"/"yes"/"ok" after "want me to
             # connect you with the team?" routes into the handoff flow instead of
             # the intent router's generic ack or the gate's refusal.
             _affirmed_handoff = False
@@ -7165,7 +7177,7 @@ async def rag_pipeline_stream(
                 )
 
             # ── Deterministic intent router (streaming path) ─────────────────
-            # Mirrors the non-stream path: greetings/acks/identity questions
+            # Greetings, acks and identity questions
             # short-circuit before retrieval so visitors don't hit the relevance
             # gate's boilerplate refusal as a first impression.
             # Phase 3: skip the deterministic English canned-intent path for
@@ -7423,8 +7435,7 @@ async def rag_pipeline_stream(
                         return
 
             # Expensive steps: handoff detection, query rewriting (LLM), embedding (API).
-            # Defense-in-depth: scope the session lookup by tenant. See equivalent
-            # block in the non-streaming path above for rationale.
+            # Defense-in-depth: scope the session lookup by tenant.
             _cs_filters_stream = [ChatSession.id == session_id]
             if bid:
                 _cs_filters_stream.append(ChatSession.bot_id == bid)
@@ -7515,7 +7526,7 @@ async def rag_pipeline_stream(
             _total_chunks, _kb_max_id = (
                 await asyncio.to_thread(_count_chunks_isolated, bid, cid) if bid or cid else (0, None)
             )
-            # See the non-streaming path: the gate's verdict cache is keyed on
+            # The gate's verdict cache is keyed on
             # this so a re-train cannot serve a stale refusal.
             _kb_version = f"{_total_chunks}:{_kb_max_id or 0}"
             _use_cag_lite = _cag_threshold > 0 and 0 < _total_chunks <= _cag_threshold
@@ -7542,8 +7553,7 @@ async def rag_pipeline_stream(
                         "YES" if suggest_handoff else "NO",
                     )
 
-                # Cost-tuned flat k=15 (matches non-stream path). See the
-                # rationale comment in the non-stream branch. Bump back to
+                # Cost-tuned flat k=15. Bump back to
                 # 20-30 if long-list under-reporting becomes a customer
                 # complaint.
                 _retrieval_k = 15
@@ -7876,7 +7886,7 @@ async def rag_pipeline_stream(
                 return
 
             # ── Budget-disclosure context strip (streaming) ──────────────
-            # See the non-streaming path: a pure budget statement is answered by
+            # A pure budget statement is answered by
             # acknowledgement, and emptying the context is what stops the model
             # quoting our pricing back at the visitor with the arithmetic wrong.
             if _is_pure_budget_disclosure(question) and final_results:
@@ -7929,8 +7939,7 @@ async def rag_pipeline_stream(
                     )
                 )
             # Qualification-chip answer, or a free-typed answer to the bot's own
-            # question → bypass the off-topic gate; see the non-streaming path
-            # for the full rationale.
+            # question → bypass the off-topic gate.
             # A volunteered budget counts alongside an answer to our own probe:
             # both are the visitor telling us about THEM, which no knowledge base
             # can answer, and both must reach generation rather than the
@@ -8009,7 +8018,7 @@ async def rag_pipeline_stream(
                 and not _relax_topical
                 and not _relax_on_scope
             ):
-                # Mirror of the non-stream path: on-scope questions where the
+                # On-scope questions where the
                 # gate fired (no matching chunks) get the graceful no-info pivot
                 # instead of the off-topic refusal.
                 _on_scope = _topical_followup or _question_looks_on_scope(question, _company_name)
@@ -8188,7 +8197,7 @@ async def rag_pipeline_stream(
 
             # Build context with company identity injection
             context_text = _build_reference_context(final_results, _company_name)
-            # See non-streaming path for rationale. Combine retrieved-chunk
+            # Combine retrieved-chunk
             # media with the bot-wide DB fetch so the LLM sees every
             # video/file in the KB and can pick by topic match.
             media_sources = _iter_media_urls_from_chunks(final_results)
@@ -8200,8 +8209,7 @@ async def rag_pipeline_stream(
             history_context = _build_history_context(history)
             _log_media_visibility_in_context(final_results, session_id, "stream")
 
-            # BANT is plan-gated (Standard / Professional). See the mirror
-            # gate on the non-streaming path above for the full rationale.
+            # BANT is plan-gated (Standard / Professional).
             # Per-bot gate: BANT follows THIS bot's own subscription (falling
             # back to the account plan), so a bot downgraded to Starter stops
             # qualifying even when a sibling bot is still on a BANT tier.
@@ -8213,7 +8221,7 @@ async def rag_pipeline_stream(
             is_bant_enabled = plan_allows_bant and bool(getattr(bot, "bant_enabled", True))
             bant_config = get_framework_config(bot) if is_bant_enabled else None
 
-            # ── Probe continuity (streaming) — mirrors the non-streaming path.
+            # ── Probe continuity ─────────────────────────────────────────
             # ``_prev_probed`` is last turn's probed dimension; ``_next_probe`` is
             # this turn's target, skipping it so we never re-ask back-to-back.
             _prev_probed = getattr(chat_session, "last_probed_dimension", None) if is_bant_enabled else None
@@ -8248,8 +8256,7 @@ async def rag_pipeline_stream(
                 # completed or skipped.
                 and not _quote_active_or_pending(bot, chat_session, current_bant)
             )
-            # Qualified-lead popup eligibility. See non-streaming path for the
-            # full rationale. Resolved before the LLM call so the plain-text
+            # Qualified-lead popup eligibility. Resolved before the LLM call so the plain-text
             # team-connect prompt injection can be suppressed when the popup
             # will render instead.
             _qualified_popup = _resolve_meeting_booking(bot, session, session_id, bid) if _team_connect_offer else {}
@@ -8514,9 +8521,7 @@ async def rag_pipeline_stream(
 
             # Safety net: if the LLM asked a qualifying question but forgot the
             # [CTA:dim] marker, infer the CTA from the answer text so the
-            # quick-reply chips still render. Only the *streaming* path needs
-            # this. Every visitor turn goes through here today, and the
-            # non-streaming path does not surface CTA chips to the widget.
+            # quick-reply chips still render.
             if cta_data is None and is_bant_enabled and not _show_qualified_popup:
                 cta_data = _infer_cta_fallback(full_answer, current_bant, bant_config, contextual_q=_cta_q)
 
@@ -8585,9 +8590,9 @@ async def rag_pipeline_stream(
                 full_answer, final_results, _media_card, _allowed_titles, _allowed_names
             )
             _enrich_media_card_from_context(_media_card, final_results)
-            # Option E secondary chip. See non-streaming path for detail.
+            # Option E secondary chip.
             _media_secondary = _pick_secondary_media(_media_card, final_results, _bot_media_for_validate)
-            # Per-session dedupe — see non-streaming path for rationale.
+            # Per-session dedupe.
             _media_key = _media_card_key(_media_card)
             if (
                 _media_key
@@ -8619,7 +8624,6 @@ async def rag_pipeline_stream(
 
             # Safety net: force [LEAVE_MESSAGE_CARD] when the turn clearly asks
             # for async team contact but the LLM forgot to emit the sentinel.
-            # Mirrors the non-streaming path. See its comment for rationale.
             _leave_msg_safety_net_fired = False
             if (
                 not _leave_msg_card_detected
@@ -8685,7 +8689,7 @@ async def rag_pipeline_stream(
                 yield _name_ask_chunk
 
             # Deterministic qualification follow-up on media-card turns — mirrors
-            # the non-streaming path. The media template makes the model drop the
+            # The media template makes the model drop the
             # probe after a card, so append it ourselves (streamed live AND folded
             # into full_answer so the transcript matches what the visitor saw).
             if (
@@ -8751,8 +8755,7 @@ async def rag_pipeline_stream(
                         or _leave_msg_card_detected
                         or bool(cta_data)
                         # Only the turn that actually produced a card is skipped.
-                        # See the non-streaming path for why the previous
-                        # bot-wide "any media in the KB" skip was wrong.
+                        # The previous bot-wide "any media in the KB" skip was wrong.
                         or _media_card is not None
                     )
                     if (
@@ -8788,8 +8791,7 @@ async def rag_pipeline_stream(
                         )
                     ):
                         # Pass bid (id), not the bot ORM object. See the
-                        # non-streaming path's equivalent call for the
-                        # rationale, and for why this is queued durably rather
+                        # Queued durably rather
                         # than left on the in-process pool.
                         _enqueue_qualification(
                             session_id,
@@ -8855,7 +8857,7 @@ async def rag_pipeline_stream(
                                 session=session_id,
                             )
 
-                    # Qualified-lead popup. See non-streaming path for rationale.
+                    # Qualified-lead popup.
                     # Yields to any explicit handoff / meeting / leave-message CTA
                     # already firing this turn so two CTAs never compete.
                     if (
@@ -8868,7 +8870,7 @@ async def rag_pipeline_stream(
                             "calendly_url": _qualified_popup["calendly_url"],
                             "meeting_provider": _qualified_popup["meeting_provider"],
                             "live_chat_enabled": live_chat_on,
-                            # Deferred BANT probe. See non-streaming path.
+                            # Deferred BANT probe.
                             "follow_up": _next_dimension_cta(
                                 bant_config, current_bant, session_id=session_id, question=question, history=history
                             ),

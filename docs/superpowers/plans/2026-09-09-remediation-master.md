@@ -114,6 +114,7 @@ either grows back.
 | O-13 | Four dated audits moved to `docs/audits/` | `oyechats-website b74dec8` |
 | O-10 | ChatWindow's pure helpers extracted and tested; hooks reverted on budget | `186823e1` |
 | O-12 | Mobile app status written down; the decision is stated, not taken | `oyechats-mobile-app 2b4968d` |
+| O-2 | Rejected on measurement; the invariant is pinned by a test | `ff61ee11`+ |
 
 ### Corrections to the register, waves 4 to 6
 
@@ -137,6 +138,15 @@ fixed; the finding as written is not what was there.
 - **O-5 overcounted.** 105 super-admin endpoints, not 109. Merging them into one
   module would produce a 6,500-line file and was not done; the shared gates were
   the actual defect.
+- **O-2 is rejected, not deferred.** The proposal was to collapse the routing
+  predicates into one LLM classifier. There are 45 of them, all 45 are pure
+  string or regex work, none makes a model call, and none is dead. They run on
+  every turn, so a classifier there would add a round trip, a bill and a new
+  failure mode to every turn of every bot in order to delete code that costs
+  nothing and cannot fail. The judges on that path already fail open, which is
+  why an outage once ran unnoticed; adding a third model dependency, this time
+  for control flow rather than for a skippable check, is the wrong direction.
+  `test_predicates_stay_off_the_model.py` pins the invariant instead.
 - **U-14 is blocked, and not for the reason recorded.** The live app documents
   all 297 paths including super-admin, so the published-spec gap was not the
   problem. Only 37 of 342 operations declare a `response_model`, so generating
