@@ -160,7 +160,7 @@ def get_rerank_top_n(default: int = 5) -> int:
         return default
 
 
-def get_relevance_threshold(default: float = 0.5) -> float:
+def get_relevance_threshold(default: float = 0.3) -> float:
     try:
         return float(get("rag.relevance_threshold", default))
     except (TypeError, ValueError):

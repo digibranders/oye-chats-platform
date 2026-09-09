@@ -34,7 +34,7 @@ const agent: Bot = {
 };
 
 const SETTINGS: Record<string, unknown> = {
-  relevance_threshold: 0.55,
+  relevance_threshold: 0.3,
   feature_flags: { typing_preview: true, post_chat_rating: true },
   widget_config: { greeting_delay_ms: 3000 },
   operator_timeout_seconds: 120,

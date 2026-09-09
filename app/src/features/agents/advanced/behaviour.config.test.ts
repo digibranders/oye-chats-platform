@@ -122,8 +122,8 @@ describe('operatorTimeoutError', () => {
 
 describe('matchesLevel', () => {
   it('treats a null threshold as the platform default', () => {
-    expect(matchesLevel(null, 0.55)).toBe(true);
-    expect(matchesLevel(null, 0.65)).toBe(false);
+    expect(matchesLevel(null, 0.3)).toBe(true);
+    expect(matchesLevel(null, 0.5)).toBe(false);
   });
 
   it('tolerates float drift', () => {

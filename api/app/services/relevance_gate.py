@@ -81,7 +81,13 @@ RELEVANCE_GATE_ENABLED: bool = (os.getenv("RELEVANCE_GATE_ENABLED") or "true").l
 # set in the DB. Read `_gate_model()`'s docstring before assuming this env
 # var is authoritative.
 GATE_MODEL: str = os.getenv("GATE_MODEL", "gemini/gemini-2.5-flash")
-RELEVANCE_THRESHOLD: float = float(os.getenv("RELEVANCE_THRESHOLD", "0.55"))
+# 0.3, below the judge's own 0.5 "related enough to help" anchor. At 0.55 a
+# judge following its rubric failed the gate on every broad company question
+# ("what does X do" scored at the anchor). The gate exists to refuse "what's
+# the weather", not to grade retrieval, so it fires only at the "no chunk
+# bears on it" end of the scale; RULE 5a in the generation prompt phrases a
+# thin-context gap honestly.
+RELEVANCE_THRESHOLD: float = float(os.getenv("RELEVANCE_THRESHOLD", "0.3"))
 
 _GATE_TTL = 3600  # 1 hour. Safe: same question + same bot KB = same result
 
@@ -89,22 +95,18 @@ _GATE_TTL = 3600  # 1 hour. Safe: same question + same bot KB = same result
 # is (bot, question), so without this a prompt fix keeps serving verdicts the
 # OLD prompt produced for up to an hour after deploy -- and any before/after
 # measurement of a prompt change silently reads its own baseline back.
-_GATE_PROMPT_VERSION = 2
+_GATE_PROMPT_VERSION = 3
 
-# How much of the retrieved context the judge sees. This was hardcoded to the
-# top 3 chunks at 300 characters each while generation received the full
-# top-k (15 chunks of up to CHUNK_SIZE=1000 characters): the judge scored a
-# ~900-character keyhole view of the context the generator would answer from,
-# so a question whose answer sat in chunk 4, or past character 300 of chunk 1,
-# could be refused as off-topic when generation would have answered it fine.
-# 5 × 500 covers the first half of every default-size chunk for the top five,
-# at a cost of a few hundred extra gate-tier input tokens per uncached
-# question. ``or`` rather than a getenv default for the same reason as
-# ``RELEVANCE_GATE_ENABLED`` above (an empty-but-present value must mean the
-# default, not a crash on import); floored at 1 so the judge always sees
-# something.
+# How much of the retrieved context the judge sees. The preview covers a whole
+# default-size chunk (CHUNK_SIZE=1000) so the judge and the generator read the
+# same text: at 500 an answer in the back half of a chunk was invisible to the
+# judge and visible to the model, and the judge's verdict won. Five full chunks
+# is ~1,250 gate-tier input tokens per uncached question. ``or`` rather than a
+# getenv default for the same reason as ``RELEVANCE_GATE_ENABLED`` above (an
+# empty-but-present value must mean the default, not a crash on import);
+# floored at 1 so the judge always sees something.
 GATE_MAX_CHUNKS: int = max(1, int(os.getenv("GATE_MAX_CHUNKS") or "5"))
-GATE_CHUNK_PREVIEW_CHARS: int = max(1, int(os.getenv("GATE_CHUNK_PREVIEW_CHARS") or "500"))
+GATE_CHUNK_PREVIEW_CHARS: int = max(1, int(os.getenv("GATE_CHUNK_PREVIEW_CHARS") or "1000"))
 # Hard cap on the gate LLM call. Without this, a stalled Gemini blocks the
 # entire SSE stream for ~30s before the first token reaches the visitor.
 # The existing `except Exception` below fails open on timeout, so a slow

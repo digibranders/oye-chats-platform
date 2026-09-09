@@ -3545,6 +3545,7 @@ def _background_groundedness_check(
     bot_id: int | None,
     client_id: int | None,
     trace_id: str | None = None,
+    max_chunks: int | None = None,
 ) -> None:
     """Fire-and-forget post-generation groundedness check (AR-12).
 
@@ -3566,7 +3567,9 @@ def _background_groundedness_check(
       it and filtered per bot and per model.
     """
     try:
-        is_grounded, score = check_groundedness(question, answer, chunks, bot_id=bot_id, client_id=client_id)
+        is_grounded, score = check_groundedness(
+            question, answer, chunks, bot_id=bot_id, client_id=client_id, max_chunks=max_chunks
+        )
         _safety_net_metric(
             "groundedness_check",
             bot_id=bot_id,
@@ -8662,6 +8665,8 @@ def rag_pipeline(
                     bid,
                     cid,
                     _bot_msg_trace_id,
+                    # Unranked CAG-lite bundle: the judge must see all of it.
+                    len(final_results) if _use_cag_lite else None,
                 )
 
             result = {
@@ -10686,6 +10691,8 @@ async def rag_pipeline_stream(
                             bid,
                             cid,
                             _bot_msg_trace_id,
+                            # Unranked CAG-lite bundle: the judge must see all of it.
+                            len(final_results) if _use_cag_lite else None,
                         )
 
                     if bot_msg_id:

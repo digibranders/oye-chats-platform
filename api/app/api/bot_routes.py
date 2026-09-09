@@ -698,9 +698,9 @@ class UpdateBotRequest(BaseModel):
     # size- and depth-bounded even though its inner keys are product-defined.
     bant_config: Annotated[dict, bounded_json_object(max_bytes=_MAX_BANT_CONFIG_BYTES, max_depth=8)] | None = None
     qualification_framework: Literal["bant", "meddic"] | None = None
-    # CRAG relevance gate threshold override. None = use env default (0.55).
+    # CRAG relevance gate threshold override. None = use env default (0.3).
     # 0.0 = always pass (effectively disable), 1.0 = always fail (refuse everything).
-    # Reasonable range 0.40 (lenient). 0.70 (strict). Out-of-range writes are
+    # Reasonable range 0.15 (lenient). 0.50 (strict). Out-of-range writes are
     # rejected at the API; runtime ALSO clamps in case a bad value slipped past.
     relevance_threshold: float | None = Field(None, ge=0.0, le=1.0)
     # The three styles the admin preview and ``BotAvatar`` actually render.

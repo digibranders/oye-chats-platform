@@ -50,21 +50,21 @@ export interface StrictnessLevel {
 }
 
 /** Applied when `relevance_threshold` is null — `RELEVANCE_THRESHOLD` in config.py. */
-export const DEFAULT_RELEVANCE_THRESHOLD = 0.55;
+export const DEFAULT_RELEVANCE_THRESHOLD = 0.3;
 
 export const STRICTNESS_LEVELS: readonly StrictnessLevel[] = [
   {
-    value: 0.45,
+    value: 0.15,
     label: 'Lenient',
     help: 'Answers more questions even when the match is weak. Best while your knowledge base still has gaps.',
   },
   {
-    value: 0.55,
+    value: 0.3,
     label: 'Balanced',
     help: 'A sensible mix of helpfulness and staying on topic. Right for most sites.',
   },
   {
-    value: 0.65,
+    value: 0.5,
     label: 'Strict',
     help: 'Declines anything not clearly covered by your content. Best for regulated or sensitive topics.',
   },

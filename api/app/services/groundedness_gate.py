@@ -108,9 +108,14 @@ def should_sample() -> bool:
     return random.random() < GROUNDEDNESS_CHECK_SAMPLE_RATE  # noqa: S311 - sampling, not security
 
 
-def _build_groundedness_prompt(question: str, answer: str, chunks: list) -> str:
+def _build_groundedness_prompt(question: str, answer: str, chunks: list, max_chunks: int | None = None) -> str:
+    # ``max_chunks`` widens the window for a caller whose list is NOT ranked.
+    # Under CAG-lite the chunks are the whole knowledge base in filename
+    # order, so the first five are arbitrary and a correct answer read as
+    # fabricated. Same fix as ``relevance_gate._build_gate_prompt``.
+    limit = max_chunks if max_chunks and max_chunks > 0 else GROUNDEDNESS_MAX_CHUNKS
     chunk_previews = []
-    for i, doc in enumerate(chunks[:GROUNDEDNESS_MAX_CHUNKS], 1):
+    for i, doc in enumerate(chunks[:limit], 1):
         content = getattr(doc, "content", "") or ""
         preview = content[:GROUNDEDNESS_CHUNK_PREVIEW_CHARS].replace("\n", " ")
         chunk_previews.append(f"Chunk {i}: {preview}")
@@ -145,6 +150,7 @@ def check_groundedness(
     chunks: list,
     bot_id: int | None = None,
     client_id: int | None = None,
+    max_chunks: int | None = None,
 ) -> tuple[bool, float]:
     """Judge whether ``answer``'s factual claims are supported by ``chunks``.
 
@@ -160,7 +166,7 @@ def check_groundedness(
     if not GROUNDEDNESS_CHECK_ENABLED or not answer or not answer.strip():
         return True, 1.0
 
-    prompt = _build_groundedness_prompt(question, answer, chunks)
+    prompt = _build_groundedness_prompt(question, answer, chunks, max_chunks)
     model = _gate_model()
     try:
         with langfuse_generation("groundedness-gate", model=model, prompt=prompt) as gen:
