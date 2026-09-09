@@ -8073,6 +8073,33 @@ def rag_pipeline(
                     session=session_id,
                     bot_id=bid,
                 )
+            # On-scope question, chunks in hand: generate. The judge grades how
+            # well a bundle answers a phrasing, and on a broad company question
+            # ("what does X do") it lands at its own "related" anchor and fails.
+            # Refusing there sent the visitor who asked the most common question
+            # on the site to a canned pivot while the model held fifteen chunks
+            # about the company; measured on a live bot, "what does X do" was
+            # refused 3 of 3 while "tell me more about the company" answered 5 of
+            # 5 against the same knowledge base. RULE 5a already phrases a real
+            # gap honestly. The empty-retrieval case is NOT relaxed: it still
+            # falls to the pivot below, because generating with no context at
+            # all is where hallucination comes from.
+            _relax_on_scope = (
+                not _is_relevant
+                and not _trusted_cta
+                and not _answering_probe
+                and not _relax_topical
+                and bool(final_results)
+                and _question_looks_on_scope(question, _company_name)
+            )
+            if _relax_on_scope:
+                _safety_net_metric(
+                    "gate_relaxed_on_scope",
+                    path="nonstream",
+                    gate_score=f"{_gate_score:.2f}",
+                    session=session_id,
+                    bot_id=bid,
+                )
             # ``_affirmed_handoff`` also bypasses the refusal so a "yes" to the
             # connect offer reaches generation, where ``suggest_handoff`` renders
             # the handoff (B9).
@@ -8082,6 +8109,7 @@ def rag_pipeline(
                 and not _answering_probe
                 and not _affirmed_handoff
                 and not _relax_topical
+                and not _relax_on_scope
             ):
                 # Distinguish "on-scope but no info" from "actually off-topic":
                 # ─ on-scope (e.g. "is the CEO on linkedin?", "what time zone
@@ -9906,6 +9934,33 @@ async def rag_pipeline_stream(
                     session=session_id,
                     bot_id=bid,
                 )
+            # On-scope question, chunks in hand: generate. The judge grades how
+            # well a bundle answers a phrasing, and on a broad company question
+            # ("what does X do") it lands at its own "related" anchor and fails.
+            # Refusing there sent the visitor who asked the most common question
+            # on the site to a canned pivot while the model held fifteen chunks
+            # about the company; measured on a live bot, "what does X do" was
+            # refused 3 of 3 while "tell me more about the company" answered 5 of
+            # 5 against the same knowledge base. RULE 5a already phrases a real
+            # gap honestly. The empty-retrieval case is NOT relaxed: it still
+            # falls to the pivot below, because generating with no context at
+            # all is where hallucination comes from.
+            _relax_on_scope = (
+                not _is_relevant
+                and not _trusted_cta
+                and not _answering_probe
+                and not _relax_topical
+                and bool(final_results)
+                and _question_looks_on_scope(question, _company_name)
+            )
+            if _relax_on_scope:
+                _safety_net_metric(
+                    "gate_relaxed_on_scope",
+                    path="stream",
+                    gate_score=f"{_gate_score:.2f}",
+                    session=session_id,
+                    bot_id=bid,
+                )
             # ``_affirmed_handoff`` also bypasses the refusal so a "yes" to the
             # connect offer reaches generation, where ``suggest_handoff`` renders
             # the handoff (B9).
@@ -9915,6 +9970,7 @@ async def rag_pipeline_stream(
                 and not _answering_probe
                 and not _affirmed_handoff
                 and not _relax_topical
+                and not _relax_on_scope
             ):
                 # Mirror of the non-stream path: on-scope questions where the
                 # gate fired (no matching chunks) get the graceful no-info pivot
