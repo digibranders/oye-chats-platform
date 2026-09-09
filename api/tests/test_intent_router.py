@@ -159,3 +159,47 @@ class TestCannedRepliesFollowTheTenant:
     def test_defaults_are_the_branded_supported_replies(self):
         # Callers that pass nothing (the name-flow probes) get the historical copy.
         assert "OyeChats" in route_intent("what platform are you built on?", COMPANY).answer
+
+
+# ── Precision: identity phrasing that also asks about the business ───────────
+
+
+class TestIdentityOpenersThatCarryARealQuestion:
+    """Live failure: "who are you and what do you offer" was answered by the
+    canned greeting, with no content, because the identity patterns match on
+    the opening words and short-circuit before retrieval. The canned identity
+    replies are only the right answer when the whole message is about the bot
+    itself; the moment it also asks about the business it is a knowledge
+    question and belongs to the RAG pipeline."""
+
+    @pytest.mark.parametrize(
+        "msg",
+        [
+            "who are you and what do you offer",
+            "are you a bot? what services do you provide",
+            "what's your name and what does the company do",
+            "who made you and what is your pricing",
+            "is this a bot, and how much do your plans cost",
+        ],
+    )
+    def test_falls_through_to_retrieval(self, msg):
+        assert route_intent(msg, COMPANY) is None, msg
+
+    @pytest.mark.parametrize(
+        "msg",
+        [
+            "who are you",
+            "are you a bot?",
+            "what is your name",
+            "who made you",
+            "is this conversation recorded",
+        ],
+    )
+    def test_pure_identity_questions_still_short_circuit(self, msg):
+        assert route_intent(msg, COMPANY) is not None, msg
+
+    def test_a_greeting_is_still_a_greeting(self):
+        """The business-word guard covers identity patterns only. A bare
+        greeting has no identity pattern to suppress and must keep its canned
+        reply, which is what RULE 0 in the answer prompt exists to protect."""
+        assert route_intent("hi", COMPANY) is not None
