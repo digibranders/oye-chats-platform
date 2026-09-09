@@ -531,6 +531,24 @@ def count_documents_for_bot(session, bot_id: int = None, client_id: int = None) 
     return session.execute(stmt).scalar_one()
 
 
+def knowledge_state_for_bot(session, bot_id: int = None, client_id: int = None) -> tuple[int, int | None]:
+    """``(chunk count, highest chunk id)`` for a bot.
+
+    A cheap fingerprint of what the bot currently knows: it moves on every
+    ingest, re-ingest and delete, and one query answers both the CAG-lite
+    threshold question and the cache-key question. The relevance gate keys its
+    verdict cache on it so a re-train never serves a verdict that was judged
+    against the old documents.
+    """
+    stmt = (
+        select(func.count(), func.max(Document.id))
+        .select_from(Document)
+        .where(_owner_filter(Document, bot_id, client_id))
+    )
+    count, max_id = session.execute(stmt).one()
+    return int(count), max_id
+
+
 def sync_bot_knowledge_state(session, bot_id: int | None) -> int:
     """Recompute a bot's durable "trained" state from what it actually stores.
 

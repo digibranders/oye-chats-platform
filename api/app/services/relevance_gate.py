@@ -89,7 +89,12 @@ GATE_MODEL: str = os.getenv("GATE_MODEL", "gemini/gemini-2.5-flash")
 # thin-context gap honestly.
 RELEVANCE_THRESHOLD: float = float(os.getenv("RELEVANCE_THRESHOLD", "0.3"))
 
-_GATE_TTL = 3600  # 1 hour. Safe: same question + same bot KB = same result
+# Five minutes. The old hour was justified as "same question + same KB = same
+# result", but nothing invalidated the entry when the KB changed, and a single
+# unlucky verdict refused every visitor who typed the same words for the whole
+# hour. The key now carries the KB fingerprint, and re-judging is one cheap
+# gate-tier call, so the window is short on purpose.
+_GATE_TTL = 300
 
 # Bump whenever the judge prompt or its scoring scale changes. The cache key
 # is (bot, question), so without this a prompt fix keeps serving verdicts the
@@ -127,10 +132,18 @@ def _gate_model() -> str:
     return runtime_config.get_gate_model()
 
 
-def _gate_cache_key(bot_id: int | None, client_id: int | None, question: str) -> str:
+def _gate_cache_key(bot_id: int | None, client_id: int | None, question: str, kb_version: str | None = None) -> str:
+    """Cache key for one verdict.
+
+    ``kb_version`` is ``knowledge_state_for_bot``'s ``"count:max_id"``. Without
+    it, a bot that was just re-trained kept serving verdicts judged against the
+    documents it no longer has, for as long as the entry lived. A caller that
+    cannot compute it passes None and shares one stable key, which is the old
+    behaviour.
+    """
     scope = f"b{bot_id}" if bot_id else f"c{client_id}"
     q_hash = hashlib.sha256(question.lower().strip().encode()).hexdigest()[:16]
-    return f"oyechats:gate:v{_GATE_PROMPT_VERSION}:{scope}:{q_hash}"
+    return f"oyechats:gate:v{_GATE_PROMPT_VERSION}:{scope}:{kb_version or '0'}:{q_hash}"
 
 
 def _build_gate_prompt(question: str, chunks: list, max_chunks: int | None = None) -> str:
@@ -226,6 +239,7 @@ def check_relevance(
     client_id: int | None = None,
     threshold: float | None = None,
     max_chunks: int | None = None,
+    kb_version: str | None = None,
 ) -> tuple[bool, float]:
     """Determine whether retrieved chunks are relevant enough to answer the question.
 
@@ -258,7 +272,7 @@ def check_relevance(
     active_threshold = _resolve_threshold(threshold)
 
     # Check Redis cache first
-    cache_key = _gate_cache_key(bot_id, client_id, question)
+    cache_key = _gate_cache_key(bot_id, client_id, question, kb_version)
     cached = cache_get(cache_key)
     if cached is not None and isinstance(cached, dict) and "score" in cached:
         score = float(cached["score"])
@@ -340,7 +354,11 @@ def check_relevance(
     is_relevant = score >= active_threshold
     logger.info("Relevance gate | score=%.2f threshold=%.2f relevant=%s", score, active_threshold, is_relevant)
 
-    # Cache result, same question against same bot returns same judgment
-    cache_set(cache_key, {"score": score}, _GATE_TTL)
+    # Only a passing verdict is worth remembering. A refusal is the expensive
+    # direction to get wrong: caching one turned a single unlucky score into
+    # every visitor who typed those words being turned away until it expired,
+    # and re-judging costs one gate-tier call.
+    if is_relevant:
+        cache_set(cache_key, {"score": score}, _GATE_TTL)
 
     return is_relevant, score

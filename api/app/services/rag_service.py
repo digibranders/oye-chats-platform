@@ -23,7 +23,6 @@ from app.core.thread_pool import submit_background
 from app.db.models import BANTSignal, Bot, ChatSession, MeetingBooking
 from app.db.repository import (
     add_chat_message,
-    count_documents_for_bot,
     create_or_update_lead_info,
     ensure_chat_session,
     get_all_documents_for_bot,
@@ -31,6 +30,7 @@ from app.db.repository import (
     get_chat_history,
     get_lead_info_by_session,
     get_upcoming_events,
+    knowledge_state_for_bot,
     search_keyword_documents,
     search_similar_documents,
 )
@@ -7664,7 +7664,13 @@ def rag_pipeline(
 
             # ── CAG-lite: skip retrieval for small knowledge bases ──────────
             _cag_threshold = int(os.getenv("CAG_LITE_THRESHOLD", "20"))
-            _total_chunks = count_documents_for_bot(session, bot_id=bid, client_id=cid) if bid or cid else 0
+            _total_chunks, _kb_max_id = (
+                knowledge_state_for_bot(session, bot_id=bid, client_id=cid) if bid or cid else (0, None)
+            )
+            # Fingerprint of what this bot currently knows; the relevance gate
+            # keys its verdict cache on it so a re-train cannot serve a stale
+            # refusal.
+            _kb_version = f"{_total_chunks}:{_kb_max_id or 0}"
             _use_cag_lite = _cag_threshold > 0 and 0 < _total_chunks <= _cag_threshold
 
             # Detect handoff intent (run alongside retrieval steps)
@@ -7998,8 +8004,13 @@ def rag_pipeline(
             if _judges_bypassed:
                 _is_relevant, _gate_score = True, 1.0
             else:
+                # ``search_query`` (the query retrieval actually ran), not the
+                # raw question: a pronoun follow-up ("and that one?") was judged
+                # unresolved against chunks fetched for the resolved query, and
+                # scored low on phrasing alone. ``kb_version`` keys the verdict
+                # cache to the bot's current documents.
                 _is_relevant, _gate_score = check_relevance(
-                    question,
+                    search_query,
                     final_results,
                     bot_id=bid,
                     client_id=cid,
@@ -8009,6 +8020,7 @@ def rag_pipeline(
                     # judge must see all of it. Its default 5-chunk window is
                     # only meaningful when position means relevance.
                     max_chunks=len(final_results) if _use_cag_lite else None,
+                    kb_version=_kb_version,
                 )
             # ``_trusted_cta`` set → the visitor tapped a qualification chip
             # (budget/authority/timeline/need answer), NOT a KB question. Skip
@@ -9425,9 +9437,9 @@ async def rag_pipeline_stream(
             # use their own session. SQLAlchemy ``Session`` objects are not
             # thread-safe and sharing the outer request-scoped session across
             # threads can corrupt state or raise InvalidRequestError under load.
-            def _count_chunks_isolated(bot_id: int | None, client_id: int | None) -> int:
+            def _count_chunks_isolated(bot_id: int | None, client_id: int | None) -> tuple[int, int | None]:
                 with get_session() as s:
-                    return count_documents_for_bot(s, bot_id=bot_id, client_id=client_id)
+                    return knowledge_state_for_bot(s, bot_id=bot_id, client_id=client_id)
 
             def _fetch_all_chunks_isolated(bot_id: int | None, client_id: int | None) -> list:
                 with get_session() as s:
@@ -9440,7 +9452,12 @@ async def rag_pipeline_stream(
                     return docs
 
             _cag_threshold = int(os.getenv("CAG_LITE_THRESHOLD", "20"))
-            _total_chunks = await asyncio.to_thread(_count_chunks_isolated, bid, cid) if bid or cid else 0
+            _total_chunks, _kb_max_id = (
+                await asyncio.to_thread(_count_chunks_isolated, bid, cid) if bid or cid else (0, None)
+            )
+            # See the non-streaming path: the gate's verdict cache is keyed on
+            # this so a re-train cannot serve a stale refusal.
+            _kb_version = f"{_total_chunks}:{_kb_max_id or 0}"
             _use_cag_lite = _cag_threshold > 0 and 0 < _total_chunks <= _cag_threshold
 
             if _use_cag_lite:
@@ -9832,16 +9849,23 @@ async def rag_pipeline_stream(
             if _judges_bypassed:
                 _is_relevant, _gate_score = True, 1.0
             else:
+                # Mirrors the non-streaming call: judge ``search_query`` rather
+                # than the raw question, widen the window for an unranked
+                # CAG-lite bundle, and key the verdict cache on the bot's
+                # current documents. Keyword form via ``partial`` because
+                # ``to_thread`` forwards positionally and the argument list has
+                # grown past the point where position is readable.
                 _is_relevant, _gate_score = await asyncio.to_thread(
-                    check_relevance,
-                    question,
-                    final_results,
-                    bid,
-                    cid,
-                    _bot_threshold,
-                    # See the non-streaming path: an unranked CAG-lite bundle
-                    # must not be truncated to an arbitrary alphabetical five.
-                    len(final_results) if _use_cag_lite else None,
+                    functools.partial(
+                        check_relevance,
+                        search_query,
+                        final_results,
+                        bot_id=bid,
+                        client_id=cid,
+                        threshold=_bot_threshold,
+                        max_chunks=len(final_results) if _use_cag_lite else None,
+                        kb_version=_kb_version,
+                    )
                 )
             # Qualification-chip answer, or a free-typed answer to the bot's own
             # question → bypass the off-topic gate; see the non-streaming path
