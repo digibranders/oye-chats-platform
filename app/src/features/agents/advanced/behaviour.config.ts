@@ -15,6 +15,7 @@ import {
  * | Draft field | Column | Contract |
  * |---|---|---|
  * | `relevanceThreshold` | `relevance_threshold` | `float 0..1`, null = env default |
+ * | `pricingFromKnowledgeBase` | `pricing_from_knowledge_base` | `bool`, default false |
  * | `featureFlags` | `feature_flags` | shallow-merged server-side |
  * | `widgetConfig` | `widget_config` | shallow-merged server-side |
  * | `operatorTimeoutSeconds` | `operator_timeout_seconds` | `int 5..3600` |
@@ -338,6 +339,8 @@ export function operatorTimeoutError(value: number): string | null {
 export interface BehaviourDraft {
   /** null = use the platform default strictness. */
   relevanceThreshold: number | null;
+  /** true = pricing questions may be answered from everything it has learned. */
+  pricingFromKnowledgeBase: boolean;
   featureFlags: Record<string, boolean>;
   widgetConfig: Record<string, number>;
   /** Seconds an operator has to accept a handoff before it is re-offered. */
@@ -376,6 +379,7 @@ export function parseBehaviour(raw: Record<string, unknown>): BehaviourDraft {
   const timeout = raw.operator_timeout_seconds;
   return {
     relevanceThreshold: typeof threshold === 'number' ? threshold : null,
+    pricingFromKnowledgeBase: raw.pricing_from_knowledge_base === true,
     featureFlags: mergeFlags(raw.feature_flags),
     widgetConfig: mergeConfig(raw.widget_config),
     operatorTimeoutSeconds:
@@ -394,6 +398,7 @@ export function parseBehaviour(raw: Record<string, unknown>): BehaviourDraft {
 export function toBehaviourPayload(draft: BehaviourDraft): Record<string, unknown> {
   return {
     relevance_threshold: draft.relevanceThreshold,
+    pricing_from_knowledge_base: draft.pricingFromKnowledgeBase,
     feature_flags: draft.featureFlags,
     widget_config: draft.widgetConfig,
     operator_timeout_seconds: draft.operatorTimeoutSeconds,

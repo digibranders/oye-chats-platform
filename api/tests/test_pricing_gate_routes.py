@@ -30,17 +30,19 @@ def test_update_accepts_an_empty_string_to_clear_the_url():
     assert UpdateBotRequest(pricing_url="").pricing_url == ""
 
 
-def test_the_write_and_read_contracts_expose_no_gate_toggle():
-    """Inverted from the old "the response defaults the gate off" case.
+def test_the_write_and_read_contracts_expose_exactly_one_gate_toggle():
+    """The gate has one opt-out and it defaults off on both contracts.
 
-    The gate is unconditional, so an enable flag reappearing on either model is
-    an opt-out being reintroduced, whatever it ends up being called. Asserting
-    the absence on both models is what makes that visible at review time.
+    A SECOND pricing field appearing on either model is a new way to disable the
+    gate arriving under a different name, which is what this pins; the behaviour
+    of the one that exists is covered in ``tests/test_pricing_gate_optout.py``.
     """
     for model in (UpdateBotRequest, BotResponse):
         toggles = [name for name in model.model_fields if "pricing" in name and name != "pricing_url"]
-        assert toggles == [], f"{model.__name__} grew a pricing gate toggle: {toggles}"
+        assert toggles == ["pricing_from_knowledge_base"], f"{model.__name__} pricing fields: {toggles}"
 
+    assert BotResponse.model_fields["pricing_from_knowledge_base"].default is False
+    assert UpdateBotRequest.model_fields["pricing_from_knowledge_base"].default is None
     assert BotResponse.model_fields["pricing_url"].default is None
     assert UpdateBotRequest.model_fields["pricing_url"].default is None
 
@@ -80,9 +82,12 @@ def test_bot_cache_payload_round_trips_an_unconfigured_bot_as_no_url():
     """
     payload = _bot_to_cache_dict(Bot(id=8, client_id=3, bot_key="bot-cachenourl", name="No URL Bot"))
     assert payload["pricing_url"] is None
-    # And no companion toggle rode along: the cached bot carries the page and
-    # nothing else, so there is no cached state that could switch the gate off.
-    assert [k for k in payload if "pricing" in k] == ["pricing_url"]
+    # The cached bot carries the page and the owner's opt-out, and nothing else:
+    # a third pricing key appearing is cached state that could switch the gate
+    # off behind the API contract's back.
+    assert sorted(k for k in payload if "pricing" in k) == ["pricing_from_knowledge_base", "pricing_url"]
+    # An unconfigured bot caches as gated, never as opted out.
+    assert payload["pricing_from_knowledge_base"] is False
 
     restored = _bot_from_cache_dict(json.loads(json.dumps(payload, default=str)))
     assert restored.pricing_url is None

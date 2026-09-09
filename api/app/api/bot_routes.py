@@ -804,6 +804,8 @@ class UpdateBotRequest(BaseModel):
     # it, which is a real choice (route every pricing question to the team), not
     # a way to turn the gate off.
     pricing_url: Annotated[str, AfterValidator(_validate_optional_http_url)] | None = Field(None, max_length=MAX_URL)
+    # Owner opt-out of the pricing answer gate; see ``Bot.pricing_from_knowledge_base``.
+    pricing_from_knowledge_base: bool | None = None
     # Widget embed origin restriction.
     allowed_domains: Annotated[list[str], bounded_list(_MAX_ALLOWED_DOMAINS)] | None = None
     domain_check_enabled: bool | None = None
@@ -963,6 +965,7 @@ class BotResponse(BaseModel):
     # Smart links, always returned as ``[{keyword, url}]`` objects.
     answer_links: list[dict] | None = None
     pricing_url: str | None = None
+    pricing_from_knowledge_base: bool = False
     allowed_domains: list[str] = []
     domain_check_enabled: bool = False
     session_share_domain: str | None = None
@@ -1108,6 +1111,7 @@ def _bot_to_response(bot: Bot, request: Request, *, plan_slug: str = "free", pla
         services_url=bot.services_url,
         answer_links=_normalize_answer_links(bot.answer_links),
         pricing_url=bot.pricing_url,
+        pricing_from_knowledge_base=bool(bot.pricing_from_knowledge_base),
         allowed_domains=list(bot.allowed_domains or []),
         domain_check_enabled=bool(bot.domain_check_enabled),
         session_share_domain=bot.session_share_domain,
@@ -2425,6 +2429,7 @@ def list_bots(
                     bant_enabled=b.bant_enabled,
                     bant_config=b.bant_config,
                     relevance_threshold=b.relevance_threshold,
+                    pricing_from_knowledge_base=bool(b.pricing_from_knowledge_base),
                     avatar_type=b.avatar_type or "upload",
                     orb_color=b.orb_color,
                     lead_form_enabled=b.lead_form_enabled,

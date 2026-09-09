@@ -7291,6 +7291,9 @@ def rag_pipeline(
             # The crawled-page fallback costs a DISTINCT over the bot's corpus,
             # and only the Free branches of the pivots read the result.
             _contact_url = resolve_contact_url(bot, session, crawled_fallback=not _plan_support_allowed)
+            # Owner opt-out of the pricing answer gate (default False, so every
+            # bot that never touched it is gated exactly as before).
+            _pricing_from_kb = bool(getattr(bot, "pricing_from_knowledge_base", False)) if bot else False
 
             ensure_chat_session(session, session_id, client_id=cid, bot_id=bid, location=location, device=device)
 
@@ -7533,6 +7536,11 @@ def rag_pipeline(
                 # term on both sides is what stops the bypass and the gate from
                 # drifting apart, exactly as the standdown predicate does.
                 not _judges_bypassed
+                # An opted-out bot answers pricing from the knowledge base, so
+                # the gate will not intercept and bypassing the cache would buy
+                # a full uncached run for nothing. Same shared-predicate
+                # reasoning as the standdown below.
+                and not _pricing_from_kb
                 and _pricing_gate.is_pricing_question(question)
                 and not _pricing_gate.no_support_path_standdown(
                     support_enabled=_plan_support_allowed,
@@ -7851,6 +7859,7 @@ def rag_pipeline(
                     chunks=final_results,
                     support_enabled=_plan_support_allowed,
                     contact_url=_contact_url,
+                    answer_from_knowledge_base=_pricing_from_kb,
                 )
             if _pricing_decision.fired and _pricing_decision.outcome == "answer":
                 final_results = _pricing_decision.chunks
@@ -9056,6 +9065,9 @@ async def rag_pipeline_stream(
             # The crawled-page fallback costs a DISTINCT over the bot's corpus,
             # and only the Free branches of the pivots read the result.
             _contact_url = resolve_contact_url(bot, session, crawled_fallback=not _plan_support_allowed)
+            # Owner opt-out of the pricing answer gate (default False, so every
+            # bot that never touched it is gated exactly as before).
+            _pricing_from_kb = bool(getattr(bot, "pricing_from_knowledge_base", False)) if bot else False
 
             ensure_chat_session(session, session_id, client_id=cid, bot_id=bid, location=location, device=device)
 
@@ -9298,6 +9310,11 @@ async def rag_pipeline_stream(
                 # term on both sides is what stops the bypass and the gate from
                 # drifting apart, exactly as the standdown predicate does.
                 not _judges_bypassed
+                # An opted-out bot answers pricing from the knowledge base, so
+                # the gate will not intercept and bypassing the cache would buy
+                # a full uncached run for nothing. Same shared-predicate
+                # reasoning as the standdown below.
+                and not _pricing_from_kb
                 and _pricing_gate.is_pricing_question(question)
                 and not _pricing_gate.no_support_path_standdown(
                     support_enabled=_plan_support_allowed,
@@ -9729,6 +9746,7 @@ async def rag_pipeline_stream(
                     chunks=final_results,
                     support_enabled=_plan_support_allowed,
                     contact_url=_contact_url,
+                    answer_from_knowledge_base=_pricing_from_kb,
                 )
             if _pricing_decision.fired and _pricing_decision.outcome == "answer":
                 # Narrow the context to the pricing page and let the normal

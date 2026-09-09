@@ -321,6 +321,7 @@ def has_price_signal(text: object) -> bool:
 GateOutcome = Literal[
     "quote_standdown",
     "no_support_path_standdown",
+    "owner_optout",
     "not_pricing",
     "answer",
     "escalate_no_url",
@@ -417,11 +418,21 @@ def evaluate_pricing_gate(
     chunks: list,
     support_enabled: bool = True,
     contact_url: object = None,
+    answer_from_knowledge_base: bool = False,
 ) -> PricingGateDecision:
     """Decide how a turn should be handled under the pricing answer gate.
 
-    There is no enable flag to pass, because there is no opt-out: every bot is
-    gated on every pricing-intent turn, with the single carve-out below.
+    Every bot is gated on every pricing-intent turn unless its owner says
+    otherwise. ``answer_from_knowledge_base`` is that decision
+    (``Bot.pricing_from_knowledge_base``, default False), and it is the ONLY
+    opt-out: it cannot be defaulted into, and a bot that never touches it is
+    gated exactly as it was. It exists because the gate's assumption, that a
+    trustworthy price lives on a public pricing page, is false for every
+    customer whose price list is an uploaded PDF: those bots escalated every
+    pricing question to the team while holding the answer. It is checked after
+    ``quote_active`` so an in-flight quotation still wins, and it does NOT
+    narrow chunks: the opted-out bot answers from everything it knows, which is
+    what the owner asked for.
 
     ``quote_active`` is the per-TURN standdown: True means a BANT quotation is
     active or pending for this session, and that admin-authored priced document
@@ -462,6 +473,8 @@ def evaluate_pricing_gate(
     """
     if quote_active:
         return PricingGateDecision(fired=False, outcome="quote_standdown", chunks=chunks)
+    if answer_from_knowledge_base and is_pricing_question(question):
+        return PricingGateDecision(fired=False, outcome="owner_optout", chunks=chunks)
     if not is_pricing_question(question):
         return PricingGateDecision(fired=False, outcome="not_pricing", chunks=chunks)
 

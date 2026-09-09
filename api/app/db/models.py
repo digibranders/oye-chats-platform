@@ -624,6 +624,14 @@ class Bot(Base):
     # would silently change what every existing bot is allowed to say.
     pricing_url = Column(String, nullable=True)
 
+    # Owner opt-out of the pricing answer gate. False (the default, and what
+    # every existing bot keeps) leaves the gate exactly as it was: pricing is
+    # answered only from ``pricing_url``'s own chunks, or escalated. True says
+    # "my documents carry my prices", which is true of every bot whose price
+    # list lives in an uploaded PDF rather than on a public pricing page, and
+    # lets the general knowledge base answer pricing questions for that bot.
+    pricing_from_knowledge_base = Column(Boolean, nullable=False, default=False, server_default="false")
+
     # Widget embed origin restriction. When ``domain_check_enabled`` is true the
     # backend rejects ``X-Bot-Key`` requests whose Origin/Referer hostname does not
     # match an entry in ``allowed_domains``. Entries support exact hostnames

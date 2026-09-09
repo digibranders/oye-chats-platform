@@ -46,6 +46,7 @@ describe('toBehaviourPayload', () => {
     expect(Object.keys(payload).sort()).toEqual([
       'feature_flags',
       'operator_timeout_seconds',
+      'pricing_from_knowledge_base',
       'relevance_threshold',
       'widget_config',
     ]);
@@ -133,5 +134,21 @@ describe('matchesLevel', () => {
   it('offers three levels, one of which is the platform default', () => {
     expect(STRICTNESS_LEVELS).toHaveLength(3);
     expect(STRICTNESS_LEVELS.some((level) => matchesLevel(null, level.value))).toBe(true);
+  });
+});
+
+describe('pricingFromKnowledgeBase', () => {
+  it('defaults to the gated behaviour when the bot has never set it', () => {
+    expect(parseBehaviour({}).pricingFromKnowledgeBase).toBe(false);
+  });
+
+  it('round-trips an opted-out bot', () => {
+    const draft = parseBehaviour({ pricing_from_knowledge_base: true });
+    expect(draft.pricingFromKnowledgeBase).toBe(true);
+    expect(toBehaviourPayload(draft).pricing_from_knowledge_base).toBe(true);
+  });
+
+  it('treats a non-boolean stored value as gated', () => {
+    expect(parseBehaviour({ pricing_from_knowledge_base: 'yes' }).pricingFromKnowledgeBase).toBe(false);
   });
 });

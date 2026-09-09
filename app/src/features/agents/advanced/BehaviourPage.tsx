@@ -88,6 +88,12 @@ function BehaviourContent({
       update((previous) => ({ ...previous, relevanceThreshold })),
     [update],
   );
+
+  const setPricingFromKnowledgeBase = useCallback(
+    (pricingFromKnowledgeBase: boolean) =>
+      update((previous) => ({ ...previous, pricingFromKnowledgeBase })),
+    [update],
+  );
   const setFlag = useCallback(
     (key: string, next: boolean) =>
       update((previous) => ({
@@ -158,7 +164,12 @@ function BehaviourContent({
         main={
           <Stack>
           <SettingGroup title="Answering">
-            <ScopeSection value={draft.relevanceThreshold} onChange={setThreshold} />
+            <ScopeSection
+              value={draft.relevanceThreshold}
+              onChange={setThreshold}
+              pricingFromKnowledgeBase={draft.pricingFromKnowledgeBase}
+              onPricingChange={setPricingFromKnowledgeBase}
+            />
             <OperatorResponseSection
               value={draft.operatorTimeoutSeconds}
               liveChatAllowed={liveChatAllowed}
