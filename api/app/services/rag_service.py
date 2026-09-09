@@ -1402,7 +1402,7 @@ OFF_TOPIC_REFUSAL_VARIANTS: tuple[str, ...] = (
     "everything related to {company_name}. Want to know about our services, "
     "pricing, or how to get in touch?",
     "I appreciate the question, but I'm here to help with {company_name}. "
-    "What brings you here today. Are you looking at our services, pricing, "
+    "What brings you here today? Are you looking at our services, pricing, "
     "or something else?",
     "I'm focused on questions about {company_name}. Happy to help with our "
     "services, team, or how we work. What were you hoping to learn?",
@@ -4657,7 +4657,7 @@ def _name_ack_message(name: str, company_name: str | None) -> str:
     co = f"**{company_name}**" if company_name else "us"
     return (
         f"Nice to meet you, {name}! "
-        f"What would you like to know. Our services, recent work, or how to get started with {co}?"
+        f"What would you like to know? Our services, recent work, or how to get started with {co}?"
     )
 
 
@@ -5261,6 +5261,8 @@ Eligible dimensions (use the exact dimension key, lowercase):
 
 TALK LIKE A CURIOUS HUMAN, NOT A FORM:
 - Open your reply by briefly reflecting back something CONCRETE the visitor just said — a fact, number, tool, goal, or pain they mentioned (e.g. "Two months is a comfortable runway for this," or "Anonymous traffic is exactly what trips most teams up"). One short, genuine sentence. Mirror FACTS they stated, never invented feelings ("I understand how frustrating that must be" is banned — it reads as fake empathy).
+- THE REFLECTION IS OPTIONAL AND USUALLY WRONG. Only reflect when their latest message actually carries something concrete. If it is a greeting, a bare question, their name, or their contact details, there is NOTHING to reflect: skip it and open with the answer. A manufactured opener ("Doing well, Eva.", "You mentioned your name is Eva.", "Thanks for sharing that.") is worse than no opener at all.
+- NEVER reflect something YOU said. "You mentioned" and "you said" describe the visitor's own words only. Presenting your own earlier answer as theirs ("You already mentioned our services") is a factual error about the conversation.
 - If the visitor's latest message already answered or updated the thing you were tracking, ACKNOWLEDGE that instead of ignoring it (e.g. they said "2 months" then "one week" → "Even sooner, a week works great"). Never re-ask something they already answered.
 - Then ask about their {next_dim_to_probe.upper()} in YOUR OWN WORDS, phrased for THIS specific conversation. Make it feel like real curiosity following from what you just discussed. One short sentence.
 - Angle to aim at (rephrase freely, this is NOT a script to recite verbatim): "{next_dim_cta}"
@@ -5273,7 +5275,8 @@ TALK LIKE A CURIOUS HUMAN, NOT A FORM:
             probing_instruction = f"""This appears to be an early exchange. Answer the visitor helpfully first.
 If their message shows real intent (not just a greeting or one-word opener), close with a single soft, natural question that gets at their **{next_dim_to_probe.upper()}** — phrased in your own words for this conversation, not a canned line.
 - Angle to aim at (rephrase freely): "{next_dim_cta}"
-- If they stated a concrete fact worth acknowledging, open with a brief genuine reflection of it before the question.
+- If they stated a concrete fact worth acknowledging, open with a brief genuine reflection of it before the question. A greeting, a bare question, their name or their contact details are NOT such a fact: skip the reflection and open with the answer rather than manufacturing one ("Doing well, Eva." is worse than no opener).
+- NEVER reflect something YOU said. "You mentioned" and "you said" describe the visitor's own words only.
 - HARD LIMIT — TWO LINES MAX: the reflection + question together stay within two lines (line 1 reflection, line 2 question), each one short sentence. If it won't fit, drop the reflection and just ask the question on one line.
 - FORMAT: Put the follow-up question on its OWN line, separated from your answer by a blank line.
 - Never begin the question with "Out of curiosity"; ask directly or vary your bridge.
