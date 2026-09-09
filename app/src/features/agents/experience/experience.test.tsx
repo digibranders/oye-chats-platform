@@ -101,7 +101,8 @@ const BOT: Record<string, unknown> = {
   branding_text: 'Powered by OyeChats',
   branding_url: 'https://www.oyechats.com',
   feature_flags: { show_branding: true },
-  widget_messages: { welcome_greeting: 'Hello there', welcome_suggestions: ['What do you cost?'] },
+  welcome_title: 'Hello there',
+  widget_messages: { welcome_suggestions: ['What do you cost?'] },
   system_prompt: '',
   services: [],
   answer_links: [],
@@ -272,7 +273,7 @@ describe('unsaved changes are visible and recoverable', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(api.updateBot).toHaveBeenCalledWith(7, {
-      widget_messages: { welcome_greeting: 'Hi!' },
+      welcome_title: 'Hi!',
     }));
     expect(await screen.findByText(/All changes saved/)).toBeInTheDocument();
   });

@@ -234,6 +234,9 @@ export const FIELD_SECTION: Record<DraftField, SectionKey> = {
   launcherName: 'messages',
   welcomeGreeting: 'messages',
   welcomeSubtitle: 'messages',
+  // Both are grouped under "messages" for the UI (they sit in that card), but
+  // they PATCH top-level columns. FIELD_SECTION drives which card a field
+  // belongs to, not which payload key it lands in.
   quickActions: 'messages',
   suggestionsLayout: 'messages',
   inputPlaceholder: 'messages',
@@ -562,8 +565,14 @@ export function draftFromBot(raw: Record<string, unknown>): ExperienceDraft {
 
     displayName: asString(raw.name),
     launcherName: asString(raw.launcher_name),
-    welcomeGreeting: asString(messages.welcome_greeting),
-    welcomeSubtitle: asString(messages.welcome_subtitle),
+    // The widget renders the `welcome_title` / `welcome_subtitle` COLUMNS, not
+    // the same-named keys inside `widget_messages`. This page used to read and
+    // write the JSONB keys, so a customer could edit the greeting and the
+    // subtitle, save successfully, and see no change on their own site: the
+    // two most prominent strings in the widget were uneditable while appearing
+    // to be edited.
+    welcomeGreeting: asString(raw.welcome_title),
+    welcomeSubtitle: asString(raw.welcome_subtitle),
     quickActions: asStringArray(messages.welcome_suggestions),
     suggestionsLayout: asLayout(messages.welcome_suggestions_layout),
     inputPlaceholder: asString(messages.input_placeholder),
@@ -795,8 +804,9 @@ export function patchFromDraft(
   if (changed.has('botLogo')) patch.bot_logo = draft.botLogo;
   if (changed.has('showBranding')) flags.show_branding = draft.showBranding;
 
-  if (changed.has('welcomeGreeting')) messages.welcome_greeting = draft.welcomeGreeting;
-  if (changed.has('welcomeSubtitle')) messages.welcome_subtitle = draft.welcomeSubtitle;
+  // Top-level columns, not `widget_messages`. See `draftFromBot`.
+  if (changed.has('welcomeGreeting')) patch.welcome_title = draft.welcomeGreeting;
+  if (changed.has('welcomeSubtitle')) patch.welcome_subtitle = draft.welcomeSubtitle;
   if (changed.has('quickActions')) messages.welcome_suggestions = draft.quickActions;
   if (changed.has('suggestionsLayout')) {
     messages.welcome_suggestions_layout = draft.suggestionsLayout;
