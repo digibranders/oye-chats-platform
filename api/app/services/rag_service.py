@@ -7044,6 +7044,15 @@ async def rag_pipeline_stream(
                 plan_entitlements_service.is_live_chat_enabled_for_bot(bot.id, session) if _has_bot else False
             )
             live_chat_on = _plan_support_allowed and bool(getattr(bot, "live_chat_enabled", True))
+            # Same shape as the live-chat gate above, and for the same reason:
+            # the columns say what the owner configured, the plan says what the
+            # subscription funding this bot may actually offer. Without it a
+            # Free bot inside a paid workspace kept serving booking cards, and
+            # a bot that lapsed to Free kept serving them forever because
+            # nothing re-checked the plan after the columns were written.
+            _scheduler_ready = _meeting_gate.scheduler_is_configured(bot) and (
+                plan_entitlements_service.is_meeting_booking_enabled_for_bot(bot.id, session) if _has_bot else False
+            )
             # Resolved once per turn and handed to the prompt. Until now
             # ``business_hours`` had no reader in this pipeline at all, so the
             # LIVE SUPPORT block promised "a team member will be with you
@@ -7338,7 +7347,7 @@ async def rag_pipeline_stream(
                 # cached answer served ahead of it would reinstate exactly the
                 # broken promise the gate exists to remove.
                 not _lang_is_non_english(language)
-                and not _meeting_gate.scheduler_is_configured(bot)
+                and not _scheduler_ready
                 and _meeting_gate.is_meeting_question(question)
             )
             # Materialize history to detached role/content objects HERE, ahead of
@@ -7824,7 +7833,7 @@ async def rag_pipeline_stream(
             #
             # A bot WITH a scheduler configured falls through untouched to the
             # existing booking-card flow, which is the better answer.
-            if not _meeting_gate.scheduler_is_configured(bot) and _meeting_gate.is_meeting_question(_gate_question):
+            if not _scheduler_ready and _meeting_gate.is_meeting_question(_gate_question):
                 _safety_net_metric(
                     "meeting_gate_pivot",
                     path="stream",
@@ -8264,7 +8273,7 @@ async def rag_pipeline_stream(
                 # nowhere to send the visitor: they got "I'll set that up" with
                 # nothing attached. ``scheduler_is_configured`` is the same
                 # predicate the meeting gate uses.
-                meeting_booking_enabled=_meeting_gate.scheduler_is_configured(bot),
+                meeting_booking_enabled=_scheduler_ready,
                 services=getattr(bot, "services", None) if bot else None,
                 answer_links=_pricing_gate.merge_pricing_smart_link(
                     answer_links=getattr(bot, "answer_links", None) if bot else None,

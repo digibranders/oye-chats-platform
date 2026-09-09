@@ -90,14 +90,19 @@ class TestBothPipelinesResolveTheseBeforeBuildingThePrompt:
     """Two hand-maintained copies. A promise fixed in one and not the other is
     the file's characteristic failure."""
 
-    def test_each_passes_the_resolved_scheduler_not_the_raw_column(self):
+    def test_it_passes_the_resolved_scheduler_not_the_raw_column(self):
+        """Resolved means both halves: a configured provider URL AND a plan
+        that may offer booking. The column alone let a Free bot inside a paid
+        workspace keep serving booking cards."""
         import inspect
 
         from app.services import rag_service as rs
 
         for fn in (rs.rag_pipeline_stream,):
             src = inspect.getsource(fn)
-            assert "meeting_booking_enabled=_meeting_gate.scheduler_is_configured(bot)" in src, fn.__name__
+            assert "meeting_booking_enabled=_scheduler_ready" in src, fn.__name__
+            assert "_scheduler_ready = _meeting_gate.scheduler_is_configured(bot) and (" in src, fn.__name__
+            assert "is_meeting_booking_enabled_for_bot" in src, fn.__name__
 
     def test_each_resolves_business_hours(self):
         import inspect
@@ -108,3 +113,41 @@ class TestBothPipelinesResolveTheseBeforeBuildingThePrompt:
             src = inspect.getsource(fn)
             assert "_within_hours = _within_business_hours(" in src, fn.__name__
             assert "within_business_hours=_within_hours" in src, fn.__name__
+
+
+class TestTheMeetingGateReadsThePlan:
+    """The runtime had no plan check at all here: ``meeting_gate`` and
+    ``_resolve_meeting_booking`` read the bot's columns only, so a Free bot in a
+    paid workspace kept serving booking cards, and a bot that lapsed to Free
+    kept serving them forever."""
+
+    def test_a_free_bot_is_denied(self, monkeypatch):
+        from app.services import plan_entitlements_service as pes
+
+        monkeypatch.setattr(pes, "get_bot_entitlements", lambda *_a, **_k: SimpleNamespace(plan_slug="free"))
+
+        assert pes.is_meeting_booking_enabled_for_bot(1, object()) is False
+
+    def test_a_paid_bot_is_allowed(self, monkeypatch):
+        from app.services import plan_entitlements_service as pes
+
+        monkeypatch.setattr(pes, "get_bot_entitlements", lambda *_a, **_k: SimpleNamespace(plan_slug="professional"))
+
+        assert pes.is_meeting_booking_enabled_for_bot(1, object()) is True
+
+    def test_a_bespoke_contract_slug_is_allowed(self, monkeypatch):
+        from app.services import plan_entitlements_service as pes
+
+        monkeypatch.setattr(pes, "get_bot_entitlements", lambda *_a, **_k: SimpleNamespace(plan_slug="enterprise-acme"))
+
+        assert pes.is_meeting_booking_enabled_for_bot(1, object()) is True
+
+    def test_a_resolver_failure_denies(self, monkeypatch):
+        from app.services import plan_entitlements_service as pes
+
+        def boom(*_a, **_k):
+            raise RuntimeError("db is down")
+
+        monkeypatch.setattr(pes, "get_bot_entitlements", boom)
+
+        assert pes.is_meeting_booking_enabled_for_bot(1, object()) is False

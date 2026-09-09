@@ -777,6 +777,36 @@ def is_live_chat_enabled_for_bot(bot_id: int, db_session: Session) -> bool:
     return bool(entitlements.has_feature("live_chat"))
 
 
+def is_meeting_booking_enabled_for_bot(bot_id: int, db_session: Session) -> bool:
+    """True iff the plan funding THIS bot may offer online booking.
+
+    The runtime had no plan check here at all: ``meeting_gate`` and
+    ``_resolve_meeting_booking`` read the bot's columns only. So a Free bot
+    inside a paid workspace kept serving booking cards, and a bot that lapsed to
+    Free kept serving them forever, because nothing re-checked the plan after
+    the columns were written.
+
+    Deliberately "not free" rather than a ``meeting_booking`` feature flag.
+    There is no such key in any seeded plan's feature map, so introducing one
+    would deny the feature to every paying customer until every plan row was
+    backfilled. "Not free" is also exactly the rule ``PATCH /bots/{id}`` already
+    enforces on the integration fields, so this makes the runtime agree with
+    the write path instead of inventing a third opinion.
+
+    Falls back to False on any resolver error, like every other gate here.
+    """
+    try:
+        entitlements = get_bot_entitlements(bot_id, db_session, include_usage=False)
+    except Exception:
+        logger.warning(
+            "meeting_booking_gate: entitlements lookup failed for bot=%s. Denying",
+            bot_id,
+            exc_info=True,
+        )
+        return False
+    return entitlements.plan_slug != "free"
+
+
 def _compute(
     client_id: int, db_session: Session, *, include_usage: bool, bot_id: int | None = None
 ) -> PlanEntitlements:
