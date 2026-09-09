@@ -83,7 +83,7 @@ def _stubbed(monkeypatch):
     monkeypatch.setattr(rs, "search_keyword_documents", lambda *a, **k: list(ranked))
     monkeypatch.setattr(rs, "search_similar_documents", lambda *a, **k: [])
     monkeypatch.setattr(rs, "_zero_result_multi_query_fallback", lambda *a, **k: [])
-    monkeypatch.setenv("CAG_LITE_THRESHOLD", "0")
+    monkeypatch.setattr(rs, "CAG_LITE_THRESHOLD", 0)
 
 
 class TestTheCollectorReturnsWhatTheRouteNeeds:

@@ -97,7 +97,7 @@ def _stub_outside_world(monkeypatch):
     monkeypatch.setattr(rs, "cache_set", lambda *a, **k: None)
     monkeypatch.setattr(rs, "cache_delete", lambda *a, **k: None)
     monkeypatch.setattr(rs, "_generate_query_paraphrases", lambda *a, **k: [])
-    monkeypatch.setenv("CAG_LITE_THRESHOLD", "0")
+    monkeypatch.setattr(rs, "CAG_LITE_THRESHOLD", 0)
 
 
 @pytest.fixture()

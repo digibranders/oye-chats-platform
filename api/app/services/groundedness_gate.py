@@ -27,7 +27,9 @@ Model:        resolved per-call via ``runtime_config.get_gate_model()``,
               same cheap tier as the relevance gate
 Threshold:    ``GROUNDEDNESS_THRESHOLD`` (default: 0.5)
 Judge input:  ``GROUNDEDNESS_MAX_CHUNKS`` (default 5) chunks ×
-              ``GROUNDEDNESS_CHUNK_PREVIEW_CHARS`` (default 500) characters each
+              ``GROUNDEDNESS_CHUNK_PREVIEW_CHARS`` (default 1000, a whole
+              default-size chunk) characters each, under a total budget of
+              ``GROUNDEDNESS_PROMPT_CHAR_BUDGET``
 """
 
 import logging
@@ -85,7 +87,13 @@ GROUNDEDNESS_THRESHOLD: float = float(os.getenv("GROUNDEDNESS_THRESHOLD", "0.5")
 # value means the default, not a crash on import; floored at 1 so the judge
 # always sees something.
 GROUNDEDNESS_MAX_CHUNKS: int = max(1, int(os.getenv("GROUNDEDNESS_MAX_CHUNKS") or "5"))
-GROUNDEDNESS_CHUNK_PREVIEW_CHARS: int = max(1, int(os.getenv("GROUNDEDNESS_CHUNK_PREVIEW_CHARS") or "500"))
+GROUNDEDNESS_CHUNK_PREVIEW_CHARS: int = max(1, int(os.getenv("GROUNDEDNESS_CHUNK_PREVIEW_CHARS") or "1000"))
+# Total characters of chunk text this judge may see, whatever it is given. Same
+# reasoning as the relevance gate's ``GATE_PROMPT_CHAR_BUDGET``: an unranked
+# CAG-lite bundle can be twenty chunks, and at a full preview each that is a
+# five-thousand-token prompt for a check that runs on every answer.
+GROUNDEDNESS_PROMPT_CHAR_BUDGET: int = max(1, int(os.getenv("GROUNDEDNESS_PROMPT_CHAR_BUDGET") or "6000"))
+_MIN_CHUNK_PREVIEW_CHARS = 200
 _MAX_ANSWER_PREVIEW = 1500
 _GROUNDEDNESS_LLM_TIMEOUT_S = float(os.getenv("GROUNDEDNESS_LLM_TIMEOUT_S", "3.0"))
 
@@ -114,10 +122,17 @@ def _build_groundedness_prompt(question: str, answer: str, chunks: list, max_chu
     # order, so the first five are arbitrary and a correct answer read as
     # fabricated. Same fix as ``relevance_gate._build_gate_prompt``.
     limit = max_chunks if max_chunks and max_chunks > 0 else GROUNDEDNESS_MAX_CHUNKS
+    shown = min(limit, len(chunks))
+    per_chunk = GROUNDEDNESS_CHUNK_PREVIEW_CHARS
+    if shown > 0:
+        per_chunk = min(
+            GROUNDEDNESS_CHUNK_PREVIEW_CHARS,
+            max(_MIN_CHUNK_PREVIEW_CHARS, GROUNDEDNESS_PROMPT_CHAR_BUDGET // shown),
+        )
     chunk_previews = []
     for i, doc in enumerate(chunks[:limit], 1):
         content = getattr(doc, "content", "") or ""
-        preview = content[:GROUNDEDNESS_CHUNK_PREVIEW_CHARS].replace("\n", " ")
+        preview = content[:per_chunk].replace("\n", " ")
         chunk_previews.append(f"Chunk {i}: {preview}")
     chunks_text = "\n".join(chunk_previews) if chunk_previews else "(no chunks were retrieved for this turn)"
 
@@ -175,7 +190,7 @@ def check_groundedness(
                 messages=[{"role": "user", "content": prompt}],
                 # Thinking DISABLED, and a budget that fits the answer.
                 #
-                # `gemini-2.5-flash` (the default GATE_MODEL) is a reasoning
+                # `gemini-2.5-flash` (the default gate model) is a reasoning
                 # model: it spends output tokens thinking before it emits any
                 # text. At `max_tokens=20` the entire budget went to reasoning
                 # and the content came back EMPTY. Measured against the live
@@ -191,7 +206,7 @@ def check_groundedness(
                 # against 116 for the thinking path. Correct AND ~23x cheaper
                 # than the version that was silently returning nothing.
                 # `litellm.drop_params = True` (main.py) drops this param for a
-                # GATE_MODEL that does not support it, so retuning the model
+                # gate model that does not support it, so retuning the model
                 # cannot resurrect the bug.
                 reasoning_effort="disable",
                 # A judge is a classifier: the same question against the same

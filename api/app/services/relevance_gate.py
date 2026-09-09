@@ -7,9 +7,12 @@ score below the threshold, the gate fires and the pipeline returns a
 "can't help" response without generating an answer from irrelevant context.
 
 Feature flag: ``RELEVANCE_GATE_ENABLED`` (default: true. Scope-enforcement on by default)
-Model:        resolved per-call via ``runtime_config.get_gate_model()`` (DB-backed,
-              super-admin tunable via the ``gate_model`` setting); falls back to
-              ``GATE_MODEL`` env default (gemini/gemini-2.5-flash. Cheap & fast)
+Model:        resolved per call via ``runtime_config.get_gate_model()`` (DB-backed,
+              super-admin tunable via the ``gate_model`` setting), whose own
+              fallback chain ends at ``model.fallback`` / ``FALLBACK_MODEL``.
+              There is no ``GATE_MODEL`` constant: one existed for a long time,
+              nothing read it, and two comments disagreed about whether it was
+              authoritative.
 Threshold:    per-bot ``Bot.relevance_threshold`` → super-admin runtime knob
               ``rag.relevance_threshold`` → ``RELEVANCE_THRESHOLD`` env default (0.3).
               0.3 sits below the judge's own 0.5 "related enough to help" anchor,
@@ -80,14 +83,6 @@ RELEVANCE_GATE_ENABLED: bool = (os.getenv("RELEVANCE_GATE_ENABLED") or "true").l
     "yes",
 )
 
-# Deployed in production via deploy-api.yml, and documented in
-# docs/system-design/docs/06-rag/pipeline.md. Kept for reference/back-compat,
-# but the effective model is resolved at call time by `_gate_model()` below.
-# `runtime_config.get_gate_model()`'s own fallback chain resolves to
-# `model.fallback`/`FALLBACK_MODEL`, not this constant, if `model.gate` isn't
-# set in the DB. Read `_gate_model()`'s docstring before assuming this env
-# var is authoritative.
-GATE_MODEL: str = os.getenv("GATE_MODEL", "gemini/gemini-2.5-flash")
 # 0.3, below the judge's own 0.5 "related enough to help" anchor. At 0.55 a
 # judge following its rubric failed the gate on every broad company question
 # ("what does X do" scored at the anchor). The gate exists to refuse "what's
@@ -142,13 +137,13 @@ _GATE_LLM_TIMEOUT_S = float(os.getenv("GATE_LLM_TIMEOUT_S", "2.0"))
 
 def _gate_model() -> str:
     """Resolve the gate model at call time via ``runtime_config`` (DB-backed,
-    super-admin tunable), falling back to the ``GATE_MODEL`` env constant.
+    super-admin tunable).
 
-    Mirrors ``llm_service._primary_model()``/``_fallback_model()``. Reading
-    the module-level ``GATE_MODEL`` constant directly would freeze it at
-    import time, an admin swapping the gate model via the dashboard during
-    an incident would see the change "save" successfully while the gate kept
-    calling the old (possibly broken) model indefinitely.
+    Mirrors ``llm_service._primary_model()``/``_fallback_model()``. Reading a
+    module-level constant instead would freeze the value at import time: an
+    admin swapping the gate model via the dashboard during an incident would
+    see the change save successfully while the gate kept calling the old,
+    possibly broken, model indefinitely.
     """
     return runtime_config.get_gate_model()
 
@@ -331,7 +326,7 @@ def check_relevance(
                 messages=[{"role": "user", "content": prompt}],
                 # Thinking DISABLED, and a budget that fits the answer.
                 #
-                # `gemini-2.5-flash` (the default GATE_MODEL) is a reasoning
+                # `gemini-2.5-flash` (the default gate model) is a reasoning
                 # model: it spends output tokens thinking before it emits any
                 # text. At `max_tokens=20` the entire budget went to reasoning
                 # and the content came back EMPTY. Measured against the live
@@ -347,7 +342,7 @@ def check_relevance(
                 # against 116 for the thinking path. Correct AND ~23x cheaper
                 # than the version that was silently returning nothing.
                 # `litellm.drop_params = True` (main.py) drops this param for a
-                # GATE_MODEL that does not support it, so retuning the model
+                # gate model that does not support it, so retuning the model
                 # cannot resurrect the bug.
                 reasoning_effort="disable",
                 # A judge is a classifier: the same question against the same

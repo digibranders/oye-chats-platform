@@ -65,6 +65,12 @@ from app.worker.enqueue import WORKER_ENABLED, enqueue_sync
 
 logger = logging.getLogger(__name__)
 
+# Read once at import rather than on every chat turn. It was an ``os.getenv``
+# inside the request path, which is a syscall per turn for a value that cannot
+# change without a restart, and it hid the setting from anyone reading
+# ``config.py`` to find out what the pipeline is configured with.
+CAG_LITE_THRESHOLD: int = int(os.getenv("CAG_LITE_THRESHOLD", "20"))
+
 # TTL for query-embedding cache (Phase 4B)
 _EMBED_CACHE_TTL = 300  # 5 minutes. Short; rewrites vary
 
@@ -7488,7 +7494,7 @@ async def rag_pipeline_stream(
                         s.expunge(d)
                     return docs
 
-            _cag_threshold = int(os.getenv("CAG_LITE_THRESHOLD", "20"))
+            _cag_threshold = CAG_LITE_THRESHOLD
             _total_chunks, _kb_max_id = (
                 await asyncio.to_thread(_count_chunks_isolated, bid, cid) if bid or cid else (0, None)
             )

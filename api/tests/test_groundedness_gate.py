@@ -154,7 +154,9 @@ class TestStrictSchemaRequest:
 class TestJudgeInputKnobs:
     def test_defaults(self):
         assert groundedness_gate.GROUNDEDNESS_MAX_CHUNKS == 5
-        assert groundedness_gate.GROUNDEDNESS_CHUNK_PREVIEW_CHARS == 500
+        # A whole default-size chunk, mirroring the relevance gate as the
+        # comment on the constant claims it does.
+        assert groundedness_gate.GROUNDEDNESS_CHUNK_PREVIEW_CHARS == 1000
 
     def test_prompt_shows_five_chunks_of_500_characters(self, monkeypatch):
         monkeypatch.setattr(groundedness_gate, "GROUNDEDNESS_MAX_CHUNKS", 5)
@@ -187,7 +189,7 @@ class TestJudgeInputKnobs:
         try:
             reloaded = importlib.reload(groundedness_gate)
             assert reloaded.GROUNDEDNESS_MAX_CHUNKS == 3
-            assert reloaded.GROUNDEDNESS_CHUNK_PREVIEW_CHARS == 500
+            assert reloaded.GROUNDEDNESS_CHUNK_PREVIEW_CHARS == 1000
         finally:
             monkeypatch.delenv("GROUNDEDNESS_MAX_CHUNKS", raising=False)
             monkeypatch.delenv("GROUNDEDNESS_CHUNK_PREVIEW_CHARS", raising=False)

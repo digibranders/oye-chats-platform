@@ -170,7 +170,7 @@ def _no_cag_lite(monkeypatch):
     supposed to be narrowing. Disabling it is what makes the scoping
     assertions below mean something.
     """
-    monkeypatch.setenv("CAG_LITE_THRESHOLD", "0")
+    monkeypatch.setattr(rs, "CAG_LITE_THRESHOLD", 0)
 
 
 async def _collect(agen) -> list[str]:
