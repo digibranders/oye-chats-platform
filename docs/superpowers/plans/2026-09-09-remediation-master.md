@@ -40,6 +40,58 @@ PR #455 on `development`, seven commits, all green. Do not re-do these.
 | G-14 | Judge prompt unbounded on a wide bundle | `faac8026` |
 | P-1 | Chunk enrichment was a silent no-op | `704124e2` |
 
+
+## Executed on 2026-09-09 (after the register was written)
+
+These are closed on `development`. The register above is the state as found; this
+is the state as left.
+
+| ID | Finding | Commit |
+|---|---|---|
+| M-1 | Nightly eval never ran: the target was passed by in-process env lookup that arrived empty | `d0a86e7f` |
+| P-2 | Length, bold, follow-ups and unknown-phrasing each stated twice, style block winning | `ed553fbd` |
+| P-3 | Every customer's bot told it sells B2B SaaS | `ed553fbd` |
+| P-4 | 32,218-char media rulebook, injected with the bot-wide catalog | `ed553fbd` |
+| P-5 | Every pricing answer required a billing cadence | `ed553fbd` |
+| P-6 | Brand tone injected raw, below the rule it can contradict | `a446eb64` |
+| P-7 | Custom prompt and tone truncated below what the API accepts | `a446eb64` |
+| P-12 | No-info pivot said the words RULE 9 forbids | `e9888154` |
+| P-11 | Widget greeted twice on turn one | `e9888154` |
+| P-13 | Any reply under 1000 chars became COMPANY CONTEXT | `e9888154` |
+| P-14 | Event URLs persisted from crawled text unvalidated | `e9888154` |
+| P-15 | Handoff classifier: unfenced message, `"YES" in reply` | `e9888154` |
+| P-19 | New accounts seeded with "an advanced AI consultant" | `e9888154` |
+| E-1 | Booking card promised with no scheduler URL | `a446eb64` |
+| E-2 | Free plan told to offer a team its prompt forbids | `a446eb64` |
+| E-3 | Live handoff promised outside business hours | `a446eb64` |
+| U-1 | Qualification lost on every deploy | `fa7a84cf` |
+| U-3 | Production could boot with no durable queue | `fa7a84cf` |
+| U-10 | Two owner filters matched every tenant when unscoped | `22ba4142` |
+| U-11 | Hard-coded affiliate salt | `22ba4142` |
+| O-11 | Dev gallery mounted in production with no auth | `22ba4142` |
+| O-1 | Sync pipeline: 1,676 duplicate lines, no product caller | `93a32082` |
+| O-3 | Dead `GATE_MODEL` constant and its contradictory comments | `4f6d643c` |
+| O-14 | `CAG_LITE_THRESHOLD` read from the environment every turn | `4f6d643c` |
+| R-4 | Groundedness preview stayed 500 while relevance moved to 1000 | `4f6d643c` |
+| U-15 | Superadmin console lint did not typecheck | `oyechats-admin b0ffe09` |
+
+`rag_service.py` went from 10,572 lines to 8,905. The assembled prompt went from
+15,233 tokens to 8,120 for a bot with media, and two ratchet tests now fail if
+either grows back.
+
+### Corrections to the register
+
+- **O-3 was partly wrong.** `task_migrate_embedding_profile` is not dead: it is
+  how `api/scripts/migrate_embedding_profile.py` runs a migration through the
+  worker. `EMBED_PROVIDER` is not dead either; it exists to reject an
+  unsupported value, which is a guard rather than a dead branch. Only
+  `GATE_MODEL` was genuinely dead.
+- **U-16 cannot be done as written.** Wiring `verify-html.mjs` into the website
+  build turns a passing deploy into a failing one: the verifier exits non-zero
+  on six pre-existing content failures (four blog posts with too few inbound
+  links, and `/features` and `/solutions` with no `h3` at all). Those six are
+  content decisions, so the gate goes in after they are fixed, not before.
+
 ## Open finding register
 
 Severity is (likelihood × blast radius), not effort. **Wave** is where it gets fixed.
