@@ -173,8 +173,8 @@ async def test_on_scope_question_with_chunks_is_answered_despite_the_judge(
 
     assert _stub_generation["prompts"], "the on-scope question never reached generation"
     assert answer == "GENERATED ANSWER"
-    assert "specific detail on hand" not in answer
-    assert "specific detail on hand" not in _persisted_reply(db, session_id)
+    assert "sits with the" not in answer
+    assert "sits with the" not in _persisted_reply(db, session_id)
 
 
 @pytest.mark.asyncio
@@ -226,7 +226,7 @@ async def test_an_on_scope_question_with_no_chunks_still_takes_the_pivot(
     answer = await _drive(pipeline, bot, _ON_SCOPE, session_id)
 
     assert _stub_generation["prompts"] == [], "an empty context reached the model"
-    assert "specific detail on hand" in answer
+    assert "sits with the" in answer
 
 
 @pytest.mark.asyncio

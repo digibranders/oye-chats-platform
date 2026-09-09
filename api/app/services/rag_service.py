@@ -1970,6 +1970,9 @@ def _no_info_pivot(company_name: str | None, support_enabled: bool = True, *, co
     channel, which is the better answer than a link.
     """
     cn = f"**{company_name}**" if company_name else "us"
+    # Grammatical with or without a company name: "the **Acme** team" reads
+    # correctly, "the us team" does not.
+    team = f"the **{company_name}** team" if company_name else "our team"
     if not support_enabled:
         # Re-validate rather than trusting the caller, mirroring
         # ``pricing_gate.pricing_pivot``. This is a plain public function whose
@@ -1982,12 +1985,9 @@ def _no_info_pivot(company_name: str | None, support_enabled: bool = True, *, co
             contact_url.strip() if isinstance(contact_url, str) and _pricing_gate.normalize_url(contact_url) else None
         )
         if usable_url:
-            return f"I don't have that specific detail on hand for {cn}. You can get in touch here: {usable_url}"
-        return f"I don't have that specific detail on hand for {cn}. Is there something else about {cn} I can help you with?"
-    return (
-        f"I don't have that specific detail on hand for {cn}. Want me to "
-        f"connect you with the team so they can help directly?"
-    )
+            return f"That specific detail sits with {team}. You can get in touch here: {usable_url}"
+        return f"That specific detail sits with {team}. Is there something else about {cn} I can help you with?"
+    return f"That specific detail sits with {team}. Want me to connect you with the team so they can help directly?"
 
 
 def _browsing_ack(company_name: str | None) -> str:
@@ -4566,7 +4566,10 @@ def _maybe_append_name_ask(
 
 # Turn-1 reply: ask the visitor's name BEFORE answering, so the entire first
 # response is just this. The real question is deferred and answered next turn.
-_NAME_REQUEST_MESSAGE = "Hi there! Before I help you out, may I know your name so I can address you properly?"
+# No greeting here. The widget has already shown its welcome bubble by the time
+# this is sent, so opening with "Hi there!" gave every visitor two hellos in a
+# row before anyone had said anything.
+_NAME_REQUEST_MESSAGE = "Before I help you out, may I know your name so I can address you properly?"
 
 
 def _name_ack_message(name: str, company_name: str | None) -> str:

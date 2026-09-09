@@ -699,9 +699,16 @@ Website content:
             elif line.upper().startswith("DESCRIPTION:"):
                 description = line[12:].strip().strip('"')
 
-        if not name and not description and len(text) < 1000:
-            # Fallback: treat entire response as description
-            description = text
+        # No "treat the whole reply as the description" fallback. This value is
+        # written into the COMPANY CONTEXT block of every future visitor prompt,
+        # so anything that is not the shape we asked for is not a description:
+        # a refusal, an apology, or a line injected into the crawled page all
+        # arrive here as plausible-looking prose under 1000 characters. A miss
+        # costs one empty context block; a wrong hit is in every answer the bot
+        # gives from then on.
+        if not name and not description:
+            logger.warning("Company context reply did not match the NAME/DESCRIPTION shape; discarding")
+            return None
 
         result = {}
         if name and 2 <= len(name) <= 100:

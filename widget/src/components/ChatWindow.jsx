@@ -235,7 +235,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
     const [messages, setMessages] = useState([
         {
             id: 'welcome',
-            text: t('welcome.initial_message') || 'Hi There, How can I help you today?',
+            text: t('welcome.initial_message') || 'Hi there! How can we help you today?',
             sender: 'bot',
             timestamp: new Date().toISOString(),
             feedback: null
@@ -841,7 +841,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                 setSettings(initialSettings);
                 setMessages(prev => prev.map(m =>
                     m.id === 'welcome'
-                        ? { ...m, text: t('welcome.initial_message') || 'Hi There, How can I help you today?' }
+                        ? { ...m, text: t('welcome.initial_message') || 'Hi there! How can we help you today?' }
                         : m
                 ));
             }
@@ -1262,7 +1262,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
             // rather than leaving a blank message area.
             setMessages([{
                 id: 'welcome',
-                text: t('welcome.initial_message') || 'Hi There, How can I help you today?',
+                text: t('welcome.initial_message') || 'Hi there! How can we help you today?',
                 sender: 'bot',
                 timestamp: new Date().toISOString(),
                 feedback: null,
@@ -1402,7 +1402,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
     const handleClearMessages = () => {
         setMessages([{
             id: 'welcome',
-            text: t('welcome.initial_message') || 'Hi There, How can I help you today?',
+            text: t('welcome.initial_message') || 'Hi there! How can we help you today?',
             sender: 'bot',
             timestamp: new Date().toISOString(),
             feedback: null,
@@ -1456,7 +1456,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
         setTimeout(() => {
             setMessages([{
                 id: 'welcome',
-                text: t('welcome.initial_message') || 'Hi There, How can I help you today?',
+                text: t('welcome.initial_message') || 'Hi there! How can we help you today?',
                 sender: 'bot',
                 timestamp: new Date().toISOString(),
                 feedback: null
