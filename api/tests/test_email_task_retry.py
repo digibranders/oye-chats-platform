@@ -42,7 +42,10 @@ def test_connection_phase_failure_is_marked_retryable(monkeypatch):
 
     monkeypatch.setattr(email_service, "EMAIL_ENABLED", True)
     outcome = _outcome_for(URLError(ConnectionRefusedError("connection refused")))
-    assert outcome == SendOutcome(False, can_retry=True)
+    assert (outcome.sent, outcome.can_retry) == (False, True)
+    # ``error`` carries the transport failure so the dead-letter row can say
+    # what happened; it is not part of the retry contract under test here.
+    assert "ConnectionRefusedError" in outcome.error
 
 
 def test_read_timeout_after_the_request_was_sent_is_not_retryable(monkeypatch):
@@ -52,7 +55,8 @@ def test_read_timeout_after_the_request_was_sent_is_not_retryable(monkeypatch):
 
     monkeypatch.setattr(email_service, "EMAIL_ENABLED", True)
     outcome = _outcome_for(TimeoutError("timed out"))
-    assert outcome == SendOutcome(False, can_retry=False)
+    assert (outcome.sent, outcome.can_retry) == (False, False)
+    assert "TimeoutError" in outcome.error
 
 
 def test_server_rejection_is_not_retryable(monkeypatch):

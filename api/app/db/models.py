@@ -2558,6 +2558,53 @@ class FailedWebhook(Base):
     replayed_at = Column(DateTime(timezone=True), nullable=True)
 
 
+class FailedEmail(Base):
+    """Dead letter for an email the platform accepted and then could not send.
+
+    Every send in this codebase is fire-and-forget: the caller hands the
+    message to ``send_email_async``, which enqueues ``task_send_email``, and the
+    caller returns. That is the right shape (a visitor's turn must not wait on
+    Brevo) but it left three places where a message could vanish with no record
+    anywhere:
+
+    * the enqueue itself failed, so the job never existed;
+    * the provider rejected the message, which is deliberately not retried
+      because a retry could deliver an OTP or an invoice twice;
+    * ARQ exhausted ``max_tries``.
+
+    In all three the only trace was a log line. A customer reporting "I never
+    got the reset email" could not be answered. This table is the answer, and
+    the model is the one ``failed_webhooks`` already established: keep the row,
+    let an operator see it, replay the ones that are safe to replay.
+
+    ``body_html`` is nullable on purpose. Password resets, OTPs and invites put
+    a live credential in the body, and a dead-letter table is a bad place to
+    keep one; those rows record everything except the body and are marked
+    ``replayable=False``, because the fix is for the customer to request a new
+    one rather than for an operator to resend a token from a database.
+    """
+
+    __tablename__ = "failed_emails"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    to_email = Column(Text, nullable=False, index=True)
+    subject = Column(Text, nullable=False)
+    #: Omitted for credential-bearing mail. See the class docstring.
+    body_html = Column(Text, nullable=True)
+    reply_to = Column(Text, nullable=True)
+    sender_name = Column(Text, nullable=True)
+    attachments = Column(JSONB, nullable=True)
+    #: 'enqueue_failed' | 'provider_rejected' | 'retries_exhausted'
+    reason = Column(Text, nullable=False, index=True)
+    error = Column(Text, nullable=True)
+    attempts = Column(Integer, nullable=False, server_default="1", default=1)
+    replayable = Column(Boolean, nullable=False, server_default="true", default=True)
+    #: 'pending' | 'replayed' | 'ignored'
+    status = Column(Text, nullable=False, server_default="pending", default="pending")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    replayed_at = Column(DateTime(timezone=True), nullable=True)
+
+
 # ── Super-admin audit & supporting tables ────────────────────────────────────
 
 

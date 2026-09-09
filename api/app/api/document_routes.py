@@ -1337,7 +1337,7 @@ async def crawl_diff_endpoint(
 
     from app.services import credit_service, plan_service
     from app.services.plan_service import UNLIMITED
-    from app.services.url_discovery import check_urls_alive, discover_website_urls, normalize_url
+    from app.services.url_discovery import check_urls_liveness, discover_website_urls, normalize_url
 
     with get_session() as db:
         plan = plan_service.get_client_plan(db, client_id)
@@ -1427,10 +1427,26 @@ async def crawl_diff_endpoint(
         if not raw_urls_to_check:
             return {}
         try:
-            return await asyncio.wait_for(
-                check_urls_alive(raw_urls_to_check),
+            states = await asyncio.wait_for(
+                check_urls_liveness(raw_urls_to_check),
                 timeout=HEAD_BUDGET_SECONDS,
             )
+            # A URL the probe could not resolve either way is reported as alive
+            # (never delete on a blip) but it is NOT a clean result, and saying
+            # so is the whole point of ``head_partial``. Without this the caller
+            # could not tell 400 confirmed-live pages from 400 timeouts.
+            undetermined = [url for url, state in states.items() if state == "unknown"]
+            if undetermined:
+                head_partial = True
+                logger.warning(
+                    "HEAD liveness undetermined for %d of %d URLs on %s",
+                    len(undetermined),
+                    len(states),
+                    diff_request.url,
+                )
+                with contextlib.suppress(Exception):
+                    increment_metric_counter("liveness_probe_failed", bot_id=None)
+            return {url: state != "gone" for url, state in states.items()}
         except TimeoutError:
             logger.warning(
                 "HEAD liveness check exceeded %.0fs budget for %s (%d URLs). Falling back to assume-alive",

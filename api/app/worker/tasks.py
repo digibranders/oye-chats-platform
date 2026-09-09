@@ -479,7 +479,7 @@ async def task_prune_processed_webhooks(ctx: dict) -> int:
     import asyncio
     from datetime import UTC, datetime, timedelta
 
-    from sqlalchemy import delete, select
+    from sqlalchemy import and_, delete, or_, select
 
     from app.db.models import ProcessedWebhook
     from app.db.session import get_session
@@ -562,6 +562,40 @@ async def task_prune_processed_webhooks(ctx: dict) -> int:
                 session.execute(delete(WebhookDelivery).where(WebhookDelivery.id.in_(delivery_ids)))
                 session.commit()
                 total += len(delivery_ids)
+
+            # Email dead letters: 90 days, and a resolved row goes at 7. The
+            # body of a non-credential message is stored so it can be replayed,
+            # which makes this table a copy of customer correspondence. It is
+            # kept exactly as long as it is useful for answering "I never got
+            # that email", and no longer. Credential mail never stored a body
+            # in the first place (see ``FailedEmail``).
+            from app.db.models import FailedEmail
+
+            dead_cutoff = datetime.now(UTC) - timedelta(days=90)
+            resolved_cutoff = datetime.now(UTC) - timedelta(days=7)
+            while True:
+                dead_ids = (
+                    session.execute(
+                        select(FailedEmail.id)
+                        .where(
+                            or_(
+                                FailedEmail.created_at < dead_cutoff,
+                                and_(
+                                    FailedEmail.status.in_(("replayed", "ignored")),
+                                    FailedEmail.created_at < resolved_cutoff,
+                                ),
+                            )
+                        )
+                        .limit(5000)
+                    )
+                    .scalars()
+                    .all()
+                )
+                if not dead_ids:
+                    break
+                session.execute(delete(FailedEmail).where(FailedEmail.id.in_(dead_ids)))
+                session.commit()
+                total += len(dead_ids)
         return total
 
     loop = asyncio.get_running_loop()
@@ -1216,7 +1250,7 @@ async def task_send_email(
     """Send a raw HTML email via the configured provider (Brevo or SES). Returns True on success."""
     import asyncio
 
-    from app.services.email_service import _send_raw_email_result, redact_email
+    from app.services.email_service import _send_raw_email_result, record_failed_email, redact_email
 
     # PRIVACY, the recipient can be a visitor (the chat follow-up in
     # lead_routes, the offline-message reply), and Sentry's LoggingIntegration
@@ -1248,6 +1282,17 @@ async def task_send_email(
             redact_email(to_email),
             subject[:50],
         )
+        record_failed_email(
+            to_email,
+            subject,
+            html_body,
+            reason="provider_rejected",
+            error=outcome.error,
+            reply_to=reply_to,
+            sender_name=sender_name,
+            attachments=attachments,
+            attempts=ctx.get("job_try", 1),
+        )
         return False
 
     # Never reached the provider (DNS / connect / TLS / write). Safe to re-send.
@@ -1255,7 +1300,31 @@ async def task_send_email(
     # silently drops the email (audit F13). max_tries (3) bounds the attempts.
     from arq.worker import Retry
 
+    from app.worker.settings import WorkerSettings
+
     job_try = ctx.get("job_try", 1)
+    if job_try >= WorkerSettings.max_tries:
+        # The last attempt. Raising Retry here would have ARQ mark the job
+        # permanently failed and drop it, which is exactly the silent loss this
+        # dead letter exists to end.
+        logger.error(
+            "task_send_email: %s exhausted after %d attempts (subject=%s)",
+            redact_email(to_email),
+            job_try,
+            subject[:50],
+        )
+        record_failed_email(
+            to_email,
+            subject,
+            html_body,
+            reason="retries_exhausted",
+            error=outcome.error,
+            reply_to=reply_to,
+            sender_name=sender_name,
+            attachments=attachments,
+            attempts=job_try,
+        )
+        return False
     raise Retry(defer=min(10 * 2 ** (job_try - 1), 300))
 
 
@@ -2532,6 +2601,7 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
     path is never involved. Returns the number of PDFs produced.
     """
     import asyncio
+    import contextlib
     from datetime import timedelta
 
     from sqlalchemy import or_ as sa_or
@@ -2539,6 +2609,7 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
     from sqlalchemy import update as sa_update
 
     from app import config
+    from app.core.metrics import forward_to_sentry_if_alertable, increment_metric_counter
     from app.db.models import Invoice as InvoiceModel
     from app.services import invoice_service
 
@@ -2567,6 +2638,21 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
                 session.commit()
                 if healed:
                     logger.info("task_render_invoice_pdfs: re-numbered %d previously un-numbered invoice(s)", healed)
+                # The healed count alone cannot distinguish "nothing was broken"
+                # from "the same rows have failed every pass since Tuesday",
+                # and both render as zero. A paid charge with no invoice number
+                # is a customer with no tax document, so the rows that survive
+                # an hour of retries are counted and paged separately.
+                stuck = invoice_service.count_stuck_unnumbered_invoices(session)
+                if stuck:
+                    logger.error(
+                        "task_render_invoice_pdfs: %d paid charge(s) still un-numbered after %s",
+                        stuck,
+                        invoice_service.STUCK_INVOICE_AGE,
+                    )
+                    with contextlib.suppress(Exception):
+                        increment_metric_counter("invoice_stuck_unnumbered", bot_id=None)
+                        forward_to_sentry_if_alertable("invoice_stuck_unnumbered", stuck=stuck)
             except Exception:  # noqa: BLE001  Self-heal must never block the PDF sweep
                 session.rollback()
                 logger.exception("task_render_invoice_pdfs: un-numbered invoice backfill failed; will retry")

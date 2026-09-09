@@ -46,6 +46,14 @@ _SENTRY_FORWARD_METRICS = frozenset(
         # The gateway refused to cancel a live mandate. The daily orphan sweep
         # catches it, but until it does the customer is still being charged.
         "addon_cancel_failed",
+        # An email the platform accepted and then could not deliver: the
+        # enqueue failed, the provider refused it, or the retries ran out. The
+        # row is kept in ``failed_emails``; this is how anyone learns to look.
+        "email_dead_lettered",
+        # A paid charge that has had no invoice number for an hour. The
+        # five-minute backfill has now failed twelve times on it, so this is a
+        # customer holding a receipt-less purchase, not a transient blip.
+        "invoice_stuck_unnumbered",
         # An enqueue that never reached Redis after the response was already
         # sent. For an email that is a verification code nobody receives.
         "enqueue_failed",
