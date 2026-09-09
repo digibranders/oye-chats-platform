@@ -1176,6 +1176,10 @@ class BANTSignal(Base):
 
     session = relationship("ChatSession", back_populates="bant_signals")
 
+    # The retention sweep deletes by age. Without this it is a sequential scan
+    # over the second-highest-volume table on the platform.
+    __table_args__ = (Index("ix_bant_signals_created_at", "created_at"),)
+
 
 class VisitorEvent(Base):
     """Behavioral events tracked from the widget (page views, UTM captures, return visits, etc.)."""
@@ -1191,6 +1195,8 @@ class VisitorEvent(Base):
 
     session = relationship("ChatSession", back_populates="visitor_events")
     bot = relationship("Bot")
+
+    __table_args__ = (Index("ix_visitor_events_created_at", "created_at"),)
 
 
 class BotGrowthEvent(Base):
@@ -1629,6 +1635,12 @@ class ChatAuditLog(Base):
 
     session = relationship("ChatSession")
     operator = relationship("Operator")
+
+    # Eleven write paths feed this table and both readers filter on
+    # ``session_id``: the per-session audit view, and the queue summary that
+    # reconstructs wait times by pairing ``handoff_requested`` with whatever
+    # ended it. Neither had an index to use.
+    __table_args__ = (Index("ix_chat_audit_logs_session_id", "session_id"),)
 
 
 class LiveChatQueueEntry(Base):

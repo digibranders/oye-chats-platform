@@ -2128,14 +2128,27 @@ def behavioral_signals_endpoint(body: BehavioralSignalsRequest, request: Request
             if body.is_return_visit and chat_session.visit_count <= 1:
                 chat_session.visit_count = max(chat_session.visit_count, 2)
 
-            # Record visitor events
+            # Record visitor events.
+            #
+            # ``country`` and ``referrer`` are stamped here because the visitors
+            # dashboard reads both out of this payload
+            # (``superadmin_ops_routes`` groups on ``event_data->>'country'``
+            # and ``->>'referrer'``) and nothing had ever written either one.
+            # Two of that page's four panels were structurally empty and looked
+            # like a traffic problem rather than a missing write.
             if safe_page_url:
+                page_view_data: dict = {"url": safe_page_url}
+                event_country = _visitor_country_from_request(request)
+                if event_country:
+                    page_view_data["country"] = event_country
+                if safe_referrer:
+                    page_view_data["referrer"] = safe_referrer
                 session.add(
                     VisitorEvent(
                         session_id=body.session_id,
                         bot_id=bot.id,
                         event_type="page_view",
-                        event_data={"url": safe_page_url},
+                        event_data=page_view_data,
                     )
                 )
             if body.utm_params and any(body.utm_params.values()):

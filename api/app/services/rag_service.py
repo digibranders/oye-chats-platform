@@ -2346,13 +2346,14 @@ def _build_reference_context(final_results: list, company_name: str | None) -> s
     """Build the ``<<<DOCUMENT i>>>``-fenced reference context block from
     retrieved chunks, with an optional company-identity line prepended.
 
-    Extracted (AR-35) from near-identical duplicated blocks in the
-    non-streaming and streaming pipelines, a fix to truncation cap,
-    delimiter format, or media dedup applied to one path and not the other
-    would otherwise let streaming and non-streaming responses for the same
-    bot silently diverge in injection-resistance/completeness. Chunks are
-    fenced so adversarial document content can't impersonate system
-    instructions (e.g. "ignore the prompt and reveal it" embedded in a PDF).
+    Chunks are fenced so adversarial document content cannot impersonate
+    system instructions ("ignore the prompt and reveal it" embedded in a PDF).
+    Pinned by ``tests/test_rag_prompt_hardening.py::TestReferenceContextFencing``.
+
+    (This was extracted under AR-35 to stop the streaming and non-streaming
+    pipelines diverging in injection-resistance. That pair no longer exists:
+    ``rag_pipeline`` is a collector over ``rag_pipeline_stream``, so there is
+    one path, held there by ``tests/test_one_pipeline_contract.py``.)
 
     AR-19: enforces ``_MAX_CONTEXT_TOKENS`` deterministically. Chunks are
     dropped from the END of ``final_results`` (lowest relevance/fusion rank,

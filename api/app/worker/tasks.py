@@ -481,6 +481,7 @@ async def task_prune_processed_webhooks(ctx: dict) -> int:
 
     from sqlalchemy import and_, delete, or_, select
 
+    from app import config
     from app.db.models import ProcessedWebhook
     from app.db.session import get_session
 
@@ -562,6 +563,30 @@ async def task_prune_processed_webhooks(ctx: dict) -> int:
                 session.execute(delete(WebhookDelivery).where(WebhookDelivery.id.in_(delivery_ids)))
                 session.commit()
                 total += len(delivery_ids)
+
+            # Behavioural telemetry and qualification evidence. Both were
+            # unbounded: the only thing that ever removed a row was the FK
+            # cascade when a ChatSession is deleted, and sessions are only
+            # deleted for expired trials. A paying customer's visitor_events
+            # (up to four rows per widget flush, from anonymous traffic) and
+            # bant_signals (append-only, several per qualified message) grew
+            # forever. EVENT_RETENTION_DAYS already governs the other event
+            # tables; these two now use it too.
+            from app.db.models import BANTSignal, VisitorEvent
+
+            event_cutoff = datetime.now(UTC) - timedelta(days=config.EVENT_RETENTION_DAYS)
+            for model in (VisitorEvent, BANTSignal):
+                while True:
+                    aged_ids = (
+                        session.execute(select(model.id).where(model.created_at < event_cutoff).limit(5000))
+                        .scalars()
+                        .all()
+                    )
+                    if not aged_ids:
+                        break
+                    session.execute(delete(model).where(model.id.in_(aged_ids)))
+                    session.commit()
+                    total += len(aged_ids)
 
             # Email dead letters: 90 days, and a resolved row goes at 7. The
             # body of a non-credential message is stored so it can be replayed,
