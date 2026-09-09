@@ -22,6 +22,7 @@ import time
 import litellm
 
 from app.core.langfuse_client import langfuse_generation
+from app.services.llm_service import _apply_model_family_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,11 @@ ENRICHMENT_MODEL: str = os.getenv("ENRICHMENT_MODEL", "gemini/gemini-2.5-flash")
 
 # Keep enrichment summaries short. They're prepended to chunks for embedding
 _SUMMARY_MAX_TOKENS = 80
+# Ingest-time budget per chunk. Without a bound a stalled provider held the
+# whole ingestion job; with reasoning left on, gemini-2.5-flash spent the
+# 80-token cap thinking and returned an empty summary on every chunk, so the
+# enrichment flag was silently a no-op.
+_ENRICHMENT_TIMEOUT_S = float(os.getenv("ENRICHMENT_TIMEOUT_S", "10.0"))
 # Inter-call delay (seconds) to avoid hitting rate limits on cheap models
 _RATE_LIMIT_DELAY = 0.5
 
@@ -61,13 +67,18 @@ def enrich_chunk(chunk_text: str, document_summary: str) -> str:
 
     prompt = _build_enrichment_prompt(chunk_text, document_summary)
     try:
+        kwargs: dict = {
+            "model": ENRICHMENT_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": _SUMMARY_MAX_TOKENS,
+            "temperature": 0,
+            "timeout": _ENRICHMENT_TIMEOUT_S,
+            "metadata": {"generation_name": "chunk-enrichment"},
+        }
+        # Reasoning off for the gate-tier family, as every judge call does.
+        _apply_model_family_kwargs(kwargs, ENRICHMENT_MODEL)
         with langfuse_generation("chunk-enrichment", model=ENRICHMENT_MODEL, prompt=prompt) as gen:
-            response = litellm.completion(
-                model=ENRICHMENT_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=_SUMMARY_MAX_TOKENS,
-                metadata={"generation_name": "chunk-enrichment"},
-            )
+            response = litellm.completion(**kwargs)
             summary = (response.choices[0].message.content or "").strip()
             gen.record_litellm(response, output=summary)
         if summary and len(summary) < 500:

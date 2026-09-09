@@ -188,6 +188,10 @@ def check_groundedness(
                 # GATE_MODEL that does not support it, so retuning the model
                 # cannot resurrect the bug.
                 reasoning_effort="disable",
+                # A judge is a classifier: the same question against the same
+                # chunks must score the same on every run. Left unset, Gemini
+                # defaults to 1.0 and near-threshold verdicts were a coin flip.
+                temperature=0,
                 max_tokens=64,
                 response_format={
                     "type": "json_schema",

@@ -3421,6 +3421,7 @@ SCORING DISCIPLINE
                     # models and silently loses the turn's signals, so the cap
                     # is a runaway guard, not a budget.
                     "max_tokens": 2048,
+                    "temperature": 0,
                     "metadata": {"generation_name": "bant-extraction-v2"},
                 }
                 # Reasoning off for the gate-tier model, exactly as every other
@@ -6390,6 +6391,7 @@ Respond with EXACTLY {n} lines, one paraphrase per line, nothing else, no number
             prompt,
             model=runtime_config.get_gate_model(),
             max_tokens=200,
+            temperature=0,
             # Request-path budget: this runs between retrieval and the first
             # token on a zero-result turn, so it gets the rewrite's deadline,
             # not the 60s × retries default meant for background work.
@@ -6589,6 +6591,7 @@ Respond with ONLY the rewritten standalone query, nothing else."""
             # A standalone search query is one short line; the cap bounds the
             # cost of a model that decides to explain itself anyway.
             max_tokens=120,
+            temperature=0,
             # Client-side budget matching the caller-side deadline
             # (``_await_rewrite``): the default 60s × retries is sized for
             # background work and this call sits ahead of the first token.

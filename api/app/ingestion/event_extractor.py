@@ -222,6 +222,7 @@ def extract_events(
             },
         },
         "timeout": _EXTRACT_TIMEOUT_S,
+        "temperature": 0,
         "metadata": {"generation_name": "event-extractor"},
     }
     _apply_model_family_kwargs(kwargs, model)
