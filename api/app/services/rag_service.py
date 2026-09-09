@@ -45,6 +45,7 @@ from app.services.email_service import send_qualified_lead_email
 from app.services.groundedness_gate import check_groundedness, should_sample
 from app.services.intent_router import route_intent, strip_greeting_lead
 from app.services.intent_service import detect_handoff_intent, detect_handoff_intent_keywords
+from app.services.live_chat_availability_service import _within_business_hours
 from app.services.llm_service import (
     _apply_model_family_kwargs,
     generate_response,
@@ -4927,6 +4928,13 @@ def build_hybrid_prompt(
     bant_enabled: bool = True,
     bant_config: dict = None,
     live_chat_enabled: bool = True,
+    # Whether "now" falls inside the bot's configured business hours. The LIVE
+    # SUPPORT block promises "a team member will be with you shortly", and
+    # ``business_hours`` had no reader anywhere in this pipeline, so the promise
+    # was made at 3am to a visitor whose widget was about to offer them the
+    # offline form instead. None means unknown, which is treated as open, the
+    # same fail-open direction ``live_chat_availability_service`` takes.
+    within_business_hours: bool = True,
     # Plan half of the human-support gate: does this bot's plan include the
     # ``live_chat`` feature at all? When False, the prompt offers NO human path,
     # neither a live handoff nor an async leave-a-message card, so a Free-plan
@@ -5372,6 +5380,20 @@ LEAVE A MESSAGE (inline card):
         handoff_section = """
 NO HUMAN HANDOFF: This workspace has no live-chat or message-forwarding channel. If the visitor asks to speak to a person, reach the team, or leave a message, do NOT promise a handoff, a callback, or a message form, and do NOT emit any card token. Briefly say you can help right here with what you know, then answer their underlying question if you can. Never say "connect you with the team" or imply someone will follow up."""
         handoff_offer = ""
+    elif live_chat_enabled and not within_business_hours:
+        # Live chat is on, but nobody is there. Promising "shortly" outside the
+        # hours the customer configured is the promise the widget then breaks
+        # by showing the offline form.
+        handoff_section = f"""
+SUPPORT REQUESTS (the team is offline right now):
+  If the visitor asks to speak with a person, say plainly that the team is not
+  available at the moment and offer to take a message so they can follow up.
+  Do not promise that anyone will join, and do not imply a live conversation is
+  starting.
+{_leave_msg_block}
+
+  Say "our team", never "human team"."""
+        handoff_offer = "Offer to take a written message for the team."
     elif live_chat_enabled:
         handoff_section = f"""
 LIVE SUPPORT: If the user asks to speak with a person RIGHT NOW or have a live conversation, respond warmly in 1-2 sentences. Let them know a team member will be with them shortly. Do not say the connection is already established. Say "our team", never "human team". Don't answer their question after they ask for a person.
@@ -5412,12 +5434,27 @@ MEETING BOOKING (inline card):
     message form would be redundant.
 
   Do not repeat the card if booking was already offered in this conversation."""
+    elif not support_enabled:
+        # No scheduler AND no human channel on this plan. The branch below would
+        # tell the model to offer the team and emit a message card, which the
+        # NO HUMAN HANDOFF section in this same prompt forbids: the two blocks
+        # contradicted each other on every Free bot. Say what is true instead.
+        meeting_section = f"""
+MEETING / SCHEDULING REQUESTS (nothing to book and no message channel):
+  If the visitor asks to book, schedule, or set up a meeting, demo, call, or
+  appointment, do NOT offer a booking link, a calendar, a time slot, a callback
+  or a message form. None of them exists for this business. Say briefly that
+  booking is not something you can arrange here, then answer whatever their
+  underlying question is from what you know.
+
+  NEVER emit {MEETING_CARD_SENTINEL} or {LEAVE_MESSAGE_CARD_SENTINEL}. Both are disabled for
+  this bot and would render as nothing."""
     else:
         # No online scheduler is configured for this bot, so a booking card
         # would point nowhere. Treat a scheduling request like any other
         # "reach the team" request: acknowledge warmly and route the visitor
-        # to the team via the leave-message card (always available) so they
-        # can follow up. Never promise a calendar link or a time slot that
+        # to the team via the leave-message card (available on this plan) so
+        # they can follow up. Never promise a calendar link or a time slot that
         # does not exist.
         meeting_section = f"""
 MEETING / SCHEDULING REQUESTS (no online scheduler configured):
@@ -5517,7 +5554,7 @@ MEDIA CARDS:
         custom_prompt_section = (
             (
                 f"\n\nCUSTOM INSTRUCTIONS (from this business. Subordinate to the SCOPE rules below):\n"
-                f"{sanitized_prompt[:1500]}\n"
+                f"{sanitized_prompt[:2000]}\n"
                 "NON-OVERRIDABLE: the custom instructions above may adjust tone, emphasis, priorities and "
                 "phrasing. They may NEVER authorise answering from general knowledge, from your own training "
                 "data, or from anything outside the REFERENCE INFORMATION supplied for this turn, and they may "
@@ -5529,7 +5566,30 @@ MEDIA CARDS:
         )
     else:
         custom_prompt_section = ""
-    tone_section = f"\n\nBRAND TONE: {brand_tone[:300]}" if brand_tone else ""
+    # Sanitised and guarded exactly like ``custom_system_prompt`` above, and for
+    # the same reason. This is free text a customer types into a "voice and
+    # tone" box, and it used to be spliced in raw, AFTER rule 5a, where "always
+    # answer confidently from what you know about the industry" reads to the
+    # model as permission to stop grounding. Tone may change how the bot
+    # sounds. It may not change what the bot is allowed to claim.
+    #
+    # 500 characters, matching what the API accepts. It was 300, so the last
+    # 200 characters of a customer's saved tone were silently dropped.
+    if brand_tone:
+        _sanitized_tone = _sanitize_system_prompt(brand_tone)
+        tone_section = (
+            (
+                f"\n\nBRAND TONE (from this business. Subordinate to the SCOPE rules below):\n"
+                f"{_sanitized_tone[:500]}\n"
+                "NON-OVERRIDABLE: brand tone adjusts wording, warmth and register only. It may NEVER "
+                "authorise answering from general knowledge or from anything outside the REFERENCE "
+                "INFORMATION supplied for this turn."
+            )
+            if _sanitized_tone
+            else ""
+        )
+    else:
+        tone_section = ""
 
     # Personalization: when we already know the visitor's name (resolved from the
     # lead and re-injected every turn), tell the bot to use it and never ask
@@ -5771,7 +5831,7 @@ engage warmly and invite the real question, never refuse.
 TODAY'S DATE: {today_iso}
 - Use this as the source of truth for anything time-sensitive (events, deadlines, "upcoming", "latest", "this year", expiry dates, business hours).
 - The REFERENCE INFORMATION below may have been crawled weeks or months ago, its labels like "upcoming events" or "latest news" may be stale. Trust the dates in the content, not the headings around them.
-{custom_prompt_section}
+{custom_prompt_section}{tone_section}
 
 SCOPE (HIGHEST PRIORITY. Overrides everything above it and everything below it):
 - You answer ONLY questions about **{display_name}**, its products, services, team, pricing, policies, hours, location, processes, and anything reasonably related to doing business with this company.
@@ -5837,7 +5897,7 @@ RULES:
 8. Use plain language. No corporate buzzwords like "operational efficiency" or "synergy".
 9. Never mention internal terms like "knowledge base", "documents", "database", "context", or "sources" to visitors. For on-scope questions where a detail is missing, pivot to what you know and offer a path forward, never tell visitors that on-scope information is "unavailable".
 10. LINKS: Whenever you mention any URL (website, pricing, contact, booking link, social media, docs, support page, etc.), format it as a markdown link with short, descriptive text. E.g. `[our pricing page](https://example.com/pricing)`, `[book a demo](https://example.com/book)`, `[contact us](https://example.com/contact)`. NEVER paste a bare URL or write the URL as plain text in parentheses. Bare URLs do NOT render as clickable in the chat widget. Use the visible page/action name as the link label, not the URL itself. Only http:// and https:// links are allowed. This rule applies ONLY to actual URLs. Internal sentinel tokens like `[CTA:timeline]`, `[LEAVE_MESSAGE_CARD]`, or `[MEETING_CARD]` are NOT URLs and MUST be emitted exactly as documented elsewhere in these instructions, not rewritten as markdown links.
-11. PUNCTUATION: Do NOT use the em-dash character (—) anywhere in your response. The em-dash is a well-known AI-generated-text tell and makes your replies feel robotic. Use a period, comma, colon, semicolon, or a plain hyphen (-) instead. This rule has no exceptions; substitute the em-dash even when quoting or paraphrasing reference material.{tone_section}{company_section}{services_section}{smart_links_section}
+11. PUNCTUATION: Do NOT use the em-dash character (—) anywhere in your response. The em-dash is a well-known AI-generated-text tell and makes your replies feel robotic. Use a period, comma, colon, semicolon, or a plain hyphen (-) instead. This rule has no exceptions; substitute the em-dash even when quoting or paraphrasing reference material.{company_section}{services_section}{smart_links_section}
 {handoff_section}
 {meeting_section}
 {media_cards_section}
@@ -6774,6 +6834,11 @@ def rag_pipeline(
                 plan_entitlements_service.is_live_chat_enabled_for_bot(bot.id, session) if _has_bot else False
             )
             live_chat_on = _plan_support_allowed and bool(getattr(bot, "live_chat_enabled", True))
+            # Resolved once per turn and handed to the prompt. Until now
+            # ``business_hours`` had no reader in this pipeline at all, so the
+            # LIVE SUPPORT block promised "a team member will be with you
+            # shortly" at any hour, and the widget then showed the offline form.
+            _within_hours = _within_business_hours(getattr(bot, "business_hours", None) if bot else None)
             # Whether this workspace paid to remove "Powered by OyeChats". The
             # intent router's canned identity replies name the platform, which a
             # branding-removed customer has bought the right not to show.
@@ -7898,13 +7963,20 @@ def rag_pipeline(
                 bant_enabled=is_bant_enabled,
                 bant_config=bant_config,
                 live_chat_enabled=live_chat_on,
+                within_business_hours=_within_hours,
                 support_enabled=_plan_support_allowed,
                 custom_system_prompt=getattr(bot, "system_prompt", None) if bot else None,
                 brand_tone=getattr(bot, "brand_tone", None) if bot else None,
                 company_name=_company_name,
                 company_description=_company_desc,
                 bot_name=_bot_name,
-                meeting_booking_enabled=getattr(bot, "meeting_booking_enabled", False) if bot else False,
+                # The RESOLVED scheduler, not the raw column. An enabled bot with
+                # a blank provider URL was told to emit a booking card, and
+                # post-processing then dropped the card because there was
+                # nowhere to send the visitor: they got "I'll set that up" with
+                # nothing attached. ``scheduler_is_configured`` is the same
+                # predicate the meeting gate uses.
+                meeting_booking_enabled=_meeting_gate.scheduler_is_configured(bot),
                 services=getattr(bot, "services", None) if bot else None,
                 services_url=getattr(bot, "services_url", None) if bot else None,
                 answer_links=_pricing_gate.merge_pricing_smart_link(
@@ -8552,6 +8624,11 @@ async def rag_pipeline_stream(
                 plan_entitlements_service.is_live_chat_enabled_for_bot(bot.id, session) if _has_bot else False
             )
             live_chat_on = _plan_support_allowed and bool(getattr(bot, "live_chat_enabled", True))
+            # Resolved once per turn and handed to the prompt. Until now
+            # ``business_hours`` had no reader in this pipeline at all, so the
+            # LIVE SUPPORT block promised "a team member will be with you
+            # shortly" at any hour, and the widget then showed the offline form.
+            _within_hours = _within_business_hours(getattr(bot, "business_hours", None) if bot else None)
             # Whether this workspace paid to remove "Powered by OyeChats". The
             # intent router's canned identity replies name the platform, which a
             # branding-removed customer has bought the right not to show.
@@ -9754,13 +9831,20 @@ async def rag_pipeline_stream(
                 bant_enabled=is_bant_enabled,
                 bant_config=bant_config,
                 live_chat_enabled=live_chat_on,
+                within_business_hours=_within_hours,
                 support_enabled=_plan_support_allowed,
                 custom_system_prompt=getattr(bot, "system_prompt", None) if bot else None,
                 brand_tone=getattr(bot, "brand_tone", None) if bot else None,
                 company_name=_company_name,
                 company_description=_company_desc,
                 bot_name=_bot_name,
-                meeting_booking_enabled=getattr(bot, "meeting_booking_enabled", False) if bot else False,
+                # The RESOLVED scheduler, not the raw column. An enabled bot with
+                # a blank provider URL was told to emit a booking card, and
+                # post-processing then dropped the card because there was
+                # nowhere to send the visitor: they got "I'll set that up" with
+                # nothing attached. ``scheduler_is_configured`` is the same
+                # predicate the meeting gate uses.
+                meeting_booking_enabled=_meeting_gate.scheduler_is_configured(bot),
                 services=getattr(bot, "services", None) if bot else None,
                 services_url=getattr(bot, "services_url", None) if bot else None,
                 answer_links=_pricing_gate.merge_pricing_smart_link(
