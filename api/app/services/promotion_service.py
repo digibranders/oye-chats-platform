@@ -20,19 +20,10 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from app.core.dates import add_months
+from app.core.dates import add_months, as_utc
 from app.db.models import Client, Plan, Promotion, Subscription
 
 logger = logging.getLogger(__name__)
-
-
-def _as_utc(value: datetime | None) -> datetime | None:
-    """Coerce a possibly-naive datetime to UTC-aware, or return None."""
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value
 
 
 def _active_promotions_in_window(session: Session, now: datetime):
@@ -154,10 +145,10 @@ def _client_eligible(session: Session, client: Client, promo: Promotion, now: da
         if _norm_code(getattr(client, "signup_promo_code", None)) != _norm_code(promo.code):
             return False
     else:
-        created = _as_utc(client.created_at)
+        created = as_utc(client.created_at)
         if created is None:
             return False
-        if not (_as_utc(promo.starts_at) <= created <= _as_utc(promo.ends_at)):
+        if not (as_utc(promo.starts_at) <= created <= as_utc(promo.ends_at)):
             return False
 
     # One redemption per account, for this promotion, across the client's
@@ -262,8 +253,8 @@ def current_free_period_end(promo_free_until: datetime, now: datetime | None = N
     period end, which is always after ``promo_free_until``), so the free refresh
     and the first real charge never double-grant.
     """
-    now = _as_utc(now or datetime.now(UTC))
-    end = _as_utc(promo_free_until)
+    now = as_utc(now or datetime.now(UTC))
+    end = as_utc(promo_free_until)
     # promo_free_until is only a few months out, so this loop is tightly bounded.
     while add_months(end, -1) > now:
         end = add_months(end, -1)

@@ -6,7 +6,7 @@ admin can launch, pause (``is_active``), and expire a campaign without a deploy,
 and read redemption/conversion stats per campaign.
 
 Auth mirrors the other superadmin routers: ``get_superadmin`` (X-API-Key,
-``is_superadmin``) gates every route; ``_require_write`` blocks read-only
+``is_superadmin``) gates every route; ``require_write`` blocks read-only
 super-admins from mutating. Eligibility resolution and the checkout money-path
 live elsewhere (``promotion_service`` / ``subscription_routes``). This module
 is purely the admin control surface.
@@ -21,7 +21,8 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.auth import get_superadmin
-from app.api.superadmin_routes_v2 import _require_write
+from app.api.superadmin_common import require_write
+from app.core.dates import as_utc
 from app.db.models import Bot, Client, Plan, Promotion, Subscription
 from app.db.session import get_session
 
@@ -31,11 +32,6 @@ router = APIRouter(prefix="/superadmin", tags=["superadmin-promotions"])
 
 
 # ── Helpers ──
-
-
-def _ensure_utc(value: datetime) -> datetime:
-    """Coerce a naive datetime to UTC-aware; pass through aware values."""
-    return value.replace(tzinfo=UTC) if value.tzinfo is None else value
 
 
 def _validate_window_and_bounds(
@@ -245,7 +241,7 @@ def list_promotion_redemptions(promotion_id: int, superadmin: Client = Depends(g
                 "plan_name": plan.name if plan else None,
                 "promo_free_until": sub.promo_free_until.isoformat() if sub.promo_free_until else None,
                 # Convenience flags for the UI: still in the free window vs past it.
-                "in_free_period": bool(sub.promo_free_until and _ensure_utc(sub.promo_free_until) > now),
+                "in_free_period": bool(sub.promo_free_until and as_utc(sub.promo_free_until) > now),
                 "redeemed_at": sub.created_at.isoformat() if sub.created_at else None,
             }
             for sub, client, bot, plan in rows
@@ -259,9 +255,9 @@ def list_promotion_redemptions(promotion_id: int, superadmin: Client = Depends(g
 @router.post("/promotions")
 def create_promotion(request: CreatePromotionRequest, superadmin: Client = Depends(get_superadmin)):
     """Create a campaign. ``code`` must be unique when set (409 on clash)."""
-    _require_write(superadmin)
-    starts_at = _ensure_utc(request.starts_at)
-    ends_at = _ensure_utc(request.ends_at)
+    require_write(superadmin)
+    starts_at = as_utc(request.starts_at)
+    ends_at = as_utc(request.ends_at)
     _validate_window_and_bounds(starts_at, ends_at, request.free_cycles, request.max_redemptions)
     _refuse_past_end(ends_at)
 
@@ -295,7 +291,7 @@ def update_promotion(
     superadmin: Client = Depends(get_superadmin),
 ):
     """Update a campaign. Only provided fields change; ``is_active`` toggles pause."""
-    _require_write(superadmin)
+    require_write(superadmin)
     updates = request.model_dump(exclude_unset=True)
 
     with get_session() as session:
@@ -304,9 +300,9 @@ def update_promotion(
             raise HTTPException(status_code=404, detail="Promotion not found.")
 
         if "starts_at" in updates and updates["starts_at"] is not None:
-            updates["starts_at"] = _ensure_utc(updates["starts_at"])
+            updates["starts_at"] = as_utc(updates["starts_at"])
         if "ends_at" in updates and updates["ends_at"] is not None:
-            updates["ends_at"] = _ensure_utc(updates["ends_at"])
+            updates["ends_at"] = as_utc(updates["ends_at"])
 
         # Validate the EFFECTIVE window/bounds (merge provided over current).
         _validate_window_and_bounds(
@@ -342,7 +338,7 @@ def delete_promotion(promotion_id: int, superadmin: Client = Depends(get_superad
     ``Subscription.promotion_id`` is ``ON DELETE SET NULL``, so deleting is safe
     for cleanup, but PAUSING (``is_active=false``) is preferred to preserve the
     per-campaign stats link."""
-    _require_write(superadmin)
+    require_write(superadmin)
     with get_session() as session:
         promo = session.get(Promotion, promotion_id)
         if promo is None:

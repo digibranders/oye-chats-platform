@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import case, desc, distinct, func, or_, select
 
 from app.api.auth import get_superadmin
+from app.api.superadmin_common import require_owner, require_write
 from app.config import APP_URL, CHECKOUT_TEST_CLIENT_IDS, IMPERSONATION_ENABLED
 from app.core.csv_safety import csv_safe
 from app.core.pricing import charge_currency
@@ -78,30 +79,6 @@ def _app_base_url() -> str:
     value can never produce a double slash.
     """
     return APP_URL.rstrip("/")
-
-
-def _require_write(actor: Client) -> None:
-    """Read-only super-admins cannot mutate."""
-    if getattr(actor, "superadmin_role", None) == "readonly":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Read-only super-admin: writes are not permitted.",
-        )
-
-
-def _require_owner(actor: Client) -> None:
-    """Only owner-tier super-admins may grant or change super-admin privileges.
-
-    ``superadmin_role`` is one of ``owner|admin|readonly``; ``_require_write``
-    alone only blocks ``readonly``, which would let an ``admin``-tier actor
-    promote themselves or any other account to super-admin. Privilege writes
-    (``is_superadmin`` / ``superadmin_role``) must additionally pass this gate.
-    """
-    if getattr(actor, "superadmin_role", None) != "owner":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only an owner-tier super-admin may change super-admin privileges.",
-        )
 
 
 def _client_summary(c: Client) -> dict[str, Any]:
@@ -287,7 +264,7 @@ def patch_client(
     request: Request,
     admin: Client = Depends(get_superadmin),
 ):
-    _require_write(admin)
+    require_write(admin)
     with get_session() as session:
         client = session.get(Client, client_id)
         if not client:
@@ -305,7 +282,7 @@ def patch_client(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="You cannot change your own super-admin privileges via this endpoint.",
                 )
-            _require_owner(admin)
+            require_owner(admin)
 
         before = _client_summary(client)
         if body.name is not None:
@@ -363,7 +340,7 @@ def override_billing_country(
     Audit-logged; the same GSTIN⇒IN consistency rule as the customer route
     applies (a domestic GST registration cannot bill from abroad).
     """
-    _require_write(admin)
+    require_write(admin)
     country = body.country.strip().upper()
     with get_session() as session:
         client = session.get(Client, client_id)
@@ -398,7 +375,7 @@ def grant_credits(
     request: Request,
     admin: Client = Depends(get_superadmin),
 ):
-    _require_write(admin)
+    require_write(admin)
     if body.delta == 0:
         raise HTTPException(status_code=400, detail="delta must be non-zero")
     with get_session() as session:
@@ -462,7 +439,7 @@ def impersonate(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Impersonation is temporarily disabled.",
         )
-    _require_write(admin)
+    require_write(admin)
     with get_session() as session:
         target = session.get(Client, client_id)
         if not target:
@@ -530,7 +507,7 @@ def revoke_impersonation(
             raise HTTPException(status_code=404, detail="Impersonation token not found")
 
         if token.actor_id != admin.id:
-            _require_write(admin)
+            require_write(admin)
 
         if token.revoked_at is None:
             token.revoked_at = datetime.now(UTC)
@@ -554,7 +531,7 @@ def reset_password(
     request: Request,
     admin: Client = Depends(get_superadmin),
 ):
-    _require_write(admin)
+    require_write(admin)
     with get_session() as session:
         target = session.get(Client, client_id)
         if not target:
@@ -1082,7 +1059,7 @@ def update_pricing_config(
     request: Request,
     admin: Client = Depends(get_superadmin),
 ):
-    _require_write(admin)
+    require_write(admin)
     if key.startswith("billing."):
         raise HTTPException(
             status_code=422,
@@ -1240,7 +1217,7 @@ def create_coupon(
     request: Request,
     admin: Client = Depends(get_superadmin),
 ):
-    _require_write(admin)
+    require_write(admin)
     if body.percent_off is None and body.amount_off_cents is None:
         raise HTTPException(status_code=400, detail="Either percent_off or amount_off_cents must be set.")
     _assert_redeemable_shape(body.percent_off, body.duration_months)
@@ -1277,7 +1254,7 @@ def update_coupon(
     admin: Client = Depends(get_superadmin),
 ):
     """Partial update of a coupon. Only provided fields are modified."""
-    _require_write(admin)
+    require_write(admin)
     with get_session() as session:
         coupon = session.get(Coupon, coupon_id)
         if not coupon:
@@ -1330,7 +1307,7 @@ def delete_coupon(
     it is instead soft-deactivated (``is_active=False``) so historical
     attribution stays intact, same reasoning as the plan soft-delete.
     """
-    _require_write(admin)
+    require_write(admin)
     with get_session() as session:
         coupon = session.get(Coupon, coupon_id)
         if not coupon:
@@ -1554,7 +1531,7 @@ def patch_model_config(
     key/value store) and the runtime_config in-memory cache is invalidated so
     new chat requests see the change within a few seconds.
     """
-    _require_write(admin)
+    require_write(admin)
     from app.services import runtime_config
 
     # Cross-field validation: chunk_size/chunk_overlap are independently
@@ -2106,7 +2083,7 @@ def update_seller_profile(
     request: Request,
     admin: Client = Depends(get_superadmin),
 ):
-    _require_write(admin)
+    require_write(admin)
     with get_session() as session:
         before = _profile_dict(get_seller_profile(session))
         try:
@@ -2255,7 +2232,7 @@ def invoice_detail(invoice_id: int, _admin: Client = Depends(get_superadmin)):
 @router.post("/invoices/{invoice_id}/resend-email")
 def resend_invoice_email(invoice_id: int, request: Request, admin: Client = Depends(get_superadmin)):
     """Re-send the document email to the buyer (e.g. after a lost delivery)."""
-    _require_write(admin)
+    require_write(admin)
     from app import config as app_config
 
     # The kill switch governs ALL customer-facing delivery, a resend while
@@ -2298,7 +2275,7 @@ def regenerate_invoice_pdf(invoice_id: int, request: Request, admin: Client = De
     under a NEW capability URL; the old R2 object simply becomes unreferenced.
     The document data itself is immutable. Only the rendering is redone.
     """
-    _require_write(admin)
+    require_write(admin)
     with get_session() as session:
         inv = session.get(Invoice, invoice_id)
         if inv is None:

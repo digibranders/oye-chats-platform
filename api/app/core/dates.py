@@ -10,6 +10,20 @@ import math
 from datetime import UTC, datetime, timedelta
 
 
+def as_utc(value: datetime | None) -> datetime | None:
+    """Treat a naive datetime as UTC. ``None`` passes through.
+
+    Postgres hands back naive datetimes for any ``timestamp without time zone``
+    column, and comparing one of those against an aware ``now()`` raises
+    ``TypeError`` at runtime, on a code path nobody exercises until a customer
+    hits it. Three separate copies of this existed under two names, in a route
+    module, another route module and a service.
+    """
+    if value is None:
+        return None
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
 def trial_days_remaining(trial_end: datetime | None, now: datetime | None = None) -> int | None:
     """Whole days left until ``trial_end``, rounded UP (customer-facing).
 

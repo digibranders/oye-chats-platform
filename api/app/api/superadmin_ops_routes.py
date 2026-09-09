@@ -7,7 +7,7 @@ deliveries (list / replay), document reindex, and revenue cohorts.
 
 Conventions follow ``superadmin_routes_v2.py``:
 
-* ``Depends(get_superadmin)`` for reads, ``_require_write`` for mutations.
+* ``Depends(get_superadmin)`` for reads, ``require_write`` for mutations.
 * ``with get_session() as session:`` for DB access, ``.isoformat()`` for dates.
 * Every mutating route writes an audit entry via ``record_audit``.
 * Monetary values are normalised to USD cents via ``_to_usd_cents`` (the same
@@ -27,8 +27,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import case, desc, func, select
 
 from app.api.auth import get_superadmin
-from app.api.superadmin_plan_routes import _to_usd_cents
-from app.api.superadmin_routes_v2 import _require_write
+from app.api.superadmin_common import require_write, to_usd_cents
 from app.core.error_sanitizer import new_error_id
 from app.db.models import (
     Affiliate,
@@ -110,7 +109,7 @@ def refund_invoice(
     back the granted credits. Invoices without a gateway reference (manual
     grants, legacy rows) are marked refunded locally and noted as manual.
     """
-    _require_write(admin)
+    require_write(admin)
     with get_session() as session:
         inv = session.get(Invoice, invoice_id)
         if not inv:
@@ -267,7 +266,7 @@ def replay_webhook_delivery(
     in-process thread pool otherwise). The webhook must still exist and be
     active for the replay to land.
     """
-    _require_write(admin)
+    require_write(admin)
     with get_session() as session:
         delivery = session.get(WebhookDelivery, delivery_id)
         if not delivery:
@@ -312,7 +311,7 @@ def reindex_document(
     the action still completes. Either way the document's vector is recomputed
     under the owning bot's embedding profile.
     """
-    _require_write(admin)
+    require_write(admin)
     with get_session() as session:
         doc = session.get(Document, document_id)
         if not doc:
@@ -402,7 +401,7 @@ def revenue_cohorts(_admin: Client = Depends(get_superadmin)):
             cohort = cohort_of.get(client_id)
             if cohort is None:
                 continue
-            ltv[cohort] += _to_usd_cents(amount_cents, currency)
+            ltv[cohort] += to_usd_cents(amount_cents, currency)
 
         return [
             {
@@ -461,7 +460,7 @@ def stats_timeseries(
                     continue
                 key = ts.date().isoformat()
                 if key in buckets:
-                    buckets[key] += _to_usd_cents(amount_cents, currency)
+                    buckets[key] += to_usd_cents(amount_cents, currency)
         elif metric == "messages":
             rows = session.execute(
                 select(func.date_trunc("day", ChatMessage.created_at).label("d"), func.count().label("n"))
@@ -591,7 +590,7 @@ def command_center(_admin: Client = Depends(get_superadmin)):
         ts = paid_at or created_at
         if ts is None:
             continue
-        usd = _to_usd_cents(amount_cents, currency)
+        usd = to_usd_cents(amount_cents, currency)
         if last_month_start <= ts < current_month_start:
             revenue_last_month += usd
         elif current_month_start <= ts < next_month_start:
@@ -932,7 +931,7 @@ def rotate_client_api_key(
     The new key is generated with ``uuid.uuid4().hex``, the same generator used
     when a client is first created at registration.
     """
-    _require_write(admin)
+    require_write(admin)
     with get_session() as session:
         client = session.get(Client, client_id)
         if not client:
@@ -1036,7 +1035,7 @@ def update_offline_message(
 ):
     """Update an offline message's status (new|read|replied), stamping the
     matching timestamp. Audit-logged."""
-    _require_write(admin)
+    require_write(admin)
     if body.status not in _OFFLINE_STATUSES:
         raise HTTPException(status_code=400, detail=f"status must be one of {_OFFLINE_STATUSES}")
     with get_session() as session:
@@ -1159,7 +1158,7 @@ def list_usage_records(
                     "bots_count": r.bots_count,
                     "operators_count": r.operators_count,
                     "overage_messages": r.overage_messages,
-                    "overage_amount_cents": _to_usd_cents(r.overage_amount_cents, None),
+                    "overage_amount_cents": to_usd_cents(r.overage_amount_cents, None),
                 }
             )
         return result
@@ -1297,7 +1296,7 @@ def update_webhook_registration(
     admin: Client = Depends(get_superadmin),
 ):
     """Enable or disable a customer webhook registration. Audit-logged."""
-    _require_write(admin)
+    require_write(admin)
     with get_session() as session:
         wh = session.get(Webhook, webhook_id)
         if not wh:
@@ -1329,7 +1328,7 @@ def test_webhook_registration(
 ):
     """Dispatch a sample ``tier_transition`` event to a registration so the
     superadmin can verify the customer endpoint is reachable. Audit-logged."""
-    _require_write(admin)
+    require_write(admin)
     from app.services.webhook_service import queue_webhook_delivery
 
     with get_session() as session:
@@ -1536,7 +1535,7 @@ def unlink_oauth_account(
     admin: Client = Depends(get_superadmin),
 ):
     """Unlink an external identity provider account from its client. Audit-logged."""
-    _require_write(admin)
+    require_write(admin)
     with get_session() as session:
         account = session.get(OAuthAccount, account_id)
         if not account:
@@ -1609,7 +1608,7 @@ def replay_failed_webhook(
     the original eventually processed. On success the row is marked ``replayed``;
     on a handler error the row is left untouched and a 502 is returned.
     """
-    _require_write(admin)
+    require_write(admin)
     import hashlib
     import json
 

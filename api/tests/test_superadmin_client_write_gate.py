@@ -18,7 +18,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from app.api.superadmin_routes import _require_write
+from app.api.superadmin_common import require_write
 
 
 def _admin(role):
@@ -27,19 +27,19 @@ def _admin(role):
 
 def test_a_readonly_superadmin_is_refused():
     with pytest.raises(HTTPException) as exc:
-        _require_write(_admin("readonly"))
+        require_write(_admin("readonly"))
     assert exc.value.status_code == 403
 
 
 @pytest.mark.parametrize("role", ["owner", "admin", None])
 def test_every_writing_tier_is_allowed(role):
-    _require_write(_admin(role))
+    require_write(_admin(role))
 
 
 def test_an_account_row_without_the_column_still_writes():
     """Absence is not read-only. Failing closed here would lock out any caller
     whose row predates the column."""
-    _require_write(SimpleNamespace(id=1, email="a@b.c"))
+    require_write(SimpleNamespace(id=1, email="a@b.c"))
 
 
 def test_both_destructive_client_routes_call_the_gate():
@@ -54,4 +54,4 @@ def test_both_destructive_client_routes_call_the_gate():
 
     for fn in (superadmin_routes.create_client, superadmin_routes.delete_client):
         body = inspect.getsource(fn)
-        assert "_require_write(superadmin)" in body, f"{fn.__name__} does not gate writes"
+        assert "require_write(superadmin)" in body, f"{fn.__name__} does not gate writes"

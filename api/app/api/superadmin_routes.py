@@ -3,12 +3,12 @@ import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import case, distinct, func, or_, select
 
 from app.api.auth import get_superadmin
-from app.api.superadmin_plan_routes import _plan_monthly_usd_cents
+from app.api.superadmin_common import plan_monthly_usd_cents, require_write
 from app.core.feedback import (
     FEEDBACK_AREAS,
     FEEDBACK_RESOLVED_STATES,
@@ -47,32 +47,13 @@ class CreateClientRequest(BaseModel):
     website: OptionalName = None
 
 
-def _require_write(superadmin: Client) -> None:
-    """Refuse a mutation from a read-only super-admin.
-
-    ``get_superadmin`` proves the caller is A super-admin, not that they may
-    WRITE: ``superadmin_role == "readonly"`` is a real tier, assignable from
-    the owner-gated client PATCH, and every other super-admin module enforces
-    it on every mutation. This one enforced it on feedback triage and nowhere
-    else, so a read-only account could mint accounts and read back their fresh
-    api_key, or hard-delete a customer and CASCADE away their bots, documents,
-    conversations and messages. Irreversibly, and from an account granted
-    precisely so it could not do that.
-    """
-    if getattr(superadmin, "superadmin_role", None) == "readonly":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Read-only super-admin: writes are not permitted.",
-        )
-
-
 @router.post("/clients")
 def create_client(request: CreateClientRequest, superadmin: Client = Depends(get_superadmin)):
     """
     Superadmin only: Create a new Client account.
     Client will create their own bots from the dashboard.
     """
-    _require_write(superadmin)
+    require_write(superadmin)
     with get_session() as session:
         # Check if email exists
         stmt = select(Client).where(Client.email == request.email).limit(1)
@@ -139,7 +120,7 @@ def delete_client(client_id: int, superadmin: Client = Depends(get_superadmin)):
     Superadmin only: Delete a client and ALL their data (bots, documents, sessions, messages).
     Cannot delete yourself (the superadmin account).
     """
-    _require_write(superadmin)
+    require_write(superadmin)
     with get_session() as session:
         stmt = select(Client).where(Client.id == client_id)
         client = session.execute(stmt).scalars().first()
@@ -242,7 +223,7 @@ def list_clients(superadmin: Client = Depends(get_superadmin)):
                 p = plan_by_id.get(s.plan_id)
                 if p:
                     mrr_by_client[s.client_id] = mrr_by_client.get(s.client_id, 0) + (
-                        _plan_monthly_usd_cents(p, s.billing_cycle) * s.operator_quantity
+                        plan_monthly_usd_cents(p, s.billing_cycle) * s.operator_quantity
                     )
             if _better(s, primary_sub.get(s.client_id)):
                 primary_sub[s.client_id] = s
@@ -502,7 +483,7 @@ def update_platform_feedback(
     state (``resolved``/``closed``) stamps ``resolved_at``/``resolved_by`` and
     enqueues an in-app notification for the owning client. Audit-logged.
     """
-    _require_write(superadmin)
+    require_write(superadmin)
     _validate_feedback_filter(body.status, FEEDBACK_STATUSES, "status")
     _validate_feedback_filter(body.type, FEEDBACK_TYPES, "type")
     _validate_feedback_filter(body.area, FEEDBACK_AREAS, "area")

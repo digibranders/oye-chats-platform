@@ -354,10 +354,13 @@ class TestPreviewSSRF:
         can't bounce the request to an internal address (the F11 bypass)."""
         import httpx
 
-        from app.api import bot_routes
+        # ``_check_iframe_allowed`` lives in ``bot_demo_pages`` now, so the
+        # SSRF guard it calls resolves from THAT module's globals. Patching
+        # ``bot_routes`` here would be a no-op with a real DNS lookup behind it.
+        from app.api import bot_demo_pages, bot_routes
 
         # Skip the DNS-backed guard so this test isolates the redirect behavior.
-        monkeypatch.setattr(bot_routes, "validate_public_url", lambda u: u)
+        monkeypatch.setattr(bot_demo_pages, "validate_public_url", lambda u: u)
 
         captured = {}
 
@@ -390,9 +393,9 @@ class TestPreviewSSRF:
         fallback instead of embedding a likely frame-blocked page (RV6)."""
         import httpx
 
-        from app.api import bot_routes
+        from app.api import bot_demo_pages, bot_routes
 
-        monkeypatch.setattr(bot_routes, "validate_public_url", lambda u: u)
+        monkeypatch.setattr(bot_demo_pages, "validate_public_url", lambda u: u)
 
         class _RedirectResp:
             status_code = 301
