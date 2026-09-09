@@ -92,6 +92,58 @@ either grows back.
   links, and `/features` and `/solutions` with no `h3` at all). Those six are
   content decisions, so the gate goes in after they are fixed, not before.
 
+## Executed on 2026-09-09, waves 4 to 6
+
+| ID | Finding | Commit |
+|---|---|---|
+| U-8 | Credit refund failure after a failed answer was log-only | `f12305a6` |
+| E-4 | Meeting booking had no per-bot plan gate at chat time | `99f8eb55` |
+| E-5 | Quotation gating disagreed across UI, API and pipeline | `eb789ded` |
+| E-6 | Workspace entitlements gated per-bot settings in the UI | `f12305a6` |
+| U-13 | Extraction failure returned (0,0) and skipped billing silently | `175a00f2` |
+| O-6 | Six of fourteen "dead" endpoints deleted; the other eight are live | `9de93520` |
+| U-5 | Email dead letter for enqueue failure, provider rejection, exhausted retries | `7c811cee` |
+| U-7 | Invoices stuck un-numbered for an hour are counted and paged | `7c811cee` |
+| U-12 | Liveness probe is tri-state; undetermined no longer reports as alive | `7c811cee` |
+| O-5 | One super-admin write gate, one UTC coercer, no private cross-imports | `8544159a` |
+| O-7 | 770 lines of demo-page HTML out of `bot_routes.py`; two dead symbols | `8544159a` |
+| E-7 | Welcome greeting and subtitle now patch the columns the widget reads | `be984949` |
+| O-9 | Audit-log index, retention for two unbounded tables, dead reader, double write | `1e4f3607` |
+| O-8 | The two untested AR behaviours now have tests; AR-35's stale narrative fixed | `1e4f3607` |
+| U-16 | Six content failures fixed; `verify-html` is a build gate | `oyechats-website b74dec8` |
+| O-13 | Four dated audits moved to `docs/audits/` | `oyechats-website b74dec8` |
+| O-10 | ChatWindow's pure helpers extracted and tested; hooks reverted on budget | `186823e1` |
+| O-12 | Mobile app status written down; the decision is stated, not taken | `oyechats-mobile-app 2b4968d` |
+
+### Corrections to the register, waves 4 to 6
+
+Four findings were wrong on their premise. The defects each one led to are
+fixed; the finding as written is not what was there.
+
+- **U-5 was wrong.** "22 synchronous sends from request code" does not exist.
+  All 42 call sites already go through `send_email_async` into ARQ, and no
+  request-path code touches Brevo. The real hole was that a send which failed
+  left no record anywhere: a failed enqueue, a provider rejection (deliberately
+  never retried, because a retry can deliver an OTP twice), or an exhausted
+  retry budget. A dead-letter table, not an outbox.
+- **O-8 was stale.** Not 2,437 comment lines and 38 AR narratives: 1,849 and
+  25, across 20 blocks. Nineteen of twenty-one already have a test that fails
+  if the behaviour regresses, so there was almost nothing to convert. Two
+  genuine gaps existed and are closed.
+- **O-9 was wrong.** None of the five event tables can be merged. Every one has
+  a distinct reader, a distinct retention rule, or a distinct write cardinality;
+  the closest pair is disqualified four separate ways. The analysis did surface
+  five real defects, all fixed.
+- **O-5 overcounted.** 105 super-admin endpoints, not 109. Merging them into one
+  module would produce a 6,500-line file and was not done; the shared gates were
+  the actual defect.
+- **U-14 is blocked, and not for the reason recorded.** The live app documents
+  all 297 paths including super-admin, so the published-spec gap was not the
+  problem. Only 37 of 342 operations declare a `response_model`, so generating
+  clients today would replace roughly 150 accurate hand-written interfaces with
+  305 `any`s. Response models first, then codegen. A ratchet test now holds the
+  floor at 37.
+
 ## Open finding register
 
 Severity is (likelihood × blast radius), not effort. **Wave** is where it gets fixed.
