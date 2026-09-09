@@ -43,6 +43,7 @@ from app.worker.tasks import (  # noqa: E402  (litellm config must precede)
     task_expire_old_topups,
     task_expire_past_due_subscriptions,
     task_expire_trials,
+    task_extract_qualification,
     task_gateway_reconciliation,
     task_handoff_escalation,
     task_ingest_documents,
@@ -152,6 +153,7 @@ class WorkerSettings:
 
     # Task functions the worker can execute
     functions = [
+        task_extract_qualification,
         task_ingest_documents,
         task_ingest_web_batch,
         task_crawl_and_ingest,

@@ -61,6 +61,7 @@ from app.services.qualification_service import (
 )
 from app.services.relevance_gate import check_relevance
 from app.services.reranker import RERANK_ENABLED, rerank
+from app.worker.enqueue import WORKER_ENABLED, enqueue_sync
 
 logger = logging.getLogger(__name__)
 
@@ -3641,6 +3642,64 @@ def _background_groundedness_check(
                     logger.debug("Langfuse groundedness score failed (non-blocking): %s", score_err)
     except Exception as exc:  # never let this fire-and-forget task raise
         logger.warning("Background groundedness check failed (non-blocking): %s", exc)
+
+
+def _enqueue_qualification(
+    session_id,
+    client_id,
+    bot_id,
+    history_context,
+    question,
+    answer,
+    current_bant,
+    bant_config,
+    message_id,
+    cta_signal=None,
+    last_probed_dimension=None,
+) -> None:
+    """Queue the turn's qualification extraction durably, or run it in-process.
+
+    ARQ survives a deploy; the three-thread pool does not. When the worker is
+    disabled (local development, or a deploy that has not set
+    ``WORKER_ENABLED``) this degrades to the old behaviour rather than dropping
+    the work, and says so, because a silently skipped enqueue is how this
+    became invisible in the first place.
+    """
+    args = (
+        session_id,
+        client_id,
+        bot_id,
+        history_context,
+        question,
+        answer,
+        current_bant,
+        bant_config,
+        message_id,
+        cta_signal,
+        last_probed_dimension,
+    )
+    if WORKER_ENABLED:
+        try:
+            enqueue_sync("task_extract_qualification", *args)
+            return
+        except Exception as exc:  # noqa: BLE001  never break the turn over a queue
+            logger.warning("Qualification enqueue failed, running in-process: %s", exc)
+            _safety_net_metric("qualification_enqueue_failed", bot_id=bot_id)
+    submit_background(
+        _background_bant_extraction,
+        session_id,
+        client_id,
+        bot_id,
+        history_context,
+        question,
+        answer,
+        current_bant,
+        bot_id,
+        bant_config,
+        message_id,
+        cta_signal,
+        last_probed_dimension,
+    )
 
 
 def _background_bant_extraction(
@@ -8269,8 +8328,13 @@ def rag_pipeline(
                 # Pass bid (id), not the bot ORM object. The worker reloads
                 # inside its own session. Passing a detached instance raises
                 # DetachedInstanceError on attribute access.
-                submit_background(
-                    _background_bant_extraction,
+                #
+                # ARQ first, the in-process pool only as a local fallback: this
+                # ran solely on that pool, which ``main.py`` shuts down with
+                # ``wait=False``, so every deploy dropped whatever was queued
+                # and with it the turn's qualification signals, the
+                # ``tier_transition`` webhook and the qualified-lead email.
+                _enqueue_qualification(
                     session_id,
                     cid,
                     bid,
@@ -8278,7 +8342,6 @@ def rag_pipeline(
                     question,
                     answer,
                     current_bant,
-                    bid,
                     bant_config,
                     bot_msg_id,
                     _cta_signal,
@@ -10358,10 +10421,11 @@ async def rag_pipeline_stream(
                             question, current_bant, bant_config, is_probe_reply=_answers_last_probe
                         )
                     ):
-                        # Pass bid (id), not the bot ORM object. See streaming
-                        # path's equivalent call above for the rationale.
-                        submit_background(
-                            _background_bant_extraction,
+                        # Pass bid (id), not the bot ORM object. See the
+                        # non-streaming path's equivalent call for the
+                        # rationale, and for why this is queued durably rather
+                        # than left on the in-process pool.
+                        _enqueue_qualification(
                             session_id,
                             cid,
                             bid,
@@ -10369,7 +10433,6 @@ async def rag_pipeline_stream(
                             question,
                             full_answer,
                             current_bant,
-                            bid,
                             bant_config,
                             bot_msg_id,
                             _cta_signal,

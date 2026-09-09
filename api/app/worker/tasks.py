@@ -7,6 +7,7 @@ Naming convention: ``task_<action>``. Matches the string used in
 ``enqueue("task_<action>", ...)``.
 """
 
+import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
@@ -306,6 +307,52 @@ async def task_deliver_webhook(
         )
         raise Retry(defer=min(30 * 2 ** (job_try - 1), 300)) from None
 
+    return True
+
+
+async def task_extract_qualification(
+    ctx: dict,
+    session_id: str,
+    client_id: int | None,
+    bot_id: int | None,
+    history_context: str,
+    question: str,
+    answer: str,
+    current_bant: dict | None,
+    bant_config: dict | None,
+    message_id: int | None,
+    cta_signal: dict | None = None,
+    last_probed_dimension: str | None = None,
+) -> bool:
+    """Durable BANT/MEDDIC extraction for one finished turn.
+
+    This used to run only on ``core.thread_pool.submit_background``, a
+    three-worker in-process pool that ``main.py`` shuts down with
+    ``wait=False``. Every deploy therefore dropped whatever was queued, and
+    with it the turn's qualification signals, the ``tier_transition`` webhook
+    and the qualified-lead email. Lead scoring is a product the customer pays
+    for; it cannot be the thing that quietly stops during a release.
+
+    The work itself is unchanged: this wraps the same function, which opens its
+    own session and reloads the bot by id.
+    """
+    from app.services.rag_service import _background_bant_extraction
+
+    await asyncio.to_thread(
+        _background_bant_extraction,
+        session_id,
+        client_id,
+        bot_id,
+        history_context,
+        question,
+        answer,
+        current_bant,
+        bot_id,
+        bant_config,
+        message_id,
+        cta_signal,
+        last_probed_dimension,
+    )
     return True
 
 
