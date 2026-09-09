@@ -28,7 +28,7 @@ class _Chunk:
 def _completion(score: float):
     def completion(**kwargs):
         return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content='{"score": %s}' % score), finish_reason="stop")]
+            choices=[SimpleNamespace(message=SimpleNamespace(content=f'{{"score": {score}}}'), finish_reason="stop")]
         )
 
     return completion
