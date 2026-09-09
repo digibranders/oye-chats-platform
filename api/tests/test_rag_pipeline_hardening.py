@@ -216,7 +216,7 @@ class TestMediaRulebookGating:
         )
         assert rs._MEDIA_CATALOG_MARKER in context
         system, _user = rs.build_hybrid_prompt(self._CLIENT, "Do you have a video?", context, "")
-        assert "MEDIA CARDS (inline cards" in system
+        assert "MEDIA CARDS:" in system
 
 
 # ── Deadlines on request-path helpers ────────────────────────────────────────
