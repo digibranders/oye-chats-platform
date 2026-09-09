@@ -196,18 +196,36 @@ describe('answering scope', () => {
 });
 
 describe('widget behaviour', () => {
-  it('shows every widget flag off and locked on the Free plan', async () => {
+  it('shows every widget flag off and locked when THIS agent is on Free', async () => {
     /* `get_bot_settings_public` rewrites the whole map to false for a Free
-       workspace before the widget sees it, so the switches render off and
-       read-only here — matching what the widget actually does — with the
-       upgrade nudge on the group above. */
-    mountEntitlements({ isFree: true, hasFeature: () => false });
+       agent before the widget sees it, so the switches render off and
+       read-only here, matching what the widget actually does, with the
+       upgrade nudge on the group above.
+
+       The agent's own plan is what decides this, not the workspace's. Billing
+       attaches to the Bot, so a Professional workspace can hold a Free agent;
+       gating on the workspace showed these unlocked and let them save a value
+       the runtime then ignored. */
+    mountAgent({ ...agent, plan_slug: 'free' });
+    mountEntitlements({ isFree: false, hasFeature: () => true });
     await renderSettled();
 
     expect(screen.getByText(/switched off for visitors on the Free plan/i)).toBeInTheDocument();
     const typing = screen.getByRole('switch', { name: 'Typing indicator' });
     expect(typing).toHaveAttribute('aria-checked', 'false');
     expect(typing).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  it('leaves a paid agent unlocked inside a Free workspace', async () => {
+    /* The mirror case, and the one the old workspace-level gate got wrong in
+       the direction the customer notices: paying for this agent and finding
+       its switches greyed out. */
+    mountAgent({ ...agent, plan_slug: 'professional' });
+    mountEntitlements({ isFree: true, hasFeature: () => false });
+    await renderSettled();
+
+    const typing = screen.getByRole('switch', { name: 'Typing indicator' });
+    expect(typing).not.toHaveAttribute('aria-disabled', 'true');
   });
 
   it('marks queue position as having no effect without live chat', async () => {

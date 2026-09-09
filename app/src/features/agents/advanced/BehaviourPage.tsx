@@ -56,12 +56,20 @@ function BehaviourContent({
   agentId,
   agentName,
   liveChatAllowed,
+  agentOnFree,
 }: {
   agentId: number;
   agentName: string;
   liveChatAllowed: boolean;
+  /**
+   * THIS agent's own plan, not the workspace's. Billing attaches to the Bot, so
+   * a Professional workspace can hold a Free agent whose widget the server
+   * resolves with `get_bot_entitlements`. Gating on the workspace showed these
+   * controls unlocked and let them save a value the runtime then ignored.
+   */
+  agentOnFree: boolean;
 }) {
-  const { isFree } = useEntitlements();
+  const isFree = agentOnFree;
 
   const load = useCallback(async (id: number): Promise<BehaviourDraft> => {
     return parseBehaviour(await getClientSettings(id));
@@ -285,6 +293,7 @@ export function BehaviourPage() {
       agentId={agent.id}
       agentName={agent.name}
       liveChatAllowed={hasFeature('live_chat')}
+      agentOnFree={(agent?.plan_slug ?? 'free') === 'free'}
     />
   );
 }
