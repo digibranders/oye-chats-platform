@@ -79,7 +79,7 @@ class TestBothPipelinesWidenTheWindow:
 
         from app.services import rag_service as rs
 
-        for fn in (rs.rag_pipeline, rs.rag_pipeline_stream):
+        for fn in (rs.rag_pipeline_stream,):
             src = inspect.getsource(fn)
             call = src.index("check_relevance,") if "check_relevance," in src else src.index("check_relevance(")
             # The argument list, not the whole function: a stray mention of the

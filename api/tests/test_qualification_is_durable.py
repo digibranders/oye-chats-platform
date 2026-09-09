@@ -19,7 +19,9 @@ import textwrap
 
 from app.services import rag_service as rs
 
-PIPELINES = (rs.rag_pipeline, rs.rag_pipeline_stream)
+# One pipeline: ``rag_pipeline`` is a collector over the streaming one, so
+# the wiring below only has one place left to live.
+PIPELINES = (rs.rag_pipeline_stream,)
 
 
 def _calls_named(fn, name: str) -> list[ast.Call]:
@@ -31,8 +33,8 @@ def _calls_named(fn, name: str) -> list[ast.Call]:
     ]
 
 
-class TestBothPipelinesQueueItDurably:
-    def test_neither_pipeline_puts_extraction_on_the_pool(self):
+class TestTheTurnIsQueuedDurably:
+    def test_extraction_is_not_left_on_the_pool(self):
         for fn in PIPELINES:
             for call in _calls_named(fn, "submit_background"):
                 first = ast.unparse(call.args[0]) if call.args else ""
@@ -40,20 +42,17 @@ class TestBothPipelinesQueueItDurably:
                     f"{fn.__name__} still queues qualification on the non-durable pool"
                 )
 
-    def test_both_pipelines_use_the_shared_enqueue_helper(self):
+    def test_it_uses_the_shared_enqueue_helper(self):
         for fn in PIPELINES:
             assert _calls_named(fn, "_enqueue_qualification"), fn.__name__
 
-    def test_the_two_call_sites_pass_the_same_arguments(self):
-        rendered = []
-        for fn in PIPELINES:
-            call = _calls_named(fn, "_enqueue_qualification")[0]
-            # The answer variable differs by design (``answer`` vs
-            # ``full_answer``); everything else must match.
-            rendered.append([ast.unparse(a) for a in call.args])
-        left, right = rendered
-        assert len(left) == len(right)
-        assert [a for i, a in enumerate(left) if i != 5] == [a for i, a in enumerate(right) if i != 5]
+    def test_the_call_site_passes_every_argument_the_task_needs(self):
+        call = _calls_named(PIPELINES[0], "_enqueue_qualification")[0]
+        rendered = [ast.unparse(a) for a in call.args]
+
+        assert rendered[:5] == ["session_id", "cid", "bid", "history_context", "question"]
+        assert rendered[5] in {"answer", "full_answer"}
+        assert len(rendered) == 11, "the task's signature and the call site have drifted"
 
 
 class TestTheTaskIsRegistered:

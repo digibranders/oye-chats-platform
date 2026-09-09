@@ -250,7 +250,6 @@ def _stub_generation(monkeypatch):
         captured["system_prompts"].append(k.get("system_prompt") or "")
         return "GENERATED ANSWER", False
 
-    monkeypatch.setattr(rs, "generate_response_checked", _fake_checked)
     return captured
 
 

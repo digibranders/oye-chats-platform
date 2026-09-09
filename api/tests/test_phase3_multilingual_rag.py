@@ -325,7 +325,7 @@ class TestNonEnglishIsNotRefusedAsOffTopic:
         """
         import inspect
 
-        for fn in (rs.rag_pipeline, rs.rag_pipeline_stream):
+        for fn in (rs.rag_pipeline_stream,):
             src = inspect.getsource(fn)
             # The bypass is resolved once per turn (``_judges_bypassed``) from
             # BOTH the session language and the message's own script, so a

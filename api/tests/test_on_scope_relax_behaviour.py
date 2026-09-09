@@ -116,7 +116,6 @@ def _stub_generation(monkeypatch):
 
     monkeypatch.setattr(rs, "generate_response_stream", _fake_stream)
     monkeypatch.setattr(rs, "generate_response", lambda *a, **k: "GENERATED ANSWER")
-    monkeypatch.setattr(rs, "generate_response_checked", _fake_checked)
     return captured
 
 

@@ -1,11 +1,10 @@
-"""The relaxation's wiring, pinned in both hand-maintained pipelines.
+"""The relaxation's wiring, read from the pipeline's syntax tree.
 
-``rag_service`` holds two copies of the chat pipeline, so a guard added to one
-and not the other is the file's characteristic failure. These tests read the
-two copies' syntax trees and compare them to each other and to the shape the
-guard must have. The BEHAVIOUR is covered by
-``tests/test_on_scope_relax_behaviour.py``, which drives both pipelines for
-real; this module exists to catch the copy that silently loses the change.
+``rag_service`` used to hold two hand-maintained copies of the chat pipeline,
+and a guard added to one and not the other was this file's characteristic
+failure. There is one copy now, and these tests pin its shape. The BEHAVIOUR is
+covered by ``tests/test_on_scope_relax_behaviour.py``, which drives the
+pipeline for real.
 
 An AST walk rather than substring matching: a fixed-width slice of the source
 confirms a token appears NEAR the call without confirming what it is bound to,
@@ -20,7 +19,9 @@ import textwrap
 
 from app.services import rag_service as rs
 
-PIPELINES = (rs.rag_pipeline, rs.rag_pipeline_stream)
+# One pipeline: ``rag_pipeline`` is a collector over the streaming one, so
+# the wiring below only has one place left to live.
+PIPELINES = (rs.rag_pipeline_stream,)
 
 #: Every conjunct the guard must require. ``or`` anywhere here would relax the
 #: empty-retrieval case, which is the hallucination path it exists to keep shut.
@@ -50,7 +51,7 @@ def _names_used(fn, name: str) -> int:
 
 
 class TestTheGuardHasTheRightShape:
-    def test_it_exists_in_both_pipelines(self):
+    def test_it_exists(self):
         for fn in PIPELINES:
             assert _assignment(fn, "_relax_on_scope") is not None
 
@@ -71,9 +72,11 @@ class TestTheGuardHasTheRightShape:
             assert "_question_is_clearly_on_scope" in rendered, fn.__name__
             assert "_question_looks_on_scope" not in rendered, fn.__name__
 
-    def test_the_two_pipelines_agree(self):
-        first, second = (ast.unparse(_assignment(fn, "_relax_on_scope")) for fn in PIPELINES)
-        assert first == second, "the two pipeline copies of the guard have drifted"
+    def test_there_is_only_one_place_for_it_to_live(self):
+        """The guard used to exist in two hand-maintained copies. If a second
+        pipeline reappears, this drift class comes back with it."""
+        assert len(PIPELINES) == 1
+        assert "_relax_on_scope" not in inspect.getsource(rs.rag_pipeline)
 
 
 class TestTheGuardIsActuallyConsulted:
@@ -92,7 +95,7 @@ class TestTheEmptyContextPivotIsUntouched:
     """The deliberate limit of the relaxation: with nothing retrieved there is
     nothing to ground an answer in."""
 
-    def test_the_empty_context_branch_still_exists_in_both_pipelines(self):
+    def test_the_empty_context_branch_still_exists(self):
         for fn in PIPELINES:
             src = inspect.getsource(fn)
             assert "not final_results" in src, fn.__name__

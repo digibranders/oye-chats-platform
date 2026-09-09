@@ -76,7 +76,7 @@ class TestBothPipelinesDetachBeforeHandingOff:
     """
 
     def test_neither_pipeline_hands_the_worker_orm_rows(self):
-        for fn in (rs.rag_pipeline, rs.rag_pipeline_stream):
+        for fn in (rs.rag_pipeline_stream,):
             src = inspect.getsource(fn)
             call = src.index("_background_groundedness_check,")
             args = src[call : call + 400]

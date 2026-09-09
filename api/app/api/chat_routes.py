@@ -77,7 +77,7 @@ from app.services.plan_entitlements_service import (
     is_email_validation_enabled_for_bot,
     is_visitor_intelligence_enabled_for_bot,
 )
-from app.services.rag_service import rag_pipeline, rag_pipeline_stream
+from app.services.rag_service import collect_rag_pipeline, rag_pipeline_stream
 
 _EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
 _SAFE_URL_SCHEME = re.compile(r"^https?://", re.IGNORECASE)
@@ -1474,18 +1474,22 @@ async def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(
         # ``except HTTPException`` below, which refunds the credit just taken.
         # The slot is held until the worker thread finishes, even if this
         # coroutine is cancelled first (see ``ChatConcurrencyGate.run_sync``).
-        result = await chat_gate.run_sync(
-            rag_pipeline,
-            bot,
-            body.question,
-            session_id=session_id,
-            location=location,
-            device=formatted_device,
-            bot_id=bot.id,
-            cta_dimension=body.cta_dimension,
-            visitor_country=visitor_country,
-            language=language_ctx,
-        )
+        # ``collect_rag_pipeline`` is the async collector over the one real
+        # pipeline, so this holds a slot exactly like ``/chat/stream`` does
+        # rather than occupying a worker thread for the whole turn. The
+        # synchronous ``rag_pipeline`` wrapper still exists for sync callers.
+        async with chat_gate.slot():
+            result = await collect_rag_pipeline(
+                bot,
+                body.question,
+                session_id=session_id,
+                location=location,
+                device=formatted_device,
+                bot_id=bot.id,
+                cta_dimension=body.cta_dimension,
+                visitor_country=visitor_country,
+                language=language_ctx,
+            )
 
         ans_len = len(result.get("answer", ""))
         logger.info(f"Chat response generated | session={session_id} | answer_length={ans_len}")

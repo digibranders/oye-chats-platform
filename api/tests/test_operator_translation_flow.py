@@ -884,11 +884,14 @@ class TestBotTurnStamping:
     def test_every_bot_insert_in_the_rag_pipeline_stamps_the_language(self):
         """A source assertion, because a behavioural test cannot cover this.
 
-        ``rag_service`` writes bot turns from sixteen places across the
-        streaming and non-streaming pipelines. A seventeenth added without
-        ``source_language`` would silently hand operators an untranslatable
-        row, and only in whichever branch that call site serves. Reverting any
-        one stamp must fail here.
+        ``rag_service`` writes bot turns from thirteen places. One added
+        without ``source_language`` would silently hand operators an
+        untranslatable row, and only on whichever branch that call site
+        serves. Reverting any one stamp must fail here.
+
+        It was sixteen while the non-streaming pipeline was a second copy of
+        the whole flow; collapsing it into a collector removed its inserts
+        along with everything else it duplicated.
         """
         import re
         from pathlib import Path
@@ -900,7 +903,7 @@ class TestBotTurnStamping:
             for call in re.findall(r"add_chat_message\((?:[^()]|\([^()]*\))*\)", source, re.S)
             if 'role="bot"' in call
         ]
-        assert len(calls) >= 16, f"expected every bot insert to be found, got {len(calls)}"
+        assert len(calls) >= 13, f"expected every bot insert to be found, got {len(calls)}"
         unstamped = [c for c in calls if "source_language=" not in c]
         assert unstamped == [], f"{len(unstamped)} bot insert(s) do not stamp source_language"
 

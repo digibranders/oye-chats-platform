@@ -116,6 +116,10 @@ def test_non_preview_falls_through_to_get_current_bot():
     assert result is sentinel
 
 
+async def _stub_reply(*_a, **_k):
+    return {"answer": "Hi there", "sources": ["https://acme.com/x"]}
+
+
 def test_preview_reply_is_free_for_credit_less_client(db):
     """A client with zero credits still gets a 200 preview reply. Proving the
     ai_chat deduction (which would 402 on the paid path) is skipped."""
@@ -132,9 +136,7 @@ def test_preview_reply_is_free_for_credit_less_client(db):
 
     with (
         patch.object(chat_routes, "bot_subscription_status", lambda *a, **k: "active"),
-        patch.object(
-            chat_routes, "rag_pipeline", lambda *a, **k: {"answer": "Hi there", "sources": ["https://acme.com/x"]}
-        ),
+        patch.object(chat_routes, "collect_rag_pipeline", _stub_reply),
         patch.object(chat_routes, "submit_background", lambda *a, **k: None),
     ):
         res = api.post("/chat?preview=true&bot_id=1", json={"question": "What are your plans?"})

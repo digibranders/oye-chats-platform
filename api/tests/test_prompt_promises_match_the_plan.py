@@ -95,7 +95,7 @@ class TestBothPipelinesResolveTheseBeforeBuildingThePrompt:
 
         from app.services import rag_service as rs
 
-        for fn in (rs.rag_pipeline, rs.rag_pipeline_stream):
+        for fn in (rs.rag_pipeline_stream,):
             src = inspect.getsource(fn)
             assert "meeting_booking_enabled=_meeting_gate.scheduler_is_configured(bot)" in src, fn.__name__
 
@@ -104,7 +104,7 @@ class TestBothPipelinesResolveTheseBeforeBuildingThePrompt:
 
         from app.services import rag_service as rs
 
-        for fn in (rs.rag_pipeline, rs.rag_pipeline_stream):
+        for fn in (rs.rag_pipeline_stream,):
             src = inspect.getsource(fn)
             assert "_within_hours = _within_business_hours(" in src, fn.__name__
             assert "within_business_hours=_within_hours" in src, fn.__name__

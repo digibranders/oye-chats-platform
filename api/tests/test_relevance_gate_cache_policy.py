@@ -100,7 +100,7 @@ class TestBothPipelinesJudgeTheRewrittenQuery:
     def test_each_gate_call_passes_the_search_query_and_the_knowledge_version(self):
         from app.services import rag_service as rs
 
-        for fn in (rs.rag_pipeline, rs.rag_pipeline_stream):
+        for fn in (rs.rag_pipeline_stream,):
             src = inspect.getsource(fn)
             call = src.index("check_relevance,") if "check_relevance," in src else src.index("check_relevance(")
             args = src[call : call + 900]
@@ -110,7 +110,7 @@ class TestBothPipelinesJudgeTheRewrittenQuery:
     def test_each_pipeline_computes_the_knowledge_version(self):
         from app.services import rag_service as rs
 
-        for fn in (rs.rag_pipeline, rs.rag_pipeline_stream):
+        for fn in (rs.rag_pipeline_stream,):
             src = inspect.getsource(fn)
             assert "knowledge_state_for_bot(" in src, fn.__name__
             assert "_kb_version = " in src, fn.__name__
