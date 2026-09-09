@@ -10,6 +10,7 @@ documents are immutable. Corrections are credit notes, never edits.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -29,6 +30,7 @@ from app.core.fx import (
     implied_rate_micros,
     is_plausible_rate,
 )
+from app.core.metrics import increment_metric_counter
 from app.core.tax import compute_tax, supply_kind
 from app.db.models import Client, Invoice, InvoiceCounter
 from app.services.seller_profile_service import SellerProfile, get_seller_profile
@@ -390,6 +392,12 @@ def finalize_invoice_safely(session: Session, invoice: Invoice) -> bool:
             "invoice finalize failed for invoice %s; leaving legacy row (shadow mode)",
             invoice.id,
         )
+        # ``backfill_unnumbered_invoices`` retries these every five minutes, so
+        # a legacy row is normally transient. Counted because a row that keeps
+        # failing the backfill is a customer with no invoice document, and the
+        # log line alone never told anyone the difference.
+        with contextlib.suppress(Exception):
+            increment_metric_counter("invoice_finalize_failed", bot_id=None)
         return False
 
 

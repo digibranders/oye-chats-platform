@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 import re
 import time
@@ -18,6 +19,7 @@ from app.api.auth import (
 )
 from app.config import DOCUMENTS_DIR
 from app.core.cache import cache_delete_prefix, gate_prefix_for_bot, qa_prefix_for_bot
+from app.core.metrics import increment_metric_counter
 from app.core.rate_limit import key_from_operator_credential, limiter
 from app.db.models import Bot, Document
 from app.db.repository import (
@@ -1430,6 +1432,14 @@ async def crawl_diff_endpoint(
         except Exception as exc:
             logger.warning("HEAD liveness check failed for %s: %s", diff_request.url, exc)
             head_partial = True
+            # Assume-alive is the safe direction here (the recrawl keeps a page
+            # rather than deleting a live one), and the response carries
+            # ``head_partial`` so the console can say the count is an
+            # undercount. Counted so a probe that is failing constantly, and
+            # therefore a knowledge base quietly accumulating dead pages, is
+            # visible without reading logs.
+            with contextlib.suppress(Exception):
+                increment_metric_counter("liveness_probe_failed", bot_id=None)
             return {raw: True for raw in raw_urls_to_check}
 
     async def _discovery_with_budget() -> list[str]:

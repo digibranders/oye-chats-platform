@@ -13,7 +13,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import AfterValidator, BaseModel, Field, StringConstraints
 from sqlalchemy import desc, func, select
 
-from app import config as app_config
 from app.api.auth import get_superadmin
 from app.api.superadmin_routes_v2 import _require_write
 from app.config import DISPLAY_USD_TO_INR, EXTRA_SEAT_PRICE_USD_CENTS, RAZORPAY_SEAT_PLAN_PRICE_CENTS
@@ -292,46 +291,6 @@ def _seat_price_drifted(plan: Plan) -> bool:
     if int(plan.included_operator_seats or 0) < 0:
         return False
     return int(plan.extra_seat_price_cents or 0) != RAZORPAY_SEAT_PLAN_PRICE_CENTS
-
-
-@router.get("/billing/seat-pricing")
-def get_seat_pricing(superadmin: Client = Depends(get_superadmin)):
-    """The canonical extra-seat prices, and whether either rail can actually sell one.
-
-    ``_reject_seat_price_drift`` accepts only ``0`` or the canonical constant,
-    but nothing served that constant, so a console could only hard-code it or
-    learn it from a 422. (Per-plan seat pricing is already on
-    ``GET /superadmin/plans`` as ``extra_seat_price_cents`` /
-    ``extra_seat_price_usd_cents``. What was missing is the constant those
-    columns are graded against.)
-
-    ``plan_configured`` is served beside each price because the two fail
-    independently: the price is a compile-time constant that is always present,
-    while ``razorpay_service.create_seat_addon_subscription`` raises
-    ``RazorpayBillingError`` when the rail's ``RAZORPAY_SEAT_PLAN_ID*`` is
-    unset. A surface showing ₹449 without showing that the add-on is unwired is
-    quoting a price nobody can buy.
-
-    The ids themselves are secrets-adjacent gateway references and are NOT
-    returned; the operator needs to know whether one is set, not what it is.
-    """
-    return {
-        "inr": {
-            "currency": "INR",
-            # The same module-level constants ``_reject_seat_price_drift``
-            # compares against, so this endpoint can never advertise a value
-            # the plan editor would reject.
-            "price_cents": RAZORPAY_SEAT_PLAN_PRICE_CENTS,
-            "plan_configured": bool(app_config.RAZORPAY_SEAT_PLAN_ID),
-            "plan_id_env_var": "RAZORPAY_SEAT_PLAN_ID",
-        },
-        "usd": {
-            "currency": "USD",
-            "price_cents": EXTRA_SEAT_PRICE_USD_CENTS,
-            "plan_configured": bool(app_config.RAZORPAY_SEAT_PLAN_ID_USD),
-            "plan_id_env_var": "RAZORPAY_SEAT_PLAN_ID_USD",
-        },
-    }
 
 
 def _reject_seat_price_drift(data: dict) -> None:

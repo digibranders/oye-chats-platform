@@ -9,6 +9,7 @@ For synchronous callers (webhook_service, email_service), use ``enqueue_sync()``
 """
 
 import asyncio
+import contextlib
 import logging
 import os
 import threading
@@ -105,7 +106,17 @@ def enqueue_sync(task_name: str, *args: Any, **kwargs: Any) -> str | None:
             try:
                 await enqueue(task_name, *args, **kwargs)
             except Exception:
+                # This is the one window where work is lost with no row
+                # anywhere: the HTTP response has already gone out, and the
+                # Redis enqueue never happened. For an email that means a
+                # password-reset or verification code the customer will never
+                # receive and nobody will know about.
                 logger.exception("enqueue_sync background task failed for %s", task_name)
+                with contextlib.suppress(Exception):
+                    from app.core.metrics import forward_to_sentry_if_alertable, increment_metric_counter
+
+                    increment_metric_counter("enqueue_failed", bot_id=None)
+                    forward_to_sentry_if_alertable("enqueue_failed", task=task_name)
 
         task = loop.create_task(_do_enqueue())
         _pending_enqueue_tasks.add(task)

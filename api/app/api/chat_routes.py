@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import hashlib
 import html as html_lib
 import ipaddress
@@ -28,7 +29,7 @@ from app.api.auth import (
 from app.core.chat_concurrency import chat_gate
 from app.core.exceptions import SessionOwnershipError
 from app.core.langfuse_client import get_langfuse
-from app.core.metrics import record_latency_ms
+from app.core.metrics import forward_to_sentry_if_alertable, increment_metric_counter, record_latency_ms
 from app.core.rate_limit import consume_vendor_budget, key_from_bot_key, limiter
 from app.core.thread_pool import submit_background
 from app.core.visitor_privacy import format_visitor_location
@@ -1258,7 +1259,14 @@ def _refund_ai_chat_credit(bot: Bot, cost: int) -> None:
             db.commit()
         logger.info("Refunded ai_chat credit (generation failed) bot_id=%s cost=%s", bot.id, cost)
     except Exception:
+        # Best-effort stays best-effort: this must never mask the original
+        # failure. But a swallowed refund means the visitor was charged for an
+        # answer they did not get and the ledger is wrong, so it is counted and
+        # paged rather than left as one log line nobody reads.
         logger.exception("Failed to refund ai_chat credit for bot %s", getattr(bot, "id", "?"))
+        with contextlib.suppress(Exception):
+            increment_metric_counter("credit_refund_failed", bot_id=getattr(bot, "id", None))
+            forward_to_sentry_if_alertable("credit_refund_failed", bot_id=getattr(bot, "id", None), cost=cost)
 
 
 def _deduct_ai_chat_credit_sync(bot: Bot) -> int:

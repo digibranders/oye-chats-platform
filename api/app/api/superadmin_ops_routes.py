@@ -146,43 +146,6 @@ def refund_invoice(
         return {"ok": True}
 
 
-@router.post("/invoices/{invoice_id}/mark-paid")
-def mark_invoice_paid(
-    invoice_id: int,
-    request: Request,
-    admin: Client = Depends(get_superadmin),
-):
-    """Mark an invoice as paid (manual reconciliation)."""
-    _require_write(admin)
-    with get_session() as session:
-        inv = session.get(Invoice, invoice_id)
-        if not inv:
-            raise HTTPException(status_code=404, detail="Invoice not found")
-
-        before = {"status": inv.status, "paid_at": inv.paid_at.isoformat() if inv.paid_at else None}
-        _apply_mark_paid(inv)
-        session.flush()
-
-        record_audit(
-            session,
-            actor=admin,
-            action="invoice.mark_paid",
-            target_type="invoice",
-            target_id=invoice_id,
-            before=before,
-            # paid_at stays NULL-able: a numbered invoice keeps whatever supply
-            # date it was issued with (which finalize may have taken from
-            # period_end), and _apply_mark_paid deliberately does not touch it.
-            after={"status": "paid", "paid_at": inv.paid_at.isoformat() if inv.paid_at else None},
-            request=request,
-        )
-        session.commit()
-        return {"ok": True}
-
-
-# ── Worker / queue status ────────────────────────────────────────────────────
-
-
 def _worker_alive() -> bool:
     """True when the worker heartbeat key is present and fresh in Redis."""
     from app.core.cache import get_redis

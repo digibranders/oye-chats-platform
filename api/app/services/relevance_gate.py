@@ -43,7 +43,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.cache import cache_get, cache_set
 from app.core.langfuse_client import langfuse_generation
-from app.core.metrics import increment_metric_counter
+from app.core.metrics import forward_to_sentry_if_alertable, increment_metric_counter
 from app.services import runtime_config
 
 logger = logging.getLogger(__name__)
@@ -386,6 +386,10 @@ def check_relevance(
         # makes a sustained run of them visible on the safety-net metrics
         # endpoint instead of only in logs nobody is reading.
         increment_metric_counter("gate_failed_open")
+        # Every fail-open is an answer that went out with no scope check. One is
+        # a provider blip; a run of them is the guarantee silently switched off,
+        # which is exactly how a 41-request outage went unnoticed once already.
+        forward_to_sentry_if_alertable("gate_failed_open", bot_id=bot_id, client_id=client_id)
         return True, 1.0
 
     is_relevant = score >= active_threshold

@@ -2147,7 +2147,11 @@ def check_visitor_safety(question: str) -> tuple[bool, str | None]:
         # (audit F09); moderation already fails open via the except below.
         response = litellm.moderation(model=MODERATION_MODEL, input=question, timeout=10)
     except Exception as exc:
+        # Fails open, and says so. Moderation is the one gate whose failure lets
+        # unfiltered visitor text reach the model, so a sustained run of these
+        # is worth a page rather than a warning nobody reads.
         logger.warning("Moderation check failed (non-blocking): %s", exc)
+        _safety_net_metric("moderation_failed_open", stage="input")
         return True, None
 
     # LiteLLM normalises to OpenAI's shape: {results: [{flagged, categories: {...}}]}
@@ -2167,6 +2171,7 @@ def check_visitor_safety(question: str) -> tuple[bool, str | None]:
         return False, top or "unspecified"
     except Exception as exc:
         logger.warning("Moderation response parse failed (non-blocking): %s", exc)
+        _safety_net_metric("moderation_failed_open", stage="parse")
         return True, None
 
 
@@ -5025,7 +5030,6 @@ def build_hybrid_prompt(
     # Accepts either the legacy ``list[str]`` shape or the current
     # ``list[{name, url}]`` shape. Normalized inside the function.
     services: list[str | dict] | None = None,
-    services_url: str | None = None,  # Legacy global URL; no longer used by the prompt.
     # Smart links. Admin-defined ``[{keyword, url}]`` map. Additive and
     # independent of ``services``: it only adds hyperlinks, never narrows scope.
     answer_links: list[dict] | None = None,
@@ -8262,7 +8266,6 @@ async def rag_pipeline_stream(
                 # predicate the meeting gate uses.
                 meeting_booking_enabled=_meeting_gate.scheduler_is_configured(bot),
                 services=getattr(bot, "services", None) if bot else None,
-                services_url=getattr(bot, "services_url", None) if bot else None,
                 answer_links=_pricing_gate.merge_pricing_smart_link(
                     answer_links=getattr(bot, "answer_links", None) if bot else None,
                     pricing_url=getattr(bot, "pricing_url", None) if bot else None,

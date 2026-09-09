@@ -380,22 +380,6 @@ class Bot(Base):
     bant_enabled = Column(sqlalchemy.Boolean, default=True, server_default="true", nullable=False)
     bant_config = Column(JSONB, nullable=True)  # per-bot qualification rubric config
 
-    # Admin-defined pre-handoff question flow. Fires once the BANT signals reach
-    # ``threshold`` marked dimensions and BEFORE the handoff card is offered,
-    # to finish qualifying the lead with structured answers the sales team
-    # sees on the very first touch. NULL disables the feature for this bot.
-    # Shape:
-    #   {
-    #     "enabled": true,
-    #     "threshold": 2,          # BANT dimensions needed to trigger (1-4)
-    #     "questions": [
-    #       {"id": "q1", "text": "...", "type": "text"|"choice"|"email"|"phone",
-    #        "options": ["..."], "required": true,
-    #        "skip_if_bant": null|"need"|"timeline"|"authority"|"budget"}
-    #     ]
-    #   }
-    qualification_flow = Column(JSONB, nullable=True)
-
     # Admin-defined quotation catalog. An ordered list of billable services
     # the bot can quote a qualified visitor on (Website design, Logo, SEO
     # audit, …). Each service carries its own price per unit, unit label,

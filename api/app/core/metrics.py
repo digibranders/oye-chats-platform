@@ -30,6 +30,25 @@ _SENTRY_FORWARD_METRICS = frozenset(
     {
         "injection_attempt",
         "system_prompt_leak",
+        # A credit was charged for an answer the visitor never got, and giving
+        # it back failed. The customer stays out of pocket, the ledger stays
+        # wrong, and until now the only trace was one log line. A refund is
+        # already best-effort by design (it must never mask the original
+        # error), so counting and paging is the only way anybody learns it
+        # happened.
+        "credit_refund_failed",
+        # A fail-open on a judge means the answer went out with no scope check
+        # at all. One is a provider blip; a run of them is the scope guarantee
+        # silently switched off, which is how a 41-request outage went
+        # unnoticed once already.
+        "gate_failed_open",
+        "moderation_failed_open",
+        # The gateway refused to cancel a live mandate. The daily orphan sweep
+        # catches it, but until it does the customer is still being charged.
+        "addon_cancel_failed",
+        # An enqueue that never reached Redis after the response was already
+        # sent. For an email that is a verification code nobody receives.
+        "enqueue_failed",
         "moderation_block",
         # AR-46: the model actually GENERATED content flagged under
         # moderation categories, a jailbreak succeeded, not just an

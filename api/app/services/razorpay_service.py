@@ -33,6 +33,7 @@ References (Razorpay docs, validated against this implementation):
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import json
@@ -64,6 +65,7 @@ from app.config import (
     RAZORPAY_WEBHOOK_SECRET,
 )
 from app.core.dates import add_months
+from app.core.metrics import forward_to_sentry_if_alertable, increment_metric_counter
 from app.core.pricing import charge_currency, format_amount, seat_price
 from app.core.tax import SupplyKind, gross_charge_minor, supply_kind
 from app.db.models import (
@@ -1676,6 +1678,13 @@ def retire_branding_addon_quietly(session: Session, sub: Subscription, *, contex
             context,
             exc_info=True,
         )
+        # ``task_reconcile_orphaned_seat_addons`` does catch this within a day,
+        # so the customer is not charged forever. Nobody could see the window,
+        # though: the only trace was this log line, and a spike means the
+        # gateway is refusing cancellations rather than one call losing a race.
+        with contextlib.suppress(Exception):
+            increment_metric_counter("addon_cancel_failed", bot_id=None)
+            forward_to_sentry_if_alertable("addon_cancel_failed", addon="branding", subscription_id=sub.id)
         return False
     _invalidate_branding_entitlement_cache(session, sub)
     return True
