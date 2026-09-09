@@ -1,7 +1,23 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback, Suspense } from 'react';
 import { X, Plus, Clock, Mail, CheckCircle2, AlertCircle, User, Phone, MessageSquare, LogOut, Star, XCircle, ChevronDown, Headphones, Globe, History, Trash2, Check, Menu, Calendar } from 'lucide-react';
-import { isAbortError, sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, cancelHandoff, getSessionStatus, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail, getPendingConnectRequest, respondToConnectRequest, submitFeedback, markChatEvent, validateEmail as checkEmailWithServer, getQuotationState, changeSessionLanguage, restoreVisitorName } from '../services/api';
+import { isAbortError, sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, cancelHandoff, getSessionStatus, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, getPendingConnectRequest, respondToConnectRequest, submitFeedback, markChatEvent, validateEmail as checkEmailWithServer, sendTranscriptEmail, getQuotationState, changeSessionLanguage, restoreVisitorName } from '../services/api';
 import { getController } from '../widget-controller.js';
+import {
+    FALLBACK_PATTERNS,
+    getInitials,
+    HANDOFF_INVITATION_TAIL_RE,
+    isBotFallback,
+    isSystemMessage,
+    looksLikeEmail,
+    NAME_PROBE_LIMIT,
+    OFFLINE_POLL_INTERVAL_MS,
+    OFFLINE_POLL_MAX_TICKS,
+    relativeTimeLabel,
+    sanitizeMarkdown,
+    SYSTEM_MSG,
+    TRAILING_QUESTION_TAIL_RE,
+} from '../lib/chatWindowHelpers.js';
+
 import { themeConfigs } from './themeConfigs';
 import {
     PANEL_STYLE_KEYS,
@@ -48,48 +64,11 @@ const LanguageSelector = lazyWithRetry(() => import('./LanguageSelector'));
 
 const API_URL = (typeof window !== 'undefined' && window.OYECHATS_API_URL) || import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
-const FALLBACK_PATTERNS = /don't have that specific information|I'm not sure about that|couldn't find.*information|not contained in/i;
 
-// Offline-form availability probe. Ten minutes of waiting for an operator to
-// come online is generous; past that the visitor is writing a message, not
-// waiting for a chat, and an unbounded probe is just load with no reader.
-const OFFLINE_POLL_INTERVAL_MS = 15000;
-const OFFLINE_POLL_MAX_TICKS = 40;
 
-// How many turns into a conversation we keep re-reading the lead looking for a
-// name the visitor typed in reply to the bot's "what should I call you?". The
-// bot asks on its first reply, so the answer normally lands on turn 2; three
-// attempts absorbs a visitor who ignores the question once and answers later,
-// without polling forever for one who never answers at all.
-const NAME_PROBE_LIMIT = 3;
 
-// Stable identifiers for system dividers. Several effects add and later remove
-// the "connecting" divider; they used to find it by comparing `m.text` against
-// an English string literal, which silently stopped matching the moment that
-// copy was translated. Match on `systemId` instead, so the identity of a system
-// message is independent of the language it is rendered in.
-const SYSTEM_MSG = {
-    CONNECTING: 'connecting',
-};
 
-const isSystemMessage = (m, systemId) => m.type === 'system' && m.systemId === systemId;
 
-// Trailing sentences the bot's LLM tends to append when it thinks a handoff
-// is imminent. If the quotation card is about to render, we strip this off
-// the last bot message so the visitor doesn't see the invitation AND the
-// quote card competing side-by-side. On Skip the stashed text is replayed
-// as its own bot message so the follow-up still lands, just AFTER the
-// quote decision.
-const HANDOFF_INVITATION_TAIL_RE = /\n?\s*(would you like (me )?to (connect|introduce|arrange)|shall i connect|should i connect|do you want me to connect|can i connect you|would you like to (chat|speak) with (our|the) team|would you like to talk to (our|the) team|would you like me to loop in (our|the) team|let me know if you'?d like me to (connect|introduce))[^.?!]*[.?!]?\s*$/i;
-
-// Fallback: any trailing question the bot appends right before the quote card
-// (e.g. "Want the implementation steps or the demo material?"). When the quote
-// is about to render, that follow-up competes with the card, so we peel the
-// last question sentence off the message. Matches only the final "…?" run —
-// [^.!?\n]* stops at the previous sentence's terminator, so earlier sentences
-// are kept. Like the handoff tail, the stripped text is stashed and replayed
-// after the visitor decides on (or skips) the quote.
-const TRAILING_QUESTION_TAIL_RE = /\s*[^.!?\n]*\?\s*$/;
 
 // Chat mode state machine. Valid transitions.
 // `bot → unavailable` covers the "Leave a message" CTA (header menu option and
@@ -103,16 +82,6 @@ const TRAILING_QUESTION_TAIL_RE = /\s*[^.!?\n]*\?\s*$/;
 // unit-tested. It was a private const here, which is why a missing transition
 // went unnoticed: exercising it needed a real browser and a timing race.
 
-// Strip trailing orphaned markdown tokens that ReactMarkdown would render as raw text
-// e.g. a stream interrupted mid-bold: "Here is **important" → "Here is"
-const sanitizeMarkdown = (text) => {
-    if (!text) return text;
-    return text
-        .replace(/\*{1,2}$/, '')  // trailing * or **
-        .replace(/_+$/, '')        // trailing _
-        .replace(/`+$/, '')        // trailing `
-        .trim();
-};
 
 // Centered iMessage/WhatsApp-style system transition line. Short labels (a
 // timestamp, "Alice left") stay on one line with side dividers; a long
@@ -148,13 +117,6 @@ const SystemMessage = ({ text, textKey, textParams }) => {
     );
 };
 
-// Initials helper. Handles unicode names and empty values defensively.
-const getInitials = (name) => {
-    if (!name) return '?';
-    const parts = name.trim().split(/\s+/).filter(Boolean).slice(0, 2);
-    if (parts.length === 0) return '?';
-    return parts.map(part => Array.from(part)[0] || '').join('').toUpperCase();
-};
 
 // Operator joined notice. Replaces the plain "X joined" text divider with a
 // prominent pill showing the operator's initials, name, department, and time.
@@ -419,14 +381,37 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
 
     // Conversation history drawer (top-left) — lists this browser's past sessions
     // for this bot so the visitor can reopen an earlier conversation.
-    const [showSessionMenu, setShowSessionMenu] = useState(false);
+    const [showSessionMenu, setShowSessionMenuRaw] = useState(false);
     const [sessionList, setSessionList] = useState(() => readSessionIndex());
-    // Id of the row awaiting delete confirmation. Removing a conversation is not
-    // undoable from the widget, so the trash button arms an inline confirm step
-    // rather than deleting on the first tap (easy to hit by accident on mobile,
-    // where the row and the trash target sit close together).
     const [confirmDeleteId, setConfirmDeleteId] = useState(null);
     const refreshSessionList = useCallback(() => setSessionList(readSessionIndex()), []);
+    // Closing the drawer drops any armed confirmation, so reopening it never
+    // shows a stale "are you sure?" row. This was an effect keyed on the open
+    // flag: a render-cycle late, and a cascading render for something that is
+    // simply part of closing.
+    const setShowSessionMenu = useCallback((next) => {
+        setShowSessionMenuRaw((prev) => {
+            const value = typeof next === 'function' ? next(prev) : next;
+            if (!value) setConfirmDeleteId(null);
+            return value;
+        });
+    }, []);
+    const cancelDeleteSession = useCallback(() => setConfirmDeleteId(null), []);
+    const armDeleteSession = useCallback((sid, e) => {
+        if (e) e.stopPropagation();
+        setConfirmDeleteId(sid);
+    }, []);
+    // Remove one conversation from the local history drawer, after
+    // confirmation. The server rows are untouched: this only forgets it in this
+    // browser. Deleting the ACTIVE conversation starts a fresh one, so the
+    // visitor is not left pointed at a session they just hid.
+    const confirmDeleteSession = useCallback((sid, e) => {
+        if (e) e.stopPropagation();
+        setConfirmDeleteId(null);
+        removeSessionFromIndex(sid);
+        setSessionList(readSessionIndex());
+        if (sid === sessionId) handleNewChatRef.current?.();
+    }, [sessionId]);
 
     // Transcript email modal
     const [showTranscriptModal, setShowTranscriptModal] = useState(false);
@@ -1201,18 +1186,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
         if (name) writeVisitorName(name);
     }, [existingLeadInfo?.name]);
 
-    // ── Conversation history drawer (top-left) ───────────────────────────────────
-    // Dismissal is owned by the drawer's own scrim (click anywhere outside it),
-    // so no document-level outside-click listener is needed. Escape closes it too,
-    // which is what a modal overlay is expected to do.
-    useEffect(() => {
-        if (!showSessionMenu) return;
-        const handler = (e) => {
-            if (e.key === 'Escape') setShowSessionMenu(false);
-        };
-        document.addEventListener('keydown', handler);
-        return () => document.removeEventListener('keydown', handler);
-    }, [showSessionMenu]);
 
     // Reopen a past conversation from the history menu. Mirrors handleNewChat's
     // transient-state reset (live-chat mode, forms, CTAs) but instead of minting a
@@ -1276,30 +1249,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
     }, [sessionId, shareDomain, hydrateSession, refreshSessionList]);
 
     // Arm the confirm step for a row (first tap on the trash icon).
-    const armDeleteSession = useCallback((sid, e) => {
-        if (e) e.stopPropagation();
-        setConfirmDeleteId(sid);
-    }, []);
 
-    // Remove one conversation from the local history drawer, after confirmation.
-    // The server rows are untouched — this only forgets it in this browser.
-    // Deleting the ACTIVE conversation also starts a fresh one, so the visitor
-    // isn't left pointed at a session they just hid.
-    const confirmDeleteSession = useCallback((sid, e) => {
-        if (e) e.stopPropagation();
-        setConfirmDeleteId(null);
-        removeSessionFromIndex(sid);
-        refreshSessionList();
-        if (sid === sessionId) {
-            handleNewChatRef.current?.();
-        }
-    }, [sessionId, refreshSessionList]);
-
-    // Drop any armed confirmation when the drawer closes, so reopening it never
-    // shows a stale "are you sure?" row.
-    useEffect(() => {
-        if (!showSessionMenu) setConfirmDeleteId(null);
-    }, [showSessionMenu]);
 
     const handleSendTranscript = () => {
         setShowHeaderMenu(false);
@@ -2653,7 +2603,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
     }, [offlineEmailValue]);
 
     // ── Offline message submit ───────────────────────────────────────────────────
-    const offlineLooksLikeEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+    const offlineLooksLikeEmail = looksLikeEmail;
 
     // Fires on blur. Validation runs in the background while the visitor
     // fills in the remaining fields, same pattern as HandoffForm.
@@ -2797,10 +2747,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
     }, []);
 
     // ── Smart handoff helpers ────────────────────────────────────────────────────
-    const checkBotFallback = useCallback((botText) => {
-        const fallbackPatterns = /don't have.*specific information|I'm not sure about that|couldn't find.*specific information|not contained in/i;
-        return fallbackPatterns.test(botText);
-    }, []);
+    // `FALLBACK_PATTERNS` in lib/chatWindowHelpers.js. Two copies of this regex
+    // used to exist, one declared and never read and this narrower inline one;
+    // the inline one is what ran, so it is the one that moved.
+    const checkBotFallback = useCallback((botText) => isBotFallback(botText), []);
 
     // ── W15: Escape closes the panel ─────────────────────────────────────────────
     // Bound on `document` rather than on the container: keyboard events are
@@ -2829,17 +2779,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
     // overlay still appears when the WS is dropping mid-live-chat: that's a
     // connection-health signal, not an identity swap.
     // Compact, localized "time since" label for a session row in the history menu.
-    const sessionTimeLabel = (ts) => {
-        if (!Number.isFinite(ts) || ts <= 0) return '';
-        const diffMs = Math.max(0, Date.now() - ts);
-        const mins = Math.floor(diffMs / 60000);
-        if (mins < 1) return t('header.time_just_now') || 'Just now';
-        if (mins < 60) return t('header.time_minutes_ago', { count: mins }) || `${mins}m ago`;
-        const hours = Math.floor(mins / 60);
-        if (hours < 24) return t('header.time_hours_ago', { count: hours }) || `${hours}h ago`;
-        const days = Math.floor(hours / 24);
-        return t('header.time_days_ago', { count: days }) || `${days}d ago`;
-    };
+    const sessionTimeLabel = (ts) => relativeTimeLabel(ts, t);
 
     const renderHeader = () => {
         if (chatMode === 'live' && liveConnectionStatus === 'reconnecting') {
@@ -3381,7 +3321,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                                                 </p>
                                                 <div className="flex gap-2">
                                                     <button
-                                                        onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(null); }}
+                                                        onClick={(e) => { e.stopPropagation(); cancelDeleteSession(); }}
                                                         className="flex-1 py-1.5 rounded-lg border border-gray-200 bg-white text-[12px] font-medium text-gray-600 hover:bg-gray-50 transition-colors"
                                                     >
                                                         {t('header.delete_cancel') || 'Cancel'}
