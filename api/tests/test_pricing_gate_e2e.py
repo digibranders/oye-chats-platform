@@ -11,7 +11,7 @@ hand-duplicated copies of the gate block, so a defect can live in one and not
 the other. ``_drive`` normalises the two shapes to ``{answer, sources, meta}``
 so one test body covers both.
 
-No bot below opts in and none opts out, because there is no toggle to opt with.
+The bots below leave ``pricing_from_knowledge_base`` at its default False, which is the gated behaviour; the one opt-out that exists is covered in test_pricing_gate_optout.py and test_on_scope_relax_behaviour.py.
 The fixtures vary three things: ``pricing_url``, the page a bot may price from,
 the PLAN half of the human-support gate, and whether the bot maps a ``contact``
 Smart Link. Leaving the URL unset is a real configuration with real

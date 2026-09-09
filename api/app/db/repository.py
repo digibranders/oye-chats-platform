@@ -524,8 +524,10 @@ def get_pages_for_source(session, source: str, bot_id: int = None, client_id: in
 def count_documents_for_bot(session, bot_id: int = None, client_id: int = None) -> int:
     """Return the total number of stored chunks for a bot.
 
-    Used by CAG-lite to decide whether to skip retrieval and inject all
-    chunks directly into the prompt (when total count is small).
+    CAG-lite now asks ``knowledge_state_for_bot`` instead, because it needs the
+    same count AND a fingerprint of the corpus in one query. This remains the
+    plain count used by seed-question gating, the crawl content guards and
+    ``sync_bot_knowledge_state``.
     """
     stmt = select(func.count()).select_from(Document).where(_owner_filter(Document, bot_id, client_id))
     return session.execute(stmt).scalar_one()

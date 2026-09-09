@@ -11,16 +11,23 @@ Model:        resolved per-call via ``runtime_config.get_gate_model()`` (DB-back
               super-admin tunable via the ``gate_model`` setting); falls back to
               ``GATE_MODEL`` env default (gemini/gemini-2.5-flash. Cheap & fast)
 Threshold:    per-bot ``Bot.relevance_threshold`` → super-admin runtime knob
-              ``rag.relevance_threshold`` → ``RELEVANCE_THRESHOLD`` env default (0.55)
+              ``rag.relevance_threshold`` → ``RELEVANCE_THRESHOLD`` env default (0.3).
+              0.3 sits below the judge's own 0.5 "related enough to help" anchor,
+              so the gate fires only at the "no chunk bears on this" end.
 Judge input:  ``GATE_MAX_CHUNKS`` (default 5) chunks × ``GATE_CHUNK_PREVIEW_CHARS``
-              (default 500) characters each. A caller whose chunk list is NOT
-              ranked passes ``max_chunks`` to widen that window; see
-              :func:`_build_gate_prompt`.
+              (default 1000, a whole default-size chunk) characters each, under a
+              total budget of ``GATE_PROMPT_CHAR_BUDGET``. A caller whose chunk
+              list is NOT ranked passes ``max_chunks`` to widen the window; the
+              budget then divides across them so the prompt stays roughly
+              token-constant. See :func:`_build_gate_prompt`.
 
-Gate results are cached in Redis to avoid redundant LLM calls for repeated
-questions against the same knowledge base state.
+Only PASSING verdicts are cached, for ``_GATE_TTL``. A refusal is the expensive
+direction to be wrong in, and re-judging costs one gate-tier call.
 
-Key: ``oyechats:gate:v{prompt_version}:{bot_id}:{question_hash}`` (TTL: 3600s)
+Key: ``oyechats:gate:v{prompt_version}:{scope}:{kb_version}:{question_hash}``
+     (TTL: 300s; ``kb_version`` is the bot's ``"count:max_id"`` document
+     fingerprint, so a re-train cannot serve a verdict about documents the bot
+     no longer has)
 """
 
 import hashlib
@@ -96,10 +103,11 @@ RELEVANCE_THRESHOLD: float = float(os.getenv("RELEVANCE_THRESHOLD", "0.3"))
 # gate-tier call, so the window is short on purpose.
 _GATE_TTL = 300
 
-# Bump whenever the judge prompt or its scoring scale changes. The cache key
-# is (bot, question), so without this a prompt fix keeps serving verdicts the
-# OLD prompt produced for up to an hour after deploy -- and any before/after
-# measurement of a prompt change silently reads its own baseline back.
+# Bump whenever the judge prompt or its scoring scale changes. The cache key is
+# (bot, kb_version, question), so without this a prompt fix keeps serving
+# verdicts the OLD prompt produced for a whole ``_GATE_TTL`` after deploy -- and
+# any before/after measurement of a prompt change silently reads its own
+# baseline back.
 _GATE_PROMPT_VERSION = 3
 
 # How much of the retrieved context the judge sees. The preview covers a whole
@@ -112,6 +120,19 @@ _GATE_PROMPT_VERSION = 3
 # floored at 1 so the judge always sees something.
 GATE_MAX_CHUNKS: int = max(1, int(os.getenv("GATE_MAX_CHUNKS") or "5"))
 GATE_CHUNK_PREVIEW_CHARS: int = max(1, int(os.getenv("GATE_CHUNK_PREVIEW_CHARS") or "1000"))
+# Total characters of chunk text the judge may be shown, however many chunks it
+# is given. The per-chunk figure above is what a RANKED top-5 gets; an unranked
+# caller (CAG-lite) hands over the whole knowledge base, up to
+# CAG_LITE_THRESHOLD=20 chunks, and 20 x 1000 would be a ~5,000-token prompt
+# against a 2s timeout whose only failure mode is failing OPEN, i.e. answering
+# with no scope check at all. Dividing a fixed budget keeps the prompt roughly
+# token-constant while still showing every document, which is the thing the
+# CAG-lite widening was for: before it, three of fourteen files were never
+# judged for any question.
+GATE_PROMPT_CHAR_BUDGET: int = max(1, int(os.getenv("GATE_PROMPT_CHAR_BUDGET") or "6000"))
+# Below this a preview is too short to judge anything from, so a very wide
+# bundle takes fewer characters each rather than every chunk becoming a stub.
+_MIN_CHUNK_PREVIEW_CHARS = 200
 # Hard cap on the gate LLM call. Without this, a stalled Gemini blocks the
 # entire SSE stream for ~30s before the first token reaches the visitor.
 # The existing `except Exception` below fails open on timeout, so a slow
@@ -132,15 +153,25 @@ def _gate_model() -> str:
     return runtime_config.get_gate_model()
 
 
-def _gate_cache_key(bot_id: int | None, client_id: int | None, question: str, kb_version: str | None = None) -> str:
+def _gate_cache_key(
+    bot_id: int | None, client_id: int | None, question: str, kb_version: str | None = None
+) -> str | None:
     """Cache key for one verdict.
 
     ``kb_version`` is ``knowledge_state_for_bot``'s ``"count:max_id"``. Without
-    it, a bot that was just re-trained kept serving verdicts judged against the
-    documents it no longer has, for as long as the entry lived. A caller that
-    cannot compute it passes None and shares one stable key, which is the old
-    behaviour.
+        it, a bot that was just re-trained kept serving verdicts judged against the
+        documents it no longer has, for as long as the entry lived. A caller that
+        cannot compute it passes None and shares one stable key, which is the old
+        behaviour. The fingerprint moves on every ingested chunk, so a bot being
+        re-crawled misses this cache for the duration; that is the intended trade,
+        since the miss costs one gate-tier call and the alternative is answering
+        from a verdict about documents the bot no longer has.
+
+        Returns None for a call scoped to neither a bot nor a client, which means
+        "do not cache": such turns would otherwise share one platform-wide bucket.
     """
+    if not bot_id and not client_id:
+        return None
     scope = f"b{bot_id}" if bot_id else f"c{client_id}"
     q_hash = hashlib.sha256(question.lower().strip().encode()).hexdigest()[:16]
     return f"oyechats:gate:v{_GATE_PROMPT_VERSION}:{scope}:{kb_version or '0'}:{q_hash}"
@@ -157,10 +188,21 @@ def _build_gate_prompt(question: str, chunks: list, max_chunks: int | None = Non
     # answered was refused as off-topic. On the retrieval path the cap is
     # right: there the first five ARE the five most relevant.
     limit = max_chunks if max_chunks and max_chunks > 0 else GATE_MAX_CHUNKS
+    shown = min(limit, len(chunks))
+    # Per-chunk share of the total budget, never more than one whole chunk and
+    # never so little that the preview says nothing.
+    per_chunk = GATE_CHUNK_PREVIEW_CHARS
+    if shown > 0:
+        # Never more than the configured per-chunk preview, and never so little
+        # that a preview says nothing. The floor is inside the min, so an
+        # explicitly small ``GATE_CHUNK_PREVIEW_CHARS`` still wins: the floor
+        # exists to stop the BUDGET shrinking previews to stubs, not to
+        # override an operator who asked for short ones.
+        per_chunk = min(GATE_CHUNK_PREVIEW_CHARS, max(_MIN_CHUNK_PREVIEW_CHARS, GATE_PROMPT_CHAR_BUDGET // shown))
     chunk_previews = []
     for i, doc in enumerate(chunks[:limit], 1):
         content = getattr(doc, "content", "") or ""
-        preview = content[:GATE_CHUNK_PREVIEW_CHARS].replace("\n", " ")
+        preview = content[:per_chunk].replace("\n", " ")
         chunk_previews.append(f"Chunk {i}: {preview}")
 
     chunks_text = "\n".join(chunk_previews)
@@ -273,7 +315,7 @@ def check_relevance(
 
     # Check Redis cache first
     cache_key = _gate_cache_key(bot_id, client_id, question, kb_version)
-    cached = cache_get(cache_key)
+    cached = cache_get(cache_key) if cache_key else None
     if cached is not None and isinstance(cached, dict) and "score" in cached:
         score = float(cached["score"])
         is_relevant = score >= active_threshold
@@ -358,7 +400,7 @@ def check_relevance(
     # direction to get wrong: caching one turned a single unlucky score into
     # every visitor who typed those words being turned away until it expired,
     # and re-judging costs one gate-tier call.
-    if is_relevant:
+    if is_relevant and cache_key:
         cache_set(cache_key, {"score": score}, _GATE_TTL)
 
     return is_relevant, score

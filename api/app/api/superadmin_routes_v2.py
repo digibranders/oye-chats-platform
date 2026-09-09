@@ -717,6 +717,13 @@ def bot_detail(bot_id: int, _admin: Client = Depends(get_superadmin)):
             "client_name": client.name if client else None,
             "is_active": getattr(bot, "is_active", True),
             "primary_color": getattr(bot, "primary_color", None),
+            # The three settings that decide whether a question gets refused.
+            # Support triages "why did my bot refuse this" constantly and could
+            # not see any of them without opening an impersonation session on
+            # the customer's account to read three fields.
+            "relevance_threshold": bot.relevance_threshold,
+            "pricing_url": bot.pricing_url,
+            "pricing_from_knowledge_base": bool(bot.pricing_from_knowledge_base),
             "total_sessions": sess_count,
             "total_messages": msg_count,
             "created_at": bot.created_at.isoformat() if bot.created_at else None,

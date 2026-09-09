@@ -1,6 +1,6 @@
 """The pricing answer gate driven through the REAL rag pipelines.
 
-The gate is unconditional, so every bot below is gated by construction and the
+The gate is on by default (the owner opt-out is covered elsewhere), so every bot below is gated by construction and the
 only thing any of these fixtures vary is ``pricing_url``: the page the bot is
 allowed to price from, or nothing, which routes the turn to the team.
 

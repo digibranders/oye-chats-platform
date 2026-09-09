@@ -191,6 +191,15 @@ def gate_prefix_for_bot(bot_id: int) -> str:
     Used to bulk-invalidate stale gate judgments after a knowledge-base change:
     without this, an "off-topic" judgment cached before the upload would
     survive for an hour even after fresh docs make the question answerable.
-    Must match the layout in ``relevance_gate._gate_cache_key`` (``b{bot_id}``).
+    Must match the layout in ``relevance_gate._gate_cache_key``, which is
+    ``gate:v{prompt_version}:b{bot_id}:{kb_version}:{hash}``. It did not: the
+    version segment was added to the key and not to this prefix, so every
+    caller of ``cache_delete_prefix(gate_prefix_for_bot(...))`` deleted nothing
+    for as long as the mismatch stood, and the two existing tests that cover
+    those callers patch this function with a fabricated prefix, so the mock is
+    what hid it. Imported lazily because ``relevance_gate`` imports this
+    module.
     """
-    return f"{PREFIX}gate:b{bot_id}:"
+    from app.services.relevance_gate import _GATE_PROMPT_VERSION
+
+    return f"{PREFIX}gate:v{_GATE_PROMPT_VERSION}:b{bot_id}:"

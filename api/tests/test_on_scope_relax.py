@@ -1,57 +1,165 @@
-"""A question about the company that retrieved chunks is answered, not pivoted.
+"""The relaxation's wiring, pinned in both hand-maintained pipelines.
 
-Live on the CleanStart bot: "what does cleanstart do" retrieved fifteen chunks
-and was still answered with "I don't have that specific detail on hand", three
-times out of three, while "tell me more about the company" answered five out of
-five against the same knowledge base.
+``rag_service`` holds two copies of the chat pipeline, so a guard added to one
+and not the other is the file's characteristic failure. These tests read the
+two copies' syntax trees and compare them to each other and to the shape the
+guard must have. The BEHAVIOUR is covered by
+``tests/test_on_scope_relax_behaviour.py``, which drives both pipelines for
+real; this module exists to catch the copy that silently loses the change.
 
-The judge grades how well a bundle answers a phrasing, and on a broad company
-question it lands at its own "related" anchor. When the question already looks
-on-scope and retrieval returned something, the right move is to generate and
-let RULE 5a phrase any real gap honestly. The canned pivot is for the case
-where retrieval returned nothing at all, which the empty-context branch below
-the gate already handles.
+An AST walk rather than substring matching: a fixed-width slice of the source
+confirms a token appears NEAR the call without confirming what it is bound to,
+and it breaks when a comment is added above the arguments.
 """
 
+from __future__ import annotations
+
+import ast
 import inspect
+import textwrap
 
 from app.services import rag_service as rs
 
+PIPELINES = (rs.rag_pipeline, rs.rag_pipeline_stream)
 
-def _relax_block(src: str) -> str:
-    start = src.index("_relax_on_scope = (")
-    return src[start : start + 700]
+#: Every conjunct the guard must require. ``or`` anywhere here would relax the
+#: empty-retrieval case, which is the hallucination path it exists to keep shut.
+_REQUIRED_CONJUNCTS = {
+    "not _is_relevant",
+    "not _trusted_cta",
+    "not _answering_probe",
+    "not _relax_topical",
+    "bool(final_results)",
+    "_question_is_clearly_on_scope(question, _company_name)",
+}
 
 
-class TestBothPipelinesRelaxForOnScopeQuestions:
-    def test_the_guard_exists_in_both_pipelines(self):
-        for fn in (rs.rag_pipeline, rs.rag_pipeline_stream):
-            assert "_relax_on_scope = (" in inspect.getsource(fn), fn.__name__
+def _tree(fn) -> ast.AST:
+    return ast.parse(textwrap.dedent(inspect.getsource(fn)))
 
-    def test_it_needs_both_retrieved_chunks_and_an_on_scope_question(self):
-        for fn in (rs.rag_pipeline, rs.rag_pipeline_stream):
-            block = _relax_block(inspect.getsource(fn))
-            assert "bool(final_results)" in block, fn.__name__
-            assert "_question_looks_on_scope(question, _company_name)" in block, fn.__name__
 
-    def test_the_refusal_branch_consults_it(self):
-        """Without this the flag is computed and ignored, which is exactly how
-        a relaxation lands green in review and does nothing in production."""
-        for fn in (rs.rag_pipeline, rs.rag_pipeline_stream):
-            assert "and not _relax_on_scope" in inspect.getsource(fn), fn.__name__
+def _assignment(fn, name: str) -> ast.expr:
+    for node in ast.walk(_tree(fn)):
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in node.targets):
+            return node.value
+    raise AssertionError(f"{fn.__name__} has no `{name}` assignment")
+
+
+def _names_used(fn, name: str) -> int:
+    return sum(1 for node in ast.walk(_tree(fn)) if isinstance(node, ast.Name) and node.id == name)
+
+
+class TestTheGuardHasTheRightShape:
+    def test_it_exists_in_both_pipelines(self):
+        for fn in PIPELINES:
+            assert _assignment(fn, "_relax_on_scope") is not None
+
+    def test_every_conjunct_is_required_not_alternative(self):
+        for fn in PIPELINES:
+            value = _assignment(fn, "_relax_on_scope")
+            assert isinstance(value, ast.BoolOp), f"{fn.__name__}: not a boolean expression"
+            assert isinstance(value.op, ast.And), f"{fn.__name__}: uses `or`, which would relax an empty context"
+            assert {ast.unparse(v) for v in value.values} == _REQUIRED_CONJUNCTS, fn.__name__
+
+    def test_it_uses_the_strict_predicate_not_the_routing_one(self):
+        """``_question_looks_on_scope`` fails soft by design: it matches bare
+        pronouns and treats a script it cannot read as on-scope. That is right
+        for choosing between two canned replies and wrong for deciding whether
+        a rejected turn reaches the model."""
+        for fn in PIPELINES:
+            rendered = ast.unparse(_assignment(fn, "_relax_on_scope"))
+            assert "_question_is_clearly_on_scope" in rendered, fn.__name__
+            assert "_question_looks_on_scope" not in rendered, fn.__name__
+
+    def test_the_two_pipelines_agree(self):
+        first, second = (ast.unparse(_assignment(fn, "_relax_on_scope")) for fn in PIPELINES)
+        assert first == second, "the two pipeline copies of the guard have drifted"
+
+
+class TestTheGuardIsActuallyConsulted:
+    def test_the_refusal_branch_reads_it(self):
+        """Computed and ignored is how a relaxation lands green and does
+        nothing: assigned once, read at least once more."""
+        for fn in PIPELINES:
+            assert _names_used(fn, "_relax_on_scope") >= 2, f"{fn.__name__} never reads the flag it computes"
 
     def test_it_is_counted(self):
-        for fn in (rs.rag_pipeline, rs.rag_pipeline_stream):
+        for fn in PIPELINES:
             assert "gate_relaxed_on_scope" in inspect.getsource(fn), fn.__name__
 
 
 class TestTheEmptyContextPivotIsUntouched:
-    """The pivot still owns the retrieval-returned-nothing case: relaxing that
-    would send the model to generate with no context at all, which is where
-    hallucination comes from."""
+    """The deliberate limit of the relaxation: with nothing retrieved there is
+    nothing to ground an answer in."""
 
     def test_the_empty_context_branch_still_exists_in_both_pipelines(self):
-        for fn in (rs.rag_pipeline, rs.rag_pipeline_stream):
+        for fn in PIPELINES:
             src = inspect.getsource(fn)
             assert "not final_results" in src, fn.__name__
             assert "_no_info_pivot(" in src, fn.__name__
+
+
+class TestTheGateCallWiring:
+    """The judge must see the query retrieval ran, and the verdict must be
+    keyed on the bot's current documents."""
+
+    @staticmethod
+    def _call(fn) -> tuple[list[ast.expr], dict[str, str]]:
+        for node in ast.walk(_tree(fn)):
+            if not isinstance(node, ast.Call):
+                continue
+            target = node.func
+            args = list(node.args)
+            if isinstance(target, ast.Attribute) and target.attr == "partial":
+                if not (args and isinstance(args[0], ast.Name) and args[0].id == "check_relevance"):
+                    continue
+                args = args[1:]
+            elif not (isinstance(target, ast.Name) and target.id == "check_relevance"):
+                continue
+            return args, {kw.arg: ast.unparse(kw.value) for kw in node.keywords if kw.arg}
+        raise AssertionError(f"{fn.__name__} has no check_relevance call")
+
+    def test_each_pipeline_judges_the_rewritten_query(self):
+        for fn in PIPELINES:
+            args, _kwargs = self._call(fn)
+            assert ast.unparse(args[0]) == "search_query", fn.__name__
+
+    def test_each_pipeline_keys_the_verdict_on_knowledge_state(self):
+        for fn in PIPELINES:
+            _args, kwargs = self._call(fn)
+            assert kwargs.get("kb_version") == "_kb_version", fn.__name__
+
+    def test_each_pipeline_widens_the_window_for_an_unranked_bundle(self):
+        for fn in PIPELINES:
+            _args, kwargs = self._call(fn)
+            assert kwargs.get("max_chunks") == "len(final_results) if _use_cag_lite else None", fn.__name__
+
+    def test_each_pipeline_computes_the_fingerprint(self):
+        for fn in PIPELINES:
+            src = inspect.getsource(fn)
+            assert "knowledge_state_for_bot(" in src, fn.__name__
+            assert "_kb_version = " in src, fn.__name__
+
+
+class TestThePricingOptOutWiring:
+    """Same class of bug: the opt-out is dead for every customer if either
+    pipeline stops passing it."""
+
+    @staticmethod
+    def _kwargs(fn) -> dict[str, str]:
+        for node in ast.walk(_tree(fn)):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "evaluate_pricing_gate"
+            ):
+                return {kw.arg: ast.unparse(kw.value) for kw in node.keywords if kw.arg}
+        raise AssertionError(f"{fn.__name__} has no evaluate_pricing_gate call")
+
+    def test_each_pipeline_passes_the_owner_setting(self):
+        for fn in PIPELINES:
+            assert self._kwargs(fn).get("answer_from_knowledge_base") == "_pricing_from_kb", fn.__name__
+
+    def test_each_pipeline_reads_the_column(self):
+        for fn in PIPELINES:
+            assert "pricing_from_knowledge_base" in inspect.getsource(fn), fn.__name__

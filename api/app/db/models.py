@@ -422,7 +422,7 @@ class Bot(Base):
     # NULL = use the env default (RELEVANCE_THRESHOLD, currently 0.55).
     # Lower = more lenient (fewer off-topic refusals, more risk of off-scope answers).
     # Higher = stricter (more refusals, more risk of false positives on legit questions).
-    # Reasonable range: 0.40 (lenient). 0.70 (strict). Out-of-range is clamped at runtime.
+    # Reasonable range: 0.15 (lenient). 0.50 (strict). Out-of-range is clamped at runtime.
     relevance_threshold = Column(Float, nullable=True)
     # How this bot's vectors are made: the embedding profile its QUERIES and
     # its NEW chunks are embedded under (app/core/embedding_profiles.py).

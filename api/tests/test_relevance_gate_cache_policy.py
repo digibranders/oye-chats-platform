@@ -114,3 +114,50 @@ class TestBothPipelinesJudgeTheRewrittenQuery:
             src = inspect.getsource(fn)
             assert "knowledge_state_for_bot(" in src, fn.__name__
             assert "_kb_version = " in src, fn.__name__
+
+
+class TestTheBulkFlushCanActuallyReachTheseKeys:
+    """The other half of the cache contract, and it was broken.
+
+    ``cache.gate_prefix_for_bot`` is what ``_flush_answer_caches`` (bot update,
+    tone change, delete) and the ingestion pipeline delete by. It returned
+    ``oyechats:gate:b{id}:`` while the key has carried a ``v{version}`` segment
+    since the prompt was first versioned, so every one of those bulk deletes
+    matched nothing. The two existing tests over those call sites patch this
+    function with a fabricated prefix, so the mock is what hid it.
+    """
+
+    def test_a_real_key_is_reachable_from_the_prefix(self):
+        from app.core.cache import gate_prefix_for_bot
+
+        prefix = gate_prefix_for_bot(5)
+        for kb in (None, "3:77", "0:0"):
+            key = _gate_cache_key(5, None, "how much is pro?", kb_version=kb)
+            assert key is not None
+            assert key.startswith(prefix), f"{key!r} is not reachable from {prefix!r}"
+
+    def test_the_prefix_does_not_reach_another_bot(self):
+        from app.core.cache import gate_prefix_for_bot
+
+        key = _gate_cache_key(6, None, "q", kb_version="1:1")
+        assert not key.startswith(gate_prefix_for_bot(5))
+
+
+class TestAnUnscopedCallIsNotCached:
+    """Without a bot or a client there is no tenant to scope to, and every such
+    turn would share one platform-wide bucket."""
+
+    def test_the_key_is_none(self):
+        assert _gate_cache_key(None, None, "q", kb_version="1:1") is None
+
+    def test_nothing_is_read_or_written(self, monkeypatch):
+        touched: list = []
+        monkeypatch.setattr(relevance_gate, "RELEVANCE_GATE_ENABLED", True)
+        monkeypatch.setattr(relevance_gate, "cache_get", lambda key: touched.append(("get", key)))
+        monkeypatch.setattr(relevance_gate, "cache_set", lambda *a: touched.append(("set", a)))
+        monkeypatch.setattr(relevance_gate.litellm, "completion", _completion(0.9))
+
+        ok, _score = relevance_gate.check_relevance("q", [_Chunk("c")], threshold=0.3)
+
+        assert ok is True
+        assert touched == []

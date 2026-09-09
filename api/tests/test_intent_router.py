@@ -203,3 +203,25 @@ class TestIdentityOpenersThatCarryARealQuestion:
         greeting has no identity pattern to suppress and must keep its canned
         reply, which is what RULE 0 in the answer prompt exists to protect."""
         assert route_intent("hi", COMPANY) is not None
+
+
+class TestPrivacyAnswersSurviveTheBusinessWordGuard:
+    """The business-word guard gates the identity family only.
+
+    The knowledge base has no chunk saying whether the chat is recorded, so
+    falling through to retrieval on "is this chat recorded and does it cost
+    anything" answers neither half: the visitor asked something only the
+    platform can answer and would get a no-info pivot instead.
+    """
+
+    @pytest.mark.parametrize(
+        "msg",
+        [
+            "is this chat recorded and does it cost me anything",
+            "is this conversation recorded before i ask about pricing",
+            "can you remember our last conversation and what plans do you offer",
+            "do you save my messages? also what services do you offer",
+        ],
+    )
+    def test_recording_and_retention_still_short_circuit(self, msg):
+        assert route_intent(msg, COMPANY) is not None, msg

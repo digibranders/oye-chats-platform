@@ -251,13 +251,21 @@ def route_intent(
     # 2) Identity / meta. Match before the length gate so longer phrasings work,
     #    unless the message also asks about the business: then it is a knowledge
     #    question with an identity opener and belongs to the RAG pipeline.
+    # Privacy and retention first, and NOT behind the business-word guard. The
+    # knowledge base has no chunk saying whether the chat is recorded, so
+    # falling through to retrieval on "is this chat recorded and does it cost
+    # anything" answers neither half: the visitor asked a question only the
+    # platform can answer, and gets a pivot.
+    if _RECORDED_RE.search(norm):
+        return _recorded(company_name, support_enabled)
+    if _REMEMBER_RE.search(norm):
+        return _remember(company_name)
+
+    # The rest of the identity family stands down when the message also asks
+    # about the business, because there retrieval has the better answer.
     if not _ASKS_ABOUT_BUSINESS_RE.search(norm):
         if _IS_AI_RE.search(norm):
             return _is_ai(company_name, support_enabled)
-        if _RECORDED_RE.search(norm):
-            return _recorded(company_name, support_enabled)
-        if _REMEMBER_RE.search(norm):
-            return _remember(company_name)
         if _WHO_MADE_YOU_RE.search(norm):
             return _who_made_you(company_name, platform_branded)
         if _BOT_NAME_RE.search(norm):

@@ -3664,6 +3664,14 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
                         # is a decision only the account holder gets to
                         # reverse.
                         "followup_sending_paused",
+                        # NOT blocked, deliberately: ``pricing_from_knowledge_base``,
+                        # ``pricing_url`` and ``relevance_threshold``. All three are
+                        # answering config, which §6.1 puts inside a support session's
+                        # remit, and the console sends the whole Behaviour draft on
+                        # every save, so blocking one would 403 the entire page rather
+                        # than the one field. Revisit together if that judgement
+                        # changes; blocking only the newest of the three would be
+                        # inconsistent rather than safer.
                     }
                     & update_data.keys()
                 )

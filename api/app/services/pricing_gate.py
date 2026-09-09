@@ -7,13 +7,20 @@ the knowledge base: it routes the visitor to the team instead. A stale price
 quoted confidently from an old uploaded rate card is a worse outcome than "let
 me get you to someone who can confirm".
 
-The gate has no per-bot opt-in and no opt-out. There is no toggle anywhere in
-the product, and ``pricing_url`` is not one: it selects the SOURCE a bot may
-price from, not whether the restriction applies. On every paid plan a bot that
+The gate has exactly ONE opt-out, and it is the bot owner's:
+``Bot.pricing_from_knowledge_base`` (default False, outcome ``owner_optout``,
+checked straight after the in-flight-quotation standdown). It exists because
+the gate assumes a trustworthy price lives on a public pricing page, and that
+is false for every customer whose price list is an uploaded PDF: those bots
+escalated every pricing question to the team while holding the answer. Opting
+out does NOT narrow chunks; the bot answers pricing from everything it knows,
+which is what the owner asked for.
+
+``pricing_url`` is not an opt-out: it selects the SOURCE a gated bot may price
+from, not whether the restriction applies. With the default False, a bot that
 names no pricing page routes every pricing question to the team
-(``escalate_no_url``) rather than letting the general knowledge base answer one,
-which is precisely the behaviour the product owner asked for: a stale rate card
-must never answer a pricing question.
+(``escalate_no_url``) rather than letting the general knowledge base answer one:
+a stale rate card must never answer a pricing question by accident.
 
 THE FREE CARVE-OUT. There is exactly one plan-shaped exception, and it exists
 because on Free the escalation has nowhere to escalate TO. ``support_enabled``

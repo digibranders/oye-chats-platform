@@ -341,3 +341,29 @@ describe('what the console does not publish', () => {
     expect(screen.getByText(/Takes effect immediately/)).toBeInTheDocument();
   });
 });
+
+describe('pricing answers', () => {
+  it('saves the owner opt-out', async () => {
+    await renderSettled();
+
+    await user.click(screen.getByRole('switch', { name: 'Answer pricing from my documents' }));
+    await user.click(await screen.findByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(updateBot).toHaveBeenCalled());
+    const [, payload] = vi.mocked(updateBot).mock.calls[0];
+    expect(payload.pricing_from_knowledge_base).toBe(true);
+  });
+
+  it('reflects a bot that already opted out', async () => {
+    vi.mocked(getClientSettings).mockResolvedValue({ ...SETTINGS, pricing_from_knowledge_base: true });
+    await renderSettled();
+
+    expect(screen.getByRole('switch', { name: 'Answer pricing from my documents' })).toBeChecked();
+  });
+
+  it('defaults to the gated behaviour', async () => {
+    await renderSettled();
+
+    expect(screen.getByRole('switch', { name: 'Answer pricing from my documents' })).not.toBeChecked();
+  });
+});
