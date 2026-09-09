@@ -75,7 +75,11 @@ const InviteAirlock = named(() => import('../features/workspace/InviteAirlock'),
 const SettingsPage = named(() => import('../features/settings'), 'SettingsPage');
 const SetupPage = named(() => import('../onboarding/SetupPage'), 'SetupPage');
 const FirstRunPage = named(() => import('../onboarding/FirstRunPage'), 'FirstRunPage');
-const UiGallery = named(() => import('../dev/UiGallery'), 'UiGallery');
+// Annotated pure so that, once the dev-only route below is dropped in a
+// production build, this call and the chunk it pulls in are dropped with it.
+// Without the annotation Rollup keeps the call for its possible side effects
+// and still emits the whole gallery as a fetchable asset.
+const UiGallery = /* @__PURE__ */ named(() => import('../dev/UiGallery'), 'UiGallery');
 
 /**
  * What a split route shows while its chunk arrives.
@@ -116,15 +120,22 @@ export const router = createBrowserRouter([
     errorElement: <RootErrorBoundary />,
     children: [
       // Renders only the design system, so it needs no auth and no data
-      // providers — which is also what makes it usable as a smoke test.
-      {
-        path: '/dev/ui',
-        element: (
-          <Route>
-            <UiGallery />
-          </Route>
-        ),
-      },
+      // providers, which is also what makes it usable as a smoke test. Dev
+      // only: it shipped as a public production route, which put a 3,663-line
+      // internal gallery of every component and state on the live domain for
+      // anyone who guessed the path.
+      ...(import.meta.env.DEV
+        ? [
+            {
+              path: '/dev/ui',
+              element: (
+                <Route>
+                  <UiGallery />
+                </Route>
+              ),
+            },
+          ]
+        : []),
 
       // ── Public ────────────────────────────────────────────────────────────
       { path: '/login', element: <Login /> },

@@ -486,8 +486,20 @@ class TestUpdateMessageFeedback:
         session = MagicMock()
         session.execute.return_value.scalar_one_or_none.return_value = None
 
-        result = update_message_feedback(session, message_id=999, feedback_value=1)
+        result = update_message_feedback(session, message_id=999, feedback_value=1, bot_id=1)
         assert result is False
+
+    def test_an_unscoped_call_is_refused(self):
+        """Feedback with no bot and no client used to build ``client_id IS
+        NULL``, which is a clause that matches rows rather than an error. Every
+        real caller passes a bot id (chat_routes.py), so this only ever hid a
+        mistake."""
+        import pytest
+
+        from app.db.repository import update_message_feedback
+
+        with pytest.raises(ValueError, match="requires bot_id or client_id"):
+            update_message_feedback(MagicMock(), message_id=999, feedback_value=1)
 
 
 # ── get_lead_info_by_session ─────────────────────────────────────────────────

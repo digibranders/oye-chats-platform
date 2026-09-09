@@ -988,6 +988,11 @@ def _session_owner_filter(bot_id=None, client_id=None):
     """
     from sqlalchemy import and_
 
+    if not bot_id and not client_id:
+        # Without either id this returned ``client_id IS NULL``, a clause that
+        # silently matches rows rather than raising. ``_owner_filter`` has
+        # raised here for a while; these two were the copies that did not.
+        raise ValueError("_session_owner_filter requires bot_id or client_id")
     if bot_id and client_id:
         return and_(ChatSession.bot_id == bot_id, ChatSession.client_id == client_id)
     if bot_id:
@@ -1004,6 +1009,10 @@ def _doc_owner_filter(bot_id=None, client_id=None):
     """
     from sqlalchemy import and_
 
+    if not bot_id and not client_id:
+        # See ``_session_owner_filter``: an unscoped call used to become
+        # ``client_id IS NULL`` instead of an error.
+        raise ValueError("_doc_owner_filter requires bot_id or client_id")
     if bot_id and client_id:
         tenant = and_(Document.bot_id == bot_id, Document.client_id == client_id)
     elif bot_id:
