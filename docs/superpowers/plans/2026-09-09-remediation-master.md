@@ -114,7 +114,7 @@ either grows back.
 | O-13 | Four dated audits moved to `docs/audits/` | `oyechats-website b74dec8` |
 | O-10 | ChatWindow's pure helpers extracted and tested; hooks reverted on budget | `186823e1` |
 | O-12 | Mobile app status written down; the decision is stated, not taken | `oyechats-mobile-app 2b4968d` |
-| O-2 | Rejected on measurement; the invariant is pinned by a test | `ff61ee11`+ |
+| O-2 | Rejected on measurement; the divergent handoff regex it exposed is fixed | `bd201484`, `1bf25122` |
 
 ### Corrections to the register, waves 4 to 6
 
@@ -147,6 +147,14 @@ fixed; the finding as written is not what was there.
   why an outage once ran unnoticed; adding a third model dependency, this time
   for control flow rather than for a skippable check, is the wrong direction.
   `test_predicates_stay_off_the_model.py` pins the invariant instead.
+
+  The audit did find a defect that costs the customer money. Two regexes answer
+  "is this visitor asking for a human": one gates the widget's handoff offer,
+  the other gates the lead extractor. They shared no source and disagreed on
+  nine phrasings. Seven were the harmful direction, so "transfer me to
+  support", "escalate this please" and "I need a human" were offered a handoff
+  AND scored as leads, at roughly 15 of 25 on Need, made permanent by the
+  never-downgrade rule. Fixed, with a test over all nine.
 - **U-14 is blocked, and not for the reason recorded.** The live app documents
   all 297 paths including super-admin, so the published-spec gap was not the
   problem. Only 37 of 342 operations declare a `response_model`, so generating
