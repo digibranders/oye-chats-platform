@@ -875,12 +875,18 @@ def ingest_documents(
     # 10-minute request timeout. If extraction fails for a specific file we
     # skip it in the cost calculation, the background ingest will quarantine
     # it and no credits should be charged for content we can't store.
-    def _extract_words_for_cost(path: Path, ext: str) -> tuple[int, int]:
-        """Return ``(word_count, cleaned_char_count)`` for one saved file.
+    def _extract_words_for_cost(path: Path, ext: str) -> tuple[int, int, str | None]:
+        """Return ``(word_count, cleaned_char_count, failure_reason)``.
 
         The char count is measured on the CLEANED text because that is the unit
         the KB quota counts (``pipeline._ingest_document``), so the pre-flight
         below gates on the same number the pipeline will later enforce.
+
+        The third value is why the count is zero, or None when it genuinely is.
+        Without it the response reported a failed file as a free success and the
+        customer only found out later that the document had been quarantined.
+        ``preview-cost`` already reports ``extraction_error`` this way; this is
+        the same vocabulary.
         """
         try:
             if ext == ".pdf":
@@ -891,26 +897,26 @@ def ingest_documents(
                 pages = load_txt(str(path))
         except ExtractionError as exc:
             logger.warning(f"Skipping {path.name} for billing (extraction failed): {exc}")
-            return 0, 0
+            return 0, 0, "extraction_error"
         except Exception:  # pragma: no cover. Pypdf/docx surprise
             logger.exception(f"Unexpected extraction error for {path.name}; skipping billing")
-            return 0, 0
+            return 0, 0, "extraction_error"
         raw = " ".join(p.get("text", "") for p in pages)
         cleaned = " ".join(clean_text(p.get("text", "")) for p in pages)
-        return credit_service.count_words(raw), len(cleaned)
+        return credit_service.count_words(raw), len(cleaned), None
 
-    per_file_costs: list[tuple[str, int, int]] = []  # (filename, words, credits)
+    per_file_costs: list[tuple[str, int, int, str | None]] = []  # (filename, words, credits, reason)
     total_cost = 0
     total_chars = 0
     with get_session() as db:
         for saved_path in saved_paths:
             fname = saved_path.name
             ext = saved_path.suffix.lower()
-            words, chars = _extract_words_for_cost(saved_path, ext)
+            words, chars, reason = _extract_words_for_cost(saved_path, ext)
             # ``words == 0`` (extraction failed or the file had no text) prices
             # at 0 inside the helper, which is what ``preview-cost`` quotes.
             cost = credit_service.get_document_upload_cost_for_size(db, words)
-            per_file_costs.append((fname, words, cost))
+            per_file_costs.append((fname, words, cost, reason))
             total_cost += cost
             total_chars += chars
 
@@ -984,7 +990,10 @@ def ingest_documents(
                         "required": exc.required,
                         "available": exc.available,
                         "document_count": len(saved_files),
-                        "per_file": [{"filename": name, "words": w, "credits": c} for name, w, c in per_file_costs],
+                        "per_file": [
+                            {"filename": name, "words": w, "credits": c, "reason": r}
+                            for name, w, c, r in per_file_costs
+                        ],
                         "message": (
                             f"Uploading these {len(saved_files)} document(s) costs {exc.required} credits, "
                             f"but you only have {exc.available}. Top up or upgrade to continue."
@@ -1058,7 +1067,9 @@ def ingest_documents(
         # credits)" instead of a lump total. Replaces the old
         # ``credits_per_document`` field, which was meaningless once pricing
         # started varying per file.
-        "per_file_billing": [{"filename": name, "words": w, "credits": c} for name, w, c in per_file_costs],
+        "per_file_billing": [
+            {"filename": name, "words": w, "credits": c, "reason": r} for name, w, c, r in per_file_costs
+        ],
     }
     if job_id:
         response["job_id"] = job_id
