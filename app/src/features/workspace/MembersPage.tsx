@@ -830,6 +830,15 @@ export function MembersPage() {
         departments={team.departments}
         callerRole={currentRole}
         isSelf={editing?.linked_client_id === team.clientId}
+        // The account holder's own seat — the row linked back to the workspace
+        // client (`linked_client_id == clientId`, minted by POST
+        // /me/self-operator). That row IS the workspace owner, so its role is
+        // fixed to Owner: demoting it would leave the workspace with no owner
+        // among its operators. Detected by the link, not by the stored role, so
+        // a seat that has drifted to admin/operator (bad seed, a legacy invite
+        // path) is still recognised and corrected rather than silently
+        // demotable. Mirrors the guard in `update_operator`.
+        isAccountOwner={editing?.linked_client_id === team.clientId}
         onSaved={invalidate}
       />
 

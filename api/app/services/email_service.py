@@ -41,7 +41,6 @@ from app.config import (
     SUPPORT_EMAIL,
 )
 from app.services import email_design as ed
-from app.services._email_assets import ENVELOPE_ICON
 from app.services.email_design import button, code_box, esc, h1, info_table, link, p, pre_box, shell, strong
 
 logger = logging.getLogger(__name__)
@@ -1147,14 +1146,19 @@ _CURRENCY_SYMBOLS = {
 }
 
 
+def _as_amount(value: object) -> float:
+    """A money value from a quote line as a float; anything non-numeric is 0."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _format_money(currency: str, value: object) -> str:
     """Render a money amount with its currency symbol. Whole numbers drop the
     decimals (₹200, not ₹200.00); fractional amounts keep two places."""
     symbol = _CURRENCY_SYMBOLS.get((currency or "").upper(), f"{(currency or '').upper()} ")
-    try:
-        rounded = round(float(value), 2)
-    except (TypeError, ValueError):
-        rounded = 0.0
+    rounded = round(_as_amount(value), 2)
     if rounded == int(rounded):
         return f"{symbol}{int(rounded):,}"
     return f"{symbol}{rounded:,.2f}"
@@ -1162,8 +1166,10 @@ def _format_money(currency: str, value: object) -> str:
 
 def _grouped_quote_html(currency: str, line_items: list[dict], total: object) -> str:
     """Render the priced quote as a document-style grid: an ITEM / QTY /
-    UNIT PRICE / AMOUNT table whose rows are grouped under each service name and
-    closed by a highlighted Total bar. Line items are the requirement rows from
+    UNIT PRICE / AMOUNT table whose rows are grouped under each numbered service
+    name, each group closed by its own Subtotal row, and the table closed by a
+    Total row under a dark rule. Everything is ink, no accent colour, so the
+    indicative-quote warning below it is the only coloured line. Line items are the requirement rows from
     ``quotation_routes.build_quotation_summary``. Table markup + inline styles so
     it survives across email clients (no CSS grid, no external assets)."""
     f = ed.FONT
@@ -1190,11 +1196,11 @@ def _grouped_quote_html(currency: str, line_items: list[dict], total: object) ->
     )
 
     rows_html = ""
-    for service_name in order:
+    for index, service_name in enumerate(order, start=1):
         rows_html += (
             "<tr>"
-            f'<td colspan="4" style="font-family:{f};font-size:11px;font-weight:700;letter-spacing:0.10em;'
-            f'text-transform:uppercase;color:{ed.ACCENT};padding:16px 0 8px 0;">{esc(service_name)}</td>'
+            f'<td colspan="4" style="font-family:{f};font-size:15px;font-weight:700;letter-spacing:0.05em;'
+            f'text-transform:uppercase;color:{ed.INK900};padding:16px 0 8px 0;">{index}. {esc(service_name)}</td>'
             "</tr>"
         )
         for item in groups[service_name]:
@@ -1213,48 +1219,33 @@ def _grouped_quote_html(currency: str, line_items: list[dict], total: object) ->
                 f'padding-right:16px;white-space:nowrap;">{amount}</td>'
                 "</tr>"
             )
+        group_total = sum(_as_amount(item.get("subtotal", 0)) for item in groups[service_name])
+        sub = f"padding:10px 0;font-family:{f};color:{ed.INK900};white-space:nowrap;"
+        rows_html += (
+            "<tr>"
+            f'<td colspan="2" style="{sub}font-size:0;line-height:0;">&nbsp;</td>'
+            f'<td style="{sub}font-size:13px;font-weight:600;text-align:left;padding-left:8px;">Subtotal</td>'
+            f'<td style="{sub}font-size:14px;font-weight:700;text-align:right;padding-right:16px;">'
+            f"{esc(_format_money(currency, group_total))}</td>"
+            "</tr>"
+        )
 
     # The Total is a row INSIDE the same fixed-layout table so its amount lands
     # in the exact same 23% column as the line-item amounts (a separate table
     # would not right-align to the same guide).
-    tint = f"background-color:{ed.ACCENT_TINT};border-top:2px solid {ed.ACCENT};"
+    rule = f"border-top:2px solid {ed.INK900};"
     total_row = (
         "<tr>"
-        f'<td colspan="3" style="{tint}padding:14px 0 14px 16px;font-family:{f};font-size:16px;'
+        f'<td colspan="3" style="{rule}padding:14px 0;font-family:{f};font-size:16px;'
         f'font-weight:700;color:{ed.INK900};">Total</td>'
-        f'<td style="{tint}padding:14px 16px 14px 0;font-family:{f};font-size:16px;font-weight:700;'
-        f'color:{ed.ACCENT};text-align:right;white-space:nowrap;">{esc(_format_money(currency, total))}</td>'
+        f'<td style="{rule}padding:14px 16px 14px 0;font-family:{f};font-size:16px;font-weight:700;'
+        f'color:{ed.INK900};text-align:right;white-space:nowrap;">{esc(_format_money(currency, total))}</td>'
         "</tr>"
     )
     return (
         '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
         f'style="width:100%;table-layout:fixed;margin:6px 0 6px 0;border-collapse:collapse;">'
         f"{header}{rows_html}{total_row}</table>"
-    )
-
-
-def _next_steps_callout(body: str) -> str:
-    """A green 'What happens next' card — an envelope badge beside a bold title
-    and a line of body copy. Table-based + a data-URI icon so it survives email
-    clients (no external fetch, no flexbox)."""
-    return (
-        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
-        'style="margin:0 0 18px 0;"><tr>'
-        '<td style="background-color:#f0fdf4;border:1px solid #dcfce7;border-radius:12px;padding:16px 18px;">'
-        '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
-        '<td width="40" valign="middle" style="width:40px;vertical-align:middle;">'
-        '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
-        '<td width="40" height="40" align="center" valign="middle" '
-        'style="width:40px;height:40px;background-color:#dcfce7;border-radius:100px;'
-        'text-align:center;vertical-align:middle;">'
-        f'<img src="{ENVELOPE_ICON}" width="20" height="20" alt="" style="display:block;border:0;margin:0 auto;">'
-        "</td></tr></table></td>"
-        '<td width="14" style="width:14px;font-size:0;line-height:0;">&nbsp;</td>'
-        '<td valign="middle" style="vertical-align:middle;">'
-        f'<p style="margin:0 0 3px 0;font-family:{ed.FONT};font-size:15px;font-weight:700;'
-        'color:#15803d;">What happens next</p>'
-        f'<p style="margin:0;font-family:{ed.FONT};font-size:14px;color:#166534;line-height:1.6;">{body}</p>'
-        "</td></tr></table></td></tr></table>"
     )
 
 
@@ -1280,7 +1271,11 @@ def send_quotation_visitor_email(
         + p(f"Hi {esc(visitor_name) if visitor_name else 'there'},")
         + p(f"Thanks for your interest in {strong(safe_company)}.")
         + p(f"We&rsquo;ve received your request for a quote for {strong(services_line)}.")
-        + _next_steps_callout("Our team is preparing your quotation and will be in touch by email shortly.")
+        + p(
+            "Our team is preparing your quotation and will email it to you soon.<br>"
+            '<strong style="color:#c2410c;font-weight:700;">'
+            "If you don&rsquo;t see it, please check your spam or junk folder.</strong>"
+        )
         + p("You can reply directly to this email if you&rsquo;d like to add any details.")
     )
     send_email_async(

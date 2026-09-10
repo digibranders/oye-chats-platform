@@ -467,7 +467,7 @@ export function VisitorPanel({
                 label: line.label,
                 value: `${formatNumber(line.quantity)} × ${formatMoney(
                   Math.round(line.price * 100),
-                  profile.quotation?.currency ?? 'INR',
+                  profile.quotation?.currency ?? 'USD',
                 )}`,
               }))}
             />

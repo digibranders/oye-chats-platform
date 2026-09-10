@@ -665,6 +665,20 @@ async def update_operator(
                 raise HTTPException(status_code=409, detail="An operator with this email already exists.")
             operator.email = request.email  # already normalized by field_validator
         if request.role is not None:
+            # The account holder's own seat IS the workspace owner: it is the
+            # row linked back to the workspace client (``linked_client_id ==
+            # client_id``), minted by POST /me/self-operator when the owner
+            # joins live chat. Its role is fixed to owner -- demoting it would
+            # leave the workspace with no owner among its operators -- so the
+            # only value it may be set to is "owner". Detected by the link, not
+            # the stored role, so a seat that has drifted to admin/operator is
+            # corrected here rather than left demotable. The console offers Owner
+            # alone for this seat; this is the matching server guard.
+            if operator.linked_client_id == auth["client_id"] and request.role != "owner":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="The workspace owner's own seat must keep the owner role.",
+                )
             # Only workspace owners (client login or owner-role operators) can
             # assign the "owner" role.  Admins can assign admin/operator but not
             # escalate to owner.
@@ -675,7 +689,8 @@ async def update_operator(
                         status_code=status.HTTP_403_FORBIDDEN,
                         detail="Only workspace owners can assign the owner role.",
                     )
-            operator.role = request.role
+            if request.role != operator.role:
+                operator.role = request.role
         if request.bot_id is not None and request.bot_id != operator.bot_id:
             new_bot = session.execute(
                 select(Bot).where(Bot.id == request.bot_id, Bot.client_id == auth["client_id"])

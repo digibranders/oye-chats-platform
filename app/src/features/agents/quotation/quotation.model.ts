@@ -105,6 +105,9 @@ export const MAX_SERVICES = 20;
 export const MAX_REQUIREMENTS_PER_SERVICE = 20;
 export const MAX_OPTIONS_PER_REQUIREMENT = 12;
 
+/** The catalog currency when none has been chosen yet. Mirrors the API default. */
+export const DEFAULT_CURRENCY = 'USD';
+
 /** A currency label. The CODE is never translated; the name after it is. */
 export function currencyLabel(c: { value: string; label: string }): string {
   return translateNow(`agents.currencyName.${c.value}`) || c.label;
@@ -112,8 +115,8 @@ export function currencyLabel(c: { value: string; label: string }): string {
 
 // @i18n-exempt: fallbacks, read through currencyLabel above.
 export const CURRENCIES: { value: string; label: string }[] = [
-  { value: 'INR', label: 'INR (Indian Rupee)' },
   { value: 'USD', label: 'USD (US Dollar)' },
+  { value: 'INR', label: 'INR (Indian Rupee)' },
   { value: 'EUR', label: 'EUR (Euro)' },
   { value: 'GBP', label: 'GBP (British Pound)' },
   { value: 'AUD', label: 'AUD (Australian Dollar)' },
@@ -175,7 +178,7 @@ export const QUANTITY_MODES: { value: QuantityMode; label: string; help: string 
 
 export const EMPTY_CATALOG: QuotationCatalog = {
   enabled: false,
-  currency: 'INR',
+  currency: DEFAULT_CURRENCY,
   required_categories: [],
   threshold: 2,
   document_delay_seconds: DEFAULT_DOCUMENT_DELAY_SECONDS,
@@ -271,7 +274,7 @@ export function parseCatalog(raw: unknown): QuotationCatalog {
 
   return {
     enabled: record.enabled === true,
-    currency: (asString(record.currency) || 'INR').toUpperCase(),
+    currency: (asString(record.currency) || DEFAULT_CURRENCY).toUpperCase(),
     required_categories: categories,
     threshold: Math.min(thresholdCeiling(categories), Math.max(1, Math.floor(asNumber(record.threshold)) || 2)),
     document_delay_seconds:
@@ -289,7 +292,7 @@ export function parseCatalog(raw: unknown): QuotationCatalog {
 export function toPayload(catalog: QuotationCatalog): QuotationCatalog {
   return {
     enabled: catalog.enabled,
-    currency: (catalog.currency || 'INR').toUpperCase(),
+    currency: (catalog.currency || DEFAULT_CURRENCY).toUpperCase(),
     required_categories: [...catalog.required_categories],
     threshold: Math.min(catalog.threshold, thresholdCeiling(catalog.required_categories)),
     document_delay_seconds: Math.min(
