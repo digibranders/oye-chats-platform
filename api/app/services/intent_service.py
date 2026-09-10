@@ -25,11 +25,21 @@ _DEAL_TAIL = (
     r"|\s+(?:outright|itself|entirely|as\s+a\s+whole|from\s+you)\s*(?:[?.!,]|$))"
 )
 #: An optional price before the tail: "acquire your company for 10 crore",
-#: "for $2.5m", "for ₹ 50 lakh". The tail still has to follow it, so "for 20
-#: seats" is not a price.
-_DEAL_PRICE = r"(?:\s+for\s+(?:[\u20b9$\u20ac\u00a3]\s*)?\d[\d,.]*\s*(?:k|m|mn|million|bn|billion|lakhs?|crores?|cr)?)?"
+#: "for $2.5m", "for rs 50 lakh", "for INR 10 crore". The tail still has to
+#: follow it, so "for 20 seats" is not a price. The whitespace before a unit
+#: lives inside the optional unit group, which must end on a word boundary:
+#: with a bare ``\s*`` there, a price followed by a run of spaces split that run
+#: between it and the tail's own ``\s*`` in every possible way, and matching
+#: went quadratic in the length of the message.
+_DEAL_PRICE = (
+    r"(?:\s+for\s+(?:(?:[\u20b9$\u20ac\u00a3]|rs\.?|inr|usd)\s*)?\d[\d,.]*"
+    r"(?:\s*(?:k|m|mn|million|bn|billion|lakhs?|crores?|cr)\b)?)?"
+)
 #: "your" and up to two words before the company noun ("your cybersecurity
-#: company"). Only the second person is certain to mean THIS company.
+#: company"). The second person is the narrowest reliable signal that the
+#: visitor means THIS company, not a client's or their own. It is not proof of a
+#: deal on its own, which is why investing is left out of every rule: "can I
+#: invest in your company?" is usually a customer question.
 _DEAL_OBJECT = r"your\s+(?:[\w-]+\s+){0,2}?"
 #: A deal for THIS company, said in the second person. On a live bot on
 #: 2026-09-10 a visitor asked four times to buy the company and was refused or
@@ -201,13 +211,10 @@ _COMPANY_TAKEOVER_RE = re.compile(r"(?i)\b" + _COMPANY_TAKEOVER)
 _COMPANY_PURCHASE_RE = re.compile(
     r"(?i)\b(?:buy|purchase)\s+" + _DEAL_OBJECT + r"(?:company|firm|organi[sz]ation)" + _DEAL_PRICE + _DEAL_TAIL
 )
-_COMPANY_INVESTMENT_RE = re.compile(
-    r"(?i)\binvest\s+in\s+" + _DEAL_OBJECT + r"(?:company|business|firm|startup|organi[sz]ation)" + _DEAL_TAIL
-)
 #: The start of a stake rule. "shares" is not a stake here: on a brokerage or a
 #: bank "buy HDFC shares" is a retail trade.
 _DEAL_STAKE = r"\b(?:buy|acquire|take)\s+(?:(?:an?|the)\s+)?(?:stake|equity)\s+(?:in|of)\s+"
-_COMPANY_STAKE_RE = re.compile(r"(?i)" + _DEAL_STAKE + r"your\s+(?:company|business|firm)" + _DEAL_TAIL)
+_COMPANY_STAKE_RE = re.compile(r"(?i)" + _DEAL_STAKE + r"your\s+(?:company|business|firm|startup)" + _DEAL_TAIL)
 
 
 def _company_name_pattern(company_name: str) -> str | None:
@@ -233,18 +240,19 @@ def _company_name_pattern(company_name: str) -> str | None:
 
 
 def detect_company_deal_intent(question: str, company_name: str | None = None) -> bool:
-    """True when the visitor wants to acquire, buy, invest in or merge with THIS
-    company, as opposed to buying something it sells or dealing with another
-    company.
+    """True when the visitor wants to acquire, buy or merge with THIS company, as
+    opposed to buying something it sells, investing as a customer, or dealing
+    with another company.
 
     A narrow, high-precision signal that forces a handoff, so it fires only on
     the second person ("your company", "buy you out") or the company's full
     name. Anything less certain ("acquire the business", "buy HDFC shares",
-    "acquire eventus" for Eventus Security) is left to the handoff classifier.
-    Every rule is case-insensitive and ends with the strict tail
-    ``_DEAL_TAIL``: the end of the message, punctuation, or one of "outright",
-    "itself", "entirely", "as a whole", "from you". "An optional price" is
-    ``_DEAL_PRICE`` ("for 10 crore") just before the tail.
+    "acquire eventus" for Eventus Security, "invest in your company") is left to
+    the handoff classifier. Every rule is case-insensitive and ends with the
+    strict tail ``_DEAL_TAIL``: the end of the message, punctuation, or one of
+    "outright", "itself", "entirely", "as a whole", "from you". An optional
+    price is ``_DEAL_PRICE`` ("for 10 crore", "for rs 50 lakh") just before the
+    tail.
 
     Without the company's name:
       (a) the keyword-path phrasing ``_COMPANY_TAKEOVER``: acquire, acquiring,
@@ -255,29 +263,27 @@ def detect_company_deal_intent(question: str, company_name: str | None = None) -
           optional price; is your company, business or firm (up) for sale;
       (b) buy or purchase + your + up to two words + company, firm or
           organisation ("business" is a common plan tier) + an optional price;
-      (c) invest in + your + up to two words + company, business, firm, startup
-          or organisation;
-      (f) buy, acquire or take + optional a, an or the + stake or equity + in or
-          of + your company, business or firm.
+      (c) buy, acquire or take + optional a, an or the + stake or equity + in or
+          of + your company, business, firm or startup.
 
     With the company's name (its full identifying name, see
     :func:`_company_name_pattern`):
-      (d) acquire, acquiring, acquisition of, take over, takeover of, merge
-          with or merger with + optional "the" + the name + an optional legal
-          suffix + an optional price;
-      (e) buy, purchase or invest in + optional "the" + the name + company,
-          firm or business;
+      (d) acquire, acquiring, acquisition of or takeover of + optional "the" +
+          the name + an optional legal suffix + an optional price. "Merge with"
+          and "take over" are left out: on a one-token name they are
+          integration and migration questions ("can tally merge with zoho?");
+      (e) buy or purchase + optional "the" + the name + company or firm
+          ("Dropbox Business" is a plan tier);
       (f) buy, acquire or take + optional a, an or the + stake or equity + in or
           of + optional "the" + the name;
-      (g) is + optional "the" + the name + optional "company" + optional "up" +
-          for sale.
+      (g) is + optional "the" + the name + an optional legal suffix + optional
+          "up" + for sale.
     """
     if not isinstance(question, str) or not question.strip():
         return False
     if (
         _COMPANY_TAKEOVER_RE.search(question)
         or _COMPANY_PURCHASE_RE.search(question)
-        or _COMPANY_INVESTMENT_RE.search(question)
         or _COMPANY_STAKE_RE.search(question)
     ):
         return True
@@ -287,11 +293,10 @@ def detect_company_deal_intent(question: str, company_name: str | None = None) -
     if name is None:
         return False
     rules = (
-        r"\b(?:acquire|acquiring|acquisition\s+of|take\s+over|takeover\s+of|merge\s+with|merger\s+with)\s+"
-        rf"(?:the\s+)?{name}{_DEAL_LEGAL_SUFFIX}{_DEAL_PRICE}{_DEAL_TAIL}",
-        rf"\b(?:buy|purchase|invest\s+in)\s+(?:the\s+)?{name}\s+(?:company|firm|business){_DEAL_TAIL}",
+        rf"\b(?:acquire|acquiring|acquisition\s+of|takeover\s+of)\s+(?:the\s+)?{name}{_DEAL_LEGAL_SUFFIX}{_DEAL_PRICE}{_DEAL_TAIL}",
+        rf"\b(?:buy|purchase)\s+(?:the\s+)?{name}\s+(?:company|firm){_DEAL_TAIL}",
         rf"{_DEAL_STAKE}(?:the\s+)?{name}{_DEAL_TAIL}",
-        rf"\bis\s+(?:the\s+)?{name}\s+(?:company\s+)?(?:up\s+)?for\s+sale{_DEAL_TAIL}",
+        rf"\bis\s+(?:the\s+)?{name}{_DEAL_LEGAL_SUFFIX}\s+(?:up\s+)?for\s+sale{_DEAL_TAIL}",
     )
     return any(re.search(rule, question, re.IGNORECASE) for rule in rules)
 

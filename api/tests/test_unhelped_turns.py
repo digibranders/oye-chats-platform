@@ -7,7 +7,7 @@ with services and sales, not company acquisition.", twice, word for word). The
 existing escalation only counted the fixed refusal sentences, so it never saw a
 second miss, and live chat was never offered.
 
-Two changes are pinned here. A request to buy, acquire or invest in the company
+Two changes are pinned here. A request to buy or acquire the company
 is a request for a person. And two unhelped turns in a row, counted by how the
 pipeline handled them rather than by the wording, get an offer of the team,
 once per conversation. A turn counts when it is refused or pivoted; a turn the
@@ -16,6 +16,8 @@ a pricing escalation or a handoff reply, starts the count again.
 """
 
 from __future__ import annotations
+
+import time
 
 import pytest
 
@@ -53,6 +55,8 @@ class TestADealForTheCompanyIsARequestForAPerson:
             "acquisition of your company?",
             "acquire your startup.",
             "we want to acquire your company for 10 crore",
+            "we want to acquire your company for rs 10 crore",
+            "we want to acquire your company for INR 10 crore",
             "can we buy you out?",
             "we want to buy out your company",
             "is your company for sale?",
@@ -223,27 +227,90 @@ class TestADealForTheCompanyIsARequestForAPerson:
     @pytest.mark.parametrize(
         ("message", "company_name"),
         [
-            ("i want to buy the eventus security company", "Eventus Security"),
-            ("we want to buy your company outright", "Acme"),
+            # Investing is a customer question on property, NBFC, PMS, P2P,
+            # franchise and venture bots, even in the second person.
+            ("is it safe to invest in your company?", "Acme"),
+            ("why should I invest in your company?", "Acme"),
+            ("can NRIs invest in your company?", "Acme"),
+            ("how can I invest in your company?", "Acme"),
+            ("what is the ROI if I invest in your company?", "Acme"),
+            ("is it safe to invest in your firm?", "Acme"),
+            ("what returns will I get if I invest in your organisation?", "Acme"),
+            ("how much do I need to invest in your franchise business?", "Acme"),
+            ("i want to invest in your franchise business", "Acme"),
+            ("how can I invest in your portfolio company?", "Acme"),
+            ("can I invest in your next startup?", "Acme"),
+            ("can retail investors invest in your listed company?", "Acme"),
             ("we want to invest in your company", "Acme"),
             ("can we invest in your business", "Acme"),
+            # "<Name> Business" is a plan tier, not the company.
+            ("can I buy Dropbox Business?", "Dropbox"),
+            ("how do I purchase Grammarly Business?", "Grammarly"),
+            ("how to buy jio business?", "Jio"),
+            ("where can I buy airtel business?", "Airtel"),
+            ("how much to buy canva business?", "Canva"),
+            ("I want to purchase zoho business", "Zoho"),
+            # Merging data or taking over a job is an integration or migration
+            # question when the company shares its product's name.
+            ("can tally merge with zoho?", "Zoho"),
+            ("does quickbooks data merge with vyapar?", "Vyapar"),
+            ("can my old account merge with hubspot?", "HubSpot"),
+            ("can I merge with razorpay?", "Razorpay"),
+            ("can shopify take over razorpay?", "Razorpay"),
+            ("can my CA take over tally?", "Tally"),
+            ("we want to take over acme", "Acme"),
+        ],
+    )
+    def test_investing_plan_tiers_and_integrations_are_not_a_deal(self, message, company_name):
+        assert detect_company_deal_intent(message, company_name) is False
+        assert detect_handoff_intent_keywords(message) is False
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "we want to acquire your company for 1" + " " * 20000 + "x",
+            "can we buy you out for 1" + " " * 20000 + "x",
+        ],
+    )
+    def test_long_input_is_matched_in_linear_time(self, message):
+        """Both detectors run synchronously on the event loop of a public
+        endpoint, so a price followed by a run of spaces must not backtrack."""
+        started = time.perf_counter()
+        detect_handoff_intent_keywords(message)
+        assert time.perf_counter() - started < 0.5
+        started = time.perf_counter()
+        detect_company_deal_intent(message, "Acme")
+        assert time.perf_counter() - started < 0.5
+
+    @pytest.mark.parametrize(
+        ("message", "company_name"),
+        [
+            ("i want to buy the eventus security company", "Eventus Security"),
+            ("we want to buy your company outright", "Acme"),
             ("We would like to acquire your company", "Acme"),
+            ("open to a merger with your company", "Acme"),
+            ("we want to take over your firm outright", "Acme"),
+            ("acquisition of your company?", "Acme"),
+            ("acquire your startup.", "Acme"),
+            ("we want to acquire your company for 10 crore", "Acme"),
+            ("we want to acquire your company for rs 10 crore", "Acme"),
+            ("we want to acquire your company for INR 10 crore", "Acme"),
+            ("can we buy you out?", "Acme"),
+            ("we want to buy out your company", "Acme"),
+            ("is your company for sale?", "Acme"),
             ("I want to acquire Eventus Security", "Eventus Security"),
             ("interested in acquiring eventus security", "Eventus Security"),
             ("acquisition of eventus security?", "Eventus Security"),
             ("i want to acquire acme", "Acme"),
-            ("we want to take over acme", "Acme"),
-            ("i want to buy the acme business", "Acme"),
             ("acquire the hub", "The Hub"),
             ("i want to acquire the hub", "The Hub"),
-            ("i want to buy the hub business", "The Hub"),
             ("we want to acquire bank of baroda", "Bank of Baroda"),
-            ("we want to acquire your company for 10 crore", "Acme"),
-            ("can we buy you out?", "Acme"),
             ("buy a stake in eventus security", "Eventus Security"),
             ("take a stake in your company", "Acme"),
+            ("take equity in your startup", "Acme"),
             ("is eventus security for sale?", "Eventus Security"),
             ("is acme for sale?", "Acme"),
+            ("is acme pvt ltd for sale?", "Acme"),
             ("is your company up for sale?", "Acme"),
         ],
     )
