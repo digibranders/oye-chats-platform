@@ -7713,9 +7713,9 @@ async def rag_pipeline_stream(
                     # is the plan-aware value resolved once at the top of this
                     # turn, so a Free-plan bot never invalidates its cache to
                     # generate a handoff it isn't entitled to offer.
-                    _cached_handoff = await _detect_handoff_bounded(question) or detect_company_deal_intent(
+                    _cached_handoff = detect_company_deal_intent(
                         question, _company_name
-                    )
+                    ) or await _detect_handoff_bounded(question)
 
                     if _cached_handoff and live_chat_on:
                         # Handoff requested. Invalidate cache and fall through to
@@ -7776,6 +7776,15 @@ async def rag_pipeline_stream(
                                 logger.info(
                                     "Media card topical attach (cache hit) | session=%s key=%s", session_id, _cached_key
                                 )
+                        # A cached answer is a helped turn, so the unhelped count
+                        # starts again. A cached refusal is not one and leaves it.
+                        if not _is_known_refusal(cached_qa["answer"], _company_name or "our company"):
+                            _reset_filters = [ChatSession.id == session_id]
+                            if bid:
+                                _reset_filters.append(ChatSession.bot_id == bid)
+                            elif cid:
+                                _reset_filters.append(ChatSession.client_id == cid)
+                            _set_unhelped_streak(session.query(ChatSession).filter(*_reset_filters).first(), 0)
                         session.commit()
                         yield f"\nFINAL_METADATA:{json.dumps(_cached_meta)}\n"
                         return
@@ -7882,9 +7891,9 @@ async def rag_pipeline_stream(
                 final_results = await asyncio.to_thread(_fetch_all_chunks_isolated, bid, cid)
                 search_query = question
                 suggest_handoff = (
-                    await _detect_handoff_bounded(question)
+                    detect_company_deal_intent(question, _company_name)
+                    or await _detect_handoff_bounded(question)
                     or _affirmed_handoff
-                    or detect_company_deal_intent(question, _company_name)
                 )
             else:
                 handoff_task = asyncio.create_task(asyncio.to_thread(detect_handoff_intent, question))
@@ -8201,6 +8210,8 @@ async def rag_pipeline_stream(
                     _pivot_meta["show_leave_message"] = True
                     _mark_card_shown(chat_session, "leave_message")
                 _mark_card_shown(chat_session, "pricing_escalated")
+                # The visitor was pointed at pricing or a person: not unhelped.
+                _set_unhelped_streak(chat_session, 0)
                 session.commit()
                 yield f"\nFINAL_METADATA:{json.dumps(_pivot_meta)}\n"
                 return
@@ -8263,6 +8274,8 @@ async def rag_pipeline_stream(
                 if _mtg.needs_message_card:
                     _mtg_meta["show_leave_message"] = True
                     _mark_card_shown(chat_session, "leave_message")
+                # The visitor was given a way to reach the team: not unhelped.
+                _set_unhelped_streak(chat_session, 0)
                 session.commit()
                 yield f"\nFINAL_METADATA:{json.dumps(_mtg_meta)}\n"
                 return
@@ -8316,6 +8329,8 @@ async def rag_pipeline_stream(
                 # extraction to wait out before it opens the form.
                 _handoff_meta = {"message_id": _bot_msg.id, "suggest_handoff": True, "qualification_pending": False}
                 _mark_card_shown(chat_session, "handoff_offered")
+                # The visitor asked for a person and is getting one: not unhelped.
+                _set_unhelped_streak(chat_session, 0)
                 session.commit()
                 yield f"\nFINAL_METADATA:{json.dumps(_handoff_meta)}\n"
                 return
@@ -8448,23 +8463,43 @@ async def rag_pipeline_stream(
                     bot_id=bid,
                 )
             # ── Unhelped turns ───────────────────────────────────────────────
-            # A turn the relevance check rejected is a turn the bot could not help
-            # with, whichever way it was then handled: refused, pivoted, or passed
-            # to the model because it looked on scope. Counting by that decision
-            # rather than by the reply's wording is the point. On 2026-09-10 a
-            # visitor asked a live bot four times to buy the company; every turn
-            # scored 0.00, one was refused and three got a model-written
-            # brush-off, and the refusal escalation (which only recognises its
-            # own fixed sentences) never saw a second miss.
+            # A turn about to be refused or pivoted is a turn the bot could not
+            # help with. Counting by that decision rather than by the reply's
+            # wording is the point: on 2026-09-10 a visitor asked a live bot four
+            # times to buy the company, and the refusal escalation (which only
+            # recognises its own fixed sentences) never saw a second miss.
             #
             # The second unhelped turn in a row, on a plan with a human, is
-            # answered with an offer of the team instead of another brush-off.
-            # The count then starts again, so the offer is not repeated on every
-            # miss after it. Answers to our own question and a "yes" to a handoff
-            # are not misses. A non-English turn never reaches here unhelped
-            # (the judges are bypassed and the turn counts as relevant).
-            _unhelped_turn = not _is_relevant and not _trusted_cta and not _answering_probe and not _affirmed_handoff
-            if _unhelped_turn and _plan_support_allowed and _unhelped_streak(chat_session) >= 1:
+            # answered with an offer of the team instead of another brush-off,
+            # once per conversation: after the team has been offered (here, by a
+            # handoff reply or by a message card) a miss gets the normal refusal.
+            #
+            # A turn the gate relaxed (topical follow-up, clearly on scope) goes
+            # to the model, which often answers it well even though the judge
+            # rejected it, so it is neutral: it neither adds to the count nor
+            # resets it, and it is never replaced by the offer. A relevant turn,
+            # an answer to our own question and a "yes" to a handoff reset the
+            # count, as do the helpful early returns above (cache hit, pricing
+            # and meeting pivots, handoff reply). A non-English turn never
+            # reaches here unhelped (the judges are bypassed and the turn counts
+            # as relevant).
+            _relaxed_turn = _relax_topical or _relax_on_scope
+            _unhelped_turn = (
+                not _is_relevant
+                and not _trusted_cta
+                and not _answering_probe
+                and not _affirmed_handoff
+                and not _relaxed_turn
+            )
+            _team_already_offered = _card_already_shown(chat_session, "handoff_offered") or _card_already_shown(
+                chat_session, "leave_message"
+            )
+            if (
+                _unhelped_turn
+                and _plan_support_allowed
+                and not _team_already_offered
+                and _unhelped_streak(chat_session) >= 1
+            ):
                 _offer = unhelped_offer(live_chat_enabled=live_chat_on, team_available=bool(_team_online))
                 _safety_net_metric(
                     "unhelped_offer",
@@ -8504,7 +8539,10 @@ async def rag_pipeline_stream(
                 session.commit()
                 yield f"\nFINAL_METADATA:{json.dumps(_offer_meta)}\n"
                 return
-            _set_unhelped_streak(chat_session, _unhelped_streak(chat_session) + 1 if _unhelped_turn else 0)
+            if _unhelped_turn:
+                _set_unhelped_streak(chat_session, _unhelped_streak(chat_session) + 1)
+            elif not _relaxed_turn:
+                _set_unhelped_streak(chat_session, 0)
 
             # ``_affirmed_handoff`` also bypasses the refusal so a "yes" to the
             # connect offer reaches generation, where ``suggest_handoff`` renders

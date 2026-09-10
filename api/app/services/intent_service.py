@@ -22,11 +22,22 @@ _HANDOFF_LLM_NUM_RETRIES = 0
 #: the request as one for a person. A determiner is required ("buy THE company",
 #: "acquire YOUR business") so "buy a SIEM for our company" stays a purchase, and
 #: "customer acquisition" never matches because the verb forms need an object.
+#: The noun must not be the first half of a compound ("the business PLAN", "that
+#: startup PACKAGE", "the organization ACCOUNT"): those are things the company
+#: sells or runs, and a match here decides the handoff with no model call.
+_COMPANY_DEAL_NOUN = (
+    r"(?:company|business|firm|startup|organi[sz]ation)"
+    r"(?!\s+(?:plans?|tiers?|packages?|editions?|licen[cs]es?|accounts?|subscriptions?|versions?|pricing"
+    r"|seats?|bundles?|options?|cards?|email|address|phone|number|name|website|pages?|hours|polic(?:y|ies)"
+    r"|profile|overview|models?|types?|size|owner|details|info|information|portal|dashboard|apps?|software"
+    r"|products?|services?|solutions?|team|support|level)\b)"
+)
+_COMPANY_DEAL_OBJECT = r"(?:the|your|this|that)\s+(?:\w+\s+){0,2}?" + _COMPANY_DEAL_NOUN
 _COMPANY_DEAL_ALTERNATIVES = (
     r"(?:buy|purchase|acquire|acquiring|take\s+over|invest\s+in|merge\s+with)\s+"
-    r"(?:the|your|this|that)\s+(?:\w+\s+){0,2}?(?:company|business|firm|startup|organi[sz]ation)"
-    r"|(?:acquisition\s+of|merger\s+with|investment\s+in)\s+"
-    r"(?:the|your|this|that)\s+(?:\w+\s+){0,2}?(?:company|business|firm|startup|organi[sz]ation)"
+    + _COMPANY_DEAL_OBJECT
+    + r"|(?:acquisition\s+of|merger\s+with|investment\s+in)\s+"
+    + _COMPANY_DEAL_OBJECT
 )
 _COMPANY_DEAL_RE = re.compile(r"(?i)\b(?:" + _COMPANY_DEAL_ALTERNATIVES + r")\b")
 
@@ -170,20 +181,32 @@ _DEAL_NAME_STOPWORDS = frozenset(
     }
 )  # fmt: skip
 _DEAL_NAME_SUFFIXES = r"company|business|group|inc|ltd|limited|pvt|llc|llp|plc|corp"
+#: A word that says the visitor means ownership of the company, not something it
+#: sells. Needed before "buy <name>" counts when the name has one identifying word.
+_DEAL_OWNERSHIP_CUE_RE = re.compile(
+    r"(?i)\b(?:company|business|firm|stake|shares|equity|acquisition|ownership|valuation)\b"
+)
 
 
-def detect_company_deal_intent(question: object, company_name: object = None) -> bool:
+def detect_company_deal_intent(question: str, company_name: str | None = None) -> bool:
     """True when the visitor wants to buy, acquire, invest in or merge with the
     company itself.
 
     The generic phrasings ("acquire your company") come from the same
     alternatives the handoff keyword regex uses. The company's own name adds
-    the short form a visitor actually types, "still i want to buy eventus", but
-    only when the name ENDS the message (a legal suffix may follow), so
-    "i want to buy eventus soc" stays a question about something it sells.
-    The name is matched as the whole name or as its first identifying word;
-    "The Hub" never matches on "the", and "Eventus Security" never matches on
-    "security" alone.
+    the short form a visitor actually types, but only when the name ENDS the
+    message (a legal suffix may follow), so "i want to buy eventus soc" stays a
+    question about something it sells. "The Hub" never matches on "the", and
+    "Eventus Security" never matches on "security" alone.
+
+    How much of the name is needed depends on the verb. Acquire, take over,
+    invest in and merge with only ever name a company, so the first identifying
+    word is enough ("acquire eventus"). Buy and purchase name products just as
+    often: a bot for Coffee Co hears "i want to buy coffee" all day. With those
+    verbs the message must carry two identifying words of the name in order
+    ("buy eventus security") or an ownership word anywhere ("buy the acme
+    business"). A bare "buy eventus" is left to the handoff classifier, which
+    sees the conversation.
     """
     if not isinstance(question, str) or not question.strip():
         return False
@@ -192,18 +215,31 @@ def detect_company_deal_intent(question: object, company_name: object = None) ->
     if not isinstance(company_name, str):
         return False
     tokens = re.findall(r"[^\W_]+", company_name.lower())
-    signals = [t for t in tokens if len(t) >= 3 and t not in _DEAL_NAME_STOPWORDS]
-    if not tokens or not signals:
+    signal_positions = [i for i, t in enumerate(tokens) if len(t) >= 3 and t not in _DEAL_NAME_STOPWORDS]
+    if not signal_positions:
         return False
+    signals = [tokens[i] for i in signal_positions]
     full = r"\s+".join(map(re.escape, tokens))
     first_signal = re.escape(signals[0])
     rest = "|".join(map(re.escape, signals[1:]))
     trailer = _DEAL_NAME_SUFFIXES + (f"|{rest}" if rest else "")
-    pattern = (
-        r"(?i)\b(?:buy|purchase|acquire|take\s+over|invest\s+in|merge\s+with)\s+(?:the\s+)?"
-        rf"(?:{full}|{first_signal})(?:\s+(?:{trailer}))*\s*[?.!]*\s*$"
-    )
-    return re.search(pattern, question.strip()) is not None
+    ending = rf"(?:\s+(?:{trailer}))*\s*[?.!]*\s*$"
+    text = question.strip()
+
+    takeover = rf"(?i)\b(?:acquire|take\s+over|invest\s+in|merge\s+with)\s+(?:the\s+)?(?:{full}|{first_signal}){ending}"
+    if re.search(takeover, text):
+        return True
+
+    purchase_verb = r"(?i)\b(?:buy|purchase)\s+(?:the\s+)?"
+    if len(signal_positions) >= 2:
+        # The name from its first identifying word through its second, as
+        # written ("bank of baroda" for "Bank of Baroda").
+        span = r"\s+".join(map(re.escape, tokens[signal_positions[0] : signal_positions[1] + 1]))
+        if re.search(rf"{purchase_verb}{span}{ending}", text):
+            return True
+    if _DEAL_OWNERSHIP_CUE_RE.search(text):
+        return re.search(rf"{purchase_verb}(?:{full}|{first_signal}){ending}", text) is not None
+    return False
 
 
 def detect_handoff_intent(question: str) -> bool:
