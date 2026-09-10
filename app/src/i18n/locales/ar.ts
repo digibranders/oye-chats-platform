@@ -2165,7 +2165,7 @@ const ar = {
     replyOpened: "تم فتح الرد",
     reYourMessage: "رد: رسالتك",
     read: "مقروءة",
-    readLiveChatIn: "قراءة الدردشة المباشرة بلغة",
+    translateTo: "الترجمة إلى",
     readWhatTheyHaveAlready: "اطّلع على ما قالوه بالفعل قبل أن تتولى المحادثة. سيبقون مع الروبوت إلى أن تقبل.",
     received: "استُلمت",
     reconnectingYourReplyWillNot: "جارٍ إعادة الاتصال. لن يُرسَل ردك إلى أن يعود الاتصال.",

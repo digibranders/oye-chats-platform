@@ -2181,7 +2181,7 @@ const en = {
     replyOpened: 'Reply opened',
     reYourMessage: 'Re: your message',
     read: 'Read',
-    readLiveChatIn: 'Read live chat in',
+    translateTo: 'Translate to',
     readWhatTheyHaveAlready: 'Read what they have already said before you take the conversation. They are still with the AI until you accept.',
     received: 'Received',
     reconnectingYourReplyWillNot: 'Reconnecting. Your reply will not send until the connection is back.',

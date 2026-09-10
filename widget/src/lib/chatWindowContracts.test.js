@@ -163,3 +163,43 @@ test('the stream-close stamp is taken where the answer completes', () => {
     );
     assert.match(finalMeta, /lastStreamClosedAtRef\.current = Date\.now\(\);/, 'onFinalMetadata must stamp the stream close');
 });
+
+// ── W7: the handoff form opens as soon as nothing is left to wait for ────────
+
+test('the reading pause runs alongside the quote poll, not in front of it', () => {
+    // On a live bot the form appeared 2 to 5 seconds after the reply: a fixed
+    // 600ms pause, THEN the quote poll, THEN the form's lazy chunk, one after
+    // another. Each is still there; they now overlap.
+    const finalMeta = CHAT_WINDOW.slice(
+        CHAT_WINDOW.indexOf('onFinalMetadata: async (finalMeta) => {'),
+        CHAT_WINDOW.indexOf('onError: (err) => {'),
+    );
+    assert.match(finalMeta, /triggerHandoff\(\{ minDelayMs: delay \}\)/, 'the pause is not handed to triggerHandoff');
+    assert.doesNotMatch(finalMeta, /setTimeout\(\(\) => \{\s*triggerHandoff\(\);/, 'the pause runs before the poll again');
+
+    const trigger = CHAT_WINDOW.slice(
+        CHAT_WINDOW.indexOf('const triggerHandoff = useCallback'),
+        CHAT_WINDOW.indexOf('const handleQuotationFlowComplete'),
+    );
+    assert.match(trigger, /import\('\.\/HandoffForm'\)/, 'the form chunk is not fetched before the form mounts');
+    const pauseStarts = trigger.indexOf('const readingPause = ');
+    const pollAwaited = trigger.indexOf('await maybeInjectQuotation(activeSessionId)');
+    const pauseAwaited = trigger.indexOf('await readingPause');
+    assert.ok(pauseStarts !== -1 && pollAwaited !== -1 && pauseAwaited !== -1, 'the pause or the poll is gone');
+    assert.ok(pauseStarts < pollAwaited && pollAwaited < pauseAwaited, 'the pause no longer overlaps the poll');
+});
+
+test('a turn that queued no lead scoring does not open a new quote-poll window', () => {
+    // A handoff turn skips extraction on the server, yet the widget stamped its
+    // close and polled for 4.5s waiting for a score that was never coming.
+    const finalMeta = CHAT_WINDOW.slice(
+        CHAT_WINDOW.indexOf('onFinalMetadata: async (finalMeta) => {'),
+        CHAT_WINDOW.indexOf('onError: (err) => {'),
+    );
+    assert.match(
+        finalMeta,
+        /if \(finalMeta\.qualification_pending !== false\) \{\s*lastStreamClosedAtRef\.current = Date\.now\(\);/,
+        'the stream-close stamp ignores qualification_pending',
+    );
+});
+

@@ -88,11 +88,11 @@ export function OperatorLanguagePicker({
           assistive tech, so this span is decoration, not a second name for
           screen readers to hear. */}
       <span aria-hidden className="text-xs text-text-tertiary">
-        {t('inbox.readLiveChatIn') || 'Read live chat in'}
+        {t('inbox.translateTo') || 'Translate to'}
       </span>
       <Select
         size="sm"
-        label={t('inbox.readLiveChatIn') || 'Read live chat in'}
+        label={t('inbox.translateTo') || 'Translate to'}
         value={value ?? ''}
         options={options}
         disabled={disabled || save.isPending}

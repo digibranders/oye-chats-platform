@@ -1533,8 +1533,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                 onFinalMetadata: async (finalMeta) => {
                     // The answer is complete; BANT extraction for this turn
                     // starts on the server about now. maybeInjectQuotation
-                    // sizes its poll from this stamp.
-                    lastStreamClosedAtRef.current = Date.now();
+                    // sizes its poll from this stamp. ``qualification_pending:
+                    // false`` means the server queued no extraction for this
+                    // turn (a handoff, a pricing or meeting reply), so the stamp
+                    // stays on the last turn that did and the poll does not wait
+                    // out a window nothing is running in. An older API that does
+                    // not send the key keeps the previous behaviour.
+                    if (finalMeta.qualification_pending !== false) {
+                        lastStreamClosedAtRef.current = Date.now();
+                    }
                     // Flush any buffered chunks to state BEFORE processing metadata.
                     // Prevents the handoff form from appearing while text is still
                     // waiting in the rAF buffer (race condition: truncated response).
@@ -1596,10 +1603,12 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                     if (finalMeta.suggest_handoff && !handoffTriggeredRef.current) {
                         handoffTriggeredRef.current = true;
                         const delay = (settings.handoff_delay_seconds || 0) * 1000 || 600;
-                        setTimeout(() => {
-                            triggerHandoff();
+                        // The reading pause, the quote poll and the form's chunk
+                        // load run side by side. In series they were the 2 to 5
+                        // second gap between the reply and the form on a live bot.
+                        triggerHandoff({ minDelayMs: delay }).finally(() => {
                             handoffTriggeredRef.current = false;
-                        }, delay);
+                        });
                     } else if (!handoffFormInjectedRef.current) {
                         // No explicit handoff intent this turn, but BANT may have
                         // just crossed the quotation threshold on the previous
@@ -1934,7 +1943,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
         return false;
     }, [injectQuotationFlow, settings?.bant_enabled, settings?.quotation_enabled]);
 
-    const triggerHandoff = useCallback(async () => {
+    const triggerHandoff = useCallback(async ({ minDelayMs = 0 } = {}) => {
         // Hard gate: if the bot's PLAN has no human-support channel at all
         // (Free plan → support_enabled === false), never open the handoff /
         // leave-message flow, even from an internal caller that forgot to check
@@ -1968,8 +1977,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
         // with short spacing before falling through to the plain handoff.
         handoffFormInjectedRef.current = true;
         if (showWelcome) exitWelcome();
+        // Fetch the form's chunk now rather than when it mounts, and let the
+        // caller's reading pause elapse while the quote poll runs instead of
+        // before it. A click handler passes an event here, whose missing
+        // ``minDelayMs`` means no pause.
+        import('./HandoffForm').catch(() => { /* prefetch is best-effort */ });
+        const readingPause = minDelayMs > 0 ? new Promise((resolve) => setTimeout(resolve, minDelayMs)) : null;
         const injectedQuote = sessionMintedNow ? false : await maybeInjectQuotation(activeSessionId);
         if (injectedQuote) return;
+        if (readingPause) await readingPause;
 
         if (showWelcome) {
             setTimeout(injectHandoffForm, WELCOME_EXIT_DURATION);
