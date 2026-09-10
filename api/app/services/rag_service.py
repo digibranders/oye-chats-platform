@@ -49,6 +49,7 @@ from app.services import plan_entitlements_service, runtime_config
 from app.services import pricing_gate as _pricing_gate
 from app.services.email_service import send_qualified_lead_email
 from app.services.groundedness_gate import check_groundedness, should_sample
+from app.services.handoff_reply import handoff_reply
 from app.services.intent_router import route_intent, strip_greeting_lead
 from app.services.intent_service import detect_handoff_intent, detect_handoff_intent_keywords
 from app.services.live_chat_availability_service import (
@@ -8136,7 +8137,11 @@ async def rag_pipeline_stream(
                 )
                 session.flush()
                 _msg_id = _bot_msg.id
-                _pivot_meta = {"message_id": _msg_id, "suggest_handoff": _pivot.suggest_handoff}
+                _pivot_meta = {
+                    "message_id": _msg_id,
+                    "suggest_handoff": _pivot.suggest_handoff,
+                    "qualification_pending": False,
+                }
                 # Leave-message card (paid plan with live chat turned off). It
                 # travels as metadata, exactly like the LLM-driven card below:
                 # the sentinel is a model-to-server token that this pipeline
@@ -8205,12 +8210,69 @@ async def rag_pipeline_stream(
                     source_language=_lang_base(language),
                 )
                 session.flush()
-                _mtg_meta = {"message_id": _bot_msg.id, "suggest_handoff": _mtg.suggest_handoff}
+                _mtg_meta = {
+                    "message_id": _bot_msg.id,
+                    "suggest_handoff": _mtg.suggest_handoff,
+                    "qualification_pending": False,
+                }
                 if _mtg.needs_message_card:
                     _mtg_meta["show_leave_message"] = True
                     _mark_card_shown(chat_session, "leave_message")
                 session.commit()
                 yield f"\nFINAL_METADATA:{json.dumps(_mtg_meta)}\n"
+                return
+
+            # ── Handoff reply ────────────────────────────────────────────
+            # A visitor who asked for a person, on a bot that can hand them over,
+            # gets fixed words that describe the form the widget opens. The
+            # decision (``suggest_handoff``) is already made above, before
+            # generation; the words used to be left to the model, which copied the
+            # leave-a-message example from the prompt: "I'll open a quick message
+            # form for you" above a "Talk to a human" form, reported from a live
+            # bot on 2026-09-10. Answering here also drops the model call the
+            # visitor sat through before the form could open.
+            #
+            # After the pricing and meeting gates, which carry their own handoff.
+            # A scheduling request on a bot WITH a scheduler is left to the
+            # booking-card flow, which wins over a handoff (see the meeting-card
+            # precedence further down). English only, like both gates: the reply
+            # is an English sentence, so a non-English conversation keeps the model.
+            if (
+                suggest_handoff
+                and live_chat_on
+                and not _judges_bypassed
+                and not _meeting_gate.is_meeting_question(_gate_question)
+            ):
+                _handoff_repeat = _card_already_shown(chat_session, "handoff_offered")
+                _safety_net_metric(
+                    "handoff_reply",
+                    path="stream",
+                    repeat=str(_handoff_repeat),
+                    session=session_id,
+                    bot_id=bid,
+                )
+                _handoff_text = _name_ack_prefix(
+                    _flow_name, _just_named, language, returning=_returning_by_name
+                ) + handoff_reply(team_available=bool(_team_online), repeat=_handoff_repeat)
+                yield _stream_metadata(session_id, [], language)
+                yield _handoff_text
+                _bot_msg = add_chat_message(
+                    session,
+                    session_id,
+                    client_id=cid,
+                    role="bot",
+                    content=_handoff_text,
+                    bot_id=bid,
+                    source_language=_lang_base(language),
+                )
+                session.flush()
+                # No lead scoring runs for a visitor who asked for a person
+                # (``_should_skip_bant_extraction``), so the widget has no
+                # extraction to wait out before it opens the form.
+                _handoff_meta = {"message_id": _bot_msg.id, "suggest_handoff": True, "qualification_pending": False}
+                _mark_card_shown(chat_session, "handoff_offered")
+                session.commit()
+                yield f"\nFINAL_METADATA:{json.dumps(_handoff_meta)}\n"
                 return
 
             # ── Budget-disclosure context strip (streaming) ──────────────
@@ -8865,6 +8927,7 @@ async def rag_pipeline_stream(
             # Build it inside a try/finally so even a DB failure sends the frame.
             bot_msg_id = None
             final_meta: dict = {}
+            _qualification_enqueued = False
 
             # Detect + strip [MEETING_CARD] token from the LLM response. Card
             # resolution (calendly_url etc.) runs AFTER precedence + dedupe below,
@@ -9182,6 +9245,7 @@ async def rag_pipeline_stream(
                             _cta_signal,
                             _binding_hint,
                         )
+                        _qualification_enqueued = True
 
                     if should_sample():
                         submit_background(
@@ -9211,6 +9275,10 @@ async def rag_pipeline_stream(
                         # escalates this to a failure because its caller has
                         # read nothing yet.
                         final_meta["generation_interrupted"] = True
+                    # Whether lead scoring was queued for this turn. The widget
+                    # waits up to 4.5s for a quote card after a reply only when it
+                    # was; a turn that queued nothing has nothing to wait for.
+                    final_meta["qualification_pending"] = _qualification_enqueued
                     if suggest_handoff and live_chat_on:
                         final_meta["suggest_handoff"] = True
                     if cta_data:
