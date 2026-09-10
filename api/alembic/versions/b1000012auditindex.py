@@ -20,20 +20,63 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # CONCURRENTLY cannot run inside a transaction, and alembic wraps the
-    # migration in one. This table is small enough on every current deployment
-    # that a plain CREATE INDEX is a sub-second exclusive lock, and the short
-    # lock_timeout means a deploy fails fast rather than queuing writers behind
-    # a lock it cannot get.
-    op.execute("SET LOCAL lock_timeout = '5s'")
-    op.execute("CREATE INDEX IF NOT EXISTS ix_chat_audit_logs_session_id ON chat_audit_logs (session_id)")
-    # The retention sweep added alongside this deletes by ``created_at``.
-    op.execute("SET LOCAL lock_timeout = '5s'")
-    op.execute("CREATE INDEX IF NOT EXISTS ix_visitor_events_created_at ON visitor_events (created_at)")
-    op.execute("CREATE INDEX IF NOT EXISTS ix_bant_signals_created_at ON bant_signals (created_at)")
+    # Alembic runs the whole migration in one transaction, and a plain CREATE
+    # INDEX holds a SHARE lock on the table for the length of the build, so
+    # widget event flushes on ``visitor_events`` and the qualification worker
+    # on ``bant_signals`` would have queued behind it. CONCURRENTLY takes no
+    # lock that blocks writers, but it cannot run inside a transaction, so
+    # each build gets its own autocommit block. IF NOT EXISTS keeps a re-run
+    # after a failed (INVALID) build from erroring; drop the invalid index by
+    # hand before re-running in that case.
+    #
+    # A concurrent build still takes SHARE UPDATE EXCLUSIVE, so it can wait
+    # behind an autovacuum or another DDL; the timeout makes a deploy fail
+    # fast instead of hanging there. Session-level SET, not SET LOCAL: there
+    # is no transaction inside the autocommit block for LOCAL to bind to.
+    with op.get_context().autocommit_block():
+        op.execute("SET lock_timeout = '5s'")
+        op.create_index(
+            "ix_chat_audit_logs_session_id",
+            "chat_audit_logs",
+            ["session_id"],
+            if_not_exists=True,
+            postgresql_concurrently=True,
+        )
+        # The retention sweep added alongside this deletes by ``created_at``.
+        op.create_index(
+            "ix_visitor_events_created_at",
+            "visitor_events",
+            ["created_at"],
+            if_not_exists=True,
+            postgresql_concurrently=True,
+        )
+        op.create_index(
+            "ix_bant_signals_created_at",
+            "bant_signals",
+            ["created_at"],
+            if_not_exists=True,
+            postgresql_concurrently=True,
+        )
 
 
 def downgrade() -> None:
-    op.execute("DROP INDEX IF EXISTS ix_bant_signals_created_at")
-    op.execute("DROP INDEX IF EXISTS ix_visitor_events_created_at")
-    op.execute("DROP INDEX IF EXISTS ix_chat_audit_logs_session_id")
+    with op.get_context().autocommit_block():
+        op.execute("SET lock_timeout = '5s'")
+        op.drop_index(
+            "ix_bant_signals_created_at",
+            table_name="bant_signals",
+            if_exists=True,
+            postgresql_concurrently=True,
+        )
+        op.drop_index(
+            "ix_visitor_events_created_at",
+            table_name="visitor_events",
+            if_exists=True,
+            postgresql_concurrently=True,
+        )
+        op.drop_index(
+            "ix_chat_audit_logs_session_id",
+            table_name="chat_audit_logs",
+            if_exists=True,
+            postgresql_concurrently=True,
+        )

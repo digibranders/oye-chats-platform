@@ -1506,6 +1506,14 @@ async def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(
         if result.get("generation_failed"):
             await asyncio.to_thread(_refund_once)
         return result
+    except asyncio.CancelledError:
+        # ``TimeoutMiddleware`` cancels this coroutine at 60s, and a cancel is
+        # a ``BaseException``, so the branches below never saw it: the visitor
+        # got a 504 and stayed charged for it. The task is already cancelled,
+        # so the refund is shielded: a second cancel cannot interrupt the
+        # ledger write once it has started on the worker thread.
+        await asyncio.shield(asyncio.to_thread(_refund_once))
+        raise
     except HTTPException:
         await asyncio.to_thread(_refund_once)
         raise

@@ -9,11 +9,27 @@ paths and must be best-effort).
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from app.core import metrics
 from app.core.metrics import (
     forward_to_sentry_if_alertable,
     get_metric_counts,
     increment_metric_counter,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolated_forward_throttle(monkeypatch):
+    """The Sentry forward is throttled per metric (one page per window), and
+    the claim lives in Redis when one is reachable. Without this the second
+    test to forward ``moderation_block`` within ten minutes, in this run or
+    the next, would be suppressed and fail for a reason unrelated to what it
+    checks. Counter tests patch ``get_redis`` themselves and are unaffected."""
+    monkeypatch.setattr(metrics, "get_redis", lambda: None)
+    metrics.reset_sentry_forward_throttle()
+    yield
+    metrics.reset_sentry_forward_throttle()
 
 
 class TestIncrementMetricCounter:

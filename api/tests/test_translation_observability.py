@@ -19,6 +19,16 @@ import pytest
 from app.core import metrics
 
 
+@pytest.fixture(autouse=True)
+def _isolated_forward_throttle(monkeypatch):
+    """One page per metric per window: without a clean claim table every test
+    after the first to forward ``translation_gated`` would see it suppressed."""
+    monkeypatch.setattr(metrics, "get_redis", lambda: None)
+    metrics.reset_sentry_forward_throttle()
+    yield
+    metrics.reset_sentry_forward_throttle()
+
+
 @pytest.fixture
 def recorded(monkeypatch):
     """Capture counter increments instead of writing to Redis."""

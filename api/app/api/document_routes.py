@@ -642,7 +642,7 @@ def preview_ingest_cost(
                 continue
             except Exception:
                 logger.exception(f"preview-cost extraction error for {fname}")
-                per_file.append({"filename": fname, "words": 0, "credits": 0, "reason": "extraction_error"})
+                per_file.append({"filename": fname, "words": 0, "credits": 0, "reason": "extraction_failed"})
                 continue
 
             text = " ".join(p.get("text", "") for p in pages)
@@ -885,8 +885,9 @@ def ingest_documents(
         The third value is why the count is zero, or None when it genuinely is.
         Without it the response reported a failed file as a free success and the
         customer only found out later that the document had been quarantined.
-        ``preview-cost`` already reports ``extraction_error`` this way; this is
-        the same vocabulary.
+        ``preview-cost`` already reports ``extraction_failed`` this way; this is
+        the same vocabulary, and the console matches the reason string exactly,
+        so it is the only spelling.
         """
         try:
             if ext == ".pdf":
@@ -897,10 +898,10 @@ def ingest_documents(
                 pages = load_txt(str(path))
         except ExtractionError as exc:
             logger.warning(f"Skipping {path.name} for billing (extraction failed): {exc}")
-            return 0, 0, "extraction_error"
+            return 0, 0, "extraction_failed"
         except Exception:  # pragma: no cover. Pypdf/docx surprise
             logger.exception(f"Unexpected extraction error for {path.name}; skipping billing")
-            return 0, 0, "extraction_error"
+            return 0, 0, "extraction_failed"
         raw = " ".join(p.get("text", "") for p in pages)
         cleaned = " ".join(clean_text(p.get("text", "")) for p in pages)
         return credit_service.count_words(raw), len(cleaned), None

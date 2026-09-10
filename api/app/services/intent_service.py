@@ -63,6 +63,11 @@ _HANDOFF_KEYWORDS_RE = re.compile(
 )
 
 
+#: Characters a model wraps around the bare YES/NO it was asked for.
+_HANDOFF_REPLY_DECORATION = " \t\r\n\"'`*_.!"
+_HANDOFF_YES_RE = re.compile(r"YES\b")
+
+
 def _detect_handoff_intent_raw(question: str) -> bool:
     """Detect human handoff intent via LLM: a one-word YES/NO classification.
 
@@ -118,11 +123,13 @@ Respond with ONLY the word YES or NO. No explanation."""
         timeout=_HANDOFF_LLM_TIMEOUT_S,
         num_retries=_HANDOFF_LLM_NUM_RETRIES,
     )
-    result = response.strip().upper()
-    # ``startswith``, not ``in``: a model that answers "YES/NO" or explains
-    # itself with "NO, but YES if..." reads as YES under a substring test, and
-    # this decides whether a visitor is offered a human.
-    has_intent = result.startswith("YES")
+    # Models decorate the one word they were asked for: ``"YES"`` in quotes,
+    # ``**YES**`` in bold, ``yes.`` with a full stop. Strip that wrapping,
+    # then test the leading WORD, not the leading substring: "NO, but YES
+    # if..." must still be NO, and so must "YESTERDAY". This decides whether
+    # a visitor is offered a human.
+    result = response.strip().strip(_HANDOFF_REPLY_DECORATION).upper()
+    has_intent = _HANDOFF_YES_RE.match(result) is not None
     logger.info("Handoff Intent Detection for '%s': %s", question, result)
     return has_intent
 

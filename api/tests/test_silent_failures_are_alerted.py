@@ -33,6 +33,13 @@ class TestTheyArePageable:
     def test_the_metric_reaches_the_alert_channel(self, metric):
         assert metric in _SENTRY_FORWARD_METRICS
 
+    def test_a_failed_qualification_enqueue_pages(self):
+        """The turn falls back to the in-process pool and completes, so
+        nothing downstream fails. That is exactly why it has to page: a
+        broken queue would otherwise be discovered only when the pool
+        saturated."""
+        assert "qualification_enqueue_failed" in _SENTRY_FORWARD_METRICS
+
 
 class TestTheRelevanceGateFailOpen:
     def test_it_still_fails_open(self, monkeypatch):

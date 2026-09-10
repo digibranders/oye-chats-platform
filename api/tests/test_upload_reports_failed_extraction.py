@@ -6,8 +6,10 @@ pass quarantines it. But the upload response reported it as
 uploaded fine, so the customer was told "uploaded, free" and found out only
 later that the document was never ingested.
 
-``preview-cost`` already reports ``reason: "extraction_error"`` for exactly
-this. The upload response now uses the same vocabulary.
+``preview-cost`` reports ``reason: "extraction_failed"`` for exactly this.
+The upload response uses the same vocabulary, and there is only the one word:
+the console renders a reason by exact match, so a second spelling of the same
+failure fell through to a raw ``extraction_error`` string on screen.
 """
 
 from __future__ import annotations
@@ -50,4 +52,10 @@ class TestTheResponseCarriesTheReason:
     def test_both_failure_paths_use_the_shared_vocabulary(self):
         source = _helper()
 
-        assert source.count('return 0, 0, "extraction_error"') == 2
+        assert source.count('return 0, 0, "extraction_failed"') == 2
+
+    def test_there_is_only_one_spelling_of_the_reason(self):
+        source = _helper()
+
+        assert "extraction_error" not in source
+        assert source.count('"extraction_failed"') == 4, "preview-cost (2 paths) and upload (2 paths)"
