@@ -76,6 +76,32 @@ INJECTION_DELIMITER_FRAGMENTS: tuple[str, ...] = (
 )
 
 
+# Operator-field-only. A customer's brand tone, custom prompt or company
+# description is spliced into the system prompt, so a grounding override
+# written there switches the bot's own scope rules off. These phrasings are
+# ordinary English ("from now on", "answer from what you know") and would
+# false-positive on visitor questions and crawled prose, so they guard only the
+# fields an operator types into, where the cost of a hit is one cleared box.
+OPERATOR_FIELD_FRAGMENTS: tuple[str, ...] = (
+    r"(?:ignore|disregard|forget|discard)\s+(?:\w+\s+){0,3}?"
+    r"(?:previous|prior|above|earlier|preceding|existing|other|these|those|all)\s+(?:\w+\s+){0,2}?"
+    r"(?:instructions?|prompts?|rules?|context|guidelines?|constraints?|directions?)",
+    r"(?:ignore|disregard|forget|discard)\s+everything\s+(?:above|before|prior|else|you\s+(?:were|have\s+been)\s+told)",
+    r"from\s+now\s+on",
+    r"(?:answer|respond|reply|speak)\s+(?:\w+\s+){0,3}?from\s+(?:your\s+)?"
+    r"(?:general\s+knowledge|what\s+you\s+know|(?:own\s+)?knowledge|training(?:\s+data)?|memory)",
+    r"(?:use|rely\s+on|draw\s+on|fall\s+back\s+on)\s+(?:your\s+)?"
+    r"(?:training\s+data|general\s+knowledge|own\s+knowledge|prior\s+knowledge|world\s+knowledge)",
+    r"(?:do\s+not|don'?t|never)\s+(?:limit|restrict|confine)\s+(?:yourself|your\s+(?:answers?|responses?|replies))",
+    r"(?:regardless|irrespective)\s+of\s+(?:the\s+)?(?:reference|context|documents?|knowledge|sources?|material)",
+)
+
+# Invisible code points that split a word without changing how it reads:
+# zero-width space/joiner/non-joiner, word joiner, BOM, soft hyphen. Stripped
+# before any operator-field match, so "Ig<ZWSP>nore" is still "Ignore".
+INVISIBLE_CHARS_RE = re.compile("[​‌‍⁠﻿­]")
+
+
 def _alternation(fragments: tuple[str, ...]) -> str:
     return "|".join(f"(?:{frag})" for frag in fragments)
 
@@ -105,5 +131,15 @@ def compile_detection_pattern() -> re.Pattern:
     an acceptable tradeoff.
     """
     phrases = _alternation(SHARED_FRAGMENTS + DETECTION_ONLY_FRAGMENTS)
+    delimiters = "|".join(INJECTION_DELIMITER_FRAGMENTS)
+    return re.compile(r"(" + phrases + r")|(" + delimiters + r")", re.IGNORECASE)
+
+
+def compile_operator_field_pattern() -> re.Pattern:
+    """The detection pattern plus the grounding-override phrasings, for text an
+    operator types into their own bot's prompt fields. Never for visitor input
+    or ingested content: see ``OPERATOR_FIELD_FRAGMENTS``.
+    """
+    phrases = _alternation(SHARED_FRAGMENTS + DETECTION_ONLY_FRAGMENTS + OPERATOR_FIELD_FRAGMENTS)
     delimiters = "|".join(INJECTION_DELIMITER_FRAGMENTS)
     return re.compile(r"(" + phrases + r")|(" + delimiters + r")", re.IGNORECASE)

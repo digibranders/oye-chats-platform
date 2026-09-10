@@ -74,3 +74,15 @@ class TestARealQuestionStillReachesTheExtractor:
     def test_a_qualifying_message_is_not_skipped(self, message):
         assert detect_handoff_intent_keywords(message) is False
         assert _should_skip_bant_extraction(message, {}) is False
+
+
+class TestThePipelineDecisionIsTheSkipSignal:
+    """The regexes are English. The handoff OFFER is not limited to them: when
+    they miss, an LLM classifier decides. Whatever that classifier says the
+    platform will act on, so the skip must follow the same decision."""
+
+    def test_a_handoff_the_classifier_found_skips_extraction(self):
+        assert _should_skip_bant_extraction("mujhe kisi insaan se baat karni hai", {}, handoff_offered=True) is True
+
+    def test_without_that_signal_the_regexes_still_decide(self):
+        assert _should_skip_bant_extraction("mujhe kisi insaan se baat karni hai", {}, handoff_offered=False) is False

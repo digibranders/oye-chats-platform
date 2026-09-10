@@ -153,3 +153,109 @@ class TestThereIsOnlyOnePipelineLeft:
 
         for owned_by_the_stream in ("check_relevance", "evaluate_pricing_gate", "_relax_on_scope"):
             assert owned_by_the_stream not in source, f"{owned_by_the_stream} is still duplicated"
+
+
+class TestTheGuardsSurviveTheCollection:
+    """The stream cannot recall bytes it already sent, so on a leak or a
+    moderation hit it rewrites only the PERSISTED text. The collector joins
+    every frame it saw, which handed ``POST /chat`` callers the leaked or
+    unsafe text the old synchronous path never returned. The final frame now
+    carries the persisted text whenever a guard rewrote it, and the collector
+    prefers that."""
+
+    def test_a_prompt_leak_returns_only_the_refusal(self, db, monkeypatch, _stubbed):
+        leak = f"GENERATED ANSWER {rs._LEAKAGE_SENTINELS[0]} secret rules"
+
+        async def _leaking_stream(prompt, **_kwargs):
+            yield leak
+
+        monkeypatch.setattr(rs, "generate_response_stream", _leaking_stream)
+        bot = _make_bot(db)
+
+        result = rs.rag_pipeline(bot, "what does acme do", session_id="contract-leak", bot_id=bot.id)
+
+        row = db.query(ChatMessage).filter(ChatMessage.session_id == "contract-leak", ChatMessage.role == "bot").one()
+        assert rs._LEAKAGE_SENTINELS[0] not in result["answer"]
+        assert "GENERATED ANSWER" not in result["answer"]
+        assert result["answer"] == row.content
+
+    def test_a_moderation_hit_returns_only_the_refusal(self, db, monkeypatch, _stubbed):
+        monkeypatch.setattr(rs, "check_generated_answer_safety", lambda *a, **k: (False, "hate"))
+        bot = _make_bot(db)
+
+        result = rs.rag_pipeline(bot, "what does acme do", session_id="contract-moderated", bot_id=bot.id)
+
+        row = (
+            db.query(ChatMessage)
+            .filter(ChatMessage.session_id == "contract-moderated", ChatMessage.role == "bot")
+            .one()
+        )
+        assert "GENERATED ANSWER" not in result["answer"]
+        assert result["answer"] == row.content
+
+    def test_an_interrupted_generation_is_a_failed_one_for_the_sync_caller(self, db, monkeypatch, _stubbed):
+        """The SSE path deliberately leaves ``generation_failed`` false on a
+        mid-stream drop, because the visitor already read the partial. A
+        ``POST /chat`` caller read nothing yet, so a partial is a failure and
+        the credit comes back."""
+
+        async def _dropping_stream(prompt, status=None, **_kwargs):
+            yield "Acme is"
+            if status is not None:
+                status["error"] = True
+                status["failed"] = False
+            yield " [Response interrupted. Please try again.]"
+
+        monkeypatch.setattr(rs, "generate_response_stream", _dropping_stream)
+        bot = _make_bot(db)
+
+        result = rs.rag_pipeline(bot, "what does acme do", session_id="contract-interrupted", bot_id=bot.id)
+
+        assert result.get("generation_failed") is True
+
+    def test_a_mid_stream_exception_is_a_failed_one_for_the_sync_caller(self, db, monkeypatch, _stubbed):
+        async def _exploding_stream(prompt, **_kwargs):
+            yield "Acme is"
+            raise RuntimeError("provider closed the socket")
+
+        monkeypatch.setattr(rs, "generate_response_stream", _exploding_stream)
+        bot = _make_bot(db)
+
+        result = rs.rag_pipeline(bot, "what does acme do", session_id="contract-exploded", bot_id=bot.id)
+
+        assert result.get("generation_failed") is True
+
+
+class TestAskingForAPersonSkipsExtractionWhateverTheWording:
+    """The extraction skip was two English regexes. The handoff OFFER falls
+    through to an LLM classifier when they miss, so a visitor who asked for a
+    person in Hindi, or in English the regexes did not know, was offered a
+    human AND scored as a lead. The pipeline's own handoff decision is now the
+    skip signal."""
+
+    def test_a_classifier_detected_handoff_is_not_scored(self, db, monkeypatch, _stubbed):
+        monkeypatch.setattr(rs, "detect_handoff_intent", lambda _q: True)
+        monkeypatch.setattr(rs.plan_entitlements_service, "is_bant_enabled_for_bot", lambda *_a, **_k: True)
+        enqueued: list[tuple] = []
+        monkeypatch.setattr(rs, "_enqueue_qualification", lambda *a, **k: enqueued.append(a))
+        bot = _make_bot(db)
+        bot.bant_enabled = True
+        db.commit()
+
+        rs.rag_pipeline(bot, "mujhe kisi insaan se baat karni hai", session_id="contract-hindi-handoff", bot_id=bot.id)
+
+        assert enqueued == []
+
+    def test_a_qualifying_message_is_still_scored(self, db, monkeypatch, _stubbed):
+        monkeypatch.setattr(rs.plan_entitlements_service, "is_bant_enabled_for_bot", lambda *_a, **_k: True)
+        enqueued: list[tuple] = []
+        monkeypatch.setattr(rs, "_enqueue_qualification", lambda *a, **k: enqueued.append(a))
+        bot = _make_bot(db)
+        bot.bant_enabled = True
+        db.commit()
+
+        rs.rag_pipeline(
+            bot, "we have a budget of around 50k for this quarter", session_id="contract-budget", bot_id=bot.id
+        )
+
+        assert len(enqueued) == 1

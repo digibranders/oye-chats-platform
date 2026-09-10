@@ -37,7 +37,11 @@ from app.db.repository import (
 )
 from app.db.session import get_session
 from app.ingestion.embedder import embed_chunks, embed_chunks_async
-from app.security.injection_patterns import compile_detection_pattern
+from app.security.injection_patterns import (
+    INVISIBLE_CHARS_RE,
+    compile_detection_pattern,
+    compile_operator_field_pattern,
+)
 from app.services import currency_scoring as _currency_scoring
 from app.services import meeting_gate as _meeting_gate
 from app.services import plan_entitlements_service, runtime_config
@@ -1383,8 +1387,14 @@ def _safety_net_metric(name: str, **tags) -> None:
 # strip (AR-17). See app/security/injection_patterns.py for why and where
 # to add a new phrase when incident response turns one up.
 _INJECTION_PATTERNS = compile_detection_pattern()
+# Operator-typed prompt fields get the wider net: a grounding override written
+# into the tone box is the operator switching their own bot's scope rules off.
+_OPERATOR_FIELD_PATTERNS = compile_operator_field_pattern()
 # Maximum chars accepted for a custom system prompt (validated at API boundary too)
 _MAX_CUSTOM_PROMPT_CHARS = 2000
+# ``UpdateBotRequest.company_description`` accepts this many; the prompt used
+# to keep 500 of them and drop the rest in silence.
+_MAX_COMPANY_DESCRIPTION_CHARS = 1000
 
 # Off-topic refusal variant pool.
 #
@@ -1798,11 +1808,31 @@ def _question_is_clearly_on_scope(question: str, company_name: str | None) -> bo
     """
     if not question:
         return False
-    if company_name:
-        first_word = company_name.split()[0]
-        if first_word and re.search(rf"\b{re.escape(first_word)}\b", question, re.IGNORECASE):
-            return True
+    signals = _company_name_signals(company_name)
+    if signals and re.search(r"\b(?:" + "|".join(map(re.escape, signals)) + r")\b", question, re.IGNORECASE):
+        return True
     return bool(_STRICT_ON_SCOPE_RE.search(question))
+
+
+#: Words a company name can start with that say nothing about the company.
+#: This used to match the FIRST word of the name, whatever it was, so a bot
+#: called "The Coding School" treated every question containing "the" as on
+#: scope and the relevance gate was switched off for it.
+_COMPANY_NAME_STOPWORDS = frozenset(
+    {
+        "the", "a", "an", "my", "our", "your", "one", "go", "plus", "and", "of", "for", "to", "at", "in", "on", "by",
+        "with", "co", "inc", "ltd", "llc", "llp", "plc", "pvt", "corp", "company", "limited", "private", "group",
+    }
+)  # fmt: skip
+
+
+def _company_name_signals(company_name: str | None) -> list[str]:
+    """The words of the company name that identify it: three letters or more
+    and not an article, pronoun, preposition or legal suffix."""
+    if not company_name:
+        return []
+    tokens = re.findall(r"[^\W_]+", company_name.lower())
+    return [t for t in tokens if len(t) >= 3 and t not in _COMPANY_NAME_STOPWORDS]
 
 
 def _has_latin_words(text: str) -> bool:
@@ -2080,20 +2110,24 @@ def _ensure_followup_spacing(text: str) -> str:
     return text
 
 
-def _sanitize_system_prompt(prompt: str) -> str:
-    """Strip prompt-injection attempts from a customer-supplied system prompt.
+def _sanitize_system_prompt(prompt: str, *, limit: int = _MAX_CUSTOM_PROMPT_CHARS) -> str:
+    """Strip prompt-injection attempts from a customer-supplied prompt field.
 
-    This is a defence-in-depth measure.  The primary validation (max_length,
-    field type) happens at the Pydantic model layer in bot_routes.py.
+    Used for the custom system prompt, the brand tone and the company
+    description, every free-text box whose contents are spliced into the
+    system prompt. This is a defence-in-depth measure. The primary validation
+    (max_length, field type) happens at the Pydantic model layer in
+    bot_routes.py.
 
-    Returns the sanitised prompt, or an empty string if the entire input is
-    considered unsafe.
+    Returns the sanitised text, or an empty string if the entire input is
+    considered unsafe. Invisible code points are removed before matching, so a
+    zero-width space inside "Ignore" does not hide the word from the pattern.
     """
     if not prompt:
         return ""
-    prompt = prompt[:_MAX_CUSTOM_PROMPT_CHARS]
-    if _INJECTION_PATTERNS.search(prompt):
-        logger.warning("Prompt injection attempt detected in custom system prompt. Field cleared.")
+    prompt = INVISIBLE_CHARS_RE.sub("", prompt)[:limit]
+    if _OPERATOR_FIELD_PATTERNS.search(prompt):
+        logger.warning("Prompt injection attempt detected in an operator prompt field. Field cleared.")
         return ""
     # Strip control characters and suspicious Unicode that could break prompt boundaries
     prompt = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", prompt)
@@ -3101,6 +3135,7 @@ def _should_skip_bant_extraction(
     current_bant: dict,
     framework_config: dict | None = None,
     is_probe_reply: bool = False,
+    handoff_offered: bool = False,
 ) -> bool:
     """Return True if BANT extraction should be skipped to save LLM cost.
 
@@ -3130,6 +3165,12 @@ def _should_skip_bant_extraction(
     3. All dimensions are already saturated (≥ 20/25); further extraction is
        pointless because the post-process rejects equal-or-lower scores.
     """
+    # The pipeline's own handoff decision, which is wider than the regexes
+    # below: when they miss, an LLM classifier decides, and it reads Hindi and
+    # phrasings nobody wrote a pattern for. Whatever the platform will offer a
+    # human for is not a lead signal.
+    if handoff_offered:
+        return True
     min_len = 2 if is_probe_reply else 10
     if len(question.strip()) < min_len:
         return True
@@ -5012,6 +5053,37 @@ def resolve_name_flow(session, session_id, bot_id, client_id, question, company_
         return (None, None, None, False)
 
 
+#: Owned here, once, for every plan. This rule used to live inside the
+#: qualification section, which is emitted only when qualification is on, so
+#: a Free or Starter bot had no instruction to stop and answered "perfect,
+#: thanks" with a follow-up question.
+_CLOSURE_SECTION = """CLOSURE OVERRIDE (HARD STOP. This rule wins over every other instruction about follow-ups and questions):
+If the visitor's latest message is conversational closure, do NOT ask a qualifying question, suggest a follow-up, or otherwise prolong the exchange. Reply with one short, warm acknowledgment (under 12 words). Then stop. No "quick question:", no "are you leaving because", no "is this for future evaluation". Nothing.
+
+Closure signals include (case-insensitive, partial matches count):
+  "bye", "goodbye", "see you", "later", "ttyl", "ciao"
+  "thanks", "thank you", "thx", "ty", "appreciate it"
+  "got it", "all good", "perfect", "great", "cool", "nice"
+  "i'm good", "im good", "no thanks", "no more questions"
+  "that's all", "thats all", "that's it", "thats it"
+  "done", "i'm done", "im done", "wrapping up"
+  "i got what i wanted", "i got what i needed", "found what i needed"
+
+When ANY of these patterns is present in the visitor's most recent message and the message is not also asking a new question, emit ONLY the acknowledgment. Examples of the correct response shape:
+
+  visitor: "thanks i got what i wanted"
+  you: "Glad I could help. Have a great day."
+
+  visitor: "just bye"
+  you: "Take care."
+
+  visitor: "perfect, thanks"
+  you: "Anytime."
+
+Do NOT append a question of any kind to any of these.
+"""
+
+
 def build_hybrid_prompt(
     client,
     question: str,
@@ -5337,31 +5409,6 @@ RULES:
 5. LEAD QUALIFICATION (ACTIVE & CONVERSATIONAL):
 Your PRIMARY job is answering the visitor's question. Qualification is secondary, but it IS your responsibility to surface it naturally.
 
-CLOSURE OVERRIDE (HARD STOP. This rule wins over everything else in this section):
-If the visitor's latest message is conversational closure, do NOT ask a qualifying question, suggest a follow-up, or otherwise prolong the exchange. Reply with one short, warm acknowledgment (under 12 words). Then stop. No "quick question:", no "are you leaving because", no "is this for future evaluation". Nothing.
-
-Closure signals include (case-insensitive, partial matches count):
-  "bye", "goodbye", "see you", "later", "ttyl", "ciao"
-  "thanks", "thank you", "thx", "ty", "appreciate it"
-  "got it", "all good", "perfect", "great", "cool", "nice"
-  "i'm good", "im good", "no thanks", "no more questions"
-  "that's all", "thats all", "that's it", "thats it"
-  "done", "i'm done", "im done", "wrapping up"
-  "i got what i wanted", "i got what i needed", "found what i needed"
-
-When ANY of these patterns is present in the visitor's most recent message and the message is not also asking a new question, emit ONLY the acknowledgment. Examples of the correct response shape:
-
-  visitor: "thanks i got what i wanted"
-  you: "Glad I could help. Have a great day."
-
-  visitor: "just bye"
-  you: "Take care."
-
-  visitor: "perfect, thanks"
-  you: "Anytime."
-
-Do NOT append a qualifying question to any of these.
-
 {probing_instruction}
 
 UNIVERSAL RULES:
@@ -5369,7 +5416,7 @@ UNIVERSAL RULES:
 - Always answer first, never open with a qualifying question.
 - Never frame it as a survey, checklist, or "quick question about your needs".
 - If the visitor has already volunteered information about a dimension, do NOT ask about it again.
-- The CLOSURE OVERRIDE above always wins. If closure is detected, ALL of these universal rules are suspended in favor of the brief acknowledgment.
+- The closure rule above always wins. If closure is detected, ALL of these universal rules are suspended in favor of the brief acknowledgment.
 - Priority order: {", ".join(d.upper() for d in conversation_order)}
 
 AUTHORITY ACKNOWLEDGMENT (mandatory when the visitor reveals buying power):
@@ -5738,8 +5785,9 @@ MEDIA CARDS:
 
     # Build company context section if a description is available
     company_section = ""
-    if company_description:
-        company_section = f"\n\nCOMPANY CONTEXT:\n{company_description[:500]}"
+    _company_description = _sanitize_system_prompt(company_description or "", limit=_MAX_COMPANY_DESCRIPTION_CHARS)
+    if _company_description:
+        company_section = f"\n\nCOMPANY CONTEXT:\n{_company_description}"
 
     # SERVICES section. When admin has configured a service list, narrow the
     # bot's allowed scope to those services. Each service may carry its own
@@ -6010,7 +6058,8 @@ RULES:
     # message the caller sent, one section away from the stable rules, so ANY
     # turn where BANT state changed (i.e. almost every turn) silently defeated
     # caching for the entire prompt with no test/metric catching it.
-    user_prompt = f"""{qualification_section}
+    user_prompt = f"""{_CLOSURE_SECTION}
+{qualification_section}
 ═══════════════════════════════════════════════════════
 REFERENCE INFORMATION
 ═══════════════════════════════════════════════════════
@@ -6915,7 +6964,18 @@ async def collect_rag_pipeline(client, question: str, **kwargs) -> dict:
         else:
             answer_parts.append(frame)
 
-    payload["answer"] = "".join(answer_parts)
+    # A guard that fired after text had already streamed (prompt leak, output
+    # moderation) could only rewrite the persisted message. The final frame
+    # carries that rewrite, and it wins over the frames the guard could not
+    # recall, so this caller gets what the transcript holds.
+    override = payload.pop("answer_override", None)
+    payload["answer"] = override if override is not None else "".join(answer_parts)
+    if payload.get("generation_interrupted"):
+        # The SSE path keeps ``generation_failed`` false on a mid-stream drop
+        # because the visitor already read the partial. Nobody has read a
+        # byte of this one yet, so a partial is a failure and the route
+        # refunds the credit.
+        payload["generation_failed"] = True
     payload.setdefault("session_id", kwargs.get("session_id", "default_session"))
     payload.setdefault("sources", [])
     return payload
@@ -7640,6 +7700,12 @@ async def rag_pipeline_stream(
                     len(final_results),
                 )
 
+            # The routing decision as made, before generation and the safety
+            # nets rewrite ``suggest_handoff``. This is the extraction skip's
+            # signal: a visitor who asked for a person is not a lead, whatever
+            # language they asked in.
+            _visitor_asked_for_human = bool(suggest_handoff)
+
             # ── Pricing answer gate ──────────────────────────────────────────
             # Runs after retrieval is finalized and BEFORE the CRAG gate, on the
             # finalized chunk list, so it composes with fusion/rerank instead of
@@ -8305,6 +8371,9 @@ async def rag_pipeline_stream(
 
             _stream_error = False
             _leak_aborted = False
+            # Set by the output moderation guard below; True until it says
+            # otherwise, and it is skipped on a leak-abort or a stream error.
+            _answer_safe = True
             # ``chunk_count`` is read after the try/except (line ~4140 for the
             # cache-skip decision), so it MUST be initialized outside the try
             # . Otherwise a rare exception thrown while entering the try
@@ -8787,7 +8856,11 @@ async def rag_pipeline_stream(
                     if is_bant_enabled and (
                         _cta_signal is not None
                         or not _should_skip_bant_extraction(
-                            question, current_bant, bant_config, is_probe_reply=_answers_last_probe
+                            question,
+                            current_bant,
+                            bant_config,
+                            is_probe_reply=_answers_last_probe,
+                            handoff_offered=_visitor_asked_for_human,
                         )
                     ):
                         # Pass bid (id), not the bot ORM object. See the
@@ -8822,6 +8895,19 @@ async def rag_pipeline_stream(
 
                     if bot_msg_id:
                         final_meta["message_id"] = bot_msg_id
+                    if _leak_aborted or not _answer_safe:
+                        # The stream cannot recall bytes it already sent, so
+                        # a leak or moderation hit rewrote only the persisted
+                        # text. Carry that text so ``collect_rag_pipeline``
+                        # (``POST /chat``) returns what the transcript holds,
+                        # not the leaked or unsafe frames.
+                        final_meta["answer_override"] = full_answer
+                    if _stream_error or (_llm_status.get("error") and not _llm_status.get("failed")):
+                        # Distinct from ``generation_failed``: the SSE visitor
+                        # read the partial, so no refund there. A collector
+                        # escalates this to a failure because its caller has
+                        # read nothing yet.
+                        final_meta["generation_interrupted"] = True
                     if suggest_handoff and live_chat_on:
                         final_meta["suggest_handoff"] = True
                     if cta_data:
