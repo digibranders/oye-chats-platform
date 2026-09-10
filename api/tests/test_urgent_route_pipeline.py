@@ -1,11 +1,14 @@
 """The urgent reply is fixed wording, opens the form and alerts the team once per conversation."""
 
+import time
+
 import pytest
 from sqlalchemy import text
 
 from app.db.models import ChatSession, LeadInfo
 from app.db.repository import get_lead_info_by_session
 from app.services import rag_service as rs
+from app.services import urgent_route
 from tests.test_rag_pipeline_defects import (
     _answer_text,
     _doc,
@@ -21,6 +24,30 @@ from tests.test_rag_pipeline_defects import (
 URGENT = "we are under a ransomware attack right now, please help!"
 PUSH_TASK = "task_dispatch_handoff_push"
 TEAM_EMAILS = {"default": ["soc@acme.test"]}
+
+
+class _Classifier:
+    """Stands in for the gate model behind ``urgent_route.is_urgent_incident``."""
+
+    def __init__(self) -> None:
+        self.answer = True
+        self.delay_s = 0.0
+        self.calls: list[str] = []
+
+    def __call__(self, question: str) -> bool:
+        self.calls.append(question)
+        if self.delay_s:
+            time.sleep(self.delay_s)
+        return self.answer
+
+
+@pytest.fixture(autouse=True)
+def classifier(monkeypatch):
+    """No test here reaches a real model. The fake says YES to every message that
+    passes the vocabulary check unless a test says otherwise."""
+    fake = _Classifier()
+    monkeypatch.setattr(urgent_route, "_classify_urgent_incident_raw", fake)
+    return fake
 
 
 @pytest.fixture()
@@ -330,3 +357,105 @@ async def test_a_normal_first_question_still_gets_the_name_question(db, monkeypa
 
     assert rs._is_name_ask_message(_answer_text(frames))
     assert alerts["notify"] == []
+
+
+@pytest.mark.asyncio
+async def test_an_owner_preview_shows_the_urgent_reply_and_pages_no_one(db, monkeypatch, alerts):
+    """An owner typing an incident into the dashboard Preview sees the urgent reply,
+    but the real team gets no inbox notification, email or push."""
+    client = _make_client(db)
+    bot = _make_bot(db, client, live_chat_enabled=True, notification_emails=TEAM_EMAILS)
+    _make_session(db, bot, client, "urgent-preview")
+    _stub_pipeline(monkeypatch, retrieved=(_doc("Acme runs incident response."),), support=True)
+    bot._is_preview = True
+
+    frames = await _drive_stream(bot, URGENT, "urgent-preview")
+
+    assert _answer_text(frames).startswith("This sounds urgent")
+    assert _final_meta(frames)["suggest_handoff"] is True
+    assert alerts["notify"] == [] and alerts["emails"] == [] and alerts["enqueue"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_security_question_the_classifier_rejects_gets_the_normal_answer(db, monkeypatch, alerts, classifier):
+    client = _make_client(db)
+    bot = _make_bot(db, client, live_chat_enabled=True, notification_emails=TEAM_EMAILS)
+    _make_session(db, bot, client, "urgent-rejected")
+    knowledge = "Acme recovers data after ransomware attacks."
+    cap = _stub_pipeline(monkeypatch, chunks=(knowledge,), retrieved=(_doc(knowledge),), support=True)
+    classifier.answer = False
+    question = "can you recover data after a ransomware attack"
+
+    frames = await _drive_stream(bot, question, "urgent-rejected")
+    answer = _answer_text(frames)
+
+    assert classifier.calls == [question]
+    assert knowledge in answer
+    assert "This sounds urgent" not in answer and "flagged" not in answer
+    assert cap["prompts"], "the normal pipeline wrote the answer"
+    assert alerts["notify"] == [] and alerts["emails"] == [] and _push_jobs(alerts) == []
+    assert not _cards_shown(db, "urgent-rejected").get("urgent_notified")
+
+
+@pytest.mark.asyncio
+async def test_a_classifier_that_misses_the_deadline_hands_the_turn_to_the_fallback_rules(
+    db, monkeypatch, alerts, classifier
+):
+    """The late classifier would have said NO; the rules read a first-person
+    report in progress, so the visitor still gets the urgent route."""
+    client = _make_client(db)
+    bot = _make_bot(db, client, live_chat_enabled=True, notification_emails=TEAM_EMAILS)
+    _make_session(db, bot, client, "urgent-timeout")
+    _stub_pipeline(monkeypatch, retrieved=(_doc("Acme runs incident response."),), support=True)
+    monkeypatch.setattr(rs, "_URGENT_INTENT_TIMEOUT_S", 0.05)
+    classifier.answer, classifier.delay_s = False, 0.5
+
+    frames = await _drive_stream(bot, URGENT, "urgent-timeout")
+
+    assert _answer_text(frames).startswith("This sounds urgent")
+    assert classifier.calls == [URGENT]
+    assert len(alerts["notify"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_turn_without_security_words_never_asks_the_classifier(db, monkeypatch, alerts, classifier):
+    client = _make_client(db)
+    bot = _make_bot(db, client, live_chat_enabled=True)
+    _make_session(db, bot, client, "urgent-plain")
+    _stub_pipeline(monkeypatch, retrieved=(_doc("Acme runs incident response."),), support=True)
+
+    frames = await _drive_stream(bot, "I need urgent help, my order hasn't arrived", "urgent-plain")
+
+    assert classifier.calls == []
+    assert "This sounds urgent" not in _answer_text(frames)
+    assert alerts["notify"] == []
+
+
+@pytest.mark.asyncio
+async def test_the_bounded_check_starts_no_thread_without_security_words(monkeypatch):
+    def _must_not_run(_question):
+        raise AssertionError("is_urgent_incident ran for a message with no security words")
+
+    monkeypatch.setattr(urgent_route, "is_urgent_incident", _must_not_run)
+
+    assert await rs._detect_urgent_bounded("urgent help needed, where is my order") is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("question", "expected"), [(URGENT, True), ("is my card data safe if your store gets hacked", False)]
+)
+async def test_the_bounded_check_uses_the_fallback_rules_on_a_timeout(monkeypatch, classifier, question, expected):
+    monkeypatch.setattr(rs, "_URGENT_INTENT_TIMEOUT_S", 0.05)
+    classifier.answer, classifier.delay_s = not expected, 0.5
+
+    assert await rs._detect_urgent_bounded(question) is expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer", [True, False])
+async def test_the_bounded_check_takes_the_classifier_answer_in_time(monkeypatch, classifier, answer):
+    monkeypatch.setattr(rs, "_URGENT_INTENT_TIMEOUT_S", 1.0)
+    classifier.answer = answer
+
+    assert await rs._detect_urgent_bounded("hacked!! pls help") is answer

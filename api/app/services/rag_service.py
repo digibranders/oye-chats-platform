@@ -45,7 +45,7 @@ from app.security.injection_patterns import (
 )
 from app.services import currency_scoring as _currency_scoring
 from app.services import meeting_gate as _meeting_gate
-from app.services import plan_entitlements_service, runtime_config
+from app.services import plan_entitlements_service, runtime_config, urgent_route
 from app.services import pricing_gate as _pricing_gate
 from app.services.email_service import (
     get_notification_recipients,
@@ -83,7 +83,7 @@ from app.services.qualification_service import (
 )
 from app.services.relevance_gate import check_relevance
 from app.services.reranker import RERANK_ENABLED, rerank
-from app.services.urgent_route import emergency_url_from_answer_links, is_urgent_incident, urgent_reply
+from app.services.urgent_route import emergency_url_from_answer_links, urgent_reply
 from app.worker.enqueue import WORKER_ENABLED, enqueue_sync
 
 logger = logging.getLogger(__name__)
@@ -3143,7 +3143,7 @@ def _alert_team_of_urgent_incident(session, bot, client_id: int, session_id: str
     wants_email = bot is not None and bool(getattr(bot, "email_on_handoff", True))
     recipients = get_notification_recipients(bot, "handoff_request") if wants_email else []
     try:
-        lead = get_lead_info_by_session(session, session_id)
+        lead = get_lead_info_by_session(session, session_id, bot_id=bot_id)
     except Exception:  # noqa: BLE001 - a failed lookup leaves the alert anonymous, not unsent
         logger.warning("urgent_incident_lead_lookup_failed | bot=%s session=%s", bot_id, session_id, exc_info=True)
         session.rollback()
@@ -6617,6 +6617,34 @@ async def _detect_handoff_bounded(question: str, last_bot_message: str | None = 
         return detect_handoff_intent_keywords(question)
 
 
+# The urgent-incident classifier has the same shape (a gate-tier YES/NO call) and
+# is awaited before the first frame of the turn, so it gets the same ceiling.
+_URGENT_INTENT_TIMEOUT_S = _HANDOFF_INTENT_TIMEOUT_S
+
+
+async def _detect_urgent_bounded(question: str) -> bool:
+    """Whether the visitor reports an active incident, without blocking the event loop.
+
+    The vocabulary check is pure and cheap, so it runs here: a message without
+    security-incident words costs no thread and no model call. A hit runs
+    ``urgent_route.is_urgent_incident`` (which falls back to its rules on a model
+    error) on a worker thread under ``_URGENT_INTENT_TIMEOUT_S``. A stall uses the
+    fallback rules; the worker thread cannot be interrupted, so its late answer
+    is discarded.
+    """
+    if not urgent_route.might_be_urgent_incident(question):
+        return False
+    task = asyncio.create_task(asyncio.to_thread(urgent_route.is_urgent_incident, question))
+    try:
+        return await asyncio.wait_for(task, timeout=_URGENT_INTENT_TIMEOUT_S)
+    except TimeoutError:
+        logger.warning("Urgent incident classifier exceeded %.1fs. Using the fallback rules", _URGENT_INTENT_TIMEOUT_S)
+        return urgent_route._fallback_is_urgent(question)
+    except Exception as exc:  # noqa: BLE001 - never let the classifier break the turn
+        logger.warning("Urgent incident classifier failed (%s). Using the fallback rules", type(exc).__name__)
+        return urgent_route._fallback_is_urgent(question)
+
+
 def rewrite_query(session_id: str, question: str, history: list) -> str:
     """Rewrite a follow-up question into a standalone search query using conversation history."""
     if not history or len(history) < 2:
@@ -7576,10 +7604,16 @@ async def rag_pipeline_stream(
             # message exists). No by-name opener: "Thanks, Eva!" does not belong
             # above an incident.
             #
-            # English only, like the other deterministic replies. The pattern
-            # runs first so an ordinary turn does not pay for a language check
-            # here as well as the one below.
-            if is_urgent_incident(question) and not _english_judges_bypassed(language, question):
+            # English only, like the other deterministic replies. The vocabulary
+            # check runs first and is pure, so an ordinary turn pays for neither
+            # a language check here nor a model call. Only a message with
+            # security-incident words reaches the classifier, on a worker thread
+            # under a deadline.
+            if (
+                urgent_route.might_be_urgent_incident(question)
+                and not _english_judges_bypassed(language, question)
+                and await _detect_urgent_bounded(question)
+            ):
                 # ``chat_session`` is loaded further down the pipeline, so this
                 # block does its own tenant-scoped lookup (only on an urgent turn).
                 _urgent_filters = [ChatSession.id == session_id]
@@ -7640,7 +7674,12 @@ async def rag_pipeline_stream(
                     # The reply and its flags are committed before the alert,
                     # which commits on its own and rolls back on failure.
                     session.commit()
-                    _alert_team_of_urgent_incident(session, bot, cid, session_id, question)
+                    if _is_preview:
+                        # The owner testing the bot in the dashboard Preview sees
+                        # the reply, but the real team is not paged for it.
+                        logger.info("urgent_incident_alert_skipped_for_preview | bot=%s session=%s", bid, session_id)
+                    else:
+                        _alert_team_of_urgent_incident(session, bot, cid, session_id, question)
                 session.commit()
                 yield _stream_metadata(session_id, [], language)
                 yield _urgent.text

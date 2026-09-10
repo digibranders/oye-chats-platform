@@ -352,9 +352,17 @@ def create_or_update_lead_info(
     return lead
 
 
-def get_lead_info_by_session(session, session_id: str) -> LeadInfo | None:
-    """Get lead info for a session."""
-    return session.execute(select(LeadInfo).where(LeadInfo.session_id == session_id).limit(1)).scalar_one_or_none()
+def get_lead_info_by_session(session, session_id: str, bot_id: int | None = None) -> LeadInfo | None:
+    """Get lead info for a session, scoped to ``bot_id`` when one is given.
+
+    ``lead_info.session_id`` is unique, so the bot filter cannot change which row
+    matches today. It is defence in depth for a caller that knows the bot: it can
+    never read another bot's lead, even if that constraint is relaxed.
+    """
+    stmt = select(LeadInfo).where(LeadInfo.session_id == session_id)
+    if bot_id is not None:
+        stmt = stmt.where(LeadInfo.bot_id == bot_id)
+    return session.execute(stmt.limit(1)).scalar_one_or_none()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
