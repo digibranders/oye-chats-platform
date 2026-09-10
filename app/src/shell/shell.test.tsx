@@ -386,14 +386,14 @@ describe('the command palette', () => {
 
   it('groups its results instead of tagging every row with the group name', () => {
     renderPalette();
-    // Two group headers, in order. The group name used to be stamped on every
+    // Three group headers, in order. The group name used to be stamped on every
     // row instead: twelve chatbots meant eighty-four rows each reading
     // "Chatbots" down the right-hand edge. The palette is portalled, so this
     // reads the document rather than the render container.
     const headers = Array.from(document.body.querySelectorAll('.tracking-eyebrow')).map(
       (node) => node.textContent,
     );
-    expect(headers).toEqual(['Go to', 'Chatbots']);
+    expect(headers).toEqual(['Go to', 'Chatbots', 'Settings']);
   });
 
   it('carries no explanatory sentence per row', () => {

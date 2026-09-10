@@ -682,6 +682,7 @@ const hi = {
     searchChatbotsAndPages: 'चैटबॉट और पेज खोजें',
     selectAChatbot: 'कोई चैटबॉट चुनें',
     sendFeedback: 'प्रतिक्रिया भेजें',
+    settings: 'सेटिंग्स',
     setupComplete: 'सेटअप पूरा',
     severity: 'गंभीरता',
     signOut: 'साइन आउट',
