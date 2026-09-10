@@ -1774,3 +1774,79 @@ def test_evaluate_pricing_gate_returns_empty_chunks_on_every_escalation():
     )
     assert decision.outcome == "escalate_no_content"
     assert decision.chunks == []
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# A second pricing ask in one session
+#
+# Reported from a live bot on 2026-09-10: a visitor asked for pricing twice,
+# four minutes apart, and received the identical escalation sentence and the
+# "Talk to a human" form both times. ``pricing_pivot`` returned one fixed string
+# per branch, so it could not do otherwise. The pipeline now marks the session
+# on the first escalation and passes ``repeat`` on the next, keyed on the session
+# rather than the transcript so a name prefix, a language or an operator turn in
+# between cannot make a repeat look like a first ask.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _paid_bot_with_stale_card(db, *, live_chat_enabled: bool):
+    client = _make_client(db)
+    bot = _make_bot(db, client, live_chat_enabled=live_chat_enabled)
+    _make_document(db, bot, client, _STALE_URL, _STALE_CHUNK)
+    return bot
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pipeline", PIPELINES)
+async def test_a_second_ask_gets_new_words_and_no_second_form(
+    db, pipeline, _stub_outside_world, _stub_generation, _gate_metrics, _no_cag_lite
+):
+    bot = _paid_bot_with_stale_card(db, live_chat_enabled=True)
+    sid = f"repeat-live-{pipeline}"
+
+    first = await _drive(pipeline, bot, "what is your pricing?", sid)
+    again = await _drive(pipeline, bot, "give me pricing for SOC", sid)
+
+    assert [m["reason"] for m in _gate_metrics] == ["escalate_no_url", "escalate_no_url"]
+    assert _stub_generation["prompts"] == [], "neither pivot may be an LLM call"
+    assert first["meta"]["suggest_handoff"] is True
+    assert again["meta"]["suggest_handoff"] is False, "the form must not be offered a second time"
+    assert again["answer"] != first["answer"]
+    # With no form on the second turn the offer lives in the words, and a plain
+    # "yes" only routes to the team when they match this regex.
+    assert rs._HANDOFF_OFFER_RE.search(again["answer"]), again["answer"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pipeline", PIPELINES)
+async def test_a_second_ask_does_not_reopen_the_message_card(
+    db, pipeline, _stub_outside_world, _stub_generation, _gate_metrics, _no_cag_lite
+):
+    bot = _paid_bot_with_stale_card(db, live_chat_enabled=False)
+    sid = f"repeat-card-{pipeline}"
+
+    first = await _drive(pipeline, bot, "what is your pricing?", sid)
+    again = await _drive(pipeline, bot, "how much does it cost?", sid)
+
+    assert first["meta"]["show_leave_message"] is True
+    assert "show_leave_message" not in again["meta"]
+    assert again["meta"]["suggest_handoff"] is False
+    assert again["answer"] != first["answer"]
+    assert rs.LEAVE_MESSAGE_CARD_SENTINEL not in again["answer"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pipeline", PIPELINES)
+async def test_the_repeat_flag_is_per_conversation(
+    db, pipeline, _stub_outside_world, _stub_generation, _gate_metrics, _no_cag_lite
+):
+    """A new visitor, or the same visitor in a new chat, gets the full
+    first-time reply and the form."""
+    bot = _paid_bot_with_stale_card(db, live_chat_enabled=True)
+
+    await _drive(pipeline, bot, "what is your pricing?", f"visitor-a-{pipeline}")
+    await _drive(pipeline, bot, "what is your pricing?", f"visitor-a-{pipeline}")
+    fresh = await _drive(pipeline, bot, "what is your pricing?", f"visitor-b-{pipeline}")
+
+    assert fresh["meta"]["suggest_handoff"] is True
+    assert "best confirmed by the team" in fresh["answer"]

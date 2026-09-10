@@ -1122,7 +1122,9 @@ def _card_already_shown(chat_session, card_key: str) -> bool:
     """Return True if `card_key` has already been surfaced for this session.
 
     Reads ChatSession.inline_cards_shown JSONB. `card_key` values in use:
-    'leave_message', 'meeting', 'team_connect'.
+    'leave_message', 'meeting', 'team_connect', and 'pricing_escalated' (not a
+    card: set when the pricing gate has already escalated this session, so a
+    second ask is not answered with the same words and a second form).
     """
     if chat_session is None:
         return False
@@ -7949,12 +7951,18 @@ async def rag_pipeline_stream(
                     session=session_id,
                     bot_id=bid,
                 )
+                # A second pricing ask in the same session gets different words and
+                # no second form. Keyed on the session rather than read back out of
+                # the transcript, so a name prefix, a language or an operator turn
+                # in between cannot make a repeat look like a first ask.
+                _pricing_repeat = _card_already_shown(chat_session, "pricing_escalated")
                 _pivot = _pricing_gate.pricing_pivot(
                     company_name=_company_name,
                     pricing_url=getattr(bot, "pricing_url", None) if bot else None,
                     support_enabled=_plan_support_allowed,
                     live_chat_enabled=live_chat_on,
                     contact_url=_contact_url,
+                    repeat=_pricing_repeat,
                 )
                 _pivot_text = (
                     _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + _pivot.text
@@ -7987,6 +7995,7 @@ async def rag_pipeline_stream(
                 if _pivot.needs_message_card:
                     _pivot_meta["show_leave_message"] = True
                     _mark_card_shown(chat_session, "leave_message")
+                _mark_card_shown(chat_session, "pricing_escalated")
                 session.commit()
                 yield f"\nFINAL_METADATA:{json.dumps(_pivot_meta)}\n"
                 return
