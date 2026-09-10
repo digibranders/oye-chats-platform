@@ -5143,14 +5143,6 @@ def _last_bot_offered_handoff(history: list) -> bool:
     return False
 
 
-def _last_bot_message(history: list) -> str | None:
-    """The most recent bot (or operator) message, the context the handoff classifier reads."""
-    for message in reversed(history or []):
-        if _msg_role(message) in ("bot", "assistant", "operator"):
-            return _msg_content(message)
-    return None
-
-
 #: Intents whose "answer" is pure social reflex, so replaying them after the
 #: name gate would just greet the visitor twice.
 _SOCIAL_INTENTS = frozenset({"greeting", "ack", "neg_ack"})
@@ -6865,7 +6857,9 @@ def _strip_trailing_question(text: str) -> str:
 
 
 def _last_bot_message(history) -> str:
-    """Text of the most recent bot/assistant/operator turn (or "")."""
+    """Text of the most recent bot/assistant/operator turn (or "").
+
+    Also the context the handoff classifier reads."""
     for message in reversed(history or []):
         if _msg_role(message) in ("bot", "assistant", "operator"):
             return _msg_content(message)
