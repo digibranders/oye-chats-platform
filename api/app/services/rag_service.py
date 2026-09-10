@@ -47,7 +47,7 @@ from app.services import currency_scoring as _currency_scoring
 from app.services import meeting_gate as _meeting_gate
 from app.services import plan_entitlements_service, runtime_config, urgent_route
 from app.services import pricing_gate as _pricing_gate
-from app.services.document_request import document_reply, is_document_request, pick_documents
+from app.services.document_request import asks_for_delivery, document_reply, is_document_request, pick_documents
 from app.services.email_service import (
     get_notification_recipients,
     send_handoff_request_email,
@@ -3216,6 +3216,30 @@ def _qa_cache_lookup(cache_key: str, bot_id: int | None):
     cached = cache_get(cache_key)
     increment_metric_counter("qa_cache_hit" if cached else "qa_cache_miss", bot_id=bot_id)
     return cached
+
+
+def _document_route_applies(question: str, company_name: str | None, judges_bypassed: bool) -> bool:
+    """True when the document-request block below may run for this question.
+
+    A cached answer to "can you send me your brochure?" would be served ahead
+    of the document-request block and the block would never run, so both the
+    QA-cache skip and the block itself call this one function and always
+    agree. A request for a person, or a deal for the company, is left to the
+    handoff reply instead of the document route, and the route (like the
+    gates around it) is English only: a conversation the judges are bypassed
+    for keeps the model.
+
+    Whether a matching file exists is decided further down, inside the block:
+    a document request that turns out to have no exact file may still fall
+    through to the normal pipeline (see ``asks_for_delivery``), so this stays
+    permissive rather than trying to predict that outcome.
+    """
+    return (
+        not judges_bypassed
+        and is_document_request(question)
+        and not detect_handoff_intent_keywords(question)
+        and not detect_company_deal_intent(question, company_name)
+    )
 
 
 def _expand_company_query(question: str, company_name: str | None) -> str:
@@ -7953,13 +7977,18 @@ async def rag_pipeline_stream(
             # A document request is answered from the file catalog further down
             # (see "Document requests"). A cached answer to "can you send me your
             # brochure?" would be served ahead of it and the route would never run,
-            # so it skips the cache on the same condition the route runs on.
+            # so it skips the cache on the same condition (``_document_route_applies``)
+            # the route below is gated on. The route itself may still fall through
+            # to the normal pipeline when the catalog has no exact match and the
+            # visitor never asked for delivery; that refinement is intentionally
+            # NOT part of this skip, so the cache stays off for every such
+            # question and the pipeline, not a stale cached answer, decides.
             if (
                 _cache_key
                 and not _affirmed_handoff
                 and not _gate_may_intercept
                 and not (_prior_turns and _looks_like_follow_up(question))
-                and not (not _judges_bypassed and is_document_request(question))
+                and not _document_route_applies(question, _company_name, _judges_bypassed)
             ):
                 cached_qa = await asyncio.to_thread(_qa_cache_lookup, _cache_key, bid)
                 if cached_qa:
@@ -8547,15 +8576,23 @@ async def rag_pipeline_stream(
             # request for a file off-topic. An explicit request for a person, or a
             # deal for the company, still goes to the handoff reply below. English
             # only, like the gates: the detector and the reply are English.
-            if (
-                not _judges_bypassed
-                and is_document_request(question)
-                and not detect_handoff_intent_keywords(question)
-                and not detect_company_deal_intent(question, _company_name)
-            ):
+            #
+            # Naming a document is not always asking for one to be sent: "do you
+            # have case studies of fintech clients?" on a bot whose case studies
+            # are web pages deserves an answer from those pages, not "I don't have
+            # a downloadable document". So an exact catalog match still answers
+            # here unconditionally, but an inexact or empty pick only answers here
+            # when the question actually asks for delivery (``asks_for_delivery``);
+            # otherwise it falls through to the normal pipeline, where the model
+            # reads the knowledge base and the topical media-card attach further
+            # down can still offer a file.
+            if _document_route_applies(question, _company_name, _judges_bypassed):
                 _pick = pick_documents(
                     question, _company_name, get_bot_media_urls(session, bot_id=bid) if bid is not None else []
                 )
+            else:
+                _pick = None
+            if _pick is not None and ((_pick.docs and _pick.exact) or asks_for_delivery(question)):
                 _safety_net_metric(
                     "document_request",
                     path="stream",

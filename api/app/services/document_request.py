@@ -5,6 +5,13 @@ with the team" and "email me a datasheet" got a message form, on all four
 production bots, including one whose knowledge base holds a catalog of datasheet
 PDFs. The bot cannot send email, so the only honest answer is the file itself.
 
+A question that names documents is not always a request for one to be handed
+over: "do you have case studies of fintech clients?" on a bot whose case
+studies are web pages deserves an answer from those pages, not a file offer.
+``asks_for_delivery`` tells the two apart so the caller can fall through to the
+normal pipeline when the catalog has nothing exact and the visitor never asked
+to be sent anything.
+
 The catalog is ``repository.get_bot_media_urls`` payloads: dicts with a ``files``
 list of ``{"url", "name"}``. Nothing here sends email: the reply points at
 download cards, or offers the team when the bot has no matching file. Pure: no
@@ -47,8 +54,10 @@ _REQUEST_RULES = tuple(
         rf"\b{_CATALOG_VERBS}\b[^.?!]{{0,40}}\bcatalog(?:ue)?s?\b",
         # A document followed by a request word: "is the brochure available?", "case study please".
         rf"\b{_FILE_NOUNS}\b[^.?!]{{0,20}}\b(?:please|pls|available|downloadable|download)\b",
-        # A catalog or pdf followed by a file word: "a product catalogue I can download".
-        r"\b(?:catalog(?:ue)?s?|pdfs?)\b[^.?!]{0,20}\b(?:download(?:able)?|files?)\b",
+        # A catalog followed by "download": "a product catalogue I can download".
+        # Not "pdf": "the pdf file won't open" and "is the catalog file big" are
+        # not requests, and "file(s)" alone is too loose for either noun.
+        r"\bcatalog(?:ue)?s?\b[^.?!]{0,20}\bdownload(?:able)?\b",
         # The whole message names a document: "any whitepapers?", "Brochure?".
         rf"^\s*(?:any|some|a|the|your)?\s*{_FILE_NOUNS}\s*[?.!]*\s*$",
     )
@@ -92,18 +101,23 @@ _KINDS = (
 )
 #: File names that describe the whole company, offered first for a generic ask.
 _PROFILE_RE = re.compile(r"brochure|company[-_ ]?profile|overview|capabilit|corporate", re.IGNORECASE)
-#: Words that say how a document is asked for, never which one.
+#: Words that say how a document is asked for, never which one. Includes
+#: greetings, politeness and filler that name no document either: "thanks!
+#: could you email me the brochure" and "hey guys send me your brochure" must
+#: not treat "thanks" or "guys" as the topic.
 _STOPWORDS = frozenset(
     {
         "the", "and", "for", "with", "our", "your", "you", "can", "could", "would", "will", "should", "please", "pls",
-        "kindly", "get", "give", "want", "need", "have", "any", "some", "this", "that", "these", "those", "what",
+        "plz", "kindly", "get", "give", "want", "need", "have", "any", "some", "this", "that", "these", "those", "what",
         "which", "where", "there", "are", "does", "about", "regarding", "from", "over", "also", "just", "like", "send",
         "share", "email", "mail", "download", "downloadable", "see", "show", "provide", "forward", "available", "copy",
-        "version", "latest", "link", "pdf", "pdfs", "doc", "docx", "file", "files", "document", "documents", "datasheet",
-        "datasheets", "brochure", "brochures", "whitepaper", "whitepapers", "white", "paper", "papers", "case", "study",
-        "studies", "catalog", "catalogs", "catalogue", "catalogues", "deck", "decks", "sheet", "sheets", "data", "spec",
-        "ebook", "ebooks", "one", "pager", "pagers", "profile", "company", "pitch", "sales", "slide", "investor",
-        "product", "products", "info", "information", "details", "more",
+        "version", "latest", "link", "links", "pdf", "pdfs", "doc", "docx", "file", "files", "document", "documents",
+        "datasheet", "datasheets", "brochure", "brochures", "whitepaper", "whitepapers", "white", "paper", "papers",
+        "case", "study", "studies", "catalog", "catalogs", "catalogue", "catalogues", "deck", "decks", "sheet",
+        "sheets", "data", "spec", "ebook", "ebooks", "one", "pager", "pagers", "profile", "company", "pitch", "sales",
+        "slide", "investor", "product", "products", "info", "information", "details", "detail", "more", "thanks",
+        "thank", "thx", "hey", "hello", "hii", "guys", "team", "sir", "madam", "maam", "quick", "quickly", "asap",
+        "again", "bro", "dear", "folks", "everyone",
     }
 )  # fmt: skip
 
@@ -123,6 +137,32 @@ def is_document_request(question: object) -> bool:
     if any(rule.search(question) for rule in _SERVICE_RULES):
         return False
     return any(rule.search(question) for rule in _REQUEST_RULES)
+
+
+#: Verbs that ask for a document to be handed over, not merely mentioned.
+#: "have", "see", "show" and "available" name a document without asking for
+#: delivery ("do you have a brochure?" wants an answer, not necessarily a
+#: file), so they are deliberately absent here even though they count for
+#: ``is_document_request`` above.
+_DELIVERY_VERBS = r"(?:send|share|e-?mail|mail|forward|download|give|get)"
+_DELIVERY_RULES = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        rf"\b{_DELIVERY_VERBS}\b",
+        r"\bcan\s+i\s+have\b",
+        r"\bcould\s+i\s+have\b",
+    )
+)
+
+
+def asks_for_delivery(question: object) -> bool:
+    """True when the visitor asks for a file to be sent or downloaded, not just
+    whether one exists. "do you have", "any", "is there", "see", "show" and
+    "available" ask a question; "send", "share", "email", "download", "give",
+    "get", "can I have" and "could I have" ask for the file itself."""
+    if not isinstance(question, str) or not question.strip():
+        return False
+    return any(rule.search(question) for rule in _DELIVERY_RULES)
 
 
 def _is_file_url(url: object) -> bool:

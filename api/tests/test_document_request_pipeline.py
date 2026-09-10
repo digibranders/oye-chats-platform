@@ -24,7 +24,9 @@ from tests.test_rag_pipeline_defects import (
 
 RED = "https://acme.com/files/Red-Teaming.pdf"
 RED_CASE = "https://acme.com/files/Red-Teaming-Case-Study.pdf"
+PROFILE = "https://acme.com/files/Acme-Company-Profile.pdf"
 CATALOG = [{"files": [{"url": RED, "name": "Red-Teaming.pdf"}]}]
+PROFILE_CATALOG = [{"files": [{"url": PROFILE, "name": "Acme-Company-Profile.pdf"}]}]
 
 
 def _bot(db, session_id, **session_kwargs):
@@ -194,3 +196,75 @@ async def test_a_question_about_making_brochures_reaches_the_model(db, monkeypat
 
     assert len(cap["prompts"]) == 1
     assert "download below" not in _answer_text(frames)
+
+
+@pytest.mark.asyncio
+async def test_a_question_with_no_exact_file_reaches_the_model(db, monkeypatch):
+    """A question about documents is not the same as a request for one. On a
+    bot whose case studies are web pages, not files, "I don't have a
+    downloadable document" would replace a real answer with a refusal."""
+    bot = _bot(db, "docs-10")
+    cap = _stub_pipeline(
+        monkeypatch,
+        retrieved=(_doc("Acme has worked with several fintech clients."),),
+        chunks=("We've worked with several fintech clients.",),
+    )
+    _catalog(monkeypatch, [])
+
+    frames = await _drive_stream(bot, "do you have case studies of fintech clients?", "docs-10")
+
+    assert len(cap["prompts"]) == 1
+    answer = _answer_text(frames)
+    assert "We've worked with several fintech clients." in answer
+    assert "don't have a downloadable document" not in answer
+
+
+@pytest.mark.asyncio
+async def test_a_question_with_an_exact_kind_match_still_gets_the_card(db, monkeypatch):
+    """An inexact/no-match pick falls through to the model, but an exact
+    catalog match (here, by document kind) still answers with the card."""
+    bot = _bot(db, "docs-11")
+    cap = _stub_pipeline(monkeypatch, retrieved=(_doc("Acme is a security company."),))
+    _catalog(monkeypatch, PROFILE_CATALOG)
+
+    frames = await _drive_stream(bot, "do you have a company profile?", "docs-11")
+
+    assert _final_meta(frames)["media_card"]["url"] == PROFILE
+    assert cap["prompts"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_delivery_request_with_no_match_still_gets_the_no_file_offer(db, monkeypatch):
+    bot = _bot(db, "docs-12", inline_cards_shown={"unhelped_streak": 1})
+    cap = _stub_pipeline(monkeypatch, retrieved=(_doc("Acme does red teaming."),), support=True)
+    _catalog(monkeypatch, [])
+
+    frames = await _drive_stream(bot, "can you send me your brochure?", "docs-12")
+
+    answer = _answer_text(frames)
+    assert "connect you with the team" in answer
+    assert cap["prompts"] == []
+    assert "media_card" not in (_final_meta(frames) or {})
+
+
+@pytest.mark.asyncio
+async def test_a_document_request_with_person_words_uses_the_cache(db, monkeypatch):
+    """The cache skip and the document route are gated on the same helper
+    (``_document_route_applies``), so they always agree: a request for a
+    person is left to the handoff, and the cache is not skipped for it."""
+    bot = _bot(db, "docs-13")
+    _stub_pipeline(monkeypatch, retrieved=(_doc("Acme does red teaming."),), support=True)
+    _catalog(monkeypatch, CATALOG)
+    monkeypatch.setattr(rs, "detect_handoff_intent", lambda q, **_k: rs.detect_handoff_intent_keywords(q))
+    lookups = []
+
+    def cache_miss(cache_key, bot_id):
+        lookups.append(cache_key)
+        return None
+
+    monkeypatch.setattr(rs, "_qa_cache_lookup", cache_miss)
+
+    frames = await _drive_stream(bot, "send me the brochure and let me talk to a human", "docs-13")
+
+    assert lookups != []
+    assert "media_card" not in (_final_meta(frames) or {})

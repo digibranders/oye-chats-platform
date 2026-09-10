@@ -7,7 +7,13 @@ four bots, including one with a catalog of datasheets. 0 of 8 passed.
 
 import pytest
 
-from app.services.document_request import DocumentPick, document_reply, is_document_request, pick_documents
+from app.services.document_request import (
+    DocumentPick,
+    asks_for_delivery,
+    document_reply,
+    is_document_request,
+    pick_documents,
+)
 from app.services.intent_service import bot_offers_handoff
 
 SOC = "https://acme.com/files/Datasheet-for-SOC-as-a-Service.pdf"
@@ -87,6 +93,12 @@ def test_document_requests_are_recognised(msg):
         "I want a pdf",
         # The visitor holding the document is not asking for it.
         "I have a question about your brochure",
+        # A pdf mentioned without a sending verb is not a request, even next
+        # to a file word: "download"/"file" only turn a CATALOG into one.
+        "how do I open the pdf file",
+        "do you have pdf files",
+        "the pdf download link is broken",
+        "is the catalog file big",
     ],
 )
 def test_other_questions_are_not(msg):
@@ -126,6 +138,18 @@ def test_a_generic_brochure_request_prefers_the_company_profile():
 
 def test_polite_words_do_not_count_as_a_topic():
     pick = pick_documents("could you share your company profile please", "Acme", CATALOG)
+    assert pick.docs[0]["url"] == PROFILE
+
+
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "thanks! could you email me the brochure",
+        "hey guys send me your brochure",
+    ],
+)
+def test_greetings_and_filler_do_not_count_as_a_topic(msg):
+    pick = pick_documents(msg, "Acme", CATALOG)
     assert pick.docs[0]["url"] == PROFILE
 
 
@@ -189,3 +213,45 @@ def test_an_exact_reply_names_every_file_once_without_links():
     assert "**Datasheet for SOC as a Service**" in reply
     # The cards carry the links; the text does not repeat them.
     assert "https://" not in reply
+
+
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "can you send me your brochure?",
+        "email me a datasheet",
+        "could you share the case study",
+        "please forward the pitch deck",
+        "can you mail the whitepaper",
+        "give me the investor deck",
+        "can I have the brochure",
+        "could I have the datasheet",
+        "can I get the SOC datasheet as pdf",
+        "download the product catalogue",
+    ],
+)
+def test_asks_for_delivery_true(msg):
+    assert asks_for_delivery(msg) is True
+
+
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "do you have case studies of fintech clients?",
+        "do you have a company profile?",
+        "any whitepapers?",
+        "is there a brochure for this product",
+        "can I see the brochure",
+        "show me the catalog",
+        "is the datasheet available?",
+        "what do you document during onboarding",
+        "",
+        "   ",
+    ],
+)
+def test_asks_for_delivery_false(msg):
+    assert asks_for_delivery(msg) is False
+
+
+def test_asks_for_delivery_of_a_non_string_is_false():
+    assert asks_for_delivery(None) is False
