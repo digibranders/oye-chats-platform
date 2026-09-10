@@ -379,6 +379,12 @@ class Bot(Base):
 
     bant_enabled = Column(sqlalchemy.Boolean, default=True, server_default="true", nullable=False)
     bant_config = Column(JSONB, nullable=True)  # per-bot qualification rubric config
+    #: Unused: nothing reads or writes it. It stays mapped because the release
+    #: before this one maps it too, and ``deploy-api.yml`` migrates the schema
+    #: before it restarts the API. Dropping the column here would fail every
+    #: ``SELECT`` on ``bots`` for the old processes in that window, and for
+    #: good if the restart never came. Drop it in the release after this one.
+    qualification_flow = Column(JSONB, nullable=True)
 
     # Admin-defined quotation catalog. An ordered list of billable services
     # the bot can quote a qualified visitor on (Website design, Logo, SEO
@@ -2615,6 +2621,11 @@ class FailedEmail(Base):
     status = Column(Text, nullable=False, server_default="pending", default="pending")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
     replayed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # The one query the purge and an operator view run: pending rows, oldest
+    # first. Declared here so ``alembic check`` sees the index the migration
+    # created; without it the CI drift check reports a ``remove_index``.
+    __table_args__ = (Index("ix_failed_emails_status_created", "status", "created_at"),)
 
 
 # ── Super-admin audit & supporting tables ────────────────────────────────────
