@@ -161,7 +161,9 @@ KNOWN LIMITATIONS (deliberate, revisit with evidence):
 
 from __future__ import annotations
 
+import contextlib
 import re
+from collections import Counter
 from dataclasses import dataclass
 from typing import Literal
 from urllib.parse import urlsplit
@@ -610,6 +612,7 @@ def pricing_pivot(
     live_chat_enabled: bool,
     contact_url: str | None = None,
     repeat: bool = False,
+    subject: str | None = None,
 ) -> PricingPivot:
     """The reply for a pricing question the gate refuses to answer from the KB.
 
@@ -656,8 +659,28 @@ def pricing_pivot(
     ``UnboundLocalError`` instead of a warm bot-only reply. The gate is the thing
     that decides this combination never arrives; the pivot's job is to be correct
     if it does.
+
+    ``subject`` is the service the visitor asked the price OF, as
+    ``pricing_subject`` recovered it ("SOC", "Red Teaming"), or None. With it the
+    reply prices that service at the company ("Pricing for **SOC** at **Acme**")
+    instead of the whole company. Without it every branch is byte-identical to
+    the wording before the argument existed. It is re-validated here, like both
+    URLs, because it is rendered to the visitor and persisted: anything that is
+    not a short run of letters, digits, spaces and hyphens is dropped rather than
+    trusted from the caller.
     """
     cn = f"**{company_name}**" if company_name else "us"
+    subject_text = subject.strip() if isinstance(subject, str) else ""
+    if not _SAFE_SUBJECT_RE.fullmatch(subject_text):
+        subject_text = ""
+    if subject_text:
+        # What is being priced, and the preposition the "figure" sentences need
+        # in front of it. Without a subject both collapse to the old wording.
+        priced = f"**{subject_text}** at {cn}" if company_name else f"**{subject_text}**"
+        figure_of = f"for {priced}"
+    else:
+        priced = cn
+        figure_of = f"from {cn}"
 
     # Both halves of this module must agree on what counts as a usable URL. The
     # gate reaches this pivot on ``escalate_no_url`` precisely BECAUSE
@@ -685,25 +708,25 @@ def pricing_pivot(
             # promises no follow-up.
             if usable_url:
                 return PricingPivot(
-                    text=f"The pricing page is still the most reliable place for a figure from {cn}: {usable_url}",
+                    text=f"The pricing page is still the most reliable place for a figure {figure_of}: {usable_url}",
                     suggest_handoff=False,
                     needs_message_card=False,
                 )
             if usable_contact_url:
                 return PricingPivot(
-                    text=f"For a confirmed figure from {cn}, the contact page is still the way in: {usable_contact_url}",
+                    text=f"For a confirmed figure {figure_of}, the contact page is still the way in: {usable_contact_url}",
                     suggest_handoff=False,
                     needs_message_card=False,
                 )
             return PricingPivot(
-                text=f"I still can't confirm pricing for {cn}, sorry. Is there anything else about {cn} I can help with?",
+                text=f"I still can't confirm pricing for {priced}, sorry. Is there anything else about {cn} I can help with?",
                 suggest_handoff=False,
                 needs_message_card=False,
             )
         if usable_url:
             return PricingPivot(
                 text=(
-                    f"I'd rather not quote a figure I can't confirm for {cn}. The current pricing is here: {usable_url}"
+                    f"I'd rather not quote a figure I can't confirm for {priced}. The current pricing is here: {usable_url}"
                 ),
                 suggest_handoff=False,
                 needs_message_card=False,
@@ -717,13 +740,13 @@ def pricing_pivot(
             # and no form to open, so any wording that implied a reply was coming
             # would be a promise the plan cannot keep.
             return PricingPivot(
-                text=f"I don't have pricing I can confirm for {cn}. You can get in touch here: {usable_contact_url}",
+                text=f"I don't have pricing I can confirm for {priced}. You can get in touch here: {usable_contact_url}",
                 suggest_handoff=False,
                 needs_message_card=False,
             )
         return PricingPivot(
             text=(
-                f"I don't have pricing I can confirm for {cn}. Is there something else about {cn} I can help you with?"
+                f"I don't have pricing I can confirm for {priced}. Is there something else about {cn} I can help you with?"
             ),
             suggest_handoff=False,
             needs_message_card=False,
@@ -737,7 +760,7 @@ def pricing_pivot(
         if live_chat_enabled:
             return PricingPivot(
                 text=(
-                    f"That one still sits with the team, since a figure for {cn} depends on your scope. "
+                    f"That one still sits with the team, since a figure for {priced} depends on your scope. "
                     f"Just say yes and I'll connect you with them."
                 ),
                 suggest_handoff=False,
@@ -745,7 +768,7 @@ def pricing_pivot(
             )
         return PricingPivot(
             text=(
-                f"That one still sits with the team, since a figure for {cn} depends on your scope. "
+                f"That one still sits with the team, since a figure for {priced} depends on your scope. "
                 f"Say yes and you can leave a message for them."
             ),
             suggest_handoff=False,
@@ -755,7 +778,7 @@ def pricing_pivot(
     if live_chat_enabled:
         return PricingPivot(
             text=(
-                f"Pricing for {cn} is best confirmed by the team so you get an "
+                f"Pricing for {priced} is best confirmed by the team so you get an "
                 f"accurate figure. Want me to connect you with them now?"
             ),
             suggest_handoff=True,
@@ -764,12 +787,184 @@ def pricing_pivot(
 
     return PricingPivot(
         text=(
-            f"Pricing for {cn} is best confirmed by the team so you get an "
+            f"Pricing for {priced} is best confirmed by the team so you get an "
             f"accurate figure. I'll open a quick message form so they can get back to you."
         ),
         suggest_handoff=False,
         needs_message_card=True,
     )
+
+
+# ── What the visitor asked the price OF ────────────────────────────────────────
+#
+# Every escalation used to price the whole company. On 2026-09-10 a live bot had
+# answered "pricing of red teaming", "pricing for managed soc" and "soc pricng"
+# with "Pricing for Eventus Security is best confirmed by the team" for two
+# weeks: the visitor named a service and the reply named something else.
+
+#: Words that carry the pricing intent, never the thing priced. They end a
+#: candidate phrase, as the company name does.
+_SUBJECT_PRICE_WORDS = frozenset(
+    {
+        "price", "prices", "priced", "pricing", "pricelist", "cost", "costs", "costing",
+        "fee", "fees", "charge", "charges", "charged", "quotation", "quotations", "quote",
+        "quotes", "rate", "rates", "card", "list", "much", "budget", "estimate", "estimates",
+    }
+)  # fmt: skip
+
+#: Question scaffolding. A subject may not begin or end on one of these, though
+#: one may sit inside it ("SOC as a Service").
+_SUBJECT_FILLER = frozenset(
+    {
+        "a", "an", "the", "of", "for", "on", "in", "to", "at", "as", "and", "or", "with",
+        "about", "abt", "regarding", "re", "i", "iwant", "im", "me", "my", "we", "our", "us",
+        "you", "your", "yours", "u", "ur", "it", "its", "this", "that", "these", "those",
+        "they", "them", "is", "are", "was", "be", "do", "does", "did", "can", "could", "would",
+        "will", "should", "may", "please", "pls", "plz", "what", "whats", "wat", "how", "which",
+        "where", "when", "why", "who", "want", "wanna", "need", "know", "tell", "give", "get",
+        "share", "send", "show", "see", "like", "looking", "interested", "more", "some", "any",
+        "info", "information", "detail", "details", "exactly", "roughly", "approx",
+        "approximately", "current", "latest", "hi", "hello", "hey", "ok", "okay", "so", "just",
+        "also", "then", "now", "there", "here", "teh", "th", "fro", "em", "s",
+    }
+)  # fmt: skip
+
+#: Nouns that name no particular offering. "your services" is the company again,
+#: so a phrase needs at least one word outside this set and the filler.
+_SUBJECT_GENERIC = frozenset(
+    {
+        "service", "services", "product", "products", "plan", "plans", "package", "packages",
+        "solution", "solutions", "offering", "offerings", "subscription", "subscriptions",
+        "option", "options", "tier", "tiers", "one", "ones", "thing", "things", "stuff",
+    }
+)  # fmt: skip
+
+_SUBJECT_MAX_WORDS = 5
+_SUBJECT_MAX_QUESTION_WORDS = 40
+_SUBJECT_MAX_CORPUS_CHARS = 200_000
+_SUBJECT_WORD_RE = re.compile(r"[a-z0-9]+")
+_SUBJECT_URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
+#: What ``pricing_pivot`` will render: a short run of letters, digits, spaces and
+#: hyphens. Anything else is dropped there, whoever computed it.
+_SAFE_SUBJECT_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9 \-]{0,46}[A-Za-z0-9])?")
+
+
+def _company_word_mask(words: list[str], company_name: object) -> list[bool]:
+    """Which question words belong to the company name.
+
+    The full name as a run ("acme cloud"), and its first word on its own
+    ("eventus"), which is how visitors shorten a brand. The other words of the
+    name are NOT dropped one at a time: "Eventus Security" must not make
+    "security" unusable in "pricing for security operations".
+    """
+    mask = [False] * len(words)
+    name = _SUBJECT_WORD_RE.findall(company_name.lower()) if isinstance(company_name, str) else []
+    if not name:
+        return mask
+    n = len(name)
+    for i in range(len(words) - n + 1):
+        if words[i : i + n] == name:
+            for j in range(i, i + n):
+                mask[j] = True
+    for i, word in enumerate(words):
+        if word == name[0]:
+            mask[i] = True
+    return mask
+
+
+def _is_price_word(word: str) -> bool:
+    if word in _SUBJECT_PRICE_WORDS:
+        return True
+    return len(word) >= _NEAR_MISS_MIN_LEN and any(_within_one_edit(word, t) for t in _NEAR_MISS_PRICE_WORDS)
+
+
+def pricing_subject(question: object, company_name: object, chunks: object) -> str | None:
+    """The service a pricing question is about, spelled the way the bot's own
+    content spells it, or None.
+
+    Candidates are runs of the visitor's words between the pricing words and the
+    company name: "iwant to know the soc pricng" leaves "soc". A run must start
+    and end on a content word and hold at least one word that names something
+    more specific than "services". The longest candidate is tried first.
+
+    A candidate counts only when the retrieved ``chunks`` (the same list the gate
+    judged) contain it as a NAME: capitalised in more places than it is written
+    in lower case, and either capitalised past its first letter ("SOC", "Red
+    Teaming") or capitalised more than once; or capitalised at all and also the
+    slug of a page it came from. That is what makes "soc" come back as "SOC" and
+    "managed soc" as "Managed SOC", and what keeps "pricing for my startup" from
+    turning into "Pricing for startup". Occurrences inside URLs do not count.
+
+    Nothing the visitor typed is returned unless the knowledge base already says
+    it, so a reply cannot be made to repeat arbitrary input. English-only, like
+    the detector: the pipeline never escalates a non-English turn.
+    """
+    if not isinstance(question, str) or not question.strip():
+        return None
+    if not isinstance(chunks, (list, tuple)) or not chunks:
+        return None
+
+    texts: list[str] = []
+    slugs: list[str] = []
+    budget = _SUBJECT_MAX_CORPUS_CHARS
+    for chunk in chunks:
+        content = getattr(chunk, "content", None)
+        if isinstance(content, str) and content and budget > 0:
+            texts.append(_SUBJECT_URL_RE.sub(" ", content[:budget]))
+            budget -= len(content)
+        name = getattr(chunk, "document_name", None)
+        if isinstance(name, str):
+            with contextlib.suppress(ValueError):
+                slugs.append(urlsplit(name.strip()).path.lower())
+    corpus = "\n".join(texts)
+    if not corpus.strip():
+        return None
+
+    words = _SUBJECT_WORD_RE.findall(question.lower())[:_SUBJECT_MAX_QUESTION_WORDS]
+    company = _company_word_mask(words, company_name)
+    breaks = [company[i] or _is_price_word(w) for i, w in enumerate(words)]
+
+    candidates: list[tuple[int, int]] = []
+    for start, first in enumerate(words):
+        if breaks[start] or first in _SUBJECT_FILLER:
+            continue
+        for end in range(start, min(start + _SUBJECT_MAX_WORDS, len(words))):
+            if breaks[end]:
+                break
+            last = words[end]
+            if last in _SUBJECT_FILLER:
+                continue
+            span = words[start : end + 1]
+            if all(w in _SUBJECT_FILLER or w in _SUBJECT_GENERIC for w in span):
+                continue
+            candidates.append((start, end))
+    candidates.sort(key=lambda se: (-(se[1] - se[0]), se[0]))
+
+    for start, end in candidates:
+        span = words[start : end + 1]
+        pattern = re.compile(
+            r"(?<![A-Za-z0-9])" + r"[\s\-]+".join(re.escape(w) for w in span) + r"(?![A-Za-z0-9])",
+            re.IGNORECASE,
+        )
+        forms = [re.sub(r"\s+", " ", m.group(0)) for m in pattern.finditer(corpus)]
+        if not forms:
+            continue
+        named = [f for f in forms if any(ch.isupper() for ch in f)]
+        if not named:
+            continue
+        # A capital past the first letter ("SOC", "Red Teaming") is a name on
+        # its own; a lone leading capital ("Startup") could be a heading or a
+        # stray, so it needs repeating. Either way capitals must outnumber
+        # lower case, unless the phrase is the slug of a page it came from.
+        strong = [f for f in named if any(ch.isupper() for ch in f[1:])]
+        slug = "-".join(span)
+        on_a_page = any(re.search(rf"(?:^|[/\-]){re.escape(slug)}(?:[/\-]|$)", path) for path in slugs)
+        if not on_a_page and (len(named) <= len(forms) - len(named) or not (strong or len(named) >= 2)):
+            continue
+        subject = Counter(strong or named).most_common(1)[0][0]
+        if _SAFE_SUBJECT_RE.fullmatch(subject):
+            return subject
+    return None
 
 
 def merge_pricing_smart_link(
