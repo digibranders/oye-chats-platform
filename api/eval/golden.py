@@ -90,8 +90,26 @@ class GoldenCase(BaseModel):
     #: True when the only correct behaviour is to decline, redirect, or ignore
     #: the request (off-topic questions, prompt injection).
     must_refuse: bool = False
+    #: Substrings the answer MUST contain, matched case-insensitively after
+    #: collapsing whitespace. A case that sets this is scored deterministically
+    #: and the LLM judge is never called for it.
+    #:
+    #: This exists because some of the bot's replies are not generated at all.
+    #: ``intent_router`` answers "are you a human", "who made you" and "is this
+    #: recorded" with fixed strings and no retrieval, because an LLM gate once
+    #: classified "hi" as off-topic. Asking a model to grade how well a constant
+    #: is "grounded in the knowledge base" is the wrong instrument, and it
+    #: showed: on two consecutive runs against the same deployed build, the
+    #: identical canned reply to "Who made you?" scored 1.00 and then 0.00. The
+    #: reply says it is built on the OyeChats platform, which is true and is
+    #: named in the reference facts, but is nowhere in the company's knowledge
+    #: base, so the judge could justify either grade and picked one at random.
+    #:
+    #: A constant deserves an assertion. Use this only where the platform owns
+    #: the exact wording; anything the model composes must still be judged.
+    must_contain: list[str] = Field(default_factory=list, max_length=MAX_FACTS)
 
-    @field_validator("history", "expected_facts", "forbidden_claims")
+    @field_validator("history", "expected_facts", "forbidden_claims", "must_contain")
     @classmethod
     def _items_are_non_empty_strings(cls, items: list[str]) -> list[str]:
         cleaned: list[str] = []
@@ -114,12 +132,17 @@ class GoldenCase(BaseModel):
             raise ValueError("an answerable case needs at least one expected fact")
         if self.category == "followup" and not self.history:
             raise ValueError("a followup case needs at least one history turn")
-        for fact in (*self.expected_facts, *self.forbidden_claims):
+        for fact in (*self.expected_facts, *self.forbidden_claims, *self.must_contain):
             if len(fact) > MAX_FACT_CHARS:
                 raise ValueError(
                     f"expected_facts / forbidden_claims entries must be at most {MAX_FACT_CHARS} characters"
                 )
         return self
+
+    @property
+    def is_deterministic(self) -> bool:
+        """True when this case is asserted rather than judged."""
+        return bool(self.must_contain)
 
     @property
     def request_count(self) -> int:

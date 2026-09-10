@@ -257,7 +257,7 @@ def run_case(
     name_flow: bool = True,
 ) -> CaseResult:
     """Converse, judge, and decide one case. Never raises for a per-case failure."""
-    from eval.judge import CaseResult, case_passed, fact_coverage
+    from eval.judge import CaseResult, assert_verdict, case_passed, fact_coverage
 
     result = CaseResult.from_case(case)
     try:
@@ -275,11 +275,16 @@ def run_case(
         result.error = "generation_failed: the API returned its canned LLM-failure message"
         return result
 
-    try:
-        verdict = judge(case, reply.answer)
-    except Exception as exc:  # noqa: BLE001 - a judge failure is reported on the case, not raised
-        result.error = f"judge: {type(exc).__name__}: {exc}"
-        return result
+    if case.is_deterministic:
+        # The platform writes this reply verbatim (see ``GoldenCase.must_contain``).
+        # Asserting it costs no judge call and cannot drift between runs.
+        verdict = assert_verdict(case, reply.answer)
+    else:
+        try:
+            verdict = judge(case, reply.answer)
+        except Exception as exc:  # noqa: BLE001 - a judge failure is reported on the case, not raised
+            result.error = f"judge: {type(exc).__name__}: {exc}"
+            return result
     result.verdict = verdict
     result.coverage = fact_coverage(verdict, case)
     result.passed = case_passed(verdict, grounded_threshold)
