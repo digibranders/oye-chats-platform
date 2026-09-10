@@ -7514,6 +7514,7 @@ async def rag_pipeline_stream(
                     _company_name,
                     support_enabled=_plan_support_allowed,
                     platform_branded=not _branding_removable,
+                    visitor_name=_flow_name,
                 )
             )
             if _intent is not None:
