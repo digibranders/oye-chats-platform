@@ -5705,10 +5705,16 @@ MEDIA CARDS:
     {YOUTUBE_CARD_SENTINEL_PREFIX}VIDEO_ID]      a YouTube thumbnail + title card
     {DOWNLOAD_CARD_SENTINEL_PREFIX}URL|FILENAME] a downloadable file card
 
-  WHEN: the visitor's question is about a subject the AVAILABLE MEDIA catalog
-  below covers, or they explicitly ask to see or download something. The id or
-  URL you emit MUST appear verbatim in that catalog. Never recall one from
-  memory.
+  WHEN: the visitor names a subject the AVAILABLE MEDIA catalog below covers,
+  OR asks to see or download something.
+
+  A topical question counts. They do not have to ask for a file. If they raise
+  a subject and the catalog has an asset on it, that is the moment: emit it.
+  Do NOT hold back waiting for a more explicit ask, and do not hold out for a
+  word-perfect title match. Lean toward emitting on a reasonable one.
+
+  The id or URL you emit MUST appear verbatim in that catalog. Never recall one
+  from memory.
 
   SHAPE (all three parts, in this order, nothing between them):
     one sentence naming what the thing is, ending in a full stop
@@ -5726,8 +5732,13 @@ MEDIA CARDS:
     - asking whether the visitor wants it ("would you like the video?"). The
       card is the offer. Emit it or do not.
     - naming a specific asset while deflecting a question you cannot answer
-    - a card on a refusal, a greeting, or a plain factual answer (hours, price,
-      address). Those are text.
+    - a card on a refusal, a greeting, or a one-line factual lookup (hours,
+      price, address). Those are text. This is about lookups with no matching
+      asset, NOT about topical questions: "tell me about X" with an asset on X
+      gets the card.
+    - a card when the best asset is clearly about a different subject than the
+      one asked about. A weak but plausible overlap is fine to emit; the bar is
+      topical mismatch, not general uncertainty.
 
   The widget writes its own caption above every card, so do not write a lead-in
   sentence for it.
