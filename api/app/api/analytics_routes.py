@@ -20,6 +20,7 @@ from app.db.repository import (
     get_feedback_data,
     get_language_breakdown,
     get_message_activity,
+    get_operator_rated_chats,
     get_operator_ratings_breakdown,
     get_queue_summary,
     get_ratings_summary,
@@ -366,7 +367,13 @@ def _require_workspace_manager(auth: dict) -> None:
 def get_operator_ratings_endpoint(
     bot_id: RowId | None = Query(None),
     days: int | None = Query(None, ge=1, le=365, description="Restrict to conversations started in the last N days"),
-    min_ratings: int = Query(1, ge=1, le=100, description="Drop operators with fewer ratings than this"),
+    month: YearMonth | None = Query(
+        None, description="A calendar month, YYYY-MM, cut in `tz`. Mutually exclusive with `days`."
+    ),
+    tz: str = Query("UTC", max_length=64, description="IANA zone a `month` is cut in (e.g. Asia/Kolkata)"),
+    min_ratings: int = Query(
+        1, ge=0, le=100, description="Drop operators with fewer ratings than this; 0 keeps operators nobody rated"
+    ),
     auth: dict = Depends(get_current_client_or_operator),
 ):
     """Post-chat star ratings grouped by the operator who handled the chat.
@@ -375,19 +382,70 @@ def get_operator_ratings_endpoint(
     carries the rating COUNT beside the average, because an average drawn from
     two conversations is not a judgement anyone should act on and the count is
     what says so.
+
+    ``month`` and ``tz`` serve the downloadable monthly report, which has to
+    mean a calendar month where the reader is rather than a trailing window. A
+    month that is malformed, not yet started, in an unknown zone, or combined
+    with ``days`` is a 422, the status the activity chart gives a bad zone.
     """
     _require_workspace_manager(auth)
     try:
         _verify_bot_ownership(bot_id, auth["client_id"])
         with get_session() as session:
             return get_operator_ratings_breakdown(
-                session, client_id=auth["client_id"], bot_id=bot_id, days=days, min_ratings=min_ratings
+                session,
+                client_id=auth["client_id"],
+                bot_id=bot_id,
+                days=days,
+                min_ratings=min_ratings,
+                month=month,
+                tz=tz,
             )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error fetching operator ratings: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch operator ratings") from e
+
+
+@router.get("/operator-ratings/{operator_id}/chats")
+def get_operator_rated_chats_endpoint(
+    operator_id: RowId,
+    bot_id: RowId | None = Query(None),
+    days: int | None = Query(None, ge=1, le=365, description="Restrict to conversations started in the last N days"),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """One operator's rated chats, worst first: the drill-down under the breakdown.
+
+    Owners and admins only, like the breakdown it expands, and with more reason:
+    it names the visitors. An operator outside the caller's workspace is a 404,
+    not an empty list, so the endpoint cannot be used to probe which ids exist.
+    """
+    _require_workspace_manager(auth)
+    try:
+        _verify_bot_ownership(bot_id, auth["client_id"])
+        with get_session() as session:
+            result = get_operator_rated_chats(
+                session,
+                client_id=auth["client_id"],
+                operator_id=operator_id,
+                bot_id=bot_id,
+                days=days,
+                limit=limit,
+                offset=offset,
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching operator rated chats: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch operator chats") from e
+    if result is None:
+        raise HTTPException(status_code=404, detail="Operator not found")
+    return result
 
 
 @router.get("/resolution-summary")

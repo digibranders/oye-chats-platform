@@ -26,8 +26,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.db.models import Bot, ChatSession, Client, Operator
-from app.db.repository import get_operator_ratings_breakdown
+from app.db.models import Bot, ChatSession, Client, LeadInfo, Operator
+from app.db.repository import get_operator_rated_chats, get_operator_ratings_breakdown
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("DB_URL"),
@@ -288,3 +288,223 @@ def test_the_account_owner_reading_as_a_client_is_allowed(db) -> None:
     )
 
     assert res.status_code == 200
+
+
+# ── Chats handled, per-star counts, and the calendar-month report ────────────
+
+
+def _chat_at(db, bot: Bot, *, sid: str, operator: Operator, created_at: datetime, rating: int | None = None):
+    row = ChatSession(
+        id=sid,
+        client_id=bot.client_id,
+        bot_id=bot.id,
+        created_at=created_at,
+        visitor_rating=rating,
+        assigned_operator_id=operator.id,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def test_handled_counts_every_assigned_chat_whether_or_not_it_was_rated(db) -> None:
+    """A 4.8 from 5 rated chats out of 200 is not a 4.8 from 150 out of 200.
+    ``handled`` is the number that tells them apart."""
+    client = _make_client(db, email="opcsat-handled@e.com")
+    bot = _make_bot(db, client, key="bot-opcsat-handled")
+    ana = _make_operator(db, bot, name="Ana", email="ana-h@e.com")
+
+    _rated(db, bot, sid="h1", rating=5, operator=ana)
+    _rated(db, bot, sid="h2", rating=2, operator=ana)
+    _rated(db, bot, sid="h3", rating=None, operator=ana)
+    _rated(db, bot, sid="h4", rating=None, operator=ana)
+    db.commit()
+
+    [row] = get_operator_ratings_breakdown(db, client_id=client.id, bot_id=bot.id)
+
+    assert row["handled"] == 4
+    assert row["total"] == 2
+    assert row["avg"] == 3.5
+    assert row["stars"] == {"5": 1, "4": 0, "3": 0, "2": 1, "1": 0}
+
+
+def test_min_ratings_zero_keeps_an_operator_who_handled_chats_nobody_rated(db) -> None:
+    """The report exists partly to show exactly this operator. The on-screen
+    ranking, which keeps the default floor of one, still leaves them out."""
+    client = _make_client(db, email="opcsat-unrated@e.com")
+    bot = _make_bot(db, client, key="bot-opcsat-unrated")
+    rated = _make_operator(db, bot, name="Rated", email="rated@e.com")
+    unrated = _make_operator(db, bot, name="Unrated", email="unrated@e.com")
+
+    _rated(db, bot, sid="u1", rating=4, operator=rated)
+    _rated(db, bot, sid="u2", rating=None, operator=unrated)
+    _rated(db, bot, sid="u3", rating=None, operator=unrated)
+    db.commit()
+
+    ranking = get_operator_ratings_breakdown(db, client_id=client.id, bot_id=bot.id)
+    report = get_operator_ratings_breakdown(db, client_id=client.id, bot_id=bot.id, min_ratings=0)
+
+    assert [r["operator_id"] for r in ranking] == [rated.id]
+    assert [r["operator_id"] for r in report] == [rated.id, unrated.id], "operators nobody rated sort last"
+    assert (report[1]["handled"], report[1]["total"], report[1]["avg"]) == (2, 0, None)
+
+
+def test_a_month_is_cut_on_the_calendar_in_the_readers_zone(db) -> None:
+    """August means 1 August 00:00 to 1 September 00:00 where the reader is.
+
+    Three chats sit on month edges, each with a distinct rating so the averages
+    say which ones landed where:
+
+    * 5 stars at 23:30 IST on 31 August (18:00 UTC): August in both zones.
+    * 1 star at 00:30 IST on 1 September (19:00 UTC on 31 August): September
+      in India, still August in UTC.
+    * 3 stars at 00:30 IST on 1 August (19:00 UTC on 31 July): August in
+      India, July in UTC.
+    """
+    client = _make_client(db, email="opcsat-month@e.com")
+    bot = _make_bot(db, client, key="bot-opcsat-month")
+    ana = _make_operator(db, bot, name="Ana", email="ana-m@e.com")
+
+    _chat_at(db, bot, sid="m1", operator=ana, rating=5, created_at=datetime(2025, 8, 31, 18, 0, tzinfo=UTC))
+    _chat_at(db, bot, sid="m2", operator=ana, rating=1, created_at=datetime(2025, 8, 31, 19, 0, tzinfo=UTC))
+    _chat_at(db, bot, sid="m3", operator=ana, rating=3, created_at=datetime(2025, 7, 31, 19, 0, tzinfo=UTC))
+    db.commit()
+
+    def month(value: str, tz: str) -> tuple[int, float]:
+        [row] = get_operator_ratings_breakdown(db, client_id=client.id, bot_id=bot.id, month=value, tz=tz)
+        return row["handled"], row["avg"]
+
+    assert month("2025-08", "Asia/Kolkata") == (2, 4.0), "31 Aug 23:30 and 1 Aug 00:30 IST"
+    assert month("2025-09", "Asia/Kolkata") == (1, 1.0), "1 Sep 00:30 IST belongs to September"
+    assert month("2025-08", "UTC") == (2, 3.0), "in UTC both 31 August chats are August"
+    assert month("2025-07", "UTC") == (1, 3.0), "and 1 Aug 00:30 IST is still July"
+
+
+def test_days_and_month_together_are_refused(db) -> None:
+    with pytest.raises(ValueError, match="either days or month"):
+        get_operator_ratings_breakdown(db, client_id=1, days=30, month="2025-08")
+
+
+@pytest.mark.parametrize(
+    ("month", "tz", "message"),
+    [
+        ("2025-13", "UTC", "YYYY-MM"),
+        ("2025-8", "UTC", "YYYY-MM"),
+        ("25-08", "UTC", "YYYY-MM"),
+        ("2025-08", "Mars/Olympus_Mons", "Unknown timezone"),
+        ("2999-01", "UTC", "has not started"),
+    ],
+)
+def test_a_month_that_cannot_be_reported_on_is_refused(db, month: str, tz: str, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        get_operator_ratings_breakdown(db, client_id=1, month=month, tz=tz)
+
+
+def test_the_route_serves_a_calendar_month_and_refuses_one_it_cannot(db) -> None:
+    client = _make_client(db, email="opcsat-route-month@e.com")
+    bot = _make_bot(db, client, key="bot-opcsat-route-month")
+    lead = _make_operator(db, bot, name="Lead", email="lead-month@e.com", role="owner")
+    _chat_at(db, bot, sid="rm1", operator=lead, rating=4, created_at=datetime(2025, 8, 10, 12, 0, tzinfo=UTC))
+    _chat_at(db, bot, sid="rm2", operator=lead, created_at=datetime(2025, 8, 11, 12, 0, tzinfo=UTC))
+    db.commit()
+    auth = {"type": "client", "entity": client, "client_id": client.id}
+    base = f"/analytics/operator-ratings?bot_id={bot.id}"
+
+    ok = _get_as(db, auth, f"{base}&month=2025-08&tz=Asia/Kolkata&min_ratings=0")
+    assert ok.status_code == 200
+    assert (ok.json()[0]["handled"], ok.json()[0]["total"]) == (2, 1)
+
+    assert _get_as(db, auth, f"{base}&month=2999-01").status_code == 422, "not started yet"
+    assert _get_as(db, auth, f"{base}&month=2025-13").status_code == 422, "no such month"
+    assert _get_as(db, auth, f"{base}&month=2025-08&days=30").status_code == 422, "two windows at once"
+
+
+# ── The drill-down: which chats, and with whom ───────────────────────────────
+
+
+def _lead(db, bot: Bot, chat: ChatSession, *, name: str | None, email: str | None) -> None:
+    db.add(LeadInfo(session_id=chat.id, bot_id=bot.id, name=name, email=email))
+    db.flush()
+
+
+def test_rated_chats_come_worst_first_then_newest_with_the_visitor_named(db) -> None:
+    """A manager expands an operator to read the bad chats, so those lead."""
+    client = _make_client(db, email="opchats-order@e.com")
+    bot = _make_bot(db, client, key="bot-opchats-order")
+    ana = _make_operator(db, bot, name="Ana", email="ana-c@e.com")
+    other = _make_operator(db, bot, name="Other", email="other-c@e.com")
+
+    good_old = _rated(db, bot, sid="oc-1", rating=5, operator=ana, age_days=9)
+    _rated(db, bot, sid="oc-2", rating=1, operator=ana, age_days=8)
+    bad_new = _rated(db, bot, sid="oc-3", rating=1, operator=ana, age_days=2)
+    _rated(db, bot, sid="oc-4", rating=None, operator=ana, age_days=1)
+    _rated(db, bot, sid="oc-5", rating=2, operator=other, age_days=1)
+    _lead(db, bot, bad_new, name="  Priya Sharma ", email="priya@acme.in")
+    _lead(db, bot, good_old, name=None, email="   ")
+    db.commit()
+
+    result = get_operator_rated_chats(db, client_id=client.id, operator_id=ana.id, bot_id=bot.id)
+
+    assert [c["session_id"] for c in result["items"]] == ["oc-3", "oc-2", "oc-1"]
+    assert (result["total"], result["unrated"]) == (3, 1), "oc-4 was handled but never rated"
+    assert (result["items"][0]["visitor_name"], result["items"][0]["visitor_email"]) == (
+        "Priya Sharma",
+        "priya@acme.in",
+    )
+    assert result["items"][1]["visitor_name"] is None, "a visitor who never left details stays anonymous"
+    assert result["items"][2]["visitor_email"] is None, "a blank address is not an address"
+
+
+def test_rated_chats_page_and_honour_the_window(db) -> None:
+    client = _make_client(db, email="opchats-page@e.com")
+    bot = _make_bot(db, client, key="bot-opchats-page")
+    ana = _make_operator(db, bot, name="Ana", email="ana-p@e.com")
+    for i in range(5):
+        _rated(db, bot, sid=f"oc-p{i}", rating=3, operator=ana, age_days=i + 1)
+    _rated(db, bot, sid="oc-p-old", rating=1, operator=ana, age_days=90)
+    db.commit()
+
+    first = get_operator_rated_chats(db, client_id=client.id, operator_id=ana.id, days=30, limit=2)
+    rest = get_operator_rated_chats(db, client_id=client.id, operator_id=ana.id, days=30, limit=2, offset=2)
+    everything = get_operator_rated_chats(db, client_id=client.id, operator_id=ana.id)
+
+    assert first["total"] == 5, "the 90-day-old chat is outside the window"
+    assert [c["session_id"] for c in first["items"]] == ["oc-p0", "oc-p1"]
+    assert [c["session_id"] for c in rest["items"]] == ["oc-p2", "oc-p3"]
+    assert everything["items"][0]["session_id"] == "oc-p-old", "across all time the 1-star chat leads"
+
+
+def test_an_operator_from_another_workspace_is_not_found(db) -> None:
+    """A 404, not an empty list: an empty list would confirm the id exists."""
+    mine = _make_client(db, email="opchats-mine@e.com")
+    theirs = _make_client(db, email="opchats-theirs@e.com")
+    their_bot = _make_bot(db, theirs, key="bot-opchats-theirs")
+    their_op = _make_operator(db, their_bot, name="Theirs", email="theirs-c@e.com")
+    _rated(db, their_bot, sid="oc-x1", rating=1, operator=their_op)
+    db.commit()
+
+    assert get_operator_rated_chats(db, client_id=mine.id, operator_id=their_op.id) is None
+    res = _get_as(
+        db,
+        {"type": "client", "entity": mine, "client_id": mine.id},
+        f"/analytics/operator-ratings/{their_op.id}/chats",
+    )
+    assert res.status_code == 404
+
+
+def test_the_drill_down_is_for_owners_and_admins_only(db) -> None:
+    """It names visitors, so a plain seat is refused just as it is for the ranking."""
+    client = _make_client(db, email="opchats-gate@e.com")
+    bot = _make_bot(db, client, key="bot-opchats-gate")
+    seat = _make_operator(db, bot, name="Seat", email="seat-c@e.com", role="operator")
+    admin = _make_operator(db, bot, name="Admin", email="admin-c@e.com", role="admin")
+    _rated(db, bot, sid="oc-g1", rating=2, operator=seat)
+    db.commit()
+    url = f"/analytics/operator-ratings/{seat.id}/chats?bot_id={bot.id}"
+
+    refused = _get_as(db, {"type": "operator", "entity": seat, "client_id": client.id}, url)
+    allowed = _get_as(db, {"type": "operator", "entity": admin, "client_id": client.id}, url)
+
+    assert refused.status_code == 403
+    assert allowed.status_code == 200
+    assert allowed.json()["items"][0]["session_id"] == "oc-g1"

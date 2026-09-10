@@ -1609,15 +1609,27 @@ export const getRatingsSummary = async (
  * Owners and admins only: the endpoint answers 403 for a plain operator, since
  * this is performance data about named colleagues rather than product
  * analytics. Callers must treat that 403 as "not for you", not as a failure.
+ *
+ * `options.month` (`YYYY-MM`) asks for a calendar month cut in `options.tz`,
+ * the reader's zone unless given, instead of a trailing `days` window. The
+ * endpoint refuses both at once, so a month wins outright. `minRatings: 0`
+ * keeps operators who handled chats nobody rated.
  */
 export const getOperatorRatings = async (
     botId?: number,
     days?: number | null,
+    options: { month?: string; tz?: string; minRatings?: number } = {},
 ): Promise<Array<Record<string, unknown>>> => {
     try {
         const params = new URLSearchParams();
         if (botId) params.set('bot_id', String(botId));
-        if (days) params.set('days', String(days));
+        if (options.month) {
+            params.set('month', options.month);
+            params.set('tz', options.tz || readerTimeZone());
+        } else if (days) {
+            params.set('days', String(days));
+        }
+        if (options.minRatings !== undefined) params.set('min_ratings', String(options.minRatings));
         const qs = params.toString();
         const url = qs ? `/analytics/operator-ratings?${qs}` : '/analytics/operator-ratings';
         const response = await api.get(url);
@@ -1625,6 +1637,32 @@ export const getOperatorRatings = async (
     } catch (error) {
         console.error('API Error fetching operator ratings:', error);
         throw buildApiError(error, 'Failed to load operator ratings');
+    }
+};
+
+/**
+ * One operator's rated chats, worst first: the drill-down under the per-operator
+ * breakdown. Owners and admins only (a 403 otherwise), and an operator outside
+ * the workspace is a 404. `page` is offset paging because the list is ordered
+ * by rating then date, which no id cursor follows.
+ */
+export const getOperatorRatedChats = async (
+    operatorId: number,
+    botId?: number,
+    days?: number | null,
+    page: { limit: number; offset: number } = { limit: 20, offset: 0 },
+): Promise<Record<string, unknown>> => {
+    try {
+        const params = new URLSearchParams();
+        if (botId) params.set('bot_id', String(botId));
+        if (days) params.set('days', String(days));
+        params.set('limit', String(page.limit));
+        params.set('offset', String(page.offset));
+        const response = await api.get(`/analytics/operator-ratings/${operatorId}/chats?${params.toString()}`);
+        return response.data && typeof response.data === 'object' ? response.data : {};
+    } catch (error) {
+        console.error('API Error fetching operator rated chats:', error);
+        throw buildApiError(error, 'Failed to load operator chats');
     }
 };
 

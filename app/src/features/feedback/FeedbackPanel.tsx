@@ -8,23 +8,32 @@ import {
   Card,
   CardBody,
   CardHeader,
+  Disclosure,
   EmptyState,
   ErrorState,
   Grid,
   LoadingBars,
   LoadingRows,
+  Select,
   Stack,
   StatRow,
   Toolbar,
   buttonClass,
   formatNumber,
 } from '../../ui';
+import { downloadCsv } from '../../lib/downloadCsv';
 import { agentPath } from '../../shell/nav';
-import { errorMessage, useLiveSupportRatings, useOperatorRatings } from '../analytics/useAnalyticsData';
+import {
+  errorMessage,
+  useLiveSupportRatings,
+  useOperatorMonthReport,
+  useOperatorRatings,
+} from '../analytics/useAnalyticsData';
 import type { ResolvedRange } from '../analytics/range';
 import { FeedbackFilterTabs } from './FeedbackFilterTabs';
 import { FeedbackList } from './FeedbackList';
 import { FeedbackTrendChart } from './FeedbackTrendChart';
+import { OperatorChats } from './OperatorChats';
 import { TopDownvotedQuestions } from './TopDownvotedQuestions';
 import {
   buildTopDownvoted,
@@ -35,6 +44,12 @@ import {
   filterToWindow,
   normalizeQuestionKey,
 } from './feedback-helpers';
+import {
+  buildOperatorReportCsv,
+  defaultReportMonth,
+  operatorReportFilename,
+  reportMonths,
+} from './operator-report';
 import { type FeedbackFilter } from './types';
 import { useFeedback } from './useFeedback';
 
@@ -47,6 +62,23 @@ import { useFeedback } from './useFeedback';
  * a single bad chat stops dominating the mean.
  */
 const MIN_CONFIDENT_RATINGS = 5;
+
+/**
+ * Where the monthly download is. Shown in a live region, so a screen reader
+ * hears "Downloaded August 2026" instead of a button that quietly re-enables.
+ */
+type ReportStatus =
+  | { kind: 'idle' }
+  | { kind: 'working' }
+  | { kind: 'done' | 'empty' | 'failed'; message: string };
+
+const REPORT_STATUS_CLASS: Record<ReportStatus['kind'], string> = {
+  idle: 'sr-only',
+  working: 'sr-only',
+  done: 'text-caption text-text-secondary',
+  empty: 'text-caption text-text-secondary',
+  failed: 'text-caption text-danger',
+};
 
 export interface FeedbackPanelProps {
   /** The chatbot whose ratings these are. `null` while the agent list resolves. */
@@ -91,7 +123,47 @@ export function FeedbackPanel({ botId, range }: FeedbackPanelProps) {
   const { ratings: liveRatings, loading: liveLoading } = useLiveSupportRatings(botId, range);
   // Per-operator breakdown. `forbidden` is a plain operator being told this is
   // not their view; the section simply does not render for them.
-  const { operators, forbidden: operatorsForbidden } = useOperatorRatings(botId, range);
+  const {
+    operators,
+    ready: operatorsReady,
+    forbidden: operatorsForbidden,
+  } = useOperatorRatings(botId, range);
+  // The monthly report. The month list is built once per mount; rebuilding it
+  // on every render would hand `Select` a new options array each time.
+  const fetchMonthReport = useOperatorMonthReport(botId);
+  const monthOptions = useMemo(() => reportMonths(new Date()), []);
+  const [reportMonth, setReportMonth] = useState(() => defaultReportMonth(new Date()));
+  const [reportStatus, setReportStatus] = useState<ReportStatus>({ kind: 'idle' });
+
+  const chooseReportMonth = (value: string) => {
+    setReportMonth(value);
+    setReportStatus({ kind: 'idle' });
+  };
+
+  const downloadMonthReport = async () => {
+    const label = monthOptions.find((option) => option.value === reportMonth)?.label ?? reportMonth;
+    setReportStatus({ kind: 'working' });
+    try {
+      const rows = await fetchMonthReport(reportMonth);
+      if (rows.length === 0) {
+        setReportStatus({
+          kind: 'empty',
+          message: `No operator handled a chat in ${label}, so there is nothing to download.`,
+        });
+        return;
+      }
+      downloadCsv(buildOperatorReportCsv(rows), operatorReportFilename(reportMonth));
+      setReportStatus({
+        kind: 'done',
+        message: `Downloaded ${label}: ${formatNumber(rows.length)} ${rows.length === 1 ? 'operator' : 'operators'}.`,
+      });
+    } catch (err) {
+      setReportStatus({
+        kind: 'failed',
+        message: errorMessage(err, 'Could not prepare the report. Try again.'),
+      });
+    }
+  };
   const [filter, setFilter] = useState<FeedbackFilter>('all');
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [selectedQuestion, setSelectedQuestion] = useState<string | null>(null);
@@ -314,50 +386,101 @@ export function FeedbackPanel({ botId, range }: FeedbackPanelProps) {
             performance data about named people, and an average without its
             sample size invites a judgement the sample cannot support: below
             `MIN_CONFIDENT_RATINGS` the average is muted and labelled rather
-            than printed as if it settled anything. */}
-        {!operatorsForbidden && operators.length > 0 ? (
+            than printed as if it settled anything.
+            Rendered once the endpoint has ANSWERED (`operatorsReady`), not
+            merely while it is not refusing, so it never flashes for the reader
+            it is hidden from. */}
+        {operatorsReady && !operatorsForbidden ? (
           <CardBody>
             <Stack>
-              <p className="text-caption text-text-secondary">By operator</p>
-              {operators.map((op) => {
-                const thin = op.total < MIN_CONFIDENT_RATINGS;
-                return (
-                  <div key={op.operatorId} className="flex items-center gap-3">
-                    <span className="flex min-w-0 flex-1 items-baseline gap-2">
-                      <span className="truncate text-body">{op.name}</span>
-                      {op.disambiguator ? (
-                        <span className="truncate text-caption text-text-tertiary">
-                          {op.disambiguator}
-                        </span>
-                      ) : null}
-                    </span>
-                    <span
-                      className={
-                        thin
-                          ? 'w-16 text-end text-body text-text-tertiary'
-                          : 'w-16 text-end text-body font-medium'
-                      }
-                      title={thin ? 'Too few ratings to draw a conclusion from' : undefined}
-                    >
-                      {op.average !== null ? `${op.average.toFixed(1)} / 5` : '-'}
-                    </span>
-                    <span className="w-24 text-end text-caption text-text-secondary">
-                      {formatNumber(op.total)} rated
-                    </span>
-                    <span className="w-20 text-end text-caption">
-                      {op.unhappy > 0 ? (
-                        <Badge tone="danger">{formatNumber(op.unhappy)} unhappy</Badge>
-                      ) : null}
-                    </span>
-                  </div>
-                );
-              })}
-              {operators.some((op) => op.total < MIN_CONFIDENT_RATINGS) ? (
+              {/* The download is cut on a calendar month, not on the page's
+                  range. "Last 30 days" on 10 September starts on 11 August, and
+                  a file someone attaches to an appraisal has to mean August. So
+                  the month picker drives the download alone and changes nothing
+                  on screen. */}
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="me-auto text-caption text-text-secondary">By operator</p>
+                <Select
+                  label="Report month"
+                  size="sm"
+                  className="w-52"
+                  options={monthOptions}
+                  value={reportMonth}
+                  onValueChange={chooseReportMonth}
+                />
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={reportStatus.kind === 'working'}
+                  onClick={() => void downloadMonthReport()}
+                  iconLeft={<Download aria-hidden />}
+                >
+                  {reportStatus.kind === 'working' ? 'Preparing report' : 'Download report'}
+                </Button>
+              </div>
+              <p role="status" className={REPORT_STATUS_CLASS[reportStatus.kind]}>
+                {'message' in reportStatus ? reportStatus.message : ''}
+              </p>
+              {operators.length > 0 ? (
+                <>
+                  {/* Each row opens onto the chats behind it (`OperatorChats`),
+                      fetched only when opened. The badge sits in `trailing` so
+                      it keeps one column across every row. */}
+                  {operators.map((op) => {
+                    const thin = op.total < MIN_CONFIDENT_RATINGS;
+                    return (
+                      <Disclosure
+                        key={op.operatorId}
+                        regionLabel={`Rated chats handled by ${op.name}`}
+                        summary={
+                          <span className="flex min-w-0 items-center gap-3">
+                            <span className="flex min-w-0 flex-1 items-baseline gap-2">
+                              <span className="truncate text-body">{op.name}</span>
+                              {op.disambiguator ? (
+                                <span className="truncate text-caption text-text-tertiary">
+                                  {op.disambiguator}
+                                </span>
+                              ) : null}
+                            </span>
+                            <span
+                              className={
+                                thin
+                                  ? 'w-16 text-end text-body text-text-tertiary'
+                                  : 'w-16 text-end text-body font-medium'
+                              }
+                              title={thin ? 'Too few ratings to draw a conclusion from' : undefined}
+                            >
+                              {op.average !== null ? `${op.average.toFixed(1)} / 5` : '-'}
+                            </span>
+                            <span className="w-24 text-end text-caption text-text-secondary">
+                              {formatNumber(op.total)} rated
+                            </span>
+                          </span>
+                        }
+                        trailing={
+                          <span className="block w-20 text-end text-caption">
+                            {op.unhappy > 0 ? (
+                              <Badge tone="danger">{formatNumber(op.unhappy)} unhappy</Badge>
+                            ) : null}
+                          </span>
+                        }
+                      >
+                        <OperatorChats botId={botId} operatorId={op.operatorId} range={range} />
+                      </Disclosure>
+                    );
+                  })}
+                  {operators.some((op) => op.total < MIN_CONFIDENT_RATINGS) ? (
+                    <p className="text-caption text-text-tertiary">
+                      Greyed averages come from fewer than {MIN_CONFIDENT_RATINGS} ratings, which is
+                      too small a sample to judge anyone by.
+                    </p>
+                  ) : null}
+                </>
+              ) : (
                 <p className="text-caption text-text-tertiary">
-                  Greyed averages come from fewer than {MIN_CONFIDENT_RATINGS} ratings, which is too
-                  small a sample to judge anyone by.
+                  No operator has been rated in this period yet.
                 </p>
-              ) : null}
+              )}
             </Stack>
           </CardBody>
         ) : null}

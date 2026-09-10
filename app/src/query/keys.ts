@@ -64,6 +64,12 @@ export const keys = {
       ['analytics', 'ratings', 'live', agentId, days] as const,
     operatorRatings: (agentId: number | null, days: number | null) =>
       ['analytics', 'ratings', 'operators', agentId, days] as const,
+    // A calendar month in a named zone rather than a trailing window. "August"
+    // cut in IST and in UTC are different files, so the zone is part of the key.
+    operatorReport: (agentId: number | null, month: string, tz: string) =>
+      ['analytics', 'ratings', 'operators', 'report', agentId, month, tz] as const,
+    operatorChats: (agentId: number | null, operatorId: number, days: number | null) =>
+      ['analytics', 'ratings', 'operators', 'chats', agentId, operatorId, days] as const,
     resolution: (agentId: number | null) => ['analytics', 'resolution', agentId] as const,
     visitors: (agentId: number | null) => ['analytics', 'visitors', agentId] as const,
     byBot: (days: number) => ['analytics', 'by-bot', days] as const,

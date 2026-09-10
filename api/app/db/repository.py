@@ -1168,8 +1168,48 @@ def get_ratings_summary(session, client_id: int = None, bot_id: int = None, days
     }
 
 
+def _calendar_month_window(month: str, tz: str) -> tuple[datetime, datetime]:
+    """The half-open ``[start, end)`` of calendar ``month`` (``YYYY-MM``) in ``tz``.
+
+    A monthly report is read against a calendar, not a trailing window: August
+    means 1 August 00:00 to 1 September 00:00 where the reader is. Cut in UTC
+    instead, an IST workspace would file every chat started before 05:30 on the
+    1st under the previous month, which is exactly the row a manager checks.
+
+    Raises ``ValueError`` for a malformed month, an unknown zone, or a month
+    that has not started yet in ``tz``.
+    """
+    year_text, _, month_text = (month or "").partition("-")
+    well_formed = (
+        len(year_text) == 4
+        and year_text.isdigit()
+        and len(month_text) == 2
+        and month_text.isdigit()
+        and 1 <= int(month_text) <= 12
+    )
+    if not well_formed:
+        raise ValueError(f"month must be YYYY-MM, got {month!r}")
+    try:
+        zone = ZoneInfo(tz)
+    except (KeyError, ValueError) as exc:  # ZoneInfoNotFoundError is a KeyError
+        raise ValueError(f"Unknown timezone: {tz!r}") from exc
+
+    year, mon = int(year_text), int(month_text)
+    start = datetime(year, mon, 1, tzinfo=zone)
+    end = datetime(year + (mon == 12), mon % 12 + 1, 1, tzinfo=zone)
+    if start > datetime.now(zone):
+        raise ValueError(f"month {month} has not started yet")
+    return start, end
+
+
 def get_operator_ratings_breakdown(
-    session, client_id: int = None, bot_id: int = None, days: int = None, min_ratings: int = 1
+    session,
+    client_id: int = None,
+    bot_id: int = None,
+    days: int = None,
+    min_ratings: int = 1,
+    month: str | None = None,
+    tz: str = "UTC",
 ):
     """Post-chat star ratings grouped by the operator who handled the chat.
 
@@ -1178,17 +1218,31 @@ def get_operator_ratings_breakdown(
     answer. Only conversations with an ``assigned_operator_id`` count: a
     bot-only chat has nobody to attribute the score to.
 
-    Returns a list ordered by average DESCENDING, then by volume, so the list
-    reads as a ranking without the caller having to sort. Each row carries
-    ``total`` alongside ``avg`` deliberately: this is performance data about
-    people, and an average is meaningless without the count behind it. One bad
-    chat out of three reads as a damning 2.0 unless the "3" is equally visible,
-    so the count is part of the row rather than a tooltip.
+    Returns a list ordered by average DESCENDING, then by volume, with operators
+    nobody rated at the end, so the list reads as a ranking without the caller
+    having to sort. Each row carries ``total`` alongside ``avg`` deliberately:
+    this is performance data about people, and an average is meaningless
+    without the count behind it. One bad chat out of three reads as a damning
+    2.0 unless the "3" is equally visible, so the count is part of the row
+    rather than a tooltip.
+
+    ``handled`` counts every conversation assigned to the operator in the
+    window, rated or not, beside ``total``, the rated ones. The pair is the
+    response rate a bare average hides: a 4.8 from 5 rated chats out of 200 and
+    a 4.8 from 150 out of 200 are different stories. Attribution follows
+    ``assigned_operator_id``, so a chat counts for whoever it is assigned to
+    now. ``stars`` carries the count at each level for the downloadable report.
 
     ``min_ratings`` drops operators below a volume floor rather than publishing
     a confident-looking figure drawn from one or two conversations. It defaults
-    to 1 (show everyone who has any rating at all) so the caller decides the
-    policy; the UI passes a higher floor.
+    to 1, everyone with any rating at all. ``0`` also keeps operators who
+    handled chats nobody rated, which the monthly report wants and the
+    on-screen ranking does not.
+
+    The window is either a trailing ``days`` or a calendar ``month``
+    (``YYYY-MM``) cut in ``tz``; asking for both is a ``ValueError``. Either way
+    it is the conversation's START date: there is no rated-at timestamp, so a
+    chat opened on 31 August and rated on 1 September is an August rating.
 
     Operators are joined by id, so a DEACTIVATED operator still appears: their
     past chats happened and excluding them would silently change historical
@@ -1199,42 +1253,127 @@ def get_operator_ratings_breakdown(
     list is a ranking the reader cannot act on. The caller decides whether to
     surface it; the field is always present so it can.
     """
-    sf = _session_owner_filter(bot_id, client_id)
-    time_filter = _session_window_filter(days)
+    if days is not None and month is not None:
+        raise ValueError("Pass either days or month, not both")
 
+    sf = _session_owner_filter(bot_id, client_id)
+    if month is not None:
+        start, end = _calendar_month_window(month, tz)
+        time_filter = [ChatSession.created_at >= start, ChatSession.created_at < end]
+    else:
+        time_filter = _session_window_filter(days)
+
+    rating = ChatSession.visitor_rating
+    star_columns = [func.count(case((rating == star, 1))).label(f"star_{star}") for star in range(1, 6)]
     rows = session.execute(
         select(
             ChatSession.assigned_operator_id.label("operator_id"),
             Operator.name.label("operator_name"),
             Operator.email.label("operator_email"),
-            func.count(ChatSession.id).label("total"),
-            func.avg(ChatSession.visitor_rating).label("avg"),
-            func.count(case((ChatSession.visitor_rating <= 2, 1))).label("unhappy"),
+            func.count(ChatSession.id).label("handled"),
+            func.count(rating).label("total"),
+            func.avg(rating).label("avg"),
+            func.count(case((rating <= 2, 1))).label("unhappy"),
+            *star_columns,
         )
         .join(Operator, Operator.id == ChatSession.assigned_operator_id)
-        .where(
-            sf,
-            ChatSession.visitor_rating.isnot(None),
-            ChatSession.assigned_operator_id.isnot(None),
-            *time_filter,
-        )
+        .where(sf, ChatSession.assigned_operator_id.isnot(None), *time_filter)
         .group_by(ChatSession.assigned_operator_id, Operator.name, Operator.email)
     ).all()
 
+    floor = max(0, min_ratings)
     breakdown = [
         {
             "operator_id": row.operator_id,
             "name": row.operator_name,
             "email": row.operator_email,
+            "handled": int(row.handled or 0),
             "total": int(row.total or 0),
             "avg": round(float(row.avg), 1) if row.avg is not None else None,
             "unhappy": int(row.unhappy or 0),
+            "stars": {str(star): int(getattr(row, f"star_{star}") or 0) for star in range(5, 0, -1)},
         }
         for row in rows
-        if int(row.total or 0) >= max(1, min_ratings)
+        if int(row.total or 0) >= floor
     ]
-    breakdown.sort(key=lambda r: (-(r["avg"] or 0), -r["total"], r["name"] or ""))
+    breakdown.sort(key=lambda r: (r["avg"] is None, -(r["avg"] or 0), -r["total"], -r["handled"], r["name"] or ""))
     return breakdown
+
+
+def get_operator_rated_chats(
+    session,
+    client_id: int,
+    operator_id: int,
+    bot_id: int = None,
+    days: int = None,
+    limit: int = 20,
+    offset: int = 0,
+):
+    """One operator's rated conversations, worst first, for the analytics drill-down.
+
+    The breakdown says an operator has "1 unhappy"; this answers which chat, and
+    with whom, so a manager can open it. Returns ``None`` when the operator is
+    not in ``client_id``'s workspace. The route turns that into a 404 rather
+    than an empty list, because an empty list would confirm the id exists.
+
+    ``items`` holds rated chats ordered by rating ascending, then newest first:
+    a manager expands an operator to read the bad ones. Visitor name and email
+    come from ``LeadInfo`` and are ``None`` for a visitor who never left them.
+    ``total`` is every rated chat in the window, for paging; ``unrated`` counts
+    the chats this operator handled that nobody rated, which the list itself
+    never shows.
+
+    Same window semantics as ``get_operator_ratings_breakdown``: a chat belongs
+    to the window it STARTED in, and to whoever it is assigned to now.
+    """
+    in_workspace = session.execute(
+        select(Operator.id).where(Operator.id == operator_id, Operator.client_id == client_id)
+    ).scalar_one_or_none()
+    if in_workspace is None:
+        return None
+
+    scope = [
+        _session_owner_filter(bot_id, client_id),
+        ChatSession.assigned_operator_id == operator_id,
+        *_session_window_filter(days),
+    ]
+    handled, rated = session.execute(
+        select(func.count(ChatSession.id), func.count(ChatSession.visitor_rating)).where(*scope)
+    ).one()
+
+    rows = session.execute(
+        select(
+            ChatSession.id.label("session_id"),
+            ChatSession.visitor_rating.label("rating"),
+            ChatSession.created_at,
+            LeadInfo.name.label("visitor_name"),
+            LeadInfo.email.label("visitor_email"),
+        )
+        .outerjoin(LeadInfo, LeadInfo.session_id == ChatSession.id)
+        .where(*scope, ChatSession.visitor_rating.isnot(None))
+        .order_by(ChatSession.visitor_rating.asc(), ChatSession.created_at.desc(), ChatSession.id.asc())
+        .limit(limit)
+        .offset(offset)
+    ).all()
+
+    def _present(value: str | None) -> str | None:
+        stripped = (value or "").strip()
+        return stripped or None
+
+    return {
+        "items": [
+            {
+                "session_id": row.session_id,
+                "rating": row.rating,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "visitor_name": _present(row.visitor_name),
+                "visitor_email": _present(row.visitor_email),
+            }
+            for row in rows
+        ],
+        "total": int(rated or 0),
+        "unrated": int((handled or 0) - (rated or 0)),
+    }
 
 
 def get_resolution_summary(session, client_id: int = None, bot_id: int = None, days: int = None):

@@ -5,7 +5,15 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FeedbackPanel } from './FeedbackPanel';
 import { resolveRange } from '../analytics/range';
-import { getFeedbackData, getOperatorRatings, getRatingsSummary } from '../../services/api';
+import {
+  getFeedbackData,
+  getOperatorRatedChats,
+  getOperatorRatings,
+  getRatingsSummary,
+  readerTimeZone,
+} from '../../services/api';
+import { downloadCsv } from '../../lib/downloadCsv';
+import { defaultReportMonth } from './operator-report';
 import type { FeedbackItem } from './types';
 
 /**
@@ -24,7 +32,13 @@ vi.mock('../../services/api', () => ({
   getFeedbackData: vi.fn(),
   getRatingsSummary: vi.fn(),
   getOperatorRatings: vi.fn(),
+  getOperatorRatedChats: vi.fn(),
+  readerTimeZone: vi.fn(),
 }));
+
+// A real download needs a document that can navigate. What these tests care
+// about is the file's CONTENTS, so the last hop is replaced with a recorder.
+vi.mock('../../lib/downloadCsv', () => ({ downloadCsv: vi.fn() }));
 
 const DAY_MS = 86_400_000;
 
@@ -58,6 +72,8 @@ beforeEach(() => {
   // override these.
   vi.mocked(getRatingsSummary).mockResolvedValue({ average: null, total: 0, breakdown: {} });
   vi.mocked(getOperatorRatings).mockResolvedValue([]);
+  vi.mocked(readerTimeZone).mockReturnValue('Asia/Kolkata');
+  vi.mocked(getOperatorRatedChats).mockResolvedValue({ items: [], total: 0, unrated: 0 });
   // Two browser APIs jsdom does not implement, both used by click-to-jump: the
   // scroll itself, and the reduced-motion query that decides whether it
   // animates. Missing environment, not a missing guard — the component is right
@@ -308,5 +324,214 @@ describe('FeedbackPanel — the per-operator breakdown', () => {
       expect(screen.queryByText('By operator')).not.toBeInTheDocument();
     });
     expect(screen.queryByText(/Failed to load operator ratings/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Download report' })).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The monthly report download.
+ *
+ * What goes wrong here is invisible on screen: the file is cut on the wrong
+ * calendar, leaves out the operator nobody rated, or saves an empty sheet that
+ * looks like a broken export. Each test pins one of those.
+ */
+describe('FeedbackPanel: the monthly operator report', () => {
+  const reportRow = (over: Record<string, unknown> = {}) => ({
+    operator_id: 1,
+    name: 'Ana',
+    email: 'ana@example.com',
+    handled: 12,
+    total: 6,
+    avg: 4.5,
+    unhappy: 1,
+    stars: { '5': 4, '4': 1, '3': 0, '2': 1, '1': 0 },
+    ...over,
+  });
+
+  function withLiveRatings() {
+    vi.mocked(getFeedbackData).mockResolvedValue([item()]);
+    vi.mocked(getRatingsSummary).mockResolvedValue({
+      average: 4.2,
+      total: 9,
+      breakdown: { '5': 5, '4': 3, '3': 1, '2': 0, '1': 0 },
+    });
+  }
+
+  it('downloads the last full month in the reader zone, including operators nobody rated', async () => {
+    withLiveRatings();
+    vi.mocked(getOperatorRatings).mockImplementation(async (_botId, _days, options) =>
+      options?.month
+        ? [
+            reportRow(),
+            reportRow({
+              operator_id: 2,
+              name: 'Bo',
+              email: 'bo@example.com',
+              handled: 3,
+              total: 0,
+              avg: null,
+              unhappy: 0,
+              stars: {},
+            }),
+          ]
+        : [reportRow()],
+    );
+    renderPanel();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Download report' }));
+
+    const month = defaultReportMonth(new Date());
+    await waitFor(() => expect(downloadCsv).toHaveBeenCalledTimes(1));
+    expect(getOperatorRatings).toHaveBeenCalledWith(7, null, {
+      month,
+      tz: 'Asia/Kolkata',
+      minRatings: 0,
+    });
+    const [csv, filename] = vi.mocked(downloadCsv).mock.calls[0];
+    expect(filename).toBe(`oyechats-operator-ratings-${month}.csv`);
+    const [header, ana, bo] = csv.split('\n');
+    expect(header).toContain('"Chats handled","Chats rated","Average rating"');
+    expect(ana).toBe('"1","Ana","ana@example.com","12","6","4.5","4","1","0","1","0","1"');
+    expect(bo).toBe('"2","Bo","bo@example.com","3","0","","0","0","0","0","0","0"');
+    expect(await screen.findByText(/Downloaded .+: 2 operators\./)).toBeInTheDocument();
+  });
+
+  it('says there is nothing to download instead of saving an empty sheet', async () => {
+    withLiveRatings();
+    vi.mocked(getOperatorRatings).mockImplementation(async (_botId, _days, options) =>
+      options?.month ? [] : [reportRow()],
+    );
+    renderPanel();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Download report' }));
+
+    expect(await screen.findByText(/nothing to download/i)).toBeInTheDocument();
+    expect(downloadCsv).not.toHaveBeenCalled();
+  });
+
+  it('keeps the download available when the page period has nobody to rank', async () => {
+    // A quiet fortnight on screen says nothing about last month, which is the
+    // file a manager comes for.
+    withLiveRatings();
+    vi.mocked(getOperatorRatings).mockResolvedValue([]);
+    renderPanel();
+
+    expect(await screen.findByText('No operator has been rated in this period yet.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Download report' })).toBeEnabled();
+  });
+
+  it('reports a failed download in words rather than silence', async () => {
+    withLiveRatings();
+    vi.mocked(getOperatorRatings).mockImplementation(async (_botId, _days, options) => {
+      if (options?.month) throw new Error('network down');
+      return [reportRow()];
+    });
+    renderPanel();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Download report' }));
+
+    expect(await screen.findByText(/could not prepare the report|network down/i)).toBeInTheDocument();
+    expect(downloadCsv).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The drill-down under each operator row.
+ *
+ * Pinned: nothing is fetched until someone opens a row, the list keeps the
+ * server's worst-first order, every row links to a conversation that can
+ * actually open, and a visitor who never left a name is not shown as a blank.
+ */
+describe('FeedbackPanel: the chats behind an operator', () => {
+  const LIST_NAME = 'Rated chats, lowest rating first';
+
+  function withOperator() {
+    vi.mocked(getFeedbackData).mockResolvedValue([item()]);
+    vi.mocked(getRatingsSummary).mockResolvedValue({
+      average: 4.2,
+      total: 9,
+      breakdown: { '5': 5, '4': 3, '3': 1, '2': 0, '1': 0 },
+    });
+    vi.mocked(getOperatorRatings).mockResolvedValue([
+      { operator_id: 1, name: 'Ana', email: 'ana@example.com', handled: 9, total: 6, avg: 4.5, unhappy: 1 },
+    ]);
+  }
+
+  it('fetches nothing until the row is opened, then lists the chats worst first', async () => {
+    withOperator();
+    vi.mocked(getOperatorRatedChats).mockResolvedValue({
+      items: [
+        {
+          session_id: 's-1',
+          rating: 1,
+          created_at: '2026-08-28T10:00:00Z',
+          visitor_name: 'Priya Sharma',
+          visitor_email: 'priya@acme.in',
+        },
+        { session_id: 's-2', rating: 5, created_at: '2026-08-24T10:00:00Z', visitor_name: null, visitor_email: null },
+      ],
+      total: 2,
+      unrated: 3,
+    });
+    renderPanel();
+
+    const toggle = await screen.findByRole('button', { name: /^Ana/ });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(getOperatorRatedChats).not.toHaveBeenCalled();
+
+    await userEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(getOperatorRatedChats).toHaveBeenCalledWith(1, 7, 30, { limit: 20, offset: 0 });
+    const list = await screen.findByRole('list', { name: LIST_NAME });
+    const rows = within(list).getAllByRole('listitem');
+    expect(rows[0]).toHaveTextContent('1 star');
+    expect(rows[0]).toHaveTextContent('Priya Sharma');
+    expect(rows[1]).toHaveTextContent('Anonymous visitor');
+    expect(within(rows[0]).getByRole('link', { name: 'View chat with Priya Sharma' })).toHaveAttribute(
+      'href',
+      '/leads?lead=s-1',
+    );
+    expect(screen.getByText("Plus 3 chats that weren't rated.")).toBeInTheDocument();
+  });
+
+  it('pages twenty at a time', async () => {
+    withOperator();
+    vi.mocked(getOperatorRatedChats).mockImplementation(async (_operatorId, _botId, _days, page) => {
+      const offset = page?.offset ?? 0;
+      const count = offset === 0 ? 20 : 3;
+      return {
+        items: Array.from({ length: count }, (_, i) => ({
+          session_id: `s-${offset + i}`,
+          rating: 3,
+          created_at: '2026-08-20T10:00:00Z',
+          visitor_name: `Visitor ${offset + i}`,
+          visitor_email: null,
+        })),
+        total: 23,
+        unrated: 0,
+      };
+    });
+    renderPanel();
+
+    await userEvent.click(await screen.findByRole('button', { name: /^Ana/ }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Show more (3 left)' }));
+
+    expect(getOperatorRatedChats).toHaveBeenLastCalledWith(1, 7, 30, { limit: 20, offset: 20 });
+    const list = screen.getByRole('list', { name: LIST_NAME });
+    await waitFor(() => expect(within(list).getAllByRole('listitem')).toHaveLength(23));
+    expect(screen.queryByRole('button', { name: /Show more/ })).not.toBeInTheDocument();
+  });
+
+  it('says so when the chats cannot be loaded, without collapsing the row', async () => {
+    withOperator();
+    vi.mocked(getOperatorRatedChats).mockRejectedValue(new Error('network down'));
+    renderPanel();
+
+    const toggle = await screen.findByRole('button', { name: /^Ana/ });
+    await userEvent.click(toggle);
+
+    expect(await screen.findByText('Chats could not be loaded')).toBeInTheDocument();
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
   });
 });

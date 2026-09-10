@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useBotContext } from '../../context/BotContext';
 import { useCallback } from 'react';
 import {
@@ -7,11 +7,13 @@ import {
   getLeadStats,
   getLanguageBreakdown,
   getQualificationFunnel,
+  getOperatorRatedChats,
   getOperatorRatings,
   getRatingsSummary,
   getTopQuestions,
   getUnansweredQuestions,
   getVisitorsData,
+  readerTimeZone,
 } from '../../services/api';
 import { keys } from '../../query/keys';
 import {
@@ -190,22 +192,75 @@ export function useUnansweredQuestions(botId: number | null, days: number | null
   };
 }
 
+export type StarLevel = 1 | 2 | 3 | 4 | 5;
+
 export interface OperatorRating {
   operatorId: number;
   name: string;
+  /** The operator's email. The monthly report prints it on every row. */
+  email: string | null;
   /**
    * A second identifier, present only when the name alone cannot tell two rows
    * apart. Operator names are not unique, and a ranking that lists the same
    * name twice cannot be acted on. Email is preferred because it is what an
-   * admin recognises; when two SEATS share one address — the same person added
-   * twice, which happens — even that repeats, so the seat id is the fallback.
+   * admin recognises; when two SEATS share one address (the same person added
+   * twice, which happens) even that repeats, so the seat id is the fallback.
    * Left `null` whenever the name is already unambiguous, so the ordinary case
    * stays a clean list rather than a wall of addresses.
    */
   disambiguator: string | null;
+  /**
+   * Every chat assigned to this operator in the window, rated or not. Without
+   * it a 4.8 from 5 rated chats out of 200 reads exactly like a 4.8 from 150.
+   */
+  handled: number;
+  /** Chats that received a rating: the sample size behind `average`. */
   total: number;
   average: number | null;
   unhappy: number;
+  stars: Record<StarLevel, number>;
+}
+
+/**
+ * Raw `/analytics/operator-ratings` rows, typed, with duplicate names told
+ * apart. One mapper for the on-screen list and the monthly report, so the two
+ * can never read the same payload differently.
+ */
+export function toOperatorRatings(rows: ReadonlyArray<Record<string, unknown>>): OperatorRating[] {
+  const mapped = rows.map((row) => {
+    const rawStars =
+      row.stars !== null && typeof row.stars === 'object' ? (row.stars as Record<string, unknown>) : {};
+    const star = (level: StarLevel): number => Number(rawStars[String(level)] ?? 0);
+    const total = Number(row.total ?? 0);
+    return {
+      operatorId: Number(row.operator_id ?? 0),
+      name: typeof row.name === 'string' && row.name.trim() ? row.name : 'Unnamed operator',
+      email: typeof row.email === 'string' && row.email.trim() ? row.email.trim() : null,
+      handled: Number(row.handled ?? total),
+      total,
+      average: typeof row.avg === 'number' ? row.avg : null,
+      unhappy: Number(row.unhappy ?? 0),
+      stars: { 5: star(5), 4: star(4), 3: star(3), 2: star(2), 1: star(1) },
+    };
+  });
+
+  const pairOf = (name: string, email: string | null): string => JSON.stringify([name, email ?? '']);
+  const seenNames = new Set<string>();
+  const seenPairs = new Set<string>();
+  const repeatedNames = new Set<string>();
+  const repeatedPairs = new Set<string>();
+  for (const row of mapped) {
+    const pair = pairOf(row.name, row.email);
+    if (seenNames.has(row.name)) repeatedNames.add(row.name);
+    if (seenPairs.has(pair)) repeatedPairs.add(pair);
+    seenNames.add(row.name);
+    seenPairs.add(pair);
+  }
+  return mapped.map((row) => {
+    if (!repeatedNames.has(row.name)) return { ...row, disambiguator: null };
+    const stillAmbiguous = !row.email || repeatedPairs.has(pairOf(row.name, row.email));
+    return { ...row, disambiguator: stillAmbiguous ? `#${row.operatorId}` : row.email };
+  });
 }
 
 /**
@@ -215,39 +270,15 @@ export interface OperatorRating {
  * that is an ANSWER rather than a failure: `forbidden` reports it so the panel
  * can omit the section entirely instead of showing an error to someone who was
  * never meant to see the data. React Query is told not to retry it, since a
- * refusal will not change on a second ask.
+ * refusal will not change on a second ask. `ready` is the endpoint having
+ * answered at all: before then `forbidden` is still false, and a panel keyed on
+ * it alone would flash the section for exactly the reader it hides it from.
  */
 export function useOperatorRatings(botId: number | null, range: ResolvedRange) {
   const query = useQuery({
     queryKey: keys.analytics.operatorRatings(botId, range.days),
     queryFn: () => getOperatorRatings(scope(botId), range.days),
-    select: (rows): OperatorRating[] => {
-      const mapped = rows.map((row) => ({
-        operatorId: Number(row.operator_id ?? 0),
-        name: typeof row.name === 'string' && row.name.trim() ? row.name : 'Unnamed operator',
-        email: typeof row.email === 'string' && row.email.trim() ? row.email.trim() : null,
-        total: Number(row.total ?? 0),
-        average: typeof row.avg === 'number' ? row.avg : null,
-        unhappy: Number(row.unhappy ?? 0),
-      }));
-      const repeated = new Set<string>();
-      const repeatedWithEmail = new Set<string>();
-      const seenNames = new Set<string>();
-      const seenPairs = new Set<string>();
-      for (const row of mapped) {
-        const pair = `${row.name}\u0000${row.email ?? ''}`;
-        if (seenNames.has(row.name)) repeated.add(row.name);
-        if (seenPairs.has(pair)) repeatedWithEmail.add(pair);
-        seenNames.add(row.name);
-        seenPairs.add(pair);
-      }
-      return mapped.map(({ email, ...row }) => {
-        if (!repeated.has(row.name)) return { ...row, disambiguator: null };
-        const pair = `${row.name}\u0000${email ?? ''}`;
-        const stillAmbiguous = repeatedWithEmail.has(pair) || !email;
-        return { ...row, disambiguator: stillAmbiguous ? `#${row.operatorId}` : email };
-      });
-    },
+    select: toOperatorRatings,
     enabled: botId != null,
     retry: false,
   });
@@ -255,8 +286,114 @@ export function useOperatorRatings(botId: number | null, range: ResolvedRange) {
   return {
     operators: query.data ?? [],
     loading: query.isPending,
+    ready: query.isSuccess,
     forbidden: status === 403,
     error: status === 403 ? null : query.error,
+  };
+}
+
+/**
+ * One calendar month of per-operator ratings, for the downloadable report.
+ *
+ * Returns a function rather than query state because it runs on a click and
+ * nothing renders its result: it goes straight into a file. It still goes
+ * through the cache, so downloading the same month twice is one request.
+ * `minRatings: 0` keeps operators who handled chats nobody rated, since the
+ * report exists partly to show them. The zone is the reader's, so "August"
+ * starts at their midnight rather than UTC's.
+ */
+export function useOperatorMonthReport(botId: number | null) {
+  const client = useQueryClient();
+  return useCallback(
+    async (month: string): Promise<OperatorRating[]> => {
+      const tz = readerTimeZone();
+      const rows = await client.fetchQuery({
+        queryKey: keys.analytics.operatorReport(botId, month, tz),
+        queryFn: () => getOperatorRatings(scope(botId), null, { month, tz, minRatings: 0 }),
+        staleTime: 60_000,
+        retry: false,
+      });
+      return toOperatorRatings(rows);
+    },
+    [client, botId],
+  );
+}
+
+export interface OperatorRatedChat {
+  sessionId: string;
+  rating: number;
+  createdAt: string | null;
+  /** From the lead record; `null` for a visitor who never gave one. */
+  visitorName: string | null;
+  visitorEmail: string | null;
+}
+
+/** Chats fetched per page when an operator's row is expanded. */
+export const OPERATOR_CHATS_PAGE_SIZE = 20;
+
+interface OperatorChatsPage {
+  items: OperatorRatedChat[];
+  /** Every rated chat in the window, across all pages. */
+  total: number;
+  /** Chats the operator handled that nobody rated; never listed, only counted. */
+  unrated: number;
+}
+
+function toOperatorChatsPage(raw: Record<string, unknown>): OperatorChatsPage {
+  const present = (value: unknown): string | null =>
+    typeof value === 'string' && value.trim() ? value.trim() : null;
+  const rows = Array.isArray(raw.items) ? (raw.items as Array<Record<string, unknown>>) : [];
+  return {
+    items: rows
+      .map((row) => ({
+        sessionId: present(row.session_id) ?? '',
+        rating: Number(row.rating ?? 0),
+        createdAt: present(row.created_at),
+        visitorName: present(row.visitor_name),
+        visitorEmail: present(row.visitor_email),
+      }))
+      .filter((chat) => chat.sessionId !== ''),
+    total: Number(raw.total ?? 0),
+    unrated: Number(raw.unrated ?? 0),
+  };
+}
+
+/**
+ * One operator's rated chats, worst first, a page at a time.
+ *
+ * Mounted only while that operator's row is open (`Disclosure` unmounts its
+ * panel when closed), so a page listing ten operators costs nothing until
+ * someone asks about one. The window is the page's range, the same one the
+ * row's own average was computed over, so the list always adds up to the row.
+ */
+export function useOperatorRatedChats(botId: number | null, operatorId: number, range: ResolvedRange) {
+  const query = useInfiniteQuery({
+    queryKey: keys.analytics.operatorChats(botId, operatorId, range.days),
+    queryFn: ({ pageParam }) =>
+      getOperatorRatedChats(operatorId, scope(botId), range.days, {
+        limit: OPERATOR_CHATS_PAGE_SIZE,
+        offset: pageParam,
+      }).then(toOperatorChatsPage),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, pages) => {
+      const loaded = pages.reduce((sum, page) => sum + page.items.length, 0);
+      return lastPage.items.length > 0 && loaded < lastPage.total ? loaded : undefined;
+    },
+    enabled: botId != null,
+    staleTime: 60_000,
+    retry: false,
+  });
+  const pages = query.data?.pages ?? [];
+  return {
+    chats: pages.flatMap((page) => page.items),
+    total: pages[0]?.total ?? 0,
+    unrated: pages[0]?.unrated ?? 0,
+    loading: query.isPending,
+    error: query.error,
+    hasMore: query.hasNextPage,
+    loadingMore: query.isFetchingNextPage,
+    loadMore: () => void query.fetchNextPage(),
+    retry: () => void query.refetch(),
   };
 }
 
