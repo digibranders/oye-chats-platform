@@ -687,6 +687,7 @@ const en = {
     searchChatbotsAndPages: 'Search chatbots and pages',
     selectAChatbot: 'Select a chatbot',
     sendFeedback: 'Send feedback',
+    settings: 'Settings',
     setupComplete: 'Setup complete',
     severity: 'Severity',
     signOut: 'Sign out',

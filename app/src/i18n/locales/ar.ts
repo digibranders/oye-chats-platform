@@ -685,6 +685,7 @@ const ar = {
     searchChatbotsAndPages: "البحث في روبوتات المحادثة والصفحات",
     selectAChatbot: "اختر روبوت محادثة",
     sendFeedback: "إرسال الملاحظات",
+    settings: "الإعدادات",
     setupComplete: "اكتمل الإعداد",
     severity: "الخطورة",
     signOut: "تسجيل الخروج",

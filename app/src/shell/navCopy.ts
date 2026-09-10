@@ -39,3 +39,21 @@ export function navLabel(label: string): string {
 export function navHint(label: string, hint: string): string {
   return translateNow(`nav.hint.${crumbKey(label)}`) || hint;
 }
+
+/**
+ * A settings-index label, translated.
+ *
+ * Same rule as `navLabel`, applied one level deeper: `SettingItem.label` is a
+ * module constant evaluated before any locale exists, so it is the lookup KEY
+ * and the fallback, never copy translated in place. Its own namespace
+ * (`app.setting.*`) keeps a settings label from colliding with a nav label
+ * that happens to share the same English words.
+ */
+export function settingLabel(label: string): string {
+  return translateNow(`app.setting.${crumbKey(label)}`) || label;
+}
+
+/** The one-line hint under a settings row, keyed off its label. */
+export function settingHint(label: string, hint: string): string {
+  return translateNow(`setting.hint.${crumbKey(label)}`) || hint;
+}

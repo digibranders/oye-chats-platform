@@ -17,6 +17,7 @@ from app.db.session import get_session
 from app.schemas.ws import OPERATOR_FRAMES, VISITOR_FRAMES, parse_frame
 from app.services.language_service import resolve_live_chat_language
 from app.services.live_chat_service import is_client_gone, manager
+from app.services.operator_identity_service import resolve_account_operator
 from app.services.plan_service import get_client_subscription
 from app.services.session_state_machine import InvalidTransitionError, transition_session
 from app.services.translation_service import is_translation_enabled, translate_outgoing
@@ -849,9 +850,12 @@ def _resolve_operator_from_key(
             logger.info("Owner WS refused, workspace not authenticatable: client_id=%s", client.id)
             return None
 
-        operator = session.execute(
-            select(Operator).where(Operator.client_id == client.id, Operator.role == "owner").limit(1)
-        ).scalar_one_or_none()
+        # The same row "Taking chats" and the console's status read use. This took
+        # the first ``role='owner'`` row Postgres returned, which became an
+        # invited member's row once one joined as an owner: the console went live
+        # as that person while its toggle flipped the account's own row. Inactive
+        # rows are included so the refusal below can see them.
+        operator = resolve_account_operator(session, client.id, active_only=False)
 
         if operator is not None and not operator.is_active:
             # Same refusal the ``operator_key`` branch makes above, which this
