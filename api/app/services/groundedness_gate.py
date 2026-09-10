@@ -92,8 +92,10 @@ GROUNDEDNESS_CHUNK_PREVIEW_CHARS: int = max(1, int(os.getenv("GROUNDEDNESS_CHUNK
 # reasoning as the relevance gate's ``GATE_PROMPT_CHAR_BUDGET``: an unranked
 # CAG-lite bundle can be twenty chunks, and at a full preview each that is a
 # five-thousand-token prompt for a check that runs on every answer.
-GROUNDEDNESS_PROMPT_CHAR_BUDGET: int = max(1, int(os.getenv("GROUNDEDNESS_PROMPT_CHAR_BUDGET") or "6000"))
-_MIN_CHUNK_PREVIEW_CHARS = 200
+GROUNDEDNESS_PROMPT_CHAR_BUDGET: int = max(1, int(os.getenv("GROUNDEDNESS_PROMPT_CHAR_BUDGET") or "12000"))
+# The pre-budget preview; a wide bundle never shows less of a chunk than the
+# judge saw before the widening (see ``relevance_gate._MIN_CHUNK_PREVIEW_CHARS``).
+_MIN_CHUNK_PREVIEW_CHARS = 500
 _MAX_ANSWER_PREVIEW = 1500
 _GROUNDEDNESS_LLM_TIMEOUT_S = float(os.getenv("GROUNDEDNESS_LLM_TIMEOUT_S", "3.0"))
 

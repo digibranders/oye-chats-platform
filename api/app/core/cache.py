@@ -26,6 +26,12 @@ PREFIX = "oyechats:"
 # TTL constants (seconds)
 BOT_CONFIG_TTL = 600  # 10 minutes
 QA_RESPONSE_TTL = 3600  # 1 hour
+# Bump whenever the system prompt or the response style changes. The QA cache
+# stores finished answers for ``QA_RESPONSE_TTL``; without this segment in the
+# key, every answer written under the previous prompt kept being served for up
+# to an hour after a prompt deploy. Keys written before the segment existed are
+# the implicit version 1, so 2 is the first value that invalidates them.
+QA_PROMPT_VERSION = 2
 TRANSLATION_TTL = 86400  # 24 hours (Phase 4 operator translation)
 
 
@@ -147,13 +153,17 @@ def qa_response_key(bot_id: int, question_hash: str, lang: str | None = None) ->
     ``lang`` partitions the cache by conversation language for multilingual bots
     so a Hindi question can never be served an English cached answer that hashed
     to the same question bucket. It is passed ONLY when multilingual is enabled
-    for the bot; when it is ``None`` (every bot with the feature off) the key is
-    byte-identical to the pre-multilingual format, so existing entries keep
-    hitting and no bot takes a mass cache miss on deploy.
+    for the bot; when it is ``None`` (every bot with the feature off) the key
+    carries no language segment.
+
+    The ``v{QA_PROMPT_VERSION}`` segment sits right after the bot id so that
+    ``qa_prefix_for_bot`` still reaches every key, and so that a prompt deploy
+    (which bumps the constant) retires the old answers at once instead of
+    serving them until the TTL runs out.
     """
     if lang:
-        return f"{PREFIX}qa:{bot_id}:{lang}:{question_hash}"
-    return f"{PREFIX}qa:{bot_id}:{question_hash}"
+        return f"{PREFIX}qa:{bot_id}:v{QA_PROMPT_VERSION}:{lang}:{question_hash}"
+    return f"{PREFIX}qa:{bot_id}:v{QA_PROMPT_VERSION}:{question_hash}"
 
 
 def translation_key(source_language: str, target_language: str, text: str) -> str:

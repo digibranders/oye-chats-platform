@@ -268,6 +268,47 @@ async def test_the_judge_is_asked_about_the_query_retrieval_ran(
     assert seen.get("kb_version"), "the verdict was cached without a knowledge-base fingerprint"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pipeline", PIPELINES)
+async def test_under_cag_lite_the_judge_is_asked_about_the_rewrite_too(
+    db, monkeypatch, pipeline, _stub_outside_world, _stub_generation
+):
+    """CAG-lite skips retrieval, so ``search_query`` stays the raw question
+    there. The paid rewrite it runs for the pricing gate must also be what the
+    relevance judge is asked about, or "and what about that one?" is judged
+    with no idea what "that one" is."""
+    from app.db.models import Document
+
+    seen: dict = {}
+
+    def _spy(question, chunks, *_a, **kwargs):
+        seen["question"] = question
+        seen["max_chunks"] = kwargs.get("max_chunks")
+        return True, 1.0
+
+    monkeypatch.setattr(rs, "CAG_LITE_THRESHOLD", 20)
+    monkeypatch.setattr(rs, "rewrite_query", lambda _sid, _q, _h: "REWRITTEN QUERY")
+    monkeypatch.setattr(rs, "check_relevance", _spy)
+    bot = _make_bot(db, _make_client(db))
+    for doc in _CHUNKS:
+        db.add(
+            Document(
+                bot_id=bot.id,
+                client_id=bot.client_id,
+                document_name=doc.document_name,
+                file_hash=f"cag-{doc.id}",
+                content=doc.content,
+                embedding=[0.0] * 768,
+            )
+        )
+    db.commit()
+
+    await _drive(pipeline, bot, "and what about that one?", f"relax-cag-rewrite-{pipeline}")
+
+    assert seen.get("max_chunks") == len(_CHUNKS), "the CAG-lite bundle was not judged whole"
+    assert seen.get("question") == "REWRITTEN QUERY"
+
+
 def test_the_metadata_frame_shape_is_unchanged():
     """Guard against the relaxation changing what the widget parses."""
     frame = rs._stream_metadata("sess", [])
@@ -348,3 +389,80 @@ async def test_an_opted_out_bot_with_nothing_retrieved_does_not_invent_a_price(
 
     assert _stub_generation["prompts"] == []
     assert "$" not in answer
+
+
+# ── The live-team promise reads operator presence, not just the clock ────────
+
+_LIVE_PROMISE = "will be with them shortly"
+_OFFLINE_COPY = "the team is offline right now"
+
+
+def _availability(monkeypatch, state):
+    from app.services import live_chat_availability_service as lca
+
+    def _resolver(_bot, _db_session, **_kwargs):
+        return lca.LiveChatAvailability(state=state, suggested_action=lca.SuggestedAction.OFFLINE_FORM, message_key="x")
+
+    monkeypatch.setattr(rs, "resolve_live_chat_state", _resolver)
+
+
+def _live_bot(db, monkeypatch, captured: dict):
+    """Hours open (no schedule means 24/7), live chat on, plan allows it.
+
+    The handoff rules live in the SYSTEM prompt, which the shared generation
+    stub does not capture, so this one records both halves."""
+
+    async def _capture_both(prompt, **kwargs):
+        captured["prompts"].append(str(kwargs.get("system_prompt") or "") + "\n" + prompt)
+        yield "GENERATED ANSWER"
+
+    monkeypatch.setattr(rs, "generate_response_stream", _capture_both)
+    _paid_plan(monkeypatch)
+    monkeypatch.setattr(rs, "check_relevance", lambda *a, **k: (True, 1.0))
+    _retrieval(monkeypatch, _CHUNKS)
+    return _make_bot(db, _make_client(db), live_chat_enabled=True, business_hours=None)
+
+
+@pytest.mark.asyncio
+async def test_nobody_online_means_no_promise_even_inside_hours(db, monkeypatch, _stub_outside_world, _stub_generation):
+    from app.services.live_chat_availability_service import LiveChatState
+
+    _availability(monkeypatch, LiveChatState.ALL_OFFLINE)
+    bot = _live_bot(db, monkeypatch, _stub_generation)
+
+    await _drive("stream", bot, _ON_SCOPE, "live-all-offline")
+
+    prompt = "\n".join(_stub_generation["prompts"])
+    assert prompt, "the question never reached generation"
+    assert _LIVE_PROMISE not in prompt
+    assert _OFFLINE_COPY in prompt
+
+
+@pytest.mark.asyncio
+async def test_an_online_team_keeps_the_promise(db, monkeypatch, _stub_outside_world, _stub_generation):
+    from app.services.live_chat_availability_service import LiveChatState
+
+    _availability(monkeypatch, LiveChatState.AVAILABLE)
+    bot = _live_bot(db, monkeypatch, _stub_generation)
+
+    await _drive("stream", bot, _ON_SCOPE, "live-available")
+
+    prompt = "\n".join(_stub_generation["prompts"])
+    assert _LIVE_PROMISE in prompt
+
+
+@pytest.mark.asyncio
+async def test_a_broken_resolver_falls_back_to_the_clock(db, monkeypatch, _stub_outside_world, _stub_generation):
+    """Presence lives in Redis. When it cannot be read, the turn keeps the
+    hours-only answer it had before rather than going silent on the team."""
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("redis down")
+
+    monkeypatch.setattr(rs, "resolve_live_chat_state", _boom)
+    bot = _live_bot(db, monkeypatch, _stub_generation)
+
+    await _drive("stream", bot, _ON_SCOPE, "live-resolver-broken")
+
+    prompt = "\n".join(_stub_generation["prompts"])
+    assert _LIVE_PROMISE in prompt

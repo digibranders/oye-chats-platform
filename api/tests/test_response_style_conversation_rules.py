@@ -109,3 +109,18 @@ class TestCannedCopyPunctuatesItsQuestions:
 
         self._assert_questions_end_in_a_question_mark(_name_ack_message("Eva", "Acme"))
         self._assert_questions_end_in_a_question_mark(_name_ack_message("Eva", None))
+
+
+class TestComparisonsAreBulletsNotTables:
+    """The widget renders markdown through react-markdown with no remark-gfm,
+    so a table the prompt asked for reaches the visitor as pipe-separated
+    text. The comparison rule asks for bullets instead."""
+
+    def test_no_instruction_mentions_a_table(self):
+        import re
+
+        assert not re.search(r"\btables?\b", RESPONSE_STYLE_BLOCK, re.IGNORECASE)
+
+    def test_the_comparison_rule_asks_for_one_bullet_per_option(self):
+        assert "one bullet per option" in RESPONSE_STYLE_BLOCK
+        assert "bold the option name" in RESPONSE_STYLE_BLOCK

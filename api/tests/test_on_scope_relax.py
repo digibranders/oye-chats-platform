@@ -123,9 +123,13 @@ class TestTheGateCallWiring:
         raise AssertionError(f"{fn.__name__} has no check_relevance call")
 
     def test_each_pipeline_judges_the_rewritten_query(self):
+        """On the retrieval path ``search_query`` IS the rewrite. Under
+        CAG-lite retrieval is skipped and ``search_query`` stays the raw
+        question, so the rewrite paid for the pricing gate
+        (``_gate_search_query``) is what the judge must see there."""
         for fn in PIPELINES:
             args, _kwargs = self._call(fn)
-            assert ast.unparse(args[0]) == "search_query", fn.__name__
+            assert ast.unparse(args[0]) == "_gate_search_query if _use_cag_lite else search_query", fn.__name__
 
     def test_each_pipeline_keys_the_verdict_on_knowledge_state(self):
         for fn in PIPELINES:

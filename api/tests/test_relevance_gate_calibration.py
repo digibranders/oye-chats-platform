@@ -92,6 +92,28 @@ class TestTheJudgePromptIsBudgeted:
 
         assert prompt.count("x" * relevance_gate._MIN_CHUNK_PREVIEW_CHARS) == 20
 
+    def test_a_wide_bundle_never_drops_below_the_old_preview(self):
+        """Before the budget every chunk got 500 characters. Twenty chunks
+        under a 6,000 budget got 300 each, so the budget silently shrank the
+        judge's view below what it had before the CAG-lite widening."""
+        chunks = [_Chunk("x" * 2000) for _ in range(20)]
+        prompt = relevance_gate._build_gate_prompt("q", chunks, max_chunks=20)
+
+        previews = [line.split(": ", 1)[1] for line in prompt.splitlines() if line.startswith("Chunk ")]
+        assert len(previews) == 20
+        assert all(len(p) >= 500 for p in previews), sorted({len(p) for p in previews})
+
+    def test_the_groundedness_judge_keeps_the_same_floor_and_top_five(self):
+        from app.services import groundedness_gate
+
+        wide = _build_groundedness_prompt("q", "a", [_Chunk("x" * 2000) for _ in range(20)], max_chunks=20)
+        previews = [line.split(": ", 1)[1] for line in wide.splitlines() if line.startswith("Chunk ")]
+        assert len(previews) == 20
+        assert all(len(p) >= 500 for p in previews), sorted({len(p) for p in previews})
+
+        top5 = _build_groundedness_prompt("q", "a", [_Chunk("x" * 2000) for _ in range(5)])
+        assert top5.count("x" * groundedness_gate.GROUNDEDNESS_CHUNK_PREVIEW_CHARS) == 5
+
     def test_an_empty_bundle_does_not_divide_by_zero(self):
         assert "Chunk " not in relevance_gate._build_gate_prompt("q", [], max_chunks=0)
 

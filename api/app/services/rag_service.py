@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import contextvars
 import functools
 import hashlib
 import json
@@ -50,7 +51,11 @@ from app.services.email_service import send_qualified_lead_email
 from app.services.groundedness_gate import check_groundedness, should_sample
 from app.services.intent_router import route_intent, strip_greeting_lead
 from app.services.intent_service import detect_handoff_intent, detect_handoff_intent_keywords
-from app.services.live_chat_availability_service import _within_business_hours
+from app.services.live_chat_availability_service import (
+    LiveChatState,
+    _within_business_hours,
+    resolve_live_chat_state,
+)
 from app.services.llm_service import (
     _apply_model_family_kwargs,
     generate_response,
@@ -2900,6 +2905,38 @@ def _answer_is_cacheable(
     return not _answer_mentions_visitor_name(answer, visitor_name)
 
 
+# States in which "a team member will be with you shortly" is a promise the
+# widget can keep: someone is online and the queue has room for one more.
+# ALL_OFFLINE, QUEUE_FULL and NO_OPERATORS all send the visitor to the offline
+# form, the same place OUT_OF_HOURS does.
+_LIVE_TEAM_REACHABLE_STATES = frozenset({LiveChatState.AVAILABLE, LiveChatState.ALL_BUSY})
+
+
+def _live_team_reachable(bot_id: int, within_hours: bool) -> bool:
+    """Whether a live handoff offered on this turn would reach a person.
+
+    Business hours alone decided this, so inside hours with every operator
+    logged out the prompt still promised "shortly" and the widget then showed
+    the offline form. ``resolve_live_chat_state`` already knows ALL_OFFLINE,
+    QUEUE_FULL and ALL_BUSY and is cached for 5s in Redis, so one call per
+    turn is cheap. Runs on a worker thread (it reads Redis and Postgres) and
+    loads the bot in its own session, because the request session is not
+    thread-safe. Fails closed to the hours-only answer: a broken presence
+    store must not silence the team.
+    """
+    if not within_hours:
+        return False
+    try:
+        with get_session() as s:
+            bot = s.get(Bot, bot_id)
+            if bot is None:
+                return within_hours
+            return resolve_live_chat_state(bot, s).state in _LIVE_TEAM_REACHABLE_STATES
+    except Exception:  # noqa: BLE001 - presence is advisory, the clock is the fallback
+        logger.warning("live chat availability lookup failed for bot %s; using business hours", bot_id, exc_info=True)
+        return within_hours
+
+
 def _has_prior_visitor_turns(history: list) -> bool:
     """True when the conversation holds a visitor message BEFORE the current
     one. ``history`` is read after the current question has been persisted, so
@@ -4073,6 +4110,7 @@ def _background_bant_extraction(
 # log line at build time so ``grep media_prompt_version`` in the API logs
 # tells you at a glance whether the running process is on the latest
 # prompt version or a stale hot-reload. Rev history:
+#  11) confirmation-turn and count/list rules restored to the compact block
 #  10 (read-time junk-URL filter so pre-fix DB entries can never leak
 #   9) genericized all worked examples; no per-customer domain vocabulary
 #   8 (bridge sentence must connect asset to visitor's topic + own line
@@ -4083,7 +4121,7 @@ def _background_bant_extraction(
 #   3) engagement posture + confirmation-turn rule
 #   2 (loosened topic-match to reasonable overlap
 #   1) initial media-cards rules
-_MEDIA_PROMPT_VERSION = 10
+_MEDIA_PROMPT_VERSION = 11
 
 
 # ── Visitor name capture ────────────────────────────────────────────────────
@@ -5665,6 +5703,14 @@ MEDIA CARDS:
   The widget writes its own caption above every card, so do not write a lead-in
   sentence for it.
 
+  CONFIRMATION TURN: when your previous reply named a specific file or video
+  and the visitor answers with a bare yes ("yes", "sure", "send it", "download
+  pls"), emit that asset's card now. Do not ask again and do not pick another.
+
+  COUNT/LIST: "how many videos/files do you have", "list your downloads" and
+  the like get a short text summary of the catalog (count plus names),
+  never a single random card.
+
   PRECEDENCE: a booking card or a leave-message card outranks a media card. If
   the turn qualifies for one of those, emit that one and no media card.""".replace(
         "{YOUTUBE_CARD_SENTINEL_PREFIX}",
@@ -6943,8 +6989,12 @@ def rag_pipeline(
     except RuntimeError:
         return asyncio.run(_collect())
 
+    # The private thread starts from an empty context. Run the collector inside
+    # a copy of the caller's, so a ContextVar set on the request (Langfuse
+    # trace, request id) is visible to the pipeline on this branch too.
+    ctx = contextvars.copy_context()
     with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(lambda: asyncio.run(_collect())).result()
+        return pool.submit(ctx.run, asyncio.run, _collect()).result()
 
 
 async def collect_rag_pipeline(client, question: str, **kwargs) -> dict:
@@ -7134,6 +7184,14 @@ async def rag_pipeline_stream(
             # LIVE SUPPORT block promised "a team member will be with you
             # shortly" at any hour, and the widget then showed the offline form.
             _within_hours = _within_business_hours(getattr(bot, "business_hours", None) if bot else None)
+            # The second half of the same promise: hours say the team COULD be
+            # there, presence says whether anyone IS. Only asked when the answer
+            # is not already known from the plan, the toggle and the clock.
+            _team_online = (
+                await asyncio.to_thread(_live_team_reachable, bot.id, _within_hours)
+                if live_chat_on and _within_hours and _has_bot
+                else _within_hours
+            )
             # Whether this workspace paid to remove "Powered by OyeChats". The
             # intent router's canned identity replies name the platform, which a
             # branding-removed customer has bought the right not to show.
@@ -7992,10 +8050,15 @@ async def rag_pipeline_stream(
                 # current documents. Keyword form via ``partial`` because
                 # ``to_thread`` forwards positionally and the argument list has
                 # grown past the point where position is readable.
+                # Under CAG-lite there is no retrieval, so ``search_query`` is
+                # still the raw question; the rewrite that was already paid for
+                # above (``_gate_search_query``) is what the judge must see, or
+                # "and what about that one?" is judged with no referent. On the
+                # retrieval path the two are the same value.
                 _is_relevant, _gate_score = await asyncio.to_thread(
                     functools.partial(
                         check_relevance,
-                        search_query,
+                        _gate_search_query if _use_cag_lite else search_query,
                         final_results,
                         bot_id=bid,
                         client_id=cid,
@@ -8337,7 +8400,7 @@ async def rag_pipeline_stream(
                 bant_enabled=is_bant_enabled,
                 bant_config=bant_config,
                 live_chat_enabled=live_chat_on,
-                within_business_hours=_within_hours,
+                within_business_hours=_team_online,
                 support_enabled=_plan_support_allowed,
                 custom_system_prompt=getattr(bot, "system_prompt", None) if bot else None,
                 brand_tone=getattr(bot, "brand_tone", None) if bot else None,

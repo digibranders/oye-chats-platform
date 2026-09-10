@@ -120,11 +120,13 @@ class TestCacheKeyLanguage:
         assert qa_response_key(7, "hash", "hi") != qa_response_key(7, "hash", "es")
         assert qa_response_key(7, "hash", "hi") != qa_response_key(7, "hash")
 
-    def test_disabled_key_format_unchanged(self):
-        from app.core.cache import qa_response_key
+    def test_disabled_key_carries_no_language_segment(self):
+        """The prompt-version segment is on every key; only the language
+        segment is conditional on multilingual being enabled."""
+        from app.core.cache import QA_PROMPT_VERSION, qa_response_key
 
         assert qa_response_key(7, "hash") == qa_response_key(7, "hash", None)
-        assert qa_response_key(7, "hash") == "oyechats:qa:7:hash"
+        assert qa_response_key(7, "hash") == f"oyechats:qa:7:v{QA_PROMPT_VERSION}:hash"
 
     def test_cache_segment_helper(self):
         assert rs._cache_lang_segment(None) is None

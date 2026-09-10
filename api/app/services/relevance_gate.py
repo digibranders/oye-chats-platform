@@ -124,10 +124,14 @@ GATE_CHUNK_PREVIEW_CHARS: int = max(1, int(os.getenv("GATE_CHUNK_PREVIEW_CHARS")
 # token-constant while still showing every document, which is the thing the
 # CAG-lite widening was for: before it, three of fourteen files were never
 # judged for any question.
-GATE_PROMPT_CHAR_BUDGET: int = max(1, int(os.getenv("GATE_PROMPT_CHAR_BUDGET") or "6000"))
+GATE_PROMPT_CHAR_BUDGET: int = max(1, int(os.getenv("GATE_PROMPT_CHAR_BUDGET") or "12000"))
 # Below this a preview is too short to judge anything from, so a very wide
 # bundle takes fewer characters each rather than every chunk becoming a stub.
-_MIN_CHUNK_PREVIEW_CHARS = 200
+# 500 is what every chunk got before the budget existed: a 6,000 budget over
+# twenty chunks gave 300 each, which was less than the judge had ever seen per
+# chunk, so the widening that was meant to show every document showed less of
+# each. The budget is sized so twenty chunks land exactly on the floor.
+_MIN_CHUNK_PREVIEW_CHARS = 500
 # Hard cap on the gate LLM call. Without this, a stalled Gemini blocks the
 # entire SSE stream for ~30s before the first token reaches the visitor.
 # The existing `except Exception` below fails open on timeout, so a slow

@@ -259,3 +259,26 @@ class TestAskingForAPersonSkipsExtractionWhateverTheWording:
         )
 
         assert len(enqueued) == 1
+
+
+class TestTheRunningLoopBranchKeepsTheCallersContext:
+    """When a loop is already running on the caller's thread the collector
+    runs on a private thread. Submitting a bare lambda there starts from an
+    empty context, so every ContextVar (Langfuse trace, request id) set by
+    the caller was invisible to the pipeline on that branch."""
+
+    @pytest.mark.asyncio
+    async def test_a_contextvar_set_by_the_caller_is_visible_inside(self, monkeypatch):
+        import contextvars
+
+        marker: contextvars.ContextVar[str] = contextvars.ContextVar("contract_marker", default="unset")
+        marker.set("from-the-caller")
+
+        async def _fake_collect(_client, _question, **_kwargs):
+            return {"answer": marker.get(), "session_id": "ctx", "sources": [], "message_id": 1}
+
+        monkeypatch.setattr(rs, "collect_rag_pipeline", _fake_collect)
+
+        result = rs.rag_pipeline(None, "q", session_id="ctx")
+
+        assert result["answer"] == "from-the-caller"

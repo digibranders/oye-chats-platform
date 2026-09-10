@@ -104,7 +104,10 @@ class TestBothPipelinesResolveTheseBeforeBuildingThePrompt:
             assert "_scheduler_ready = _meeting_gate.scheduler_is_configured(bot) and (" in src, fn.__name__
             assert "is_meeting_booking_enabled_for_bot" in src, fn.__name__
 
-    def test_each_resolves_business_hours(self):
+    def test_each_resolves_business_hours_and_presence(self):
+        """Hours are the first half. The second is whether anyone is actually
+        online: ``resolve_live_chat_state`` knows ALL_OFFLINE and QUEUE_FULL,
+        and inside hours with nobody online the promise is just as broken."""
         import inspect
 
         from app.services import rag_service as rs
@@ -112,7 +115,8 @@ class TestBothPipelinesResolveTheseBeforeBuildingThePrompt:
         for fn in (rs.rag_pipeline_stream,):
             src = inspect.getsource(fn)
             assert "_within_hours = _within_business_hours(" in src, fn.__name__
-            assert "within_business_hours=_within_hours" in src, fn.__name__
+            assert "_live_team_reachable" in src, fn.__name__
+            assert "within_business_hours=_team_online" in src, fn.__name__
 
 
 class TestTheMeetingGateReadsThePlan:

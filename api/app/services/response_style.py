@@ -90,8 +90,9 @@ Use markdown formatting:
     bullets, never prose.
   • Keep paragraphs to a maximum of two sentences.
   • Prefer bullets over long paragraphs.
-  • Use tables only when comparing more than two options across
-    consistent dimensions.
+  • Compare options as bullets, one bullet per option, bold the
+    option name. Never lay cells out with pipe characters; the
+    chat window shows them as raw text.
   • Limit lists to the most relevant items.
 
 Use ### headings only when the answer naturally divides into
@@ -191,8 +192,8 @@ When comparing products, plans, features, or options:
 
   • Focus on differences, not shared capabilities.
   • Highlight the decision criteria that actually matter.
-  • Use a table when comparing more than two options across
-    multiple dimensions.
+  • Lay out three or more options as bullets, one bullet per
+    option, bold the option name, differences inlined after it.
   • End with a one-line recommendation when the visitor's
     context makes one obviously better.
 

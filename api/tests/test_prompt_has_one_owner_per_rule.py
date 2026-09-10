@@ -127,3 +127,14 @@ class TestTheMediaRulebookIsBounded:
 
     def test_a_bot_without_media_pays_nothing(self):
         assert "[YOUTUBE_CARD:" not in _prompt()
+
+    def test_it_kept_the_two_rules_that_have_no_server_side_backstop(self):
+        """A bare "yes" after the bot offered a file must produce the card,
+        and "how many videos do you have" must get a summary of the catalog,
+        not one random card. Nothing after generation can repair either."""
+        catalog = _CONTEXT + "\nAVAILABLE MEDIA:\n  - Downloadable file (guide.pdf): https://acme.com/guide.pdf"
+        prompt = _prompt(context=catalog)
+
+        assert "CONFIRMATION TURN:" in prompt
+        assert "COUNT/LIST:" in prompt
+        assert "never a single" in prompt
