@@ -271,6 +271,67 @@ _PRICE_IDIOM_RE = re.compile(
 )
 
 
+#: Long price words worth recognising through a single typo. Kept to words of
+#: six letters or more on purpose: one edit away from "price" are "pride",
+#: "prime" and "prize", and one edit from "cost" is "cast", all of which a
+#: visitor types about things that are not our rates. At seven letters the
+#: neighbourhood of "pricing" holds nothing a visitor plausibly means instead.
+_NEAR_MISS_PRICE_WORDS = frozenset({"pricing", "quotation", "pricelist"})
+_NEAR_MISS_MIN_LEN = 6
+_WORD_RE = re.compile(r"[a-z]+")
+
+
+def _within_one_edit(a: str, b: str) -> bool:
+    """True when ``a`` and ``b`` differ by at most one insertion, deletion,
+    substitution, or swap of two adjacent letters."""
+    if a == b:
+        return True
+    la, lb = len(a), len(b)
+    if abs(la - lb) > 1:
+        return False
+    if la == lb:
+        diffs = [i for i in range(la) if a[i] != b[i]]
+        if len(diffs) == 1:
+            return True
+        if len(diffs) == 2:
+            i, j = diffs
+            return j == i + 1 and a[i] == b[j] and a[j] == b[i]
+        return False
+    short, long_ = (a, b) if la < lb else (b, a)
+    i = j = 0
+    skipped = False
+    while i < len(short) and j < len(long_):
+        if short[i] == long_[j]:
+            i += 1
+            j += 1
+        elif skipped:
+            return False
+        else:
+            skipped = True
+            j += 1
+    return True
+
+
+def _has_near_miss_price_word(question: str) -> bool:
+    """True when the visitor typed one of the long price words with one typo.
+
+    The gate decides from the wording of the question, so it only ever fires on
+    words it recognises. On 2026-09-10 a visitor on a live bot typed "iwant to
+    know the soc pricng ?". "pricng" is not "pricing", the gate did not fire,
+    and the turn went to the general knowledge base, which answered with rate
+    figures. Two other visitors on the same bot spelled it correctly and were
+    handed to the team. Same intent, opposite behaviour, decided by one missing
+    letter, and it looked to the tester like the bot behaved differently on
+    different devices.
+    """
+    for word in _WORD_RE.findall(question.lower()):
+        if len(word) < _NEAR_MISS_MIN_LEN:
+            continue
+        if any(_within_one_edit(word, target) for target in _NEAR_MISS_PRICE_WORDS):
+            return True
+    return False
+
+
 def is_pricing_question(question: object) -> bool:
     """True when the visitor is asking what we charge.
 
@@ -292,6 +353,8 @@ def is_pricing_question(question: object) -> bool:
     if _PRICE_IDIOM_RE.search(question):
         return False
     if _PRICE_TOKENS_RE.search(question):
+        return True
+    if _has_near_miss_price_word(question):
         return True
     return bool(_CURRENCY_AMOUNT_RE.search(question) and _ASKING_US_RE.search(question))
 
