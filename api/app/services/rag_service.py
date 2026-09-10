@@ -735,6 +735,8 @@ _TITLE_STOPWORDS = frozenset(
         "brochures",
         "datasheet",
         "datasheets",
+        "whitepaper",
+        "whitepapers",
         "template",
         "templates",
         "notes",
@@ -802,21 +804,24 @@ def _topical_media_card(
     otherwise "eventus" alone would count toward every Eventus asset.
 
     Ranking is overlap first, then how much of the title the question covers,
-    then whether the asset rode in on a retrieved chunk. That picks
+    then whether the asset rode in on a retrieved chunk, and last the asset's own
+    URL or video id, so a tie never depends on the order rows arrived in. That picks
     ``Penetration-Testing.pdf`` over ``Sample_Web_Application_Penetration_
     Testing_Report`` for "explain penetration testing", where both share two
     words but only one is entirely about the subject.
     """
-    anchor = _title_tokens(question) - _title_tokens(company_name)
+    company_tokens = _title_tokens(company_name)
+    anchor = _title_tokens(question) - company_tokens
     if len(anchor) < _TOPICAL_MEDIA_MIN_OVERLAP:
         return None
 
     best_rank: tuple[int, float, int] | None = None
     best_card: dict | None = None
+    best_key: str | None = None
     seen: set[str] = set()
 
     def _consider(entry: object, entry_type: str, from_retrieval: bool) -> None:
-        nonlocal best_rank, best_card
+        nonlocal best_rank, best_card, best_key
         if not isinstance(entry, dict):
             return
         if entry_type == "youtube":
@@ -835,16 +840,25 @@ def _topical_media_card(
         if key in seen:
             return
         seen.add(key)
-        tokens = _title_tokens(title)
+        # The company name is noise on the title side as much as on the question
+        # side. Left in, "Eventus-SOAR-Platform-Datasheet" covered less of its own
+        # title than "Whitepaper-SOAR-platform", purely because Eventus named it.
+        tokens = _title_tokens(title) - company_tokens
         if not tokens:
             return
         overlap = len(anchor & tokens)
         if overlap < _TOPICAL_MEDIA_MIN_OVERLAP:
             return
         rank = (overlap, overlap / len(tokens), 1 if from_retrieval else 0)
-        if best_rank is not None and rank <= best_rank:
+        # A tie on relevance is broken by the asset's own URL or video id, never by
+        # the order rows happened to arrive in. The catalog query had no ORDER BY,
+        # so two equally good SOAR documents could swap between requests. This is
+        # not a relevance judgement, only a guarantee that the same question against
+        # the same catalog attaches the same card every time.
+        if best_rank is not None and (rank < best_rank or (rank == best_rank and key >= best_key)):
             return
         best_rank = rank
+        best_key = key
         if entry_type == "youtube":
             card: dict = {"type": "youtube", "video_id": key}
             if isinstance(title, str) and title.strip():

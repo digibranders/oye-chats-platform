@@ -157,3 +157,79 @@ class TestVideos:
             {"files": [{"url": f"{_U}/2023/07/Red-Teaming.pdf", "name": "Red-Teaming.pdf"}]},
         ]
         assert _card("what is red teaming", catalog=both)["type"] == "download"
+
+
+class TestATieIsDecidedTheSameWayEveryTime:
+    """Eventus holds two SOAR documents that are equally about "Eventus Soar Platform".
+
+    Before this, which one a visitor got depended on the order the catalog rows
+    arrived in, and the catalog query had no ORDER BY, so the answer could swap
+    between two identical questions. Two things were wrong. The company name was
+    stripped from the question but not from file titles, so the file Eventus named
+    after itself covered less of its own title and lost for a reason nobody chose.
+    And a genuine tie had no rule at all.
+
+    Now the company name is noise on both sides, "whitepaper" is a generic document
+    word like "datasheet" already was, and a remaining tie goes to the asset's own
+    URL. That is a stability rule, not a relevance judgement.
+    """
+
+    _DATASHEET = {
+        "url": f"{_U}/2025/11/Eventus-SOAR-Platform-Datasheet.pdf",
+        "name": "Eventus-SOAR-Platform-Datasheet.pdf",
+    }
+    _WHITEPAPER = {"url": f"{_U}/2026/01/Whitepaper-SOAR-platform.pdf", "name": "Whitepaper-SOAR-platform.pdf"}
+
+    @pytest.mark.parametrize("whitepaper_first", [False, True])
+    def test_the_same_soar_card_whichever_order_the_catalog_arrives_in(self, whitepaper_first):
+        files = [self._WHITEPAPER, self._DATASHEET] if whitepaper_first else [self._DATASHEET, self._WHITEPAPER]
+        catalog = [{"files": [entry]} for entry in files]
+
+        assert _card("Eventus Soar Platform", catalog=catalog)["name"] == "Eventus-SOAR-Platform-Datasheet.pdf"
+
+    @pytest.mark.parametrize("whitepaper_first", [False, True])
+    def test_both_orders_inside_one_payload_agree(self, whitepaper_first):
+        files = [self._WHITEPAPER, self._DATASHEET] if whitepaper_first else [self._DATASHEET, self._WHITEPAPER]
+
+        assert (
+            _card("Eventus Soar Platform", catalog=[{"files": files}])["name"] == "Eventus-SOAR-Platform-Datasheet.pdf"
+        )
+
+    def test_the_tie_break_is_the_url_not_a_preference_for_datasheets(self):
+        """Swap which file has the earlier URL and the other one wins. The rule is
+        stability, and it does not quietly rank document types."""
+        datasheet_late = {**self._DATASHEET, "url": f"{_U}/2027/01/Eventus-SOAR-Platform-Datasheet.pdf"}
+
+        card = _card("Eventus Soar Platform", catalog=[{"files": [datasheet_late, self._WHITEPAPER]}])
+
+        assert card["name"] == "Whitepaper-SOAR-platform.pdf"
+
+    def test_whitepaper_is_a_generic_document_word(self):
+        from app.services.rag_service import _title_tokens
+
+        assert _title_tokens("Whitepaper-SOAR-platform.pdf") == {"soar", "platform"}
+
+    def test_a_company_name_in_a_file_title_no_longer_lowers_its_coverage(self):
+        """Both reduce to {soar, platform}, so the earlier URL wins. Before the
+        change the company-named file covered two of three title words and lost
+        to the other file outright, whatever its URL."""
+        named = {"url": f"{_U}/a/Eventus-SOAR-Platform.pdf", "name": "Eventus-SOAR-Platform.pdf"}
+        plain = {"url": f"{_U}/b/SOAR-Platform-Overview.pdf", "name": "SOAR-Platform-Overview.pdf"}
+
+        assert (
+            _card("Eventus Soar Platform", catalog=[{"files": [plain, named]}])["name"] == "Eventus-SOAR-Platform.pdf"
+        )
+
+    def test_a_retrieved_asset_still_outranks_the_url_tie_break(self):
+        """The URL only settles a true tie. The document this answer was actually
+        built from still wins over an equally scored one from the bot-wide catalog."""
+        retrieved = [SimpleNamespace(metadata_info={"media_urls": {"files": [self._WHITEPAPER]}})]
+
+        card = _card("Eventus Soar Platform", retrieved=retrieved, catalog=[{"files": [self._DATASHEET]}])
+
+        assert card["name"] == "Whitepaper-SOAR-platform.pdf"
+
+    def test_repeated_calls_agree(self):
+        catalog = [{"files": [self._WHITEPAPER, self._DATASHEET]}]
+
+        assert len({_card("Eventus Soar Platform", catalog=catalog)["url"] for _ in range(5)}) == 1
