@@ -107,6 +107,20 @@ describe('roles', () => {
     expect(assignableRoles(null).map((role) => role.value)).toContain('owner');
   });
 
+  it('locks the account owner’s own seat to Owner alone', () => {
+    // The self-operator row is the workspace owner; demoting it would leave the
+    // workspace with no owner, so the picker offers Owner and nothing else —
+    // mirrored by the guard in `update_operator`.
+    expect(assignableRoles('owner', { lockToOwner: true }).map((role) => role.value)).toEqual([
+      'owner',
+    ]);
+    // The caller's own role does not widen it: even a client identity gets Owner
+    // only for this seat.
+    expect(assignableRoles(null, { lockToOwner: true }).map((role) => role.value)).toEqual([
+      'owner',
+    ]);
+  });
+
   it('treats an absent role as the solo owner, not as an operator', () => {
     expect(canManageTeam(null)).toBe(true);
     expect(canManageTeam('admin')).toBe(true);
