@@ -44,7 +44,7 @@ import time
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 from urllib.robotparser import RobotFileParser
 
-from app.core.ssrf import fetch_bytes_safely, fetch_text_safely, probe_url_alive
+from app.core.ssrf import Liveness, fetch_bytes_safely, fetch_text_safely, probe_url_liveness
 
 logger = logging.getLogger(__name__)
 
@@ -599,13 +599,18 @@ def removal_cap(total_urls: int) -> int:
     return max(REMOVAL_CAP_FLOOR, int(total_urls) * REMOVAL_CAP_PERCENT // 100)
 
 
-async def check_urls_alive(
+async def check_urls_liveness(
     urls: list[str],
     *,
     concurrency: int = 15,
     per_request_timeout: float = 8.0,
-) -> dict[str, bool]:
-    """Return ``{url: is_alive}`` for each input URL using HEAD (GET fallback).
+) -> dict[str, Liveness]:
+    """Return ``{url: "alive" | "gone" | "unknown"}`` using HEAD (GET fallback).
+
+    Use this wherever the result is shown to a person. ``"unknown"`` means the
+    origin would not answer, which is not the same as the page being fine, and
+    collapsing the two is how a knowledge base quietly accumulates dead pages
+    while the console reports a clean bill of health.
 
     Used by the recrawl-diff endpoint to authoritatively decide whether a
     previously-stored URL is still on the site. Discovery alone cannot answer
@@ -613,12 +618,11 @@ async def check_urls_alive(
     200) without being reachable via the seed page or sitemap.
 
     Liveness policy:
-        * Confirmed gone (404, 410) → ``False``.
-        * Anything else, including timeouts, 5xx, redirects, 405 (HEAD
-          disallowed → retried as GET), and connection errors → ``True``
-          ("not confirmed dead"). Conservative on purpose so a transient
-          network blip or a bot-blocking firewall does not delete a customer's
-          knowledge base.
+        * Confirmed gone (404, 410), or an address the SSRF guard refuses →
+          ``"gone"``.
+        * A response that is not 404/410, including 5xx, redirects and 405
+          (HEAD disallowed → retried as GET) → ``"alive"``.
+        * Neither HEAD nor GET completed → ``"unknown"``.
 
     Concurrency is bounded so we do not hammer the customer's origin. Total
     wall-clock for *N* URLs is roughly ``ceil(N / concurrency) * per_request_timeout``
@@ -632,7 +636,7 @@ async def check_urls_alive(
     sem = asyncio.Semaphore(concurrency)
     timeout = aiohttp.ClientTimeout(total=per_request_timeout, connect=5, sock_read=6)
     headers = {"User-Agent": _USER_AGENT}
-    results: dict[str, bool] = {}
+    results: dict[str, Liveness] = {}
 
     async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
 
@@ -646,9 +650,27 @@ async def check_urls_alive(
                 # where aiohttp's own connect-time DNS resolution could
                 # return a different (private/metadata) address than the
                 # one just validated. `session` is passed through only to
-                # supply headers/timeout config; see probe_url_alive.
-                results[url] = await probe_url_alive(session, url)
+                # supply headers/timeout config; see probe_url_liveness.
+                results[url] = await probe_url_liveness(session, url)
 
         await asyncio.gather(*[_check(u) for u in urls])
 
     return results
+
+
+async def check_urls_alive(
+    urls: list[str],
+    *,
+    concurrency: int = 15,
+    per_request_timeout: float = 8.0,
+) -> dict[str, bool]:
+    """``{url: is_alive}``, where an undetermined probe counts as alive.
+
+    The view every deleting caller wants: the orphan sweep and the recrawl
+    removal pass may only act on a *confirmed* 404/410, so a transient blip or
+    a bot-blocking firewall never removes a customer's page. Anything that
+    reports a number to a human should call :func:`check_urls_liveness` and say
+    how many were undetermined.
+    """
+    liveness = await check_urls_liveness(urls, concurrency=concurrency, per_request_timeout=per_request_timeout)
+    return {url: state != "gone" for url, state in liveness.items()}

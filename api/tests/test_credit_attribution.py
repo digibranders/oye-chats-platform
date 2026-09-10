@@ -238,7 +238,7 @@ def test_chat_reply_lands_attribution_end_to_end(db):
         patch("app.api.chat_routes._parse_request_context", return_value=("1.2.3.4", "Desktop Chrome")),
         patch("app.api.chat_routes.submit_background"),
         patch(
-            "app.api.chat_routes.rag_pipeline",
+            "app.api.chat_routes.collect_rag_pipeline",
             return_value={"answer": "Hi!", "sources": [], "session_id": "session-1", "message_id": 1},
         ),
     ):

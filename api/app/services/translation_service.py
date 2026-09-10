@@ -96,7 +96,7 @@ TRANSLATION_BACKFILL_TIMEOUT_S = 8.0
 TRANSLATION_NUM_RETRIES = 0
 
 #: Pinned to the cheapest capable model, the same one already carrying the
-#: relevance-gate workload (``GATE_MODEL``). Overridable per environment.
+#: relevance-gate workload. Overridable per environment.
 TRANSLATION_MODEL = os.getenv("TRANSLATION_MODEL", "gemini/gemini-2.5-flash")
 
 #: Ledger action name. Doubles as the ``feature.<action>_enabled`` toggle key

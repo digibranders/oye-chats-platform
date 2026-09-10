@@ -59,7 +59,7 @@ MODERATION_ENABLED=true
 
 ```
 RELEVANCE_GATE_ENABLED      (default TRUE — and an EMPTY value is treated as unset)
-RELEVANCE_THRESHOLD         (default 0.55; per-bot override in bots.relevance_threshold)
+RELEVANCE_THRESHOLD         (default 0.3; per-bot override in bots.relevance_threshold)
 GATE_MODEL                  (fallback only — runtime_config.get_gate_model() wins)
 GROUNDEDNESS_CHECK_ENABLED  (default true; observability only, never blocks)
 GROUNDEDNESS_THRESHOLD      (default 0.5)

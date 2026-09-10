@@ -940,6 +940,34 @@ async def shutdown_services():
 
 
 @app.on_event("startup")
+async def _require_a_durable_queue_in_production():
+    """Refuse to serve production traffic with no worker behind the queue.
+
+    ``WORKER_ENABLED`` defaults to false, and the deploy sets it. Unset, every
+    caller that enqueues silently degrades: outbound webhooks become
+    fire-and-forget with no ``WebhookDelivery`` row, and lead qualification
+    falls back to a three-thread pool that is dropped on the next restart.
+    Nothing failed, nothing alerted, and the loss was only visible as data that
+    never arrived.
+
+    Outside production this is a warning, because running the API without a
+    worker is a normal local setup.
+    """
+    from app.config import APP_ENV
+    from app.worker.enqueue import WORKER_ENABLED
+
+    if WORKER_ENABLED:
+        return
+    message = (
+        "WORKER_ENABLED is not set. Outbound webhooks and lead qualification "
+        "would degrade to fire-and-forget in-process work that a restart drops."
+    )
+    if APP_ENV == "production":
+        raise RuntimeError(message)
+    logger.warning("%s Continuing because APP_ENV=%s.", message, APP_ENV)
+
+
+@app.on_event("startup")
 async def _bind_notification_broadcaster_loop():
     """Capture the FastAPI event loop for thread-safe notification fan-out.
 

@@ -6,18 +6,18 @@ and can be modified at runtime without code changes.
 """
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import AfterValidator, BaseModel, Field, StringConstraints
 from sqlalchemy import desc, func, select
 
-from app import config as app_config
 from app.api.auth import get_superadmin
-from app.api.superadmin_routes_v2 import _require_write
-from app.config import DISPLAY_USD_TO_INR, EXTRA_SEAT_PRICE_USD_CENTS, RAZORPAY_SEAT_PLAN_PRICE_CENTS
-from app.core.pricing import annual_saving_percent, display_price, emandate_warning
+from app.api.superadmin_common import plan_monthly_usd_cents, require_write, to_usd_cents
+from app.config import EXTRA_SEAT_PRICE_USD_CENTS, RAZORPAY_SEAT_PLAN_PRICE_CENTS
+from app.core.dates import as_utc
+from app.core.pricing import annual_saving_percent, emandate_warning
 from app.db.models import Client, Invoice, Plan, Subscription
 from app.db.session import get_session
 from app.schemas.validators import (
@@ -52,45 +52,6 @@ def _validate_included_seats(value: int) -> int:
 
 
 IncludedOperatorSeats = Annotated[int, AfterValidator(_validate_included_seats)]
-
-
-def _to_usd_cents(amount_minor: int | None, currency: str | None) -> int:
-    """Normalise a stored minor-unit amount to USD cents.
-
-    Mirrors the customer-app display rule (``core.pricing.display_price``):
-    INR-stored amounts are converted at the fixed ``DISPLAY_USD_TO_INR`` rate,
-    USD amounts pass through unchanged. The super-admin dashboard reports a
-    single canonical currency (USD), matching what international customers see.
-    """
-    minor = int(amount_minor or 0)
-    if (currency or "usd").lower() == "inr":
-        usd_cents, _ = display_price(inr_paise=minor, usd_cents=None, country=None, rate=DISPLAY_USD_TO_INR)
-        return usd_cents
-    return minor
-
-
-def _plan_monthly_usd_cents(plan: Plan, billing_cycle: str) -> int:
-    """Monthly-equivalent USD cents for a plan on a given billing cycle.
-
-    Prefers the plan's stored USD column (the exact gateway price) and falls
-    back to converting the INR column only for legacy rows with no USD price.
-    Identical precedence to ``PlanModal``'s ``PriceBlock`` on the frontend.
-    """
-    if billing_cycle == "annual" and (plan.annual_price_cents or plan.annual_price_usd_cents):
-        annual_usd, _ = display_price(
-            inr_paise=plan.annual_price_cents,
-            usd_cents=plan.annual_price_usd_cents,
-            country=None,
-            rate=DISPLAY_USD_TO_INR,
-        )
-        return round(annual_usd / 12)  # round, not floor, so MRR isn't understated (M8)
-    monthly_usd, _ = display_price(
-        inr_paise=plan.monthly_price_cents,
-        usd_cents=plan.monthly_price_usd_cents,
-        country=None,
-        rate=DISPLAY_USD_TO_INR,
-    )
-    return monthly_usd
 
 
 # ── Request Models ──
@@ -294,46 +255,6 @@ def _seat_price_drifted(plan: Plan) -> bool:
     return int(plan.extra_seat_price_cents or 0) != RAZORPAY_SEAT_PLAN_PRICE_CENTS
 
 
-@router.get("/billing/seat-pricing")
-def get_seat_pricing(superadmin: Client = Depends(get_superadmin)):
-    """The canonical extra-seat prices, and whether either rail can actually sell one.
-
-    ``_reject_seat_price_drift`` accepts only ``0`` or the canonical constant,
-    but nothing served that constant, so a console could only hard-code it or
-    learn it from a 422. (Per-plan seat pricing is already on
-    ``GET /superadmin/plans`` as ``extra_seat_price_cents`` /
-    ``extra_seat_price_usd_cents``. What was missing is the constant those
-    columns are graded against.)
-
-    ``plan_configured`` is served beside each price because the two fail
-    independently: the price is a compile-time constant that is always present,
-    while ``razorpay_service.create_seat_addon_subscription`` raises
-    ``RazorpayBillingError`` when the rail's ``RAZORPAY_SEAT_PLAN_ID*`` is
-    unset. A surface showing ₹449 without showing that the add-on is unwired is
-    quoting a price nobody can buy.
-
-    The ids themselves are secrets-adjacent gateway references and are NOT
-    returned; the operator needs to know whether one is set, not what it is.
-    """
-    return {
-        "inr": {
-            "currency": "INR",
-            # The same module-level constants ``_reject_seat_price_drift``
-            # compares against, so this endpoint can never advertise a value
-            # the plan editor would reject.
-            "price_cents": RAZORPAY_SEAT_PLAN_PRICE_CENTS,
-            "plan_configured": bool(app_config.RAZORPAY_SEAT_PLAN_ID),
-            "plan_id_env_var": "RAZORPAY_SEAT_PLAN_ID",
-        },
-        "usd": {
-            "currency": "USD",
-            "price_cents": EXTRA_SEAT_PRICE_USD_CENTS,
-            "plan_configured": bool(app_config.RAZORPAY_SEAT_PLAN_ID_USD),
-            "plan_id_env_var": "RAZORPAY_SEAT_PLAN_ID_USD",
-        },
-    }
-
-
 def _reject_seat_price_drift(data: dict) -> None:
     """Keep a plan's advertised seat price equal to what the seat add-on bills.
 
@@ -469,7 +390,7 @@ def _plan_warnings(plan: Plan, session) -> list[str]:
 @router.post("/plans")
 def create_plan(request: CreatePlanRequest, superadmin: Client = Depends(get_superadmin)):
     """Create a new pricing plan."""
-    _require_write(superadmin)
+    require_write(superadmin)
     _reject_seat_price_drift(request.model_dump())
     annual_discount_percent = _resolve_annual_discount(
         monthly_minor=request.monthly_price_cents,
@@ -544,7 +465,7 @@ def create_plan(request: CreatePlanRequest, superadmin: Client = Depends(get_sup
 @router.put("/plans/{plan_id}")
 def update_plan(plan_id: int, request: UpdatePlanRequest, superadmin: Client = Depends(get_superadmin)):
     """Update an existing plan. Only provided fields are modified."""
-    _require_write(superadmin)
+    require_write(superadmin)
     with get_session() as session:
         plan = session.execute(select(Plan).where(Plan.id == plan_id)).scalars().first()
         if not plan:
@@ -701,7 +622,7 @@ def delete_plan(plan_id: int, superadmin: Client = Depends(get_superadmin)):
     ``is_active`` only on rows it INSERTS, never on rows it updates, so a plan
     soft-deleted here is not resurrected the next time the catalogue is seeded.
     """
-    _require_write(superadmin)
+    require_write(superadmin)
     with get_session() as session:
         plan = session.execute(select(Plan).where(Plan.id == plan_id)).scalars().first()
         if not plan:
@@ -748,7 +669,7 @@ def read_pricing_content(superadmin: Client = Depends(get_superadmin)):
 @router.put("/pricing-content")
 def write_pricing_content(request: PricingContentRequest, superadmin: Client = Depends(get_superadmin)):
     """Upsert any subset of the website pricing-content blobs."""
-    _require_write(superadmin)
+    require_write(superadmin)
     with get_session() as session:
         set_pricing_content(session, request.model_dump(exclude_none=True))
         logger.info(f"Superadmin {superadmin.id} updated pricing content")
@@ -756,11 +677,6 @@ def write_pricing_content(request: PricingContentRequest, superadmin: Client = D
 
 
 # ── Subscription Management ──
-
-
-def _as_utc(value: datetime) -> datetime:
-    """Read a stored timestamp as UTC-aware, whatever the driver handed back."""
-    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 def _extend_trial(sub: Subscription, days: int) -> None:
@@ -795,7 +711,7 @@ def _extend_trial(sub: Subscription, days: int) -> None:
     old_trial_end = sub.trial_end
     sub.trial_end = old_trial_end + delta
     period_end = sub.current_period_end
-    if period_end is not None and _as_utc(period_end) <= _as_utc(old_trial_end):
+    if period_end is not None and as_utc(period_end) <= as_utc(old_trial_end):
         sub.current_period_end = period_end + delta
 
 
@@ -889,7 +805,7 @@ def update_subscription(
     superadmin: Client = Depends(get_superadmin),
 ):
     """Manual override: change plan, status, extend trial, etc."""
-    _require_write(superadmin)
+    require_write(superadmin)
     with get_session() as session:
         sub = session.execute(select(Subscription).where(Subscription.id == subscription_id)).scalars().first()
         if not sub:
@@ -1014,20 +930,20 @@ def get_revenue_metrics(superadmin: Client = Depends(get_superadmin)):
                 # subscription (and more once operator_quantity moves).
                 included = int(plan.included_operator_seats or 1)
                 extra_seats = 0 if included < 0 else max(int(sub.operator_quantity or included) - included, 0)
-                mrr_cents += _plan_monthly_usd_cents(plan, sub.billing_cycle)
+                mrr_cents += plan_monthly_usd_cents(plan, sub.billing_cycle)
                 if extra_seats:
                     # Finding H3: seats bill the global seat add-on at the canonical
                     # charged price (config.RAZORPAY_SEAT_PLAN_PRICE_CENTS, INR), NOT
                     # a plan's own extra_seat_price_cents. Using the column would
                     # overstate/understate MRR whenever the two drift. Report the
                     # amount actually invoiced.
-                    mrr_cents += _to_usd_cents(extra_seats * int(RAZORPAY_SEAT_PLAN_PRICE_CENTS or 0), "INR")
+                    mrr_cents += to_usd_cents(extra_seats * int(RAZORPAY_SEAT_PLAN_PRICE_CENTS or 0), "INR")
 
         # Total paid invoices, normalised to USD cents.
         paid_invoices = session.execute(
             select(Invoice.amount_cents, Invoice.currency).where(Invoice.status == "paid")
         ).all()
-        total_revenue_cents = sum(_to_usd_cents(amount, currency) for amount, currency in paid_invoices)
+        total_revenue_cents = sum(to_usd_cents(amount, currency) for amount, currency in paid_invoices)
 
         # Subscription status counts
         status_counts = dict(

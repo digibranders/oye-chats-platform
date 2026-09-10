@@ -2728,65 +2728,6 @@ def _bant_dimensions_marked(cs: ChatSession) -> dict[str, bool]:
     }
 
 
-@router.get("/qualified-bot-sessions/debug")
-def debug_qualified_bot_sessions(auth=Depends(get_current_client_or_operator)):
-    """Diagnostic view. Returns every session in this workspace alongside the
-    fields the qualifier evaluates so we can see why a row didn't surface.
-
-    Strictly admin-only; not consumed by the UI. Useful when a session you
-    expected to see in "Chatting with AI" is missing. Usually because the
-    status moved off ``bot`` or the BANT signals never landed in the
-    expected columns.
-    """
-    client_id = auth["client_id"]
-    rows = []
-    with get_session() as session:
-        all_sessions = session.execute(
-            select(ChatSession, Bot)
-            .join(Bot, ChatSession.bot_id == Bot.id)
-            .where(Bot.client_id == client_id)
-            .order_by(ChatSession.last_active_at.desc().nullslast())
-            .limit(50)
-        ).all()
-        for cs, bot in all_sessions:
-            dims = _bant_dimensions_marked(cs)
-            rows.append(
-                {
-                    "session_id": cs.id,
-                    "bot_name": bot.name,
-                    "status": cs.status,
-                    "assigned_operator_id": cs.assigned_operator_id,
-                    "department_id": cs.department_id,
-                    "bant_scores": {
-                        "budget": cs.bant_budget_score or 0,
-                        "authority": cs.bant_authority_score or 0,
-                        "need": cs.bant_need_score or 0,
-                        "timeline": cs.bant_timeline_score or 0,
-                    },
-                    "bant_text": {
-                        "budget": cs.bant_budget,
-                        "authority": cs.bant_authority,
-                        "need": cs.bant_need,
-                        "timeline": cs.bant_timeline,
-                    },
-                    "dimensions_marked": dims,
-                    "dimensions_marked_count": sum(1 for v in dims.values() if v),
-                    "dimensions_assessed": cs.dimensions_assessed or 0,
-                    "bant_score": cs.bant_score or 0,
-                    "bant_tier": cs.bant_tier,
-                    "qualifies": (
-                        cs.status == "bot"
-                        and (
-                            sum(1 for v in dims.values() if v) >= _QUALIFIED_MIN_DIMENSIONS
-                            or (cs.dimensions_assessed or 0) >= _QUALIFIED_MIN_DIMENSIONS
-                        )
-                    ),
-                    "last_active_at": cs.last_active_at.isoformat() if cs.last_active_at else None,
-                }
-            )
-    return {"sessions": rows, "min_dimensions": _QUALIFIED_MIN_DIMENSIONS}
-
-
 @router.get("/qualified-bot-sessions")
 def get_qualified_bot_sessions(
     limit: int = Query(50, ge=1, le=200),

@@ -27,9 +27,20 @@
  * on its own is what silently revoked Visitor Intelligence server-side.
  */
 
-/** Slugs `seed_plans.py` creates. Anything else is bespoke. See rule 2. */
+/**
+ * Slugs `seed_plans.py` creates. Anything else is bespoke. See rule 2.
+ *
+ * The server's copy, `_SEEDED_PLAN_SLUGS` in
+ * `api/app/services/plan_entitlements_service.py`, is the source of truth.
+ * This set must match it exactly.
+ */
 export const SEEDED_PLAN_SLUGS: ReadonlySet<string> = new Set([
   'free',
+  // The non-public trial row `seed_plans.py` writes. It is on every ladder
+  // below because the server names it on every ladder; the console used to
+  // leave it out of this set, which handed it every feature by rule 2 and
+  // made the outcome right only by accident.
+  'trial',
   'starter',
   'standard',
   'professional',
@@ -40,6 +51,7 @@ export const SEEDED_PLAN_SLUGS: ReadonlySet<string> = new Set([
 
 /** Ladder tiers that include Reoon email verification. */
 export const EMAIL_VERIFICATION_SLUGS: ReadonlySet<string> = new Set([
+  'trial',
   'standard',
   'professional',
   'enterprise',
@@ -53,6 +65,7 @@ export const EMAIL_VERIFICATION_SLUGS: ReadonlySet<string> = new Set([
  * the seeded ladder must not cost it one.
  */
 export const VISITOR_INTELLIGENCE_SLUGS: ReadonlySet<string> = new Set([
+  'trial',
   'professional',
   'enterprise',
 ]);
@@ -66,6 +79,7 @@ export const VISITOR_INTELLIGENCE_SLUGS: ReadonlySet<string> = new Set([
  * contract slug gets it, exactly as the server grants it.
  */
 export const QUOTATION_SLUGS: ReadonlySet<string> = new Set([
+  'trial',
   'professional',
   'enterprise',
 ]);

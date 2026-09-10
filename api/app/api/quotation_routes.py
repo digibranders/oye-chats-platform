@@ -51,6 +51,7 @@ from app.db.repository import get_lead_info_by_session
 from app.db.session import get_session
 from app.services import email_service
 from app.services.plan_entitlements_service import (
+    _paid_tier_includes,
     get_bot_entitlements,
     get_entitlements,
 )
@@ -91,7 +92,29 @@ def _client_plan_allows(client_id: int, db) -> bool:
         ent = get_entitlements(client_id, db)
     except Exception:
         return False
-    return (ent.plan_slug or "").lower() in QUOTATION_PLAN_SLUGS
+    return _plan_allows_quotations(ent.plan_slug)
+
+
+def _plan_allows_quotations(slug: str | None) -> bool:
+    """The same two-part rule every other paid gate on this platform uses.
+
+    A bare ``in QUOTATION_PLAN_SLUGS`` denied every bespoke enterprise slug
+    (``enterprise-acme`` and friends), which are exactly the customers who buy
+    this. The console already grants them: ``planGates.ts`` implements rule 2
+    and its comment says "the server grants it; matching that here is what
+    keeps the UI from contradicting the API". The server did not, so a bespoke
+    customer saw the Quotations page unlocked and got a 403 on save.
+
+    ``_paid_tier_includes`` is the shared implementation, so this gate now
+    moves with every other one rather than drifting on its own.
+    """
+    normalized = (slug or "").strip().lower()
+    if not normalized:
+        # Unknown denies. ``_paid_tier_includes`` reads "off the seeded ladder"
+        # as bespoke, and an empty string is off the ladder, so delegating a
+        # blank slug would grant the feature to a plan that failed to resolve.
+        return False
+    return _paid_tier_includes(normalized, QUOTATION_PLAN_SLUGS)
 
 
 def _bot_plan_allows(bot: Bot, db) -> bool:
@@ -102,7 +125,7 @@ def _bot_plan_allows(bot: Bot, db) -> bool:
         ent = get_bot_entitlements(bot.id, db)
     except Exception:
         return False
-    return (ent.plan_slug or "").lower() in QUOTATION_PLAN_SLUGS
+    return _plan_allows_quotations(ent.plan_slug)
 
 
 # Abuse ceilings for the widget runtime. These four routes authenticate with
@@ -450,7 +473,7 @@ def quotation_available(bot: Bot, plan_slug: str | None) -> bool:
     catalog = _normalize(getattr(bot, "quotation_catalog", None))
     if not catalog.enabled or not catalog.services:
         return False
-    return (plan_slug or "").lower() in QUOTATION_PLAN_SLUGS
+    return _plan_allows_quotations(plan_slug)
 
 
 def _bant_field_present(session: ChatSession, bant_key: str) -> bool:

@@ -134,6 +134,22 @@ _BOT_NAME_RE = re.compile(
     r")\b"
 )
 
+# A message that ALSO asks about the business is a knowledge question wearing
+# an identity opener. Live: "who are you and what do you offer" was answered by
+# the canned greeting with no content at all, because the identity patterns
+# match on the opening words and short-circuit before retrieval. The canned
+# identity replies are only right when the whole message is about the bot
+# itself. Deliberately narrow: these words almost never appear in a genuine
+# "are you a bot" and always do in a question the knowledge base should answer.
+_ASKS_ABOUT_BUSINESS_RE = re.compile(
+    r"(?ix)\b(?:"
+    r"offer|offers|offering|provide|provides|sell|sells"
+    r"|services?|products?|pricing|prices?|cost|costs|plans?"
+    r"|what\s+do\s+you\s+do|what\s+does\s+(?:the\s+)?company|about\s+(?:the\s+)?company"
+    r")\b"
+)
+
+
 _RECORDED_RE = re.compile(
     r"(?ix)\b(?:"
     r"is\s+this\s+(?:conversation|chat|call)\s+(?:recorded|saved|stored|logged|monitored)"
@@ -232,17 +248,28 @@ def route_intent(
     # about your services, what about pricing").
     word_count = len(norm.split())
 
-    # 2) Identity / meta. Match before length gate so longer phrasings work
-    if _IS_AI_RE.search(norm):
-        return _is_ai(company_name, support_enabled)
+    # 2) Identity / meta. Match before the length gate so longer phrasings work,
+    #    unless the message also asks about the business: then it is a knowledge
+    #    question with an identity opener and belongs to the RAG pipeline.
+    # Privacy and retention first, and NOT behind the business-word guard. The
+    # knowledge base has no chunk saying whether the chat is recorded, so
+    # falling through to retrieval on "is this chat recorded and does it cost
+    # anything" answers neither half: the visitor asked a question only the
+    # platform can answer, and gets a pivot.
     if _RECORDED_RE.search(norm):
         return _recorded(company_name, support_enabled)
     if _REMEMBER_RE.search(norm):
         return _remember(company_name)
-    if _WHO_MADE_YOU_RE.search(norm):
-        return _who_made_you(company_name, platform_branded)
-    if _BOT_NAME_RE.search(norm):
-        return _bot_name(company_name)
+
+    # The rest of the identity family stands down when the message also asks
+    # about the business, because there retrieval has the better answer.
+    if not _ASKS_ABOUT_BUSINESS_RE.search(norm):
+        if _IS_AI_RE.search(norm):
+            return _is_ai(company_name, support_enabled)
+        if _WHO_MADE_YOU_RE.search(norm):
+            return _who_made_you(company_name, platform_branded)
+        if _BOT_NAME_RE.search(norm):
+            return _bot_name(company_name)
 
     # 3) Greetings. Only if the WHOLE message is a greeting term
     if word_count <= 4 and norm in _GREETING_TERMS:

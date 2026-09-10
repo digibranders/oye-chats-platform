@@ -318,6 +318,22 @@ class TestShippedGoldenSet:
         assert sum(1 for c in cases if c.category == "events") >= 2
         assert sum(1 for c in cases if c.category == "pricing") >= 3
         assert sum(1 for c in cases if c.category == "events" and "coming up" in c.question) >= 1
+        assert sum(1 for c in cases if c.category == "company" and not c.must_refuse) >= 4
+
+    def test_company_cases_guard_against_refusal(self, cases):
+        """The September 2026 regression: the gate refused "what does Acme do".
+        Every company case must be answerable and must name the refusal as a
+        forbidden claim, so a polite decline can never pass on groundedness."""
+        company = [c for c in cases if c.category == "company"]
+        assert len(company) >= 4
+        for case in company:
+            assert not case.must_refuse, case.id
+            assert case.expected_facts, case.id
+            assert any("refuse" in claim.lower() for claim in case.forbidden_claims), case.id
+        questions = " ".join(c.question.lower() for c in company)
+        assert "what does acme do" in questions
+        assert "what is acme analytics" in questions
+        assert "your company" in questions
 
     def test_refusal_cases_have_forbidden_claims_and_no_facts(self, cases):
         for case in (c for c in cases if c.must_refuse):
@@ -679,7 +695,7 @@ class TestCli:
     def test_dry_run_validates_and_prints_the_plan(self, clean_env, capsys):
         assert run_eval.main(["--dry-run"]) == 0
         out = capsys.readouterr().out
-        assert "35 cases" in out and "38 chat requests" in out
+        assert "40 cases" in out and "43 chat requests" in out
         assert "coverage: meets the shipped minimums" in out
         assert "Judge: gemini/gemini-2.5-flash" in out
         assert "Dry run: no request was made." in out

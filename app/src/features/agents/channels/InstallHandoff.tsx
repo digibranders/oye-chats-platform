@@ -110,9 +110,10 @@ export function InstallHandoff({
       setOpen(false);
       setConfirming(false);
       setDraft('');
-      // A real milestone, unlike the `install_snippet_copied` this button used
-      // to emit: nothing was ever copied.
-      void recordActivationEvent('install_invite_sent', { botId });
+      // No activation event from here. The server records `install_invite_sent`
+      // inside the same request that sends the mail, so it fires exactly when
+      // the send succeeded and cannot be lost to a closed tab. Emitting it here
+      // as well wrote the milestone twice for one action.
     } catch (cause) {
       setError(
         cause instanceof Error && cause.message

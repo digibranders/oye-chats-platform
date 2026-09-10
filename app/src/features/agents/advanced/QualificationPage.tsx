@@ -344,7 +344,11 @@ function QualificationContent({ agentId }: { agentId: number }) {
  */
 export function QualificationPage() {
   const { agent, loading, error, refresh } = useAgent();
-  const { isFree, loading: entitlementsLoading, hasFeature, planName } = useEntitlements();
+  const { loading: entitlementsLoading, hasFeature, planName } = useEntitlements();
+  // THIS agent's plan, not the workspace's highest. Billing attaches to the
+  // Bot, so a paid workspace can hold a Free agent for whom the server's own
+  // `is_bant_enabled_for_bot` returns false however the workspace is billed.
+  const isFree = (agent?.plan_slug ?? 'free') === 'free';
 
   // The plan resolves after first paint, and the Free fallback is restrictive,
   // so a paid workspace deep-linking here must not flash the locked card.

@@ -39,7 +39,7 @@ const RAW: Record<string, unknown> = {
   branding_url: 'https://acme.test',
   feature_flags: { show_branding: false, something_else: true },
   widget_messages: {
-    welcome_greeting: 'Hello',
+    welcome_greeting: 'Hello',  // ignored: the widget reads the column
     welcome_suggestions: ['What do you cost?'],
     welcome_suggestions_layout: 'vertical',
     offline_message: 'Back soon',
@@ -138,7 +138,7 @@ describe('patchFromDraft', () => {
   it('sends only the field that changed', () => {
     const baseline = load();
     const patch = patchFromDraft({ ...baseline, welcomeGreeting: 'Hi!' }, baseline);
-    expect(patch).toEqual({ widget_messages: { welcome_greeting: 'Hi!' } });
+    expect(patch).toEqual({ welcome_title: 'Hi!' });
   });
 
   it('never re-sends an unchanged avatar', () => {
@@ -416,5 +416,37 @@ describe('pricing page', () => {
     expect(
       validateDraft({ ...baseline, pricingUrl: 'https://acme.test/pricing' }).pricingUrl,
     ).toBeUndefined();
+  });
+});
+
+describe('the welcome copy reaches the widget', () => {
+  /**
+   * The widget renders the `welcome_title` and `welcome_subtitle` COLUMNS.
+   * This page used to read and write the same-named keys inside the
+   * `widget_messages` JSONB, which nothing reads. A customer could edit the
+   * greeting and the subtitle, save successfully, and see no change on their
+   * own site: the two most prominent strings in the widget were uneditable
+   * while appearing to be edited.
+   */
+  it('reads the columns, not the json blob', () => {
+    const draft = draftFromBot({
+      welcome_title: 'Hey there',
+      welcome_subtitle: 'Ask us anything',
+      widget_messages: { welcome_greeting: 'stale', welcome_subtitle: 'stale' },
+    });
+
+    expect(draft.welcomeGreeting).toBe('Hey there');
+    expect(draft.welcomeSubtitle).toBe('Ask us anything');
+  });
+
+  it('patches the columns, not the json blob', () => {
+    const baseline = draftFromBot({ welcome_title: 'A', welcome_subtitle: 'B' });
+    const patch = patchFromDraft(
+      { ...baseline, welcomeGreeting: 'C', welcomeSubtitle: 'D' },
+      baseline,
+    );
+
+    expect(patch).toEqual({ welcome_title: 'C', welcome_subtitle: 'D' });
+    expect(patch.widget_messages).toBeUndefined();
   });
 });

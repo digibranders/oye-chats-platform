@@ -36,9 +36,12 @@ def create_client():
     api_key_input = input("Custom API Key (Leave blank to auto-generate): ").strip()
     api_key = api_key_input or f"live-{uuid.uuid4().hex[:8]}"
 
-    system_prompt = input(f"System Prompt (Default: 'You are an advanced AI consultant for {name}.'): ").strip()
-    if not system_prompt:
-        system_prompt = f"You are an advanced AI consultant for {name}. Your goal is to provide accurate, professional, and helpful answers."
+    # The platform already tells the model who it is, what it may answer from
+    # and how to sound. A seed prompt is for the customer's own emphasis, so
+    # the default is empty rather than a second, weaker identity line. The old
+    # default ("an advanced AI consultant") also contradicted the locked
+    # lexicon, which calls this an AI Chatbot, not a consultant.
+    system_prompt = input("Custom instructions (optional, press Enter to skip): ").strip() or None
 
     # Hash the password
     hashed_password = get_password_hash(password)

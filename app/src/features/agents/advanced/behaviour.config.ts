@@ -15,6 +15,7 @@ import {
  * | Draft field | Column | Contract |
  * |---|---|---|
  * | `relevanceThreshold` | `relevance_threshold` | `float 0..1`, null = env default |
+ * | `pricingFromKnowledgeBase` | `pricing_from_knowledge_base` | `bool`, default false |
  * | `featureFlags` | `feature_flags` | shallow-merged server-side |
  * | `widgetConfig` | `widget_config` | shallow-merged server-side |
  * | `operatorTimeoutSeconds` | `operator_timeout_seconds` | `int 5..3600` |
@@ -50,21 +51,21 @@ export interface StrictnessLevel {
 }
 
 /** Applied when `relevance_threshold` is null — `RELEVANCE_THRESHOLD` in config.py. */
-export const DEFAULT_RELEVANCE_THRESHOLD = 0.55;
+export const DEFAULT_RELEVANCE_THRESHOLD = 0.3;
 
 export const STRICTNESS_LEVELS: readonly StrictnessLevel[] = [
   {
-    value: 0.45,
+    value: 0.15,
     label: 'Lenient',
     help: 'Answers more questions even when the match is weak. Best while your knowledge base still has gaps.',
   },
   {
-    value: 0.55,
+    value: 0.3,
     label: 'Balanced',
     help: 'A sensible mix of helpfulness and staying on topic. Right for most sites.',
   },
   {
-    value: 0.65,
+    value: 0.5,
     label: 'Strict',
     help: 'Declines anything not clearly covered by your content. Best for regulated or sensitive topics.',
   },
@@ -338,6 +339,8 @@ export function operatorTimeoutError(value: number): string | null {
 export interface BehaviourDraft {
   /** null = use the platform default strictness. */
   relevanceThreshold: number | null;
+  /** true = pricing questions may be answered from everything it has learned. */
+  pricingFromKnowledgeBase: boolean;
   featureFlags: Record<string, boolean>;
   widgetConfig: Record<string, number>;
   /** Seconds an operator has to accept a handoff before it is re-offered. */
@@ -376,6 +379,7 @@ export function parseBehaviour(raw: Record<string, unknown>): BehaviourDraft {
   const timeout = raw.operator_timeout_seconds;
   return {
     relevanceThreshold: typeof threshold === 'number' ? threshold : null,
+    pricingFromKnowledgeBase: raw.pricing_from_knowledge_base === true,
     featureFlags: mergeFlags(raw.feature_flags),
     widgetConfig: mergeConfig(raw.widget_config),
     operatorTimeoutSeconds:
@@ -394,6 +398,7 @@ export function parseBehaviour(raw: Record<string, unknown>): BehaviourDraft {
 export function toBehaviourPayload(draft: BehaviourDraft): Record<string, unknown> {
   return {
     relevance_threshold: draft.relevanceThreshold,
+    pricing_from_knowledge_base: draft.pricingFromKnowledgeBase,
     feature_flags: draft.featureFlags,
     widget_config: draft.widgetConfig,
     operator_timeout_seconds: draft.operatorTimeoutSeconds,

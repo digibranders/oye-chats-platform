@@ -118,11 +118,6 @@ def _stub_pipeline(
 
     monkeypatch.setattr(rs, "generate_response_stream", fake_stream)
     monkeypatch.setattr(rs, "generate_response", lambda *a, **k: "".join(chunks))
-    monkeypatch.setattr(
-        rs,
-        "generate_response_checked",
-        lambda *a, **k: ("".join(chunks), bool((llm_status or {}).get("failed"))),
-    )
 
     async def fake_resolve(session_id, question, history, bid, cid, company_name, embedding_profile=None):
         return question, None

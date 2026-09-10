@@ -48,7 +48,7 @@ function isTab(value: string | null): value is TabKey {
 export function IntegrationsPage() {
   const [params, setParams] = useSearchParams();
   const { selectedBot, bots, loading, error, refreshBots } = useBotContext();
-  const { hasFeature, entitlements, isFree } = useEntitlements();
+  const { hasFeature, entitlements } = useEntitlements();
 
   /**
    * Which chatbot these integrations belong to.
@@ -70,7 +70,15 @@ export function IntegrationsPage() {
   // Email and meeting booking are whole-feature paid: the Free plan sees the
   // upsell in place of the panel, the same treatment the Webhooks tab already
   // gives a plan without them.
-  const integrationsUnlocked = !isFree;
+  //
+  // THIS bot's plan decides, not the workspace's. Billing attaches to the Bot,
+  // and the runtime gate (`is_meeting_booking_enabled_for_bot`) is
+  // `plan_slug != "free"` for the bot being configured, so a Free bot inside a
+  // paid workspace never serves a booking card and a paid bot inside a Free
+  // workspace always may. Gating on the workspace let the first configure a
+  // link the widget ignored and showed the second an upsell for a feature it
+  // already had. A bot that has not resolved its plan fails closed.
+  const integrationsUnlocked = (bot?.plan_slug ?? 'free') !== 'free';
 
   // Webhooks lead when they are available; otherwise the first tab a customer
   // can actually use is Email, and landing on a locked tab reads as a broken

@@ -34,7 +34,7 @@ const agent: Bot = {
 };
 
 const SETTINGS: Record<string, unknown> = {
-  relevance_threshold: 0.55,
+  relevance_threshold: 0.3,
   feature_flags: { typing_preview: true, post_chat_rating: true },
   widget_config: { greeting_delay_ms: 3000 },
   operator_timeout_seconds: 120,
@@ -150,12 +150,26 @@ describe('the four states', () => {
     expect(screen.getByRole('radiogroup', { name: 'Answering strictness' })).toBeInTheDocument();
   });
 
-  it('states the plan on the operator window when there is no live chat', async () => {
-    mountEntitlements({ hasFeature: (key) => key !== 'live_chat' });
+  it('states the plan on the operator window when THIS agent has no live chat', async () => {
+    /* `get_bot_settings_public` resolves live chat from the agent's own plan
+       (`get_bot_entitlements(bot.id)`), and only the Free plan excludes it.
+       A Free agent inside a paid workspace has no operator window, whatever
+       the workspace's feature map says. */
+    mountAgent({ ...agent, plan_slug: 'free' });
+    mountEntitlements({ hasFeature: () => true });
     await renderSettled();
 
     expect(screen.getByText(/Live chat is not included/i)).toBeInTheDocument();
     expect(screen.queryByLabelText(/Time to accept/)).not.toBeInTheDocument();
+  });
+
+  it('offers the operator window to a paid agent inside a Free workspace', async () => {
+    mountAgent({ ...agent, plan_slug: 'professional' });
+    mountEntitlements({ isFree: true, hasFeature: () => false });
+    await renderSettled();
+
+    expect(screen.queryByText(/Live chat is not included/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/Time to accept/)).toBeInTheDocument();
   });
 });
 
@@ -196,12 +210,18 @@ describe('answering scope', () => {
 });
 
 describe('widget behaviour', () => {
-  it('shows every widget flag off and locked on the Free plan', async () => {
+  it('shows every widget flag off and locked when THIS agent is on Free', async () => {
     /* `get_bot_settings_public` rewrites the whole map to false for a Free
-       workspace before the widget sees it, so the switches render off and
-       read-only here — matching what the widget actually does — with the
-       upgrade nudge on the group above. */
-    mountEntitlements({ isFree: true, hasFeature: () => false });
+       agent before the widget sees it, so the switches render off and
+       read-only here, matching what the widget actually does, with the
+       upgrade nudge on the group above.
+
+       The agent's own plan is what decides this, not the workspace's. Billing
+       attaches to the Bot, so a Professional workspace can hold a Free agent;
+       gating on the workspace showed these unlocked and let them save a value
+       the runtime then ignored. */
+    mountAgent({ ...agent, plan_slug: 'free' });
+    mountEntitlements({ isFree: false, hasFeature: () => true });
     await renderSettled();
 
     expect(screen.getByText(/switched off for visitors on the Free plan/i)).toBeInTheDocument();
@@ -210,8 +230,21 @@ describe('widget behaviour', () => {
     expect(typing).toHaveAttribute('aria-disabled', 'true');
   });
 
+  it('leaves a paid agent unlocked inside a Free workspace', async () => {
+    /* The mirror case, and the one the old workspace-level gate got wrong in
+       the direction the customer notices: paying for this agent and finding
+       its switches greyed out. */
+    mountAgent({ ...agent, plan_slug: 'professional' });
+    mountEntitlements({ isFree: true, hasFeature: () => false });
+    await renderSettled();
+
+    const typing = screen.getByRole('switch', { name: 'Typing indicator' });
+    expect(typing).not.toHaveAttribute('aria-disabled', 'true');
+  });
+
   it('marks queue position as having no effect without live chat', async () => {
-    mountEntitlements({ hasFeature: (key) => key !== 'live_chat' });
+    mountAgent({ ...agent, plan_slug: 'free' });
+    mountEntitlements({ hasFeature: () => true });
     await renderSettled();
 
     expect(screen.getByText(/no queue without live chat/i)).toBeInTheDocument();
@@ -339,5 +372,31 @@ describe('what the console does not publish', () => {
       await screen.findByRole('switch', { name: 'Pause follow-up emails' }),
     ).toBeInTheDocument();
     expect(screen.getByText(/Takes effect immediately/)).toBeInTheDocument();
+  });
+});
+
+describe('pricing answers', () => {
+  it('saves the owner opt-out', async () => {
+    await renderSettled();
+
+    await user.click(screen.getByRole('switch', { name: 'Answer pricing from my documents' }));
+    await user.click(await screen.findByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(updateBot).toHaveBeenCalled());
+    const [, payload] = vi.mocked(updateBot).mock.calls[0];
+    expect(payload.pricing_from_knowledge_base).toBe(true);
+  });
+
+  it('reflects a bot that already opted out', async () => {
+    vi.mocked(getClientSettings).mockResolvedValue({ ...SETTINGS, pricing_from_knowledge_base: true });
+    await renderSettled();
+
+    expect(screen.getByRole('switch', { name: 'Answer pricing from my documents' })).toBeChecked();
+  });
+
+  it('defaults to the gated behaviour', async () => {
+    await renderSettled();
+
+    expect(screen.getByRole('switch', { name: 'Answer pricing from my documents' })).not.toBeChecked();
   });
 });

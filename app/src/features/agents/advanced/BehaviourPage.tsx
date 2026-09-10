@@ -56,12 +56,20 @@ function BehaviourContent({
   agentId,
   agentName,
   liveChatAllowed,
+  agentOnFree,
 }: {
   agentId: number;
   agentName: string;
   liveChatAllowed: boolean;
+  /**
+   * THIS agent's own plan, not the workspace's. Billing attaches to the Bot, so
+   * a Professional workspace can hold a Free agent whose widget the server
+   * resolves with `get_bot_entitlements`. Gating on the workspace showed these
+   * controls unlocked and let them save a value the runtime then ignored.
+   */
+  agentOnFree: boolean;
 }) {
-  const { isFree } = useEntitlements();
+  const isFree = agentOnFree;
 
   const load = useCallback(async (id: number): Promise<BehaviourDraft> => {
     return parseBehaviour(await getClientSettings(id));
@@ -86,6 +94,12 @@ function BehaviourContent({
   const setThreshold = useCallback(
     (relevanceThreshold: number | null) =>
       update((previous) => ({ ...previous, relevanceThreshold })),
+    [update],
+  );
+
+  const setPricingFromKnowledgeBase = useCallback(
+    (pricingFromKnowledgeBase: boolean) =>
+      update((previous) => ({ ...previous, pricingFromKnowledgeBase })),
     [update],
   );
   const setFlag = useCallback(
@@ -158,7 +172,12 @@ function BehaviourContent({
         main={
           <Stack>
           <SettingGroup title="Answering">
-            <ScopeSection value={draft.relevanceThreshold} onChange={setThreshold} />
+            <ScopeSection
+              value={draft.relevanceThreshold}
+              onChange={setThreshold}
+              pricingFromKnowledgeBase={draft.pricingFromKnowledgeBase}
+              onPricingChange={setPricingFromKnowledgeBase}
+            />
             <OperatorResponseSection
               value={draft.operatorTimeoutSeconds}
               liveChatAllowed={liveChatAllowed}
@@ -246,7 +265,7 @@ function BehaviourContent({
  */
 export function BehaviourPage() {
   const { agent, loading, error, refresh } = useAgent();
-  const { hasFeature, loading: entitlementsLoading } = useEntitlements();
+  const { loading: entitlementsLoading } = useEntitlements();
 
   if (entitlementsLoading || (loading && !agent)) return <BehaviourSkeleton />;
 
@@ -268,12 +287,21 @@ export function BehaviourPage() {
     );
   }
 
+  // THIS agent's plan decides everything below, never the workspace's.
+  // `get_bot_settings_public` resolves live chat with
+  // `get_bot_entitlements(bot.id).has_feature("live_chat")`, and of the seeded
+  // plans only Free lacks that feature (`seed_plans.py`). The console only
+  // knows the agent's slug, so "not Free" is the per-bot rule it can apply,
+  // and an agent still resolving its plan fails closed.
+  const agentOnFree = (agent.plan_slug ?? 'free') === 'free';
+
   return (
     <BehaviourContent
       key={agent.id}
       agentId={agent.id}
       agentName={agent.name}
-      liveChatAllowed={hasFeature('live_chat')}
+      liveChatAllowed={!agentOnFree}
+      agentOnFree={agentOnFree}
     />
   );
 }

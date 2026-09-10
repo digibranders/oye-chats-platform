@@ -5,7 +5,7 @@ import contextlib
 import time
 from contextlib import ExitStack, contextmanager
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -110,7 +110,7 @@ class TestChatEndpoint:
             patch("app.api.chat_routes._parse_request_context", return_value=("1.2.3.4", "Desktop Chrome")),
             patch("app.api.chat_routes.submit_background"),
             patch(
-                "app.api.chat_routes.rag_pipeline",
+                "app.api.chat_routes.collect_rag_pipeline",
                 return_value={
                     "answer": "Hello! How can I help?",
                     "sources": [],
@@ -169,7 +169,7 @@ def _charged_chat_patches(refunds: list[int], pipeline):
         patch("app.api.chat_routes._parse_request_context", return_value=("1.2.3.4", "Desktop Chrome")),
         patch("app.api.chat_routes._resolve_visitor_language_and_update_session", return_value=None),
         patch("app.api.chat_routes.submit_background"),
-        patch("app.api.chat_routes.rag_pipeline", pipeline),
+        patch("app.api.chat_routes.collect_rag_pipeline", pipeline),
     )
 
 
@@ -187,7 +187,7 @@ class TestChatConcurrencyGate:
         bot = _default_bot()
         tc = TestClient(_build_app(bot_override=bot))
         refunds: list[int] = []
-        pipeline = MagicMock(return_value={"answer": "never", "sources": [], "session_id": "session-1"})
+        pipeline = AsyncMock(return_value={"answer": "never", "sources": [], "session_id": "session-1"})
 
         with ExitStack() as stack:
             for cm in _charged_chat_patches(refunds, pipeline):
@@ -209,7 +209,7 @@ class TestChatConcurrencyGate:
         refunds: list[int] = []
 
         with ExitStack() as stack:
-            for cm in _charged_chat_patches(refunds, MagicMock()):
+            for cm in _charged_chat_patches(refunds, AsyncMock()):
                 stack.enter_context(cm)
             stack.enter_context(patch("app.services.preview_quota.check_and_increment_preview", return_value=True))
             stack.enter_context(patch("app.api.chat_routes.chat_gate", _saturated_gate()))
@@ -225,7 +225,7 @@ class TestChatConcurrencyGate:
         refunds: list[int] = []
         seen: dict[str, int] = {}
 
-        def pipeline(*_args, **_kwargs):
+        async def pipeline(*_args, **_kwargs):
             seen["in_flight"] = gate.stats()["in_flight"]
             return {"answer": "Hello!", "sources": [], "session_id": "session-1"}
 

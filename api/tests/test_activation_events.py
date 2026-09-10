@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import os
 from contextlib import contextmanager
-from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import FastAPI
@@ -129,87 +128,3 @@ def test_post_event_rejects_empty_event_type(db):
         res = api.post("/activation/events", json={"event_type": "   "})
 
     assert res.status_code == 422, res.text
-
-
-def test_funnel_forbidden_for_non_superadmin(db):
-    from app.api import auth
-
-    client = _make_client(db, email="act-nonsa@example.com", api_key="act-nonsa-key")
-    app, mod = _app(db)
-    # get_superadmin depends on get_current_client_strict then checks the flag.
-    app.dependency_overrides[auth.get_current_client_strict] = lambda: client
-    api = TestClient(app, raise_server_exceptions=False)
-
-    with _patch(mod, db):
-        res = api.get("/activation/funnel")
-
-    assert res.status_code == 403, res.text
-
-
-def test_funnel_returns_counts_and_ttvlw_for_superadmin(db):
-    from app.api import auth
-
-    sa = _make_client(db, email="act-sa@example.com", api_key="act-sa-key", is_superadmin=True)
-
-    # Two activation events of one type, one of another.
-    db.add_all(
-        [
-            ActivationEvent(client_id=sa.id, event_type="studio_opened"),
-            ActivationEvent(client_id=sa.id, event_type="studio_opened"),
-            ActivationEvent(client_id=sa.id, event_type="first_doc_uploaded"),
-        ]
-    )
-
-    # A qualifying client: created_at set, one bot with widget_installed_at 100s later.
-    base = datetime(2026, 7, 1, 12, 0, 0, tzinfo=UTC)
-    live_client = Client(
-        name="Live",
-        email="act-live@example.com",
-        api_key="act-live-key",
-        hashed_password="h",
-        created_at=base,
-    )
-    db.add(live_client)
-    db.flush()
-    live_bot = Bot(
-        client_id=live_client.id,
-        bot_key="bot-act-live",
-        name="Live Bot",
-        system_prompt="",
-        widget_installed_at=base + timedelta(seconds=100),
-    )
-    db.add(live_bot)
-    db.flush()
-    db.commit()
-
-    app, mod = _app(db)
-    app.dependency_overrides[auth.get_current_client_strict] = lambda: sa
-    api = TestClient(app, raise_server_exceptions=False)
-
-    with _patch(mod, db):
-        res = api.get("/activation/funnel")
-
-    assert res.status_code == 200, res.text
-    body = res.json()
-    assert body["counts"]["studio_opened"] == 2
-    assert body["counts"]["first_doc_uploaded"] == 1
-    assert body["ttvlw"]["count"] == 1
-    assert body["ttvlw"]["median_seconds"] == 100.0
-
-
-def test_funnel_null_median_when_no_live_clients(db):
-    from app.api import auth
-
-    sa = _make_client(db, email="act-sa2@example.com", api_key="act-sa2-key", is_superadmin=True)
-
-    app, mod = _app(db)
-    app.dependency_overrides[auth.get_current_client_strict] = lambda: sa
-    api = TestClient(app, raise_server_exceptions=False)
-
-    with _patch(mod, db):
-        res = api.get("/activation/funnel")
-
-    assert res.status_code == 200, res.text
-    body = res.json()
-    assert body["ttvlw"]["count"] == 0
-    assert body["ttvlw"]["median_seconds"] is None

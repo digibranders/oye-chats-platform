@@ -48,16 +48,16 @@ def test_null_cap_allowed():
     routes._validate_window_and_bounds(AUG1, AUG31, free_cycles=3, max_redemptions=None)  # no raise
 
 
-# ── _ensure_utc ──────────────────────────────────────────────────────────────
+# ── as_utc ──────────────────────────────────────────────────────────────
 
 
-def test_ensure_utc_coerces_naive():
+def test_as_utc_coerces_naive():
     naive = datetime(2026, 8, 1, 10, 0)
-    assert routes._ensure_utc(naive).tzinfo is UTC
+    assert routes.as_utc(naive).tzinfo is UTC
 
 
-def test_ensure_utc_passes_aware_through():
-    assert routes._ensure_utc(AUG1) == AUG1
+def test_as_utc_passes_aware_through():
+    assert routes.as_utc(AUG1) == AUG1
 
 
 # ── _serialize ───────────────────────────────────────────────────────────────

@@ -1,11 +1,14 @@
 import { memo } from 'react';
-import { Button, SegmentedControl, SettingRow } from '../../../ui';
+import { Button, SegmentedControl, SettingRow, Switch } from '../../../ui';
 import { DEFAULT_RELEVANCE_THRESHOLD, STRICTNESS_LEVELS, matchesLevel } from './behaviour.config';
 
 export interface ScopeSectionProps {
   /** null = the platform default. */
   value: number | null;
   onChange: (next: number | null) => void;
+  /** `Bot.pricing_from_knowledge_base` — false is the gated default. */
+  pricingFromKnowledgeBase: boolean;
+  onPricingChange: (next: boolean) => void;
 }
 
 /** The segment value for a threshold that matches no preset. */
@@ -29,7 +32,12 @@ const CUSTOM = 'custom';
  * control; the chosen level's own help now sits under the label, where the
  * choice is.
  */
-function ScopeSectionInner({ value, onChange }: ScopeSectionProps) {
+function ScopeSectionInner({
+  value,
+  onChange,
+  pricingFromKnowledgeBase,
+  onPricingChange,
+}: ScopeSectionProps) {
   const matched = STRICTNESS_LEVELS.find((level) => matchesLevel(value, level.value));
   const isCustom = value !== null && !matched;
   const selected = isCustom ? CUSTOM : String(matched?.value ?? DEFAULT_RELEVANCE_THRESHOLD);
@@ -44,6 +52,7 @@ function ScopeSectionInner({ value, onChange }: ScopeSectionProps) {
     : (matched?.help ?? '');
 
   return (
+    <>
     <SettingRow label="Answering scope" description={description} stacked>
       <div className="flex flex-wrap items-center gap-3">
         <SegmentedControl
@@ -64,6 +73,26 @@ function ScopeSectionInner({ value, onChange }: ScopeSectionProps) {
         </Button>
       </div>
     </SettingRow>
+    {/* Pricing is the one topic the chatbot refuses on purpose: without a
+        pricing page it sends the visitor to the team rather than risk quoting
+        a stale figure. That is wrong for a business whose prices live in an
+        uploaded document, so the owner decides. */}
+    <SettingRow
+      label="Pricing answers"
+      description={
+        pricingFromKnowledgeBase
+          ? 'Answers pricing from everything it has learned, like any other question.'
+          : 'Answers pricing only from the pricing page set under Voice. Without one, it offers to connect the visitor with your team.'
+      }
+    >
+      <Switch
+        label="Answer pricing from my documents"
+        hideLabel
+        checked={pricingFromKnowledgeBase}
+        onCheckedChange={onPricingChange}
+      />
+    </SettingRow>
+    </>
   );
 }
 

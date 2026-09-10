@@ -379,21 +379,11 @@ class Bot(Base):
 
     bant_enabled = Column(sqlalchemy.Boolean, default=True, server_default="true", nullable=False)
     bant_config = Column(JSONB, nullable=True)  # per-bot qualification rubric config
-
-    # Admin-defined pre-handoff question flow. Fires once the BANT signals reach
-    # ``threshold`` marked dimensions and BEFORE the handoff card is offered,
-    # to finish qualifying the lead with structured answers the sales team
-    # sees on the very first touch. NULL disables the feature for this bot.
-    # Shape:
-    #   {
-    #     "enabled": true,
-    #     "threshold": 2,          # BANT dimensions needed to trigger (1-4)
-    #     "questions": [
-    #       {"id": "q1", "text": "...", "type": "text"|"choice"|"email"|"phone",
-    #        "options": ["..."], "required": true,
-    #        "skip_if_bant": null|"need"|"timeline"|"authority"|"budget"}
-    #     ]
-    #   }
+    #: Unused: nothing reads or writes it. It stays mapped because the release
+    #: before this one maps it too, and ``deploy-api.yml`` migrates the schema
+    #: before it restarts the API. Dropping the column here would fail every
+    #: ``SELECT`` on ``bots`` for the old processes in that window, and for
+    #: good if the restart never came. Drop it in the release after this one.
     qualification_flow = Column(JSONB, nullable=True)
 
     # Admin-defined quotation catalog. An ordered list of billable services
@@ -422,7 +412,7 @@ class Bot(Base):
     # NULL = use the env default (RELEVANCE_THRESHOLD, currently 0.55).
     # Lower = more lenient (fewer off-topic refusals, more risk of off-scope answers).
     # Higher = stricter (more refusals, more risk of false positives on legit questions).
-    # Reasonable range: 0.40 (lenient). 0.70 (strict). Out-of-range is clamped at runtime.
+    # Reasonable range: 0.15 (lenient). 0.50 (strict). Out-of-range is clamped at runtime.
     relevance_threshold = Column(Float, nullable=True)
     # How this bot's vectors are made: the embedding profile its QUERIES and
     # its NEW chunks are embedded under (app/core/embedding_profiles.py).
@@ -623,6 +613,14 @@ class Bot(Base):
     # bot may answer" contract, so turning one into an answering restriction
     # would silently change what every existing bot is allowed to say.
     pricing_url = Column(String, nullable=True)
+
+    # Owner opt-out of the pricing answer gate. False (the default, and what
+    # every existing bot keeps) leaves the gate exactly as it was: pricing is
+    # answered only from ``pricing_url``'s own chunks, or escalated. True says
+    # "my documents carry my prices", which is true of every bot whose price
+    # list lives in an uploaded PDF rather than on a public pricing page, and
+    # lets the general knowledge base answer pricing questions for that bot.
+    pricing_from_knowledge_base = Column(Boolean, nullable=False, default=False, server_default="false")
 
     # Widget embed origin restriction. When ``domain_check_enabled`` is true the
     # backend rejects ``X-Bot-Key`` requests whose Origin/Referer hostname does not
@@ -1184,6 +1182,10 @@ class BANTSignal(Base):
 
     session = relationship("ChatSession", back_populates="bant_signals")
 
+    # The retention sweep deletes by age. Without this it is a sequential scan
+    # over the second-highest-volume table on the platform.
+    __table_args__ = (Index("ix_bant_signals_created_at", "created_at"),)
+
 
 class VisitorEvent(Base):
     """Behavioral events tracked from the widget (page views, UTM captures, return visits, etc.)."""
@@ -1199,6 +1201,8 @@ class VisitorEvent(Base):
 
     session = relationship("ChatSession", back_populates="visitor_events")
     bot = relationship("Bot")
+
+    __table_args__ = (Index("ix_visitor_events_created_at", "created_at"),)
 
 
 class BotGrowthEvent(Base):
@@ -1637,6 +1641,12 @@ class ChatAuditLog(Base):
 
     session = relationship("ChatSession")
     operator = relationship("Operator")
+
+    # Eleven write paths feed this table and both readers filter on
+    # ``session_id``: the per-session audit view, and the queue summary that
+    # reconstructs wait times by pairing ``handoff_requested`` with whatever
+    # ended it. Neither had an index to use.
+    __table_args__ = (Index("ix_chat_audit_logs_session_id", "session_id"),)
 
 
 class LiveChatQueueEntry(Base):
@@ -2564,6 +2574,58 @@ class FailedWebhook(Base):
     status = Column(Text, nullable=False, server_default="pending", default="pending")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     replayed_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class FailedEmail(Base):
+    """Dead letter for an email the platform accepted and then could not send.
+
+    Every send in this codebase is fire-and-forget: the caller hands the
+    message to ``send_email_async``, which enqueues ``task_send_email``, and the
+    caller returns. That is the right shape (a visitor's turn must not wait on
+    Brevo) but it left three places where a message could vanish with no record
+    anywhere:
+
+    * the enqueue itself failed, so the job never existed;
+    * the provider rejected the message, which is deliberately not retried
+      because a retry could deliver an OTP or an invoice twice;
+    * ARQ exhausted ``max_tries``.
+
+    In all three the only trace was a log line. A customer reporting "I never
+    got the reset email" could not be answered. This table is the answer, and
+    the model is the one ``failed_webhooks`` already established: keep the row,
+    let an operator see it, replay the ones that are safe to replay.
+
+    ``body_html`` is nullable on purpose. Password resets, OTPs and invites put
+    a live credential in the body, and a dead-letter table is a bad place to
+    keep one; those rows record everything except the body and are marked
+    ``replayable=False``, because the fix is for the customer to request a new
+    one rather than for an operator to resend a token from a database.
+    """
+
+    __tablename__ = "failed_emails"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    to_email = Column(Text, nullable=False, index=True)
+    subject = Column(Text, nullable=False)
+    #: Omitted for credential-bearing mail. See the class docstring.
+    body_html = Column(Text, nullable=True)
+    reply_to = Column(Text, nullable=True)
+    sender_name = Column(Text, nullable=True)
+    attachments = Column(JSONB, nullable=True)
+    #: 'enqueue_failed' | 'provider_rejected' | 'retries_exhausted'
+    reason = Column(Text, nullable=False, index=True)
+    error = Column(Text, nullable=True)
+    attempts = Column(Integer, nullable=False, server_default="1", default=1)
+    replayable = Column(Boolean, nullable=False, server_default="true", default=True)
+    #: 'pending' | 'replayed' | 'ignored'
+    status = Column(Text, nullable=False, server_default="pending", default="pending")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    replayed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # The one query the purge and an operator view run: pending rows, oldest
+    # first. Declared here so ``alembic check`` sees the index the migration
+    # created; without it the CI drift check reports a ``remove_index``.
+    __table_args__ = (Index("ix_failed_emails_status_created", "status", "created_at"),)
 
 
 # ── Super-admin audit & supporting tables ────────────────────────────────────

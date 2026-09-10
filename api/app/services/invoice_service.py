@@ -10,9 +10,10 @@ documents are immutable. Corrections are credit notes, never edits.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
@@ -29,6 +30,7 @@ from app.core.fx import (
     implied_rate_micros,
     is_plausible_rate,
 )
+from app.core.metrics import increment_metric_counter
 from app.core.tax import compute_tax, supply_kind
 from app.db.models import Client, Invoice, InvoiceCounter
 from app.services.seller_profile_service import SellerProfile, get_seller_profile
@@ -390,6 +392,12 @@ def finalize_invoice_safely(session: Session, invoice: Invoice) -> bool:
             "invoice finalize failed for invoice %s; leaving legacy row (shadow mode)",
             invoice.id,
         )
+        # ``backfill_unnumbered_invoices`` retries these every five minutes, so
+        # a legacy row is normally transient. Counted because a row that keeps
+        # failing the backfill is a customer with no invoice document, and the
+        # log line alone never told anyone the difference.
+        with contextlib.suppress(Exception):
+            increment_metric_counter("invoice_finalize_failed", bot_id=None)
         return False
 
 
@@ -441,6 +449,43 @@ def backfill_unnumbered_invoices(session: Session, *, limit: int = 50) -> int:
         if finalize_invoice_safely(session, invoice):
             numbered += 1
     return numbered
+
+
+#: How long a paid charge may sit without an invoice number before the backlog
+#: stops being "the seller profile is not saved yet" and starts being a bug.
+#: The backfill runs every five minutes, so an hour is twelve failed attempts.
+STUCK_INVOICE_AGE = timedelta(hours=1)
+
+
+def count_stuck_unnumbered_invoices(session: Session, *, older_than: timedelta = STUCK_INVOICE_AGE) -> int:
+    """Paid charges still carrying no invoice number after ``older_than``.
+
+    ``backfill_unnumbered_invoices`` retries these every five minutes and
+    reports how many it healed. Nobody was reporting the other number. A row
+    that fails every pass is a customer who paid and has no tax document, and
+    the difference between "one transient failure" and "this has been broken
+    since Tuesday" was not visible anywhere: both looked like a healed count of
+    zero.
+
+    Rows younger than the window are excluded on purpose. A charge captured
+    before the super-admin saves the seller profile is legitimately un-numbered
+    for a while, and paging on that would train everyone to ignore the alert.
+    """
+    if not config.INVOICING_V2_ENABLED:
+        return 0
+    cutoff = datetime.now(UTC) - older_than
+    return int(
+        session.execute(
+            select(func.count())
+            .select_from(Invoice)
+            .where(
+                Invoice.invoice_number.is_(None),
+                Invoice.status.in_(("paid", "partially_refunded", "refunded")),
+                Invoice.created_at < cutoff,
+            )
+        ).scalar()
+        or 0
+    )
 
 
 CREDIT_NOTE_SERIES_PREFIX = "CN"

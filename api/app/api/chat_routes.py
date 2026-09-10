@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import hashlib
 import html as html_lib
 import ipaddress
@@ -28,7 +29,7 @@ from app.api.auth import (
 from app.core.chat_concurrency import chat_gate
 from app.core.exceptions import SessionOwnershipError
 from app.core.langfuse_client import get_langfuse
-from app.core.metrics import record_latency_ms
+from app.core.metrics import forward_to_sentry_if_alertable, increment_metric_counter, record_latency_ms
 from app.core.rate_limit import consume_vendor_budget, key_from_bot_key, limiter
 from app.core.thread_pool import submit_background
 from app.core.visitor_privacy import format_visitor_location
@@ -77,7 +78,7 @@ from app.services.plan_entitlements_service import (
     is_email_validation_enabled_for_bot,
     is_visitor_intelligence_enabled_for_bot,
 )
-from app.services.rag_service import rag_pipeline, rag_pipeline_stream
+from app.services.rag_service import collect_rag_pipeline, rag_pipeline_stream
 
 _EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
 _SAFE_URL_SCHEME = re.compile(r"^https?://", re.IGNORECASE)
@@ -1258,7 +1259,14 @@ def _refund_ai_chat_credit(bot: Bot, cost: int) -> None:
             db.commit()
         logger.info("Refunded ai_chat credit (generation failed) bot_id=%s cost=%s", bot.id, cost)
     except Exception:
+        # Best-effort stays best-effort: this must never mask the original
+        # failure. But a swallowed refund means the visitor was charged for an
+        # answer they did not get and the ledger is wrong, so it is counted and
+        # paged rather than left as one log line nobody reads.
         logger.exception("Failed to refund ai_chat credit for bot %s", getattr(bot, "id", "?"))
+        with contextlib.suppress(Exception):
+            increment_metric_counter("credit_refund_failed", bot_id=getattr(bot, "id", None))
+            forward_to_sentry_if_alertable("credit_refund_failed", bot_id=getattr(bot, "id", None), cost=cost)
 
 
 def _deduct_ai_chat_credit_sync(bot: Bot) -> int:
@@ -1474,18 +1482,22 @@ async def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(
         # ``except HTTPException`` below, which refunds the credit just taken.
         # The slot is held until the worker thread finishes, even if this
         # coroutine is cancelled first (see ``ChatConcurrencyGate.run_sync``).
-        result = await chat_gate.run_sync(
-            rag_pipeline,
-            bot,
-            body.question,
-            session_id=session_id,
-            location=location,
-            device=formatted_device,
-            bot_id=bot.id,
-            cta_dimension=body.cta_dimension,
-            visitor_country=visitor_country,
-            language=language_ctx,
-        )
+        # ``collect_rag_pipeline`` is the async collector over the one real
+        # pipeline, so this holds a slot exactly like ``/chat/stream`` does
+        # rather than occupying a worker thread for the whole turn. The
+        # synchronous ``rag_pipeline`` wrapper still exists for sync callers.
+        async with chat_gate.slot():
+            result = await collect_rag_pipeline(
+                bot,
+                body.question,
+                session_id=session_id,
+                location=location,
+                device=formatted_device,
+                bot_id=bot.id,
+                cta_dimension=body.cta_dimension,
+                visitor_country=visitor_country,
+                language=language_ctx,
+            )
 
         ans_len = len(result.get("answer", ""))
         logger.info(f"Chat response generated | session={session_id} | answer_length={ans_len}")
@@ -1494,6 +1506,14 @@ async def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(
         if result.get("generation_failed"):
             await asyncio.to_thread(_refund_once)
         return result
+    except asyncio.CancelledError:
+        # ``TimeoutMiddleware`` cancels this coroutine at 60s, and a cancel is
+        # a ``BaseException``, so the branches below never saw it: the visitor
+        # got a 504 and stayed charged for it. The task is already cancelled,
+        # so the refund is shielded: a second cancel cannot interrupt the
+        # ledger write once it has started on the worker thread.
+        await asyncio.shield(asyncio.to_thread(_refund_once))
+        raise
     except HTTPException:
         await asyncio.to_thread(_refund_once)
         raise
@@ -2116,14 +2136,27 @@ def behavioral_signals_endpoint(body: BehavioralSignalsRequest, request: Request
             if body.is_return_visit and chat_session.visit_count <= 1:
                 chat_session.visit_count = max(chat_session.visit_count, 2)
 
-            # Record visitor events
+            # Record visitor events.
+            #
+            # ``country`` and ``referrer`` are stamped here because the visitors
+            # dashboard reads both out of this payload
+            # (``superadmin_ops_routes`` groups on ``event_data->>'country'``
+            # and ``->>'referrer'``) and nothing had ever written either one.
+            # Two of that page's four panels were structurally empty and looked
+            # like a traffic problem rather than a missing write.
             if safe_page_url:
+                page_view_data: dict = {"url": safe_page_url}
+                event_country = _visitor_country_from_request(request)
+                if event_country:
+                    page_view_data["country"] = event_country
+                if safe_referrer:
+                    page_view_data["referrer"] = safe_referrer
                 session.add(
                     VisitorEvent(
                         session_id=body.session_id,
                         bot_id=bot.id,
                         event_type="page_view",
-                        event_data={"url": safe_page_url},
+                        event_data=page_view_data,
                     )
                 )
             if body.utm_params and any(body.utm_params.values()):

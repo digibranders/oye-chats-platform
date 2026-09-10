@@ -120,7 +120,7 @@ Vector cosine alone misses keyword matches that have weak semantic similarity bu
 | Path | Default | Effect |
 |---|---|---|
 | `CAG_LITE_THRESHOLD=20` | on | Bots with ≤20 chunks **skip retrieval** (Cache-Augmented Generation lite — passes all chunks as context) |
-| `RELEVANCE_GATE_ENABLED` | **on** (default `true`) | CRAG-style relevance scoring; if all chunks score below `RELEVANCE_THRESHOLD` (0.55, per-bot override `bots.relevance_threshold`) the bot refuses instead of hallucinating. Skipped for non-English sessions |
+| `RELEVANCE_GATE_ENABLED` | **on** (default `true`) | CRAG-style relevance scoring; if all chunks score below `RELEVANCE_THRESHOLD` (0.3, per-bot override `bots.relevance_threshold`) the bot refuses instead of hallucinating. Skipped for non-English sessions |
 | `RERANK_ENABLED` | off | FlashRank cross-encoder rerank. The chat path passes `top_n=15` explicitly, so `RERANK_TOP_N=5` does **not** apply here |
 | `MODERATION_ENABLED` | on | `omni-moderation-latest` pre-check on visitor input, plus an output-side check on the generated answer. Fails open on a moderation-service outage |
 | `GROUNDEDNESS_CHECK_ENABLED` | on | Post-answer groundedness judge. **Observability only** — it runs after the answer has streamed and its verdict is logged, never enforced |

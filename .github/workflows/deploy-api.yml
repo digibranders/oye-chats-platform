@@ -368,8 +368,7 @@ jobs:
               "CAG_LITE_THRESHOLD=20" \
               "CHUNK_SIZE=1000" \
               "CHUNK_OVERLAP=200" \
-              "RELEVANCE_THRESHOLD=0.55" \
-              "GATE_MODEL=gemini/gemini-2.5-flash" \
+              "RELEVANCE_THRESHOLD=0.3" \
               "ENRICHMENT_MODEL=gemini/gemini-2.5-flash" \
               "RELEVANCE_GATE_ENABLED=${RELEVANCE_GATE_ENABLED:-true}" \
               "CHUNK_ENRICHMENT_ENABLED=${CHUNK_ENRICHMENT_ENABLED}" \

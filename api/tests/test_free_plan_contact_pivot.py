@@ -118,10 +118,11 @@ def test_an_unusable_first_match_does_not_shadow_a_usable_later_one():
 # change to this string is a change to what every paid bot says on every
 # unanswerable on-scope turn, so it is pinned rather than pattern-matched.
 _PAID_TEXT = (
-    "I don't have that specific detail on hand for **Acme**. Want me to connect you with the team so they can help "
-    "directly?"
+    "That specific detail sits with the **Acme** team. Want me to connect you with the team so they can help directly?"
 )
-_FREE_NO_LINK_TEXT = "I don't have that specific detail on hand for **Acme**. Is there something else about **Acme** I can help you with?"
+_FREE_NO_LINK_TEXT = (
+    "That specific detail sits with the **Acme** team. Is there something else about **Acme** I can help you with?"
+)
 
 
 def test_paid_pivot_is_unchanged_with_a_contact_url():
@@ -135,7 +136,7 @@ def test_paid_pivot_is_unchanged_without_a_contact_url():
 
 def test_free_pivot_hands_over_the_contact_url():
     assert rs._no_info_pivot("Acme", support_enabled=False, contact_url=_CONTACT) == (
-        f"I don't have that specific detail on hand for **Acme**. You can get in touch here: {_CONTACT}"
+        f"That specific detail sits with the **Acme** team. You can get in touch here: {_CONTACT}"
     )
 
 
@@ -158,7 +159,7 @@ def test_free_pivot_refuses_an_unusable_contact_url(url):
 
 def test_free_pivot_with_no_company_name_still_links():
     assert rs._no_info_pivot(None, support_enabled=False, contact_url=_CONTACT) == (
-        f"I don't have that specific detail on hand for us. You can get in touch here: {_CONTACT}"
+        f"That specific detail sits with our team. You can get in touch here: {_CONTACT}"
     )
 
 
@@ -227,7 +228,7 @@ def _stub_outside_world(monkeypatch):
     monkeypatch.setattr(rs, "cache_set", lambda *a, **k: None)
     monkeypatch.setattr(rs, "cache_delete", lambda *a, **k: None)
     monkeypatch.setattr(rs, "_generate_query_paraphrases", lambda *a, **k: [])
-    monkeypatch.setenv("CAG_LITE_THRESHOLD", "0")
+    monkeypatch.setattr(rs, "CAG_LITE_THRESHOLD", 0)
 
 
 @pytest.fixture()
@@ -249,7 +250,6 @@ def _stub_generation(monkeypatch):
         captured["system_prompts"].append(k.get("system_prompt") or "")
         return "GENERATED ANSWER", False
 
-    monkeypatch.setattr(rs, "generate_response_checked", _fake_checked)
     return captured
 
 

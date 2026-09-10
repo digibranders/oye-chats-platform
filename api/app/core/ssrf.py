@@ -25,6 +25,7 @@ import ipaddress
 import logging
 import socket
 import ssl as _ssl
+from typing import Literal
 from urllib.parse import urljoin, urlparse
 
 from app.config import SSRF_TLS_VERIFY_ENABLED
@@ -205,7 +206,14 @@ class _PinnedResolver:
         return None
 
 
-async def probe_url_alive(session, url: str) -> bool:
+#: Outcome of a liveness probe. ``"unknown"`` exists because the probe cannot
+#: always tell the difference between a page that is gone and an origin that
+#: would not answer. Callers that delete content must treat it as alive;
+#: callers that report a count to a human must say it was not determined.
+Liveness = Literal["alive", "gone", "unknown"]
+
+
+async def probe_url_liveness(session, url: str) -> Liveness:
     """Liveness probe (HEAD, GET fallback) for ``url``, connecting only to a
     single pinned, pre-validated IP so the host that gets validated is the
     host that actually gets connected to.
@@ -226,18 +234,16 @@ async def probe_url_alive(session, url: str) -> bool:
     configuration; the actual HEAD/GET connections go through a short-lived
     session bound to the pinned resolver. Mirrors ``fetch_text_safely``.
 
-    Liveness policy (unchanged from the pre-fix behavior of
-    ``check_urls_alive``, preserved here so callers see no behavior change):
+    Outcomes:
         - The URL fails :func:`validate_public_url`, or its host does not
-          resolve to a single pinned public IP -> ``False``.
-        - HEAD (or the GET fallback) responds 404/410 (confirmed gone) ->
-          ``False``.
-        - HEAD responds < 400 -> ``True``.
+          resolve to a single pinned public IP -> ``"gone"``. An address the
+          platform will not fetch cannot back a knowledge-base entry.
+        - HEAD (or the GET fallback) responds 404/410 -> ``"gone"``.
+        - HEAD responds < 400 -> ``"alive"``.
         - HEAD responds >= 400 (other than 404/410), or raises -> retried as
-          GET; the GET result (status not in 404/410) is the final answer.
-          A GET transport error is conservative -> ``True`` ("not confirmed
-          dead", so a transient blip or bot-blocking firewall never deletes
-          a customer's knowledge base entry).
+          GET; a GET response decides between ``"gone"`` and ``"alive"``.
+        - The GET also raises -> ``"unknown"``. A transient blip, a timeout or
+          a bot-blocking firewall is not evidence that a page is gone.
 
     Never raises.
     """
@@ -246,34 +252,48 @@ async def probe_url_alive(session, url: str) -> bool:
     try:
         validate_public_url(url)
     except SSRFError:
-        return False
+        return "gone"
 
     hostname = urlparse(url).hostname
     if hostname is None:
-        return False
+        return "gone"
     try:
         pinned_ip = str(ipaddress.ip_address(hostname))
     except ValueError:
         pinned_ip = _resolve_pinned_public_ip(hostname)
     if pinned_ip is None:
-        return False
+        return "gone"
 
     connector = aiohttp.TCPConnector(resolver=_PinnedResolver({hostname: pinned_ip}), ssl=_tls())
     async with aiohttp.ClientSession(headers=session.headers, timeout=session.timeout, connector=connector) as pinned:
         try:
             async with pinned.head(url, allow_redirects=False, ssl=_tls()) as resp:
                 if resp.status in (404, 410):
-                    return False
+                    return "gone"
                 if resp.status < 400:
-                    return True
+                    return "alive"
         except Exception as exc:
             _log_if_tls_failure(url, exc)
         try:
             async with pinned.get(url, allow_redirects=False, ssl=_tls()) as resp:
-                return resp.status not in (404, 410)
+                return "gone" if resp.status in (404, 410) else "alive"
         except Exception as exc:
             _log_if_tls_failure(url, exc)
-            return True
+            return "unknown"
+
+
+async def probe_url_alive(session, url: str) -> bool:
+    """``True`` unless ``url`` is confirmed gone.
+
+    The bool view of :func:`probe_url_liveness`, kept because every caller
+    that DELETES content wants exactly this collapse: an undetermined probe
+    must never be grounds for removing a customer's page. Callers that report
+    to a human should use :func:`probe_url_liveness` instead, so "we could not
+    check 300 of these" does not render as "all 300 are fine".
+
+    Never raises.
+    """
+    return await probe_url_liveness(session, url) != "gone"
 
 
 async def fetch_text_safely(

@@ -171,7 +171,20 @@ def _daily_salt() -> str:
     current UTC date. Cross-day correlation of the same visitor requires
     knowledge of the secret, which the application never exposes.
     """
-    base = os.getenv("AFFILIATE_HASH_SALT", "oyechats-affiliate-default-salt")
+    base = os.getenv("AFFILIATE_HASH_SALT")
+    if not base:
+        # The whole point of the salt is that cross-day correlation of a
+        # visitor requires a secret the application never exposes. A default
+        # committed to the repository is not a secret, so in production this is
+        # a configuration error rather than something to paper over.
+        from app.config import APP_ENV
+
+        if APP_ENV == "production":
+            raise RuntimeError(
+                "AFFILIATE_HASH_SALT must be set in production; the visitor hash is not private without it"
+            )
+        logger.warning("AFFILIATE_HASH_SALT is unset; using a development-only salt")
+        base = "oyechats-affiliate-development-salt"
     day = datetime.now(UTC).strftime("%Y-%m-%d")
     return f"{base}|{day}"
 

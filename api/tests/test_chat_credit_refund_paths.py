@@ -10,7 +10,7 @@ refund on those paths, and pin that no path refunds twice.
 import contextlib
 from contextlib import contextmanager
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -70,7 +70,9 @@ class TestSyncChatRefund:
             patch("app.api.chat_routes._parse_request_context", return_value=("1.2.3.4", "Desktop Chrome")),
             patch("app.api.chat_routes._resolve_visitor_language_and_update_session", return_value=None),
             patch("app.api.chat_routes.submit_background"),
-            patch("app.api.chat_routes.rag_pipeline", side_effect=RuntimeError("pipeline exploded")),
+            patch(
+                "app.api.chat_routes.collect_rag_pipeline", new=AsyncMock(side_effect=RuntimeError("pipeline exploded"))
+            ),
         ):
             mock_gs.return_value = _session_ctx(MagicMock())
             resp = tc.post("/chat", json={"question": "Hi"}, headers={"X-Bot-Key": "bot-refund"})
@@ -114,8 +116,8 @@ class TestSyncChatRefund:
             patch("app.api.chat_routes._resolve_visitor_language_and_update_session", return_value=None),
             patch("app.api.chat_routes.submit_background"),
             patch(
-                "app.api.chat_routes.rag_pipeline",
-                return_value={"answer": "…", "session_id": "s-1", "generation_failed": True},
+                "app.api.chat_routes.collect_rag_pipeline",
+                new=AsyncMock(return_value={"answer": "…", "session_id": "s-1", "generation_failed": True}),
             ),
         ):
             mock_gs.return_value = _session_ctx(MagicMock())

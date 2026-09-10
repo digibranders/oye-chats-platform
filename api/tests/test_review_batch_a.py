@@ -69,12 +69,10 @@ def test_mrr_counts_seats_as_flat_addon(db, monkeypatch):
     sa = Client(name="SA", email="sa-mrr@test.local", hashed_password="x", api_key="k-sa-mrr", is_superadmin=True)
     result = spr.get_revenue_metrics(superadmin=sa)
 
-    expected = spr._plan_monthly_usd_cents(plan, "monthly") + spr._to_usd_cents(
-        2 * RAZORPAY_SEAT_PLAN_PRICE_CENTS, "INR"
-    )
+    expected = spr.plan_monthly_usd_cents(plan, "monthly") + spr.to_usd_cents(2 * RAZORPAY_SEAT_PLAN_PRICE_CENTS, "INR")
     assert result["mrr_cents"] == expected
     # And crucially NOT the old triple-count.
-    assert result["mrr_cents"] != spr._plan_monthly_usd_cents(plan, "monthly") * 3
+    assert result["mrr_cents"] != spr.plan_monthly_usd_cents(plan, "monthly") * 3
 
 
 @contextmanager

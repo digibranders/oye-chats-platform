@@ -198,12 +198,12 @@ class TestChatEndpointPreviewQuota:
         def _deduct_should_not_be_called(*_a, **_k):
             pytest.fail("credit_service.check_and_deduct must not be called on the preview path")
 
-        def _rag_should_not_be_called(*_a, **_k):
-            pytest.fail("rag_pipeline must not run once the preview quota is exceeded")
+        async def _rag_should_not_be_called(*_a, **_k):
+            pytest.fail("the pipeline must not run once the preview quota is exceeded")
 
         with (
             patch.object(chat_routes, "bot_subscription_status", lambda *a, **k: "active"),
-            patch.object(chat_routes, "rag_pipeline", _rag_should_not_be_called),
+            patch.object(chat_routes, "collect_rag_pipeline", _rag_should_not_be_called),
             patch.object(credit_service, "check_and_deduct", _deduct_should_not_be_called),
             patch("app.services.preview_quota.check_and_increment_preview", lambda bot_id: False),
         ):
@@ -211,6 +211,10 @@ class TestChatEndpointPreviewQuota:
 
         assert res.status_code == 429, res.text
         assert res.json()["detail"] == "preview_daily_limit_reached"
+
+    @staticmethod
+    async def _reply_stub(*_a, **_k):
+        return {"answer": "Hi there", "sources": []}
 
     def test_under_quota_preview_returns_200_with_no_credit_deduction(self, db):
         from app.api import chat_routes
@@ -225,11 +229,7 @@ class TestChatEndpointPreviewQuota:
 
         with (
             patch.object(chat_routes, "bot_subscription_status", lambda *a, **k: "active"),
-            patch.object(
-                chat_routes,
-                "rag_pipeline",
-                lambda *a, **k: {"answer": "Hi there", "sources": []},
-            ),
+            patch.object(chat_routes, "collect_rag_pipeline", self._reply_stub),
             patch.object(chat_routes, "submit_background", lambda *a, **k: None),
             patch.object(credit_service, "check_and_deduct", _deduct_should_not_be_called),
             patch("app.services.preview_quota.check_and_increment_preview", lambda bot_id: True),

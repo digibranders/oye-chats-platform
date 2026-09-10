@@ -606,8 +606,6 @@ export function uploadSkipReason(reason: string | undefined): string | null {
       return translateNow('agents.thisBatchIsOver60') || 'This batch is over 60 MB. Skipped, no charge';
     case 'extraction_failed':
       return translateNow('agents.noReadableTextMostLikely') || 'No readable text, most likely a scanned PDF. Skipped, no charge';
-    case 'extraction_error':
-      return translateNow('agents.weCouldNotExtractText') || 'We could not extract text. Skipped, no charge';
     default:
       return reason;
   }

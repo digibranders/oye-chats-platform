@@ -184,6 +184,22 @@ def _parse_iso_datetime(raw: str) -> datetime | None:
     return parsed.astimezone(UTC)
 
 
+def _usable_url(raw: object) -> str | None:
+    """An http(s) URL we are willing to show a visitor, or None.
+
+    The model is reading a crawled page, so it can return anything the page
+    contained, including ``javascript:`` and ``data:`` URIs.
+    """
+    from app.services.pricing_gate import normalize_url
+
+    if not isinstance(raw, str):
+        return None
+    candidate = raw.strip()
+    if not candidate:
+        return None
+    return candidate if normalize_url(candidate) else None
+
+
 def extract_events(
     text: str,
     *,
@@ -222,6 +238,7 @@ def extract_events(
             },
         },
         "timeout": _EXTRACT_TIMEOUT_S,
+        "temperature": 0,
         "metadata": {"generation_name": "event-extractor"},
     }
     _apply_model_family_kwargs(kwargs, model)
@@ -254,7 +271,12 @@ def extract_events(
                 "title": title,
                 "starts_at": starts,
                 "ends_at": ends,
-                "url": (ev.url or "").strip() or None,
+                # Validated, not merely stripped. This URL is persisted and
+                # then presented to the answering model as source-of-truth
+                # event data, while the answer prompt permits only http(s)
+                # links. ``normalize_url`` is the same check the pricing gate
+                # uses before putting a link in front of a visitor.
+                "url": _usable_url(ev.url),
                 "location": (ev.location or "").strip() or None,
             }
         )

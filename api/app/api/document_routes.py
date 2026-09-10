@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 import re
 import time
@@ -18,6 +19,7 @@ from app.api.auth import (
 )
 from app.config import DOCUMENTS_DIR
 from app.core.cache import cache_delete_prefix, gate_prefix_for_bot, qa_prefix_for_bot
+from app.core.metrics import increment_metric_counter
 from app.core.rate_limit import key_from_operator_credential, limiter
 from app.db.models import Bot, Document
 from app.db.repository import (
@@ -640,7 +642,7 @@ def preview_ingest_cost(
                 continue
             except Exception:
                 logger.exception(f"preview-cost extraction error for {fname}")
-                per_file.append({"filename": fname, "words": 0, "credits": 0, "reason": "extraction_error"})
+                per_file.append({"filename": fname, "words": 0, "credits": 0, "reason": "extraction_failed"})
                 continue
 
             text = " ".join(p.get("text", "") for p in pages)
@@ -873,12 +875,19 @@ def ingest_documents(
     # 10-minute request timeout. If extraction fails for a specific file we
     # skip it in the cost calculation, the background ingest will quarantine
     # it and no credits should be charged for content we can't store.
-    def _extract_words_for_cost(path: Path, ext: str) -> tuple[int, int]:
-        """Return ``(word_count, cleaned_char_count)`` for one saved file.
+    def _extract_words_for_cost(path: Path, ext: str) -> tuple[int, int, str | None]:
+        """Return ``(word_count, cleaned_char_count, failure_reason)``.
 
         The char count is measured on the CLEANED text because that is the unit
         the KB quota counts (``pipeline._ingest_document``), so the pre-flight
         below gates on the same number the pipeline will later enforce.
+
+        The third value is why the count is zero, or None when it genuinely is.
+        Without it the response reported a failed file as a free success and the
+        customer only found out later that the document had been quarantined.
+        ``preview-cost`` already reports ``extraction_failed`` this way; this is
+        the same vocabulary, and the console matches the reason string exactly,
+        so it is the only spelling.
         """
         try:
             if ext == ".pdf":
@@ -889,26 +898,26 @@ def ingest_documents(
                 pages = load_txt(str(path))
         except ExtractionError as exc:
             logger.warning(f"Skipping {path.name} for billing (extraction failed): {exc}")
-            return 0, 0
+            return 0, 0, "extraction_failed"
         except Exception:  # pragma: no cover. Pypdf/docx surprise
             logger.exception(f"Unexpected extraction error for {path.name}; skipping billing")
-            return 0, 0
+            return 0, 0, "extraction_failed"
         raw = " ".join(p.get("text", "") for p in pages)
         cleaned = " ".join(clean_text(p.get("text", "")) for p in pages)
-        return credit_service.count_words(raw), len(cleaned)
+        return credit_service.count_words(raw), len(cleaned), None
 
-    per_file_costs: list[tuple[str, int, int]] = []  # (filename, words, credits)
+    per_file_costs: list[tuple[str, int, int, str | None]] = []  # (filename, words, credits, reason)
     total_cost = 0
     total_chars = 0
     with get_session() as db:
         for saved_path in saved_paths:
             fname = saved_path.name
             ext = saved_path.suffix.lower()
-            words, chars = _extract_words_for_cost(saved_path, ext)
+            words, chars, reason = _extract_words_for_cost(saved_path, ext)
             # ``words == 0`` (extraction failed or the file had no text) prices
             # at 0 inside the helper, which is what ``preview-cost`` quotes.
             cost = credit_service.get_document_upload_cost_for_size(db, words)
-            per_file_costs.append((fname, words, cost))
+            per_file_costs.append((fname, words, cost, reason))
             total_cost += cost
             total_chars += chars
 
@@ -982,7 +991,10 @@ def ingest_documents(
                         "required": exc.required,
                         "available": exc.available,
                         "document_count": len(saved_files),
-                        "per_file": [{"filename": name, "words": w, "credits": c} for name, w, c in per_file_costs],
+                        "per_file": [
+                            {"filename": name, "words": w, "credits": c, "reason": r}
+                            for name, w, c, r in per_file_costs
+                        ],
                         "message": (
                             f"Uploading these {len(saved_files)} document(s) costs {exc.required} credits, "
                             f"but you only have {exc.available}. Top up or upgrade to continue."
@@ -1056,7 +1068,9 @@ def ingest_documents(
         # credits)" instead of a lump total. Replaces the old
         # ``credits_per_document`` field, which was meaningless once pricing
         # started varying per file.
-        "per_file_billing": [{"filename": name, "words": w, "credits": c} for name, w, c in per_file_costs],
+        "per_file_billing": [
+            {"filename": name, "words": w, "credits": c, "reason": r} for name, w, c, r in per_file_costs
+        ],
     }
     if job_id:
         response["job_id"] = job_id
@@ -1324,7 +1338,7 @@ async def crawl_diff_endpoint(
 
     from app.services import credit_service, plan_service
     from app.services.plan_service import UNLIMITED
-    from app.services.url_discovery import check_urls_alive, discover_website_urls, normalize_url
+    from app.services.url_discovery import check_urls_liveness, discover_website_urls, normalize_url
 
     with get_session() as db:
         plan = plan_service.get_client_plan(db, client_id)
@@ -1414,10 +1428,26 @@ async def crawl_diff_endpoint(
         if not raw_urls_to_check:
             return {}
         try:
-            return await asyncio.wait_for(
-                check_urls_alive(raw_urls_to_check),
+            states = await asyncio.wait_for(
+                check_urls_liveness(raw_urls_to_check),
                 timeout=HEAD_BUDGET_SECONDS,
             )
+            # A URL the probe could not resolve either way is reported as alive
+            # (never delete on a blip) but it is NOT a clean result, and saying
+            # so is the whole point of ``head_partial``. Without this the caller
+            # could not tell 400 confirmed-live pages from 400 timeouts.
+            undetermined = [url for url, state in states.items() if state == "unknown"]
+            if undetermined:
+                head_partial = True
+                logger.warning(
+                    "HEAD liveness undetermined for %d of %d URLs on %s",
+                    len(undetermined),
+                    len(states),
+                    diff_request.url,
+                )
+                with contextlib.suppress(Exception):
+                    increment_metric_counter("liveness_probe_failed", bot_id=None)
+            return {url: state != "gone" for url, state in states.items()}
         except TimeoutError:
             logger.warning(
                 "HEAD liveness check exceeded %.0fs budget for %s (%d URLs). Falling back to assume-alive",
@@ -1430,6 +1460,14 @@ async def crawl_diff_endpoint(
         except Exception as exc:
             logger.warning("HEAD liveness check failed for %s: %s", diff_request.url, exc)
             head_partial = True
+            # Assume-alive is the safe direction here (the recrawl keeps a page
+            # rather than deleting a live one), and the response carries
+            # ``head_partial`` so the console can say the count is an
+            # undercount. Counted so a probe that is failing constantly, and
+            # therefore a knowledge base quietly accumulating dead pages, is
+            # visible without reading logs.
+            with contextlib.suppress(Exception):
+                increment_metric_counter("liveness_probe_failed", bot_id=None)
             return {raw: True for raw in raw_urls_to_check}
 
     async def _discovery_with_budget() -> list[str]:

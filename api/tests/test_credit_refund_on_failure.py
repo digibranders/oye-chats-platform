@@ -202,11 +202,10 @@ class TestRouteRefundWiring:
     def test_nonstream_refunds_when_generation_failed(self, monkeypatch):
         from app.api import chat_routes
 
-        monkeypatch.setattr(
-            chat_routes,
-            "rag_pipeline",
-            lambda *a, **k: {"answer": LLM_API_ERROR_MESSAGE, "generation_failed": True},
-        )
+        async def _failed(*_a, **_k):
+            return {"answer": LLM_API_ERROR_MESSAGE, "generation_failed": True}
+
+        monkeypatch.setattr(chat_routes, "collect_rag_pipeline", _failed)
         resp = _client().post("/chat", json={"question": "hi", "session_id": "s1"})
         assert resp.status_code == 200
         assert self.refunds == [1]
@@ -214,11 +213,10 @@ class TestRouteRefundWiring:
     def test_nonstream_no_refund_on_success(self, monkeypatch):
         from app.api import chat_routes
 
-        monkeypatch.setattr(
-            chat_routes,
-            "rag_pipeline",
-            lambda *a, **k: {"answer": "Our hours are 9-5.", "generation_failed": False},
-        )
+        async def _ok(*_a, **_k):
+            return {"answer": "Our hours are 9-5.", "generation_failed": False}
+
+        monkeypatch.setattr(chat_routes, "collect_rag_pipeline", _ok)
         resp = _client().post("/chat", json={"question": "hi", "session_id": "s1"})
         assert resp.status_code == 200
         assert self.refunds == []

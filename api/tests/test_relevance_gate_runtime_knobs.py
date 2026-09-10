@@ -122,7 +122,9 @@ class TestThresholdResolution:
 class TestJudgeInputKnobs:
     def test_defaults(self):
         assert relevance_gate.GATE_MAX_CHUNKS == 5
-        assert relevance_gate.GATE_CHUNK_PREVIEW_CHARS == 500
+        # A whole default-size chunk (CHUNK_SIZE=1000), so the judge and the
+        # generator read the same text.
+        assert relevance_gate.GATE_CHUNK_PREVIEW_CHARS == 1000
 
     def test_prompt_shows_five_chunks_of_500_characters(self, monkeypatch):
         monkeypatch.setattr(relevance_gate, "GATE_MAX_CHUNKS", 5)
@@ -156,7 +158,7 @@ class TestJudgeInputKnobs:
         try:
             reloaded = importlib.reload(relevance_gate)
             assert reloaded.GATE_MAX_CHUNKS == 2
-            assert reloaded.GATE_CHUNK_PREVIEW_CHARS == 500
+            assert reloaded.GATE_CHUNK_PREVIEW_CHARS == 1000
         finally:
             monkeypatch.delenv("GATE_MAX_CHUNKS", raising=False)
             monkeypatch.delenv("GATE_CHUNK_PREVIEW_CHARS", raising=False)

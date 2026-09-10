@@ -1808,7 +1808,6 @@ const en = {
     weCouldNotCompareThe: 'We could not compare the pages.',
     weCouldNotCompareThe2: 'We could not compare the pages',
     weCouldNotCountThe: 'We could not count the pages on that site. You can still train on it, and we will follow links from the homepage.',
-    weCouldNotExtractText: 'We could not extract text. Skipped, no charge',
     weCouldNotFinishReading: 'We could not finish reading that site. Try again, or upload a document instead.',
     weCouldNotListThis: 'We could not list this site’s pages; training will follow links from the homepage',
     weCouldNotLoadThe: 'We could not load the weekly retrain',

@@ -7,7 +7,6 @@ from sqlalchemy.orm import aliased
 
 from app.core.exceptions import SessionOwnershipError
 from app.db.models import (
-    BANTSignal,
     Bot,
     BotGrowthEvent,
     ChatAuditLog,
@@ -223,15 +222,6 @@ def update_session_bant(session, session_id: str, client_id: int = None, bant_da
         session.flush()
         return True
     return False
-
-
-def get_bant_signals(session, session_id: str) -> list:
-    """Return all BANT signal records for a session, ordered by creation time."""
-    return (
-        session.execute(select(BANTSignal).where(BANTSignal.session_id == session_id).order_by(BANTSignal.created_at))
-        .scalars()
-        .all()
-    )
 
 
 def add_chat_message(
@@ -524,11 +514,31 @@ def get_pages_for_source(session, source: str, bot_id: int = None, client_id: in
 def count_documents_for_bot(session, bot_id: int = None, client_id: int = None) -> int:
     """Return the total number of stored chunks for a bot.
 
-    Used by CAG-lite to decide whether to skip retrieval and inject all
-    chunks directly into the prompt (when total count is small).
+    CAG-lite now asks ``knowledge_state_for_bot`` instead, because it needs the
+    same count AND a fingerprint of the corpus in one query. This remains the
+    plain count used by seed-question gating, the crawl content guards and
+    ``sync_bot_knowledge_state``.
     """
     stmt = select(func.count()).select_from(Document).where(_owner_filter(Document, bot_id, client_id))
     return session.execute(stmt).scalar_one()
+
+
+def knowledge_state_for_bot(session, bot_id: int = None, client_id: int = None) -> tuple[int, int | None]:
+    """``(chunk count, highest chunk id)`` for a bot.
+
+    A cheap fingerprint of what the bot currently knows: it moves on every
+    ingest, re-ingest and delete, and one query answers both the CAG-lite
+    threshold question and the cache-key question. The relevance gate keys its
+    verdict cache on it so a re-train never serves a verdict that was judged
+    against the old documents.
+    """
+    stmt = (
+        select(func.count(), func.max(Document.id))
+        .select_from(Document)
+        .where(_owner_filter(Document, bot_id, client_id))
+    )
+    count, max_id = session.execute(stmt).one()
+    return int(count), max_id
 
 
 def sync_bot_knowledge_state(session, bot_id: int | None) -> int:
@@ -968,6 +978,11 @@ def _session_owner_filter(bot_id=None, client_id=None):
     """
     from sqlalchemy import and_
 
+    if not bot_id and not client_id:
+        # Without either id this returned ``client_id IS NULL``, a clause that
+        # silently matches rows rather than raising. ``_owner_filter`` has
+        # raised here for a while; these two were the copies that did not.
+        raise ValueError("_session_owner_filter requires bot_id or client_id")
     if bot_id and client_id:
         return and_(ChatSession.bot_id == bot_id, ChatSession.client_id == client_id)
     if bot_id:
@@ -984,6 +999,10 @@ def _doc_owner_filter(bot_id=None, client_id=None):
     """
     from sqlalchemy import and_
 
+    if not bot_id and not client_id:
+        # See ``_session_owner_filter``: an unscoped call used to become
+        # ``client_id IS NULL`` instead of an error.
+        raise ValueError("_doc_owner_filter requires bot_id or client_id")
     if bot_id and client_id:
         tenant = and_(Document.bot_id == bot_id, Document.client_id == client_id)
     elif bot_id:

@@ -1,7 +1,7 @@
 """Authorization gating for ``superadmin_plan_routes.py``.
 
 Mirrors the pattern in ``test_superadmin_impersonation_revoke.py``: this module
-had ZERO ``_require_write`` gating, so a ``readonly`` super-admin could create,
+had ZERO ``require_write`` gating, so a ``readonly`` super-admin could create,
 update, and delete pricing plans and override subscriptions/seats. Writes
 that should be restricted to owner/admin roles. These tests pin down that a
 ``readonly`` actor is rejected with 403 on every mutating endpoint while a

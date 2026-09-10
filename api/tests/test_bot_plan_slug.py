@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from app.api.bot_routes import bot_plan, bot_plan_slug
+from app.api.bot_routes import bot_plan
 
 
 def _entitlements(slug, name="Professional"):
@@ -30,7 +30,7 @@ class TestBotPlanSlug:
             "app.services.plan_entitlements_service.get_bot_entitlements",
             return_value=_entitlements("professional"),
         ):
-            assert bot_plan_slug(1, MagicMock()) == "professional"
+            assert bot_plan(1, MagicMock())[0] == "professional"
 
     def test_lowercases_so_slug_comparisons_hold(self):
         """Gates compare against literal `'professional'`; a stored
@@ -39,7 +39,7 @@ class TestBotPlanSlug:
             "app.services.plan_entitlements_service.get_bot_entitlements",
             return_value=_entitlements("Professional"),
         ):
-            assert bot_plan_slug(1, MagicMock()) == "professional"
+            assert bot_plan(1, MagicMock())[0] == "professional"
 
     def test_a_lookup_failure_reads_as_free(self):
         """Fail closed. A resolution error that read as a paid tier would open
@@ -48,7 +48,7 @@ class TestBotPlanSlug:
             "app.services.plan_entitlements_service.get_bot_entitlements",
             side_effect=RuntimeError("entitlements down"),
         ):
-            assert bot_plan_slug(1, MagicMock()) == "free"
+            assert bot_plan(1, MagicMock())[0] == "free"
 
     def test_a_non_string_slug_reads_as_free(self):
         """`or "free"` alone would pass a stub or a bad row straight through to
@@ -57,14 +57,14 @@ class TestBotPlanSlug:
             "app.services.plan_entitlements_service.get_bot_entitlements",
             return_value=_entitlements(MagicMock()),
         ):
-            assert bot_plan_slug(1, MagicMock()) == "free"
+            assert bot_plan(1, MagicMock())[0] == "free"
 
     def test_a_missing_slug_reads_as_free(self):
         with patch(
             "app.services.plan_entitlements_service.get_bot_entitlements",
             return_value=_entitlements(None),
         ):
-            assert bot_plan_slug(1, MagicMock()) == "free"
+            assert bot_plan(1, MagicMock())[0] == "free"
 
 
 class TestBotPlanName:

@@ -491,6 +491,7 @@ Return ONLY the single preset key (e.g. "professional"), nothing else."""
             "model": _model,
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 10,
+            "temperature": 0,
             "metadata": metadata or {"generation_name": "brand-tone-classification"},
         }
         _apply_model_family_kwargs(kwargs, _model)
@@ -552,6 +553,7 @@ Return ONLY the questions, one per line, no numbering, no quotes, no extra text.
             "model": _model,
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 200,
+            "temperature": 0,
             "metadata": metadata or {"generation_name": "seed-questions"},
         }
         _apply_model_family_kwargs(kwargs, _model)
@@ -609,6 +611,7 @@ Return ONLY the reply text, no quotes or preamble."""
             "model": _model,
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 80,
+            "temperature": 0,
             "metadata": metadata or {"generation_name": "brand-tone-preview"},
         }
         _apply_model_family_kwargs(kwargs, _model)
@@ -673,6 +676,7 @@ Website content:
             "model": _model,
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 250,
+            "temperature": 0,
             "metadata": metadata or {"generation_name": "company-context-extraction"},
         }
         _apply_model_family_kwargs(kwargs, _model)
@@ -695,9 +699,16 @@ Website content:
             elif line.upper().startswith("DESCRIPTION:"):
                 description = line[12:].strip().strip('"')
 
-        if not name and not description and len(text) < 1000:
-            # Fallback: treat entire response as description
-            description = text
+        # No "treat the whole reply as the description" fallback. This value is
+        # written into the COMPANY CONTEXT block of every future visitor prompt,
+        # so anything that is not the shape we asked for is not a description:
+        # a refusal, an apology, or a line injected into the crawled page all
+        # arrive here as plausible-looking prose under 1000 characters. A miss
+        # costs one empty context block; a wrong hit is in every answer the bot
+        # gives from then on.
+        if not name and not description:
+            logger.warning("Company context reply did not match the NAME/DESCRIPTION shape; discarding")
+            return None
 
         result = {}
         if name and 2 <= len(name) <= 100:

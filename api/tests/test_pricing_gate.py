@@ -591,28 +591,37 @@ def test_the_exported_standdown_predicate_matches_the_gates_own_decision(
     assert (decision.outcome == "no_support_path_standdown") is expected
 
 
-def test_there_is_no_outcome_that_turns_the_gate_off():
-    """No opt-out under another name. The decision type's own vocabulary is the
-    cheapest place to pin that: an ``off`` outcome reappearing means something
-    grew a way to disable the gate again.
+def test_the_only_way_off_is_the_owner_setting():
+    """One opt-out, named, and it is a deliberate owner decision.
 
-    ``no_support_path_standdown`` is the one addition and it is NOT an opt-out:
-    it is not reachable from any setting an owner can flip, it needs a plan with
-    no human path AND no usable pricing page together, and a Free bot that names
-    a usable page is gated exactly like a paid one. It is a distinct value rather
-    than being folded into ``quote_standdown`` because the two mean opposite
-    things about the bot's health, and the Free carve-out is the one that
-    re-opens the stale-price hole and therefore has to be countable on its own.
+    ``owner_optout`` is reachable only from ``Bot.pricing_from_knowledge_base``,
+    which defaults False, so a bot that never touches it is gated exactly as it
+    was; ``tests/test_pricing_gate_optout.py`` pins that default from both API
+    contracts and the bot cache. It exists because the gate assumed a
+    trustworthy price lives on a public pricing page, and that is false for
+    every customer whose price list is an uploaded PDF: those bots escalated
+    every pricing question while holding the answer.
+
+    ``no_support_path_standdown`` is NOT an opt-out: no setting reaches it, it
+    needs a plan with no human path AND no usable pricing page together, and a
+    Free bot that names a usable page is gated exactly like a paid one. It is a
+    distinct value rather than being folded into ``quote_standdown`` because the
+    two mean opposite things about the bot's health, and the Free carve-out is
+    the one that re-opens the stale-price hole and therefore has to be countable
+    on its own.
+
+    The vocabulary is still the cheapest place to spot a SECOND way off
+    appearing: anything that reads as a bare switch is one.
     """
     assert set(get_args(GateOutcome)) == {
         "quote_standdown",
         "no_support_path_standdown",
+        "owner_optout",
         "not_pricing",
         "answer",
         "escalate_no_url",
         "escalate_no_content",
     }
-    # The thing actually being guarded: no outcome that reads as a switch.
     assert not [o for o in get_args(GateOutcome) if o in ("off", "disabled", "gate_off", "opted_out")]
 
 

@@ -135,6 +135,10 @@ class SendOutcome:
 
     sent: bool
     can_retry: bool = False
+    #: Why the send failed, in a form worth storing on a dead letter. Empty on
+    #: success. Without it the dead-letter row could say a message was lost but
+    #: not whether the provider refused it, the DNS failed, or email was off.
+    error: str | None = None
 
 
 # HTTP statuses whose semantics are "we did NOT queue this, come back later".
@@ -225,7 +229,7 @@ def _send_brevo_email_result(
             redact_email(to_email),
             subject,
         )
-        return SendOutcome(False)
+        return SendOutcome(False, error="EMAIL_ENABLED is false")
 
     email_payload: dict = {
         "sender": {"name": sender_name or EMAIL_FROM_NAME, "email": EMAIL_FROM_ADDRESS},
@@ -254,7 +258,7 @@ def _send_brevo_email_result(
         reason = _extract_brevo_error(e)
         logger.warning("Brevo email failed | to=%s subject=%s reason=%s", redact_email(to_email), subject, reason)
         _capture_email_failure(e, kind="raw", to=to_email, subject=subject, reason=reason)
-        return SendOutcome(False, can_retry=_is_brevo_connection_phase(e))
+        return SendOutcome(False, can_retry=_is_brevo_connection_phase(e), error=repr(e))
 
 
 def _send_brevo_email(
@@ -292,7 +296,7 @@ def _send_brevo_template_result(
             redact_email(to_email),
             template_id,
         )
-        return SendOutcome(False)
+        return SendOutcome(False, error="EMAIL_ENABLED is false")
 
     email_payload: dict = {"to": [{"email": to_email}], "templateId": template_id, "params": params}
     if reply_to:
@@ -317,7 +321,7 @@ def _send_brevo_template_result(
             "Brevo template email failed | to=%s template_id=%s reason=%s", redact_email(to_email), template_id, reason
         )
         _capture_email_failure(e, kind="template", to=to_email, template_id=template_id, reason=reason)
-        return SendOutcome(False, can_retry=_is_brevo_connection_phase(e))
+        return SendOutcome(False, can_retry=_is_brevo_connection_phase(e), error=repr(e))
 
 
 def _send_brevo_template(
@@ -375,7 +379,7 @@ def _send_ses_email_result(
             redact_email(to_email),
             subject,
         )
-        return SendOutcome(False)
+        return SendOutcome(False, error="EMAIL_ENABLED is false")
 
     msg = MIMEMultipart("mixed")
     msg["Subject"] = subject
@@ -406,7 +410,7 @@ def _send_ses_email_result(
         reason = _extract_ses_error(e)
         logger.warning("SES email failed | to=%s subject=%s reason=%s", redact_email(to_email), subject, reason)
         _capture_email_failure(e, kind="raw", to=to_email, subject=subject, reason=reason)
-        return SendOutcome(False, can_retry=_is_ses_connection_phase(e))
+        return SendOutcome(False, can_retry=_is_ses_connection_phase(e), error=repr(e))
 
 
 def _send_ses_email(
@@ -464,6 +468,85 @@ def _send_raw_email(
     ).sent
 
 
+#: Subjects and senders whose body carries a live credential. A dead-letter row
+#: for one of these keeps everything EXCEPT the body: an operator resending a
+#: password-reset link out of a database is not a support workflow, it is a
+#: privilege-escalation path. The customer requests a new one instead.
+_CREDENTIAL_BEARING = ("otp", "verification", "verify", "password", "reset", "invite", "invitation")
+
+
+def _looks_credential_bearing(subject: str) -> bool:
+    lowered = (subject or "").lower()
+    return any(word in lowered for word in _CREDENTIAL_BEARING)
+
+
+def record_failed_email(
+    to_email: str,
+    subject: str,
+    html_body: str | None,
+    *,
+    reason: str,
+    error: str | None = None,
+    reply_to: str | None = None,
+    sender_name: str | None = None,
+    attachments: list[dict] | None = None,
+    attempts: int = 1,
+    credential: bool = False,
+) -> None:
+    """Persist an email that was accepted and then lost. Never raises.
+
+    ``credential`` is the sender's own declaration that the body carries a
+    live code or link. The subject heuristic stays as a second net, but it is
+    a guess: the email-change OTP's subject matched none of its keywords, so
+    a six-digit code sat in this table marked replayable.
+
+    Called from the three places a message can disappear: a failed enqueue, a
+    provider rejection that is deliberately not retried, and an exhausted retry
+    budget. Before this, each of those was one log line, so "I never got the
+    email" had no answer and nothing could be replayed.
+
+    Opens its own session: the callers are a fire-and-forget helper and a
+    worker task, neither of which owns a transaction the row should ride on. A
+    failure to record must never become the caller's problem, so everything
+    here is swallowed. The counter is what makes that swallow visible.
+    """
+    from app.core.metrics import forward_to_sentry_if_alertable, increment_metric_counter
+
+    if not EMAIL_ENABLED:
+        # Mail is switched off for this deployment, so nothing was lost: every
+        # send is expected to be a no-op. Recording them would fill the table on
+        # any environment without provider credentials and turn the alert into
+        # noise nobody reads.
+        return
+
+    try:
+        from app.db.models import FailedEmail
+        from app.db.session import get_session
+
+        credentialed = credential or _looks_credential_bearing(subject)
+        with get_session() as session:
+            session.add(
+                FailedEmail(
+                    to_email=to_email,
+                    subject=subject,
+                    body_html=None if credentialed else html_body,
+                    reply_to=reply_to,
+                    sender_name=sender_name,
+                    attachments=attachments,
+                    reason=reason,
+                    error=(error or "")[:2000] or None,
+                    attempts=attempts,
+                    replayable=not credentialed,
+                )
+            )
+            session.commit()
+    except Exception:
+        logger.exception("record_failed_email: could not persist the dead letter for %s", redact_email(to_email))
+    with contextlib.suppress(Exception):
+        increment_metric_counter("email_dead_lettered", bot_id=None)
+        forward_to_sentry_if_alertable("email_dead_lettered", reason=reason)
+
+
 def send_email_async(
     to_email: str,
     subject: str,
@@ -472,19 +555,58 @@ def send_email_async(
     reply_to: str | None = None,
     sender_name: str | None = None,
     attachments: list[dict] | None = None,
+    credential: bool = False,
 ):
     """Fire-and-forget raw HTML email. Non-blocking.
 
     When WORKER_ENABLED=true, enqueues to ARQ (durable, retryable). Otherwise uses a
     thread-pool / threading fallback. ``attachments`` uses the Brevo format and is
     JSON-serializable so it rides through the ARQ job args unchanged.
+
+    ``credential`` marks a body that carries a live code or link. It rides
+    through the job so a dead-letter row written by the worker omits the body
+    too, not only one written here.
     """
     from app.worker.enqueue import WORKER_ENABLED
 
     if WORKER_ENABLED:
         from app.worker.enqueue import enqueue_sync
 
-        enqueue_sync("task_send_email", to_email, subject, html_body, reply_to, sender_name, attachments)
+        def _dead_letter(exc: BaseException) -> None:
+            # The job never existed, so no retry will ever run and no log
+            # anywhere would say which message was lost. Four sync routes also
+            # called this without a try, so a Redis blip surfaced to the
+            # customer as a 500 on an otherwise successful action.
+            logger.exception("send_email_async: enqueue failed for %s", redact_email(to_email))
+            record_failed_email(
+                to_email,
+                subject,
+                html_body,
+                reason="enqueue_failed",
+                error=repr(exc),
+                reply_to=reply_to,
+                sender_name=sender_name,
+                attachments=attachments,
+                credential=credential,
+            )
+
+        try:
+            # Inside a running loop the enqueue happens after this returns, so
+            # its failure can only reach us through ``on_failure``. Outside one
+            # it raises here. Never both.
+            enqueue_sync(
+                "task_send_email",
+                to_email,
+                subject,
+                html_body,
+                reply_to,
+                sender_name,
+                attachments,
+                credential,
+                on_failure=_dead_letter,
+            )
+        except Exception as exc:
+            _dead_letter(exc)
         return
 
     def _send():
@@ -824,6 +946,7 @@ def send_password_reset_email(to_email: str, otp: str):
             preheader="Your password reset code. Expires in 15 minutes.",
             inner=inner,
         ),
+        credential=True,
     )
 
 
@@ -849,6 +972,7 @@ def send_verification_otp_email(to_email: str, name: str, otp: str) -> None:
             preheader="Your verification code. Expires in 15 minutes.",
             inner=inner,
         ),
+        credential=True,
     )
 
 
@@ -874,6 +998,7 @@ def send_email_change_otp(to_email: str, name: str, otp: str) -> None:
             preheader="Confirm your new email address. Code expires in 15 minutes.",
             inner=inner,
         ),
+        credential=True,
     )
 
 
@@ -1334,6 +1459,7 @@ def send_affiliate_invite_email(to_email: str, accept_url: str, *, expires_in_da
             preheader=f"Accept your Partners invite. Link expires in {expiry}.",
             inner=inner,
         ),
+        credential=True,
     )
 
 
@@ -1382,6 +1508,7 @@ def send_operator_invite_email(
             preheader=f"Accept your invite to join {workspace_name}. Link expires in {expiry}.",
             inner=inner,
         ),
+        credential=True,
     )
 
 
@@ -1448,6 +1575,7 @@ def send_install_invite_email(
             inner=inner,
         ),
         reply_to=reply_to,
+        credential=True,
     )
 
 

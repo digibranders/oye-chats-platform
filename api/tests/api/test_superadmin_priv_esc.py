@@ -1,13 +1,13 @@
 """Privilege-escalation regression tests for PATCH /superadmin/clients/{id}.
 
-Bug: ``patch_client`` only gated writes behind ``_require_write`` (blocks the
+Bug: ``patch_client`` only gated writes behind ``require_write`` (blocks the
 ``readonly`` role) before writing ``is_superadmin`` / ``superadmin_role`` from
 the request body. Any non-readonly super-admin ("admin"-tier) could therefore
 promote themselves to ``owner`` or mint a brand-new super-admin from any
 customer row, the ``owner`` tier was checked nowhere.
 
 Fix: privilege-field writes (``is_superadmin``, ``superadmin_role``) now
-require ``_require_owner`` (only ``superadmin_role == "owner"``), and even an
+require ``require_owner`` (only ``superadmin_role == "owner"``), and even an
 owner is forbidden from mutating their OWN privilege fields via this endpoint
 (self-escalation / accidental self-lockout guard).
 """

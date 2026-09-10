@@ -1,6 +1,6 @@
 """The pricing answer gate driven through the REAL rag pipelines.
 
-The gate is unconditional, so every bot below is gated by construction and the
+The gate is on by default (the owner opt-out is covered elsewhere), so every bot below is gated by construction and the
 only thing any of these fixtures vary is ``pricing_url``: the page the bot is
 allowed to price from, or nothing, which routes the turn to the team.
 
@@ -129,7 +129,6 @@ def _stub_generation(monkeypatch):
         captured["prompts"].append(prompt)
         return "GENERATED ANSWER", False
 
-    monkeypatch.setattr(rs, "generate_response_checked", _fake_checked)
     monkeypatch.setattr(rs, "check_relevance", lambda *a, **k: (True, 1.0))
     monkeypatch.setattr(rs, "check_generated_answer_safety", lambda *a, **k: (True, None))
     monkeypatch.setattr(rs, "check_visitor_safety", lambda _q: (True, None))
@@ -171,7 +170,7 @@ def _no_cag_lite(monkeypatch):
     supposed to be narrowing. Disabling it is what makes the scoping
     assertions below mean something.
     """
-    monkeypatch.setenv("CAG_LITE_THRESHOLD", "0")
+    monkeypatch.setattr(rs, "CAG_LITE_THRESHOLD", 0)
 
 
 async def _collect(agen) -> list[str]:

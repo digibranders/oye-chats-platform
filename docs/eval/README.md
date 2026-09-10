@@ -21,11 +21,11 @@ golden_set.jsonl ──► run_eval ──POST /chat (X-Bot-Key)──► live b
                               report.json + report.md, exit 0/1
 ```
 
-1. **Golden set** — `api/eval/golden_set.jsonl`, 35 cases over ten
-   categories (`greeting`, `services`, `pricing`, `team`, `hours`, `events`,
-   `followup`, `offtopic`, `adversarial`, `trust`). Every answerable case lists
-   the facts a correct answer conveys; every refusal case lists what a bad
-   answer would say.
+1. **Golden set** — `api/eval/golden_set.jsonl`, 40 cases over eleven
+   categories (`greeting`, `company`, `services`, `pricing`, `team`, `hours`,
+   `events`, `followup`, `offtopic`, `adversarial`, `trust`). Every answerable
+   case lists the facts a correct answer conveys; every refusal case lists
+   what a bad answer would say.
 2. **Fixture knowledge base** — `api/eval/fixtures/acme/`, six Markdown
    documents about a fictional consultancy, *Acme Analytics*: services,
    pricing in INR and USD (GST-exclusive, like the real product), team, hours
@@ -65,8 +65,24 @@ input. Do not lower a threshold to make a run green: read the failures first.
 Coverage minimums for the shipped set are enforced by
 `tests/test_eval_harness.py` (`MINIMUM_COVERAGE` in `eval/golden.py`): at
 least 4 off-topic refusals, 3 prompt-injection attempts, 2 follow-ups with
-history, 2 events questions and 3 pricing questions, one per failure class
-the audit found.
+history, 2 events questions, 3 pricing questions and 4 answerable `company`
+questions, one per failure class the audit found.
+
+## Categories
+
+| Category | Cases | What it guards |
+|---|---|---|
+| `greeting` | 2 | "hi" is answered with an offer of help, not treated as off-topic |
+| `company` | 5 | Questions about the business itself ("what does Acme do", "what is Acme Analytics", "tell me about your company", "who are you and what do you do", an indirect "what is this place?") are answered from the KB. In September 2026 the relevance gate refused these; every case lists "Refuses or says it cannot help with that" as a forbidden claim and a tempting fabrication (a founding year other than 2019, a team size other than 18, an office outside Pune or Berlin, selling a BI product, building apps) |
+| `services` | 4 | The four offerings, supported warehouses, what Acme does not do, migration duration |
+| `pricing` | 4 | INR and USD prices, GST exclusivity, the annual discount, workshop pricing |
+| `team` | 3 | Founders, team size, the CTO's role and city |
+| `hours` | 3 | Office hours, weekend support, how to reach sales |
+| `events` | 3 | Past versus upcoming events under `TODAY'S DATE` reasoning |
+| `followup` | 3 | Pronoun and elliptical follow-ups resolved from session history |
+| `offtopic` | 4 | Geography, code, weather and sport are declined |
+| `adversarial` | 4 | Prompt injection, persona hijack, pasted fake documents, credential requests |
+| `trust` | 5 | AI disclosure, who built the assistant, recording, certification, data location |
 
 ## Running it locally
 
@@ -109,8 +125,8 @@ back to `EVAL_API_URL`, `EVAL_BOT_KEY`, `EVAL_API_KEY`, `EVAL_ORIGIN` and
 Exit status: `0` pass, `1` below the threshold or API unreachable, `2` usage
 or golden-file error. A run costs one AI-chat credit per request, and every
 session costs one request more than its turns because the bot opens with
-its name request: about 75 credits for the shipped set, plus judge tokens.
-A full run takes roughly 10 minutes at the default pacing.
+its name request: about 83 credits for the shipped set, plus judge tokens.
+A full run takes roughly 11 minutes at the default pacing.
 
 ### The eval bot
 
@@ -140,7 +156,7 @@ One JSON object per line in `golden_set.jsonl`:
 | Field | Rules |
 |---|---|
 | `id` | unique, `[a-z0-9-]`; convention `<category>-<nn>` |
-| `category` | one of the ten categories above |
+| `category` | one of the eleven categories above |
 | `question` | the visitor's message, ≤ 5000 characters (the API's own limit) |
 | `history` | optional prior *visitor* turns, ≤ 6, replayed in order into the same session. The bot's replies come from the live API. Required for `followup`. |
 | `expected_facts` | 1–12 reference truths a correct answer conveys. Write them as **verifiable statements**, close to the source wording and including the specific number, date or name. Required unless `must_refuse`. |

@@ -7,7 +7,8 @@ name: Answer-Quality Eval
 # bot's answers regressed (or the judge/API was unreachable). Read the report
 # artifact (report.md) or the job summary before changing a threshold.
 #
-# Secrets:  EVAL_API_URL  (e.g. https://api.oyechats.com)
+# Secret or variable:
+#           EVAL_API_URL  (e.g. https://api.oyechats.com)
 #           EVAL_BOT_KEY  (public key of the dedicated eval bot)
 #           GOOGLE_API_KEY / OPENAI_API_KEY (the judge model's provider key)
 # Variable: EVAL_ORIGIN (optional; only if the eval bot enforces allowed domains)
@@ -83,8 +84,8 @@ jobs:
       - name: Check the eval target is configured
         id: target
         env:
-          EVAL_API_URL: ${{ secrets.EVAL_API_URL }}
-          EVAL_BOT_KEY: ${{ secrets.EVAL_BOT_KEY }}
+          EVAL_API_URL: ${{ secrets.EVAL_API_URL || vars.EVAL_API_URL }}
+          EVAL_BOT_KEY: ${{ secrets.EVAL_BOT_KEY || vars.EVAL_BOT_KEY }}
         run: |
           missing=()
           [ -n "$EVAL_API_URL" ] || missing+=("EVAL_API_URL")
@@ -124,8 +125,8 @@ jobs:
         if: steps.target.outputs.configured == 'true'
         working-directory: api
         env:
-          EVAL_API_URL: ${{ secrets.EVAL_API_URL }}
-          EVAL_BOT_KEY: ${{ secrets.EVAL_BOT_KEY }}
+          EVAL_API_URL: ${{ secrets.EVAL_API_URL || vars.EVAL_API_URL }}
+          EVAL_BOT_KEY: ${{ secrets.EVAL_BOT_KEY || vars.EVAL_BOT_KEY }}
           EVAL_ORIGIN: ${{ vars.EVAL_ORIGIN }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -133,7 +134,16 @@ jobs:
           EVAL_MIN_PASS_RATE: ${{ inputs.min_pass_rate || '0.8' }}
           EVAL_LIMIT: ${{ inputs.limit }}
         run: |
-          args=(--min-pass-rate "$EVAL_MIN_PASS_RATE" --out eval-report)
+          # Passed explicitly rather than left to the runner's own env lookup.
+          # The 2026-09-09 run reached this step with both values present in the
+          # step environment and still exited with "--api-url is required",
+          # because the default is resolved inside the process and something in
+          # the import chain clears it. An explicit argument cannot be lost.
+          args=(--api-url "$EVAL_API_URL" --bot-key "$EVAL_BOT_KEY")
+          args+=(--min-pass-rate "$EVAL_MIN_PASS_RATE" --out eval-report)
+          if [ -n "$EVAL_ORIGIN" ]; then
+            args+=(--origin "$EVAL_ORIGIN")
+          fi
           if [ -n "$EVAL_LIMIT" ]; then
             args+=(--limit "$EVAL_LIMIT")
           fi

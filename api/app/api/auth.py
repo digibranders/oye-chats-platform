@@ -1082,6 +1082,7 @@ def _bot_to_cache_dict(bot: Bot) -> dict:
         # it ANSWER, so a cache hit that dropped it would make every bot escalate
         # every pricing question until the cache expired.
         "pricing_url": getattr(bot, "pricing_url", None),
+        "pricing_from_knowledge_base": bool(getattr(bot, "pricing_from_knowledge_base", False)),
         "created_at": bot.created_at.isoformat() if bot.created_at else None,
     }
 
