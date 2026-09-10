@@ -133,7 +133,7 @@ def _stub_pipeline(
     monkeypatch.setattr(rs, "check_generated_answer_safety", lambda *a, **k: (True, None))
     monkeypatch.setattr(rs, "check_visitor_safety", lambda q: (True, None))
     monkeypatch.setattr(rs, "route_intent", lambda *a, **k: None)
-    monkeypatch.setattr(rs, "detect_handoff_intent", lambda q: False)
+    monkeypatch.setattr(rs, "detect_handoff_intent", lambda q, **_kw: False)
     monkeypatch.setattr(rs, "resolve_name_flow", lambda *a, **k: (None, None, "Tester", False))
     monkeypatch.setattr(rs, "resolve_visitor_name", lambda *a, **k: "Tester")
     monkeypatch.setattr(rs, "_should_ask_visitor_name", lambda *a, **k: False)

@@ -85,7 +85,7 @@ def _stub_outside_world(monkeypatch):
     monkeypatch.setattr(rs, "_embed_query_cached", lambda *_a, **_k: None)
     monkeypatch.setattr(rs, "_embed_query_cached_async", _no_embedding_async)
     monkeypatch.setattr(rs, "RERANK_ENABLED", False)
-    monkeypatch.setattr(rs, "detect_handoff_intent", lambda _q: False)
+    monkeypatch.setattr(rs, "detect_handoff_intent", lambda _q, **_kw: False)
     monkeypatch.setattr(rs, "resolve_name_flow", lambda *_a, **_k: (None, None, None, False))
     monkeypatch.setattr(rs, "_should_ask_visitor_name", lambda *_a, **_k: False)
     monkeypatch.setattr(rs, "check_visitor_safety", lambda _q: (True, None))

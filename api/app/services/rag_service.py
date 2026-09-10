@@ -52,6 +52,7 @@ from app.services.groundedness_gate import check_groundedness, should_sample
 from app.services.handoff_reply import handoff_reply, unhelped_offer
 from app.services.intent_router import route_intent, strip_greeting_lead
 from app.services.intent_service import (
+    HANDOFF_OFFER_RE,
     detect_company_deal_intent,
     detect_handoff_intent,
     detect_handoff_intent_keywords,
@@ -4953,17 +4954,9 @@ _PROBE_PHRASE_RE = re.compile(
     r")\b"
 )
 
-# Handoff / connect OFFERS the bot makes (B8/B9). These end with "?" but are NOT
-# information-gathering probes, so an answer to them must not relax the gate; and
-# an affirmative reply to one is a handoff request, not a KB query.
-_HANDOFF_OFFER_RE = re.compile(
-    r"(?i)(?:"
-    r"connect you (?:with|to)|put you in touch|"
-    r"talk to (?:a|the|our|someone) (?:human|team|agent|representative|member|expert)?|"
-    r"take (?:a|your) (?:written )?message|leave (?:a|your) (?:message|details|contact)|"
-    r"have (?:the|our) team (?:reach|follow up|get back|help)"
-    r")"
-)
+# Handoff / connect OFFERS the bot makes (B8/B9). Defined once in intent_service,
+# which also uses it to decide whether a bare "yes" answers an offer.
+_HANDOFF_OFFER_RE = HANDOFF_OFFER_RE
 
 # Generic invites the bot closes with (B8). End with "?" but expect no specific
 # answer, so a reply after one must not relax the gate.
@@ -5148,6 +5141,14 @@ def _last_bot_offered_handoff(history: list) -> bool:
         if _msg_role(message) in ("bot", "assistant", "operator"):
             return bool(_HANDOFF_OFFER_RE.search(_msg_content(message)))
     return False
+
+
+def _last_bot_message(history: list) -> str | None:
+    """The most recent bot (or operator) message, the context the handoff classifier reads."""
+    for message in reversed(history or []):
+        if _msg_role(message) in ("bot", "assistant", "operator"):
+            return _msg_content(message)
+    return None
 
 
 #: Intents whose "answer" is pure social reflex, so replaying them after the
@@ -6499,10 +6500,12 @@ async def _rewrite_query_bounded(session_id: str, question: str, history: list) 
     return await _await_rewrite(task, question)
 
 
-async def _detect_handoff_bounded(question: str) -> bool:
+async def _detect_handoff_bounded(question: str, last_bot_message: str | None = None) -> bool:
     """``detect_handoff_intent`` off the event loop with a hard deadline,
     degrading to the keyword-only signal when the classifier stalls."""
-    task = asyncio.create_task(asyncio.to_thread(detect_handoff_intent, question))
+    task = asyncio.create_task(
+        asyncio.to_thread(functools.partial(detect_handoff_intent, question, last_bot_message=last_bot_message))
+    )
     try:
         return await asyncio.wait_for(task, timeout=_HANDOFF_INTENT_TIMEOUT_S)
     except TimeoutError:
@@ -7722,7 +7725,7 @@ async def rag_pipeline_stream(
                     # generate a handoff it isn't entitled to offer.
                     _cached_handoff = detect_company_deal_intent(
                         question, _company_name
-                    ) or await _detect_handoff_bounded(question)
+                    ) or await _detect_handoff_bounded(question, _last_bot_message(history))
 
                     if _cached_handoff and live_chat_on:
                         # Handoff requested. Invalidate cache and fall through to
@@ -7897,11 +7900,15 @@ async def rag_pipeline_stream(
                 search_query = question
                 suggest_handoff = (
                     detect_company_deal_intent(question, _company_name)
-                    or await _detect_handoff_bounded(question)
+                    or await _detect_handoff_bounded(question, _last_bot_message(history))
                     or _affirmed_handoff
                 )
             else:
-                handoff_task = asyncio.create_task(asyncio.to_thread(detect_handoff_intent, question))
+                handoff_task = asyncio.create_task(
+                    asyncio.to_thread(
+                        functools.partial(detect_handoff_intent, question, last_bot_message=_last_bot_message(history))
+                    )
+                )
                 search_query, query_embedding = await _resolve_search_query_and_embedding(
                     session_id, question, history, bid, cid, _company_name, embedding_profile=_embedding_profile
                 )
