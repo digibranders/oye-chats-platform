@@ -7,7 +7,9 @@ import { Kbd, cn } from '../ui';
 import { useBotContext } from '../context/BotContext';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { AGENT_NAV, FOOTER_NAV, WORKSPACE_NAV, agentPath, navForRole } from './nav';
-import { navHint, navLabel } from './navCopy';
+import { navHint, navLabel, settingHint, settingLabel } from './navCopy';
+import { makePaletteFilter } from './paletteFilter';
+import { AGENT_SETTINGS, WORKSPACE_SETTINGS } from './searchIndex';
 import { useTranslation } from '../i18n/useTranslation';
 import { Trans } from '../i18n/Trans';
 
@@ -30,6 +32,20 @@ interface CommandGroup {
 
 const RECENT_KEY = 'oc_palette_recent';
 const RECENT_LIMIT = 5;
+
+/**
+ * The text a command is found by: its visible label plus the hint and
+ * keywords that never render. Base UI's `filter` prop is handed items
+ * through its `itemToStringLabel` resolver, not `itemToStringValue` (that one
+ * only stringifies the *selected* value, e.g. for form submission) — without
+ * itemToStringLabel it falls back to `item.label` alone, which is exactly the
+ * literal-label-only matching this task's search is meant to fix. Both props
+ * are wired to this same function below so filtering and value-stringifying
+ * stay consistent.
+ */
+function commandSearchText(command: Command): string {
+  return `${command.label} ${command.hint} ${command.keywords ?? ''}`;
+}
 
 function readRecent(): string[] {
   try {
@@ -91,6 +107,14 @@ export function CommandPalette({
   const [query, setQuery] = useState('');
   const [recent, setRecent] = useState<string[]>(readRecent);
 
+  // Base UI's own default match is a single whole-query substring scan, so
+  // "hours business" would not find an item whose text reads "...Business
+  // Hours...". `makePaletteFilter` wraps the SAME Collator-backed `contains`
+  // Base UI already computes and applies it once per query word instead of
+  // once per query — see paletteFilter.ts.
+  const coreFilter = BaseCombobox.useFilter();
+  const filter = useMemo(() => makePaletteFilter(coreFilter.contains), [coreFilter]);
+
   const commands = useMemo<Command[]>(() => {
     const destinations: Command[] = navForRole([...WORKSPACE_NAV, ...FOOTER_NAV], isOperator).map(
       (item) => ({
@@ -130,7 +154,36 @@ export function CommandPalette({
           ];
         });
 
-    return [...destinations, ...agents];
+    // Things a customer would type the NAME of rather than browse to —
+    // Business Hours, an API key, a webhook — indexed one level deeper than a
+    // destination. See searchIndex.ts. An operator has no Settings
+    // destination at all today (`OPERATOR_PREFIXES` in nav.ts), so none of
+    // this applies to them either.
+    const settings: Command[] = isOperator
+      ? []
+      : [
+          ...WORKSPACE_SETTINGS.map((item) => ({
+            id: `setting:workspace:${item.id}`,
+            label: settingLabel(item.label),
+            hint: settingHint(item.label, item.hint),
+            icon: item.icon,
+            to: item.to,
+            keywords: item.keywords,
+          })),
+          ...bots.flatMap((bot) => {
+            const name = bot.name ?? `${navLabel((t('shell.chatbot') || 'Chatbot'))} ${bot.id}`;
+            return AGENT_SETTINGS.map((item) => ({
+              id: `setting:agent:${bot.id}:${item.id}`,
+              label: `${name} — ${settingLabel(item.label)}`,
+              hint: settingHint(item.label, item.hint),
+              icon: item.icon,
+              to: agentPath(bot.id, item.segment),
+              keywords: `${name} ${item.keywords}`,
+            }));
+          }),
+        ];
+
+    return [...destinations, ...agents, ...settings];
   }, [bots, isOperator, t]);
 
   const groups = useMemo<CommandGroup[]>(() => {
@@ -155,6 +208,14 @@ export function CommandPalette({
         label: t('shell.chatbots') || 'Chatbots',
         items: commands.filter(
           (command) => command.id.startsWith('agent:') && !recentIds.has(command.id),
+        ),
+      },
+      // Appended last, deliberately: the two groups above keep their exact
+      // existing order and behaviour — this is pure addition.
+      {
+        label: t('shell.settings') || 'Settings',
+        items: commands.filter(
+          (command) => command.id.startsWith('setting:') && !recentIds.has(command.id),
         ),
       },
     ].filter((group) => group.items.length > 0);
@@ -192,7 +253,9 @@ export function CommandPalette({
             open
             inputValue={query}
             onInputValueChange={setQuery}
-            itemToStringValue={(item) => `${item.label} ${item.hint} ${item.keywords ?? ''}`}
+            itemToStringValue={commandSearchText}
+            itemToStringLabel={commandSearchText}
+            filter={filter}
             onValueChange={run}
           >
             <div className="flex items-center gap-2.5 border-b border-border px-4">
