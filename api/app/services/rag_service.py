@@ -4965,9 +4965,14 @@ _HANDOFF_OFFER_RE = HANDOFF_OFFER_RE
 # also uses it to decide whether a bare "yes" needs the model.
 _GENERIC_INVITE_RE = GENERIC_INVITE_RE
 
-# Short affirmations to an offer (B9): "yes", "sure", "ok", "go ahead".
+# Short affirmations to an offer (B9): "yes", "sure", "ok", "go ahead". "y" is
+# its own alternative after "yes|yep|yeah|yup|ya" so it never shadows them: the
+# engine tries the longer alternatives first and only falls back to "y" when
+# they don't match, and the trailing "\s*[.!]*\s*$" anchor still requires the
+# whole message, so "yes" keeps matching "yes" in full, not "y" plus leftover
+# text.
 _AFFIRMATIVE_RE = re.compile(
-    r"(?i)^\s*(?:yes|yep|yeah|yup|ya|sure|ok|okay|k|please|go ahead|"
+    r"(?i)^\s*(?:yes|yep|yeah|yup|ya|y|sure|ok|okay|k|please|go ahead|"
     r"sounds good|that works|connect me|do it|let'?s do it|please do|"
     r"yes please|absolutely|definitely|i(?:'d| would) like that)"
     r"\s*[.!]*\s*$"
@@ -5155,14 +5160,15 @@ def _deferred_is_worth_replaying(deferred: str, company_name: str | None) -> boo
     a deferred GREETING, and for a greeting that is right: replaying "hi" after
     "Nice to meet you, Eva!" greets them twice.
 
-    But the router answers eight intents, not three. The other five are real
-    questions: "are you a human", "who made you", "what's your name", "is this
-    conversation recorded", "do you remember me". Treating those as nothing to
-    replay meant the visitor asked one, was asked for their name, gave it, and
-    got "Nice to meet you, Eva! What would you like to know?" while their
-    actual question was dropped on the floor. Caught by the eval on 2026-09-10,
-    where three trust cases had been passing on a grader lenient enough to call
-    that a correct answer.
+    But the router answers a lot more than a greeting, ack and neg-ack. Most of
+    the rest are real questions: "are you a human", "who made you", "what's my
+    name", "is this conversation recorded", "do you remember me", "you are
+    useless" (frustration, which still wants a real answer once the name is
+    known). Treating those as nothing to replay meant the visitor asked one,
+    was asked for their name, gave it, and got "Nice to meet you, Eva! What
+    would you like to know?" while their actual question was dropped on the
+    floor. Caught by the eval on 2026-09-10, where three trust cases had been
+    passing on a grader lenient enough to call that a correct answer.
 
     A replayed question flows through the pipeline normally, so a router intent
     still gets its canned reply; it just gets one.

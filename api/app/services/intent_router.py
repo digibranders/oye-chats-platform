@@ -94,9 +94,12 @@ _ACK_TERMS = {
     "kk",
 }
 
-# Negative ack. Visitor declining a previous offer.
+# Negative ack. Visitor declining a previous offer. "n" means no the same way
+# a bare "y" means yes; see rag_service._AFFIRMATIVE_RE and
+# intent_service._BARE_AFFIRMATION_RE / _BARE_REFUSAL_RE for the counterpart.
 _NEG_ACK_TERMS = {
     "no",
+    "n",
     "nope",
     "not really",
     "no thanks",
@@ -206,11 +209,13 @@ _ABUSE_RE = re.compile(
     r"|bastard"
     r")$"
 )
-# Gibberish / too-short-to-mean-anything. A lone letter, a run of 6+ consonants
-# with no vowel, or a keyboard-mash substring (adjacent-key runs).
+# One-word gibberish: a lone letter (not k, n or y, which mean ok, no and yes),
+# six or more consonants (y counts as a vowel), or a keyboard run. The caller
+# checks the word is ASCII letters only, which also keeps matching linear.
 _UNCLEAR_RE = re.compile(
-    r"^(?:[a-z]|[b-df-hj-np-tv-z]{6,}"
-    r"|[a-z]*(?:asdf|sdfg|dfgh|fghj|ghjk|hjkl|qwer|wert|erty|rtyu|tyui|yuio|uiop|zxcv)[a-z]*)$"
+    r"^(?:[a-jlmo-xz]"
+    r"|[b-df-hj-np-tv-xz]{6,}"
+    r"|[a-z]*(?:asdf|sdfg|dfgh|fghj|ghjk|hjkl|qwer|werty|rtyu|tyui|yuio|uiop|zxcv)[a-z]*)$"
 )
 _NAME_RECALL_RE = re.compile(
     r"^(?:what(?:'s|\s+is)\s+my\s+name|do\s+you\s+(?:know|remember)\s+my\s+name|who\s+am\s+i)$"
@@ -325,16 +330,13 @@ def route_intent(
         if _BOT_NAME_RE.search(norm):
             return _bot_name(company_name)
 
-    # 2b) Conversation about the conversation. Whole-message matches only, so a
-    #     real question that contains these words still reaches retrieval.
-    if (
-        word_count == 1
-        and _UNCLEAR_RE.match(norm)
-        and norm not in _GREETING_TERMS
-        and norm not in _ACK_TERMS
-        and norm not in _NEG_ACK_TERMS
-    ):
-        return _unclear(company_name)
+    # 2b) One-word gibberish. The ASCII-letters-only guard keeps matching
+    #     linear for a long adversarial input. No greeting/ack/neg-ack term
+    #     matches ``_UNCLEAR_RE`` (see
+    #     test_intent_router_social.py::test_no_known_term_is_unclear), so this
+    #     check does not need to exclude those sets separately.
+    if word_count == 1 and norm.isascii() and norm.isalpha() and _UNCLEAR_RE.match(norm):
+        return _unclear(company_name, support_enabled)
     if word_count <= 8:
         if _NAME_RECALL_RE.match(norm):
             return _name_recall(company_name, visitor_name)
@@ -478,23 +480,27 @@ def _remember(company_name: str | None) -> IntentResponse:
 
 
 def _how_are_you(company_name: str | None) -> IntentResponse:
-    return IntentResponse(
-        answer=f"Doing well, thanks for asking. What can I help you with at {_co(company_name)}?",
-        intent="how_are_you",
-    )
+    # No company name reads oddly as "at us", so this route gets its own
+    # neutral close instead of routing the None case through ``_co``.
+    if company_name:
+        answer = f"Doing well, thanks for asking. What can I help you with at {_co(company_name)}?"
+    else:
+        answer = "Doing well, thanks for asking. What can I help you with?"
+    return IntentResponse(answer=answer, intent="how_are_you")
 
 
 def _compliment(company_name: str | None) -> IntentResponse:
-    return IntentResponse(
-        answer=f"Thank you, that's kind. Anything else I can help with at {_co(company_name)}?",
-        intent="compliment",
-    )
+    if company_name:
+        answer = f"Thank you, that's kind. Anything else I can help with at {_co(company_name)}?"
+    else:
+        answer = "Thank you, that's kind. Anything else I can help with?"
+    return IntentResponse(answer=answer, intent="compliment")
 
 
 def _frustration(company_name: str | None, support_enabled: bool = True) -> IntentResponse:
     # The human-handoff offer is a plan entitlement, not a platform fact: a bot
     # with no live-chat or offline-message path must not dangle one.
-    offer = " or I can connect you with the team" if support_enabled else ""
+    offer = ", or I can connect you with the team" if support_enabled else ""
     return IntentResponse(
         answer=f"Sorry that wasn't helpful. Tell me what you're looking for and I'll try again{offer}.",
         intent="frustration",
@@ -502,26 +508,31 @@ def _frustration(company_name: str | None, support_enabled: bool = True) -> Inte
 
 
 def _abuse(company_name: str | None) -> IntentResponse:
-    return IntentResponse(
-        answer=f"I'm here to help with anything about {_co(company_name)} whenever you're ready.",
-        intent="abuse",
-    )
+    if company_name:
+        answer = f"I'm here to help with anything about {_co(company_name)} whenever you're ready."
+    else:
+        answer = "I'm here to help whenever you're ready."
+    return IntentResponse(answer=answer, intent="abuse")
 
 
-def _unclear(company_name: str | None) -> IntentResponse:
+def _unclear(company_name: str | None, support_enabled: bool = True) -> IntentResponse:
+    # "getting in touch" is a plan entitlement (live chat / offline message),
+    # not a platform fact; see ``_frustration`` and ``_is_ai`` for the same rule.
+    # Without it the list drops to two items, so the joiner drops the comma too.
+    topics = "services, pricing or getting in touch" if support_enabled else "services or pricing"
+    who = _co(company_name) + "'s" if company_name else "our"
     return IntentResponse(
-        answer=(
-            f"Could you say a bit more about what you're looking for? "
-            f"I can help with {_co(company_name)}'s services, pricing or getting in touch."
-        ),
+        answer=f"Could you say a bit more about what you're looking for? I can help with {who} {topics}.",
         intent="unclear",
     )
 
 
 def _name_recall(company_name: str | None, visitor_name: str | None) -> IntentResponse:
     name = " ".join(str(visitor_name).split())[:40] if visitor_name else ""
-    if name:
+    if name and company_name:
         answer = f"You're {name}. What can I help you with at {_co(company_name)}?"
+    elif name:
+        answer = f"You're {name}. What can I help you with?"
     else:
         answer = "I don't know your name yet. You can tell me anytime."
     return IntentResponse(answer=answer, intent="name_recall")

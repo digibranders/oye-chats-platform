@@ -52,6 +52,16 @@ class TestABareReplyIsOnlyAHandoffAfterAnOffer:
         assert svc.detect_handoff_intent("yes", last_bot_message=TEAM_CONNECT_OFFER) is True
         assert llm == []
 
+    def test_a_bare_y_after_an_offer_is_a_handoff_without_the_model(self, llm):
+        # "y" after "Want me to connect you with the team?" used to fall through
+        # to the intent router's unclear reply and never reach this check.
+        assert svc.detect_handoff_intent("y", last_bot_message=OFFER) is True
+        assert llm == []
+
+    def test_a_bare_n_after_an_offer_is_not_a_handoff_without_the_model(self, llm):
+        assert svc.detect_handoff_intent("n", last_bot_message=OFFER) is False
+        assert llm == []
+
 
 class TestAYesToAnUnfamiliarQuestionAsksTheModel:
     def test_the_model_decides_with_the_question_in_its_prompt(self, llm):
@@ -385,3 +395,14 @@ class TestThePatternsStayLinear:
         started = time.perf_counter()
         pattern.search(text)
         assert time.perf_counter() - started < 0.1
+
+
+class TestYIsAffirmative:
+    def test_is_affirmative_reply_treats_y_as_yes(self):
+        assert rs._is_affirmative_reply("y") is True
+
+    def test_is_affirmative_reply_still_treats_yes_as_yes(self):
+        assert rs._is_affirmative_reply("yes") is True
+
+    def test_n_is_not_affirmative(self):
+        assert rs._is_affirmative_reply("n") is False

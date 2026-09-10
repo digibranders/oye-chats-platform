@@ -194,12 +194,15 @@ GENERIC_INVITE_RE = re.compile(
 )
 
 #: A whole message that only agrees or declines. It carries no request of its own,
-#: so it is a handoff only as the answer to an offer the bot just made.
+#: so it is a handoff only as the answer to an offer the bot just made. "y" and
+#: "n" are their own alternatives after the words they abbreviate so they never
+#: shadow "yes"/"yep"/"yeah"/"yup"/"ya" or "no": the engine tries the longer
+#: alternatives first, and the trailing anchor still requires the whole message.
 _BARE_AFFIRMATION_RE = re.compile(
-    r"(?i)^\s*(?:yes|yep|yeah|yup|ya|sure|ok|okay|k|please|go ahead|sounds good|that works|"
+    r"(?i)^\s*(?:yes|yep|yeah|yup|ya|y|sure|ok|okay|k|please|go ahead|sounds good|that works|"
     r"do it|let'?s do it|please do|yes please|absolutely|definitely|i(?:'d| would) like that)\s*[.!]*\s*$"
 )
-_BARE_REFUSAL_RE = re.compile(r"(?i)^\s*(?:no|nope|nah|not really|no thanks|no thank you|not now)\s*[.!]*\s*$")
+_BARE_REFUSAL_RE = re.compile(r"(?i)^\s*(?:no|n|nope|nah|not really|no thanks|no thank you|not now)\s*[.!]*\s*$")
 
 
 #: Characters a model wraps around the bare YES/NO it was asked for.
