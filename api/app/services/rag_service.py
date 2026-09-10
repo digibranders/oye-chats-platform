@@ -4855,6 +4855,7 @@ def _maybe_append_name_ask(
     question: str,
     history: list | None = None,
     language=None,
+    opener: bool = True,
 ) -> str:
     """Give an EARLY-RETURN reply (the intent-router greeting/ack handler and the
     QA cache) the same first-reply name treatment the generation path gets.
@@ -4870,6 +4871,12 @@ def _maybe_append_name_ask(
       is invisible in testing precisely because it only shows up the SECOND time
       anyone asks a given question.
 
+    ``opener`` lets a caller whose ``text`` already states the visitor's name
+    (the ``name_recall`` intent's "You're {name}.") skip the welcome-back
+    prepend, so the reply doesn't say the name twice in adjacent sentences.
+    The name-unknown branch is unaffected: it still appends the name request
+    when appropriate, since that is a distinct, still-useful ask.
+
     Best-effort: any failure returns the text unchanged."""
     try:
         known = resolve_visitor_name(session, session_id, bot_id, client_id, question, history or [])
@@ -4879,15 +4886,17 @@ def _maybe_append_name_ask(
             else get_chat_history(session, session_id, client_id=client_id, limit=5, bot_id=bot_id)
         )
         if known:
+            if not opener:
+                return text
             # `resolve_visitor_name` resolves a name STORED before this turn (the
             # widget re-seeds it into each new session), so on a first reply this
             # is by definition a returning visitor rather than one who just
             # introduced themselves.
-            opener = _name_ack_prefix(known, False, language, returning=_is_first_bot_reply(hist))
+            prefix = _name_ack_prefix(known, False, language, returning=_is_first_bot_reply(hist))
             # The welcome-back opener IS the greeting, so drop the canned reply's
             # own greeting lead ("Hey. Happy to help.") to avoid doubling it.
             # No-op for non-greeting replies (e.g. QA-cache hits).
-            return opener + strip_greeting_lead(text) if opener and text else text
+            return prefix + strip_greeting_lead(text) if prefix and text else text
         if _should_ask_visitor_name(None, hist) and not _is_name_ask_message(text):
             return (text.rstrip() if text else "") + f"\n\n{_name_ask_text(language)}"
     except Exception:  # noqa: BLE001  Personalization is best-effort, never fatal
@@ -7526,7 +7535,17 @@ async def rag_pipeline_stream(
                     bot_id=bid,
                 )
                 _intent_answer = _maybe_append_name_ask(
-                    _intent.answer, session, session_id, bid, cid, question, language=language
+                    _intent.answer,
+                    session,
+                    session_id,
+                    bid,
+                    cid,
+                    question,
+                    language=language,
+                    # ``name_recall``'s own answer already states the visitor's
+                    # name ("You're {name}."), so the welcome-back opener would
+                    # say it again in the very next sentence.
+                    opener=_intent.intent != "name_recall",
                 )
                 yield _stream_metadata(session_id, [], language)
                 yield _intent_answer

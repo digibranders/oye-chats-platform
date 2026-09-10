@@ -42,14 +42,65 @@ async def test_the_pipeline_passes_the_visitor_name_to_the_router(db, monkeypatc
 
     # The harness stubs ``resolve_name_flow`` to a known visitor called
     # "Tester" (see ``_stub_pipeline``) AND stubs ``resolve_visitor_name`` the
-    # same way, so "Tester" appears in the answer either way via the separate
-    # ``_maybe_append_name_ask`` welcome-back opener. The distinguishing
-    # signal that the router itself received the name is its own canned
-    # sentence, not the bare substring "Tester".
+    # same way. Before the fix, the returning-visitor welcome-back opener from
+    # ``_maybe_append_name_ask`` prepended "Welcome back, Tester!" in front of
+    # the router's own "You're Tester." sentence, saying the name twice in
+    # adjacent sentences; the router call site now passes ``opener=False`` for
+    # the ``name_recall`` intent, so the opener never fires here and "Tester"
+    # appears exactly once, from the router's own canned sentence.
     answer = _answer_text(frames)
-    assert "You're Tester." in answer
+    assert answer.count("You're Tester.") == 1
+    assert "Welcome back" not in answer
     assert "I don't know your name yet" not in answer
     assert cap["prompts"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_greeting_from_a_returning_visitor_still_gets_welcomed_back(db, monkeypatch):
+    """Guard against over-fixing: the ``name_recall`` opener suppression must
+    not bleed into other early-return intents. A returning visitor's first
+    message being a plain greeting still gets the welcome-back opener, since
+    "Hey. Happy to help." never states the visitor's name."""
+    client = _make_client(db)
+    bot = _make_bot(db, client)
+    _make_session(db, bot, client, "name-recall-greeting")
+    _stub_pipeline(monkeypatch, retrieved=(_doc("Acme sells widgets."),))
+    monkeypatch.setattr(rs, "route_intent", intent_router.route_intent)
+
+    frames = await _drive_stream(bot, "hi", "name-recall-greeting")
+
+    answer = _answer_text(frames)
+    assert "Welcome back, Tester!" in answer
+
+
+@pytest.mark.asyncio
+async def test_a_rename_is_recalled_by_the_new_name(db, monkeypatch):
+    """Rename then recall, driven through the real name-capture logic (not the
+    ``_stub_pipeline`` canned "Tester"): an intro capture, an explicit
+    mid-chat rename, then a recall must answer with the RENAMED name and,
+    per the fix, without a doubled "Welcome back" opener."""
+    client = _make_client(db)
+    bot = _make_bot(db, client)
+    _make_session(db, bot, client, "name-recall-rename")
+    real_resolve_name_flow = rs.resolve_name_flow
+    real_resolve_visitor_name = rs.resolve_visitor_name
+    _stub_pipeline(monkeypatch, retrieved=(_doc("Acme sells widgets."),))
+    monkeypatch.setattr(rs, "route_intent", intent_router.route_intent)
+    monkeypatch.setattr(rs, "resolve_name_flow", real_resolve_name_flow)
+    monkeypatch.setattr(rs, "resolve_visitor_name", real_resolve_visitor_name)
+
+    # Turn 1: an intro capture ("I'm Eva") on the very first message stores
+    # the name immediately, without the bot asking for it first.
+    await _drive_stream(bot, "I'm Eva", "name-recall-rename")
+
+    # Turn 2: an explicit mid-chat rename overwrites the stored name.
+    await _drive_stream(bot, "call me Sam", "name-recall-rename")
+
+    # Turn 3: recall must reflect the renamed name, once, with no opener.
+    frames = await _drive_stream(bot, "what's my name?", "name-recall-rename")
+    answer = _answer_text(frames)
+    assert "You're Sam." in answer
+    assert "Welcome back" not in answer
 
 
 @pytest.mark.asyncio
