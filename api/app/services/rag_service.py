@@ -54,6 +54,7 @@ from app.services.intent_router import route_intent, strip_greeting_lead
 from app.services.intent_service import (
     GENERIC_INVITE_RE,
     HANDOFF_OFFER_RE,
+    bot_offers_handoff,
     detect_company_deal_intent,
     detect_handoff_intent,
     detect_handoff_intent_keywords,
@@ -4955,8 +4956,9 @@ _PROBE_PHRASE_RE = re.compile(
     r")\b"
 )
 
-# Handoff / connect OFFERS the bot makes (B8/B9). Defined once in intent_service,
-# which also uses it to decide whether a bare "yes" answers an offer.
+# Handoff / connect OFFERS the bot makes (B8/B9). Defined once in intent_service.
+# A bot message is tested with ``bot_offers_handoff``, which reads only its closing
+# paragraph; this alias is the raw wording the pricing pivot tests pin.
 _HANDOFF_OFFER_RE = HANDOFF_OFFER_RE
 
 # Generic invites the bot closes with (B8). Defined once in intent_service, which
@@ -4983,8 +4985,10 @@ def _text_is_question(text: str) -> bool:
 
 def _is_real_probe(text: str) -> bool:
     """A genuine information-gathering probe: a question that is NOT a handoff
-    offer or a generic 'anything else?' invite (B8)."""
-    return _text_is_question(text) and not _HANDOFF_OFFER_RE.search(text) and not _GENERIC_INVITE_RE.search(text)
+    offer or a generic 'anything else?' invite (B8). The offer is looked for in
+    the closing paragraph only, so a callback sentence in the answer body does not
+    stop the follow-up question from counting as a probe."""
+    return _text_is_question(text) and not bot_offers_handoff(text) and not _GENERIC_INVITE_RE.search(text)
 
 
 def _recent_bot_question(history: list, lookback: int = 2) -> str | None:
@@ -5130,11 +5134,11 @@ def _is_affirmative_reply(question: str) -> bool:
 
 
 def _last_bot_offered_handoff(history: list) -> bool:
-    """True if the most recent bot turn offered to connect the visitor to a human
-    / take a message (B9)."""
+    """True if the most recent bot turn closed with an offer to connect the visitor
+    to a human / take a message (B9)."""
     for message in reversed(history or []):
         if _msg_role(message) in ("bot", "assistant", "operator"):
-            return bool(_HANDOFF_OFFER_RE.search(_msg_content(message)))
+            return bot_offers_handoff(_msg_content(message))
     return False
 
 

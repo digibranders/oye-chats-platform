@@ -6,6 +6,7 @@ Each YES opened the "Talk to a human" form in the widget.
 """
 
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -229,7 +230,7 @@ ORDINARY_ANSWERS = [
 class TestTheOfferPatternCoversTheBotsOwnOffers:
     @pytest.mark.parametrize("offer", _the_bots_offers())
     def test_every_offer_the_bot_writes_is_recognised(self, offer):
-        assert svc.HANDOFF_OFFER_RE.search(offer), offer
+        assert svc.bot_offers_handoff(offer), offer
 
     def test_the_refusal_menus_that_name_the_team_are_still_found(self):
         assert _refusal_menus_that_name_the_team()
@@ -245,6 +246,124 @@ class TestTheOfferPatternCoversTheBotsOwnOffers:
     def test_rag_service_reads_the_same_patterns(self):
         assert rs._HANDOFF_OFFER_RE is svc.HANDOFF_OFFER_RE
         assert rs._GENERIC_INVITE_RE is svc.GENERIC_INVITE_RE
+        assert rs.bot_offers_handoff is svc.bot_offers_handoff
+
+
+#: Answers written the way the answer prompt asks: the answer, a blank line, then
+#: one follow-up question. Each body names a callback or a person, which the offer
+#: pattern matches, but the closing question asks for something else, so a "yes"
+#: answers that question and is no request for a person.
+ANSWERS_WITH_A_PERSON_IN_THE_BODY = [
+    "Our team will contact you after you book a demo.\n\nWant the demo link?",
+    "We'll call you before delivery.\n\nWant to track your order?",
+    "You can speak with a specialist during your first appointment.\n\nWould you like to book one?",
+    "If shortlisted, the hiring team will contact you within two weeks.\n\nWould you like to see open roles?",
+    "You can talk to an agent at our Bandra office.\n\nWant the office address?",
+    "After you register, a specialist will call you to confirm the appointment.\n\nWould you like to see available clinics?",
+    "An expert will get in touch with you after the site visit.\n\nWant to see the floor plans?",
+    "If a payment fails, we'll reach out to you by email.\n\nWould you like to update your card now?",
+]
+
+
+@pytest.fixture()
+def llm_says_no(monkeypatch):
+    calls: list[str] = []
+
+    def fake(prompt, **_kwargs):
+        calls.append(prompt)
+        return "NO"
+
+    monkeypatch.setattr(svc, "generate_response", fake)
+    return calls
+
+
+class TestOnlyTheClosingParagraphCanOffer:
+    @pytest.mark.parametrize("answer", ANSWERS_WITH_A_PERSON_IN_THE_BODY)
+    def test_a_person_in_the_answer_body_is_not_an_offer(self, answer):
+        assert svc.HANDOFF_OFFER_RE.search(answer), "the body must name a person for this case to mean anything"
+        assert svc.bot_offers_handoff(answer) is False
+
+    @pytest.mark.parametrize("answer", ANSWERS_WITH_A_PERSON_IN_THE_BODY)
+    def test_a_yes_after_it_asks_the_model_once_and_the_model_decides(self, llm_says_no, answer):
+        assert svc.detect_handoff_intent("yes", last_bot_message=answer) is False
+        assert len(llm_says_no) == 1
+
+    @pytest.mark.parametrize("text", [None, "", "   ", " \n\t\r\n "])
+    def test_no_message_is_no_offer(self, text):
+        assert svc.bot_offers_handoff(text) is False
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Want me to connect you with our team?\n\n\n",
+            "Answer.\r\n\r\nWould you like to connect with our team?",
+            "Would you like to connect with our team?\r\n\r\n",
+            "Answer.\n  \t\nWant me to connect you with our team?",
+            "Two months is a comfortable runway.\nWould you like to connect with our team?",
+            "We cover SOC and VAPT.\n\nTwo months is a comfortable runway.\nWant me to loop in someone from our team?",
+        ],
+        ids=[
+            "trailing-blank-lines",
+            "windows-breaks",
+            "windows-trailing",
+            "blank-line-with-spaces",
+            "single-break",
+            "two-line-close",
+        ],
+    )
+    def test_an_offer_in_the_last_non_empty_paragraph_counts(self, text):
+        assert svc.bot_offers_handoff(text) is True
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "\n \n" * 7000,
+            "x" + "\n \n" * 7000 + "x",
+            "\n" + " " * 20_000 + "x",
+            "connect you with the " * 1000,
+            "a" * 20_000,
+        ],
+        ids=["paragraph-breaks-only", "paragraph-breaks-inside", "one-long-break", "no-break-offer-words", "no-break"],
+    )
+    def test_a_long_message_is_fast(self, text):
+        assert len(text) >= 20_000
+        started = time.perf_counter()
+        svc.bot_offers_handoff(text)
+        assert time.perf_counter() - started < 0.05
+
+
+def _history(bot_message: str) -> list[SimpleNamespace]:
+    return [
+        SimpleNamespace(role="user", content="How does delivery work?"),
+        SimpleNamespace(role="assistant", content=bot_message),
+        SimpleNamespace(role="user", content="yes"),
+    ]
+
+
+class TestThePipelineReadsTheClosingParagraph:
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Our team will call you to confirm the slot after booking.\n\nWhat timeline are you working toward?",
+            "Yes, we'll contact you before renewal.\n\nHow many seats are you planning for?",
+        ],
+    )
+    def test_a_question_after_a_callback_sentence_is_a_real_probe(self, text):
+        assert rs._is_real_probe(text) is True
+
+    def test_a_closing_offer_is_not_a_probe(self):
+        text = "Pricing for Acme is best confirmed by the team.\n\nWant me to connect you with them now?"
+        assert rs._is_real_probe(text) is False
+
+    def test_a_yes_after_a_callback_sentence_does_not_affirm_a_handoff(self):
+        assert (
+            rs._last_bot_offered_handoff(_history("We'll call you before delivery.\n\nWant to track your order?"))
+            is False
+        )
+
+    def test_a_yes_after_a_closing_offer_affirms_a_handoff(self):
+        history = _history("Delivery takes three days.\n\nWould you like to connect with our team?")
+        assert rs._last_bot_offered_handoff(history) is True
 
 
 ADVERSARIAL = [

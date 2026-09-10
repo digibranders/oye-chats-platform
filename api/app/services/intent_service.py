@@ -167,6 +167,21 @@ HANDOFF_OFFER_RE = re.compile(
     r")"
 )
 
+#: A blank line, which may hold spaces or a carriage return.
+_PARAGRAPH_BREAK_RE = re.compile(r"\n\s*\n")
+
+
+def bot_offers_handoff(text: str | None) -> bool:
+    """True when the bot message's closing paragraph offers to connect the visitor to a person.
+
+    Only the closing paragraph counts: answers put the follow-up question in their own
+    last paragraph, so "Our team will contact you after you book a demo." in the answer
+    body is not an offer, and a "yes" after it answers the follow-up question.
+    """
+    closing = _PARAGRAPH_BREAK_RE.split((text or "").strip())[-1]
+    return bool(HANDOFF_OFFER_RE.search(closing))
+
+
 #: Generic invites the bot closes with ("Anything else?", "What would you like to
 #: know?"). They end with "?" but ask for nothing specific, so a bare "yes" after
 #: one is no handoff and a reply after one does not relax the relevance gate.
@@ -438,7 +453,9 @@ def detect_handoff_intent(question: str, last_bot_message: str | None = None) ->
     1. Keyword regex: a match IS the decision.
     2. A bare refusal ("no", "not now") is never a handoff, and the model is not asked.
     3. A bare affirmation ("yes", "sure") is decided by ``last_bot_message``:
-       a. it matches ``HANDOFF_OFFER_RE``: True, and the model is not asked;
+       a. its closing paragraph offers a person (``bot_offers_handoff``): True,
+          and the model is not asked. An offer earlier in the message does not
+          count, since the closing paragraph holds the question being answered;
        b. it ends with "?" and is not a generic invite (``GENERIC_INVITE_RE``):
           the model decides with that question as context, since the pattern
           cannot know every way the model words an offer;
@@ -458,7 +475,7 @@ def detect_handoff_intent(question: str, last_bot_message: str | None = None) ->
         return False
     if _BARE_AFFIRMATION_RE.match(text):
         previous = (last_bot_message or "").strip()
-        if HANDOFF_OFFER_RE.search(previous):
+        if bot_offers_handoff(previous):
             return True
         if not previous.endswith("?") or GENERIC_INVITE_RE.search(previous):
             return False

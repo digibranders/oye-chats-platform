@@ -626,7 +626,7 @@ def pricing_pivot(
     A repeat gets different words that acknowledge the answer has not changed,
     and it does NOT re-open the form or the message card, because the visitor
     has already been offered one. The paid repeats keep an offer the pipeline's
-    ``_HANDOFF_OFFER_RE`` recognises, so a plain "yes" still routes straight into
+    ``bot_offers_handoff`` recognises, so a plain "yes" still routes straight into
     the handoff. The first-time copy is unchanged.
 
     ``support_enabled`` is the PLAN half of the human-support gate (does this
