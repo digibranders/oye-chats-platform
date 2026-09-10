@@ -47,6 +47,7 @@ from app.services import currency_scoring as _currency_scoring
 from app.services import meeting_gate as _meeting_gate
 from app.services import plan_entitlements_service, runtime_config, urgent_route
 from app.services import pricing_gate as _pricing_gate
+from app.services.document_request import document_reply, is_document_request, pick_documents
 from app.services.email_service import (
     get_notification_recipients,
     send_handoff_request_email,
@@ -7948,11 +7949,17 @@ async def rag_pipeline_stream(
             # keeps the write side consistent. The Redis round-trips, hit counter
             # included, run on a worker thread so a slow Redis cannot stall every
             # other stream on this event loop.
+            #
+            # A document request is answered from the file catalog further down
+            # (see "Document requests"). A cached answer to "can you send me your
+            # brochure?" would be served ahead of it and the route would never run,
+            # so it skips the cache on the same condition the route runs on.
             if (
                 _cache_key
                 and not _affirmed_handoff
                 and not _gate_may_intercept
                 and not (_prior_turns and _looks_like_follow_up(question))
+                and not (not _judges_bypassed and is_document_request(question))
             ):
                 cached_qa = await asyncio.to_thread(_qa_cache_lookup, _cache_key, bid)
                 if cached_qa:
@@ -8526,6 +8533,69 @@ async def rag_pipeline_stream(
                 _set_unhelped_streak(chat_session, 0)
                 session.commit()
                 yield f"\nFINAL_METADATA:{json.dumps(_mtg_meta)}\n"
+                return
+
+            # ── Document requests ────────────────────────────────────────────
+            # "Send me your brochure" is answered from the bot's own file catalog
+            # as download cards, never with a promise to email: on 2026-09-10 all
+            # four production bots answered "That specific detail sits with the
+            # team" or opened a message form, 0 of 8 requests passed, one of them
+            # on a bot holding a catalog of datasheet PDFs.
+            #
+            # After the pricing and meeting gates ("send me your pricing brochure"
+            # is a pricing question) and before the relevance gate, which scores a
+            # request for a file off-topic. An explicit request for a person, or a
+            # deal for the company, still goes to the handoff reply below. English
+            # only, like the gates: the detector and the reply are English.
+            if (
+                not _judges_bypassed
+                and is_document_request(question)
+                and not detect_handoff_intent_keywords(question)
+                and not detect_company_deal_intent(question, _company_name)
+            ):
+                _pick = pick_documents(
+                    question, _company_name, get_bot_media_urls(session, bot_id=bid) if bid is not None else []
+                )
+                _safety_net_metric(
+                    "document_request",
+                    path="stream",
+                    found=str(len(_pick.docs)),
+                    exact=str(_pick.exact),
+                    session=session_id,
+                    bot_id=bid,
+                )
+                _doc_text = _name_ack_prefix(
+                    _flow_name, _just_named, language, returning=_returning_by_name
+                ) + document_reply(_pick, company_name=_company_name, support_enabled=_plan_support_allowed)
+                # The reply is fixed text, so it is saved BEFORE the first frame:
+                # a visitor who closes the tab mid-stream still leaves it behind.
+                _bot_msg = add_chat_message(
+                    session,
+                    session_id,
+                    client_id=cid,
+                    role="bot",
+                    content=_doc_text,
+                    bot_id=bid,
+                    is_unanswered=not _pick.docs,
+                    source_language=_lang_base(language),
+                )
+                session.flush()
+                _doc_meta: dict = {"message_id": _bot_msg.id, "qualification_pending": False}
+                if _pick.docs:
+                    # The first file is the card and the second the "Also
+                    # available" chip, the shape the generated path sends.
+                    _doc_meta["media_card"] = _pick.docs[0]
+                    if len(_pick.docs) > 1:
+                        _doc_meta["media_secondary"] = _pick.docs[1:]
+                    _mark_card_shown(chat_session, _media_card_key(_pick.docs[0]))
+                    # Documents were offered, so the unhelped run ends.
+                    _set_unhelped_streak(chat_session, 0)
+                # With no file the team is offered in words only: no form opens, so
+                # no card flag is set and the unhelped count is left as it was.
+                session.commit()
+                yield _stream_metadata(session_id, [], language)
+                yield _doc_text
+                yield f"\nFINAL_METADATA:{json.dumps(_doc_meta)}\n"
                 return
 
             # ── Handoff reply ────────────────────────────────────────────
