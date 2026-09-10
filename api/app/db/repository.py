@@ -667,6 +667,11 @@ def get_bot_media_urls(
     with media rather than chunks. ``LIMIT`` caps the worst case where
     a huge KB legitimately has hundreds of distinct-media pages.
 
+    ``ORDER BY`` makes the result deterministic. Without it Postgres returned
+    rows in whatever order the plan produced, so two equally relevant assets
+    could swap places between requests, and on a KB with more than ``limit``
+    distinct payloads the set of 100 returned was itself arbitrary.
+
     Returns a list of dicts each shaped like
     ``{"youtube": [{"video_id": "...", ...}], "files": [...]}``. Callers
     typically feed them to ``_build_media_catalog`` in rag_service.py.
@@ -680,6 +685,7 @@ def get_bot_media_urls(
             "FROM documents "
             "WHERE bot_id = :bot_id "
             "  AND metadata_info ? 'media_urls' "
+            "ORDER BY media "
             "LIMIT :limit"
         )
         params: dict[str, int] = {"bot_id": bot_id, "limit": limit}
@@ -689,6 +695,7 @@ def get_bot_media_urls(
             "FROM documents "
             "WHERE client_id = :client_id "
             "  AND metadata_info ? 'media_urls' "
+            "ORDER BY media "
             "LIMIT :limit"
         )
         params = {"client_id": client_id, "limit": limit}
