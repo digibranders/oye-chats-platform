@@ -31,7 +31,13 @@ QA_RESPONSE_TTL = 3600  # 1 hour
 # key, every answer written under the previous prompt kept being served for up
 # to an hour after a prompt deploy. Keys written before the segment existed are
 # the implicit version 1, so 2 is the first value that invalidates them.
-QA_PROMPT_VERSION = 2
+#: Bump whenever the assembled prompt changes, so a deploy retires the answers the
+#: old prompt wrote instead of serving them for the rest of ``QA_RESPONSE_TTL``.
+#: 3: the media-card rule was restored in 159fc1e2 and shipped without a bump, so
+#: on 2026-09-10 two of three topical questions on a live bot were answered from
+#: an hour-old cache written under the previous rule. ``tests/test_qa_cache_prompt_version.py``
+#: fingerprints the prompt so the next change cannot ship without one.
+QA_PROMPT_VERSION = 3
 TRANSLATION_TTL = 86400  # 24 hours (Phase 4 operator translation)
 
 

@@ -766,6 +766,110 @@ def _title_tokens(title: str | None) -> set[str]:
     return {tok for tok in re.findall(r"[a-z0-9]+", title.lower()) if len(tok) > 2 and tok not in _TITLE_STOPWORDS}
 
 
+#: Content words a question and an asset title must share before that asset is
+#: attached as a card the model did not choose. The same bar the secondary chip
+#: uses, for the same reason: two words in common ("red" + "teaming",
+#: "penetration" + "testing") is a strong signal of one subject; one is
+#: usually incidental.
+_TOPICAL_MEDIA_MIN_OVERLAP = _SECONDARY_MIN_OVERLAP
+
+
+def _topical_media_card(
+    question: str | None,
+    company_name: str | None,
+    retrieved_chunks,
+    extra_payloads=None,
+) -> dict | None:
+    """The one catalog asset the visitor's question is clearly about, or None.
+
+    The prompt tells the model to attach a card when a question names a subject
+    the catalog covers, and in production it almost never does. Measured on
+    2026-09-10: 44 turns since 8 September had files visible in context and the
+    cards that did appear were explicit "do you have a datasheet" requests. A
+    fresh "what is red teaming" on a bot holding ``Red-Teaming.pdf``, with that
+    exact file in context and the new prompt loaded, produced a full answer and
+    no card. The reason is structural. The media rule shapes a carded reply as
+    one sentence plus the card; roughly 250 lines of response-style rules later
+    demand full, bulleted answers and end in a self-check. For "tell me about X"
+    the model picks the full answer and drops the card, which given that
+    contradiction is not even wrong. More wording keeps losing that fight.
+
+    So the server decides, the way it already promotes a pasted link into a
+    card: when the generated answer carries no card and the question clearly
+    names one asset, attach it and leave the answer text alone. Scoring reuses
+    ``_title_tokens`` and the secondary chip's overlap bar, so this adds no new
+    notion of relevance. The company name is removed from the question first,
+    otherwise "eventus" alone would count toward every Eventus asset.
+
+    Ranking is overlap first, then how much of the title the question covers,
+    then whether the asset rode in on a retrieved chunk. That picks
+    ``Penetration-Testing.pdf`` over ``Sample_Web_Application_Penetration_
+    Testing_Report`` for "explain penetration testing", where both share two
+    words but only one is entirely about the subject.
+    """
+    anchor = _title_tokens(question) - _title_tokens(company_name)
+    if len(anchor) < _TOPICAL_MEDIA_MIN_OVERLAP:
+        return None
+
+    best_rank: tuple[int, float, int] | None = None
+    best_card: dict | None = None
+    seen: set[str] = set()
+
+    def _consider(entry: object, entry_type: str, from_retrieval: bool) -> None:
+        nonlocal best_rank, best_card
+        if not isinstance(entry, dict):
+            return
+        if entry_type == "youtube":
+            key = entry.get("video_id")
+            if not isinstance(key, str) or not key:
+                return
+            title = entry.get("title")
+        else:
+            key = entry.get("url")
+            if not _is_valid_file_url(key):
+                return
+            raw_name = entry.get("name")
+            title = (
+                raw_name if isinstance(raw_name, str) and raw_name.strip() else key.split("?", 1)[0].rsplit("/", 1)[-1]
+            )
+        if key in seen:
+            return
+        seen.add(key)
+        tokens = _title_tokens(title)
+        if not tokens:
+            return
+        overlap = len(anchor & tokens)
+        if overlap < _TOPICAL_MEDIA_MIN_OVERLAP:
+            return
+        rank = (overlap, overlap / len(tokens), 1 if from_retrieval else 0)
+        if best_rank is not None and rank <= best_rank:
+            return
+        best_rank = rank
+        if entry_type == "youtube":
+            card: dict = {"type": "youtube", "video_id": key}
+            if isinstance(title, str) and title.strip():
+                card["title"] = title.strip()
+        else:
+            card = {"type": "download", "url": key, "name": title.strip() or "download"}
+        best_card = card
+
+    for chunk in retrieved_chunks or []:
+        meta = getattr(chunk, "metadata_info", None)
+        media = meta.get("media_urls") if isinstance(meta, dict) else None
+        if isinstance(media, dict):
+            for yt in media.get("youtube") or []:
+                _consider(yt, "youtube", True)
+            for entry in media.get("files") or []:
+                _consider(entry, "download", True)
+    for payload in extra_payloads or []:
+        if isinstance(payload, dict):
+            for yt in payload.get("youtube") or []:
+                _consider(yt, "youtube", False)
+            for entry in payload.get("files") or []:
+                _consider(entry, "download", False)
+    return best_card
+
+
 def _pick_secondary_media(
     primary: dict | None,
     retrieved_chunks,
@@ -7590,8 +7694,42 @@ async def rag_pipeline_stream(
                         )
                         session.flush()
                         _cached_msg_id = bot_msg.id
+                        _cached_meta: dict = {"message_id": _cached_msg_id}
+                        # The cache stores an answer's text and sources, never its
+                        # card. Without this the first visitor to ask a topical
+                        # question got the card and every visitor after them, for
+                        # the next hour, got the same answer with the card gone:
+                        # which reads on production as a feature that works "sometimes".
+                        # The attach is a pure function of the question and the
+                        # catalog, so recomputing it here gives the card the
+                        # generated turn would have had.
+                        if bid is not None and not _is_known_refusal(
+                            cached_qa["answer"], _company_name or "our company"
+                        ):
+                            _cached_card = _topical_media_card(
+                                question, _company_name, [], get_bot_media_urls(session, bot_id=bid)
+                            )
+                            _cached_key = _media_card_key(_cached_card)
+                            if _cached_key:
+                                _cached_filters = [ChatSession.id == session_id]
+                                if bid:
+                                    _cached_filters.append(ChatSession.bot_id == bid)
+                                elif cid:
+                                    _cached_filters.append(ChatSession.client_id == cid)
+                                _cached_session = session.query(ChatSession).filter(*_cached_filters).first()
+                                if not _is_explicit_media_request(question) and _card_already_shown(
+                                    _cached_session, _cached_key
+                                ):
+                                    _cached_card = None
+                                else:
+                                    _mark_card_shown(_cached_session, _cached_key)
+                            if _cached_card:
+                                _cached_meta["media_card"] = _cached_card
+                                logger.info(
+                                    "Media card topical attach (cache hit) | session=%s key=%s", session_id, _cached_key
+                                )
                         session.commit()
-                        yield f"\nFINAL_METADATA:{json.dumps({'message_id': _cached_msg_id})}\n"
+                        yield f"\nFINAL_METADATA:{json.dumps(_cached_meta)}\n"
                         return
 
             # Expensive steps: handoff detection, query rewriting (LLM), embedding (API).
@@ -8763,6 +8901,32 @@ async def rag_pipeline_stream(
                 full_answer, _media_card = _promote_loose_url_to_media_card(
                     full_answer, final_results, _allowed_yt, _allowed_files
                 )
+            _attached_key: str | None = None
+            if (
+                _media_card is None
+                and not _stream_error
+                and not _leak_aborted
+                and not _meeting_card_detected
+                and not _leave_msg_card_detected
+                and not _is_known_refusal(full_answer, _company_name or "our company")
+            ):
+                # Safety net #2: the model answered a question that clearly names
+                # one catalog asset and attached nothing. See ``_topical_media_card``
+                # for why this is decided here rather than asked for in the prompt.
+                # Whitelisted against the same set as a model-emitted card, so an
+                # attached card can never point at a URL this bot does not own.
+                _media_card = _drop_hallucinated_media_card(
+                    _topical_media_card(question, _company_name, final_results, _bot_media_for_validate),
+                    _allowed_yt,
+                    _allowed_files,
+                )
+                if _media_card:
+                    _attached_key = _media_card_key(_media_card)
+                    logger.info(
+                        "Media card topical attach | session=%s key=%s",
+                        session_id,
+                        _media_card.get("url") or _media_card.get("video_id"),
+                    )
             # Trailing-ask handler (streaming path). NAMED follow-up offers
             # that reference a real catalog asset are preserved so the next
             # turn's confirmation binds cleanly; vague/invented asks and
@@ -8935,9 +9099,19 @@ async def rag_pipeline_stream(
                         or _meeting_card_detected
                         or _leave_msg_card_detected
                         or bool(cta_data)
-                        # Only the turn that actually produced a card is skipped.
+                        # Only the turn that actually produced a card is skipped, and
+                        # only when the model chose that card: nothing on a cache hit
+                        # can know which asset the model would have picked. A card the
+                        # server attached (``_topical_media_card``) is a pure function
+                        # of the question and the catalog, and the cache-hit path
+                        # recomputes exactly the same one, so its turn may be cached.
+                        # Keyed on the final card still being the attached one, in case
+                        # a later step in the media pipeline replaced it.
                         # The previous bot-wide "any media in the KB" skip was wrong.
-                        or _media_card is not None
+                        or (
+                            _media_card is not None
+                            and not (_attached_key is not None and _media_card_key(_media_card) == _attached_key)
+                        )
                     )
                     if (
                         _cache_key
