@@ -322,6 +322,40 @@ class TestADealForTheCompanyIsARequestForAPerson:
         assert detect_company_deal_intent(message, company_name) is False
         assert detect_handoff_intent_keywords(message) is False
 
+    @pytest.mark.parametrize(
+        ("message", "company_name"),
+        [
+            # A descriptive trading name makes the bare name an ordinary
+            # product phrase, whatever its number of identifying words.
+            ("do you help with acquiring fine art?", "The Fine Art Group"),
+            ("can you advise on the acquisition of fine art?", "The Fine Art Group"),
+            ("what should I know before acquiring real estate?", "The Real Estate Company"),
+            ("do you help with acquiring commercial property?", "Commercial Property Group"),
+            ("any tips on acquiring classic cars?", "Classic Cars Ltd"),
+            ("do you help with acquiring domain names?", "Domain Names Inc"),
+            ("do you assist in acquiring rare coins?", "Rare Coins Ltd"),
+            ("what's the fee for acquiring farm land?", "Farm Land Company"),
+            ("when was the acquisition of whole foods market?", "Whole Foods Market"),
+            ("is fine art for sale?", "The Fine Art Group"),
+            ("can I buy a stake in real estate?", "The Real Estate Company"),
+            ("I want to acquire Eventus Security", "Eventus Security"),
+            ("interested in acquiring eventus security", "Eventus Security"),
+            ("acquisition of eventus security?", "Eventus Security"),
+            ("we want to acquire bank of baroda", "Bank of Baroda"),
+            ("buy a stake in eventus security", "Eventus Security"),
+            ("is eventus security for sale?", "Eventus Security"),
+        ],
+    )
+    def test_a_multi_word_descriptive_name_also_needs_a_company_word_after_it(self, message, company_name):
+        """A multi-word name that describes what the company sells ("The Fine
+        Art Group", "The Real Estate Company") makes the bare name an ordinary
+        product phrase too: "acquiring fine art" and "acquiring real estate"
+        read as service questions, not as a bid for the company. Every
+        name-based rule needs a company word or legal suffix after the name,
+        whatever the number of identifying words."""
+        assert detect_company_deal_intent(message, company_name) is False
+        assert detect_handoff_intent_keywords(message) is False
+
     @pytest.mark.parametrize("word", ["a", "of"])
     def test_a_name_of_repeated_short_words_is_matched_in_linear_time(self, word):
         """Company names come from clients and crawls with no cap on their words.
@@ -369,16 +403,15 @@ class TestADealForTheCompanyIsARequestForAPerson:
             ("can we buy you out?", "Acme"),
             ("we want to buy out your company", "Acme"),
             ("is your company for sale?", "Acme"),
-            ("I want to acquire Eventus Security", "Eventus Security"),
-            ("interested in acquiring eventus security", "Eventus Security"),
-            ("acquisition of eventus security?", "Eventus Security"),
+            ("i want to acquire eventus security company", "Eventus Security"),
+            ("we want to acquire eventus security pvt ltd", "Eventus Security"),
             ("i want to acquire acme company", "Acme"),
             ("we want to acquire hubspot inc", "HubSpot"),
-            ("we want to acquire bank of baroda", "Bank of Baroda"),
-            ("buy a stake in eventus security", "Eventus Security"),
+            ("acquisition of bank of baroda ltd?", "Bank of Baroda"),
+            ("buy a stake in eventus security ltd", "Eventus Security"),
             ("take a stake in your company", "Acme"),
             ("take equity in your startup", "Acme"),
-            ("is eventus security for sale?", "Eventus Security"),
+            ("is eventus security pvt ltd for sale?", "Eventus Security"),
             ("is acme inc for sale?", "Acme"),
             ("is acme pvt ltd for sale?", "Acme"),
             ("is your company up for sale?", "Acme"),

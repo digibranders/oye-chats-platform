@@ -210,11 +210,10 @@ _DEAL_NAME_STOPWORDS = frozenset(
 #: word boundary stops "co" and "corp" matching the start of a longer word, so
 #: the repetitions below can be possessive without changing a result.
 _DEAL_COMPANY_WORD = r"\s+(?:company|firm|group|inc|ltd|limited|pvt|private|llc|llp|plc|corp|co)\b"
-#: Up to two company words, optional: a name of two or more identifying words
-#: is the company on its own.
-_DEAL_LEGAL_SUFFIX = rf"(?:{_DEAL_COMPANY_WORD}){{0,2}}+"
-#: One or two company words, required: a one-word name ("Acme", "car" in The
-#: Car Company, "hubspot") is also a common noun or the product itself.
+#: One or two company words, required after every name-based rule's name: a
+#: bare name, however many words identify it, is also a common noun or an
+#: ordinary product phrase ("Acme", "car" in The Car Company, "fine art" in
+#: The Fine Art Group).
 _DEAL_REQUIRED_SUFFIX = rf"(?:{_DEAL_COMPANY_WORD}){{1,2}}+"
 _COMPANY_TAKEOVER_RE = re.compile(r"(?i)\b" + _COMPANY_TAKEOVER)
 #: "business" is left out: it is a common plan tier ("buy your business plan?").
@@ -297,12 +296,15 @@ def detect_company_deal_intent(question: str, company_name: str | None = None) -
     With the company's name (its full identifying name, see
     :func:`_company_name_pattern`), where "suffix" is one or two of company,
     firm, group, inc, ltd, limited, pvt, private, llc, llp, plc, corp or co
-    (``_DEAL_COMPANY_WORD``). A name of two or more identifying words takes an
-    optional suffix; a one-word name ("Acme", "car" in The Car Company,
-    "HubSpot") needs one, since on its own it is also a common noun or the
-    product ("is the car for sale?", "the cost of acquiring hubspot"). No
-    "the" before the name, except in (e), where the company noun after the
-    name already says the visitor means a company:
+    (``_DEAL_COMPANY_WORD``). Every name-based rule requires this suffix
+    directly after the name, whatever the number of identifying words: a bare
+    name is also a common noun or the product it sells ("is the car for
+    sale?", "the cost of acquiring hubspot"), and a bare descriptive trading
+    name is an ordinary product phrase ("acquiring fine art" on The Fine Art
+    Group, "acquiring real estate" on The Real Estate Company). A bare name is
+    left to the handoff classifier. No "the" before the name, except in (e),
+    where the company noun after the name already says the visitor means a
+    company:
       (d) acquire, acquiring, acquisition of or takeover of + the name + the
           suffix + an optional price. "Merge with" and "take over" are left
           out: on a one-token name they are integration and migration
@@ -326,8 +328,7 @@ def detect_company_deal_intent(question: str, company_name: str | None = None) -
     name = _company_name_pattern(company_name)
     if name is None:
         return False
-    _, positions = _name_tokens(company_name)
-    suffix = _DEAL_REQUIRED_SUFFIX if len(positions) == 1 else _DEAL_LEGAL_SUFFIX
+    suffix = _DEAL_REQUIRED_SUFFIX
     rules = (
         rf"\b(?:acquire|acquiring|acquisition\s+of|takeover\s+of)\s+{name}{suffix}{_DEAL_PRICE}{_DEAL_TAIL}",
         rf"\b(?:buy|purchase)\s+(?:the\s+)?{name}\s+(?:company|firm){_DEAL_TAIL}",
