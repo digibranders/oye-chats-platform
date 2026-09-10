@@ -269,6 +269,13 @@ class TestCatalogValidation:
                 services=[{"id": "s1", "name": "x", "requirements": [{"id": "r1", "label": "a", "price": -1}]}]
             )
 
+    def test_currency_defaults_to_usd(self):
+        assert QuotationCatalog.model_validate({"services": []}).currency == "USD"
+        assert QuotationCatalog.model_validate({"currency": "", "services": []}).currency == "USD"
+
+    def test_explicit_currency_is_kept(self):
+        assert QuotationCatalog.model_validate({"currency": "inr", "services": []}).currency == "INR"
+
     def test_document_delay_defaults_to_the_platform_constant(self):
         cat = QuotationCatalog.model_validate({"services": []})
         assert cat.document_delay_seconds == quotation_routes.QUOTATION_EMAIL_DELAY_SECONDS
@@ -1196,6 +1203,28 @@ class TestQuotationEmailBuilders:
         assert to == "jason@buyer.com"
         assert "Landing page" in body
         assert "₹" not in body and "8,000" not in body
+
+    def test_visitor_ack_points_to_spam_folder_without_a_tinted_card(self, _sent):
+        from app.services import email_service
+
+        email_service.send_quotation_visitor_email("jason@buyer.com", "Acme Co", "Jason", ["Landing page"])
+        _, _, body, _ = _sent[0]
+        assert "will email it to you soon" in body
+        assert "spam or junk folder" in body
+        assert "What happens next" not in body
+        for green in ("#f0fdf4", "#dcfce7", "#15803d", "#166534"):
+            assert green not in body
+
+    def test_document_email_total_row_has_no_tint(self, _sent):
+        from app.services import email_design as ed
+        from app.services import email_service
+
+        email_service.send_quotation_document_email(
+            "jason@buyer.com", "Acme Co", "Jason", "USD", self._LINE_ITEMS, 14000.0
+        )
+        _, _, body, _ = _sent[0]
+        assert "$14,000" in body
+        assert ed.ACCENT_TINT not in body
 
     def test_document_email_prices_inline_no_attachment(self, _sent):
         from app.services import email_service

@@ -72,6 +72,7 @@ MAX_UNIT = 40
 
 VALID_BANT_KEYS = {"need", "timeline", "authority", "budget"}
 VALID_CURRENCIES = {"INR", "USD", "EUR", "GBP", "AUD", "CAD", "SGD", "AED"}
+DEFAULT_CURRENCY = "USD"
 
 # Plan gating: quotation flow is a Professional-tier feature, and the trial
 # carries Professional's entitlements. Any bot whose
@@ -289,7 +290,7 @@ class QuotationCatalog(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     enabled: bool = False
-    currency: str = "INR"
+    currency: str = DEFAULT_CURRENCY
     required_categories: list[str] = Field(default_factory=list)
     threshold: int = Field(default=2, ge=1, le=4)
     # How long after `accept` the priced "Your quotation" document email is
@@ -306,7 +307,7 @@ class QuotationCatalog(BaseModel):
     @field_validator("currency")
     @classmethod
     def _validate_currency(cls, value: str) -> str:
-        code = (value or "INR").strip().upper()
+        code = (value or DEFAULT_CURRENCY).strip().upper()
         if code not in VALID_CURRENCIES:
             raise ValueError(f"currency must be one of {sorted(VALID_CURRENCIES)}")
         return code
@@ -403,7 +404,7 @@ class QuoteLine(BaseModel):
 class QuotationStateOut(BaseModel):
     active: bool
     status: Literal["idle", "selecting", "choosing", "quoting", "complete", "skipped"] = "idle"
-    currency: str = "INR"
+    currency: str = DEFAULT_CURRENCY
     services: list[ServicePublic] = Field(default_factory=list)
     selected_service_ids: list[str] = Field(default_factory=list)
     current: ChoosingView | None = None
