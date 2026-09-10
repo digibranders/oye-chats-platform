@@ -52,6 +52,7 @@ from app.services.groundedness_gate import check_groundedness, should_sample
 from app.services.handoff_reply import handoff_reply, unhelped_offer
 from app.services.intent_router import route_intent, strip_greeting_lead
 from app.services.intent_service import (
+    GENERIC_INVITE_RE,
     HANDOFF_OFFER_RE,
     detect_company_deal_intent,
     detect_handoff_intent,
@@ -4958,15 +4959,9 @@ _PROBE_PHRASE_RE = re.compile(
 # which also uses it to decide whether a bare "yes" answers an offer.
 _HANDOFF_OFFER_RE = HANDOFF_OFFER_RE
 
-# Generic invites the bot closes with (B8). End with "?" but expect no specific
-# answer, so a reply after one must not relax the gate.
-_GENERIC_INVITE_RE = re.compile(
-    r"(?i)(?:"
-    r"anything else|what would you like to know|what else would you like|"
-    r"how can i help|hear about our services|see (?:our )?recent work|"
-    r"what can i help you with"
-    r")"
-)
+# Generic invites the bot closes with (B8). Defined once in intent_service, which
+# also uses it to decide whether a bare "yes" needs the model.
+_GENERIC_INVITE_RE = GENERIC_INVITE_RE
 
 # Short affirmations to an offer (B9): "yes", "sure", "ok", "go ahead".
 _AFFIRMATIVE_RE = re.compile(
@@ -6495,9 +6490,7 @@ async def _rewrite_query_bounded(session_id: str, question: str, history: list) 
 async def _detect_handoff_bounded(question: str, last_bot_message: str | None = None) -> bool:
     """``detect_handoff_intent`` off the event loop with a hard deadline,
     degrading to the keyword-only signal when the classifier stalls."""
-    task = asyncio.create_task(
-        asyncio.to_thread(functools.partial(detect_handoff_intent, question, last_bot_message=last_bot_message))
-    )
+    task = asyncio.create_task(asyncio.to_thread(detect_handoff_intent, question, last_bot_message=last_bot_message))
     try:
         return await asyncio.wait_for(task, timeout=_HANDOFF_INTENT_TIMEOUT_S)
     except TimeoutError:
@@ -7899,9 +7892,7 @@ async def rag_pipeline_stream(
                 )
             else:
                 handoff_task = asyncio.create_task(
-                    asyncio.to_thread(
-                        functools.partial(detect_handoff_intent, question, last_bot_message=_last_bot_message(history))
-                    )
+                    asyncio.to_thread(detect_handoff_intent, question, last_bot_message=_last_bot_message(history))
                 )
                 search_query, query_embedding = await _resolve_search_query_and_embedding(
                     session_id, question, history, bid, cid, _company_name, embedding_profile=_embedding_profile

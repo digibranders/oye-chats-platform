@@ -116,15 +116,65 @@ _HANDOFF_KEYWORDS_RE = re.compile(
 )
 
 
-#: Offers the bot makes to connect the visitor to a person. The single definition:
-#: ``rag_service`` imports it, because this module cannot import ``rag_service``
-#: (it imports this one).
+#: A team the bot can put the visitor in touch with: "the team", "our sales team",
+#: "the **Acme Security** team". At most three words sit before "team".
+_OFFER_TEAM = r"(?:the|our) (?:[\w&'\u2019.*-]+ ){0,3}?team"
+#: A person or team the bot can put the visitor in touch with.
+_OFFER_PERSON = (
+    rf"(?:someone|an expert|a (?:person|human|specialist|team member|member of {_OFFER_TEAM})|{_OFFER_TEAM})"
+)
+
+#: Offers the bot makes to put the visitor in touch with a person. The single
+#: definition: ``rag_service`` imports it, because this module cannot import
+#: ``rag_service`` (it imports this one). Every group is literal words or a
+#: bounded run, so a search stays linear in the length of the message.
+#: ``tests/test_handoff_intent_context.py`` pins it against every fixed offer the
+#: services write and against ordinary answers that must not count as one.
 HANDOFF_OFFER_RE = re.compile(
+    r"(?i)\b(?:"
+    # Pivots and prompts: "Want me to connect you with them now?", "connect you to someone"
+    r"connect you (?:with|to)\b"
+    # Team-connect prompt: "Would you like to connect with our team?"
+    r"|(?:to|you) connect with " + _OFFER_TEAM + r"\b"
+    # Escalation: "just let me know and I'll connect you.", "Shall I connect you?"
+    r"|i(?:['\u2019]ll| will) connect you\b|connect you\s*[.!?]"
+    # Team-connect prompt: "Want me to loop in someone from our team?", "loop the team in"
+    r"|loop in " + _OFFER_PERSON + r"\b|loop " + _OFFER_PERSON + r" in\b"
+    # Escalation: "I can hand you off to someone on our team"
+    r"|hand you (?:off|over) to\b"
+    # Escalation: "Want me to put you in touch with the Acme team directly?"
+    r"|put you in touch\b"
+    # "Shall I have someone from our team get in touch?", "get the sales team to call you"
+    r"|(?:have|get) " + _OFFER_PERSON + r" (?:from " + _OFFER_TEAM + r" )?(?:to )?"
+    r"(?:reach out|contact you|get in touch|follow up|call you)\b"
+    # The team or someone contacts the visitor: "our team to reach out to you",
+    # "we'll contact you". In "you can contact us" the visitor acts, so no offer.
+    r"|(?:" + _OFFER_PERSON + r"|we)(?: (?:will|can|could|would|to)|['\u2019]ll)? "
+    r"(?:reach out to|get in touch with|contact|call) you\b"
+    # "Would you like to speak with a specialist?"
+    r"|speak (?:with|to) " + _OFFER_PERSON + r"\b"
+    # "If you'd rather talk to a human on the team". The person is required, so
+    # "talk to the onboarding guide" and "talk to our chatbot" are no offer.
+    r"|talk to (?:a |an |the |our )?(?:human|person|someone|agent|representative|expert|specialist|"
+    r"(?:[\w&'\u2019*-]+ )?team)\b"
+    # "I can take a written message for the team"
+    r"|take (?:a|your) (?:written )?message\b"
+    # Pricing repeat: "Say yes and you can leave a message for them." The
+    # recipient is required, so "leave a message on the portal" is no offer.
+    r"|leave (?:a|your) (?:message|details) (?:for|with) (?:" + _OFFER_TEAM + r"|them|us)\b"
+    # "I can have the team reach out"
+    r"|have (?:the|our) team (?:reach|follow up|get back|help)\b"
+    r")"
+)
+
+#: Generic invites the bot closes with ("Anything else?", "What would you like to
+#: know?"). They end with "?" but ask for nothing specific, so a bare "yes" after
+#: one is no handoff and a reply after one does not relax the relevance gate.
+GENERIC_INVITE_RE = re.compile(
     r"(?i)(?:"
-    r"connect you (?:with|to)|put you in touch|"
-    r"talk to (?:a|the|our|someone) (?:human|team|agent|representative|member|expert)?|"
-    r"take (?:a|your) (?:written )?message|leave (?:a|your) (?:message|details|contact)|"
-    r"have (?:the|our) team (?:reach|follow up|get back|help)"
+    r"anything else|what would you like to know|what else would you like|"
+    r"how can i help|hear about our services|see (?:our )?recent work|"
+    r"what can i help you with"
     r")"
 )
 
@@ -139,6 +189,11 @@ _BARE_REFUSAL_RE = re.compile(r"(?i)^\s*(?:no|nope|nah|not really|no thanks|no t
 
 #: Characters a model wraps around the bare YES/NO it was asked for.
 _HANDOFF_REPLY_DECORATION = " \t\r\n\"'`*_.!"
+
+#: How much of the bot's previous message the classifier reads. An answer can run
+#: to 1,500 tokens against a 16-token, 3s call, and an offer sits in the closing
+#: sentence, so the tail is kept and the head is dropped.
+_HANDOFF_CONTEXT_CHARS = 600
 _HANDOFF_YES_RE = re.compile(r"YES\b")
 
 
@@ -157,6 +212,7 @@ def _detect_handoff_intent_raw(question: str, last_bot_message: str | None = Non
     ``last_bot_message`` is the bot's previous reply, shown to the model as
     context. Without it the classifier judged every message alone and answered
     YES to a bare "yes", "re you a human" and "non sense" (production, 2026-09-10).
+    Only its last ``_HANDOFF_CONTEXT_CHARS`` characters are sent.
     """
 
     def _fence(text: str | None) -> str:
@@ -166,8 +222,9 @@ def _detect_handoff_intent_raw(question: str, last_bot_message: str | None = Non
     # contains the closing marker cannot end its own fence and have the rest
     # read as top-level instructions. Same technique as the reference-context
     # fence in ``rag_service._neutralize_context_fence``.
+    previous = (last_bot_message or "").strip()[-_HANDOFF_CONTEXT_CHARS:]
     fenced_question = _fence(question)
-    fenced_previous = _fence(last_bot_message) or "(none)"
+    fenced_previous = _fence(previous) or "(none)"
     prompt = f"""You are a handoff-intent classifier for a customer-facing chatbot.
 
 TASK: Determine whether the user wants to be connected to a live human operator or support team member.
@@ -379,10 +436,19 @@ def detect_handoff_intent(question: str, last_bot_message: str | None = None) ->
     """Hybrid handoff detection: keywords, then bare replies, then the LLM.
 
     1. Keyword regex: a match IS the decision.
-    2. A bare "yes"/"no" is decided here, never by the model: an affirmation is a
-       handoff only when ``last_bot_message`` offered one, a refusal never is.
-    3. Otherwise the LLM decides, with the bot's previous message as context.
-    4. LLM fails: False.
+    2. A bare refusal ("no", "not now") is never a handoff, and the model is not asked.
+    3. A bare affirmation ("yes", "sure") is decided by ``last_bot_message``:
+       a. it matches ``HANDOFF_OFFER_RE``: True, and the model is not asked;
+       b. it ends with "?" and is not a generic invite (``GENERIC_INVITE_RE``):
+          the model decides with that question as context, since the pattern
+          cannot know every way the model words an offer;
+       c. anything else (no message, a statement, "What would you like to
+          know?"): False, and the model is not asked.
+    4. Otherwise the LLM decides, with the bot's previous message as context.
+    5. LLM fails: False.
+
+    In the stream the intent router answers some acks ("ok", "sure", "no") before
+    this runs, unless the message affirms an offer in the previous bot message.
     """
     if detect_handoff_intent_keywords(question):
         logger.info("Handoff keywords matched for: '%s'", question)
@@ -391,7 +457,11 @@ def detect_handoff_intent(question: str, last_bot_message: str | None = None) ->
     if _BARE_REFUSAL_RE.match(text):
         return False
     if _BARE_AFFIRMATION_RE.match(text):
-        return bool(HANDOFF_OFFER_RE.search(last_bot_message or ""))
+        previous = (last_bot_message or "").strip()
+        if HANDOFF_OFFER_RE.search(previous):
+            return True
+        if not previous.endswith("?") or GENERIC_INVITE_RE.search(previous):
+            return False
     try:
         return _detect_handoff_intent_raw(question, last_bot_message)
     except Exception as e:
