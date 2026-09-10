@@ -134,6 +134,17 @@ describe('reading a stored blob back', () => {
     expect(parsed.services[0].name).toBe('Photography');
   });
 
+  it('defaults the currency to USD when none is stored, matching the API', () => {
+    expect(EMPTY_CATALOG.currency).toBe('USD');
+    expect(parseCatalog(null).currency).toBe('USD');
+    expect(parseCatalog({ services: [] }).currency).toBe('USD');
+    expect(toPayload({ ...EMPTY_CATALOG, currency: '' }).currency).toBe('USD');
+  });
+
+  it('keeps a stored currency instead of overwriting it with the default', () => {
+    expect(parseCatalog({ services: [], currency: 'inr' }).currency).toBe('INR');
+  });
+
   it('defaults document_delay_seconds to 600 seconds when the field is missing', () => {
     const parsed = parseCatalog({ services: [] });
     expect(parsed.document_delay_seconds).toBe(600);
