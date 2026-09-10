@@ -586,3 +586,75 @@ def test_an_active_owner_still_resolves_through_the_client_api_key(db, monkeypat
     result = _resolve(monkeypatch, db, client.api_key, "api_key")
     assert result is not None
     assert result[0] == owner.id
+
+
+# ── One operator row per account, whichever door it comes through ────────────
+
+
+def _invited_owner(db, workspace_client, bot, suffix: str) -> Operator:
+    """Another person who accepted an invite into this workspace as an owner.
+
+    On a live workspace on 2026-09-10 a row like this made the account's own
+    console connect as the invited person. The socket took the first
+    ``role='owner'`` row Postgres returned, while "Taking chats" and the status
+    read used the account's own row. The stale-flag sweep then switched the
+    account's row off (it had no socket), the console read "off duty" and closed
+    the socket, and visitors were told the team was offline.
+    """
+    member = Client(
+        name=f"Member {suffix}",
+        email=f"member-{suffix}@deactivation.test",
+        api_key=f"key-member-{suffix}",
+        hashed_password="h",
+    )
+    db.add(member)
+    db.flush()
+    op = _operator(db, workspace_client, bot, f"member-{suffix}", role="owner")
+    op.linked_client_id = member.id
+    db.flush()
+    return op
+
+
+def _self_operator(db, client, bot, suffix: str) -> Operator:
+    op = _operator(db, client, bot, f"self-{suffix}", role="owner")
+    op.linked_client_id = client.id
+    db.flush()
+    return op
+
+
+def test_the_socket_connects_as_the_row_the_availability_toggle_flips(db, monkeypatch):
+    from app.api.operator_routes import _resolve_status_operator
+
+    client, bot = _workspace(db, "same-row", operator_seats=5)
+    # Created first, so a lookup that takes the first owner row it finds lands here.
+    member = _invited_owner(db, client, bot, "same-row")
+    self_op = _self_operator(db, client, bot, "same-row")
+
+    resolved = _resolve(monkeypatch, db, client.api_key, "api_key")
+
+    assert resolved is not None
+    assert resolved[0] == self_op.id
+    assert _resolve_status_operator(db, _client_auth(client.id), bot.id).id == self_op.id
+    db.refresh(member)
+    assert member.is_online is False, "connecting the account must not put the invited person online"
+
+
+def test_an_account_never_connects_as_a_row_linked_to_another_account(db, monkeypatch):
+    client, bot = _workspace(db, "not-mine", operator_seats=5)
+    member = _invited_owner(db, client, bot, "not-mine")
+
+    resolved = _resolve(monkeypatch, db, client.api_key, "api_key")
+
+    assert resolved is not None
+    assert resolved[0] != member.id
+    db.refresh(member)
+    assert member.is_online is False
+
+
+def test_the_availability_toggle_never_reads_a_row_linked_to_another_account(db):
+    from app.api.operator_routes import _resolve_status_operator
+
+    client, bot = _workspace(db, "toggle-not-mine", operator_seats=5)
+    _invited_owner(db, client, bot, "toggle-not-mine")
+
+    assert _resolve_status_operator(db, _client_auth(client.id), bot.id) is None
