@@ -137,7 +137,17 @@ deductions land in that workspace like any visitor's. Set the bot's
 greeting and identity replies quote it), leave `domain_check_enabled` off or
 pass `--origin` with an allowed domain, and keep the knowledge base limited
 to the fixture documents so the judge's reference material matches what the
-bot retrieves. Re-run `--ingest-fixture` after editing a fixture document;
+bot retrieves.
+
+**Turn on Behaviour ▸ "Answer pricing from the knowledge base"**
+(`bots.pricing_from_knowledge_base`). It is off by default, and off is the
+right default: most bots would rather hand a pricing question to a human than
+have a model quote a figure. But `fixtures/acme/pricing.md` carries a real
+plan table, and four cases (`pricing-01`, `pricing-02`, `pricing-04`,
+`followup-02`) ask for a figure from it. With the toggle off the pricing gate
+correctly escalates instead, and those four fail for a configuration reason
+that has nothing to do with answer quality. That cost six points of a run on
+2026-09-10 before anyone noticed what it was. Re-run `--ingest-fixture` after editing a fixture document;
 uploads replace the existing chunks of a document with the same name.
 
 ## Adding cases
