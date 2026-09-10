@@ -51,6 +51,7 @@ function renderDialog(props: Partial<Parameters<typeof MemberDialog>[0]> = {}) {
           departments={[{ id: 5, name: 'Billing' }]}
           callerRole="owner"
           isSelf={false}
+          isAccountOwner={false}
           onSaved={() => {}}
           {...props}
         />
@@ -151,6 +152,40 @@ describe('MemberDialog', () => {
       'Operator',
       'Admin',
     ]);
+  });
+
+  it('locks the account owner’s own seat to Owner, with no way to demote it', async () => {
+    const user = userEvent.setup();
+    // The account holder's own self-operator row: role owner, linked to the
+    // workspace client. It is the workspace owner and must not be demotable.
+    renderDialog({
+      member: { ...MEMBER, role: 'owner', linked_client_id: 99 },
+      isSelf: true,
+      isAccountOwner: true,
+    });
+
+    // No radio group at all — Admin and Operator are not offered, so the owner
+    // cannot strip their own workspace of its owner by a mis-click.
+    expect(screen.queryByRole('radiogroup', { name: /role/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: 'Admin' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: 'Operator' })).not.toBeInTheDocument();
+    expect(screen.getByText(/this seat stays an owner/i)).toBeInTheDocument();
+
+    // A capacity change still saves, and it never sends anything but the owner
+    // role: the seat's role is fixed.
+    const capacity = screen.getByLabelText(/live chats at once/i);
+    await user.clear(capacity);
+    await user.type(capacity, '5');
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() =>
+      expect(api.updateOperator).toHaveBeenCalledWith(7, {
+        role: 'owner',
+        department_id: null,
+        max_concurrent_chats: 5,
+      }),
+    );
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
   });
 
   it('shows the email as read-only, because the server refuses an admin changing it', () => {

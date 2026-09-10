@@ -43,6 +43,12 @@ export interface MemberDialogProps {
   callerRole: string | null;
   /** True when this row is the signed-in person's own seat. */
   isSelf: boolean;
+  /**
+   * True when this row is the account holder's own seat — the self-operator row
+   * the workspace owner created by joining live chat. Its role is locked to
+   * Owner: it is the workspace's owner and cannot be demoted here.
+   */
+  isAccountOwner: boolean;
   onSaved: () => void;
 }
 
@@ -69,6 +75,7 @@ export function MemberDialog({
   departments,
   callerRole,
   isSelf,
+  isAccountOwner,
   onSaved,
 }: MemberDialogProps) {
   const queryClient = useQueryClient();
@@ -105,7 +112,12 @@ export function MemberDialog({
   const [seededFor, setSeededFor] = useState<number | null>(null);
   if (member && seededFor !== member.id) {
     setSeededFor(member.id);
-    setRole((member.role as WorkspaceRole) ?? 'operator');
+    // The account holder's own seat is the workspace owner: its role is Owner
+    // and cannot be anything else, even if the stored row has drifted to
+    // admin/operator. Seeding it as Owner means the read-only display, the
+    // confirmation and the saved payload all agree, and a drifted seat is
+    // corrected on the next save rather than silently kept.
+    setRole(isAccountOwner ? 'owner' : ((member.role as WorkspaceRole) ?? 'operator'));
     setDepartmentId(member.department_id != null ? String(member.department_id) : '');
     setCapacity(String(member.max_concurrent_chats ?? 3));
     setCapacityError(null);
@@ -190,7 +202,7 @@ export function MemberDialog({
   if (!member) return null;
 
   const roleChanged = role !== member.role;
-  const options = assignableRoles(callerRole);
+  const options = assignableRoles(callerRole, { lockToOwner: isAccountOwner });
 
   function attemptSave() {
     const parsed = validateConcurrentChats(capacity);
@@ -309,19 +321,38 @@ export function MemberDialog({
               forced the reader to change the value in order to read what each
               value meant, so they could not compare before choosing. The
               consequence of the change still lands in the confirmation. */}
-          <Field label="Role" required>
-            <RadioCards
+          {/* The account holder's own seat is the workspace owner and cannot be
+              demoted here, so the picker collapses to a single read-only Owner
+              statement rather than a radio group with two options that must not
+              be chosen. To hand the workspace over, they promote someone else to
+              owner first. The server refuses the same demotion in
+              `update_operator`; this is the matching UI. */}
+          {isAccountOwner ? (
+            <Field
               label="Role"
-              columns={1}
-              value={role}
-              onChange={setRole}
-              items={options.map((definition) => ({
-                value: definition.value,
-                label: definition.label,
-                description: definition.summary,
-              }))}
-            />
-          </Field>
+              required
+              hint="You own this workspace, so this seat stays an owner. Make someone else an owner first if you want to hand it over."
+            >
+              <div className="rounded-md border border-border-strong bg-surface-sunken p-3">
+                <p className="font-medium text-text-primary">{options[0]?.label ?? 'Owner'}</p>
+                <p className="mt-0.5 text-sm text-text-secondary">{options[0]?.summary}</p>
+              </div>
+            </Field>
+          ) : (
+            <Field label="Role" required>
+              <RadioCards
+                label="Role"
+                columns={1}
+                value={role}
+                onChange={setRole}
+                items={options.map((definition) => ({
+                  value: definition.value,
+                  label: definition.label,
+                  description: definition.summary,
+                }))}
+              />
+            </Field>
+          )}
 
           <Field label="Department" optional hint="Routes a conversation to a group.">
             {/* An explicit "no department" option rather than a placeholder:

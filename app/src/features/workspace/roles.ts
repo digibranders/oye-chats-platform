@@ -90,8 +90,22 @@ export function roleTone(role: string | null | undefined): BadgeTone {
  * identity, or an operator whose own role is `owner`) may assign `owner`. An
  * admin offering an Owner option they cannot use would be a control that
  * always 403s, which is worse than one that is not there.
+ *
+ * `lockToOwner` is the account holder's own seat: the self-operator row created
+ * when the workspace owner joins live chat (`linked_client_id == client_id`,
+ * `role == 'owner'`). Owner is the only role it may hold — demoting it would
+ * leave the workspace with no owner among its operators — so the picker offers
+ * Owner alone rather than a choice that must never be made. The server refuses
+ * the same change in `update_operator`, so a hidden option is a mirror of a
+ * server rule, not the only thing standing between the row and demotion.
  */
-export function assignableRoles(callerRole: string | null | undefined): RoleDefinition[] {
+export function assignableRoles(
+  callerRole: string | null | undefined,
+  options?: { lockToOwner?: boolean },
+): RoleDefinition[] {
+  if (options?.lockToOwner) {
+    return ROLES.filter((role) => role.value === 'owner');
+  }
   const canGrantOwner = callerRole == null || callerRole === 'owner';
   return ROLES.filter((role) => role.value !== 'owner' || canGrantOwner);
 }

@@ -1226,6 +1226,35 @@ class TestQuotationEmailBuilders:
         assert "$14,000" in body
         assert ed.ACCENT_TINT not in body
 
+    def test_quote_table_numbers_services_and_subtotals_each_one(self):
+        from app.services import email_design as ed
+        from app.services import email_service
+
+        line_items = [
+            {"service_name": "Website design", "label": "Homepage", "quantity": 1, "price": 1200.0, "subtotal": 1200.0},
+            {"service_name": "Website design", "label": "Inner page", "quantity": 3, "price": 250.0, "subtotal": 750.0},
+            {"service_name": "SEO", "label": "Audit", "quantity": 1, "price": 400.0, "subtotal": 400.0},
+        ]
+        html = email_service._grouped_quote_html("USD", line_items, 2350.0)
+
+        assert "1. Website design" in html and "2. SEO" in html
+        assert html.count("Subtotal") == 2
+        # The Website design subtotal sits between its own header and the next service.
+        assert html.index("1. Website design") < html.index("$1,950") < html.index("2. SEO")
+        assert "$2,350" in html
+        assert ed.ACCENT not in html
+
+    def test_quote_table_subtotal_treats_a_malformed_amount_as_zero(self):
+        from app.services import email_service
+
+        line_items = [
+            {"service_name": "SEO", "label": "Audit", "quantity": 1, "price": 400.0, "subtotal": 400.0},
+            {"service_name": "SEO", "label": "Broken", "quantity": 1, "price": None, "subtotal": "n/a"},
+        ]
+        html = email_service._grouped_quote_html("USD", line_items, 400.0)
+
+        assert html.count("$400") == 4  # unit price, line amount, subtotal, total
+
     def test_document_email_prices_inline_no_attachment(self, _sent):
         from app.services import email_service
 
