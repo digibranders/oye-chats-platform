@@ -31,7 +31,7 @@ So the decision has three stages:
 stream runs the vocabulary check itself on the event loop, then
 ``rag_service._detect_urgent_bounded``, which runs ``classify_urgent_incident``
 (stages 2 and 3) on a worker thread under a deadline, falling back to the rules
-when it passes.
+when the model fails or the deadline passes.
 """
 
 from __future__ import annotations
@@ -58,8 +58,9 @@ logger = logging.getLogger(__name__)
 # "how do I reset my password" and "I didn't receive the confirmation email"
 # stop here.
 #
-# Every gap is bounded and none crosses a sentence end, so the scan stays linear
-# on any input.
+# The explicit gaps are bounded and none crosses a sentence end, and the
+# pattern has no nested unbounded repetition, so matching stays linear on any
+# input.
 
 #: Up to 30 characters inside one sentence.
 _NEAR = r"[^.?!\n]{0,30}?"
@@ -509,7 +510,10 @@ def might_be_urgent_incident(question: object) -> bool:
     """
     if not isinstance(question, str) or not question.strip():
         return False
-    return _VOCABULARY_RE.search(question.lower()) is not None
+    # "İ" (U+0130) lowercases to "i" plus a combining dot above (U+0307), a
+    # non-word character that can multiply the regex engine's backtracking on
+    # a long run of them. Folding it to plain "i" first keeps the scan linear.
+    return _VOCABULARY_RE.search(question.replace("İ", "i").lower()) is not None
 
 
 # ── Stage 2: the classifier ───────────────────────────────────────────────────
@@ -558,7 +562,7 @@ def _classify_urgent_incident_raw(question: str) -> bool:
     """
     prompt = f"""You are an incident triage classifier for a customer-facing chatbot.
 
-TASK: Decide whether the visitor is REPORTING a security incident that is affecting their own organisation, systems, accounts, website or data, happening now or just discovered, so they need urgent help.
+TASK: Decide whether the visitor is REPORTING a security incident that is affecting their own organisation (or a client they support as an agency or IT provider), its systems, accounts, website, money or data, happening now or just discovered, so they need urgent help.
 
 CLASSIFY AS YES when the visitor reports, happening to them now or just found:
 - An attack, a breach, ransomware or a malware infection
@@ -566,7 +570,7 @@ CLASSIFY AS YES when the visitor reports, happening to them now or just found:
 - Attackers threatening them, for example demanding a ransom or threatening to leak their data
 - Files, systems or accounts locked or encrypted by an attacker, or held for ransom
 - Signs that someone else controls or uses their accounts, systems, money or data: payments, messages, posts, logins or changes they did not make
-- An incident happening now to their company, their employer, or a client they support as an agency or IT provider, when they ask for urgent help with it
+- An incident happening now to a client they support as an agency or IT provider
 
 CLASSIFY AS NO when the message is:
 - A question about services, pricing, policies, templates, plans or how something works
@@ -605,9 +609,12 @@ Respond with ONLY the word YES or NO."""
 def classify_urgent_incident(question: str) -> bool:
     """Stages 2 and 3 for a message that already passed ``might_be_urgent_incident``.
 
+    Called by ``rag_service._detect_urgent_bounded``, on a worker thread and
+    separately from the prefilter: the chat stream runs
+    ``might_be_urgent_incident`` itself on the event loop before handing off.
     The classifier decides, and any classifier error hands the decision to the
-    fallback rules. The vocabulary check is not repeated: a caller that has not
-    run it should call ``is_urgent_incident``.
+    fallback rules. The vocabulary check is not repeated here: a caller that
+    has not run it should call ``is_urgent_incident`` instead.
     """
     try:
         return _classify_urgent_incident_raw(question)
@@ -619,8 +626,14 @@ def classify_urgent_incident(question: str) -> bool:
 def is_urgent_incident(question: object) -> bool:
     """True when the visitor reports an incident happening to them, not one they ask about.
 
-    No model call without security vocabulary. On a vocabulary hit the classifier
-    decides, and any classifier error hands the decision to the fallback rules.
+    The composed form of all three stages, for a caller that has not already
+    run the prefilter or the classifier, which today means the tests. The
+    production pipeline does not call this: the chat stream runs
+    ``might_be_urgent_incident`` itself, and ``rag_service._detect_urgent_bounded``
+    runs ``classify_urgent_incident`` separately, on a worker thread under a
+    deadline. No model call without security vocabulary. On a vocabulary hit
+    the classifier decides, and any classifier error hands the decision to the
+    fallback rules.
     """
     return isinstance(question, str) and might_be_urgent_incident(question) and classify_urgent_incident(question)
 

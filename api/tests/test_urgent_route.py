@@ -88,7 +88,7 @@ _REVIEWED_INCIDENTS = [
     "URGENT: data breach in progress",
     "we have an ongoing breach",
     # A report about a client the visitor supports as an agency or IT provider
-    # counts as their own: the prompt says YES to it.
+    # is named in the prompt's TASK line and its own YES bullet.
     "My client's site was hacked",
     "we've been hacked, how do we recover?",
     "our servers have been compromised, can you protect us?",
@@ -451,8 +451,11 @@ def test_a_message_without_security_words_does_not_pass(msg):
 
 @pytest.mark.parametrize("msg", _EVERYDAY_MESSAGES)
 def test_everyday_account_order_and_booking_messages_do_not_pass(msg):
-    """The symptom families need a disowning or a stranger: "i didn't receive the
-    confirmation email" and "my payment went through twice" have neither."""
+    """Most symptom families need a disowning or a stranger: "i didn't receive
+    the confirmation email" and "my payment went through twice" have neither.
+    The money movement, extortion and resource-abuse families need neither:
+    they match on the money, ransom or resource-abuse pattern itself, which
+    none of these messages contain either."""
     assert might_be_urgent_incident(msg) is False
 
 
@@ -605,7 +608,7 @@ def test_the_prompt_fences_the_message_and_states_its_rules(model):
         "Files, systems or accounts locked or encrypted by an attacker, or held for ransom",
         "Signs that someone else controls or uses their accounts, systems, money or data: payments, messages, "
         "posts, logins or changes they did not make",
-        "their company, their employer, or a client they support as an agency or IT provider",
+        "a client they support as an agency or IT provider",
         '"what if we get hacked"',
         '"we were hacked last year and now want a pentest"',
         "About an incident at a vendor or a competitor, or one in the news",
@@ -678,6 +681,9 @@ _ADVERSARIAL_SEEDS = [
     " ",
     "!",
     "<<<",
+    # U+0130 (LATIN CAPITAL LETTER I WITH DOT ABOVE, "İ") lowercases to
+    # "i" plus a combining mark, which used to slow the vocabulary check's regex.
+    "\u0130",
     "we ",
     "we, ",
     "we got ",
