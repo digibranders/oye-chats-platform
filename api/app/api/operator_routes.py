@@ -51,6 +51,7 @@ from app.services.invite_service import InviteError
 from app.services.language_service import language_from_locale, normalize_locale
 from app.services.live_chat_queue_service import mark_session_waiting
 from app.services.live_chat_service import manager
+from app.services.operator_identity_service import resolve_account_operator
 from app.services.push_service import muted_push_preferences
 from app.services.qualification_service import (
     calculate_composite_score,
@@ -1974,26 +1975,9 @@ def _resolve_status_operator(session, auth: dict, bot_id: int | None = None) -> 
             select(Operator).where(Operator.id == auth["operator_id"], Operator.is_active.is_(True))
         ).scalar_one_or_none()
 
-    client = auth["entity"]
-    self_op_stmt = select(Operator).where(
-        Operator.client_id == client.id,
-        Operator.linked_client_id == client.id,
-        Operator.is_active.is_(True),
-    )
-    if bot_id is not None:
-        self_op_stmt = self_op_stmt.where(Operator.bot_id == bot_id)
-    operator = session.execute(self_op_stmt).scalar_one_or_none()
-    if operator:
-        return operator
-
-    legacy_stmt = select(Operator).where(
-        Operator.client_id == client.id,
-        Operator.role == "owner",
-        Operator.is_active.is_(True),
-    )
-    if bot_id is not None:
-        legacy_stmt = legacy_stmt.where(Operator.bot_id == bot_id)
-    return session.execute(legacy_stmt.limit(1)).scalar_one_or_none()
+    # Shared with the operator websocket, so the row the console reads is the row
+    # it is connected as. See ``operator_identity_service``.
+    return resolve_account_operator(session, auth["entity"].id, bot_id)
 
 
 @router.get("/me/status")
@@ -2366,25 +2350,8 @@ async def set_operator_status(
                 operator_id_to_release = operator.id
             response = {"is_online": operator.is_online, "operator_name": operator.name, "operator_id": operator.id}
         else:
-            client = auth["entity"]
             target_bot_id = request.bot_id if request is not None else None
-            self_op_stmt = select(Operator).where(
-                Operator.client_id == client.id,
-                Operator.linked_client_id == client.id,
-                Operator.is_active.is_(True),
-            )
-            if target_bot_id is not None:
-                self_op_stmt = self_op_stmt.where(Operator.bot_id == target_bot_id)
-            operator = session.execute(self_op_stmt).scalar_one_or_none()
-            if not operator:
-                legacy_stmt = select(Operator).where(
-                    Operator.client_id == client.id,
-                    Operator.role == "owner",
-                    Operator.is_active.is_(True),
-                )
-                if target_bot_id is not None:
-                    legacy_stmt = legacy_stmt.where(Operator.bot_id == target_bot_id)
-                operator = session.execute(legacy_stmt.limit(1)).scalar_one_or_none()
+            operator = resolve_account_operator(session, auth["entity"].id, target_bot_id)
 
             if not operator:
                 # Refuse to silently mint an operator row. The frontend catches
