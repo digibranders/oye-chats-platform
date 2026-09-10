@@ -49,9 +49,13 @@ from app.services import plan_entitlements_service, runtime_config
 from app.services import pricing_gate as _pricing_gate
 from app.services.email_service import send_qualified_lead_email
 from app.services.groundedness_gate import check_groundedness, should_sample
-from app.services.handoff_reply import handoff_reply
+from app.services.handoff_reply import handoff_reply, unhelped_offer
 from app.services.intent_router import route_intent, strip_greeting_lead
-from app.services.intent_service import detect_handoff_intent, detect_handoff_intent_keywords
+from app.services.intent_service import (
+    detect_company_deal_intent,
+    detect_handoff_intent,
+    detect_handoff_intent_keywords,
+)
 from app.services.live_chat_availability_service import (
     LiveChatState,
     _within_business_hours,
@@ -1261,6 +1265,33 @@ def _mark_card_shown(chat_session, card_key: str) -> None:
         return
     shown = dict(getattr(chat_session, "inline_cards_shown", None) or {})
     shown[card_key] = True
+    chat_session.inline_cards_shown = shown
+
+
+#: Key inside ``ChatSession.inline_cards_shown`` for how many turns in a row the
+#: bot could not help. An int, not a flag, so it cannot collide with a card key.
+_UNHELPED_STREAK_KEY = "unhelped_streak"
+
+
+def _unhelped_streak(chat_session) -> int:
+    """Consecutive turns in this conversation the relevance check rejected."""
+    if chat_session is None:
+        return 0
+    value = (getattr(chat_session, "inline_cards_shown", None) or {}).get(_UNHELPED_STREAK_KEY, 0)
+    return value if isinstance(value, int) and value > 0 else 0
+
+
+def _set_unhelped_streak(chat_session, value: int) -> None:
+    """Store the streak, rebuilding the JSONB dict so SQLAlchemy sees the change."""
+    if chat_session is None:
+        return
+    shown = dict(getattr(chat_session, "inline_cards_shown", None) or {})
+    if value > 0:
+        shown[_UNHELPED_STREAK_KEY] = value
+    elif _UNHELPED_STREAK_KEY in shown:
+        del shown[_UNHELPED_STREAK_KEY]
+    else:
+        return
     chat_session.inline_cards_shown = shown
 
 
@@ -7682,7 +7713,9 @@ async def rag_pipeline_stream(
                     # is the plan-aware value resolved once at the top of this
                     # turn, so a Free-plan bot never invalidates its cache to
                     # generate a handoff it isn't entitled to offer.
-                    _cached_handoff = await _detect_handoff_bounded(question)
+                    _cached_handoff = await _detect_handoff_bounded(question) or detect_company_deal_intent(
+                        question, _company_name
+                    )
 
                     if _cached_handoff and live_chat_on:
                         # Handoff requested. Invalidate cache and fall through to
@@ -7848,7 +7881,11 @@ async def rag_pipeline_stream(
                 logger.info(f"CAG-lite stream mode: injecting all {_total_chunks} chunks (bot_id={bid})")
                 final_results = await asyncio.to_thread(_fetch_all_chunks_isolated, bid, cid)
                 search_query = question
-                suggest_handoff = await _detect_handoff_bounded(question) or _affirmed_handoff
+                suggest_handoff = (
+                    await _detect_handoff_bounded(question)
+                    or _affirmed_handoff
+                    or detect_company_deal_intent(question, _company_name)
+                )
             else:
                 handoff_task = asyncio.create_task(asyncio.to_thread(detect_handoff_intent, question))
                 search_query, query_embedding = await _resolve_search_query_and_embedding(
@@ -7856,10 +7893,18 @@ async def rag_pipeline_stream(
                 )
 
                 try:
-                    suggest_handoff = await asyncio.wait_for(handoff_task, timeout=4.0) or _affirmed_handoff
+                    suggest_handoff = (
+                        await asyncio.wait_for(handoff_task, timeout=4.0)
+                        or _affirmed_handoff
+                        or detect_company_deal_intent(question, _company_name)
+                    )
                 except TimeoutError:
                     # LLM timed out. Fall back to keyword signal.
-                    suggest_handoff = detect_handoff_intent_keywords(question) or _affirmed_handoff
+                    suggest_handoff = (
+                        detect_handoff_intent_keywords(question)
+                        or _affirmed_handoff
+                        or detect_company_deal_intent(question, _company_name)
+                    )
                     logger.warning(
                         "Handoff LLM timed out for session %s, keyword fallback=%s",
                         session_id,
@@ -8402,6 +8447,65 @@ async def rag_pipeline_stream(
                     session=session_id,
                     bot_id=bid,
                 )
+            # ── Unhelped turns ───────────────────────────────────────────────
+            # A turn the relevance check rejected is a turn the bot could not help
+            # with, whichever way it was then handled: refused, pivoted, or passed
+            # to the model because it looked on scope. Counting by that decision
+            # rather than by the reply's wording is the point. On 2026-09-10 a
+            # visitor asked a live bot four times to buy the company; every turn
+            # scored 0.00, one was refused and three got a model-written
+            # brush-off, and the refusal escalation (which only recognises its
+            # own fixed sentences) never saw a second miss.
+            #
+            # The second unhelped turn in a row, on a plan with a human, is
+            # answered with an offer of the team instead of another brush-off.
+            # The count then starts again, so the offer is not repeated on every
+            # miss after it. Answers to our own question and a "yes" to a handoff
+            # are not misses. A non-English turn never reaches here unhelped
+            # (the judges are bypassed and the turn counts as relevant).
+            _unhelped_turn = not _is_relevant and not _trusted_cta and not _answering_probe and not _affirmed_handoff
+            if _unhelped_turn and _plan_support_allowed and _unhelped_streak(chat_session) >= 1:
+                _offer = unhelped_offer(live_chat_enabled=live_chat_on, team_available=bool(_team_online))
+                _safety_net_metric(
+                    "unhelped_offer",
+                    path="stream",
+                    gate_score=f"{_gate_score:.2f}",
+                    live_chat=str(live_chat_on),
+                    session=session_id,
+                    bot_id=bid,
+                )
+                _offer_text = (
+                    _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + _offer.text
+                )
+                yield _stream_metadata(session_id, [], language)
+                yield _offer_text
+                _bot_msg = add_chat_message(
+                    session,
+                    session_id,
+                    client_id=cid,
+                    role="bot",
+                    content=_offer_text,
+                    bot_id=bid,
+                    is_unanswered=True,
+                    source_language=_lang_base(language),
+                )
+                session.flush()
+                _offer_meta = {
+                    "message_id": _bot_msg.id,
+                    "suggest_handoff": _offer.suggest_handoff,
+                    "qualification_pending": False,
+                }
+                if _offer.needs_message_card:
+                    _offer_meta["show_leave_message"] = True
+                    _mark_card_shown(chat_session, "leave_message")
+                if _offer.suggest_handoff:
+                    _mark_card_shown(chat_session, "handoff_offered")
+                _set_unhelped_streak(chat_session, 0)
+                session.commit()
+                yield f"\nFINAL_METADATA:{json.dumps(_offer_meta)}\n"
+                return
+            _set_unhelped_streak(chat_session, _unhelped_streak(chat_session) + 1 if _unhelped_turn else 0)
+
             # ``_affirmed_handoff`` also bypasses the refusal so a "yes" to the
             # connect offer reaches generation, where ``suggest_handoff`` renders
             # the handoff (B9).

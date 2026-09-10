@@ -12,6 +12,8 @@ The reply has one job: say what the form below is for and what happens after it.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 
 def handoff_reply(*, team_available: bool, repeat: bool) -> str:
     """The reply shown above the handoff form.
@@ -32,3 +34,47 @@ def handoff_reply(*, team_available: bool, repeat: bool) -> str:
     if team_available:
         return "Sure. Share your details in the form below and I'll connect you with our team."
     return "Our team is offline right now. Share your details in the form below and they'll get back to you."
+
+
+@dataclass(frozen=True)
+class HandoffOffer:
+    """A fixed reply that hands the visitor to the team, and how the widget opens it."""
+
+    text: str
+    suggest_handoff: bool
+    needs_message_card: bool
+
+
+def unhelped_offer(*, live_chat_enabled: bool, team_available: bool) -> HandoffOffer:
+    """The reply after two turns in a row the bot could not help with.
+
+    On 2026-09-10 a visitor asked a live bot four times to buy the company and
+    got a refusal or a model-written brush-off every time, never the team. This
+    says plainly that the bot could not help, then offers the channel the plan
+    has: the live form when live chat is on (worded for nobody being available
+    when that is the case), the message card when it is off. Only called on a
+    plan that includes human support.
+    """
+    if not live_chat_enabled:
+        return HandoffOffer(
+            text="I haven't been able to help with that here. I'll open a quick message form so our team can get back to you.",
+            suggest_handoff=False,
+            needs_message_card=True,
+        )
+    if team_available:
+        return HandoffOffer(
+            text=(
+                "I haven't been able to help with that here, but our team can. "
+                "Share your details in the form below and I'll connect you with them."
+            ),
+            suggest_handoff=True,
+            needs_message_card=False,
+        )
+    return HandoffOffer(
+        text=(
+            "I haven't been able to help with that here, and our team is offline right now. "
+            "Share your details in the form below and they'll get back to you."
+        ),
+        suggest_handoff=True,
+        needs_message_card=False,
+    )

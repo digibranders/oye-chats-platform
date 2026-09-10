@@ -15,6 +15,21 @@ logger = logging.getLogger(__name__)
 _HANDOFF_LLM_TIMEOUT_S = 3.0
 _HANDOFF_LLM_NUM_RETRIES = 0
 
+#: A request to buy, acquire, invest in or merge with THE COMPANY itself, as
+#: opposed to buying something it sells. On a live bot on 2026-09-10 a visitor
+#: asked four times to buy the company and was refused or deflected every time,
+#: because nothing in the knowledge base covers acquisitions and nothing treated
+#: the request as one for a person. A determiner is required ("buy THE company",
+#: "acquire YOUR business") so "buy a SIEM for our company" stays a purchase, and
+#: "customer acquisition" never matches because the verb forms need an object.
+_COMPANY_DEAL_ALTERNATIVES = (
+    r"(?:buy|purchase|acquire|acquiring|take\s+over|invest\s+in|merge\s+with)\s+"
+    r"(?:the|your|this|that)\s+(?:\w+\s+){0,2}?(?:company|business|firm|startup|organi[sz]ation)"
+    r"|(?:acquisition\s+of|merger\s+with|investment\s+in)\s+"
+    r"(?:the|your|this|that)\s+(?:\w+\s+){0,2}?(?:company|business|firm|startup|organi[sz]ation)"
+)
+_COMPANY_DEAL_RE = re.compile(r"(?i)\b(?:" + _COMPANY_DEAL_ALTERNATIVES + r")\b")
+
 # Compiled regex for fast keyword-based handoff detection.
 #
 # A match is the decision in ``detect_handoff_intent`` (no LLM call is made),
@@ -59,7 +74,8 @@ _HANDOFF_KEYWORDS_RE = re.compile(
     r"|transfer\s+(?:me\s+|us\s+)?to"
     # how can / do I|we connect|talk|speak|chat|contact|reach
     r"|how\s+(?:can|do)\s+(?:i|we)\s+(?:connect|talk|speak|chat|contact|reach)"
-    r")\b"
+    # buy / acquire / invest in / merge with the company itself
+    r"|" + _COMPANY_DEAL_ALTERNATIVES + r")\b"
 )
 
 
@@ -142,6 +158,52 @@ def detect_handoff_intent_keywords(question: str) -> bool:
     this directly as the fallback when the LLM task exceeds its ceiling.
     """
     return bool(_HANDOFF_KEYWORDS_RE.search(question))
+
+
+#: Words a company name can contain that do not identify it. Mirrors
+#: ``rag_service._COMPANY_NAME_STOPWORDS``, which cannot be imported here
+#: without a cycle (``rag_service`` imports this module).
+_DEAL_NAME_STOPWORDS = frozenset(
+    {
+        "the", "a", "an", "my", "our", "your", "one", "go", "plus", "and", "of", "for", "to", "at", "in", "on", "by",
+        "with", "co", "inc", "ltd", "llc", "llp", "plc", "pvt", "corp", "company", "limited", "private", "group",
+    }
+)  # fmt: skip
+_DEAL_NAME_SUFFIXES = r"company|business|group|inc|ltd|limited|pvt|llc|llp|plc|corp"
+
+
+def detect_company_deal_intent(question: object, company_name: object = None) -> bool:
+    """True when the visitor wants to buy, acquire, invest in or merge with the
+    company itself.
+
+    The generic phrasings ("acquire your company") come from the same
+    alternatives the handoff keyword regex uses. The company's own name adds
+    the short form a visitor actually types, "still i want to buy eventus", but
+    only when the name ENDS the message (a legal suffix may follow), so
+    "i want to buy eventus soc" stays a question about something it sells.
+    The name is matched as the whole name or as its first identifying word;
+    "The Hub" never matches on "the", and "Eventus Security" never matches on
+    "security" alone.
+    """
+    if not isinstance(question, str) or not question.strip():
+        return False
+    if _COMPANY_DEAL_RE.search(question):
+        return True
+    if not isinstance(company_name, str):
+        return False
+    tokens = re.findall(r"[^\W_]+", company_name.lower())
+    signals = [t for t in tokens if len(t) >= 3 and t not in _DEAL_NAME_STOPWORDS]
+    if not tokens or not signals:
+        return False
+    full = r"\s+".join(map(re.escape, tokens))
+    first_signal = re.escape(signals[0])
+    rest = "|".join(map(re.escape, signals[1:]))
+    trailer = _DEAL_NAME_SUFFIXES + (f"|{rest}" if rest else "")
+    pattern = (
+        r"(?i)\b(?:buy|purchase|acquire|take\s+over|invest\s+in|merge\s+with)\s+(?:the\s+)?"
+        rf"(?:{full}|{first_signal})(?:\s+(?:{trailer}))*\s*[?.!]*\s*$"
+    )
+    return re.search(pattern, question.strip()) is not None
 
 
 def detect_handoff_intent(question: str) -> bool:
