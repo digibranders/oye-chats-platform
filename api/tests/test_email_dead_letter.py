@@ -179,3 +179,57 @@ class TestTheWorkerRecordsWhatItGivesUpOn:
 
         assert self._run({"job_try": 1}) is True
         assert recorded == []
+
+
+class TestCredentialMailIsDeclaredNotGuessed:
+    """The body was omitted on a subject-keyword guess. The email-change OTP's
+    subject, "Confirm your new ... email address", matched none of the
+    keywords, so a live six-digit code sat in the table marked replayable."""
+
+    def test_the_email_change_otp_body_is_not_stored(self, monkeypatch, recorded):
+        monkeypatch.setattr("app.worker.enqueue.WORKER_ENABLED", True)
+        monkeypatch.setattr("app.worker.enqueue.enqueue_sync", lambda *a, **k: (_ for _ in ()).throw(OSError("x")))
+
+        email_service.send_email_change_otp("person@example.com", "Person", "123456")
+
+        assert len(recorded) == 1
+        assert recorded[0].body_html is None
+        assert recorded[0].replayable is False
+
+    def test_a_declared_credential_wins_over_an_innocent_subject(self, monkeypatch, recorded):
+        monkeypatch.setattr("app.worker.enqueue.WORKER_ENABLED", True)
+        monkeypatch.setattr("app.worker.enqueue.enqueue_sync", lambda *a, **k: (_ for _ in ()).throw(OSError("x")))
+
+        email_service.send_email_async("p@example.com", "Hello", "<p>code 999</p>", credential=True)
+
+        assert recorded[0].body_html is None
+        assert recorded[0].replayable is False
+
+
+class TestTheAsyncEnqueuePathIsRecordedToo:
+    """Inside a running loop ``enqueue_sync`` schedules the Redis call and
+    returns before it runs, so its failure was caught in the background task
+    and never reached the caller's try/except. Every send from an async route
+    (offline messages, transcripts, live-chat mail) was in that window."""
+
+    def test_a_redis_failure_after_the_response_went_out_leaves_a_row(self, monkeypatch, recorded):
+        import asyncio
+
+        from app.worker import enqueue as enqueue_module
+
+        monkeypatch.setattr("app.worker.enqueue.WORKER_ENABLED", True)
+
+        async def _no_redis(*_a, **_k):
+            raise ConnectionError("redis is unreachable")
+
+        monkeypatch.setattr(enqueue_module, "enqueue", _no_redis)
+
+        async def _route():
+            email_service.send_email_async("visitor@example.com", "Your transcript", "<p>hi</p>")
+            await asyncio.gather(*list(enqueue_module._pending_enqueue_tasks))
+
+        asyncio.run(_route())
+
+        assert len(recorded) == 1
+        assert recorded[0].reason == "enqueue_failed"
+        assert "redis is unreachable" in recorded[0].error

@@ -1271,8 +1271,13 @@ async def task_send_email(
     reply_to: str | None = None,
     sender_name: str | None = None,
     attachments: list[dict] | None = None,
+    credential: bool = False,
 ) -> bool:
-    """Send a raw HTML email via the configured provider (Brevo or SES). Returns True on success."""
+    """Send a raw HTML email via the configured provider (Brevo or SES). Returns True on success.
+
+    ``credential`` is the sender's declaration that the body carries a live
+    code or link; a dead-letter row for one of those omits the body.
+    """
     import asyncio
 
     from app.services.email_service import _send_raw_email_result, record_failed_email, redact_email
@@ -1317,6 +1322,7 @@ async def task_send_email(
             sender_name=sender_name,
             attachments=attachments,
             attempts=ctx.get("job_try", 1),
+            credential=credential,
         )
         return False
 
@@ -1348,6 +1354,7 @@ async def task_send_email(
             sender_name=sender_name,
             attachments=attachments,
             attempts=job_try,
+            credential=credential,
         )
         return False
     raise Retry(defer=min(10 * 2 ** (job_try - 1), 300))

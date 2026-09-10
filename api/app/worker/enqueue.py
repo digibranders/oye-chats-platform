@@ -14,6 +14,7 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 from arq import ArqRedis, create_pool
@@ -84,11 +85,19 @@ async def enqueue(task_name: str, *args: Any, **kwargs: Any) -> Any:
     return job
 
 
-def enqueue_sync(task_name: str, *args: Any, **kwargs: Any) -> str | None:
+def enqueue_sync(
+    task_name: str, *args: Any, on_failure: Callable[[BaseException], None] | None = None, **kwargs: Any
+) -> str | None:
     """Synchronous wrapper for callers outside an async context.
 
     Creates a temporary event loop if needed. Returns the job_id string
     or None if the task was deduplicated.
+
+    ``on_failure`` is called with the exception when the enqueue fails on the
+    running-loop path, where the failure happens after this function has
+    returned and so cannot reach the caller's ``try``. On the no-loop path the
+    exception propagates as before and ``on_failure`` is not called, so a
+    caller that does both never records one loss twice.
     """
     try:
         loop = asyncio.get_running_loop()
@@ -105,7 +114,7 @@ def enqueue_sync(task_name: str, *args: Any, **kwargs: Any) -> str | None:
         async def _do_enqueue() -> None:
             try:
                 await enqueue(task_name, *args, **kwargs)
-            except Exception:
+            except Exception as exc:
                 # This is the one window where work is lost with no row
                 # anywhere: the HTTP response has already gone out, and the
                 # Redis enqueue never happened. For an email that means a
@@ -117,6 +126,9 @@ def enqueue_sync(task_name: str, *args: Any, **kwargs: Any) -> str | None:
 
                     increment_metric_counter("enqueue_failed", bot_id=None)
                     forward_to_sentry_if_alertable("enqueue_failed", task=task_name)
+                if on_failure is not None:
+                    with contextlib.suppress(Exception):
+                        on_failure(exc)
 
         task = loop.create_task(_do_enqueue())
         _pending_enqueue_tasks.add(task)
