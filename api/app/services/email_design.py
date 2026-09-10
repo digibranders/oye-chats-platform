@@ -46,11 +46,15 @@ ACCENT = "#4f46e5"  # indigo, the ONE accent
 ACCENT_TINT = "#eef2ff"
 
 # Semantic. Used ONLY inside small chips / alert boxes, never as full-email theming.
+# Deliberately neutral: no red/green/yellow/blue fills. Every kind renders as the
+# same ink-on-neutral-fill callout, so an alert stands out by its rule and weight,
+# not by colour. The four keys are kept so call sites need not change.
+_NEUTRAL_BOX = {"bg": FILL, "border": RULE, "text": INK700}
 SEMANTIC: dict[str, dict[str, str]] = {
-    "success": {"bg": "#ecfdf3", "border": "#a6f4c5", "text": "#067647"},
-    "warning": {"bg": "#fffaeb", "border": "#fedf89", "text": "#b54708"},
-    "danger": {"bg": "#fef3f2", "border": "#fecdca", "text": "#b42318"},
-    "info": {"bg": "#eff8ff", "border": "#b2ddff", "text": "#175cd3"},
+    "success": dict(_NEUTRAL_BOX),
+    "warning": dict(_NEUTRAL_BOX),
+    "danger": dict(_NEUTRAL_BOX),
+    "info": dict(_NEUTRAL_BOX),
 }
 
 # Dark overrides (class -> {prop: value}). Applied via @media(prefers-color-scheme)
@@ -67,14 +71,16 @@ _DARK: dict[str, dict[str, str]] = {
     ".oc-fill-text": {"color": "#e4e6ea"},
     ".oc-link": {"color": "#a5b0ff"},
     ".oc-code": {"color": "#f3f4f6"},
-    ".oc-box-success": {"background-color": "#0f2a1d", "border-color": "#1c5237", "color": "#6ee7b7"},
-    ".oc-box-warning": {"background-color": "#2b2109", "border-color": "#5a4413", "color": "#fcd34d"},
-    ".oc-box-danger": {"background-color": "#2b1514", "border-color": "#5c2422", "color": "#fca5a5"},
-    ".oc-box-info": {"background-color": "#10233d", "border-color": "#1e4272", "color": "#93c5fd"},
-    ".oc-chip-success": {"background-color": "#0f2a1d", "border-color": "#1c5237", "color": "#6ee7b7"},
-    ".oc-chip-warning": {"background-color": "#2b2109", "border-color": "#5a4413", "color": "#fcd34d"},
-    ".oc-chip-danger": {"background-color": "#2b1514", "border-color": "#5c2422", "color": "#fca5a5"},
-    ".oc-chip-info": {"background-color": "#10233d", "border-color": "#1e4272", "color": "#93c5fd"},
+    # Neutral in dark too: the boxes/chips flatten to the same neutral fill as
+    # every other surface, so no red/green/yellow/blue survives the inversion.
+    ".oc-box-success": {"background-color": "#232428", "border-color": "#31333a", "color": "#e4e6ea"},
+    ".oc-box-warning": {"background-color": "#232428", "border-color": "#31333a", "color": "#e4e6ea"},
+    ".oc-box-danger": {"background-color": "#232428", "border-color": "#31333a", "color": "#e4e6ea"},
+    ".oc-box-info": {"background-color": "#232428", "border-color": "#31333a", "color": "#e4e6ea"},
+    ".oc-chip-success": {"background-color": "#232428", "border-color": "#31333a", "color": "#e4e6ea"},
+    ".oc-chip-warning": {"background-color": "#232428", "border-color": "#31333a", "color": "#e4e6ea"},
+    ".oc-chip-danger": {"background-color": "#232428", "border-color": "#31333a", "color": "#e4e6ea"},
+    ".oc-chip-info": {"background-color": "#232428", "border-color": "#31333a", "color": "#e4e6ea"},
 }
 
 

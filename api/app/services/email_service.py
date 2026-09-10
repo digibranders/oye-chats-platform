@@ -750,7 +750,6 @@ def send_qualified_lead_email(
         "sql": "Sales Qualified Lead",
         "unqualified": "New Lead",
     }.get(tier_key, "New Lead")
-    chip_kind = "success" if tier_key == "sql" else "warning"
     safe_bot = esc(bot_name)
     contact = contact or {}
 
@@ -758,7 +757,7 @@ def send_qualified_lead_email(
         h1("New qualified lead")
         + p(
             f"A visitor on {strong(safe_bot)} has reached {esc(tier_label)} status. They match your "
-            f"qualification criteria. &nbsp;{ed.chip(tier_label, chip_kind)}"
+            f"qualification criteria."
         )
         + ed.section_label(f"Qualification ({esc(framework_label)})")
         + info_table(
@@ -1038,10 +1037,12 @@ def send_transcript_email(to_email: str, bot_name: str, messages: list[dict], *,
     safe_bot = esc(bot_name)
     role_labels = {"user": "You", "bot": safe_bot, "operator": "Operator", "system": "System"}
     # Distinct light tints per role (flatten to neutral in dark via oc-fill).
+    # Neutral bubbles for every role: no blue/green tints. The role label above
+    # each bubble is what distinguishes speakers, not a background colour.
     tints = {
         "user": (ed.FILL, ed.INK700),
-        "bot": (ed.ACCENT_TINT, "#3730a3"),
-        "operator": ("#ecfdf3", "#065f46"),
+        "bot": (ed.FILL, ed.INK700),
+        "operator": (ed.FILL, ed.INK700),
     }
 
     rows: list[str] = []
@@ -1167,8 +1168,10 @@ def _format_money(currency: str, value: object) -> str:
 def _grouped_quote_html(currency: str, line_items: list[dict], total: object) -> str:
     """Render the priced quote as a document-style grid: an ITEM / QTY /
     UNIT PRICE / AMOUNT table whose rows are grouped under each numbered service
-    name, each group closed by its own Subtotal row, and the table closed by a
-    Total row under a dark rule. Everything is ink, no accent colour, so the
+    name, each group closed by its own Subtotal row when there is more than one
+    group (a single group has no Subtotal, since it would just repeat the
+    Total), and the table closed by a Total row under a dark rule. Everything is
+    ink, no accent colour, so the
     indicative-quote warning below it is the only coloured line. Line items are the requirement rows from
     ``quotation_routes.build_quotation_summary``. Table markup + inline styles so
     it survives across email clients (no CSS grid, no external assets)."""
@@ -1195,6 +1198,11 @@ def _grouped_quote_html(currency: str, line_items: list[dict], total: object) ->
         "</tr>"
     )
 
+    # A per-group Subtotal only earns its place when there is more than one
+    # group: with a single service it just repeats the Total on the row below,
+    # so it is suppressed and the Total alone closes the table.
+    show_subtotals = len(order) > 1
+
     rows_html = ""
     for index, service_name in enumerate(order, start=1):
         rows_html += (
@@ -1219,16 +1227,17 @@ def _grouped_quote_html(currency: str, line_items: list[dict], total: object) ->
                 f'padding-right:16px;white-space:nowrap;">{amount}</td>'
                 "</tr>"
             )
-        group_total = sum(_as_amount(item.get("subtotal", 0)) for item in groups[service_name])
-        sub = f"padding:10px 0;font-family:{f};color:{ed.INK900};white-space:nowrap;"
-        rows_html += (
-            "<tr>"
-            f'<td colspan="2" style="{sub}font-size:0;line-height:0;">&nbsp;</td>'
-            f'<td style="{sub}font-size:13px;font-weight:600;text-align:left;padding-left:8px;">Subtotal</td>'
-            f'<td style="{sub}font-size:14px;font-weight:700;text-align:right;padding-right:16px;">'
-            f"{esc(_format_money(currency, group_total))}</td>"
-            "</tr>"
-        )
+        if show_subtotals:
+            group_total = sum(_as_amount(item.get("subtotal", 0)) for item in groups[service_name])
+            sub = f"padding:10px 0;font-family:{f};color:{ed.INK900};white-space:nowrap;"
+            rows_html += (
+                "<tr>"
+                f'<td colspan="2" style="{sub}font-size:0;line-height:0;">&nbsp;</td>'
+                f'<td style="{sub}font-size:13px;font-weight:600;text-align:left;padding-left:8px;">Subtotal</td>'
+                f'<td style="{sub}font-size:14px;font-weight:700;text-align:right;padding-right:16px;">'
+                f"{esc(_format_money(currency, group_total))}</td>"
+                "</tr>"
+            )
 
     # The Total is a row INSIDE the same fixed-layout table so its amount lands
     # in the exact same 23% column as the line-item amounts (a separate table
@@ -1273,7 +1282,7 @@ def send_quotation_visitor_email(
         + p(f"We&rsquo;ve received your request for a quote for {strong(services_line)}.")
         + p(
             "Our team is preparing your quotation and will email it to you soon.<br>"
-            '<strong style="color:#c2410c;font-weight:700;">'
+            '<strong style="color:#1a1a1d;font-weight:700;">'
             "If you don&rsquo;t see it, please check your spam or junk folder.</strong>"
         )
         + p("You can reply directly to this email if you&rsquo;d like to add any details.")
@@ -1321,7 +1330,7 @@ def send_quotation_document_email(
         + _grouped_quote_html(currency, line_items, total)
         + (
             f'<p style="margin:10px 0 0 0;font-family:{ed.FONT};font-size:13px;font-weight:700;'
-            f'color:#c2410c;line-height:1.6;">This is an indicative quotation, not a final quote. '
+            f'color:#1a1a1d;line-height:1.6;">This is an indicative quotation, not a final quote. '
             f"Prices may change once our team confirms the exact scope and details with you.</p>"
         )
         + p("Reply to this email if you have any questions or would like to proceed.", top=14)
@@ -2027,7 +2036,7 @@ def send_payment_failed_email(to_email: str, *, name: str | None, plan_name: str
     inner = (
         h1("We couldn&rsquo;t process your payment")
         + p(
-            f"Hi {_first_name(name)} &mdash; the {strong(safe_amount)} charge for your "
+            f"Hi {_first_name(name)}, the {strong(safe_amount)} charge for your "
             f"{strong(safe_plan)} plan didn&rsquo;t go through. This is usually a temporary "
             f"bank decline."
         )
@@ -2056,7 +2065,7 @@ def send_payment_action_required_email(
     inner = (
         h1("Action needed: update your payment method")
         + p(
-            f"Hi {_first_name(name)} &mdash; we&rsquo;ve tried the {strong(safe_amount)} charge for your "
+            f"Hi {_first_name(name)}, we&rsquo;ve tried the {strong(safe_amount)} charge for your "
             f"{strong(safe_plan)} plan several times and it hasn&rsquo;t gone through."
         )
         + ed.alert(
@@ -2088,7 +2097,7 @@ def send_payment_final_warning_email(
     inner = (
         h1(f"Your AI agents stop {phrase}")
         + p(
-            f"Hi {_first_name(name)} &mdash; your {strong(safe_plan)} payment is still outstanding. "
+            f"Hi {_first_name(name)}, your {strong(safe_plan)} payment is still outstanding. "
             f"{strong(phrase.capitalize())} your agents will stop responding to visitors "
             f"and your chat widget will go into offline mode."
         )
@@ -2124,7 +2133,7 @@ def send_subscription_suspended_email(
     inner = (
         h1("Your subscription has been suspended")
         + p(
-            f"Hi {_first_name(name)} &mdash; we weren&rsquo;t able to collect payment for your "
+            f"Hi {_first_name(name)}, we weren&rsquo;t able to collect payment for your "
             f"{strong(safe_plan)} plan, so your agents have stopped responding to visitors."
         )
         + ed.alert("Your data, knowledge base and conversation history are all safe and untouched.", "info")
