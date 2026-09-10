@@ -37,20 +37,25 @@ from tests.test_rag_pipeline_defects import (
 
 
 class TestADealForTheCompanyIsARequestForAPerson:
-    """A match on the keyword path opens the handoff with no model call and skips
-    lead scoring, so it keeps only verbs that can only mean a corporate
-    transaction. Buying or investing is a deal only for the company by name or
-    with a company noun and nothing after it; anything more ambiguous is left
-    to the handoff classifier."""
+    """A match on either detector opens the handoff without the model, so both
+    fire only when the visitor plainly means THIS company: in the second person
+    ("your company", "buy you out") or by its full name. On a legal, broker or
+    M&A bot "acquire the business" is a service question, and on a brokerage
+    "buy HDFC shares" is a trade. Anything less certain is left to the handoff
+    classifier."""
 
     @pytest.mark.parametrize(
         "message",
         [
             "We would like to acquire your company",
-            "I'm interested in acquiring the business",
             "open to a merger with your company",
             "we want to take over your firm outright",
             "acquisition of your company?",
+            "acquire your startup.",
+            "we want to acquire your company for 10 crore",
+            "can we buy you out?",
+            "we want to buy out your company",
+            "is your company for sale?",
         ],
     )
     def test_the_keyword_detector_hears_a_takeover(self, message):
@@ -89,6 +94,39 @@ class TestADealForTheCompanyIsARequestForAPerson:
         ],
     )
     def test_the_keyword_detector_leaves_purchases_alone(self, message):
+        assert detect_handoff_intent_keywords(message) is False
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            # Company registration, CA and legal bots.
+            "what is the process to merge with the holding company?",
+            "how do I merge with the parent company?",
+            "can an LLP merge with the company?",
+            "do you handle takeover of the company?",
+            "what are the stamp duty charges on acquisition of the business?",
+            "do you help with the merger with the parent company?",
+            # Business brokers, M&A advisers and lenders.
+            "can you help us acquire the business?",
+            "do you do due diligence for the acquisition of the business?",
+            "can I get financing to acquire the business?",
+            "what is the asking price to acquire this business?",
+            "how do I take over the franchise business?",
+            "I'm interested in acquiring the business",
+            # Succession planning, insurance and wealth.
+            "my daughter will take over the business.",
+            "who will take over the company?",
+            "how do I plan for someone to take over the business?",
+            # HR, payroll and SaaS.
+            "we are about to merge with the company, can you do payroll for both?",
+            "we just completed the acquisition of the firm, can you onboard their staff?",
+            "can a sub-account merge with the business?",
+            "how do I merge with the parent organisation?",
+        ],
+    )
+    def test_the_keyword_detector_leaves_other_companies_alone(self, message):
+        """ "The", "this" and "that" name the visitor's or a client's company as
+        often as this one; only "your" is certain."""
         assert detect_handoff_intent_keywords(message) is False
 
     @pytest.mark.parametrize(
@@ -149,33 +187,75 @@ class TestADealForTheCompanyIsARequestForAPerson:
     @pytest.mark.parametrize(
         ("message", "company_name"),
         [
-            ("i want to buy the eventus security company", "Eventus Security"),
+            # A word of the company's name is also the thing it helps with.
+            ("how can I acquire leads?", "Leads Hub"),
+            ("can NRIs acquire property?", "Property Hub"),
+            ("can I acquire land?", "Land Bank Realty"),
+            ("how do we acquire talent?", "Talent Bridge"),
+            ("can it merge with salesforce?", "Salesforce Consultants"),
+            ("take over payroll?", "Payroll Experts"),
+            # A company that is not this one.
+            ("how do I invest in the startup?", "Acme"),
+            ("should I invest in this business?", "Acme"),
+            ("is it safe to invest in the company?", "Acme"),
+            ("why invest in this company?", "Acme"),
+            ("i want to invest in that real estate company.", "Acme"),
             ("we want to buy the company outright", "Acme"),
+            # Shares, stakes and equity are retail trades on brokerages and banks.
+            ("how do I buy HDFC shares?", "HDFC Securities"),
+            ("can I buy hdfc bank shares through netbanking", "HDFC Bank"),
+            ("how to buy shares of tata motors", "Tata Capital"),
+            ("buy the shares of reliance", "Reliance Jio"),
+            ("can i buy equity in gold", "Gold Traders"),
+            ("how to buy stake in mutual funds", "Mutual Funds Direct"),
+            ("i want to buy acme shares", "Acme"),
+            ("buy the shares of eventus security", "Eventus Security"),
+            ("i want to buy acme's shares", "Acme"),
+            # Part of a two-word name is a product or a platform, not the company.
+            ("acquire eventus", "Eventus Security"),
+            ("i want to acquire eventus", "Eventus Security"),
+            ("i want to acquire the eventus platform", "Eventus Security"),
+        ],
+    )
+    def test_a_name_word_or_another_company_is_not_a_deal(self, message, company_name):
+        assert detect_company_deal_intent(message, company_name) is False
+
+    @pytest.mark.parametrize(
+        ("message", "company_name"),
+        [
+            ("i want to buy the eventus security company", "Eventus Security"),
+            ("we want to buy your company outright", "Acme"),
             ("we want to invest in your company", "Acme"),
             ("can we invest in your business", "Acme"),
             ("We would like to acquire your company", "Acme"),
             ("I want to acquire Eventus Security", "Eventus Security"),
-            ("i want to acquire eventus", "Eventus Security"),
+            ("interested in acquiring eventus security", "Eventus Security"),
+            ("acquisition of eventus security?", "Eventus Security"),
             ("i want to acquire acme", "Acme"),
             ("we want to take over acme", "Acme"),
             ("i want to buy the acme business", "Acme"),
-            ("i want to buy acme shares", "Acme"),
-            ("buy a stake in eventus security", "Eventus Security"),
-            ("buy the shares of eventus security", "Eventus Security"),
-            ("i want to buy acme's shares", "Acme"),
             ("acquire the hub", "The Hub"),
             ("i want to acquire the hub", "The Hub"),
             ("i want to buy the hub business", "The Hub"),
             ("we want to acquire bank of baroda", "Bank of Baroda"),
+            ("we want to acquire your company for 10 crore", "Acme"),
+            ("can we buy you out?", "Acme"),
+            ("buy a stake in eventus security", "Eventus Security"),
+            ("take a stake in your company", "Acme"),
+            ("is eventus security for sale?", "Eventus Security"),
+            ("is acme for sale?", "Acme"),
+            ("is your company up for sale?", "Acme"),
         ],
     )
     def test_a_deal_for_the_company_itself(self, message, company_name):
         assert detect_company_deal_intent(message, company_name) is True
 
-    def test_no_company_name_falls_back_to_the_generic_phrasings(self):
+    def test_no_company_name_falls_back_to_the_second_person_phrasings(self):
         assert detect_company_deal_intent("buy eventus", None) is False
+        assert detect_company_deal_intent("we want to buy the company outright", None) is False
         assert detect_company_deal_intent("we want to acquire your company", None) is True
-        assert detect_company_deal_intent("we want to buy the company outright", None) is True
+        assert detect_company_deal_intent("we want to buy your company outright", None) is True
+        assert detect_company_deal_intent("take a stake in your company", None) is True
 
     def test_the_stopword_copy_matches_the_pipeline_list(self):
         """``intent_service`` keeps its own copy to avoid an import cycle."""
