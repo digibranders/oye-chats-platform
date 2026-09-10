@@ -37,18 +37,23 @@ from tests.test_rag_pipeline_defects import (
 
 
 class TestADealForTheCompanyIsARequestForAPerson:
+    """A match on the keyword path opens the handoff with no model call and skips
+    lead scoring, so it keeps only verbs that can only mean a corporate
+    transaction. Buying or investing is a deal only for the company by name or
+    with a company noun and nothing after it; anything more ambiguous is left
+    to the handoff classifier."""
+
     @pytest.mark.parametrize(
         "message",
         [
-            "i want to buy the eventus security company",
             "We would like to acquire your company",
-            "can we invest in your business",
             "I'm interested in acquiring the business",
             "open to a merger with your company",
-            "we want to buy the company outright",
+            "we want to take over your firm outright",
+            "acquisition of your company?",
         ],
     )
-    def test_the_keyword_detector_hears_it(self, message):
+    def test_the_keyword_detector_hears_a_takeover(self, message):
         assert detect_handoff_intent_keywords(message) is True
 
     @pytest.mark.parametrize(
@@ -67,62 +72,110 @@ class TestADealForTheCompanyIsARequestForAPerson:
             "i want to buy your enterprise business plan for 20 seats",
             "buy that startup package",
             "how do i take over the organization account from my colleague",
+            "buy the business pro plan",
+            "purchase the business premium plan",
+            "i'd like to buy the business annual plan",
+            "buy the business-plan",
+            "buy the business for 2 users",
+            "buy the business now",
+            "buy the business?",
+            "buy that business tool",
+            "i want to purchase the company logo design",
+            "can i buy the company domain",
+            "buy the business insurance",
+            # Buying and investing are never decided without the model.
+            "we want to buy the company outright",
+            "we want to invest in your company",
         ],
     )
-    def test_buying_a_service_is_not(self, message):
+    def test_the_keyword_detector_leaves_purchases_alone(self, message):
         assert detect_handoff_intent_keywords(message) is False
 
     @pytest.mark.parametrize(
         "message",
-        ["I want to acquire Eventus Security", "i want to acquire eventus", "i want to buy eventus security"],
+        [
+            "we want to acquire your company and what is your pricing",
+            "we want to acquire your company\nand what is your pricing",
+            "acquire your company culture tips",
+        ],
     )
-    def test_buying_the_company_by_name(self, message):
-        assert detect_company_deal_intent(message, "Eventus Security") is True
-
-    @pytest.mark.parametrize("message", ["still i want to buy eventus", "buy eventus?"])
-    def test_buying_by_the_first_word_alone_is_left_to_the_classifier(self, message):
-        """ "buy <first word of the name>" reads the same as buying a product
-        called that, so the name path does not decide it. The context-aware
-        handoff classifier (Task 2) sees the conversation and makes that call."""
-        assert detect_company_deal_intent(message, "Eventus Security") is False
-
-    def test_selling_is_not_a_deal(self):
-        assert detect_company_deal_intent("sell me eventus security company", "Eventus Security") is False
+    def test_the_company_noun_must_end_the_message(self, message):
+        """The tail is checked against the end of the whole message, not the end
+        of a line or of the match."""
+        assert detect_handoff_intent_keywords(message) is False
+        assert detect_company_deal_intent(message, "Acme") is False
 
     @pytest.mark.parametrize(
         ("message", "company_name"),
         [
+            ("our company needs to buy insurance", "Insurance Hub"),
+            ("my business wants to buy coffee", "Coffee Co"),
+            ("our company needs to buy freshdesk", "Freshdesk"),
+            ("my company wants to purchase eventus", "Eventus Security"),
+            ("we are a small business and want to buy acme", "Acme"),
+            ("i want to invest in mutual funds", "Mutual Funds Direct"),
+            ("how do i invest in gold", "Gold Traders"),
+            ("i need to invest in real estate", "Real Estate Partners"),
+            ("invest in cloud", "Cloud Storage Inc"),
+            ("i want to buy web design", "Web Design Studio"),
+            ("buy green tea", "Green Tea Co"),
+            ("i want to buy cloud storage", "Cloud Storage Inc"),
             ("i want to buy coffee", "Coffee Co"),
             ("can i buy pizza?", "Pizza Hut"),
             ("where can i buy shoes", "Shoes Express"),
             ("how do I buy insurance", "Insurance Hub"),
             ("buy apple", "Apple Inc"),
+            ("still i want to buy eventus", "Eventus Security"),
+            ("buy eventus?", "Eventus Security"),
+            ("i want to buy eventus security", "Eventus Security"),
+            ("i want to buy eventus soc", "Eventus Security"),
+            ("buy the eventus SOAR platform", "Eventus Security"),
+            ("sell me eventus security company", "Eventus Security"),
+            ("what is eventus", "Eventus Security"),
+            ("buy the business?", "Acme"),
+            ("i want to buy the business plan", "Acme"),
+            ("i want to buy the", "The Hub"),
+            ("i want to buy the hub", "The Hub"),
+            ("buy", "Eventus Security"),
+            ("", "Eventus Security"),
         ],
     )
-    def test_a_name_that_is_also_a_product_word_is_not_a_deal(self, message, company_name):
+    def test_buying_what_the_company_sells_is_not_a_deal(self, message, company_name):
+        """A product that shares the company's name, or a purchase the visitor's
+        own company makes, reads the same as buying the company. The handoff
+        classifier sees the conversation and makes that call (Task 2)."""
         assert detect_company_deal_intent(message, company_name) is False
 
-    @pytest.mark.parametrize("message", ["I want to acquire acme", "i want to buy the acme business"])
-    def test_a_one_word_name_needs_a_takeover_verb_or_an_ownership_word(self, message):
-        assert detect_company_deal_intent(message, "Acme") is True
-
     @pytest.mark.parametrize(
-        "message",
-        ["i want to buy eventus soc", "buy the eventus SOAR platform", "what is eventus", "buy", ""],
+        ("message", "company_name"),
+        [
+            ("i want to buy the eventus security company", "Eventus Security"),
+            ("we want to buy the company outright", "Acme"),
+            ("we want to invest in your company", "Acme"),
+            ("can we invest in your business", "Acme"),
+            ("We would like to acquire your company", "Acme"),
+            ("I want to acquire Eventus Security", "Eventus Security"),
+            ("i want to acquire eventus", "Eventus Security"),
+            ("i want to acquire acme", "Acme"),
+            ("we want to take over acme", "Acme"),
+            ("i want to buy the acme business", "Acme"),
+            ("i want to buy acme shares", "Acme"),
+            ("buy a stake in eventus security", "Eventus Security"),
+            ("buy the shares of eventus security", "Eventus Security"),
+            ("i want to buy acme's shares", "Acme"),
+            ("acquire the hub", "The Hub"),
+            ("i want to acquire the hub", "The Hub"),
+            ("i want to buy the hub business", "The Hub"),
+            ("we want to acquire bank of baroda", "Bank of Baroda"),
+        ],
     )
-    def test_buying_something_the_company_sells_is_not_a_deal(self, message):
-        assert detect_company_deal_intent(message, "Eventus Security") is False
-
-    def test_a_short_or_generic_first_word_is_not_used_alone(self):
-        assert detect_company_deal_intent("i want to buy the", "The Hub") is False
-        assert detect_company_deal_intent("i want to acquire the hub", "The Hub") is True
-        # One identifying word, so buying it needs an ownership word as well.
-        assert detect_company_deal_intent("i want to buy the hub", "The Hub") is False
-        assert detect_company_deal_intent("i want to buy the hub business", "The Hub") is True
+    def test_a_deal_for_the_company_itself(self, message, company_name):
+        assert detect_company_deal_intent(message, company_name) is True
 
     def test_no_company_name_falls_back_to_the_generic_phrasings(self):
         assert detect_company_deal_intent("buy eventus", None) is False
         assert detect_company_deal_intent("we want to acquire your company", None) is True
+        assert detect_company_deal_intent("we want to buy the company outright", None) is True
 
     def test_the_stopword_copy_matches_the_pipeline_list(self):
         """``intent_service`` keeps its own copy to avoid an import cycle."""
@@ -243,6 +296,8 @@ class TestTwoUnhelpedTurnsOfferThePerson:
         replies = [_answer_text(await _drive_stream(bot, message, "unhelped-4")) for message in misses]
 
         assert sum(reply.count(_OFFER_TEXT) for reply in replies) == 1, replies
+        # The offer fires on the second miss; the stored count never needs more.
+        assert _stored_cards(db, "unhelped-4")["unhelped_streak"] == 2
 
     @pytest.mark.asyncio
     async def test_asking_for_a_person_in_between_resets_the_count(self, db, monkeypatch):
@@ -269,6 +324,26 @@ class TestTwoUnhelpedTurnsOfferThePerson:
         frames = await _drive_stream(bot, "what is the capital of france", "unhelped-4c")
 
         assert _OFFER_TEXT not in _answer_text(frames)
+        assert cap["prompts"] == []
+
+    @pytest.mark.asyncio
+    async def test_an_answer_from_the_qa_cache_resets_the_count(self, db, monkeypatch):
+        bot, cap = _paid_bot(db, monkeypatch, "unhelped-4d")
+        cached_question = "when do you open"
+        key = rs.qa_response_key(
+            bot.id, rs.hashlib.sha256(rs._normalize_question_for_cache(cached_question).encode()).hexdigest()[:32], None
+        )
+        cap["cache"].store[key] = {"answer": "We open at 9.", "sources": ["kb.txt"]}
+
+        await _drive_stream(bot, "what is 2 plus 2", "unhelped-4d")
+        assert _stored_cards(db, "unhelped-4d").get("unhelped_streak") == 1, "precondition: the refusal counted"
+        hit = await _drive_stream(bot, cached_question, "unhelped-4d")
+        assert "We open at 9." in _answer_text(hit), "precondition: the second turn was served from the cache"
+        assert "unhelped_streak" not in _stored_cards(db, "unhelped-4d")
+        frames = await _drive_stream(bot, "what is the capital of france", "unhelped-4d")
+
+        assert _OFFER_TEXT not in _answer_text(frames)
+        assert not (_final_meta(frames) or {}).get("suggest_handoff")
         assert cap["prompts"] == []
 
     @pytest.mark.asyncio

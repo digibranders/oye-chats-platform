@@ -15,31 +15,32 @@ logger = logging.getLogger(__name__)
 _HANDOFF_LLM_TIMEOUT_S = 3.0
 _HANDOFF_LLM_NUM_RETRIES = 0
 
-#: A request to buy, acquire, invest in or merge with THE COMPANY itself, as
-#: opposed to buying something it sells. On a live bot on 2026-09-10 a visitor
-#: asked four times to buy the company and was refused or deflected every time,
-#: because nothing in the knowledge base covers acquisitions and nothing treated
-#: the request as one for a person. A determiner is required ("buy THE company",
-#: "acquire YOUR business") so "buy a SIEM for our company" stays a purchase, and
-#: "customer acquisition" never matches because the verb forms need an object.
-#: The noun must not be the first half of a compound ("the business PLAN", "that
-#: startup PACKAGE", "the organization ACCOUNT"): those are things the company
-#: sells or runs, and a match here decides the handoff with no model call.
-_COMPANY_DEAL_NOUN = (
-    r"(?:company|business|firm|startup|organi[sz]ation)"
-    r"(?!\s+(?:plans?|tiers?|packages?|editions?|licen[cs]es?|accounts?|subscriptions?|versions?|pricing"
-    r"|seats?|bundles?|options?|cards?|email|address|phone|number|name|website|pages?|hours|polic(?:y|ies)"
-    r"|profile|overview|models?|types?|size|owner|details|info|information|portal|dashboard|apps?|software"
-    r"|products?|services?|solutions?|team|support|level)\b)"
+#: The tail every company-deal phrasing must end with: the end of the message,
+#: punctuation, or a word that only reinforces "the company itself". The regexes
+#: are searched, not anchored, so ``$`` (without MULTILINE) is what ties the tail
+#: to the end of the WHOLE message: "buy the business plan", "acquire your
+#: company culture tips" and a second line after the noun all fail it.
+_DEAL_TAIL = (
+    r"(?=\s*(?:[?.!,]|$)"
+    r"|\s+(?:outright|itself|entirely|as\s+a\s+whole|from\s+you)\s*(?:[?.!,]|$))"
 )
-_COMPANY_DEAL_OBJECT = r"(?:the|your|this|that)\s+(?:\w+\s+){0,2}?" + _COMPANY_DEAL_NOUN
-_COMPANY_DEAL_ALTERNATIVES = (
-    r"(?:buy|purchase|acquire|acquiring|take\s+over|invest\s+in|merge\s+with)\s+"
-    + _COMPANY_DEAL_OBJECT
-    + r"|(?:acquisition\s+of|merger\s+with|investment\s+in)\s+"
-    + _COMPANY_DEAL_OBJECT
+#: A determiner and up to two words before the company noun ("your
+#: cybersecurity company"). The determiner keeps "customer acquisition" and
+#: "buy a SIEM for our company" out.
+_DEAL_OBJECT = r"(?:the|your|this|that)\s+(?:[\w-]+\s+){0,2}?"
+#: Acquiring, taking over or merging with THE COMPANY itself. On a live bot on
+#: 2026-09-10 a visitor asked four times to buy the company and was refused or
+#: deflected every time. These verbs only ever name a corporate transaction, so
+#: a match is safe to decide on the keyword path, which opens the handoff with
+#: no model call and skips lead scoring. Buying and investing are not here: "buy
+#: the business annual plan" is an ordinary purchase, and every word list that
+#: tried to tell the two apart was one review short of complete.
+_COMPANY_TAKEOVER = (
+    r"(?:acquire|acquiring|acquisition\s+of|take\s+over|takeover\s+of|merge\s+with|merger\s+with)\s+"
+    + _DEAL_OBJECT
+    + r"(?:company|business|firm|startup|organi[sz]ation)"
+    + _DEAL_TAIL
 )
-_COMPANY_DEAL_RE = re.compile(r"(?i)\b(?:" + _COMPANY_DEAL_ALTERNATIVES + r")\b")
 
 # Compiled regex for fast keyword-based handoff detection.
 #
@@ -85,8 +86,8 @@ _HANDOFF_KEYWORDS_RE = re.compile(
     r"|transfer\s+(?:me\s+|us\s+)?to"
     # how can / do I|we connect|talk|speak|chat|contact|reach
     r"|how\s+(?:can|do)\s+(?:i|we)\s+(?:connect|talk|speak|chat|contact|reach)"
-    # buy / acquire / invest in / merge with the company itself
-    r"|" + _COMPANY_DEAL_ALTERNATIVES + r")\b"
+    # acquire / take over / merge with the company itself
+    r"|" + _COMPANY_TAKEOVER + r")\b"
 )
 
 
@@ -180,66 +181,93 @@ _DEAL_NAME_STOPWORDS = frozenset(
         "with", "co", "inc", "ltd", "llc", "llp", "plc", "pvt", "corp", "company", "limited", "private", "group",
     }
 )  # fmt: skip
-_DEAL_NAME_SUFFIXES = r"company|business|group|inc|ltd|limited|pvt|llc|llp|plc|corp"
-#: A word that says the visitor means ownership of the company, not something it
-#: sells. Needed before "buy <name>" counts when the name has one identifying word.
-_DEAL_OWNERSHIP_CUE_RE = re.compile(
-    r"(?i)\b(?:company|business|firm|stake|shares|equity|acquisition|ownership|valuation)\b"
+#: Up to two legal words after a company's name ("Acme Pvt Ltd").
+_DEAL_LEGAL_SUFFIX = r"(?:\s+(?:company|group|inc|ltd|limited|pvt|private|llc|llp|plc|corp|co)){0,2}"
+_COMPANY_TAKEOVER_RE = re.compile(r"(?i)\b" + _COMPANY_TAKEOVER)
+#: "business" is left out: it is a common plan tier ("buy the business?").
+_COMPANY_PURCHASE_RE = re.compile(
+    r"(?i)\b(?:buy|purchase)\s+" + _DEAL_OBJECT + r"(?:company|firm|organi[sz]ation)" + _DEAL_TAIL
+)
+_COMPANY_INVESTMENT_RE = re.compile(
+    r"(?i)\binvest\s+in\s+" + _DEAL_OBJECT + r"(?:company|business|firm|startup|organi[sz]ation)" + _DEAL_TAIL
 )
 
 
+def _company_name_patterns(company_name: str) -> tuple[str, str] | None:
+    """Regex fragments for a company's name: ``(full, full_or_first)``.
+
+    ``full`` is every identifying token in order; a word of the name that does
+    not identify it ("of" in "Bank of Baroda") may appear between them.
+    ``full_or_first`` also accepts the first identifying token alone. A token
+    identifies the company when it is at least three characters long and not in
+    ``_DEAL_NAME_STOPWORDS``. None when the name has no identifying token.
+    """
+    tokens = re.findall(r"[^\W_]+", company_name.lower())
+    positions = [i for i, token in enumerate(tokens) if len(token) >= 3 and token not in _DEAL_NAME_STOPWORDS]
+    if not positions:
+        return None
+    full = re.escape(tokens[positions[0]])
+    for previous, current in zip(positions, positions[1:], strict=False):
+        skipped = "".join(rf"(?:[\s-]+{re.escape(token)})?" for token in tokens[previous + 1 : current])
+        full += rf"{skipped}[\s-]+{re.escape(tokens[current])}"
+    first = re.escape(tokens[positions[0]])
+    full_or_first = full if len(positions) == 1 else f"(?:{full}|{first})"
+    return full, full_or_first
+
+
 def detect_company_deal_intent(question: str, company_name: str | None = None) -> bool:
-    """True when the visitor wants to buy, acquire, invest in or merge with the
-    company itself.
+    """True when the visitor wants to acquire, buy, invest in or merge with the
+    company itself, as opposed to buying something it sells.
 
-    The generic phrasings ("acquire your company") come from the same
-    alternatives the handoff keyword regex uses. The company's own name adds
-    the short form a visitor actually types, but only when the name ENDS the
-    message (a legal suffix may follow), so "i want to buy eventus soc" stays a
-    question about something it sells. "The Hub" never matches on "the", and
-    "Eventus Security" never matches on "security" alone.
+    A narrow, high-precision signal: anything ambiguous ("still i want to buy
+    eventus", "buy your business?") is left to the handoff classifier. Every
+    rule is case-insensitive, and unless stated its object must be followed by
+    the strict tail ``_DEAL_TAIL``: the end of the message, punctuation, or one
+    of "outright", "itself", "entirely", "as a whole", "from you".
 
-    How much of the name is needed depends on the verb. Acquire, take over,
-    invest in and merge with only ever name a company, so the first identifying
-    word is enough ("acquire eventus"). Buy and purchase name products just as
-    often: a bot for Coffee Co hears "i want to buy coffee" all day. With those
-    verbs the message must carry two identifying words of the name in order
-    ("buy eventus security") or an ownership word anywhere ("buy the acme
-    business"). A bare "buy eventus" is left to the handoff classifier, which
-    sees the conversation.
+    Without the company's name:
+      (a) acquire, acquiring, acquisition of, take over, takeover of, merge with
+          or merger with + the/your/this/that + up to two words + company,
+          business, firm, startup or organisation (the keyword-path phrasing);
+      (b) buy or purchase + a determiner + up to two words + company, firm or
+          organisation ("business" is a common plan tier, so it does not count);
+      (c) invest in + a determiner + up to two words + company, business, firm,
+          startup or organisation.
+
+    With the company's name (identifying tokens only, see
+    :func:`_company_name_patterns`):
+      (d) acquire, take over or merge with + optional "the" + the full name or
+          its first identifying token + an optional legal suffix;
+      (e) buy, purchase or invest in + optional "the" + the full name + company,
+          firm or business;
+      (f) buying, purchasing or acquiring a stake, shares or equity in or of the
+          company ("buy a stake in eventus security", "buy the shares of
+          eventus security"), or buying or purchasing the company's shares,
+          stake or equity ("buy acme's shares"), by the full name or its first
+          identifying token. No tail is required.
     """
     if not isinstance(question, str) or not question.strip():
         return False
-    if _COMPANY_DEAL_RE.search(question):
+    if (
+        _COMPANY_TAKEOVER_RE.search(question)
+        or _COMPANY_PURCHASE_RE.search(question)
+        or _COMPANY_INVESTMENT_RE.search(question)
+    ):
         return True
     if not isinstance(company_name, str):
         return False
-    tokens = re.findall(r"[^\W_]+", company_name.lower())
-    signal_positions = [i for i, t in enumerate(tokens) if len(t) >= 3 and t not in _DEAL_NAME_STOPWORDS]
-    if not signal_positions:
+    names = _company_name_patterns(company_name)
+    if names is None:
         return False
-    signals = [tokens[i] for i in signal_positions]
-    full = r"\s+".join(map(re.escape, tokens))
-    first_signal = re.escape(signals[0])
-    rest = "|".join(map(re.escape, signals[1:]))
-    trailer = _DEAL_NAME_SUFFIXES + (f"|{rest}" if rest else "")
-    ending = rf"(?:\s+(?:{trailer}))*\s*[?.!]*\s*$"
-    text = question.strip()
-
-    takeover = rf"(?i)\b(?:acquire|take\s+over|invest\s+in|merge\s+with)\s+(?:the\s+)?(?:{full}|{first_signal}){ending}"
-    if re.search(takeover, text):
-        return True
-
-    purchase_verb = r"(?i)\b(?:buy|purchase)\s+(?:the\s+)?"
-    if len(signal_positions) >= 2:
-        # The name from its first identifying word through its second, as
-        # written ("bank of baroda" for "Bank of Baroda").
-        span = r"\s+".join(map(re.escape, tokens[signal_positions[0] : signal_positions[1] + 1]))
-        if re.search(rf"{purchase_verb}{span}{ending}", text):
-            return True
-    if _DEAL_OWNERSHIP_CUE_RE.search(text):
-        return re.search(rf"{purchase_verb}(?:{full}|{first_signal}){ending}", text) is not None
-    return False
+    full, full_or_first = names
+    rules = (
+        rf"\b(?:acquire|take\s+over|merge\s+with)\s+(?:the\s+)?{full_or_first}{_DEAL_LEGAL_SUFFIX}{_DEAL_TAIL}",
+        rf"\b(?:buy|purchase|invest\s+in)\s+(?:the\s+)?{full}\s+(?:company|firm|business){_DEAL_TAIL}",
+        rf"\b(?:buy|purchase|acquire)\s+(?:(?:an?|the)\s+)?(?:stake|shares|equity)\s+(?:in|of)\s+"
+        rf"(?:the\s+)?{full_or_first}\b",
+        rf"\b(?:buy|purchase)\s+(?:the\s+)?{full_or_first}(?:['\u2019]s)?\s+(?:shares|stake|equity)\b",
+    )
+    return any(re.search(rule, question, re.IGNORECASE) for rule in rules)
 
 
 def detect_handoff_intent(question: str) -> bool:

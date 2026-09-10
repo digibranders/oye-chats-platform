@@ -1281,10 +1281,17 @@ def _unhelped_streak(chat_session) -> int:
     return value if isinstance(value, int) and value > 0 else 0
 
 
+#: The offer of the team fires on the second unhelped turn, so nothing reads a
+#: larger count. Capping it keeps a long run of misses from growing the value.
+_UNHELPED_STREAK_CAP = 2
+
+
 def _set_unhelped_streak(chat_session, value: int) -> None:
-    """Store the streak, rebuilding the JSONB dict so SQLAlchemy sees the change."""
+    """Store the streak, capped at ``_UNHELPED_STREAK_CAP``, rebuilding the JSONB
+    dict so SQLAlchemy sees the change."""
     if chat_session is None:
         return
+    value = min(value, _UNHELPED_STREAK_CAP)
     shown = dict(getattr(chat_session, "inline_cards_shown", None) or {})
     if value > 0:
         shown[_UNHELPED_STREAK_KEY] = value
@@ -7751,20 +7758,23 @@ async def rag_pipeline_stream(
                         # The attach is a pure function of the question and the
                         # catalog, so recomputing it here gives the card the
                         # generated turn would have had.
-                        if bid is not None and not _is_known_refusal(
-                            cached_qa["answer"], _company_name or "our company"
-                        ):
+                        _cached_is_refusal = _is_known_refusal(cached_qa["answer"], _company_name or "our company")
+                        # One tenant-scoped session lookup serves both the media
+                        # card dedupe and the unhelped-count reset below.
+                        _cached_session = None
+                        if not _cached_is_refusal:
+                            _cached_filters = [ChatSession.id == session_id]
+                            if bid:
+                                _cached_filters.append(ChatSession.bot_id == bid)
+                            elif cid:
+                                _cached_filters.append(ChatSession.client_id == cid)
+                            _cached_session = session.query(ChatSession).filter(*_cached_filters).first()
+                        if bid is not None and not _cached_is_refusal:
                             _cached_card = _topical_media_card(
                                 question, _company_name, [], get_bot_media_urls(session, bot_id=bid)
                             )
                             _cached_key = _media_card_key(_cached_card)
                             if _cached_key:
-                                _cached_filters = [ChatSession.id == session_id]
-                                if bid:
-                                    _cached_filters.append(ChatSession.bot_id == bid)
-                                elif cid:
-                                    _cached_filters.append(ChatSession.client_id == cid)
-                                _cached_session = session.query(ChatSession).filter(*_cached_filters).first()
                                 if not _is_explicit_media_request(question) and _card_already_shown(
                                     _cached_session, _cached_key
                                 ):
@@ -7778,13 +7788,8 @@ async def rag_pipeline_stream(
                                 )
                         # A cached answer is a helped turn, so the unhelped count
                         # starts again. A cached refusal is not one and leaves it.
-                        if not _is_known_refusal(cached_qa["answer"], _company_name or "our company"):
-                            _reset_filters = [ChatSession.id == session_id]
-                            if bid:
-                                _reset_filters.append(ChatSession.bot_id == bid)
-                            elif cid:
-                                _reset_filters.append(ChatSession.client_id == cid)
-                            _set_unhelped_streak(session.query(ChatSession).filter(*_reset_filters).first(), 0)
+                        if not _cached_is_refusal:
+                            _set_unhelped_streak(_cached_session, 0)
                         session.commit()
                         yield f"\nFINAL_METADATA:{json.dumps(_cached_meta)}\n"
                         return
@@ -8482,7 +8487,9 @@ async def rag_pipeline_stream(
             # count, as do the helpful early returns above (cache hit, pricing
             # and meeting pivots, handoff reply). A non-English turn never
             # reaches here unhelped (the judges are bypassed and the turn counts
-            # as relevant).
+            # as relevant). ``check_relevance`` also returns relevant when there
+            # are no chunks to judge or the gate is disabled, so those turns
+            # reset the count rather than add to it.
             _relaxed_turn = _relax_topical or _relax_on_scope
             _unhelped_turn = (
                 not _is_relevant
