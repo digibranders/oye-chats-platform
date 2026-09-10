@@ -12,9 +12,11 @@ of 30 incident reports and flagged "I need urgent help, my order hasn't arrived"
 So the decision has three stages:
 
 1. ``might_be_urgent_incident``: a pure, linear vocabulary check written for
-   recall. A message with no security-incident words ("urgent help with my
-   order", "is the service down?") stops here, so an ordinary turn costs no
-   model call.
+   recall. It passes a message that names an attack and one that describes a
+   symptom ("someone is using our stripe account", "customers get emails from
+   us we never sent"). A message with neither ("urgent help with my order", "is
+   the service down?", "how do I reset my password") stops here, so an ordinary
+   turn costs no model call.
 2. ``_classify_urgent_incident_raw``: on a vocabulary hit, the gate-tier model
    answers YES or NO to one question: is the visitor reporting an incident that
    is happening to them now? It tells a report from a question, a hypothetical,
@@ -26,9 +28,10 @@ So the decision has three stages:
    service.
 
 ``is_urgent_incident`` runs the three in order on the calling thread. The chat
-stream calls ``rag_service._detect_urgent_bounded`` instead, which runs the
-vocabulary check on the event loop and the rest on a worker thread under a
-deadline, falling back to the rules when it passes.
+stream runs the vocabulary check itself on the event loop, then
+``rag_service._detect_urgent_bounded``, which runs ``classify_urgent_incident``
+(stages 2 and 3) on a worker thread under a deadline, falling back to the rules
+when it passes.
 """
 
 from __future__ import annotations
@@ -47,11 +50,21 @@ logger = logging.getLogger(__name__)
 
 # ── Stage 1: security-incident vocabulary ─────────────────────────────────────
 #
-# Written for recall: a hit only buys one classifier call. Every gap is bounded
-# and none crosses a sentence end, so the scan stays linear on any input.
+# Written for recall: a hit only buys one classifier call, and a miss alerts no
+# one. Visitors describe what they see more often than they name the attack
+# ("someone is using our stripe account", "emails from us we never sent"), so
+# the families below cover symptoms as well as names. A symptom family needs a
+# disowning, a stranger, an attacker's demand or a system acting on its own:
+# "how do I reset my password" and "I didn't receive the confirmation email"
+# stop here.
+#
+# Every gap is bounded and none crosses a sentence end, so the scan stays linear
+# on any input.
 
 #: Up to 30 characters inside one sentence.
 _NEAR = r"[^.?!\n]{0,30}?"
+#: Up to 40 characters inside one sentence, for a symptom spread over a clause.
+_WITHIN = r"[^.?!\n]{0,40}?"
 
 #: Systems and security nouns that make a nearby "attack" a cyber one.
 _SYSTEM_NOUN = (
@@ -90,99 +103,413 @@ _BREAKABLE_NOUN = (
 _ENCRYPTABLE_NOUN = (
     r"(?:files?|servers?|systems?|data|computers?|pcs?|drives?|backups?|databases?|machines?|laptops?|nas)"
 )
+#: "did not", "didn't", "didnt", "have not", "haven't", "never", "not".
+_NEGATION = r"(?:did\s*n[o'’]?t|have\s*n[o'’]?t|had\s*n[o'’]?t|never|not)"
+#: What a visitor says they did not do: "emails from us we never sent".
+_DISOWNED_VERB = (
+    r"(?:send|sent|make(?!\s+it\b)|made|create|created|write|wrote|written|request(?:ed)?|authori[sz]ed?|approved?"
+    r"|placed?|post(?:ed)?|set(?:\s+up)?|ask(?:ed)?\s+for|initiated?|trigger(?:ed)?|change[ds]?|install(?:ed)?"
+    r"|add(?:ed)?|enter(?:ed)?|log(?:ged)?\s+in|sign(?:ed)?\s+in|touch(?:ed)?)"
+)
+#: The disowned verb ends the clause, or takes a pronoun or a payment, message or
+#: security noun: "we did not make them", "i never requested this code". "I
+#: didn't create an account yet" and "we have not posted the job" take an
+#: everyday object and stop here.
+_DISOWNED_OBJECT = (
+    r"(?:\s*(?:[.,;:!?)\"'’]|$)"
+    r"|\s+(?:it|them|this|that|these|those|either|and|but|so|or|on|from|in|at|via|ourselves|myself|last|today"
+    r"|yesterday|overnight|recently)\b"
+    r"|\s+(?:dns|nameservers|passwords?|2fa|mfa|settings|(?:bank|payment|payout)\s+details)\b"
+    r"|\s+(?:the|a|an|any|these|those|this|that|such|our|my)\s+(?:\w+\s+){0,2}?(?:payments?|transfers?"
+    r"|transactions?|charges?|purchases?|withdrawals?|e-?mails?|messages?|posts?|tweets?|codes?|otps?|requests?"
+    r"|changes?|log\s*-?ins?|rules?|invoices?|calls?|ads|orders?|wires?)\b)"
+)
+#: A bill or spend going up: "jumped", "spiked", "doubled", "is huge".
+_RISE = (
+    r"\b(?:jump\w*|spik\w*|skyrocket\w*|shot\s+up|went\s+up|gone\s+up|explod\w*|surg\w*|tripl\w*|doubl\w*"
+    r"|increas\w*|huge|massive|insane)\b"
+)
+#: A person outside the organisation, or one who should no longer be inside it.
+_STRANGER = (
+    r"(?:someone|somebody|some\s+(?:guy|person|people)|strangers?|scammers?|fraudsters?|criminals?"
+    r"|unknown\s+(?:person|persons|people|users?|part(?:y|ies)|individuals?|third[\s-]part(?:y|ies)|actors?"
+    r"|admins?|devices?|ips?|accounts?)"
+    r"|(?:former|fired|ex|terminated|disgruntled|sacked|dismissed)[\s-]+(?:employees?|staff"
+    r"|workers?|contractors?|developers?|devs?|freelancers?|admins?|colleagues?|agency|it\s+(?:guy|person|admin)"
+    r"|partners?|husband|wife|spouse|boyfriend|girlfriend|co-?founders?))"
+)
+#: What a stranger does with the access: "is using", "still logs into", "has access", "changed".
+_STRANGER_ACTION = (
+    r"(?:us(?:ing|es|ed(?!\s+to\b))|access(?:ing|ed|es)?|log(?:s|ged|ging)?\s+(?:in|on)(?:to)?"
+    r"|sign(?:s|ed|ing)?\s+in(?:to)?|(?:trying|tries|tried|attempting)\s+to\s+(?:log|sign|get|break)\s+in(?:to)?"
+    r"|ha(?:s|d|ve)\s+(?:\w+\s+)?access|g(?:ot|ained)\s+(?:\w+\s+)?access"
+    r"|got\s+(?:our|my|the)\s+(?:\w+\s+)?(?:passwords?|log\s*-?ins?|credentials|keys?|codes?)"
+    r"|chang(?:ed|es|ing)|reset(?:s|ting)?|t(?:ook|aken|akes|aking)|stole|stolen|transferr(?:ed|ing)"
+    r"|delet(?:ed|es|ing)|remov(?:ed|es|ing)|posting|posts|messag(?:es|ing)|send(?:s|ing)|e-?mailing|texting"
+    r"|download(?:s|ed|ing)|withdr(?:ew|awn|awing|aws)|spen(?:t|ds|ding)|add(?:ed|ing)|creat(?:ed|es|ing)"
+    r"|install(?:ed|s|ing)|upload(?:ed|s|ing)|control(?:s|led|ling)|impersonat(?:ed|es|ing)|pretend(?:s|ed|ing)"
+    r"|redirect(?:s|ed|ing)|locked|charg(?:ed|es|ing)|running\s+up|set(?:s|ting)?\s+up|reading)"
+)
+#: Sensitive records an outsider would copy, post or sell.
+_SENSITIVE_RECORDS = (
+    r"(?:(?:customer|client|user|patient|employee|member|contact|subscriber)s?(?:[’']s?)?\s+(?:data|database|db"
+    r"|lists?|records|details|info|information|e-?mails|files)|customers|clients|databases?|db|data|records"
+    r"|credentials|passwords)"
+)
 
+_VOCABULARY_FAMILIES: tuple[tuple[str, ...], ...] = (
+    # Words that name an attack or its tools.
+    (
+        r"\bhack(?!athons?\b)",
+        r"\bp[w0]n(?:ed|d|z)\b",
+        r"\bransom",
+        r"\bmalware",
+        r"\bvirus(?:es)?\b",
+        r"\btrojan",
+        r"\bspyware",
+        r"\bkey\s*-?logg",
+        r"\bphish",
+        r"\bddos",
+        r"\bdos\s+attack",
+        r"\bdenial[\s-]+of[\s-]+service",
+        r"\bcyber\s*-?\s*attack",
+        r"\bbotnet",
+        r"\bcompromis(?:ed|ing)\b",
+        r"\bcompromise\s+of\b",
+        r"\b(?:security|account|data|system|e-?mail)\s+compromise\b",
+        r"\bintru(?:d|sion)",
+        r"\bhijack",
+        r"\bdefac(?:e|ed|es|ing|ement)\b",
+        r"\bskimmers?\b",
+        r"\b(?:card|credit\s+card|magecart)\s+skimming\b",
+        r"\bexfiltrat",
+        r"\bbackdoor",
+        r"\brootkit",
+        r"\b(?:zero|0)[\s-]?days?\b",
+        r"\bbreach",
+        r"\bspoof",
+        r"\bbrute[\s-]?forc",
+        r"\bsim[\s-]?swap",
+        r"\bcredential\s+stuffing\b",
+        r"\b(?:sql|code|script)\s+injection\b",
+        r"\battackers?\b",
+        r"\b(?:active|ongoing|live|security|cyber)\s+incidents?\b",
+    ),
+    # "attack" when it is plainly about systems.
+    (
+        r"\bunder\s+(?:an?\s+)?(?:\w+\s+)?attack\b" + _FIGURATIVE_SOURCE,
+        r"\b(?:being|getting)\s+attacked\b" + _FIGURATIVE_SOURCE,
+        r"\b" + _SYSTEM_NOUN + r"\b" + _NEAR + _CYBER_ATTACK,
+        _CYBER_ATTACK + _NEAR + r"\b" + _SYSTEM_NOUN + r"\b",
+    ),
+    # Data leaving: "our api keys leaked", "threatening to leak our data".
+    (
+        r"\bleak(?:s|ed|ing|age)?\b" + _NEAR + r"\b" + _LEAK_NOUN + r"\b",
+        r"\b" + _LEAK_NOUN + r"\b" + _NEAR + r"\bleak(?:s|ed|ing|age)?\b",
+        r"\b(?:stolen|stole|steal(?:s|ing)?)\b" + _NEAR + r"\b" + _STOLEN_NOUN + r"\b",
+        r"\b" + _STOLEN_NOUN + r"\b" + _NEAR + r"\b(?:stolen|stole)\b",
+        r"\bexposed\s+(?:\w+\s+)?(?:credentials|passwords|keys|secrets|tokens)\b",
+    ),
+    # Systems locked or encrypted: "an attacker encrypted our file server".
+    (
+        r"\bencrypted\s+(?:all\s+(?:of\s+)?)?(?:our|my|every)\b",
+        r"\b"
+        + _ENCRYPTABLE_NOUN
+        + r"\s+(?:(?:are|were|is|was|got|have|has|been|all|now|just)\s+){0,3}encrypted\b"
+        + r"(?!\s+(?:at\s+rest|in\s+transit|by\s+default|end[\s-]to[\s-]end)\b)",
+        r"\blocked\s+(?:us\s+|me\s+|them\s+)?out\b",
+    ),
+    # Accounts or systems in someone else's hands: "taken over", "logged in from", "got into our".
+    (
+        r"\b(?:taken|took|taking|takes|take)\s+over\b" + _NEAR + r"\b" + _TAKEOVER_NOUN + r"\b",
+        r"\b" + _TAKEOVER_NOUN + r"\b" + _NEAR + r"\b(?:taken|took|taking)\s+over\b",
+        r"\b(?:account|site|domain|server|e-?mail)\s+take-?over\b",
+        r"\b" + _TAKEOVER_NOUN + r"\s+(?:(?:was|were|got|has|have|been|just|also)\s+){1,2}(?:taken|stolen|seized)\b"
+        r"(?!\s+(?:down|offline|off|care|out)\b)",
+        r"\blogged\s+in(?:to)?\b[^.?!\n]{0,40}?\bfrom\s+(?!(?:my|our|the\s+app|home|work|mobile|desktop)\b)",
+        r"\b(?:someone|somebody|stranger|unknown|hackers?)\b[^.?!\n]{0,20}?\blogged\s+in(?:to)?\b",
+        r"\b(?:unauthori[sz]ed|suspicious)\s+(?:\w+\s+)?(?:access|log\s*-?ins?|sign\s*-?ins?|charges?|transactions?"
+        r"|payments?|transfers?|users?|activity|changes?|purchases?|withdrawals?)\b",
+        r"\b(?:broke|broken|break(?:s|ing)?|got|gotten|get(?:s|ting)?)\s+into\s+(?:our|my|the)\s+(?:\w+\s+){0,2}?"
+        + _BREAKABLE_NOUN
+        + r"\b",
+        r"\b(?:someone|somebody|intruders?|strangers?|they)\s+(?:is|are|was|were)\s+(?:still\s+)?in(?:side)?\s+"
+        r"(?:our|my|the)\s+(?:\w+\s+)?(?:networks?|systems?|servers?|accounts?|e-?mails?|environment"
+        r"|infrastructure|cloud|aws|inbox|computers?)\b",
+        r"\binfect(?:ed|ion)\b" + _NEAR + r"\b" + _INFECTABLE_NOUN + r"\b",
+        r"\b" + _INFECTABLE_NOUN + r"\b" + _NEAR + r"\binfect(?:ed|ion)\b",
+        r"\bwrong\s+hands\b",
+    ),
+    # Abuse sent in the visitor's name, and fraud on their accounts.
+    (
+        r"\bscam\s+(?:texts?|e-?mails?|messages?|calls?|sms|links?)\b",
+        r"\b(?:sending|sent|sends)\s+(?:out\s+)?(?:spam|scams?|phishing)\b",
+        r"\bspam\s+(?:(?:e-?mails?|messages?)\s+)?from\s+(?:our|my)\b",
+        r"\bfraud(?:ulent)?\b" + _NEAR + r"\b(?:on|in|from|with)\s+(?:our|my)\b",
+        r"\b(?:wire|invoice|payment|card|bank|account)\s+fraud\b",
+        r"\bfake\s+(?:\w+\s+)?(?:invoices?|wire\s+instructions|bank\s+details|payment\s+(?:requests?|links?|details)"
+        r"|pages?|web\s*sites?|sites?|links?|profiles?|log\s*-?ins?|portals?|giveaways?)\b",
+        r"\bimpersonat",
+        r"\bpretend(?:s|ed|ing)?\s+to\s+be\s+(?:us|me|our|my|the\s+(?:ceo|owner|boss|director|company|founder|bank))\b",
+        r"\bgift\s*-?cards?\b" + _WITHIN + r"\b(?:ceo|cfo|boss|owner|director|founder|president|md)\b",
+        r"\b(?:ceo|cfo|boss|owner|director|founder|president|md)\b" + _WITHIN + r"\bgift\s*-?cards?\b",
+        r"\bask(?:s|ed|ing)?\s+(?:all\s+)?(?:of\s+)?(?:my|our)\s+(?:\w+\s+)?(?:contacts|clients|customers|friends"
+        r"|followers|family|staff|employees|team|vendors|suppliers)\s+(?:for\s+(?:money|payments?|gift\s*-?cards"
+        r"|bitcoin|crypto|loans?|transfers?)|to\s+(?:send|pay|transfer|buy|wire))\b",
+    ),
+    # Actions the visitor disowns: "emails from us we never sent", "not by us", "without our permission".
+    (
+        r"\b(?:we|i|us)(?:[’']ve)?\s+(?:(?:have|had|ourselves|myself|personally|definitely|certainly|really|actually"
+        r"|also)\s+)?"
+        + _NEGATION
+        + r"\s+(?:(?:ever|even|actually|really|personally|knowingly|ourselves|myself)\s+)?"
+        + _DISOWNED_VERB
+        + _DISOWNED_OBJECT,
+        r"\b(?:we|i)\s+(?:(?:really|actually|definitely|certainly)\s+)?(?:did\s*n[o'’]?t|never)\s+(?:do|did)\b"
+        r"(?:\s+(?:it|this|that|these|those|them|any\s+of\s+(?:it|this|that|these|those|them))\b|(?!\s+\w))",
+        r"\b(?:nobody|no\s*-?one|none\s+of\s+(?:us|our\s+(?:\w+\s+)?(?:team|staff|people|employees)))\b"
+        + _WITHIN
+        + r"\b(?:did\s+(?:it|this|that)|made|created|changed|entered|authori[sz]ed|approved|requested|added"
+        r"|set|installed|processed|booked|touched)\b",
+        # A thing, then a clause disowning it: "an account we don't own", "people we never contacted".
+        r"\b(?:accounts?|details|invoices?|e-?mails?|messages?|texts?|sms|transfers?|payments?|charges?"
+        r"|withdrawals?|purchases?|log\s*-?ins?|sign\s*-?ins?|devices?|people|numbers?|regions?|servers?"
+        r"|instances?|users?|admins?|vendors?|payees?|rules?|posts?|ads|calls?|apps?|plugins?|changes?|addresses"
+        r"|ips?|keywords?|refunds?|bots?)\s+(?:(?:that|which|who)\s+)?(?:we|i)\s+(?:(?:have|had|really|actually"
+        r"|definitely|certainly)\s+)?(?:do\s*n[o'’]?t|did\s*n[o'’]?t|have\s*n[o'’]?t|never)\s+"
+        r"(?!(?:receive|get|got|see|saw|find|found|need|want|have|like|understand|expect|hear|mean|remember|think"
+        r"|agree|care|mind|use\s+anymore)\b)[a-z]+",
+        r"\b(?:is|was|were|are)\s*n[o'’]?t\s+(?:(?:done|sent|made|posted|written|authori[sz]ed|by|from)\s+){0,2}"
+        r"(?:us|me|him|her|them)\b(?!\s+(?:who|that)\b)",
+        r"\bnot\s+(?:(?:done|sent|made|posted|written|authori[sz]ed)\s+)?(?:by|from)\s+(?:us|me)\b",
+        r"\bnot\s+us\b",
+        r"\b(?:(?:is|was|were|are)\s*n[o'’]?t|not)\s+(?:\w+\s+)?(?:ours|mine)\b",
+        r"\bwithout\s+(?:(?:our|my|any|their)\s+)?(?:permission|consent|knowledge|authori[sz]ation|approval)\b",
+        r"\bwithout\s+(?:asking|telling|informing|notifying)\s+(?:us|me)\b",
+        r"\bwithout\s+(?:us|me)\s+knowing\b",
+        r"\b(?:do\s*n[o'’]?t|did\s*n[o'’]?t|never)\s+recogni[sz]e\b",
+        r"\bunrecogni[sz]ed\b",
+        # Mail that claims to come from the visitor: "an email from my own address", "texts from us we don't send".
+        r"\bfrom\s+(?:my|our)\s+own\s+(?:e-?mail\s+)?(?:address|e-?mail|account|domain|number)\b",
+        r"\bfrom\s+(?:us|our\s+(?:\w+\s+)?(?:e-?mail|address|domain|number|account|brand|company|name))\b"
+        + _WITHIN
+        + r"\b(?:we|i)\s+(?:do\s*n[o'’]?t|did\s*n[o'’]?t|never)\b",
+        r"\b(?:my|our)\s+(?:own\s+|old\s+|real\s+|actual\s+)?passwords?\s+in\s+(?:it|the\s+(?:e-?mail|message|subject))\b",
+    ),
+    # A stranger with access or control: "someone is using our stripe account", "a fired employee still logs in".
+    (
+        r"\b(?<!\bcan\s)(?<!\bcould\s)(?<!\bwill\s)(?<!\bwould\s)"
+        + _STRANGER
+        + r"\b[^.?!\n]{0,30}?\b"
+        + _STRANGER_ACTION
+        + r"\b",
+        r"\b(?:they|he|she)\s+(?:\w+\s+){0,2}?(?:changed|reset|removed|disabled)\s+(?:(?:the|our|my|all)\s+)?"
+        r"(?:\w+\s+)?(?:passwords?|2fa|mfa|two[\s-]factor|recovery|e-?mail\s+address|phone\s+number|log\s*-?ins?"
+        r"|credentials)\b",
+        r"\b(?:left|quit|fired|let\s+go|no\s+longer\s+(?:works?|with\s+us))\b[^.?!\n]{0,50}?\bstill\s+"
+        r"(?:has\s+(?:\w+\s+)?access|log(?:s|ging)?\s+in(?:to)?|sign(?:s|ing)?\s+in(?:to)?|us(?:es|ing)"
+        r"|access(?:es|ing))\b",
+        r"\bstill\s+(?:has|had|knows)\s+(?:the\s+|our\s+|my\s+)?(?:\w+\s+)?(?:passwords?|credentials|keys?"
+        r"|log\s*-?ins?|access)\b",
+        r"\b(?:ceo|cfo|boss|owner|director|founder|president|md|manager)(?:[’']s)?\s+(?:e-?mail|account|whatsapp"
+        r"|number|phone)\b"
+        + _WITHIN
+        + r"\b(?:sending|sends|asking|asks|requesting|requests)\b[^.?!\n]{0,20}?\b(?:wires?|transfers?"
+        r"|payments?|gift\s*-?cards?|bank\s+details|money)\b",
+        r"\b(?:mouse|cursor|pointer|webcam|camera|keyboard)\b[^.?!\n]{0,25}?"
+        r"\b(?:by\s+(?:it|them)sel(?:f|ves)|on\s+(?:its|their)\s+own|(?:mov|click|typ)\w*\s+alone)\b",
+    ),
+    # Money or resources moving unexpectedly: "money leaving our paypal", "bill jumped overnight".
+    (
+        r"\b(?:money|funds|cash|balance|payouts?|savings)\s+(?:\w+\s+){0,2}?(?:leaving|missing|gone|drained"
+        r"|disappear(?:ed|ing|s)?|vanish(?:ed|ing)|withdrawn|stolen|siphoned|diverted|redirected|moved\s+out"
+        r"|taken\s+out|going\s+out)\b",
+        r"\b(?:accounts?|cards?|wallets?|balance)\s+(?:\w+\s+){0,2}?(?:drained|emptied|cleaned\s+out|wiped\s+out)\b",
+        r"\b(?:bills?|invoices?|charges?|spend(?:ing)?|costs?|usage|billing)\b[^.?!\n]{0,20}?"
+        + _RISE
+        + _WITHIN
+        + r"\b(?:overnight|suddenly|out\s+of\s+nowhere|all\s+night|in\s+(?:one|a\s+single)\s+(?:day|night|hour))\b",
+        r"\b(?:overnight|suddenly|out\s+of\s+nowhere)\b"
+        + _WITHIN
+        + r"\b(?:bills?|charges?|spend(?:ing)?|costs?|usage)\b[^.?!\n]{0,20}?"
+        + _RISE,
+        r"\b(?:ads?|campaigns?|accounts?|cards?)\b[^.?!\n]{0,20}?\bspent\b"
+        + _WITHIN
+        + r"\b(?:overnight|last\s+night|all\s+night|out\s+of\s+nowhere)\b",
+        r"\b(?:transfers?|transactions?|withdrawals?|payments?|charges?|purchases?|payouts?|debits?|wires?)\b"
+        + _NEAR
+        + r"\b(?:overnight|out\s+of\s+nowhere|all\s+night)\b",
+    ),
+    # Extortion and lockout by an attacker: a crypto demand, "pay or lose", a decrypt note, a countdown.
+    (
+        r"\b(?:demand\w*|asking\s+for|ransom\w*)\b"
+        + _NEAR
+        + r"\b(?:bitcoins?|btc|monero|xmr|crypto(?:currency)?|usdt)\b",
+        r"\b(?:pay|send|transfer)\s+(?:\w+\s+){0,2}?(?:bitcoins?|btc|monero|xmr|usdt)\s+(?:to|or|within|in|before)\b",
+        r"\b\d[\d.,]{0,12}\s*(?:btc|bitcoins?|xmr|monero)\b",
+        r"\b(?:bitcoins?|btc|monero|xmr|crypto(?:currency)?|usdt)\b"
+        + _NEAR
+        + r"\b(?:or\s+(?:else|lose|we|they|you|all|your|our|my)|demand\w*|ransom|to\s+(?:unlock|decrypt|restore"
+        r"|recover|get\s+(?:it|them|our|my|the)))\b",
+        r"\bpay\w*\b"
+        + _WITHIN
+        + r"\bor\s+(?:else\s+)?(?:(?:we|they|you|it|all|the|your|our|my|everything|data|files?)(?:[’']ll)?\s+){0,2}"
+        r"(?:will\s+)?(?:lose|losing|lost|delet\w*|leak\w*|publish\w*|releas\w*|sell|expos\w*|wip\w*|destroy\w*"
+        r"|gone)\b",
+        r"\bthreaten\w*\s+(?:\w+\s+){0,2}?to\s+(?:leak|publish|release|sell|expose|delete|wipe|destroy|dox|share"
+        r"|post|shut|take|attack|ddos)\b",
+        r"\bextort",
+        r"\bblackmail",
+        r"\bdecrypt",
+        r"\b(?:files?|documents?|folders?|photos?)\b"
+        + _NEAR
+        + r"\b(?:renamed|re-named|(?:have|has|with|got)\s+(?:an?\s+)?(?:new|strange|weird|random|different"
+        r"|unknown)\s+extensions?|named\s+with\s+random|random\s+(?:names|letters|characters|extensions?)"
+        r"|gibberish\s+names)\b",
+        r"\b(?:read[\s_-]?me|txt\s+files?|text\s+files?)\b"
+        + _WITHIN
+        + r"\b(?:pay\w*|bitcoins?|btc|crypto|unlock|money)\b",
+        r"\bnotes?\b" + _WITHIN + r"\b(?:bitcoins?|btc|crypto|unlock|e-?mail\s+them|contact\s+them"
+        r"|get\s+(?:it|them|(?:\w+\s+)?(?:data|files?|database|access))\s+back)\b",
+        r"\bcount\s*-?down\b"
+        + _WITHIN
+        + r"\b(?:screens?|pcs?|computers?|laptops?|machines?|desktops?|files?|pay\w*|bitcoins?|btc|delet\w*"
+        r"|lose|wip\w*)\b",
+        r"\b(?:screens?|pcs?|computers?|laptops?|machines?|desktops?|monitors?)\b" + _WITHIN + r"\bcount\s*-?down\b",
+        r"\b(?:won[’']?t|wont|can[’']?t|cant|cannot|unable\s+to)\s+(?:be\s+)?(?:open\w*|access\w*)\b[^.?!\n]{0,60}?"
+        r"\b(?:note|demand\w*|read[\s_-]?me|bitcoins?|btc|extensions?|renamed)\b",
+    ),
+    # A site or account behaving as if taken: casino redirects, spam pages, a web shell, a strange admin,
+    # a password or recovery address changed, posts nobody wrote.
+    (
+        r"\bredirect\w*\b"
+        + _WITHIN
+        + r"\b(?:casinos?|gambl\w*|betting|pharma\w*|viagra|cialis|porn\w*|adult|xxx|dating|spam\w*|scam\w*"
+        r"|malicious|phishing|pills?|weird|strange|random|unknown|suspicious|shady|dodgy)\b",
+        r"\b(?:spam(?:my)?|casinos?|gambling|viagra|cialis|porn\w*|xxx)\s+(?:\w+\s+)?(?:keywords?|pages?|links?"
+        r"|posts?|content|results?|urls?|titles?|pop-?ups?|ads|redirects?|products?|listings?)\b",
+        r"\b(?:send(?:s|ing)?|sent|post(?:s|ed|ing)?|tweet(?:s|ed|ing)?|publish(?:es|ed|ing)?|messag(?:es|ed|ing)"
+        r"|(?:live\s*-?)?stream(?:s|ed|ing)?|shar(?:es|ed|ing)|show(?:s|ed|ing)?)\s+(?:out\s+)?(?:\w+\s+)?"
+        r"(?:spam|scams?|phishing|porn\w*|malware|malicious\s+links?|crypto\s+(?:scams?|giveaways?|ads|links?"
+        r"|promotions?|offers?)|fake\s+(?:giveaways?|offers?|invoices?|links?))\b",
+        r"\bcrypto\s+(?:giveaways?|doubling|scams?)\b",
+        r"\b(?:strange|weird|unknown|unfamiliar|mysterious|rogue|suspicious|unexplained|unexpected)\s+"
+        r"(?:(?:new|admin|super\s*-?admin)\s+)?(?:admins?|administrators?|users?|accounts?|log\s*-?ins?"
+        r"|sign\s*-?ins?|sessions?|devices?|charges?|transactions?|transfers?|payments?|withdrawals?|process(?:es)?"
+        r"|files?|scripts?|plugins?|programs?|software|redirects?|payees?|vendors?|beneficiar(?:y|ies)"
+        r"|forwarding|(?:inbox|mail|e-?mail)\s+rules?|ssh\s+keys?|api\s+keys?|ip\s+addresse?s?|locations?|activity"
+        r"|traffic|pop-?ups?|ads|posts?)\b",
+        r"\b(?:php|web|reverse)\s*-?shells?\b",
+        r"\b(?:\d[\d,]{0,12}|dozens?|hundreds?|thousands?|several|multiple|many)\s+(?:of\s+)?(?:new\s+)?"
+        r"(?:admin|administrator|super\s*-?admin)\s+(?:accounts?|users?)\b",
+        r"\bhidden\s+(?:\w+\s+)?(?:links?|iframes?|scripts?|redirects?|admins?|users?)\b",
+        r"\b(?:on|in)\s+(?:every|each)\s+(?:desktop|folder|directory|computer|pc|machine|drive|laptop|screen)\b",
+        r"\b(?:data|traffic|files|connections?|requests?)\b"
+        + _WITHIN
+        + r"\bto\s+(?:an?\s+)?(?:(?:unknown|strange|foreign|random|suspicious|external)\s+)?ips?(?:\s+address(?:es)?)?\b",
+        r"\b(?:send(?:s|ing)?|sent)\s+(?:the\s+|our\s+|customers?[’']?\s+)?card\s+(?:numbers|details|data)\b",
+        r"\bcard\s+(?:numbers|details|data)\b" + _WITHIN + r"\b(?:somewhere|elsewhere)\b",
+        r"\b(?:log\s*-?ins|sign\s*-?ins|(?:a|new)\s+(?:log\s*-?in|sign\s*-?in)|(?:log\s*-?in|sign\s*-?in)\s+"
+        r"(?:attempts?|alerts?|notifications?)|(?:used|tried|attempted|trying|attempting)\s+to\s+(?:log|sign)\s*-?\s*in)\b"
+        + _WITHIN
+        + r"\bfrom\s+(?!(?:my|our|your|the\s+app|home|work|mobile|desktop|the\s+same|anywhere|any\s+device"
+        r"|(?:multiple|different|two|other)\s+devices|google|facebook|apple|microsoft|github|linkedin|sso"
+        r"|e-?mail|phone)\b)",
+        r"\bpop-?\s*ups?\b"
+        + _WITHIN
+        + r"\b(?:download\w*|install\w*|virus\w*|infected|scan|tech\s+support|call\s+(?:this|the|a)\s+number)\b",
+        r"\b(?:sites?|web\s*sites?|domains?|pages?|links?|urls?)\b"
+        + _WITHIN
+        + r"\b(?:dangerous|deceptive|blacklisted|blocklisted)\b",
+        r"\bchanged\s+to\s+(?:(?:someone|somebody)\s+else|(?:an?\s+)?(?:unknown|strange|random|foreign)\b)",
+        r"\b(?:passwords?|pass\s*codes?|2fa|mfa|two[\s-]factor(?:\s+authentication)?|recovery\s+(?:e-?mail|phone"
+        r"|number)|security\s+questions?|log\s*-?in\s+details|(?:bank|payout)\s+(?:account|details)"
+        r"|dns(?:\s+(?:records?|settings))?|nameservers?|mx\s+records?"
+        r"|(?:router|firewall|wi-?fi|security|admin|payout|bank)\s+settings)\s+"
+        r"(?:(?:was|were|got|has|have|been|is|are|being|keeps?|getting|just|suddenly|all)\s+){1,3}"
+        r"(?:changed|reset|removed|disabled|turned\s+off|modified|altered|tampered\s+with)\b",
+        r"\bkeep\w*\s+(?:getting|receiving)\s+(?:\w+\s+){0,2}?(?:codes?|otps?|password\s+resets?|reset\s+(?:e-?mails?"
+        r"|links?|codes?)|verification\s+(?:codes?|texts?)|log\s*-?in\s+(?:alerts?|notifications?|codes?))\b",
+        r"\bforward(?:s|ed|ing)?\s+(?:all\s+)?(?:of\s+)?(?:our|my|the|company)\s+(?:\w+\s+)?(?:e-?mails?|mails?|inbox)"
+        r"\s+to\s+(?:an?\s+|some\s+)?(?:unknown|strange|external|outside|random|foreign|weird|someone)\b",
+        r"\b(?:data(?:bases?)?|dbs?|files?|servers?|backups?|web\s*sites?|sites?|stores?|drives?|records"
+        r"|repos(?:itor(?:y|ies))?|inbox(?:es)?)\s+(?:(?:was|were|got|has|have|been|is|are|all|just|completely"
+        r"|entirely|suddenly)\s+){1,3}(?:wiped|erased|destroyed|emptied)\b",
+    ),
+    # Data exposure: records on the dark web or for sale, a customer list posted, card details taken at checkout.
+    (
+        r"\b(?:dark\s*-?web|darknet|dark\s+net|deep\s+web)\b",
+        r"\b(?:our|my|company|customer|client|user|patient|employee|staff|personal|private|internal)\s+"
+        r"(?:\w+\s+){0,2}?(?:data|database|db|lists?|records|details|info|information|files|documents|e-?mails"
+        r"|passwords|credentials)\b"
+        + _WITHIN
+        + r"\b(?:on\s+(?:the\s+|a\s+)?(?:dark\s*-?web|darknet|telegram|pastebin|github|(?:hacker\s+)?forums?"
+        r"|internet)|for\s+sale|being\s+(?:sold|posted|published|taken|copied|leaked|dumped|scraped)"
+        r"|(?:was|were|got|has\s+been|have\s+been|is|are)\s+(?:\w+\s+)?(?:posted|published|dumped|sold|leaked"
+        r"|exposed|scraped))\b",
+        r"\b(?:post(?:ed|ing|s)?|publish(?:ed|ing|es)?|selling|dump(?:ed|ing)|cop(?:ied|ying)|stole"
+        r"|steal(?:ing|s)?|scrap(?:ed|ing))\s+(?:all\s+)?(?:of\s+)?(?:our|my)\s+(?:\w+\s+)?"
+        + _SENSITIVE_RECORDS
+        + r"\b",
+        r"\b(?:card|payment|credit\s+card|debit\s+card|billing|bank)\s+(?:\w+\s+)?(?:details|data|numbers"
+        r"|info(?:rmation)?)\b[^.?!\n]{0,20}?\b(?:taken|stolen|copied|skimmed|captured|harvested|leaked|exposed"
+        r"|scraped|intercepted|misused)\b",
+    ),
+    # Resource abuse: a crypto miner on the server, floods of login attempts or bot traffic.
+    (
+        r"\b(?:crypto|coin|bitcoin|monero|xmr)[\s-]*(?:currency\s+)?min(?:ing|ers?)\b",
+        r"\bcryptojack",
+        r"\b(?:xmrig|kinsing|kdevtmpfsi)\b",
+        r"\b(?:tor|onion)\s+(?:links?|browser|sites?|address(?:es)?)\b",
+        r"\.onion\b",
+        r"\bminers?\b" + _NEAR + r"\b(?:servers?|cpus?|gpus?|instances?|vms?|machines?|cloud|aws|azure|gcp)\b",
+        r"\b(?:servers?|cpus?|gpus?|instances?|vms?|machines?|cloud|aws|azure|gcp)\b" + _NEAR + r"\bminers?\b",
+        r"\b(?:thousands?|hundreds?|millions?|tons|lots|loads|floods?|flooded|flooding|waves?|spikes?|surges?"
+        r"|barrage|\d[\d,]{2,12})\s+(?:of\s+|with\s+)?(?:\w+\s+){0,2}?(?:log\s*-?in|sign\s*-?in|password"
+        r"|access|brute[\s-]?force)\s+attempts\b",
+        r"\b(?:thousands?|hundreds?|millions?|tons|lots|loads|floods?|flooded|flooding|waves?|spikes?|surges?"
+        r"|barrage|\d[\d,]{2,12})\s+(?:of\s+|with\s+)?(?:\w+\s+){0,2}?(?:requests?|traffic|sign\s*-?ups?"
+        r"|registrations?|accounts?|submissions?|orders?|visits?|hits|log\s*-?ins?|messages?|e-?mails?|calls?)\b"
+        + _WITHIN
+        + r"\b(?:fake|spam|junk|malicious|bogus|gibberish|premium\s+(?:rate\s+)?numbers?)\b",
+        r"\b(?:thousands?|hundreds?|millions?|tons|lots|loads|floods?|flooded|flooding|waves?|spikes?|surges?"
+        r"|barrage|\d[\d,]{2,12})\s+(?:of\s+|with\s+)?(?:\w+\s+){0,2}?(?:bots?|fake|spam|junk|malicious)\s+"
+        r"(?:requests?|traffic|sign\s*-?ups?|registrations?|accounts?|submissions?|orders?|visits?|hits"
+        r"|log\s*-?ins?)\b",
+        r"\b(?:log\s*-?in|sign\s*-?in|password)\s+attempts\b"
+        + _NEAR
+        + r"\b(?:per\s+(?:second|minute|hour)|every\s+(?:second|minute)|from\s+(?:different|many|multiple|random"
+        r"|unknown|foreign)|non-?stop|all\s+(?:day|night))\b",
+        r"\b(?:bots?|botnet|fake|spam|junk|malicious)\s+(?:requests?|traffic|sign\s*-?ups?|registrations?"
+        r"|submissions?|log\s*-?ins?)\b"
+        + _NEAR
+        + r"\b(?:flood\w*|per\s+(?:second|minute)|crash\w*|overwhelm\w*|non-?stop)\b",
+    ),
+)
+
+#: A ransomware file extension: "all our files have .locked extension". Not
+#: word-anchored, because a space comes before the dot.
+_RANSOM_EXTENSION = r"\.(?:locked|encrypted|crypted|crypt|enc)\b"
+
+# Every family pattern starts at a word boundary, so the shared ``\b`` rejects
+# most positions before any family is tried. The patterns are lowercase and run
+# on the lowercased message: case-insensitive matching made each of the ~150
+# branches about three times slower, and "a b a b ..." took 51ms.
 _VOCABULARY_RE = re.compile(
-    r"(?i)"
-    + "|".join(
-        (
-            # Words that name an attack or its tools.
-            r"\bhack(?!athons?\b)",
-            r"\bransom",
-            r"\bmalware",
-            r"\bvirus(?:es)?\b",
-            r"\btrojan",
-            r"\bspyware",
-            r"\bkey\s*-?logg",
-            r"\bphish",
-            r"\bddos",
-            r"\bdos\s+attack",
-            r"\bdenial[\s-]+of[\s-]+service",
-            r"\bcyber\s*-?\s*attack",
-            r"\bbotnet",
-            r"\bcompromis(?:ed|ing)\b",
-            r"\bcompromise\s+of\b",
-            r"\b(?:security|account|data|system|e-?mail)\s+compromise\b",
-            r"\bintru(?:d|sion)",
-            r"\bhijack",
-            r"\bdefac(?:e|ed|es|ing|ement)\b",
-            r"\bskimmers?\b",
-            r"\b(?:card|credit\s+card|magecart)\s+skimming\b",
-            r"\bexfiltrat",
-            r"\bbackdoor",
-            r"\brootkit",
-            r"\b(?:zero|0)[\s-]?days?\b",
-            r"\bbreach",
-            r"\bspoof",
-            r"\bbrute[\s-]?forc",
-            r"\bsim[\s-]?swap",
-            r"\bcredential\s+stuffing\b",
-            r"\b(?:sql|code|script)\s+injection\b",
-            r"\battackers?\b",
-            r"\b(?:active|ongoing|live|security|cyber)\s+incidents?\b",
-            # "attack" when it is plainly about systems.
-            r"\bunder\s+(?:an?\s+)?(?:\w+\s+)?attack\b" + _FIGURATIVE_SOURCE,
-            r"\b(?:being|getting)\s+attacked\b" + _FIGURATIVE_SOURCE,
-            r"\b" + _SYSTEM_NOUN + r"\b" + _NEAR + _CYBER_ATTACK,
-            _CYBER_ATTACK + _NEAR + r"\b" + _SYSTEM_NOUN + r"\b",
-            # Data leaving: "our api keys leaked", "threatening to leak our data".
-            r"\bleak(?:s|ed|ing|age)?\b" + _NEAR + r"\b" + _LEAK_NOUN + r"\b",
-            r"\b" + _LEAK_NOUN + r"\b" + _NEAR + r"\bleak(?:s|ed|ing|age)?\b",
-            r"\b(?:stolen|stole|steal(?:s|ing)?)\b" + _NEAR + r"\b" + _STOLEN_NOUN + r"\b",
-            r"\b" + _STOLEN_NOUN + r"\b" + _NEAR + r"\b(?:stolen|stole)\b",
-            r"\bexposed\s+(?:\w+\s+)?(?:credentials|passwords|keys|secrets|tokens)\b",
-            # Systems locked or encrypted: "an attacker encrypted our file server".
-            r"\bencrypted\s+(?:all\s+(?:of\s+)?)?(?:our|my|every)\b",
-            r"\b"
-            + _ENCRYPTABLE_NOUN
-            + r"\s+(?:(?:are|were|is|was|got|have|has|been|all|now|just)\s+){0,3}encrypted\b"
-            + r"(?!\s+(?:at\s+rest|in\s+transit|by\s+default|end[\s-]to[\s-]end)\b)",
-            r"\blocked\s+(?:us\s+|me\s+|them\s+)?out\b",
-            # Accounts or systems in someone else's hands.
-            r"\b(?:taken|took|taking|takes|take)\s+over\b" + _NEAR + r"\b" + _TAKEOVER_NOUN + r"\b",
-            r"\b" + _TAKEOVER_NOUN + r"\b" + _NEAR + r"\b(?:taken|took|taking)\s+over\b",
-            r"\b(?:account|site|domain|server|e-?mail)\s+take-?over\b",
-            r"\blogged\s+in(?:to)?\b[^.?!\n]{0,40}?\bfrom\s+(?!(?:my|our|the\s+app|home|work|mobile|desktop)\b)",
-            r"\b(?:someone|somebody|stranger|unknown|hackers?)\b[^.?!\n]{0,20}?\blogged\s+in(?:to)?\b",
-            r"\b(?:unauthori[sz]ed|suspicious)\s+(?:\w+\s+)?(?:access|log\s*-?ins?|sign\s*-?ins?|charges?|transactions?"
-            r"|payments?|transfers?|users?|activity|changes?|purchases?|withdrawals?)\b",
-            r"\b(?:broke|broken|break(?:s|ing)?|got|gotten|get(?:s|ting)?)\s+into\s+(?:our|my|the)\s+(?:\w+\s+){0,2}?"
-            + _BREAKABLE_NOUN
-            + r"\b",
-            r"\b(?:someone|somebody|intruders?|strangers?|they)\s+(?:is|are|was|were)\s+(?:still\s+)?in(?:side)?\s+"
-            r"(?:our|my|the)\s+(?:\w+\s+)?(?:networks?|systems?|servers?|accounts?|e-?mails?|environment"
-            r"|infrastructure|cloud|aws|inbox|computers?)\b",
-            r"\binfect(?:ed|ion)\b" + _NEAR + r"\b" + _INFECTABLE_NOUN + r"\b",
-            r"\b" + _INFECTABLE_NOUN + r"\b" + _NEAR + r"\binfect(?:ed|ion)\b",
-            # Abuse sent in the visitor's name, and fraud on their accounts.
-            r"\bscam\s+(?:texts?|e-?mails?|messages?|calls?|sms|links?)\b",
-            r"\b(?:sending|sent|sends)\s+(?:out\s+)?(?:spam|scams?|phishing)\b",
-            r"\bspam\s+(?:(?:e-?mails?|messages?)\s+)?from\s+(?:our|my)\b",
-            r"\bfraud(?:ulent)?\b" + _NEAR + r"\b(?:on|in|from|with)\s+(?:our|my)\b",
-            r"\b(?:wire|invoice|payment|card|bank|account)\s+fraud\b",
-        )
-    )
+    r"\b(?:" + "|".join(pattern for family in _VOCABULARY_FAMILIES for pattern in family) + r")|" + _RANSOM_EXTENSION
 )
 
 
 def might_be_urgent_incident(question: object) -> bool:
-    """Whether the message uses security-incident vocabulary, so the classifier should decide.
+    """Whether the message names a security incident or describes one of its symptoms, so the classifier should decide.
 
-    Pure and linear. Bare urgency ("urgent", "emergency", "help", "asap", "down")
-    and a figurative "attack from competitors" do not pass on their own.
+    Pure and linear. Bare urgency ("urgent", "emergency", "help", "asap", "down"),
+    a figurative "attack from competitors" and everyday account trouble ("how do
+    I reset my password", "my payment went through twice") do not pass on their own.
     """
     if not isinstance(question, str) or not question.strip():
         return False
-    return _VOCABULARY_RE.search(question) is not None
+    return _VOCABULARY_RE.search(question.lower()) is not None
 
 
 # ── Stage 2: the classifier ───────────────────────────────────────────────────
@@ -237,13 +564,17 @@ CLASSIFY AS YES when the visitor reports, happening to them now or just found:
 - An attack, a breach, ransomware or a malware infection
 - An account takeover, a defaced website, a data leak or unauthorised access
 - Attackers threatening them, for example demanding a ransom or threatening to leak their data
-- Files or systems that are locked or encrypted
+- Files, systems or accounts locked or encrypted by an attacker, or held for ransom
+- Signs that someone else controls or uses their accounts, systems, money or data: payments, messages, posts, logins or changes they did not make
+- An incident happening now to their company, their employer, or a client they support as an agency or IT provider, when they ask for urgent help with it
 
 CLASSIFY AS NO when the message is:
 - A question about services, pricing, policies, templates, plans or how something works
 - A hypothetical or a worry ("what if we get hacked", "is my data safe if you are breached")
 - About an incident that is over and resolved, or long ago ("we were hacked last year and now want a pentest")
-- About an incident that happened to someone else: a vendor, a competitor, or a client they serve
+- About an incident at a vendor or a competitor, or one in the news
+- The visitor describing their own services ("we help companies that got hacked")
+- Locked out after forgetting a password, or other ordinary account problems with no sign of someone else involved
 - Urgent for a reason that is not security: a late order, a booking, a deadline or a quote
 - An emergency that is not about security, such as a flood or a medical problem
 - A figurative "attack", such as from competitors or in marketing
@@ -271,19 +602,27 @@ Respond with ONLY the word YES or NO."""
     return _YES_RE.match(response.strip().strip(_REPLY_DECORATION).upper()) is not None
 
 
+def classify_urgent_incident(question: str) -> bool:
+    """Stages 2 and 3 for a message that already passed ``might_be_urgent_incident``.
+
+    The classifier decides, and any classifier error hands the decision to the
+    fallback rules. The vocabulary check is not repeated: a caller that has not
+    run it should call ``is_urgent_incident``.
+    """
+    try:
+        return _classify_urgent_incident_raw(question)
+    except Exception as exc:  # noqa: BLE001 - a model failure falls back to the rules, never breaks the turn
+        logger.warning("urgent_incident_classifier_failed | %s. Using the fallback rules", type(exc).__name__)
+        return _fallback_is_urgent(question)
+
+
 def is_urgent_incident(question: object) -> bool:
     """True when the visitor reports an incident happening to them, not one they ask about.
 
     No model call without security vocabulary. On a vocabulary hit the classifier
     decides, and any classifier error hands the decision to the fallback rules.
     """
-    if not isinstance(question, str) or not might_be_urgent_incident(question):
-        return False
-    try:
-        return _classify_urgent_incident_raw(question)
-    except Exception as exc:  # noqa: BLE001 - a model failure falls back to the rules, never breaks the turn
-        logger.warning("urgent_incident_classifier_failed | %s. Using the fallback rules", type(exc).__name__)
-        return _fallback_is_urgent(question)
+    return isinstance(question, str) and might_be_urgent_incident(question) and classify_urgent_incident(question)
 
 
 # ── Stage 3: fallback rules, only when the model fails ────────────────────────

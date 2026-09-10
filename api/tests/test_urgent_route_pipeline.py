@@ -27,7 +27,7 @@ TEAM_EMAILS = {"default": ["soc@acme.test"]}
 
 
 class _Classifier:
-    """Stands in for the gate model behind ``urgent_route.is_urgent_incident``."""
+    """Stands in for the gate model behind ``urgent_route.classify_urgent_incident``."""
 
     def __init__(self) -> None:
         self.answer = True
@@ -432,13 +432,31 @@ async def test_a_turn_without_security_words_never_asks_the_classifier(db, monke
 
 
 @pytest.mark.asyncio
-async def test_the_bounded_check_starts_no_thread_without_security_words(monkeypatch):
-    def _must_not_run(_question):
-        raise AssertionError("is_urgent_incident ran for a message with no security words")
+@pytest.mark.parametrize(
+    ("question", "classified"), [("I need urgent help, my order hasn't arrived", False), (URGENT, True)]
+)
+async def test_a_turn_runs_the_vocabulary_check_once_and_classifies_only_a_hit(
+    db, monkeypatch, alerts, classifier, question, classified
+):
+    """The pipeline runs the check before the language check, and the bounded
+    helper trusts it instead of running it again."""
+    client = _make_client(db)
+    bot = _make_bot(db, client, live_chat_enabled=True)
+    _make_session(db, bot, client, "urgent-once")
+    _stub_pipeline(monkeypatch, retrieved=(_doc("Acme runs incident response."),), support=True)
+    checked: list[object] = []
+    real_check = urgent_route.might_be_urgent_incident
 
-    monkeypatch.setattr(urgent_route, "is_urgent_incident", _must_not_run)
+    def _counting_check(message: object) -> bool:
+        checked.append(message)
+        return real_check(message)
 
-    assert await rs._detect_urgent_bounded("urgent help needed, where is my order") is False
+    monkeypatch.setattr(urgent_route, "might_be_urgent_incident", _counting_check)
+
+    await _drive_stream(bot, question, "urgent-once")
+
+    assert len(checked) == 1
+    assert len(classifier.calls) == (1 if classified else 0)
 
 
 @pytest.mark.asyncio

@@ -6623,18 +6623,17 @@ _URGENT_INTENT_TIMEOUT_S = _HANDOFF_INTENT_TIMEOUT_S
 
 
 async def _detect_urgent_bounded(question: str) -> bool:
-    """Whether the visitor reports an active incident, without blocking the event loop.
+    """Whether a message that passed the vocabulary check reports an active incident,
+    without blocking the event loop.
 
-    The vocabulary check is pure and cheap, so it runs here: a message without
-    security-incident words costs no thread and no model call. A hit runs
-    ``urgent_route.is_urgent_incident`` (which falls back to its rules on a model
-    error) on a worker thread under ``_URGENT_INTENT_TIMEOUT_S``. A stall uses the
-    fallback rules; the worker thread cannot be interrupted, so its late answer
-    is discarded.
+    The caller runs ``urgent_route.might_be_urgent_incident`` first, so a message
+    without security-incident words costs no thread and no model call, and the
+    check runs once per turn. This runs ``urgent_route.classify_urgent_incident``
+    (which falls back to its rules on a model error) on a worker thread under
+    ``_URGENT_INTENT_TIMEOUT_S``. A stall uses the fallback rules; the worker
+    thread cannot be interrupted, so its late answer is discarded.
     """
-    if not urgent_route.might_be_urgent_incident(question):
-        return False
-    task = asyncio.create_task(asyncio.to_thread(urgent_route.is_urgent_incident, question))
+    task = asyncio.create_task(asyncio.to_thread(urgent_route.classify_urgent_incident, question))
     try:
         return await asyncio.wait_for(task, timeout=_URGENT_INTENT_TIMEOUT_S)
     except TimeoutError:
@@ -7605,10 +7604,10 @@ async def rag_pipeline_stream(
             # above an incident.
             #
             # English only, like the other deterministic replies. The vocabulary
-            # check runs first and is pure, so an ordinary turn pays for neither
-            # a language check here nor a model call. Only a message with
-            # security-incident words reaches the classifier, on a worker thread
-            # under a deadline.
+            # check runs first, once, and is pure, so an ordinary turn pays for
+            # neither a language check here nor a model call. Only a message
+            # that names an incident or describes a symptom reaches the
+            # classifier, on a worker thread under a deadline.
             if (
                 urgent_route.might_be_urgent_incident(question)
                 and not _english_judges_bypassed(language, question)

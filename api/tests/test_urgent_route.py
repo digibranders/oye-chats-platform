@@ -87,6 +87,8 @@ _REVIEWED_INCIDENTS = [
     "we were hacked last night",
     "URGENT: data breach in progress",
     "we have an ongoing breach",
+    # A report about a client the visitor supports as an agency or IT provider
+    # counts as their own: the prompt says YES to it.
     "My client's site was hacked",
     "we've been hacked, how do we recover?",
     "our servers have been compromised, can you protect us?",
@@ -272,6 +274,109 @@ _FRESH_NOT_INCIDENTS = [
     "we are under attack from competitors undercutting our prices",
     "is emergency assistance available for rent",
 ]
+#: 75 incident reports written on 2026-09-11 after the vocabulary check was built
+#: on every list above. It passed all 25 that name the attack and 6 of the 50
+#: that describe what the visitor sees instead.
+_SYMPTOM_INCIDENTS = [
+    "someone is using our stripe account",
+    "our wordpress got a weird redirect to a casino site",
+    "we got a message saying pay bitcoin or lose files",
+    "all our files have .locked extension",
+    "customers say they get emails from us we never sent",
+    "our instagram was taken and they changed the password",
+    "there is a strange admin user we did not create",
+    "our AWS bill jumped to 40k overnight from crypto mining",
+    "the website shows 'hacked by' text",
+    "my facebook page got stolen and now it posts crypto scams",
+    "somebody changed our domain nameservers without our permission",
+    "our google ads account is spending money on ads we didnt make",
+    "staff cant open any documents, there is a readme file asking for payment",
+    "someone keeps resetting my password and i get 2fa codes i didnt request",
+    "a client paid a fake invoice that came from our real email address",
+    "since this morning our site redirects visitors to a pharmacy spam page",
+    "there is a crypto miner running on our server cpu is at 100%",
+    "we found a php shell uploaded in our wp-content uploads folder",
+    "our database was wiped and there is a note saying email them to get it back",
+    "someone took my whatsapp business number and is messaging my clients",
+    "sir our company data is on dark web what to do now",
+    "unknown person has access to our office 365 and set up forwarding rules",
+    "our staff got an email from the ceo asking for gift cards and two of them bought them, it wasnt him",
+    "someone transferred our domain to another registrar without asking us",
+    "all our pcs show a red screen with a countdown timer",
+    "my gmail is sending emails i never wrote",
+    "fake orders with stolen cards are pouring into our store right now",
+    "google shows japanese spam keywords for our website pages",
+    "we see thousands of login attempts per minute on our portal",
+    "the bank called, there are transfers from our business account we did not make",
+    "our twitter account is posting stuff we didnt write",
+    "someone got our admin password and deleted the whole shopify theme",
+    "my laptop camera turns on by itself and the mouse moves alone",
+    "a fired employee still logs into our crm and downloads client lists",
+    "We received an email from a group saying they copied our customer database and will publish it",
+    "our host suspended us because our server is attacking other sites",
+    "i typed my login on a fake microsoft page and now i cant get into my mailbox",
+    "our phone system made international calls all night and the bill is huge, we did not make them",
+    "every file on the shared drive got renamed and there is a how_to_decrypt.txt",
+    "the bank told us our customers card details are being taken at checkout",
+    "our site is hack please do fast help",
+    "admin password changed not by us and now we cannot login",
+    "virus in all computers of office please send engineer",
+    "our website keeps crashing, thousands of bot requests per second from everywhere",
+    "Someone has access to our QuickBooks and added a new vendor with their bank account",
+    "we see money leaving our paypal and it isnt us",
+    "the youtube channel got taken and they are live streaming a crypto giveaway",
+    "Our entire network is down and a ransom demand appeared on the screens",
+    "someone is posting our private customer list on telegram",
+    "My email got into wrong hands, they are asking my contacts for money",
+]
+_NAMED_ATTACK_INCIDENTS = [
+    "our company email got hacked this morning, pls advise",
+    "i think our quickbooks was compromised",
+    "Got ransomware on the file server, what now??",
+    "hackers are inside our office network",
+    "our online store was breached and card numbers stolen",
+    "we have a virus spreading across all laptops",
+    "someone hijacked our google business profile",
+    "my linkedin was hacked and is messaging people",
+    "our site has malware, google is blocking it",
+    "we are getting phished right now, staff are clicking the links",
+    "our wordpress admin got hacked yesterday and they still have access",
+    "customer data leaked on a forum today",
+    "our servers are being ddos'd",
+    "the attackers left a note demanding 5 btc",
+    "an intruder accessed our payroll system tonight",
+    "our twitter got hacked, can someone help asap",
+    "i clicked a phishing link and now my bank account is emptied",
+    "our shop got defaced overnight",
+    "passwords of all our users were stolen",
+    "someone logged into our admin from nigeria",
+    "we suspect a breach, logs show data exfiltration",
+    "our crm credentials leaked and someone downloaded everything",
+    "ransomware on 30 machines, can you respond today",
+    "there is malware on our pos terminals",
+    "our cloud account got hacked and they spun up servers",
+]
+#: Everyday support messages from the same round. They share words with the
+#: symptom families (a password, a payment, "didn't", a record) but disown
+#: nothing and name no stranger, so they must not reach the model.
+_EVERYDAY_MESSAGES = [
+    "how do I reset my password",
+    "why was my card declined when upgrading",
+    "is there an API for exporting contacts",
+    "how do I remove a user from our workspace",
+    "where is my order 12345",
+    "can I return shoes that don't fit",
+    "do you ship to canada",
+    "my payment went through twice, please refund one",
+    "is there a discount code for my first order",
+    "i didn't receive the confirmation email",
+    "can I book a teeth cleaning next tuesday",
+    "do you accept aetna insurance",
+    "what are your opening hours on sunday",
+    "my prescription refill hasn't been sent to the pharmacy",
+    "do you treat viral infections in kids",
+    "how do I get a copy of my medical records",
+]
 #: Messages with no security-incident vocabulary, including urgency, outages,
 #: a figurative attack and a medical one.
 _ORDINARY_MESSAGES = _BARE_PLEAS + [
@@ -313,7 +418,13 @@ _ORDINARY_MESSAGES = _BARE_PLEAS + [
 ]
 
 _ALL_INCIDENTS = (
-    _REPORTED_INCIDENTS + _REVIEWED_INCIDENTS + _SECOND_ROUND_INCIDENTS + _WORDING_VARIANT_INCIDENTS + _FRESH_INCIDENTS
+    _REPORTED_INCIDENTS
+    + _REVIEWED_INCIDENTS
+    + _SECOND_ROUND_INCIDENTS
+    + _WORDING_VARIANT_INCIDENTS
+    + _FRESH_INCIDENTS
+    + _SYMPTOM_INCIDENTS
+    + _NAMED_ATTACK_INCIDENTS
 )
 _ALL_NOT_INCIDENTS = (
     _QUESTIONS_ABOUT_INCIDENTS
@@ -335,6 +446,13 @@ def test_every_known_incident_passes_the_vocabulary_check(msg):
 
 @pytest.mark.parametrize("msg", _ORDINARY_MESSAGES)
 def test_a_message_without_security_words_does_not_pass(msg):
+    assert might_be_urgent_incident(msg) is False
+
+
+@pytest.mark.parametrize("msg", _EVERYDAY_MESSAGES)
+def test_everyday_account_order_and_booking_messages_do_not_pass(msg):
+    """The symptom families need a disowning or a stranger: "i didn't receive the
+    confirmation email" and "my payment went through twice" have neither."""
     assert might_be_urgent_incident(msg) is False
 
 
@@ -404,6 +522,18 @@ def test_a_vocabulary_hit_asks_the_model_once_and_takes_its_answer(model, answer
     assert len(model.calls) == 1
 
 
+def test_classify_urgent_incident_does_not_repeat_the_vocabulary_check(model, monkeypatch):
+    """The chat stream runs the vocabulary check itself, once, before the language check."""
+
+    def _must_not_run(_question: object) -> bool:
+        raise AssertionError("the vocabulary check ran a second time")
+
+    monkeypatch.setattr(urgent_route, "might_be_urgent_incident", _must_not_run)
+
+    assert urgent_route.classify_urgent_incident(_FALLBACK_SAYS_NO) is True
+    assert len(model.calls) == 1
+
+
 @pytest.mark.parametrize(
     ("answer", "expected"),
     [
@@ -463,7 +593,7 @@ def test_the_call_is_one_short_attempt_on_the_gate_model_at_temperature_zero(mod
     assert call["metadata"] == {"generation_name": "urgent-incident-detection"}
 
 
-def test_the_prompt_fences_the_message_and_states_the_no_rules(model):
+def test_the_prompt_fences_the_message_and_states_its_rules(model):
     msg = "our api keys leaked and someone is running up charges on our account right now"
 
     is_urgent_incident(msg)
@@ -472,9 +602,16 @@ def test_the_prompt_fences_the_message_and_states_the_no_rules(model):
     assert f"<<<VISITOR MESSAGE>>>\n{msg}\n<<<END VISITOR MESSAGE>>>" in prompt
     for phrase in (
         "REPORTING a security incident",
+        "Files, systems or accounts locked or encrypted by an attacker, or held for ransom",
+        "Signs that someone else controls or uses their accounts, systems, money or data: payments, messages, "
+        "posts, logins or changes they did not make",
+        "their company, their employer, or a client they support as an agency or IT provider",
         '"what if we get hacked"',
         '"we were hacked last year and now want a pentest"',
-        "a vendor, a competitor, or a client they serve",
+        "About an incident at a vendor or a competitor, or one in the news",
+        'The visitor describing their own services ("we help companies that got hacked")',
+        "Locked out after forgetting a password, or other ordinary account problems with no sign of someone else "
+        "involved",
         "a late order, a booking, a deadline or a quote",
         "a flood or a medical problem",
         'A figurative "attack"',
@@ -569,6 +706,30 @@ _ADVERSARIAL_SEEDS = [
     "urgent help with ",
     "for malware on our ",
     "our vendor was hacked last year, if we are breached ",
+    # Tokens of the symptom families, and word-dense text that puts a word
+    # boundary at almost every position.
+    "a b ",
+    "1,",
+    "someone is using ",
+    "a fired employee ",
+    "we did not ",
+    "we didnt make ",
+    "we never did ",
+    "not us ",
+    "not by us ",
+    "without our ",
+    "nobody ",
+    "pay bitcoin ",
+    "or lose ",
+    "5 btc ",
+    "our data is ",
+    "files won't open ",
+    "redirects to ",
+    "count down ",
+    "thousands of ",
+    "password was ",
+    "strange admin ",
+    "logins from ",
 ]
 
 
