@@ -68,8 +68,10 @@ export const HANDOFF_INVITATION_TAIL_RE =
 // after the visitor decides on (or skips) the quote.
 export const TRAILING_QUESTION_TAIL_RE = /\s*[^.!?\n]*\?\s*$/;
 
-// Strip trailing orphaned markdown tokens that ReactMarkdown would render as
-// raw text, e.g. a stream interrupted mid-bold: "Here is **important" → "Here is"
+// Strip a trailing orphaned markdown token that ReactMarkdown would render as
+// raw text, e.g. a stream interrupted right after opening a bold span:
+// "Here is the answer **" → "Here is the answer". Only the final token goes;
+// "Here is **important" is left alone, the text after the opener is content.
 export const sanitizeMarkdown = (text) => {
     if (!text) return text;
     return text

@@ -265,7 +265,7 @@ function BehaviourContent({
  */
 export function BehaviourPage() {
   const { agent, loading, error, refresh } = useAgent();
-  const { hasFeature, loading: entitlementsLoading } = useEntitlements();
+  const { loading: entitlementsLoading } = useEntitlements();
 
   if (entitlementsLoading || (loading && !agent)) return <BehaviourSkeleton />;
 
@@ -287,13 +287,21 @@ export function BehaviourPage() {
     );
   }
 
+  // THIS agent's plan decides everything below, never the workspace's.
+  // `get_bot_settings_public` resolves live chat with
+  // `get_bot_entitlements(bot.id).has_feature("live_chat")`, and of the seeded
+  // plans only Free lacks that feature (`seed_plans.py`). The console only
+  // knows the agent's slug, so "not Free" is the per-bot rule it can apply,
+  // and an agent still resolving its plan fails closed.
+  const agentOnFree = (agent.plan_slug ?? 'free') === 'free';
+
   return (
     <BehaviourContent
       key={agent.id}
       agentId={agent.id}
       agentName={agent.name}
-      liveChatAllowed={hasFeature('live_chat')}
-      agentOnFree={(agent?.plan_slug ?? 'free') === 'free'}
+      liveChatAllowed={!agentOnFree}
+      agentOnFree={agentOnFree}
     />
   );
 }

@@ -49,7 +49,11 @@ test('FALLBACK_PATTERNS is the regex that actually ran', () => {
 });
 
 test('sanitizeMarkdown: strips the token a cut-off stream leaves behind', () => {
-    assert.equal(sanitizeMarkdown('Here is **important'), 'Here is **important'.replace(/\*{1,2}$/, '').trim());
+    // Only a TRAILING token is orphaned. A stream cut mid-word keeps the
+    // opener, because the text after it is still real content.
+    assert.equal(sanitizeMarkdown('Here is **important'), 'Here is **important');
+    assert.equal(sanitizeMarkdown('Here is the answer **'), 'Here is the answer');
+    assert.equal(sanitizeMarkdown('Here is *'), 'Here is');
     assert.equal(sanitizeMarkdown('Here is the answer**'), 'Here is the answer');
     assert.equal(sanitizeMarkdown('emphasis_'), 'emphasis');
     assert.equal(sanitizeMarkdown('code`'), 'code');

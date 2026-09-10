@@ -8,10 +8,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
   EMAIL_VERIFICATION_SLUGS,
+  QUOTATION_SLUGS,
   SEEDED_PLAN_SLUGS,
   VISITOR_INTELLIGENCE_SLUGS,
   planIncludes,
   planIncludesEmailVerification,
+  planIncludesQuotations,
   planIncludesVisitorIntelligence,
 } from './planGates';
 
@@ -52,6 +54,36 @@ describe('the seeded Enterprise tier', () => {
   it('gets both enrichments by ladder membership', () => {
     expect(planIncludesEmailVerification('enterprise')).toBe(true);
     expect(planIncludesVisitorIntelligence('enterprise')).toBe(true);
+  });
+});
+
+describe('the seeded trial tier', () => {
+  /* `seed_plans.py` writes a non-public `trial` row, and the server's
+     `_SEEDED_PLAN_SLUGS` lists it. The console left it out, so it was read as
+     a bespoke deal and handed every paid feature by rule 2. The outcome was
+     right by accident: the server names `trial` in every ladder, so it must
+     be granted by ladder membership here too, or registering it as seeded
+     would silently revoke it. */
+  it('is registered as a seeded tier, not read as bespoke', () => {
+    expect(SEEDED_PLAN_SLUGS.has('trial')).toBe(true);
+  });
+
+  it('is named in every ladder the server names it in', () => {
+    const ladders: ReadonlySet<string>[] = [
+      EMAIL_VERIFICATION_SLUGS,
+      VISITOR_INTELLIGENCE_SLUGS,
+      QUOTATION_SLUGS,
+    ];
+    for (const ladder of ladders) {
+      expect(ladder.has('trial')).toBe(true);
+      expect(planIncludes('trial', ladder)).toBe(true);
+    }
+  });
+
+  it('gets every gated feature by ladder membership', () => {
+    expect(planIncludesEmailVerification('trial')).toBe(true);
+    expect(planIncludesVisitorIntelligence('trial')).toBe(true);
+    expect(planIncludesQuotations('trial')).toBe(true);
   });
 });
 

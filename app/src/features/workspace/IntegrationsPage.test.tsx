@@ -25,8 +25,8 @@ const api = vi.hoisted(() => ({
 vi.mock('../../services/api', () => api);
 
 const bots = vi.hoisted(() => ({
-  bots: [{ id: 1, name: 'Acme Support' }] as Record<string, unknown>[],
-  selectedBot: { id: 1, name: 'Acme Support' } as Record<string, unknown> | null,
+  bots: [{ id: 1, name: 'Acme Support', plan_slug: 'professional' }] as Record<string, unknown>[],
+  selectedBot: { id: 1, name: 'Acme Support', plan_slug: 'professional' } as Record<string, unknown> | null,
   loading: false,
   error: null as { message: string } | null,
   refreshBots: vi.fn(),
@@ -36,6 +36,7 @@ vi.mock('../../context/BotContext', () => ({ useBotContext: () => bots }));
 const entitlements = vi.hoisted(() => ({
   hasFeature: ((_key: string) => true) as (key: string) => boolean,
   entitlements: { features: { integrations: 'all' as 'all' | 'reply_to_only' } },
+  isFree: false,
 }));
 vi.mock('../../hooks/useEntitlements', () => ({ useEntitlements: () => entitlements }));
 
@@ -64,12 +65,13 @@ function renderPage(entry = '/settings/integrations') {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  bots.bots = [{ id: 1, name: 'Acme Support' }];
-  bots.selectedBot = { id: 1, name: 'Acme Support' };
+  bots.bots = [{ id: 1, name: 'Acme Support', plan_slug: 'professional' }];
+  bots.selectedBot = { id: 1, name: 'Acme Support', plan_slug: 'professional' };
   bots.loading = false;
   bots.error = null;
   entitlements.hasFeature = () => true;
   entitlements.entitlements = { features: { integrations: 'all' } };
+  entitlements.isFree = false;
   api.getWebhooks.mockResolvedValue([
     { id: 4, url: 'https://hooks.example.com/x', events: ['tier_transition'], is_active: true },
   ]);
@@ -111,6 +113,37 @@ describe('IntegrationsPage — the four states', () => {
     entitlements.hasFeature = (key: string) => key !== 'webhooks';
     renderPage();
     expect(await screen.findByText('Addresses')).toBeInTheDocument();
+  });
+});
+
+describe('IntegrationsPage — the bot decides the meeting and email gates', () => {
+  /* Billing attaches to the Bot. The runtime resolves meeting booking per bot
+     (`is_meeting_booking_enabled_for_bot` is `plan_slug != "free"` for THAT
+     bot), so a Free bot inside a paid workspace never serves a booking card.
+     The panel gated on the workspace plan, so that customer could configure a
+     link the widget then ignored, and a paid bot in a Free workspace saw an
+     upsell for a feature it already had. */
+  it('locks meetings for a Free bot even when the workspace is paid', async () => {
+    bots.bots = [{ id: 1, name: 'Acme Support', plan_slug: 'free' }];
+    bots.selectedBot = bots.bots[0];
+    entitlements.isFree = false;
+    renderPage('/settings/integrations?tab=meetings');
+    expect(await screen.findByText('Meeting booking is not on your plan')).toBeInTheDocument();
+  });
+
+  it('unlocks meetings for a paid bot even when the workspace is Free', async () => {
+    entitlements.isFree = true;
+    renderPage('/settings/integrations?tab=meetings');
+    expect(await screen.findByRole('heading', { name: 'Meeting booking' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Offer a booking link')).toBeInTheDocument();
+    expect(screen.queryByText('Meeting booking is not on your plan')).not.toBeInTheDocument();
+  });
+
+  it('fails closed when the bot has not resolved its plan', async () => {
+    bots.bots = [{ id: 1, name: 'Acme Support' }];
+    bots.selectedBot = bots.bots[0];
+    renderPage('/settings/integrations?tab=email');
+    expect(await screen.findByText('Email notifications are not on your plan')).toBeInTheDocument();
   });
 });
 

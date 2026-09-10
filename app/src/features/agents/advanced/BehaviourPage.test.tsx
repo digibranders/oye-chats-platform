@@ -150,12 +150,26 @@ describe('the four states', () => {
     expect(screen.getByRole('radiogroup', { name: 'Answering strictness' })).toBeInTheDocument();
   });
 
-  it('states the plan on the operator window when there is no live chat', async () => {
-    mountEntitlements({ hasFeature: (key) => key !== 'live_chat' });
+  it('states the plan on the operator window when THIS agent has no live chat', async () => {
+    /* `get_bot_settings_public` resolves live chat from the agent's own plan
+       (`get_bot_entitlements(bot.id)`), and only the Free plan excludes it.
+       A Free agent inside a paid workspace has no operator window, whatever
+       the workspace's feature map says. */
+    mountAgent({ ...agent, plan_slug: 'free' });
+    mountEntitlements({ hasFeature: () => true });
     await renderSettled();
 
     expect(screen.getByText(/Live chat is not included/i)).toBeInTheDocument();
     expect(screen.queryByLabelText(/Time to accept/)).not.toBeInTheDocument();
+  });
+
+  it('offers the operator window to a paid agent inside a Free workspace', async () => {
+    mountAgent({ ...agent, plan_slug: 'professional' });
+    mountEntitlements({ isFree: true, hasFeature: () => false });
+    await renderSettled();
+
+    expect(screen.queryByText(/Live chat is not included/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/Time to accept/)).toBeInTheDocument();
   });
 });
 
@@ -229,7 +243,8 @@ describe('widget behaviour', () => {
   });
 
   it('marks queue position as having no effect without live chat', async () => {
-    mountEntitlements({ hasFeature: (key) => key !== 'live_chat' });
+    mountAgent({ ...agent, plan_slug: 'free' });
+    mountEntitlements({ hasFeature: () => true });
     await renderSettled();
 
     expect(screen.getByText(/no queue without live chat/i)).toBeInTheDocument();

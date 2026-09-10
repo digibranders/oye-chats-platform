@@ -390,12 +390,20 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
     // shows a stale "are you sure?" row. This was an effect keyed on the open
     // flag: a render-cycle late, and a cascading render for something that is
     // simply part of closing.
+    // Updaters must be pure: React may call one twice in StrictMode and never
+    // expects a second setState from inside it. The confirmation is cleared in
+    // this callback body instead, in the same batch as the open flag. Clearing
+    // it on every functional update is harmless (an open drawer with a null
+    // confirmation is just the drawer's initial state) and keeps the invariant
+    // without reading state the updater is only allowed to compute from.
     const setShowSessionMenu = useCallback((next) => {
-        setShowSessionMenuRaw((prev) => {
-            const value = typeof next === 'function' ? next(prev) : next;
-            if (!value) setConfirmDeleteId(null);
-            return value;
-        });
+        if (typeof next === 'function') {
+            setShowSessionMenuRaw(next);
+            setConfirmDeleteId(null);
+            return;
+        }
+        setShowSessionMenuRaw(next);
+        if (!next) setConfirmDeleteId(null);
     }, []);
     const cancelDeleteSession = useCallback(() => setConfirmDeleteId(null), []);
     const armDeleteSession = useCallback((sid, e) => {
