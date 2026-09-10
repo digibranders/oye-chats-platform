@@ -5144,7 +5144,7 @@ def _last_bot_offered_handoff(history: list) -> bool:
 
 #: Intents whose "answer" is pure social reflex, so replaying them after the
 #: name gate would just greet the visitor twice.
-_SOCIAL_INTENTS = frozenset({"greeting", "ack", "neg_ack"})
+_SOCIAL_INTENTS = frozenset({"greeting", "ack", "neg_ack", "how_are_you", "compliment", "abuse", "unclear"})
 
 
 def _deferred_is_worth_replaying(deferred: str, company_name: str | None) -> bool:

@@ -116,6 +116,8 @@ _IS_AI_RE = re.compile(
     r"|(?:am|are)\s+i\s+(?:talking\s+to|chatting\s+with)\s+(?:a\s+)?(?:human|person|bot|ai|robot)"
     r"|is\s+this\s+(?:a\s+)?(?:bot|ai|chatbot|human|real)"
     r"|are\s+you\s+(?:a\s+)?(?:real|live)\s+(?:person|human|agent)"
+    # typos: "re you a human", "r u a bot", "are u human"
+    r"|(?:r|re|ar|are)\s+(?:you|u|yu)\s+(?:an?\s+)?(?:ai|bot|robot|chatbot|human|real\s+(?:person|human))"
     r")\b"
 )
 
@@ -165,6 +167,55 @@ _REMEMBER_RE = re.compile(
     r")\b"
 )
 
+# Small talk / social reflexes the knowledge base can never answer. Whole-message
+# matches only, so a real question that happens to contain one of these words
+# still reaches retrieval ("how are your SOC services priced" is not a greeting).
+_HOW_ARE_YOU_RE = re.compile(
+    r"^(?:(?:hi|hey|hello)\s+)?(?:how\s+(?:are|r)\s+(?:you|u)(?:\s+doing)?(?:\s+today)?"
+    r"|how'?s\s+it\s+going|how\s+do\s+you\s+do)$"
+)
+_COMPLIMENT_RE = re.compile(
+    r"^(?:you(?:'re|\s+are)\s+(?:a\s+)?(?:good|great|nice|helpful|smart|awesome|amazing|cool)"
+    r"(?:\s+(?:bot|assistant|chatbot))?"
+    r"|(?:good|great|nice)\s+(?:bot|job|work)"
+    r"|(?:this|that)\s+(?:is|was)\s+(?:helpful|great|awesome|useful))$"
+)
+_FRUSTRATION_RE = re.compile(
+    r"^(?:non\s?sense|useless|not\s+helpful|wtf"
+    r"|you(?:'re|\s+are)\s+(?:useless|stupid|dumb|wrong|not\s+helpful|no\s+help)"
+    r"|this\s+is\s+(?:useless|stupid|nonsense|not\s+helpful))$"
+)
+# Directed abuse, whole message only. An unanchored word search would swallow
+# real questions that merely contain a swear word ("what the fuck is your
+# pricing"), so every branch below matches the full normalised message, not a
+# substring. Linear: no nested unbounded quantifiers, just bounded repeats.
+_ABUSE_RE = re.compile(
+    r"^(?:"
+    r"f\*+\s*(?:off|you|u)?"
+    r"|f+u+c+k+\s*(?:off|you|u|this(?:\s+bot)?)?"
+    r"|f\s*u"
+    r"|screw\s+you"
+    r"|shut\s+up"
+    r"|go\s+to\s+hell"
+    r"|you(?:'re|\s+are)\s+an?\s+idiot"
+    r"|idiot\s+bot"
+    r"|this\s+bot\s+is\s+shit"
+    r"|shit\s+bot"
+    r"|asshole"
+    r"|bitch"
+    r"|bastard"
+    r")$"
+)
+# Gibberish / too-short-to-mean-anything. A lone letter, a run of 6+ consonants
+# with no vowel, or a keyboard-mash substring (adjacent-key runs).
+_UNCLEAR_RE = re.compile(
+    r"^(?:[a-z]|[b-df-hj-np-tv-z]{6,}"
+    r"|[a-z]*(?:asdf|sdfg|dfgh|fghj|ghjk|hjkl|qwer|wert|erty|rtyu|tyui|yuio|uiop|zxcv)[a-z]*)$"
+)
+_NAME_RECALL_RE = re.compile(
+    r"^(?:what(?:'s|\s+is)\s+my\s+name|do\s+you\s+(?:know|remember)\s+my\s+name|who\s+am\s+i)$"
+)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Response shape
 # ─────────────────────────────────────────────────────────────────────────────
@@ -180,7 +231,8 @@ class IntentResponse:
         The text to return verbatim.
     intent
         Short label (greeting | ack | neg_ack | is_ai | bot_name | who_made_you
-        | recorded | remember). Used for logs/metrics, not shown to visitor.
+        | recorded | remember | how_are_you | compliment | frustration | abuse
+        | unclear | name_recall). Used for logs/metrics, not shown to visitor.
     """
 
     answer: str
@@ -217,6 +269,7 @@ def route_intent(
     *,
     support_enabled: bool = True,
     platform_branded: bool = True,
+    visitor_name: str | None = None,
 ) -> IntentResponse | None:
     """Match ``question`` against deterministic intent rules.
 
@@ -228,7 +281,8 @@ def route_intent(
     offers a human path (live chat or offline message): the identity replies
     only offer to connect the visitor when it does. ``platform_branded`` is
     False for a workspace that bought branding removal, whose canned replies
-    must not name the platform.
+    must not name the platform. ``visitor_name`` is the visitor's known name,
+    if any; it is used only by the name-recall route ("what's my name?").
     """
     if not question or not isinstance(question, str):
         return None
@@ -270,6 +324,28 @@ def route_intent(
             return _who_made_you(company_name, platform_branded)
         if _BOT_NAME_RE.search(norm):
             return _bot_name(company_name)
+
+    # 2b) Conversation about the conversation. Whole-message matches only, so a
+    #     real question that contains these words still reaches retrieval.
+    if (
+        word_count == 1
+        and _UNCLEAR_RE.match(norm)
+        and norm not in _GREETING_TERMS
+        and norm not in _ACK_TERMS
+        and norm not in _NEG_ACK_TERMS
+    ):
+        return _unclear(company_name)
+    if word_count <= 8:
+        if _NAME_RECALL_RE.match(norm):
+            return _name_recall(company_name, visitor_name)
+        if _HOW_ARE_YOU_RE.match(norm):
+            return _how_are_you(company_name)
+        if _COMPLIMENT_RE.match(norm):
+            return _compliment(company_name)
+        if _FRUSTRATION_RE.match(norm):
+            return _frustration(company_name, support_enabled)
+        if _ABUSE_RE.match(norm):
+            return _abuse(company_name)
 
     # 3) Greetings. Only if the WHOLE message is a greeting term
     if word_count <= 4 and norm in _GREETING_TERMS:
@@ -399,3 +475,53 @@ def _remember(company_name: str | None) -> IntentResponse:
         ),
         intent="remember",
     )
+
+
+def _how_are_you(company_name: str | None) -> IntentResponse:
+    return IntentResponse(
+        answer=f"Doing well, thanks for asking. What can I help you with at {_co(company_name)}?",
+        intent="how_are_you",
+    )
+
+
+def _compliment(company_name: str | None) -> IntentResponse:
+    return IntentResponse(
+        answer=f"Thank you, that's kind. Anything else I can help with at {_co(company_name)}?",
+        intent="compliment",
+    )
+
+
+def _frustration(company_name: str | None, support_enabled: bool = True) -> IntentResponse:
+    # The human-handoff offer is a plan entitlement, not a platform fact: a bot
+    # with no live-chat or offline-message path must not dangle one.
+    offer = " or I can connect you with the team" if support_enabled else ""
+    return IntentResponse(
+        answer=f"Sorry that wasn't helpful. Tell me what you're looking for and I'll try again{offer}.",
+        intent="frustration",
+    )
+
+
+def _abuse(company_name: str | None) -> IntentResponse:
+    return IntentResponse(
+        answer=f"I'm here to help with anything about {_co(company_name)} whenever you're ready.",
+        intent="abuse",
+    )
+
+
+def _unclear(company_name: str | None) -> IntentResponse:
+    return IntentResponse(
+        answer=(
+            f"Could you say a bit more about what you're looking for? "
+            f"I can help with {_co(company_name)}'s services, pricing or getting in touch."
+        ),
+        intent="unclear",
+    )
+
+
+def _name_recall(company_name: str | None, visitor_name: str | None) -> IntentResponse:
+    name = " ".join(str(visitor_name).split())[:40] if visitor_name else ""
+    if name:
+        answer = f"You're {name}. What can I help you with at {_co(company_name)}?"
+    else:
+        answer = "I don't know your name yet. You can tell me anytime."
+    return IntentResponse(answer=answer, intent="name_recall")
