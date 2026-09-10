@@ -331,7 +331,7 @@ test.describe('Phase 5A - the working language is a property of the operator', (
     await availability.click();
     await expect(availability).not.toBeChecked();
 
-    const picker = page.getByRole('combobox', { name: 'Read live chat in' });
+    const picker = page.getByRole('combobox', { name: 'Translate to' });
     await expect(picker).toHaveText(/English \(India\)/, { timeout: 20_000 });
     await expect(page.getByRole('button', { name: /translated into English/i })).toBeVisible();
     await expect(page.getByRole('button', { name: /language they were written in/i })).toHaveCount(0);
@@ -350,7 +350,7 @@ test.describe('Phase 5A - the working language is a property of the operator', (
     await expect(availability).toBeChecked();
     await availability.click();
     await expect(availability).not.toBeChecked();
-    const picker = page.getByRole('combobox', { name: 'Read live chat in' });
+    const picker = page.getByRole('combobox', { name: 'Translate to' });
     await expect(picker).toHaveText(/Do not translate/, { timeout: 20_000 });
     await expect(page.getByRole('button', { name: /language they were written in/i })).toBeVisible();
   });
@@ -360,7 +360,7 @@ test.describe('Phase 5A - the working language is a property of the operator', (
     await mockBackend(page, { history: [], operatorLocale: 'en-IN', online: false });
     await page.goto('/inbox?view=yours');
 
-    const picker = page.getByRole('combobox', { name: 'Read live chat in' });
+    const picker = page.getByRole('combobox', { name: 'Translate to' });
     await picker.click();
     // Scoped to the picker's own popup. A bare `getByRole('option')` also
     // matched the conversation rows, which are options in the list's listbox —

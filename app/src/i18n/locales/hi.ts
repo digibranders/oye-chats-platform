@@ -865,7 +865,7 @@ const hi = {
     replyOpened: 'जवाब खोला गया',
     reYourMessage: 'Re: आपका संदेश',
     read: 'पढ़ा गया',
-    readLiveChatIn: 'लाइव चैट इसमें पढ़ें',
+    translateTo: 'इसमें अनुवाद करें',
     readWhatTheyHaveAlready: 'बातचीत लेने से पहले पढ़ें कि वे पहले ही क्या कह चुके हैं; आपके स्वीकार करने तक वे AI के साथ ही हैं।',
     received: 'प्राप्त',
     reconnectingYourReplyWillNot: 'फिर से जुड़ा जा रहा है; कनेक्शन लौटने तक आपका उत्तर नहीं भेजा जाएगा।',
