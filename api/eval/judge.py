@@ -129,6 +129,41 @@ def fact_coverage(verdict: JudgeVerdict, case: GoldenCase) -> float | None:
     return len(verdict.facts_covered) / len(case.expected_facts)
 
 
+def assert_verdict(case: GoldenCase, answer: str) -> JudgeVerdict:
+    """Grade a deterministic case by assertion instead of by model.
+
+    A case with ``must_contain`` is one whose reply the platform writes
+    verbatim: ``intent_router`` answers "are you a human", "who made you" and
+    "is this recorded" with fixed strings and no retrieval. Grading a constant
+    with an LLM produced a grade that moved on its own, so these are matched
+    instead.
+
+    Matching collapses whitespace and ignores case, so re-wrapping a line does
+    not fail the case, but changing what it SAYS does. That is the point: if
+    someone edits the canned identity reply, this should go red.
+
+    The result is a real :class:`JudgeVerdict` so every downstream consumer,
+    the pass rule, the aggregate and the report, is unchanged.
+    """
+    haystack = _normalise_text(answer)
+    missing = [needle for needle in case.must_contain if _normalise_text(needle) not in haystack]
+    if missing:
+        return JudgeVerdict(
+            grounded=0.0,
+            refusal_correct=False,
+            facts_covered=[],
+            fabricated=[],
+            notes="asserted: the answer is missing " + "; ".join(f"{m!r}" for m in missing),
+        )
+    return JudgeVerdict(
+        grounded=1.0,
+        refusal_correct=True,
+        facts_covered=list(case.expected_facts),
+        fabricated=[],
+        notes=f"asserted: the answer contains all {len(case.must_contain)} required phrase(s)",
+    )
+
+
 def case_passed(verdict: JudgeVerdict, threshold: float = GROUNDED_PASS_THRESHOLD) -> bool:
     """The pass rule: the refusal decision was right AND the answer is grounded enough."""
     return verdict.refusal_correct and verdict.grounded >= threshold
@@ -160,6 +195,25 @@ Respond with only the JSON object."""
 def _bullets(items: Iterable[str], empty: str) -> str:
     lines = [f"- {item}" for item in items]
     return "\n".join(lines) if lines else empty
+
+
+#: Judges do not sample. See ``judge_answer``.
+_JUDGE_TEMPERATURE = 0
+
+#: Models that reject any temperature but 1. LiteLLM surfaces this as
+#: ``UnsupportedParamsError: gpt-5 models (including gpt-5-codex) don't support
+#: temperature=0. Only temperature=1 is supported``.
+#:
+#: The whole gpt-5 family is treated this way, 5.4 included, deliberately. The
+#: product never hits it because ``app.main`` sets ``litellm.drop_params``, so
+#: an unsupported parameter is silently discarded there. A measurement tool
+#: should not silently discard parameters, so this names the family instead and
+#: errs on the side of not sending one.
+_TEMPERATURE_REJECTING_RE = re.compile(r"(?i)(?:^|/)gpt-5")
+
+
+def _rejects_temperature(model: str) -> bool:
+    return bool(_TEMPERATURE_REJECTING_RE.search(model or ""))
 
 
 def build_judge_messages(case: GoldenCase, answer: str, reference_text: str | None = None) -> list[dict[str, str]]:
@@ -223,8 +277,27 @@ def judge_answer(
         "max_tokens": JUDGE_MAX_TOKENS,
         "response_format": _response_format(),
         "timeout": timeout,
+        # A sampling judge is not a measurement. Without this the judge ran at
+        # the provider default (1.0 for Gemini) and graded the SAME answer
+        # differently between runs: on two consecutive runs against one
+        # deployed build, a byte-identical reply scored 1.00 then 0.00, and a
+        # cached answer scored 1.00 then 0.67 against a 0.70 pass threshold.
+        # Two cases moved for no reason but the dice, which is enough to swing
+        # a 40-case run by five points.
+        #
+        # ``relevance_gate`` and ``groundedness_gate`` both already pin this,
+        # for the same reason and after the same symptom. The eval, the thing
+        # that is supposed to tell us whether they work, was the last judge on
+        # the platform still sampling.
+        "temperature": _JUDGE_TEMPERATURE,
     }
     _apply_model_family_kwargs(kwargs, model)
+    if _rejects_temperature(model):
+        # The gpt-5 family accepts only temperature=1 and errors on anything
+        # else, so asking for 0 there fails the call outright. Those models are
+        # run with reasoning disabled by the call above, which is the closest
+        # to deterministic they offer.
+        kwargs.pop("temperature", None)
 
     last_error: Exception | None = None
     for attempt in range(1, _JUDGE_ATTEMPTS + 1):

@@ -1122,7 +1122,9 @@ def _card_already_shown(chat_session, card_key: str) -> bool:
     """Return True if `card_key` has already been surfaced for this session.
 
     Reads ChatSession.inline_cards_shown JSONB. `card_key` values in use:
-    'leave_message', 'meeting', 'team_connect'.
+    'leave_message', 'meeting', 'team_connect', and 'pricing_escalated' (not a
+    card: set when the pricing gate has already escalated this session, so a
+    second ask is not answered with the same words and a second form).
     """
     if chat_session is None:
         return False
@@ -4991,6 +4993,35 @@ def _last_bot_offered_handoff(history: list) -> bool:
     return False
 
 
+#: Intents whose "answer" is pure social reflex, so replaying them after the
+#: name gate would just greet the visitor twice.
+_SOCIAL_INTENTS = frozenset({"greeting", "ack", "neg_ack"})
+
+
+def _deferred_is_worth_replaying(deferred: str, company_name: str | None) -> bool:
+    """True when a question held behind the name gate still deserves an answer.
+
+    The guard here used to be ``route_intent(deferred) is None``, meaning "the
+    router cannot handle it". The comment beside it said the point was to skip
+    a deferred GREETING, and for a greeting that is right: replaying "hi" after
+    "Nice to meet you, Eva!" greets them twice.
+
+    But the router answers eight intents, not three. The other five are real
+    questions: "are you a human", "who made you", "what's your name", "is this
+    conversation recorded", "do you remember me". Treating those as nothing to
+    replay meant the visitor asked one, was asked for their name, gave it, and
+    got "Nice to meet you, Eva! What would you like to know?" while their
+    actual question was dropped on the floor. Caught by the eval on 2026-09-10,
+    where three trust cases had been passing on a grader lenient enough to call
+    that a correct answer.
+
+    A replayed question flows through the pipeline normally, so a router intent
+    still gets its canned reply; it just gets one.
+    """
+    routed = route_intent(deferred, company_name)
+    return routed is None or routed.intent not in _SOCIAL_INTENTS
+
+
 def _recover_deferred_question(history: list) -> str | None:
     """The visitor's original question: the last USER message BEFORE the most
     recent bot "what's your name" turn (history is chronological, oldest first)."""
@@ -5042,7 +5073,7 @@ def resolve_name_flow(session, session_id, bot_id, client_id, question, company_
                 # falls through to the plain rename return.
                 if known is None:
                     deferred = _recover_deferred_question(history)
-                    if deferred and route_intent(deferred, company_name) is None:
+                    if deferred and _deferred_is_worth_replaying(deferred, company_name):
                         return (None, deferred, renamed, True)
                 return (None, None, renamed, True)
 
@@ -5068,7 +5099,7 @@ def resolve_name_flow(session, session_id, bot_id, client_id, question, company_
             # Only re-answer a genuine deferred question. If the original message
             # was itself a greeting/ack (intent router would handle it), let the
             # current turn flow normally so the visitor is simply greeted by name.
-            if deferred and route_intent(deferred, company_name) is None:
+            if deferred and _deferred_is_worth_replaying(deferred, company_name):
                 return (None, deferred, name, True)
             # Name-only reply (their whole message was the name; the deferred
             # item, if any, was a greeting the router already covers). Emit a
@@ -5083,7 +5114,7 @@ def resolve_name_flow(session, session_id, bot_id, client_id, question, company_
         # normally (topic change).
         if _is_name_decline(question):
             deferred = _recover_deferred_question(history)
-            if deferred and route_intent(deferred, company_name) is None:
+            if deferred and _deferred_is_worth_replaying(deferred, company_name):
                 return (None, deferred, None, False)
         return (None, None, None, False)
     except Exception:  # noqa: BLE001  Name flow is best-effort, never fatal
@@ -5676,10 +5707,16 @@ MEDIA CARDS:
     {YOUTUBE_CARD_SENTINEL_PREFIX}VIDEO_ID]      a YouTube thumbnail + title card
     {DOWNLOAD_CARD_SENTINEL_PREFIX}URL|FILENAME] a downloadable file card
 
-  WHEN: the visitor's question is about a subject the AVAILABLE MEDIA catalog
-  below covers, or they explicitly ask to see or download something. The id or
-  URL you emit MUST appear verbatim in that catalog. Never recall one from
-  memory.
+  WHEN: the visitor names a subject the AVAILABLE MEDIA catalog below covers,
+  OR asks to see or download something.
+
+  A topical question counts. They do not have to ask for a file. If they raise
+  a subject and the catalog has an asset on it, that is the moment: emit it.
+  Do NOT hold back waiting for a more explicit ask, and do not hold out for a
+  word-perfect title match. Lean toward emitting on a reasonable one.
+
+  The id or URL you emit MUST appear verbatim in that catalog. Never recall one
+  from memory.
 
   SHAPE (all three parts, in this order, nothing between them):
     one sentence naming what the thing is, ending in a full stop
@@ -5697,8 +5734,13 @@ MEDIA CARDS:
     - asking whether the visitor wants it ("would you like the video?"). The
       card is the offer. Emit it or do not.
     - naming a specific asset while deflecting a question you cannot answer
-    - a card on a refusal, a greeting, or a plain factual answer (hours, price,
-      address). Those are text.
+    - a card on a refusal, a greeting, or a one-line factual lookup (hours,
+      price, address). Those are text. This is about lookups with no matching
+      asset, NOT about topical questions: "tell me about X" with an asset on X
+      gets the card.
+    - a card when the best asset is clearly about a different subject than the
+      one asked about. A weak but plausible overlap is fine to emit; the bar is
+      topical mismatch, not general uncertainty.
 
   The widget writes its own caption above every card, so do not write a lead-in
   sentence for it.
@@ -7909,12 +7951,18 @@ async def rag_pipeline_stream(
                     session=session_id,
                     bot_id=bid,
                 )
+                # A second pricing ask in the same session gets different words and
+                # no second form. Keyed on the session rather than read back out of
+                # the transcript, so a name prefix, a language or an operator turn
+                # in between cannot make a repeat look like a first ask.
+                _pricing_repeat = _card_already_shown(chat_session, "pricing_escalated")
                 _pivot = _pricing_gate.pricing_pivot(
                     company_name=_company_name,
                     pricing_url=getattr(bot, "pricing_url", None) if bot else None,
                     support_enabled=_plan_support_allowed,
                     live_chat_enabled=live_chat_on,
                     contact_url=_contact_url,
+                    repeat=_pricing_repeat,
                 )
                 _pivot_text = (
                     _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + _pivot.text
@@ -7947,6 +7995,7 @@ async def rag_pipeline_stream(
                 if _pivot.needs_message_card:
                     _pivot_meta["show_leave_message"] = True
                     _mark_card_shown(chat_session, "leave_message")
+                _mark_card_shown(chat_session, "pricing_escalated")
                 session.commit()
                 yield f"\nFINAL_METADATA:{json.dumps(_pivot_meta)}\n"
                 return

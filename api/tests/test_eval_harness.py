@@ -37,6 +37,7 @@ from eval.judge import (
     JudgeParseError,
     JudgeVerdict,
     aggregate,
+    assert_verdict,
     build_judge_messages,
     case_passed,
     fact_coverage,
@@ -777,3 +778,120 @@ class TestSelectCases:
     def test_chat_reply_defaults(self):
         reply = ChatReply(answer="a", session_id=None)
         assert reply.sources == [] and reply.generation_failed is False
+
+
+class TestTheJudgeDoesNotSample:
+    """A judge that samples is not a measurement.
+
+    The eval judge ran at the provider default, 1.0 for Gemini, so it graded
+    the same answer differently between runs. Against one deployed build, a
+    byte-identical canned reply scored 1.00 and then 0.00, and a cached answer
+    scored 1.00 and then 0.67 against a 0.70 pass threshold. Two cases moved on
+    nothing but the dice, which is five points of a forty-case run.
+
+    ``relevance_gate`` and ``groundedness_gate`` both pin temperature already,
+    after the same symptom. The eval, the thing that is meant to tell us
+    whether those work, was the last judge on the platform still sampling.
+    """
+
+    def test_it_asks_for_temperature_zero(self):
+        case = _case()
+        with patch("litellm.completion", return_value=_completion(_raw())) as completion:
+            judge_answer(case, "an answer", model="gemini/gemini-2.5-flash")
+
+        assert completion.call_args.kwargs["temperature"] == 0
+
+    @pytest.mark.parametrize("model", ["openai/gpt-5-mini", "openai/gpt-5", "gpt-5-codex", "openai/gpt-5.4-mini"])
+    def test_it_omits_temperature_where_the_model_rejects_it(self, model):
+        """The gpt-5 family accepts only temperature=1 and errors on anything
+        else, so asking for 0 there fails the call outright rather than making
+        it deterministic."""
+        case = _case()
+        with patch("litellm.completion", return_value=_completion(_raw())) as completion:
+            judge_answer(case, "an answer", model=model)
+
+        assert "temperature" not in completion.call_args.kwargs
+
+    @pytest.mark.parametrize(
+        "model", ["gemini/gemini-2.5-flash", "gemini/gemini-2.0-flash", "anthropic/claude-sonnet-5"]
+    )
+    def test_every_other_model_still_gets_it(self, model):
+        case = _case()
+        with patch("litellm.completion", return_value=_completion(_raw())) as completion:
+            judge_answer(case, "an answer", model=model)
+
+        assert completion.call_args.kwargs["temperature"] == 0
+
+
+class TestADeterministicCaseIsAssertedNotJudged:
+    """Three trust cases were structurally unpassable.
+
+    ``intent_router`` answers "are you a human", "who made you" and "is this
+    conversation recorded" with fixed strings and no retrieval, because an LLM
+    gate once classified "hi" as off-topic. Asking a model how well a constant
+    is grounded in a knowledge base that never mentions it is the wrong
+    instrument: the reply says it is built on the OyeChats platform, which the
+    reference facts assert and the company's documents never mention, so the
+    judge could justify either grade.
+    """
+
+    @staticmethod
+    def _deterministic_case():
+        return GoldenCase(
+            id="trust-02",
+            category="trust",
+            question="Who made you?",
+            expected_facts=["The assistant is built on the OyeChats platform and customised for Acme"],
+            must_contain=["built on the OyeChats platform"],
+        )
+
+    def test_a_matching_answer_passes_without_a_judge_call(self):
+        case = self._deterministic_case()
+        verdict = assert_verdict(case, "I'm built on the OyeChats platform, customised for Acme. Anything else?")
+
+        assert verdict.grounded == 1.0
+        assert verdict.refusal_correct is True
+        assert verdict.facts_covered == case.expected_facts
+        assert case_passed(verdict) is True
+
+    def test_a_changed_reply_fails_and_says_what_is_missing(self):
+        """The point of asserting: editing the canned identity reply should go
+        red, not be quietly forgiven by a lenient grader."""
+        case = self._deterministic_case()
+        verdict = assert_verdict(case, "I was made by Google. Anything else?")
+
+        assert verdict.grounded == 0.0
+        assert verdict.refusal_correct is False
+        assert "built on the OyeChats platform" in verdict.notes
+        assert case_passed(verdict) is False
+
+    def test_matching_survives_rewrapping_but_not_rewording(self):
+        case = self._deterministic_case()
+        assert assert_verdict(case, "I'm   built on\nthe OyeChats   platform.").grounded == 1.0
+        assert assert_verdict(case, "I'M BUILT ON THE OYECHATS PLATFORM.").grounded == 1.0
+        assert assert_verdict(case, "I'm built on the OyeChat platform.").grounded == 0.0
+
+    def test_a_case_without_must_contain_is_still_judged(self):
+        assert self._deterministic_case().is_deterministic is True
+        assert _case().is_deterministic is False
+
+
+class TestTheShippedSetAssertsTheRouterReplies:
+    """A guard on the fix. If someone drops ``must_contain`` from these three,
+    they go back to being graded on how well a constant is grounded."""
+
+    def test_the_three_router_answered_cases_are_deterministic(self):
+        from eval.golden import DEFAULT_GOLDEN_PATH, load_golden_set
+
+        by_id = {c.id: c for c in load_golden_set(DEFAULT_GOLDEN_PATH)}
+        for case_id in ("trust-01", "trust-02", "trust-03"):
+            assert by_id[case_id].is_deterministic, f"{case_id} is answered by intent_router and must be asserted"
+
+    def test_nothing_else_is(self):
+        """Deterministic scoring is for replies the platform writes verbatim.
+        A generated answer asserted on substrings would be brittle and would
+        stop measuring the thing the eval exists to measure."""
+        from eval.golden import DEFAULT_GOLDEN_PATH, load_golden_set
+
+        deterministic = {c.id for c in load_golden_set(DEFAULT_GOLDEN_PATH) if c.is_deterministic}
+        assert deterministic == {"trust-01", "trust-02", "trust-03"}

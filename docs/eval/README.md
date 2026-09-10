@@ -137,8 +137,39 @@ deductions land in that workspace like any visitor's. Set the bot's
 greeting and identity replies quote it), leave `domain_check_enabled` off or
 pass `--origin` with an allowed domain, and keep the knowledge base limited
 to the fixture documents so the judge's reference material matches what the
-bot retrieves. Re-run `--ingest-fixture` after editing a fixture document;
+bot retrieves.
+
+**Turn on Behaviour ▸ "Answer pricing from the knowledge base"**
+(`bots.pricing_from_knowledge_base`). It is off by default, and off is the
+right default: most bots would rather hand a pricing question to a human than
+have a model quote a figure. But `fixtures/acme/pricing.md` carries a real
+plan table, and four cases (`pricing-01`, `pricing-02`, `pricing-04`,
+`followup-02`) ask for a figure from it. With the toggle off the pricing gate
+correctly escalates instead, and those four fail for a configuration reason
+that has nothing to do with answer quality. That cost six points of a run on
+2026-09-10 before anyone noticed what it was. Re-run `--ingest-fixture` after editing a fixture document;
 uploads replace the existing chunks of a document with the same name.
+
+### When to assert instead of judge
+
+Some replies are not generated. `intent_router` answers "are you a human",
+"who made you" and "is this conversation recorded" with fixed strings and no
+retrieval, because an LLM gate once classified "hi" as off-topic.
+
+Grading a constant with a model is the wrong instrument, and it showed. On two
+consecutive runs against the same deployed build, the identical canned reply to
+"Who made you?" scored 1.00 and then 0.00. The reply says it is built on the
+OyeChats platform, which the reference facts assert and the company's own
+documents never mention, so the judge could justify either grade.
+
+`must_contain` asserts those cases instead. Matching collapses whitespace and
+ignores case, so re-wrapping a line is free while changing what it says turns
+the case red, which is exactly what a regression guard should do.
+
+Use it **only** where the platform owns the exact wording. Anything the model
+composes must still be judged: asserting substrings against a generated answer
+is brittle and stops measuring the thing this harness exists to measure. A test
+enforces that only the three router-answered cases use it.
 
 ## Adding cases
 
@@ -162,6 +193,7 @@ One JSON object per line in `golden_set.jsonl`:
 | `expected_facts` | 1–12 reference truths a correct answer conveys. Write them as **verifiable statements**, close to the source wording and including the specific number, date or name. Required unless `must_refuse`. |
 | `forbidden_claims` | 0–12 claims the answer must never assert. Name the failure you are guarding against ("Lists the March 2026 summit as upcoming"). |
 | `must_refuse` | `true` when the only correct behaviour is to decline, redirect or ignore the request. Such a case has no `expected_facts`. |
+| `must_contain` | 0–12 substrings the answer must contain, matched case-insensitively on collapsed whitespace. A case that sets this is **asserted, not judged**: the LLM judge is never called for it. See below. |
 
 Guidelines that keep the judge honest:
 

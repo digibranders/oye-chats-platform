@@ -271,6 +271,67 @@ _PRICE_IDIOM_RE = re.compile(
 )
 
 
+#: Long price words worth recognising through a single typo. Kept to words of
+#: six letters or more on purpose: one edit away from "price" are "pride",
+#: "prime" and "prize", and one edit from "cost" is "cast", all of which a
+#: visitor types about things that are not our rates. At seven letters the
+#: neighbourhood of "pricing" holds nothing a visitor plausibly means instead.
+_NEAR_MISS_PRICE_WORDS = frozenset({"pricing", "quotation", "pricelist"})
+_NEAR_MISS_MIN_LEN = 6
+_WORD_RE = re.compile(r"[a-z]+")
+
+
+def _within_one_edit(a: str, b: str) -> bool:
+    """True when ``a`` and ``b`` differ by at most one insertion, deletion,
+    substitution, or swap of two adjacent letters."""
+    if a == b:
+        return True
+    la, lb = len(a), len(b)
+    if abs(la - lb) > 1:
+        return False
+    if la == lb:
+        diffs = [i for i in range(la) if a[i] != b[i]]
+        if len(diffs) == 1:
+            return True
+        if len(diffs) == 2:
+            i, j = diffs
+            return j == i + 1 and a[i] == b[j] and a[j] == b[i]
+        return False
+    short, long_ = (a, b) if la < lb else (b, a)
+    i = j = 0
+    skipped = False
+    while i < len(short) and j < len(long_):
+        if short[i] == long_[j]:
+            i += 1
+            j += 1
+        elif skipped:
+            return False
+        else:
+            skipped = True
+            j += 1
+    return True
+
+
+def _has_near_miss_price_word(question: str) -> bool:
+    """True when the visitor typed one of the long price words with one typo.
+
+    The gate decides from the wording of the question, so it only ever fires on
+    words it recognises. On 2026-09-10 a visitor on a live bot typed "iwant to
+    know the soc pricng ?". "pricng" is not "pricing", the gate did not fire,
+    and the turn went to the general knowledge base, which answered with rate
+    figures. Two other visitors on the same bot spelled it correctly and were
+    handed to the team. Same intent, opposite behaviour, decided by one missing
+    letter, and it looked to the tester like the bot behaved differently on
+    different devices.
+    """
+    for word in _WORD_RE.findall(question.lower()):
+        if len(word) < _NEAR_MISS_MIN_LEN:
+            continue
+        if any(_within_one_edit(word, target) for target in _NEAR_MISS_PRICE_WORDS):
+            return True
+    return False
+
+
 def is_pricing_question(question: object) -> bool:
     """True when the visitor is asking what we charge.
 
@@ -292,6 +353,8 @@ def is_pricing_question(question: object) -> bool:
     if _PRICE_IDIOM_RE.search(question):
         return False
     if _PRICE_TOKENS_RE.search(question):
+        return True
+    if _has_near_miss_price_word(question):
         return True
     return bool(_CURRENCY_AMOUNT_RE.search(question) and _ASKING_US_RE.search(question))
 
@@ -546,8 +609,22 @@ def pricing_pivot(
     support_enabled: bool,
     live_chat_enabled: bool,
     contact_url: str | None = None,
+    repeat: bool = False,
 ) -> PricingPivot:
     """The reply for a pricing question the gate refuses to answer from the KB.
+
+    ``repeat`` is True when this session has already been given a pricing
+    escalation. Every branch used to return one fixed sentence, so a visitor who
+    asked twice got the same words twice and, on a paid plan, the "Talk to a
+    human" form a second time: reported from a live bot on 2026-09-10, where one
+    session received the identical escalation four minutes apart. It read as a
+    bot stuck in a loop.
+
+    A repeat gets different words that acknowledge the answer has not changed,
+    and it does NOT re-open the form or the message card, because the visitor
+    has already been offered one. The paid repeats keep an offer the pipeline's
+    ``_HANDOFF_OFFER_RE`` recognises, so a plain "yes" still routes straight into
+    the handoff. The first-time copy is unchanged.
 
     ``support_enabled`` is the PLAN half of the human-support gate (does this
     bot's plan include ``live_chat`` at all). On Free it is False, meaning there
@@ -602,6 +679,27 @@ def pricing_pivot(
     usable_contact_url = contact_url.strip() if isinstance(contact_url, str) and normalize_url(contact_url) else None
 
     if not support_enabled:
+        if repeat:
+            # Free has no in-chat channel on either ask, so the repeat carries
+            # the same pointer in new words, and still names no team and
+            # promises no follow-up.
+            if usable_url:
+                return PricingPivot(
+                    text=f"The pricing page is still the most reliable place for a figure from {cn}: {usable_url}",
+                    suggest_handoff=False,
+                    needs_message_card=False,
+                )
+            if usable_contact_url:
+                return PricingPivot(
+                    text=f"For a confirmed figure from {cn}, the contact page is still the way in: {usable_contact_url}",
+                    suggest_handoff=False,
+                    needs_message_card=False,
+                )
+            return PricingPivot(
+                text=f"I still can't confirm pricing for {cn}, sorry. Is there anything else about {cn} I can help with?",
+                suggest_handoff=False,
+                needs_message_card=False,
+            )
         if usable_url:
             return PricingPivot(
                 text=(
@@ -626,6 +724,29 @@ def pricing_pivot(
         return PricingPivot(
             text=(
                 f"I don't have pricing I can confirm for {cn}. Is there something else about {cn} I can help you with?"
+            ),
+            suggest_handoff=False,
+            needs_message_card=False,
+        )
+
+    if repeat:
+        # The form was already offered this session. Showing it again is half of
+        # what made the repeat read as a loop, so it is not re-opened; the offer
+        # stays in the words instead, phrased so a bare "yes" is still read as a
+        # handoff request by ``rag_service._last_bot_offered_handoff``.
+        if live_chat_enabled:
+            return PricingPivot(
+                text=(
+                    f"That one still sits with the team, since a figure for {cn} depends on your scope. "
+                    f"Just say yes and I'll connect you with them."
+                ),
+                suggest_handoff=False,
+                needs_message_card=False,
+            )
+        return PricingPivot(
+            text=(
+                f"That one still sits with the team, since a figure for {cn} depends on your scope. "
+                f"Say yes and you can leave a message for them."
             ),
             suggest_handoff=False,
             needs_message_card=False,
