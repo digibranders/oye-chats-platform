@@ -13,6 +13,7 @@ import {
     OFFLINE_POLL_INTERVAL_MS,
     OFFLINE_POLL_MAX_TICKS,
     relativeTimeLabel,
+    resolveEscape,
     sanitizeMarkdown,
     SYSTEM_MSG,
     TRAILING_QUESTION_TAIL_RE,
@@ -2760,15 +2761,24 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
     useEffect(() => {
         const handleKeyDown = (e) => {
             if (e.key !== 'Escape') return;
-            if (showTranscriptModal || showEndConfirm || showRating || showBooking
-                || showLanguageSelector || showHeaderMenu || showLeadForm) return;
+            const owner = resolveEscape({
+                drawerOpen: showSessionMenu,
+                overlayOpen: showTranscriptModal || showEndConfirm || showRating || showBooking
+                    || showLanguageSelector || showHeaderMenu || showLeadForm,
+            });
+            if (owner === 'overlay') return;
             e.stopPropagation();
+            if (owner === 'drawer') {
+                setShowSessionMenu(false);
+                return;
+            }
             handleHeaderClose();
         };
         document.addEventListener('keydown', handleKeyDown);
         return () => document.removeEventListener('keydown', handleKeyDown);
     }, [showTranscriptModal, showEndConfirm, showRating, showBooking,
-        showLanguageSelector, showHeaderMenu, showLeadForm, handleHeaderClose]);
+        showLanguageSelector, showHeaderMenu, showLeadForm, showSessionMenu,
+        setShowSessionMenu, handleHeaderClose]);
 
     // ── Header rendering ─────────────────────────────────────────────────────────
     // Waiting + live modes both keep the bot-mode date/time chrome so the

@@ -90,6 +90,18 @@ export const getInitials = (name) => {
 export const looksLikeEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
 /**
+ * Who owns an Escape press. A stacked overlay (modal, menu, picker) always
+ * owns it; the conversations drawer is next; the panel itself closes only
+ * when nothing sits on top of it. The drawer's own handler was lost in a
+ * refactor, so Escape inside it closed the whole widget mid-conversation.
+ */
+export const resolveEscape = ({ drawerOpen, overlayOpen }) => {
+    if (overlayOpen) return 'overlay';
+    if (drawerOpen) return 'drawer';
+    return 'panel';
+};
+
+/**
  * "Just now" / "5m ago" / "3h ago" / "2d ago" for the conversation-history
  * drawer. `translate` is the i18n lookup, passed in so this stays pure and so
  * a caller can test it without a locale bundle.

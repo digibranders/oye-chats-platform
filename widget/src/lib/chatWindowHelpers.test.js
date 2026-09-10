@@ -15,6 +15,7 @@ import {
     isSystemMessage,
     looksLikeEmail,
     relativeTimeLabel,
+    resolveEscape,
     sanitizeMarkdown,
     SYSTEM_MSG,
     TRAILING_QUESTION_TAIL_RE,
@@ -128,4 +129,17 @@ test('relativeTimeLabel falls back to English when the key is missing', () => {
     const now = 1_000_000_000_000;
     assert.equal(relativeTimeLabel(now - 5 * 60_000, t, now), '5m ago');
     assert.equal(relativeTimeLabel(now - 30_000, t, now), 'Just now');
+});
+
+test('escape closes the conversations drawer before it closes the panel', () => {
+    assert.equal(resolveEscape({ drawerOpen: true, overlayOpen: false }), 'drawer');
+    assert.equal(resolveEscape({ drawerOpen: true, overlayOpen: true }), 'overlay');
+});
+
+test('escape is owned by a stacked overlay when one is open', () => {
+    assert.equal(resolveEscape({ drawerOpen: false, overlayOpen: true }), 'overlay');
+});
+
+test('escape closes the panel only when nothing is stacked on it', () => {
+    assert.equal(resolveEscape({ drawerOpen: false, overlayOpen: false }), 'panel');
 });
