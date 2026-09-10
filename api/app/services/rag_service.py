@@ -8115,6 +8115,9 @@ async def rag_pipeline_stream(
                     live_chat_enabled=live_chat_on,
                     contact_url=_contact_url,
                     repeat=_pricing_repeat,
+                    # The chunks the gate judged, not the emptied escalation list:
+                    # the service is named only as the knowledge base spells it.
+                    subject=_pricing_gate.pricing_subject(_gate_question, _company_name, final_results),
                 )
                 _pivot_text = (
                     _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + _pivot.text

@@ -1850,3 +1850,54 @@ async def test_the_repeat_flag_is_per_conversation(
 
     assert fresh["meta"]["suggest_handoff"] is True
     assert "best confirmed by the team" in fresh["answer"]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# The escalation names what was asked. Every Eventus pricing escalation in two
+# weeks said "Pricing for Eventus Security", including "pricing of red teaming"
+# and "soc pricng". The one prose assertion in this file, because the prose is
+# the defect: the pivot's name for the thing priced has to reach the visitor.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pipeline", PIPELINES)
+async def test_the_escalation_names_the_service_the_visitor_asked_about(
+    db, pipeline, _stub_outside_world, _stub_generation, _gate_metrics, _no_cag_lite
+):
+    client = _make_client(db)
+    bot = _make_bot(db, client, live_chat_enabled=True)
+    _make_document(
+        db,
+        bot,
+        client,
+        "https://acme.com/services/soc/",
+        "Pricing for our SOC is scoped per estate, and the SOC team escalates in minutes.",
+    )
+    sid = f"subject-{pipeline}"
+
+    # A real question from the reporting bot. Retrieval here is keyword-only
+    # (embeddings are stubbed) and ANDs every term, so the typo'd form of the
+    # report would retrieve nothing; the typo itself is covered by the unit tests.
+    turn = await _drive(pipeline, bot, "Price of soc ?", sid)
+
+    assert [m["reason"] for m in _gate_metrics] == ["escalate_no_url"]
+    assert _stub_generation["prompts"] == [], "the pivot is not an LLM call"
+    assert "Pricing for **SOC** at **Acme**" in turn["answer"], turn["answer"]
+    assert turn["meta"]["suggest_handoff"] is True
+    persisted = [m.content for m in _bot_messages(db, sid)]
+    assert any("**SOC**" in content for content in persisted), persisted
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pipeline", PIPELINES)
+async def test_a_general_pricing_question_still_names_the_company(
+    db, pipeline, _stub_outside_world, _stub_generation, _gate_metrics, _no_cag_lite
+):
+    client = _make_client(db)
+    bot = _make_bot(db, client, live_chat_enabled=True)
+    _make_document(db, bot, client, "https://acme.com/services/soc/", "Our SOC watches your estate around the clock.")
+
+    turn = await _drive(pipeline, bot, "what is your pricing?", f"general-{pipeline}")
+
+    assert turn["answer"].startswith("Pricing for **Acme** is best confirmed by the team"), turn["answer"]
