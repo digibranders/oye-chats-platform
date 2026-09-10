@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 Category = Literal[
     "greeting",
+    "company",
     "services",
     "pricing",
     "team",
@@ -48,16 +49,19 @@ MAX_FACT_CHARS = 500
 #: Minimum number of cases per behaviour the SHIPPED set must contain. These are
 #: the failure classes the April 2026 audit found in production (off-topic
 #: refusals, prompt injection, pronoun follow-ups, stale "upcoming" events,
-#: pricing hedges), so a set that lost coverage of one of them would silently
-#: stop guarding it. ``coverage_shortfalls`` reports the gaps; the dry run
-#: prints them as warnings and ``tests/test_eval_harness.py`` enforces them on
-#: the shipped file.
+#: pricing hedges), plus the September 2026 regression in which the relevance
+#: gate refused questions about the company itself ("what does Acme do"), so a
+#: set that lost coverage of one of them would silently stop guarding it.
+#: ``coverage_shortfalls`` reports the gaps; the dry run prints them as
+#: warnings and ``tests/test_eval_harness.py`` enforces them on the shipped
+#: file.
 MINIMUM_COVERAGE: dict[str, int] = {
     "offtopic_refusals": 4,
     "adversarial_refusals": 3,
     "followups_with_history": 2,
     "events": 2,
     "pricing": 3,
+    "company_answered": 4,
 }
 
 
@@ -76,7 +80,9 @@ class GoldenCase(BaseModel):
     #: Reference truths the answer must convey / may draw on. Every entry should
     #: be verifiable in the bot's knowledge base (for the shipped set: the
     #: fixture docs). For ``greeting`` and ``trust`` cases they describe the
-    #: expected behaviour rather than a KB fact.
+    #: expected behaviour rather than a KB fact. ``company`` cases ask about
+    #: the business itself ("what does Acme do") and must be answered from the
+    #: KB, never refused.
     expected_facts: list[str] = Field(default_factory=list, max_length=MAX_FACTS)
     #: Claims the answer must never assert. A forbidden claim in the answer is
     #: graded as fabricated and caps ``grounded`` at 0.3 (see ``judge``).
@@ -181,6 +187,7 @@ def coverage_shortfalls(cases: list[GoldenCase]) -> list[str]:
         "followups_with_history": sum(1 for c in cases if c.category == "followup" and c.history),
         "events": sum(1 for c in cases if c.category == "events"),
         "pricing": sum(1 for c in cases if c.category == "pricing"),
+        "company_answered": sum(1 for c in cases if c.category == "company" and not c.must_refuse),
     }
     return [
         f"{name}: have {counts[name]}, need at least {minimum}"
