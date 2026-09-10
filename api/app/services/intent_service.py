@@ -35,12 +35,14 @@ _DEAL_PRICE = (
     r"(?:\s+for\s+(?:(?:[\u20b9$\u20ac\u00a3]|rs\.?|inr|usd)\s*)?\d[\d,.]*"
     r"(?:\s*(?:k|m|mn|million|bn|billion|lakhs?|crores?|cr)\b)?)?"
 )
-#: "your" and up to two words before the company noun ("your cybersecurity
-#: company"). The second person is the narrowest reliable signal that the
-#: visitor means THIS company, not a client's or their own. It is not proof of a
-#: deal on its own, which is why investing is left out of every rule: "can I
-#: invest in your company?" is usually a customer question.
-_DEAL_OBJECT = r"your\s+(?:[\w-]+\s+){0,2}?"
+#: "your" directly before the company noun. The second person is the narrowest
+#: reliable signal that the visitor means THIS company, not a client's or their
+#: own. Nothing may sit between them: a word there is usually what the company
+#: sells ("your license per company", "your medium firm", "your shelf company",
+#: "your demo company"). It is not proof of a deal on its own either, which is
+#: why investing is left out of every rule: "can I invest in your company?" is
+#: usually a customer question.
+_DEAL_OBJECT = r"your\s+"
 #: A deal for THIS company, said in the second person. On a live bot on
 #: 2026-09-10 a visitor asked four times to buy the company and was refused or
 #: deflected every time. A match here is decided on the keyword path: it opens
@@ -204,8 +206,16 @@ _DEAL_NAME_STOPWORDS = frozenset(
         "with", "co", "inc", "ltd", "llc", "llp", "plc", "pvt", "corp", "company", "limited", "private", "group",
     }
 )  # fmt: skip
-#: Up to two legal words after a company's name ("Acme Pvt Ltd").
-_DEAL_LEGAL_SUFFIX = r"(?:\s+(?:company|group|inc|ltd|limited|pvt|private|llc|llp|plc|corp|co)){0,2}"
+#: A company noun or legal word after a company's name ("Acme Pvt Ltd"). The
+#: word boundary stops "co" and "corp" matching the start of a longer word, so
+#: the repetitions below can be possessive without changing a result.
+_DEAL_COMPANY_WORD = r"\s+(?:company|firm|group|inc|ltd|limited|pvt|private|llc|llp|plc|corp|co)\b"
+#: Up to two company words, optional: a name of two or more identifying words
+#: is the company on its own.
+_DEAL_LEGAL_SUFFIX = rf"(?:{_DEAL_COMPANY_WORD}){{0,2}}+"
+#: One or two company words, required: a one-word name ("Acme", "car" in The
+#: Car Company, "hubspot") is also a common noun or the product itself.
+_DEAL_REQUIRED_SUFFIX = rf"(?:{_DEAL_COMPANY_WORD}){{1,2}}+"
 _COMPANY_TAKEOVER_RE = re.compile(r"(?i)\b" + _COMPANY_TAKEOVER)
 #: "business" is left out: it is a common plan tier ("buy your business plan?").
 _COMPANY_PURCHASE_RE = re.compile(
@@ -217,24 +227,38 @@ _DEAL_STAKE = r"\b(?:buy|acquire|take)\s+(?:(?:an?|the)\s+)?(?:stake|equity)\s+(
 _COMPANY_STAKE_RE = re.compile(r"(?i)" + _DEAL_STAKE + r"your\s+(?:company|business|firm|startup)" + _DEAL_TAIL)
 
 
+def _name_tokens(company_name: str) -> tuple[list[str], list[int]]:
+    """A company name's lowercase word tokens, and the positions of the tokens
+    that identify it: at least three characters long and not in
+    ``_DEAL_NAME_STOPWORDS``."""
+    tokens = re.findall(r"[^\W_]+", company_name.lower())
+    positions = [i for i, token in enumerate(tokens) if len(token) >= 3 and token not in _DEAL_NAME_STOPWORDS]
+    return tokens, positions
+
+
 def _company_name_pattern(company_name: str) -> str | None:
     """A regex fragment for a company's FULL identifying name.
 
-    Every identifying token, in order; a word of the name that does not
-    identify it ("of" in "Bank of Baroda") may appear between them. A token
-    identifies the company when it is at least three characters long and not
-    in ``_DEAL_NAME_STOPWORDS``, so a one-token name ("The Hub") is that token
-    alone. A shorter part of a longer name is never enough: "eventus" is a
-    product of Eventus Security, "leads" is what Leads Hub sells. None when the
-    name has no identifying token.
+    Every identifying token (see :func:`_name_tokens`), in order; a word of the
+    name that does not identify it ("of" in "Bank of Baroda") may appear
+    between them. A one-token name ("The Hub") is that token alone. A shorter
+    part of a longer name is never enough: "eventus" is a product of Eventus
+    Security, "leads" is what Leads Hub sells. None when the name has no
+    identifying token.
+
+    Each skipped word is a possessive optional group that must end on a word
+    boundary. Company names come from clients and crawls with no cap on their
+    words, and with plain optional groups a failed match on a name of repeated
+    short words ("Alpha a a a ... Beta") tried every subset of them. A skipped
+    word is never an identifying word, so taking it whenever it is there never
+    loses a match.
     """
-    tokens = re.findall(r"[^\W_]+", company_name.lower())
-    positions = [i for i, token in enumerate(tokens) if len(token) >= 3 and token not in _DEAL_NAME_STOPWORDS]
+    tokens, positions = _name_tokens(company_name)
     if not positions:
         return None
     full = re.escape(tokens[positions[0]])
     for previous, current in zip(positions, positions[1:], strict=False):
-        skipped = "".join(rf"(?:[\s-]+{re.escape(token)})?" for token in tokens[previous + 1 : current])
+        skipped = "".join(rf"(?:[\s-]+{re.escape(token)}\b)?+" for token in tokens[previous + 1 : current])
         full += rf"{skipped}[\s-]+{re.escape(tokens[current])}"
     return full
 
@@ -257,27 +281,37 @@ def detect_company_deal_intent(question: str, company_name: str | None = None) -
     Without the company's name:
       (a) the keyword-path phrasing ``_COMPANY_TAKEOVER``: acquire, acquiring,
           acquisition of, take over, takeover of, merge with or merger with +
-          your + up to two words + company, business, firm, startup or
-          organisation + an optional price; buy you out, buy your company,
-          business or firm out, or buy out your company, business or firm + an
-          optional price; is your company, business or firm (up) for sale;
-      (b) buy or purchase + your + up to two words + company, firm or
-          organisation ("business" is a common plan tier) + an optional price;
+          your + company, business, firm, startup or organisation + an optional
+          price; buy you out, buy your company, business or firm out, or buy out
+          your company, business or firm + an optional price; is your company,
+          business or firm (up) for sale;
+      (b) buy or purchase + your + company, firm or organisation ("business" is
+          a common plan tier) + an optional price;
       (c) buy, acquire or take + optional a, an or the + stake or equity + in or
           of + your company, business, firm or startup.
 
+    In (a) and (b) nothing sits between "your" and the company noun: "buy your
+    license per company", "your medium firm" and "take over your sample
+    company" name what the company sells.
+
     With the company's name (its full identifying name, see
-    :func:`_company_name_pattern`):
-      (d) acquire, acquiring, acquisition of or takeover of + optional "the" +
-          the name + an optional legal suffix + an optional price. "Merge with"
-          and "take over" are left out: on a one-token name they are
-          integration and migration questions ("can tally merge with zoho?");
+    :func:`_company_name_pattern`), where "suffix" is one or two of company,
+    firm, group, inc, ltd, limited, pvt, private, llc, llp, plc, corp or co
+    (``_DEAL_COMPANY_WORD``). A name of two or more identifying words takes an
+    optional suffix; a one-word name ("Acme", "car" in The Car Company,
+    "HubSpot") needs one, since on its own it is also a common noun or the
+    product ("is the car for sale?", "the cost of acquiring hubspot"). No
+    "the" before the name, except in (e), where the company noun after the
+    name already says the visitor means a company:
+      (d) acquire, acquiring, acquisition of or takeover of + the name + the
+          suffix + an optional price. "Merge with" and "take over" are left
+          out: on a one-token name they are integration and migration
+          questions ("can tally merge with zoho?");
       (e) buy or purchase + optional "the" + the name + company or firm
           ("Dropbox Business" is a plan tier);
       (f) buy, acquire or take + optional a, an or the + stake or equity + in or
-          of + optional "the" + the name;
-      (g) is + optional "the" + the name + an optional legal suffix + optional
-          "up" + for sale.
+          of + the name + the suffix;
+      (g) is + the name + the suffix + optional "up" + for sale.
     """
     if not isinstance(question, str) or not question.strip():
         return False
@@ -292,11 +326,13 @@ def detect_company_deal_intent(question: str, company_name: str | None = None) -
     name = _company_name_pattern(company_name)
     if name is None:
         return False
+    _, positions = _name_tokens(company_name)
+    suffix = _DEAL_REQUIRED_SUFFIX if len(positions) == 1 else _DEAL_LEGAL_SUFFIX
     rules = (
-        rf"\b(?:acquire|acquiring|acquisition\s+of|takeover\s+of)\s+(?:the\s+)?{name}{_DEAL_LEGAL_SUFFIX}{_DEAL_PRICE}{_DEAL_TAIL}",
+        rf"\b(?:acquire|acquiring|acquisition\s+of|takeover\s+of)\s+{name}{suffix}{_DEAL_PRICE}{_DEAL_TAIL}",
         rf"\b(?:buy|purchase)\s+(?:the\s+)?{name}\s+(?:company|firm){_DEAL_TAIL}",
-        rf"{_DEAL_STAKE}(?:the\s+)?{name}{_DEAL_TAIL}",
-        rf"\bis\s+(?:the\s+)?{name}{_DEAL_LEGAL_SUFFIX}\s+(?:up\s+)?for\s+sale{_DEAL_TAIL}",
+        rf"{_DEAL_STAKE}{name}{suffix}{_DEAL_TAIL}",
+        rf"\bis\s+{name}{suffix}\s+(?:up\s+)?for\s+sale{_DEAL_TAIL}",
     )
     return any(re.search(rule, question, re.IGNORECASE) for rule in rules)
 

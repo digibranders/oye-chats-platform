@@ -266,6 +266,75 @@ class TestADealForTheCompanyIsARequestForAPerson:
         assert detect_handoff_intent_keywords(message) is False
 
     @pytest.mark.parametrize(
+        ("message", "company_name"),
+        [
+            # Buying: the plan, licence or product the company sells.
+            ("Do I need to buy your license per company?", "Acme"),
+            ("do I have to purchase your software per company?", "Acme"),
+            ("can I buy your subscription per firm?", "Acme"),
+            # A firm mattress.
+            ("should I buy your medium firm?", "Acme"),
+            ("I want to buy your extra firm.", "Acme"),
+            ("Can I purchase your luxury firm?", "Acme"),
+            # A shelf company from a company formation service.
+            ("can I buy your shelf company?", "Acme"),
+            ("how much to purchase your ready-made company?", "Acme"),
+            # Home organisation.
+            ("can I buy your closet organization?", "Acme"),
+            # The keyword phrasings: an accounting product's sample data, and a
+            # franchise unit.
+            ("how do I merge with your demo company?", "Acme"),
+            ("can I take over your sample company?", "Acme"),
+            ("how do I acquire your franchise business?", "Acme"),
+            ("can I take over your franchise business?", "Acme"),
+        ],
+    )
+    def test_a_word_between_your_and_the_company_noun_is_not_a_deal(self, message, company_name):
+        """Whatever sits between "your" and "company", "firm" or "business" is
+        usually what the company sells: a licence per company, a firm mattress,
+        a shelf company, a demo company in an accounting product."""
+        assert detect_company_deal_intent(message, company_name) is False
+        assert detect_handoff_intent_keywords(message) is False
+
+    @pytest.mark.parametrize(
+        ("message", "company_name"),
+        [
+            ("is the car for sale?", "The Car Company"),
+            ("is the property for sale?", "The Property Company"),
+            ("is the boat for sale?", "The Boat Company"),
+            ("is the piano for sale?", "The Piano Company"),
+            ("is the villa for sale?", "The Villa Company"),
+            ("can you help with acquiring property?", "Property Co"),
+            ("do you assist with the acquisition of land?", "Land Group"),
+            ("what is the cost of acquiring hubspot?", "HubSpot"),
+            ("is it worth acquiring hubspot?", "HubSpot"),
+            ("any discount on acquiring notion?", "Notion"),
+            ("i want to acquire acme", "Acme"),
+            ("is acme for sale?", "Acme"),
+            ("acquire the hub", "The Hub"),
+            ("i want to acquire the hub", "The Hub"),
+        ],
+    )
+    def test_a_one_word_name_needs_a_company_word_after_it(self, message, company_name):
+        """A one-word name is also a common noun ("car", "property") or the
+        product itself ("hubspot"). It names the company only with a company
+        word or legal suffix after it."""
+        assert detect_company_deal_intent(message, company_name) is False
+        assert detect_handoff_intent_keywords(message) is False
+
+    @pytest.mark.parametrize("word", ["a", "of"])
+    def test_a_name_of_repeated_short_words_is_matched_in_linear_time(self, word):
+        """Company names come from clients and crawls with no cap on their words.
+        Each word that does not identify the company is optional in the name
+        pattern, and a failed match must not try every subset of them."""
+        company_name = "Alpha " + f"{word} " * 48 + "Beta"
+        message = "acquire alpha" + f" {word}" * 48 + " gamma"
+        started = time.perf_counter()
+        assert detect_company_deal_intent(message, company_name) is False
+        assert detect_handoff_intent_keywords(message) is False
+        assert time.perf_counter() - started < 0.5
+
+    @pytest.mark.parametrize(
         "message",
         [
             "we want to acquire your company for 1" + " " * 20000 + "x",
@@ -287,6 +356,8 @@ class TestADealForTheCompanyIsARequestForAPerson:
         [
             ("i want to buy the eventus security company", "Eventus Security"),
             ("we want to buy your company outright", "Acme"),
+            ("buy your company", "Acme"),
+            ("we'd like to buy your company", "Acme"),
             ("We would like to acquire your company", "Acme"),
             ("open to a merger with your company", "Acme"),
             ("we want to take over your firm outright", "Acme"),
@@ -301,15 +372,14 @@ class TestADealForTheCompanyIsARequestForAPerson:
             ("I want to acquire Eventus Security", "Eventus Security"),
             ("interested in acquiring eventus security", "Eventus Security"),
             ("acquisition of eventus security?", "Eventus Security"),
-            ("i want to acquire acme", "Acme"),
-            ("acquire the hub", "The Hub"),
-            ("i want to acquire the hub", "The Hub"),
+            ("i want to acquire acme company", "Acme"),
+            ("we want to acquire hubspot inc", "HubSpot"),
             ("we want to acquire bank of baroda", "Bank of Baroda"),
             ("buy a stake in eventus security", "Eventus Security"),
             ("take a stake in your company", "Acme"),
             ("take equity in your startup", "Acme"),
             ("is eventus security for sale?", "Eventus Security"),
-            ("is acme for sale?", "Acme"),
+            ("is acme inc for sale?", "Acme"),
             ("is acme pvt ltd for sale?", "Acme"),
             ("is your company up for sale?", "Acme"),
         ],
@@ -528,10 +598,10 @@ class TestTwoUnhelpedTurnsOfferThePerson:
 
 class TestBuyingTheCompanyGetsThePersonOnTheFirstAsk:
     @pytest.mark.asyncio
-    async def test_buy_the_company_by_name(self, db, monkeypatch):
+    async def test_acquiring_your_company_in_the_second_person(self, db, monkeypatch):
         bot, cap = _paid_bot(db, monkeypatch, "deal-1", relevant=True)
 
-        frames = await _drive_stream(bot, "i want to acquire acme", "deal-1")
+        frames = await _drive_stream(bot, "we would like to acquire your company", "deal-1")
 
         assert _answer_text(frames).endswith(handoff_reply(team_available=True, repeat=False))
         assert _final_meta(frames)["suggest_handoff"] is True
