@@ -4991,6 +4991,35 @@ def _last_bot_offered_handoff(history: list) -> bool:
     return False
 
 
+#: Intents whose "answer" is pure social reflex, so replaying them after the
+#: name gate would just greet the visitor twice.
+_SOCIAL_INTENTS = frozenset({"greeting", "ack", "neg_ack"})
+
+
+def _deferred_is_worth_replaying(deferred: str, company_name: str | None) -> bool:
+    """True when a question held behind the name gate still deserves an answer.
+
+    The guard here used to be ``route_intent(deferred) is None``, meaning "the
+    router cannot handle it". The comment beside it said the point was to skip
+    a deferred GREETING, and for a greeting that is right: replaying "hi" after
+    "Nice to meet you, Eva!" greets them twice.
+
+    But the router answers eight intents, not three. The other five are real
+    questions: "are you a human", "who made you", "what's your name", "is this
+    conversation recorded", "do you remember me". Treating those as nothing to
+    replay meant the visitor asked one, was asked for their name, gave it, and
+    got "Nice to meet you, Eva! What would you like to know?" while their
+    actual question was dropped on the floor. Caught by the eval on 2026-09-10,
+    where three trust cases had been passing on a grader lenient enough to call
+    that a correct answer.
+
+    A replayed question flows through the pipeline normally, so a router intent
+    still gets its canned reply; it just gets one.
+    """
+    routed = route_intent(deferred, company_name)
+    return routed is None or routed.intent not in _SOCIAL_INTENTS
+
+
 def _recover_deferred_question(history: list) -> str | None:
     """The visitor's original question: the last USER message BEFORE the most
     recent bot "what's your name" turn (history is chronological, oldest first)."""
@@ -5042,7 +5071,7 @@ def resolve_name_flow(session, session_id, bot_id, client_id, question, company_
                 # falls through to the plain rename return.
                 if known is None:
                     deferred = _recover_deferred_question(history)
-                    if deferred and route_intent(deferred, company_name) is None:
+                    if deferred and _deferred_is_worth_replaying(deferred, company_name):
                         return (None, deferred, renamed, True)
                 return (None, None, renamed, True)
 
@@ -5068,7 +5097,7 @@ def resolve_name_flow(session, session_id, bot_id, client_id, question, company_
             # Only re-answer a genuine deferred question. If the original message
             # was itself a greeting/ack (intent router would handle it), let the
             # current turn flow normally so the visitor is simply greeted by name.
-            if deferred and route_intent(deferred, company_name) is None:
+            if deferred and _deferred_is_worth_replaying(deferred, company_name):
                 return (None, deferred, name, True)
             # Name-only reply (their whole message was the name; the deferred
             # item, if any, was a greeting the router already covers). Emit a
@@ -5083,7 +5112,7 @@ def resolve_name_flow(session, session_id, bot_id, client_id, question, company_
         # normally (topic change).
         if _is_name_decline(question):
             deferred = _recover_deferred_question(history)
-            if deferred and route_intent(deferred, company_name) is None:
+            if deferred and _deferred_is_worth_replaying(deferred, company_name):
                 return (None, deferred, None, False)
         return (None, None, None, False)
     except Exception:  # noqa: BLE001  Name flow is best-effort, never fatal
