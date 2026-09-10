@@ -47,7 +47,11 @@ from app.services import currency_scoring as _currency_scoring
 from app.services import meeting_gate as _meeting_gate
 from app.services import plan_entitlements_service, runtime_config
 from app.services import pricing_gate as _pricing_gate
-from app.services.email_service import send_qualified_lead_email
+from app.services.email_service import (
+    get_notification_recipients,
+    send_handoff_request_email,
+    send_qualified_lead_email,
+)
 from app.services.groundedness_gate import check_groundedness, should_sample
 from app.services.handoff_reply import handoff_reply, unhelped_offer
 from app.services.intent_router import route_intent, strip_greeting_lead
@@ -3103,38 +3107,93 @@ def _live_team_reachable(bot_id: int, within_hours: bool) -> bool:
         return within_hours
 
 
-def _alert_team_of_urgent_incident(session, bot, client_id: int, session_id: str, visitor_name: str | None) -> None:
+#: The push body for an urgent incident, shown under the handoff push's "New chat from" title.
+_URGENT_PUSH_REASON = "URGENT: active incident reported in chat"
+#: How much of the visitor's message the team email quotes.
+_URGENT_EMAIL_MESSAGE_LIMIT = 500
+#: The live-chat queue timeout a handoff push is enqueued with when the bot has none
+#: (the column default, and the fallback ``operator_routes`` uses).
+_DEFAULT_QUEUE_TIMEOUT_SECONDS = 20
+
+
+def _alert_team_of_urgent_incident(session, bot, client_id: int, session_id: str, visitor_message: str) -> None:
     """Tell the team a visitor reported an active incident. Never breaks the turn.
 
-    The urgent inbox notification is a DB write on the request session, so it is
-    made here. ``create_notification`` commits that session itself, so the caller
-    commits the turn's own writes first, and a failure is rolled back here so the
-    caller's closing commit does not raise on an aborted transaction.
+    Three channels, each failing on its own:
 
-    The email is a blocking provider call and goes through the worker
-    (``task_send_urgent_incident_email``), enqueued the same way the handoff and
-    waiting-visitor alerts are. ``enqueue_sync`` does not block inside the
-    running stream: it schedules the Redis write and logs its own failure.
+    - The inbox notification, a DB write on the request session.
+      ``create_notification`` commits that session itself, so the caller commits
+      the turn's own writes first, and a failure is rolled back here so the
+      caller's closing commit does not raise on an aborted transaction.
+    - The email to the bot's ``handoff_request`` list, sent from here:
+      ``send_handoff_request_email`` builds the message and hands it to
+      ``send_email_async``, which enqueues it to the worker or submits it to the
+      email thread pool, so no provider call runs inside the turn.
+    - The operator push, through ``task_dispatch_handoff_push`` like a handoff
+      request. That task reads no queue state, so it reaches the team for a
+      visitor who has not joined the queue, and a tap opens the conversation.
+
+    The visitor's name and contact come from the stored lead, never from the
+    message, which is quoted in the email as it was written.
     """
     bot_id = getattr(bot, "id", None)
+    bot_name = getattr(bot, "name", None)
+    reply_to = getattr(bot, "reply_to_email", None)
+    queue_timeout = getattr(bot, "live_chat_queue_timeout_seconds", None) or _DEFAULT_QUEUE_TIMEOUT_SECONDS
+    wants_email = bot is not None and bool(getattr(bot, "email_on_handoff", True))
+    recipients = get_notification_recipients(bot, "handoff_request") if wants_email else []
+    try:
+        lead = get_lead_info_by_session(session, session_id)
+    except Exception:  # noqa: BLE001 - a failed lookup leaves the alert anonymous, not unsent
+        logger.warning("urgent_incident_lead_lookup_failed | bot=%s session=%s", bot_id, session_id, exc_info=True)
+        session.rollback()
+        lead = None
+    # Plain values, read before the notification: its rollback on failure expires the row.
+    visitor_name = lead.name if lead is not None and lead.name else None
+    contact = {"name": lead.name, "email": lead.email, "phone": lead.phone} if lead is not None else None
+
     try:
         notify_handoff_request(
             session,
             client_id=client_id,
             session_id=session_id,
             visitor_name=visitor_name,
-            bot_name=getattr(bot, "name", None),
+            bot_name=bot_name,
             urgent=True,
         )
     except Exception:  # noqa: BLE001 - an alert failure must not lose the visitor's reply
         logger.warning("urgent_incident_notification_failed | bot=%s session=%s", bot_id, session_id, exc_info=True)
         session.rollback()
+
+    reason = (visitor_message or "").strip()[:_URGENT_EMAIL_MESSAGE_LIMIT]
+    for recipient in recipients:
+        try:
+            send_handoff_request_email(
+                recipient,
+                bot_name,
+                reason,
+                contact,
+                reply_to=reply_to,
+                urgent=True,
+                session_id=session_id,
+            )
+        except Exception:  # noqa: BLE001 - one bad address must not cost the rest of the team the alert
+            logger.warning("urgent_incident_email_failed | bot=%s session=%s", bot_id, session_id, exc_info=True)
+
     if bot_id is None:
         return
     try:
-        enqueue_sync("task_send_urgent_incident_email", bot_id, session_id)
+        enqueue_sync(
+            "task_dispatch_handoff_push",
+            session_id,
+            bot_id,
+            None,
+            visitor_name,
+            _URGENT_PUSH_REASON,
+            queue_timeout,
+        )
     except Exception:  # noqa: BLE001 - a queue failure must not lose the visitor's reply
-        logger.warning("urgent_incident_email_enqueue_failed | bot=%s session=%s", bot_id, session_id, exc_info=True)
+        logger.warning("urgent_incident_push_enqueue_failed | bot=%s session=%s", bot_id, session_id, exc_info=True)
 
 
 def _has_prior_visitor_turns(history: list) -> bool:
@@ -7503,6 +7562,91 @@ async def rag_pipeline_stream(
                 except Exception:  # noqa: BLE001  Preview personalization is best-effort
                     logger.warning("preview name seed failed for session %s", session_id, exc_info=True)
 
+            # ── Urgent incident ──────────────────────────────────────────────
+            # A visitor reporting an attack in progress gets the fastest human
+            # route and a priority alert. On 2026-09-10 "we are under a
+            # ransomware attack right now, please help!" got the generic
+            # offline form on two security companies' bots.
+            #
+            # Before the name question and on the visitor's own words: an
+            # incident typed as the first message used to get "may I know your
+            # name?" and no alert until the visitor answered. The urgent reply
+            # is the bot's first reply, so the name question does not come on
+            # the next turn either (``resolve_name_flow`` asks only while no bot
+            # message exists). No by-name opener: "Thanks, Eva!" does not belong
+            # above an incident.
+            #
+            # English only, like the other deterministic replies. The pattern
+            # runs first so an ordinary turn does not pay for a language check
+            # here as well as the one below.
+            if is_urgent_incident(question) and not _english_judges_bypassed(language, question):
+                # ``chat_session`` is loaded further down the pipeline, so this
+                # block does its own tenant-scoped lookup (only on an urgent turn).
+                _urgent_filters = [ChatSession.id == session_id]
+                if bid:
+                    _urgent_filters.append(ChatSession.bot_id == bid)
+                elif cid:
+                    _urgent_filters.append(ChatSession.client_id == cid)
+                _urgent_session = session.query(ChatSession).filter(*_urgent_filters).first()
+                # Set once the team was alerted: a second urgent message gets its
+                # own words and alerts no one again.
+                _urgent_repeat = _card_already_shown(_urgent_session, "urgent_notified")
+                _urgent = urgent_reply(
+                    company_name=_company_name,
+                    support_enabled=_plan_support_allowed,
+                    live_chat_enabled=live_chat_on,
+                    team_available=bool(_team_online),
+                    emergency_url=emergency_url_from_answer_links(getattr(bot, "answer_links", None)),
+                    contact_url=_contact_url,
+                    repeat=_urgent_repeat,
+                )
+                _safety_net_metric(
+                    "urgent_incident",
+                    path="stream",
+                    repeat=str(_urgent_repeat),
+                    session=session_id,
+                    bot_id=bid,
+                )
+                # The reply is fixed text, so it is saved and the team alerted
+                # BEFORE the first frame: a visitor who closes the tab mid-stream
+                # still leaves the reply and the alert behind.
+                _bot_msg = add_chat_message(
+                    session,
+                    session_id,
+                    client_id=cid,
+                    role="bot",
+                    content=_urgent.text,
+                    bot_id=bid,
+                    source_language=_lang_base(language),
+                )
+                session.flush()
+                # Same flags and card bookkeeping as the unhelped offer below, so a
+                # later turn sees the team as already offered: the handoff reply
+                # uses its repeat wording and the unhelped offer stays quiet.
+                _urgent_meta = {
+                    "message_id": _bot_msg.id,
+                    "suggest_handoff": _urgent.suggest_handoff,
+                    "qualification_pending": False,
+                }
+                if _urgent.needs_message_card:
+                    _urgent_meta["show_leave_message"] = True
+                    _mark_card_shown(_urgent_session, "leave_message")
+                if _urgent.suggest_handoff:
+                    _mark_card_shown(_urgent_session, "handoff_offered")
+                # The visitor was offered a person (or a page to reach one): not unhelped.
+                _set_unhelped_streak(_urgent_session, 0)
+                if _plan_support_allowed and not _urgent_repeat:
+                    _mark_card_shown(_urgent_session, "urgent_notified")
+                    # The reply and its flags are committed before the alert,
+                    # which commits on its own and rolls back on failure.
+                    session.commit()
+                    _alert_team_of_urgent_incident(session, bot, cid, session_id, question)
+                session.commit()
+                yield _stream_metadata(session_id, [], language)
+                yield _urgent.text
+                yield f"\nFINAL_METADATA:{json.dumps(_urgent_meta)}\n"
+                return
+
             # ── Two-step name capture (ask first, answer next turn) ──────────
             # First message → reply ONLY with a name request and defer the real
             # answer; the following turn (their name) answers the original
@@ -7553,70 +7697,6 @@ async def rag_pipeline_stream(
             # off; see ``_english_judges_bypassed``. Resolved once per turn so the
             # sites below can never disagree with each other.
             _judges_bypassed = _english_judges_bypassed(language, question)
-
-            # ── Urgent incident ──────────────────────────────────────────────
-            # A visitor reporting an attack in progress gets the fastest human
-            # route and a priority alert, before the router and retrieval.
-            # English only, like the other deterministic replies. On 2026-09-10
-            # "we are under a ransomware attack right now, please help!" got the
-            # generic offline form on two security companies' bots.
-            if not _judges_bypassed and is_urgent_incident(question):
-                _urgent = urgent_reply(
-                    company_name=_company_name,
-                    support_enabled=_plan_support_allowed,
-                    live_chat_enabled=live_chat_on,
-                    team_available=bool(_team_online),
-                    emergency_url=emergency_url_from_answer_links(getattr(bot, "answer_links", None)),
-                    contact_url=_contact_url,
-                )
-                _safety_net_metric("urgent_incident", path="stream", session=session_id, bot_id=bid)
-                # ``chat_session`` is loaded further down the pipeline, so this
-                # block does its own tenant-scoped lookup (only on an urgent turn).
-                _urgent_filters = [ChatSession.id == session_id]
-                if bid:
-                    _urgent_filters.append(ChatSession.bot_id == bid)
-                elif cid:
-                    _urgent_filters.append(ChatSession.client_id == cid)
-                _urgent_session = session.query(ChatSession).filter(*_urgent_filters).first()
-                # ``_returning_by_name`` is computed further down the pipeline, so this
-                # early block uses the plain opener (a thank-you when just named).
-                _urgent_text = _name_ack_prefix(_flow_name, _just_named, language) + _urgent.text
-                yield _stream_metadata(session_id, [], language)
-                yield _urgent_text
-                _bot_msg = add_chat_message(
-                    session,
-                    session_id,
-                    client_id=cid,
-                    role="bot",
-                    content=_urgent_text,
-                    bot_id=bid,
-                    source_language=_lang_base(language),
-                )
-                session.flush()
-                # Same flags and card bookkeeping as the unhelped offer below, so a
-                # later turn sees the team as already offered: the handoff reply
-                # uses its repeat wording and the unhelped offer stays quiet.
-                _urgent_meta = {
-                    "message_id": _bot_msg.id,
-                    "suggest_handoff": _urgent.suggest_handoff,
-                    "qualification_pending": False,
-                }
-                if _urgent.needs_message_card:
-                    _urgent_meta["show_leave_message"] = True
-                    _mark_card_shown(_urgent_session, "leave_message")
-                if _urgent.suggest_handoff:
-                    _mark_card_shown(_urgent_session, "handoff_offered")
-                # The visitor was offered a person (or a page to reach one): not unhelped.
-                _set_unhelped_streak(_urgent_session, 0)
-                if _plan_support_allowed and not _card_already_shown(_urgent_session, "urgent_notified"):
-                    _mark_card_shown(_urgent_session, "urgent_notified")
-                    # The reply and its flags are saved before the alert, which
-                    # commits on its own and rolls back on failure.
-                    session.commit()
-                    _alert_team_of_urgent_incident(session, bot, cid, session_id, _flow_name)
-                session.commit()
-                yield f"\nFINAL_METADATA:{json.dumps(_urgent_meta)}\n"
-                return
 
             _intent = (
                 None

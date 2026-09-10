@@ -66,7 +66,6 @@ from app.worker.tasks import (  # noqa: E402  (litellm config must precede)
     task_send_email,
     task_send_quotation_visitor_email,
     task_send_template_email,
-    task_send_urgent_incident_email,
     task_send_visitor_message_email,
     task_trial_reminder_emails,
     task_worker_heartbeat,
@@ -189,7 +188,6 @@ class WorkerSettings:
         task_handoff_escalation,
         task_send_quotation_visitor_email,
         task_send_visitor_message_email,
-        task_send_urgent_incident_email,
         task_reembed_document,
         # Re-embeds whole bots onto the current embedding profile. It paces
         # itself against the shared embed rate limiter, so on a real corpus it
