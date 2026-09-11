@@ -95,6 +95,7 @@ from app.services.price_intent import (
     PriceIntentDecision,
     decide_price_intent,
     fallback_price_intent,
+    guard_asks_price,
     might_ask_price,
 )
 from app.services.qualification_service import (
@@ -7383,12 +7384,15 @@ async def _turn_price_intent(
     ``raw_task`` decides the visitor's own words; the stream starts it alongside
     retrieval when they carry a price word. A follow-up with no price word of its
     own ("and that one?") carries the intent only in its rewrite, so when the raw
-    words do not ask the price, and the rewrite differs and carries a price word,
-    the rewrite is decided too. The two are decided separately rather than
-    concatenated, as the gate always read them.
+    words would not escalate, and the rewrite differs and carries a price word,
+    the rewrite is decided too. The gate escalates only a phrasing its wording
+    rule also reads as pricing, so raw words that pass the classifier alone ("what
+    plans do you have") still let a rewrite that names the price decide. The two
+    are decided separately rather than concatenated, as the gate always read them.
     """
     decision = await raw_task if raw_task is not None else NOT_A_PRICE_QUESTION
-    if decision.asks_price or rewritten == question or not might_ask_price(rewritten):
+    raw_escalates = decision.asks_price and _pricing_gate.is_pricing_question(question)
+    if raw_escalates or rewritten == question or not might_ask_price(rewritten):
         return decision, question
     rewritten_decision = await _detect_price_intent_bounded(rewritten)
     return (rewritten_decision, rewritten) if rewritten_decision.asks_price else (decision, question)
@@ -9423,9 +9427,10 @@ async def rag_pipeline_stream(
                 )
             else:
                 # One price decision for the turn, on the raw question or its
-                # rewrite, and the gate acts on it rather than on the wording: on
-                # 2026-09-11 "a quote from your leadership" and "whats the share
-                # price" were escalated as pricing questions.
+                # rewrite, and it narrows the gate's wording rule: on 2026-09-11
+                # "a quote from your leadership" and "whats the share price" were
+                # escalated as pricing questions. It never widens the rule, so a
+                # plan or rate question the rule answered is still answered.
                 _price_intent, _price_question = await _turn_price_intent(
                     question, _gate_search_query, _price_intent_task
                 )
@@ -10390,7 +10395,9 @@ async def rag_pipeline_stream(
             # trips; without it only a figure whose sentence or paragraph names the
             # company's own price in the first person does.
             _price_guard = (
-                PriceStreamGuard(signal=_price_guard_signal(_price_intent.asks_price, chat_session))
+                PriceStreamGuard(
+                    signal=_price_guard_signal(guard_asks_price(_price_intent, _price_question), chat_session)
+                )
                 if price_guard_applies(
                     gate_outcome=_pricing_decision.outcome,
                     pricing_url=_price_guard_pricing_url,

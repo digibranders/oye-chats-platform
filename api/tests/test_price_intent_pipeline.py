@@ -114,8 +114,9 @@ def _team_priced_bot(db, monkeypatch, session_id, *, chunks, **bot_kwargs):
     [
         (REPORTER, ("Thanks for reaching out. Our press team can arrange a comment from leadership.",)),
         (SHARE_PRICE, ("Acme is a privately held company and is not listed on any exchange.",)),
+        ("whats the share price", ("Acme is privately held.",)),
     ],
-    ids=["reporter_quote", "share_price"],
+    ids=["reporter_quote", "share_price", "bare_share_price"],
 )
 @pytest.mark.asyncio
 async def test_a_price_word_in_another_sense_is_answered_not_escalated(
@@ -135,6 +136,72 @@ async def test_a_price_word_in_another_sense_is_answered_not_escalated(
     assert _named(metrics, "pricing_gate_escalation") == []
     assert [m.content for m in _messages(db, session_id, role="bot")] == [answer]
     assert "pricing_escalated" not in _cards(db, session_id)
+
+
+@pytest.mark.parametrize("label", ["PRICE", "MIXED"])
+@pytest.mark.parametrize(
+    ("question", "chunks"),
+    [
+        ("what plans do you have", ("We offer Starter, Growth and Enterprise plans.",)),
+        ("what is the interest rate on a home loan", ("Home loan interest rates are listed on our loans page.",)),
+    ],
+    ids=["saas_plans", "bank_interest_rate"],
+)
+@pytest.mark.asyncio
+async def test_the_classifier_never_escalates_a_question_the_wording_rule_answered(
+    db, monkeypatch, classifier, metrics, label, question, chunks
+):
+    """The classifier counts plans, packages and rates as price questions. Before
+    it these were answered from the knowledge base, and they still are."""
+    session_id = f"intent-no-widening-{label}-{len(question)}"
+    classifier.answers[question] = label
+    bot, captured = _team_priced_bot(db, monkeypatch, session_id, chunks=chunks)
+
+    frames = await _drive_stream(bot, question, session_id)
+
+    answer = "".join(chunks)
+    assert classifier.calls == [question]
+    assert _answer_text(frames) == answer
+    assert len(captured["prompts"]) == 1
+    assert _named(metrics, "pricing_gate_escalation") == []
+    assert _named(metrics, "pricing_gate_deferred") == []
+    assert [m.content for m in _messages(db, session_id, role="bot")] == [answer]
+    assert "pricing_escalated" not in _cards(db, session_id)
+
+
+@pytest.mark.asyncio
+async def test_a_figure_for_a_plan_question_trips_the_guard_during_a_classifier_timeout(
+    db, monkeypatch, classifier, metrics
+):
+    """The fallback rules do not read plan words as a price question; the price
+    guard always did, so a timeout must not let a figure through."""
+    monkeypatch.setattr(rs, "_PRICE_INTENT_TIMEOUT_S", 0.05)
+    classifier.delay_s = 0.5
+    chunks = ("Growth comes to ", "₹2,66,250", " a month for small teams.")
+    bot, _ = _team_priced_bot(db, monkeypatch, "intent-plans-timeout", chunks=chunks)
+
+    frames = await _drive_stream(bot, "what plans do you have", "intent-plans-timeout")
+
+    assert "2,66,250" not in _answer_text(frames)
+    assert [tags["reason"] for tags in _named(metrics, "pricing_gate_escalation")] == ["price_guard"]
+
+
+@pytest.mark.asyncio
+async def test_a_plan_follow_up_is_escalated_on_a_rewrite_the_wording_rule_reads(db, monkeypatch, classifier):
+    """The raw words ask about a plan and pass only the classifier; the rewrite
+    names the price, as the gate always read it."""
+    question, rewritten = "what plans do you have", "what is the price of your enterprise plan"
+    bot, _ = _team_priced_bot(db, monkeypatch, "intent-plan-follow-up", chunks=("unused",))
+
+    async def fake_resolve(session_id, question, history, bid, cid, company_name, embedding_profile=None):
+        return rewritten, None
+
+    monkeypatch.setattr(rs, "_resolve_search_query_and_embedding", fake_resolve)
+
+    frames = await _drive_stream(bot, question, "intent-plan-follow-up")
+
+    assert classifier.calls == [question, rewritten]
+    assert _answer_text(frames) == GENERIC
 
 
 @pytest.mark.asyncio

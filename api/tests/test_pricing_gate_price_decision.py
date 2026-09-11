@@ -3,7 +3,10 @@
 Production, 2026-09-11: the gate decided from the question's wording alone, so a
 reporter's "a quote from your leadership" and "whats the share price" were
 escalated as pricing questions. The turn's decision (``price_intent``) is now
-passed in, and the gate no longer reads the wording itself when it has one.
+passed in, and it only narrows the wording rule: the classifier counts plans,
+packages, rates and budgets as price questions, and "what plans do you have" or
+"what is the interest rate on a home loan" were answered from the knowledge base
+before it and still are.
 
 A message that asks the price and something else is not short-circuited: an
 escalation the gate would have given is deferred to generation, with the price
@@ -43,16 +46,38 @@ def _gate(**overrides):
     return evaluate_pricing_gate(**kwargs)
 
 
-class TestTheDecisionReplacesTheWording:
+class TestTheDecisionOnlyNarrowsTheWording:
     def test_a_price_word_in_another_sense_is_not_escalated(self):
         decision = _gate(question="can i get a quote from your leadership", asks_price=False)
 
         assert (decision.fired, decision.outcome, decision.chunks) == (False, "not_pricing", [_ELSEWHERE])
 
-    def test_a_price_question_without_a_price_word_is_escalated(self):
-        decision = _gate(question="what is th picin for SOC", asks_price=True)
+    @pytest.mark.parametrize(
+        "question",
+        [
+            "what plans do you have",
+            "what is the interest rate on a home loan",
+            "are your rates competitive with deloitte",
+            "what does a wedding package include",
+            # A typo the wording rule misses is the price guard's to catch.
+            "what is th picin for SOC",
+        ],
+    )
+    @pytest.mark.parametrize("asks_more", [False, True], ids=["price", "mixed"])
+    def test_a_question_the_wording_rule_never_read_as_pricing_is_not_escalated(self, question, asks_more):
+        decision = _gate(question=question, asks_price=True, asks_more=asks_more)
+
+        assert (decision.fired, decision.outcome, decision.chunks) == (False, "not_pricing", [_ELSEWHERE])
+
+    def test_a_price_question_the_wording_rule_reads_is_escalated(self):
+        decision = _gate(question="how much does the pro plan cost?", asks_price=True)
 
         assert (decision.fired, decision.outcome, decision.chunks) == (True, "escalate_no_url", [])
+
+    def test_an_opted_out_bot_reports_a_plan_question_as_not_pricing(self):
+        decision = _gate(question="what plans do you have", asks_price=True, answer_from_knowledge_base=True)
+
+        assert decision.outcome == "not_pricing"
 
     def test_without_a_decision_the_wording_still_decides(self):
         assert _gate(question="what is your pricing?").outcome == "escalate_no_url"

@@ -174,6 +174,19 @@ Respond with ONLY one word: PRICE, MIXED or NO."""
     return _LABELS[label.group(1)]
 
 
+def guard_asks_price(decision: PriceIntentDecision, question: object) -> bool:
+    """Whether the price guard treats the turn as asking the price, so every figure trips.
+
+    The turn's decision says so, or the fallback rules made it and ``question``
+    carries the guard's own price vocabulary. The rules leave plan words, budgets
+    and loose typos to the model on purpose, and the guard read those as a price
+    question before the model decided; a model that timed out must not let a
+    figure through for "what plans do you have". ``question`` is the phrasing the
+    decision was made on.
+    """
+    return decision.asks_price or (decision.by_fallback and question_has_fuzzy_price_word(question))
+
+
 def decide_price_intent(question: str) -> PriceIntentDecision:
     """Stages 2 and 3 for a message that already passed ``might_ask_price``.
 

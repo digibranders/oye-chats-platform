@@ -23,6 +23,7 @@ from app.services.price_intent import (
     classify_price_intent,
     decide_price_intent,
     fallback_price_intent,
+    guard_asks_price,
     might_ask_price,
 )
 from app.services.prompt_fence import neutralise_fence
@@ -214,6 +215,23 @@ def test_the_decision_says_whether_the_turn_asks_the_price_and_whether_it_asks_m
     decision = PriceIntentDecision(intent, by_fallback=by_fallback)
 
     assert (decision.asks_price, decision.asks_more) == (asks_price, asks_more)
+
+
+@pytest.mark.parametrize(
+    ("decision", "question", "signal"),
+    [
+        (PriceIntentDecision("price", by_fallback=False), "what plans do you have", True),
+        (PriceIntentDecision("mixed", by_fallback=False), "what plans do you have", True),
+        (PriceIntentDecision("no", by_fallback=False), "what plans do you have", False),
+        # The fallback rules leave plan words, budgets and loose typos out; the guard never did.
+        (PriceIntentDecision("no", by_fallback=True), "what plans do you have", True),
+        (PriceIntentDecision("no", by_fallback=True), "hw much for 3 sites", True),
+        (PriceIntentDecision("no", by_fallback=True), "where is your office?", False),
+    ],
+    ids=["price", "mixed", "model_no", "fallback_plan_word", "fallback_typo", "fallback_no_price_word"],
+)
+def test_the_price_guard_signal(decision, question, signal):
+    assert guard_asks_price(decision, question) is signal
 
 
 # ── Stage 3: the fallback rules ───────────────────────────────────────────────

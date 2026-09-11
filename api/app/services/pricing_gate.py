@@ -709,10 +709,15 @@ def evaluate_pricing_gate(
 
     ``asks_price`` is the turn's price decision (``price_intent``): whether the
     visitor asks what this business charges for its own products or services.
-    When it is given, the question's wording is not read at all, which is what
-    keeps "can i get a quote from your leadership" and "whats the share price"
-    from being escalated (production, 2026-09-11). None keeps the wording rule
-    (``is_pricing_question``) for a caller that has no decision.
+    It only narrows the wording rule (``is_pricing_question``), never widens it:
+    False keeps "can i get a quote from your leadership" and "whats the share
+    price" from being escalated (production, 2026-09-11), and True escalates only
+    a question the wording rule also reads as pricing. The classifier counts
+    plans, packages, rates and budgets as price questions, and "what plans do you
+    have" or "what is the interest rate on a home loan" are answered from the
+    knowledge base as they always were; a typo the wording rule misses is the
+    price guard's to catch. None leaves the wording rule alone to decide, for a
+    caller that has no decision.
 
     ``asks_more`` says the visitor also asked something besides the price. An
     escalation replaces the whole answer, so it would drop that part of the turn;
@@ -726,7 +731,7 @@ def evaluate_pricing_gate(
     """
     if quote_active:
         return PricingGateDecision(fired=False, outcome="quote_standdown", chunks=chunks)
-    asks = is_pricing_question(question) if asks_price is None else asks_price
+    asks = asks_price is not False and is_pricing_question(question)
     if answer_from_knowledge_base and asks:
         return PricingGateDecision(fired=False, outcome="owner_optout", chunks=chunks)
     if not asks:
