@@ -28,3 +28,23 @@ def neutralise_fence(text: str | None) -> str:
     marker behind, and no character is dropped. ``None`` is an empty string.
     """
     return _FENCE_RUN_RE.sub(_in_pairs, text or "")
+
+
+def tail_for_prompt(text: str | None, limit: int) -> str:
+    """The last ``limit`` characters of ``text``, whitespace collapsed, starting on a word.
+
+    A classifier reading the bot's previous reply wants its end, where the reply
+    lands on what the visitor is now reacting to, inside a bounded prompt.
+    Collapsing whitespace also keeps the reply's own line breaks from standing on
+    a line of their own beside the marker lines. ``None`` is an empty string.
+    """
+    if limit <= 0:
+        return ""
+    flat = " ".join((text or "").split())
+    if len(flat) <= limit:
+        return flat
+    tail = flat[-limit:]
+    if flat[-limit - 1] == " ":
+        return tail
+    space = tail.find(" ")
+    return tail[space + 1 :] if 0 <= space < len(tail) - 1 else tail
