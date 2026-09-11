@@ -623,7 +623,10 @@ async def test_follow_ups_after_the_urgent_reply_alert_no_one_again_and_get_no_u
     await _drive_stream(bot, URGENT, "urgent-follow-ups")
     replies = [
         _answer_text(await _drive_stream(bot, message, "urgent-follow-ups"))
-        for message in ("please hurry, what do we do now?", "hello?? is anyone there")
+        # Not "hello?? is anyone there": after the form was offered that is the
+        # visitor chasing a person, and it gets the form again
+        # (test_conversational_turns_pipeline.TestWaitingOnTheTeamGetsTheForm).
+        for message in ("please hurry, what do we do now?", "what do we do next")
     ]
 
     assert len(alerts["notify"]) == 1

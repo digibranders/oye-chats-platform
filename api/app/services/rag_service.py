@@ -45,7 +45,7 @@ from app.security.injection_patterns import (
 )
 from app.services import currency_scoring as _currency_scoring
 from app.services import meeting_gate as _meeting_gate
-from app.services import plan_entitlements_service, runtime_config, support_route, urgent_route
+from app.services import plan_entitlements_service, runtime_config, support_route, urgent_route, visitor_reaction
 from app.services import pricing_gate as _pricing_gate
 from app.services.document_request import (
     TOPIC_MIN_OVERLAP,
@@ -97,7 +97,7 @@ from app.services.qualification_service import (
     pick_probe_variant,
     select_next_probe_dimension,
 )
-from app.services.relevance_gate import check_relevance
+from app.services.relevance_gate import ConversationContext, check_relevance
 from app.services.reranker import RERANK_ENABLED, rerank
 from app.services.urgent_route import emergency_url_from_answer_links, urgent_reply
 from app.worker.enqueue import WORKER_ENABLED, enqueue_sync
@@ -1583,16 +1583,19 @@ OFF_TOPIC_REFUSAL_VARIANTS: tuple[str, ...] = (
     "or something else?",
     "I'm focused on questions about {company_name}. Happy to help with our "
     "services, team, or how we work. What were you hoping to learn?",
-    "That one's outside my lane! I help with {company_name}. Services, "
-    "pricing, and connecting you with the team. What can I show you?",
-    "Let's keep this about {company_name}. I can answer about our work, our "
-    "services, or connect you with the team, which would be most useful?",
+    "I only have answers about {company_name}: our services, pricing, and "
+    "connecting you with the team. What can I show you?",
+    "Let's keep this about {company_name}. Would it help to hear about our "
+    "work and our services, or should I connect you with the team?",
     "I stick to topics about {company_name}. Are you exploring our services, "
     "looking at pricing, or wanting to talk to someone on the team?",
     "That's not something I can speak to. I cover {company_name} only. "
     "Curious about our services, recent work, or how to start a project?",
-    "Bit outside my wheelhouse. I'm built for {company_name} questions. "
-    "services, team, pricing, or anything about working together?",
+    # Was "Bit outside my wheelhouse. I'm built for {company_name} questions.
+    # services, team, pricing, ...": two phrases the answer prompt bans as
+    # refusals in a friendly mask, and a lowercase fragment for a question.
+    "That's beyond what I can help with here, but I know {company_name} well. "
+    "Would you like to hear about our services, our team, pricing, or working together?",
 )
 
 # When a visitor has been off-topic two-plus turns in a row, swap to an
@@ -1973,7 +1976,7 @@ _STRICT_ON_SCOPE_RE = re.compile(
     r"|services?|offer|offers|offering|product|products|deliverables?|capabilities|expertise"
     r"|case\s+stud(?:y|ies)|portfolio|client|customer"
     r"|process|approach|methodology|workflow|engagement|onboarding|integration"
-    r"|timeline|turnaround|duration"
+    r"|timeline|turnaround|duration|sla|slas"
     r"|nda|confidentiality|ip\s+ownership|intellectual\s+property"
     r"|refund|warranty|guarantee|shipping|delivery"
     r"|demo|trial|free\s+tier"
@@ -1984,9 +1987,54 @@ _STRICT_ON_SCOPE_RE = re.compile(
     r")\b"
 )
 
+# The visitor addressing the business in the second person, as a comparison or
+# an assurance question names it: "you", "u", "your company".
+_VISITOR_ADDRESSES_US = (
+    r"(?:you|u|ur|yourself|yourselves|y'?all"
+    r"|your\s+(?:company|firm|team|product|platform|service|solution|offering))"
+)
+
+# A visitor weighing this company against another is asking about this company.
+# "how r u better than crowdstrike" and "why pick you over sentinelone" are sales
+# questions, and the first was refused before generation on two bots (reported
+# from production on 2026-09-11). Every shape but one needs the visitor to
+# address the business inside the comparison itself, so "is crowdstrike better
+# than sentinelone" and "can you compare python and java" stay unknown. "An
+# alternative to X" is the exception: a visitor asks it of a company's bot
+# because the company might be one.
+_COMPARES_US_RE = re.compile(
+    r"(?i)(?:"
+    rf"\b{_VISITOR_ADDRESSES_US}(?:'re|\s+are|\s+r)?\s+(?:any\s+|much\s+|so\s+)?"
+    r"(?:better|worse|cheaper|different|faster|stronger|unique)\b"
+    rf"|\b(?:better|worse|cheaper|different|faster)\s+(?:than|from)\s+{_VISITOR_ADDRESSES_US}\b"
+    rf"|\b{_VISITOR_ADDRESSES_US}\s+(?:vs\.?|versus)\s+\w"
+    rf"|\b(?:vs\.?|versus)\s+{_VISITOR_ADDRESSES_US}\b"
+    r"|\bwhy\s+(?:should\s+|would\s+|do\s+|must\s+)?(?:i\s+|we\s+)?"
+    rf"(?:pick|choose|select|go\s+with|hire|trust|prefer|use|buy\s+from|work\s+with)\s+{_VISITOR_ADDRESSES_US}\b"
+    rf"|\b(?:pick|choose|select|go\s+with|hire|prefer|use)\s+{_VISITOR_ADDRESSES_US}\s+(?:over|instead\s+of|rather\s+than)\b"
+    rf"|\b{_VISITOR_ADDRESSES_US}\s+compare\s+(?:to|with|against)\b"
+    rf"|\bcompared?\s+(?:to|with)\s+{_VISITOR_ADDRESSES_US}\b"
+    rf"|\bwhat\s+(?:makes|sets)\s+{_VISITOR_ADDRESSES_US}\s+(?:different|better|unique|stand\s+out|apart)"
+    r"|\balternatives?\s+(?:to|for)\s+\w"
+    r")"
+)
+
+# Service levels and assurances asked of the business: "whats ur MTTD and MTTR
+# sla" (a managed SOC's bot) and "are you gdpr compliant" were both refused
+# (reported from production on 2026-09-11). Asked in the second person, so "is it
+# legal to scrape linkedin under gdpr" stays unknown. The gap is bounded, so the
+# match stays linear.
+_ASKS_OUR_ASSURANCES_RE = re.compile(
+    r"(?i)\b(?:you|u|ur|your|yours)\b[^.?!\n]{0,40}?\b(?:"
+    r"slas?|mttd|mttr|uptime|response\s+times?|compliant|compliance|certified|certifications?|accredited|audited"
+    r"|gdpr|hipaa|dpdp|iso\s*27001|soc\s*2|pci(?:[\s-]*dss)?"
+    r")\b"
+)
+
 
 def _question_is_clearly_on_scope(question: str, company_name: str | None) -> bool:
-    """True only when the visitor named the company or something it sells.
+    """True only when the visitor named the company or something it sells,
+    compared the company with another, or asked the company for an assurance.
 
     The gate is the platform's one deterministic scope control, so the guard
     that overrules it has to be a positive signal rather than the absence of a
@@ -1997,7 +2045,11 @@ def _question_is_clearly_on_scope(question: str, company_name: str | None) -> bo
     signals = _company_name_signals(company_name)
     if signals and re.search(r"\b(?:" + "|".join(map(re.escape, signals)) + r")\b", question, re.IGNORECASE):
         return True
-    return bool(_STRICT_ON_SCOPE_RE.search(question))
+    return bool(
+        _STRICT_ON_SCOPE_RE.search(question)
+        or _COMPARES_US_RE.search(question)
+        or _ASKS_OUR_ASSURANCES_RE.search(question)
+    )
 
 
 #: Words a company name can start with that say nothing about the company.
@@ -6653,11 +6705,175 @@ _FOLLOW_UP_SIGNAL_RE = re.compile(
 )
 
 
+_FOLLOW_UP_WORD_RE = re.compile(r"[a-z]+(?:'[a-z]+)?")
+
+# "Tell me more" in the forms visitors type it. The exact-word list above missed
+# "tell me moer about " after a company overview, so the query was never
+# rewritten against the conversation and the judge refused it (reported from
+# production on 2026-09-11). Typos are matched by shape, not listed: see
+# ``_one_slip_from``.
+_ASK_FOR_MORE_WORDS: tuple[str, ...] = (
+    "more",
+    "moar",
+    "elaborate",
+    "explain",
+    "expand",
+    "continue",
+    "details",
+    "detail",
+    "info",
+    "information",
+    "else",
+    "further",
+    "deeper",
+)
+_ABOUT_WORDS: tuple[str, ...] = ("about", "abt")
+# A message that stops on one of these is waiting for the subject the last
+# reply supplied: "tell me about", "what can you tell me regarding".
+_DANGLING_PREPOSITIONS: tuple[str, ...] = ("about", "abt", "regarding", "on", "re")
+_CONTINUE_BIGRAMS = frozenset({("go", "on"), ("keep", "going"), ("carry", "on")})
+# Words that carry no subject of their own around a request for more. A message
+# made only of these and the words above names nothing, so its subject is the
+# reply it follows.
+_ASK_FOR_MORE_FILLER = frozenset(
+    {
+        "a", "an", "the", "any", "some", "bit", "little", "lil", "lot", "much", "few",
+        "tell", "me", "us", "i", "i'd", "id", "i'm", "im", "you", "u", "ya",
+        "can", "could", "would", "will", "do", "does", "please", "pls", "plz", "kindly",
+        "go", "keep", "going", "carry", "and", "so", "then", "now", "also", "just",
+        "what", "anything", "something", "share", "give", "show", "get", "dig",
+        "want", "wanna", "like", "love", "to", "know", "learn", "hear", "see",
+        "ok", "okay", "yes", "yeah", "yep", "sure", "hmm", "oh",
+        "that", "this", "it", "them", "those", "these", "there",
+        "of", "in", "into", "on", "for", "with", "regarding", "re",
+    }
+)  # fmt: skip
+# A request for more is short; a long message holding "more" is about something.
+_ASK_FOR_MORE_MAX_WORDS = 12
+# "paid or unpaid? and is remote ok" after an internships answer, and "d'accord,
+# et c'est disponible en France ?" after a product answer: no pronoun, no phrase
+# signal, and no subject of their own. Short enough that the missing subject is
+# the one the conversation just had.
+_ELLIPTICAL_MAX_WORDS = 8
+_ADDRESSES_THE_BUSINESS_RE = re.compile(r"(?i)\b(?:you|your|yours|u|ur|y'?all)\b")
+
+
+def _one_slip_from(token: str, word: str) -> bool:
+    """True when ``token`` is ``word`` or one keyboard slip from it: two adjacent
+    letters swapped ("moer", "mroe"), one letter dropped ("mor", "abut") or one
+    letter doubled ("moree").
+
+    Never a substituted letter, which is what keeps "mode" and "store" from
+    reading as "more". Words shorter than four letters match only exactly.
+    """
+    if token == word:
+        return True
+    if len(word) < 4:
+        return False
+    if len(token) == len(word):
+        return any(token == word[:i] + word[i + 1] + word[i] + word[i + 2 :] for i in range(len(word) - 1))
+    if len(token) == len(word) - 1:
+        return len(token) >= 3 and any(token == word[:i] + word[i + 1 :] for i in range(len(word)))
+    if len(token) == len(word) + 1:
+        return any(token[i] == token[i - 1] and token[:i] + token[i + 1 :] == word for i in range(1, len(token)))
+    return False
+
+
+def _follow_up_words(question: str) -> list[str]:
+    """Lowercase Latin words, apostrophes kept inside a word ("i'd", "c'est")."""
+    return _FOLLOW_UP_WORD_RE.findall((question or "").replace("’", "'").lower())
+
+
+def _asks_for_more(question: str) -> bool:
+    """True when the message asks for more of whatever was just said, and names
+    nothing else: "tell me moer about ", "elaborate", "details?", "and?",
+    "go on", or any short message stopping on "about", "on" or "regarding".
+
+    Context-free; the pipeline pairs it with a bot reply immediately before the
+    turn. "tell me more about cricket" is not one: it names its own subject, and
+    the relevance judge decides that one in context.
+    """
+    words = _follow_up_words(question)
+    if not words or len(words) > _ASK_FOR_MORE_MAX_WORDS:
+        return False
+    if words[-1] in _DANGLING_PREPOSITIONS or any(_one_slip_from(words[-1], w) for w in _ABOUT_WORDS):
+        return True
+    if set(words) <= {"and", "then", "so", "what"} and "and" in words:
+        return True
+    asks = False
+    for index, word in enumerate(words):
+        if any(_one_slip_from(word, target) for target in _ASK_FOR_MORE_WORDS) or (
+            index and (words[index - 1], word) in _CONTINUE_BIGRAMS
+        ):
+            asks = True
+        elif word not in _ASK_FOR_MORE_FILLER and not any(_one_slip_from(word, w) for w in _ABOUT_WORDS):
+            return False
+    return asks
+
+
+def _is_elliptical_fragment(question: str) -> bool:
+    """True for a short Latin-script message that names no subject of its own.
+
+    "No subject of its own" is the strict on-scope vocabulary being absent:
+    "office hours" and "what's your price?" name one and are asked the same way
+    at any point in a conversation, while "paid or unpaid? and is remote ok"
+    names nothing it could be about. A message put to the business in the second
+    person ("when do you open") is about the business, so it is not a fragment
+    either, and keeps its QA cache entry. A message in another script is left
+    alone, as the English-tuned judges are for it.
+    """
+    if _ADDRESSES_THE_BUSINESS_RE.search(question or ""):
+        return False
+    words = re.findall(r"[^\W_]+(?:'[^\W_]+)?", question or "")
+    return (
+        0 < len(words) <= _ELLIPTICAL_MAX_WORDS
+        and _has_latin_words(question)
+        and not _STRICT_ON_SCOPE_RE.search(question)
+    )
+
+
 def _looks_like_follow_up(question: str) -> bool:
-    """True when the question carries a pronoun/determiner/phrase signal that
-    makes it depend on conversation context (the trigger ``rewrite_query``
-    uses to decide whether an LLM rewrite is worth an extra call)."""
-    return bool(question) and bool(_FOLLOW_UP_SIGNAL_RE.search(question))
+    """True when the message depends on the conversation before it: a pronoun,
+    determiner or phrase signal (``_FOLLOW_UP_SIGNALS``), a request for more in
+    any spelling (``_asks_for_more``), or a short fragment with no subject of
+    its own (``_is_elliptical_fragment``).
+
+    One definition for three consumers, which must agree: ``rewrite_query``
+    rewrites such a message against history, the relevance gate judges it with
+    the bot's last reply beside it, and the QA cache, keyed on the words alone,
+    neither serves nor stores an answer to it once there is earlier conversation.
+    """
+    if not question:
+        return False
+    return bool(
+        _FOLLOW_UP_SIGNAL_RE.search(question)
+        or _asks_for_more(question)
+        or _is_elliptical_fragment(question)
+        or _mentions_more_about(question)
+    )
+
+
+def _mentions_more_about(question: str) -> bool:
+    """True for "more about" in any spelling ("moer abt", "mroe about"), wherever
+    it sits: the typo form of the ``"more about"`` signal."""
+    words = _follow_up_words(question)
+    return any(
+        _one_slip_from(first, "more") and (second == "on" or any(_one_slip_from(second, w) for w in _ABOUT_WORDS))
+        for first, second in zip(words, words[1:], strict=False)
+    )
+
+
+def _reply_before_this_turn(history: list) -> str:
+    """The bot's reply that the visitor's current message answers, or "".
+
+    ``history`` ends with the visitor's own message (it is persisted before
+    history is read), so this is the entry before it, when that entry is ours.
+    A message after another visitor message, or on a first turn, follows no reply.
+    """
+    if not history or len(history) < 2 or _msg_role(history[-1]) != "user":
+        return ""
+    before = history[-2]
+    return _msg_content(before) if _msg_role(before) in ("bot", "assistant", "operator") else ""
 
 
 # Hard deadline for the follow-up query rewrite on the request path. The
@@ -6712,6 +6928,28 @@ async def _detect_handoff_bounded(question: str, last_bot_message: str | None = 
 # The urgent-incident classifier has the same shape (a gate-tier YES/NO call) and
 # is awaited before the first frame of the turn, so it gets the same ceiling.
 _URGENT_INTENT_TIMEOUT_S = _HANDOFF_INTENT_TIMEOUT_S
+
+
+async def _detect_dissatisfaction_bounded(question: str, previous_reply: str) -> bool:
+    """Whether a message that passed the vocabulary check is unhappy with the bot's
+    last reply, without blocking the event loop.
+
+    The caller runs ``visitor_reaction.might_be_dissatisfied`` first and asks only
+    on a turn about to be refused, so an ordinary turn costs no thread and no model
+    call. This runs ``visitor_reaction.classify_dissatisfaction`` (which falls back
+    to its rules on a model error) on a worker thread under the same ceiling as the
+    urgent classifier. A stall uses the fallback rules; the worker thread cannot be
+    interrupted, so its late answer is discarded.
+    """
+    task = asyncio.create_task(asyncio.to_thread(visitor_reaction.classify_dissatisfaction, question, previous_reply))
+    try:
+        return await asyncio.wait_for(task, timeout=_URGENT_INTENT_TIMEOUT_S)
+    except TimeoutError:
+        logger.warning("Dissatisfaction classifier exceeded %.1fs. Using the fallback rules", _URGENT_INTENT_TIMEOUT_S)
+        return visitor_reaction.fallback_is_dissatisfied(question)
+    except Exception as exc:  # noqa: BLE001 - never let the classifier break the turn
+        logger.warning("Dissatisfaction classifier failed (%s). Using the fallback rules", type(exc).__name__)
+        return visitor_reaction.fallback_is_dissatisfied(question)
 
 
 async def _detect_urgent_bounded(question: str) -> bool:
@@ -6776,6 +7014,8 @@ def rewrite_query(session_id: str, question: str, history: list) -> str:
     history_text = "\n".join(f"{msg.role.upper()}: {msg.content}" for msg in history[-4:])
 
     rewrite_prompt = f"""Given the conversation history and a follow-up question, rewrite the follow-up question to be a standalone search query that captures the full context.
+
+The follow-up may be short, misspelled or written in another language ("tell me moer about", "paid or unpaid?"). When it continues the conversation, name what it refers to. When it is a new question unrelated to the conversation, return it unchanged.
 
 CONVERSATION HISTORY:
 {history_text}
@@ -7999,6 +8239,50 @@ async def rag_pipeline_stream(
             # sites below can never disagree with each other.
             _judges_bypassed = _english_judges_bypassed(language, question)
 
+            # ── Waiting on the team after the handoff form ───────────────────
+            # "hello?? nobody is replying" after the form opened is a visitor
+            # chasing a person, not a question. It met the relevance judge, which
+            # scored it 0.00, and got "Let's keep this about CleanStart" (reported
+            # from production on 2026-09-11), and "hellooo??" met the router first
+            # and was greeted like a new visitor. So this runs ahead of the router
+            # and points back at the form with the handoff reply's repeat wording.
+            #
+            # Rules only, and pure: a message that does not read as chasing a
+            # reply costs nothing and loads no session. Only after the form was
+            # offered in this conversation, on a bot whose live chat can still take
+            # the visitor, and in English, like the handoff reply itself.
+            if live_chat_on and not _judges_bypassed and visitor_reaction.is_waiting_for_a_person(question):
+                _wait_filters = [ChatSession.id == session_id]
+                if bid:
+                    _wait_filters.append(ChatSession.bot_id == bid)
+                elif cid:
+                    _wait_filters.append(ChatSession.client_id == cid)
+                _wait_session = session.query(ChatSession).filter(*_wait_filters).first()
+                if _card_already_shown(_wait_session, "handoff_offered"):
+                    _safety_net_metric("handoff_waiting_reply", path="stream", session=session_id, bot_id=bid)
+                    _wait_text = _name_ack_prefix(_flow_name, _just_named, language) + handoff_reply(
+                        team_available=bool(_team_online), repeat=True
+                    )
+                    # Fixed text, saved before the first frame like the urgent reply.
+                    _bot_msg = add_chat_message(
+                        session,
+                        session_id,
+                        client_id=cid,
+                        role="bot",
+                        content=_wait_text,
+                        bot_id=bid,
+                        source_language=_lang_base(language),
+                    )
+                    session.flush()
+                    _wait_meta = {"message_id": _bot_msg.id, "suggest_handoff": True, "qualification_pending": False}
+                    # The visitor is being pointed at a person: not unhelped.
+                    _set_unhelped_streak(_wait_session, 0)
+                    session.commit()
+                    yield _stream_metadata(session_id, [], language)
+                    yield _wait_text
+                    yield f"\nFINAL_METADATA:{json.dumps(_wait_meta)}\n"
+                    return
+
             _intent = (
                 None
                 if (_affirmed_handoff or _judges_bypassed)
@@ -9062,6 +9346,22 @@ async def rag_pipeline_stream(
             # unrelated context. Wrongly refusing a paying customer's question
             # is far more costly than occasionally answering a loose one.
             _bot_threshold = getattr(bot, "relevance_threshold", None) if bot else None
+            # A message that leans on the bot's last reply is judged with that
+            # reply beside it. "tell me moer about " after a company overview was
+            # judged on its own words, scored 0.00 and refused (reported from
+            # production on 2026-09-11): the rewrite had not fired, and even a
+            # rewritten "paid or unpaid?" reads as nothing without the internships
+            # answer before it. Only for a follow-up-shaped turn right after a bot
+            # reply, the same definition the rewrite and the QA cache use: a
+            # standalone question keeps its context-free prompt and shared cache
+            # entry, since the context is part of the verdict's key. A deferred
+            # question replayed after the name answers no reply.
+            _prior_reply = _reply_before_this_turn(history)
+            _gate_context = (
+                ConversationContext(previous_reply=_prior_reply, visitor_message=question)
+                if _prior_reply and _prior_turns and _deferred_q is None and _looks_like_follow_up(question)
+                else None
+            )
             if _judges_bypassed:
                 _is_relevant, _gate_score = True, 1.0
             else:
@@ -9086,6 +9386,7 @@ async def rag_pipeline_stream(
                         threshold=_bot_threshold,
                         max_chunks=len(final_results) if _use_cag_lite else None,
                         kb_version=_kb_version,
+                        context=_gate_context,
                     )
                 )
             # Qualification-chip answer, or a free-typed answer to the bot's own
@@ -9111,11 +9412,14 @@ async def rag_pipeline_stream(
             # Topical follow-up on a phrase the bot just used — see non-stream
             # path for the full rationale. Relaxes the gate (reach generation)
             # when chunks exist, else counts as on-scope for the graceful pivot.
+            # A request for more of the reply just given ("tell me moer about ",
+            # "elaborate", "details?") is the same kind of turn with no phrase to
+            # share: it names nothing, so its subject is that reply.
             _topical_followup = (
                 not _is_relevant
                 and not _trusted_cta
                 and not _answering_probe
-                and _continues_prior_bot_topic(question, history)
+                and (_continues_prior_bot_topic(question, history) or (bool(_prior_reply) and _asks_for_more(question)))
             )
             _relax_topical = _topical_followup and bool(final_results)
             if _relax_topical:
@@ -9191,6 +9495,88 @@ async def rag_pipeline_stream(
             _team_already_offered = _card_already_shown(chat_session, "handoff_offered") or _card_already_shown(
                 chat_session, "leave_message"
             )
+
+            # ── A visitor unhappy with the last reply ────────────────────────
+            # "wow very helpful answer 🙄" after a reply that did not help, and
+            # "cool so ill just sit here and get hacked then" after the handoff
+            # form, name nothing, so the judge scored both 0.00 and each got a
+            # scope refusal (reported from production on 2026-09-11).
+            #
+            # Asked only of a turn about to be refused or pivoted (by the judge,
+            # or for want of any context), right after a bot reply, in English,
+            # and only when the message carries dissatisfaction vocabulary. The
+            # gate-tier model decides from there, because sarcasm reads as praise
+            # to any word list. The reply apologises and offers the team with the
+            # plan gating of the unhelped offer below (the live form, the message
+            # card with live chat off, and on a plan with no person the contact
+            # page or a request for more). Unlike that offer it fires on the first
+            # such turn, and again after the team was offered, pointing back at the
+            # form: the visitor has said the bot is not helping.
+            _empty_context_ahead = (
+                not final_results
+                and not _trusted_cta
+                and not _answering_probe
+                and not _affirmed_handoff
+                and not _is_pure_budget_disclosure(question)
+            )
+            if (
+                (_unhelped_turn or _empty_context_ahead)
+                and not _judges_bypassed
+                and _deferred_q is None
+                and _prior_reply
+                and visitor_reaction.might_be_dissatisfied(question)
+                and await _detect_dissatisfaction_bounded(question, _prior_reply)
+            ):
+                _reaction = visitor_reaction.dissatisfied_offer(
+                    support_enabled=_plan_support_allowed,
+                    live_chat_enabled=live_chat_on,
+                    team_available=bool(_team_online),
+                    handoff_already_offered=_card_already_shown(chat_session, "handoff_offered"),
+                    company_name=_company_name,
+                    contact_url=_contact_url,
+                )
+                _safety_net_metric(
+                    "dissatisfied_reply",
+                    path="stream",
+                    gate_score=f"{_gate_score:.2f}",
+                    live_chat=str(live_chat_on),
+                    support=str(_plan_support_allowed),
+                    session=session_id,
+                    bot_id=bid,
+                )
+                _reaction_text = (
+                    _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + _reaction.text
+                )
+                # Fixed text, saved with its flags before the first frame, like the
+                # unhelped offer below.
+                _bot_msg = add_chat_message(
+                    session,
+                    session_id,
+                    client_id=cid,
+                    role="bot",
+                    content=_reaction_text,
+                    bot_id=bid,
+                    is_unanswered=True,
+                    source_language=_lang_base(language),
+                )
+                session.flush()
+                _reaction_meta = {
+                    "message_id": _bot_msg.id,
+                    "suggest_handoff": _reaction.suggest_handoff,
+                    "qualification_pending": False,
+                }
+                if _reaction.needs_message_card:
+                    _reaction_meta["show_leave_message"] = True
+                    _mark_card_shown(chat_session, "leave_message")
+                if _reaction.suggest_handoff:
+                    _mark_card_shown(chat_session, "handoff_offered")
+                _set_unhelped_streak(chat_session, 0)
+                session.commit()
+                yield _stream_metadata(session_id, [], language)
+                yield _reaction_text
+                yield f"\nFINAL_METADATA:{json.dumps(_reaction_meta)}\n"
+                return
+
             if (
                 _unhelped_turn
                 and _plan_support_allowed
@@ -9355,8 +9741,12 @@ async def rag_pipeline_stream(
                 # the gate judged the turn relevant.
                 and not _is_pure_budget_disclosure(question)
             ):
-                if _question_looks_on_scope(question, _company_name) or (
-                    search_query != question and _question_looks_on_scope(search_query, _company_name)
+                if (
+                    _question_looks_on_scope(question, _company_name)
+                    or (search_query != question and _question_looks_on_scope(search_query, _company_name))
+                    # A request for more of the reply just given is about that
+                    # reply, whatever was retrieved for its own words.
+                    or (bool(_prior_reply) and _asks_for_more(question))
                 ):
                     _safety_net_metric(
                         "no_info_pivot",
