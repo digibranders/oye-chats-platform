@@ -10,7 +10,10 @@ over: "do you have case studies of fintech clients?" on a bot whose case
 studies are web pages deserves an answer from those pages, not a file offer.
 ``asks_for_delivery`` tells the two apart so the caller can fall through to the
 normal pipeline when the catalog has nothing exact and the visitor never asked
-to be sent anything.
+to be sent anything. Nor is every sentence with "pdf" in it about the business's
+files: "can I download reports as pdf?" asks about a feature, and "send me the
+invoice pdf for my order" is about the visitor's own paperwork. Both belong to
+the model.
 
 The catalog is ``repository.get_bot_media_urls`` payloads: dicts with a ``files``
 list of ``{"url", "name"}``. Nothing here sends email: the reply points at
@@ -22,8 +25,17 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from urllib.parse import unquote
 
-from app.ingestion.cleaner import _FILE_URL_RE
+from app.ingestion.cleaner import is_valid_file_url
+
+#: Content words a question and a file name must share before the file counts as
+#: the one asked for. ``rag_service`` attaches a topical card on the same bar, so
+#: both paths agree on what "clearly about this file" means: two words in common
+#: ("red" + "teaming") is one subject, one ("model", "report") is usually
+#: incidental. A question with a single topic word is exact when a file carries
+#: it ("the SOAR datasheet").
+TOPIC_MIN_OVERLAP = 2
 
 #: Documents a business hands out. "deck" alone is also a patio or a ship, so
 #: only a pitch, sales, slide, investor or company deck counts.
@@ -85,41 +97,61 @@ _SERVICE_RULES = tuple(
     )
 )
 
-#: Kinds of document a question can name, with the stem that marks a file of
-#: that kind once its name is lowercased and stripped to letters and digits.
-_KINDS = (
-    (re.compile(r"brochure", re.IGNORECASE), "brochure"),
-    (re.compile(r"data\s*sheet", re.IGNORECASE), "datasheet"),
-    (re.compile(r"spec\s*sheet", re.IGNORECASE), "specsheet"),
-    (re.compile(r"white\s*paper", re.IGNORECASE), "whitepaper"),
-    (re.compile(r"case\s+stud", re.IGNORECASE), "casestud"),
-    (re.compile(r"catalog", re.IGNORECASE), "catalog"),
-    (re.compile(r"\bdecks?\b", re.IGNORECASE), "deck"),
-    (re.compile(r"one[- ]?pager", re.IGNORECASE), "onepager"),
-    (re.compile(r"e-?book", re.IGNORECASE), "ebook"),
-    (re.compile(r"profile", re.IGNORECASE), "profile"),
+#: Contact details a visitor adds to a request ("email it to rahul.sharma@gmail.com",
+#: "my number is 98765 43210", a link). They name no document, so they are removed
+#: before a question is read: left in, "rahul" or "gmail" became the topic of the
+#: request and no file matched it.
+_CONTACT_RE = re.compile(
+    r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"  # an email address
+    r"|\b(?:https?://|www\.)\S+"  # a link
+    r"|\+?\d(?:[\s.-]?\d){6,}",  # a phone number: 7 or more digits, with spaces, dashes or dots between
+    re.IGNORECASE,
 )
-#: File names that describe the whole company, offered first for a generic ask.
-_PROFILE_RE = re.compile(r"brochure|company[-_ ]?profile|overview|capabilit|corporate", re.IGNORECASE)
-#: Words that say how a document is asked for, never which one. Includes
-#: greetings, politeness and filler that name no document either: "thanks!
-#: could you email me the brochure" and "hey guys send me your brochure" must
-#: not treat "thanks" or "guys" as the topic.
-_STOPWORDS = frozenset(
-    {
-        "the", "and", "for", "with", "our", "your", "you", "can", "could", "would", "will", "should", "please", "pls",
-        "plz", "kindly", "get", "give", "want", "need", "have", "any", "some", "this", "that", "these", "those", "what",
-        "which", "where", "there", "are", "does", "about", "regarding", "from", "over", "also", "just", "like", "send",
-        "share", "email", "mail", "download", "downloadable", "see", "show", "provide", "forward", "available", "copy",
-        "version", "latest", "link", "links", "pdf", "pdfs", "doc", "docx", "file", "files", "document", "documents",
-        "datasheet", "datasheets", "brochure", "brochures", "whitepaper", "whitepapers", "white", "paper", "papers",
-        "case", "study", "studies", "catalog", "catalogs", "catalogue", "catalogues", "deck", "decks", "sheet",
-        "sheets", "data", "spec", "ebook", "ebooks", "one", "pager", "pagers", "profile", "company", "pitch", "sales",
-        "slide", "investor", "product", "products", "info", "information", "details", "detail", "more", "thanks",
-        "thank", "thx", "hey", "hello", "hii", "guys", "team", "sir", "madam", "maam", "quick", "quickly", "asap",
-        "again", "bro", "dear", "folks", "everyone",
-    }
-)  # fmt: skip
+
+#: Where one thought ends and the next begins. The rules below judge the clause a
+#: document is named in, so "send me your brochure, my number is ..." is read as a
+#: request followed by contact details, not as a question about "my" file.
+_CLAUSE_BREAK = re.compile(r"[,;:.!?]|\s(?:and|but|also)\s", re.IGNORECASE)
+_NOUN_RE = re.compile(rf"\b{_ANY_NOUN}\b", re.IGNORECASE)
+#: Every document noun except a bare pdf.
+_NAMED_DOCUMENT_RE = re.compile(rf"\b(?:{_FILE_NOUNS}|catalog(?:ue)?s?|decks?)\b", re.IGNORECASE)
+#: "your brochure", "your latest 2026 brochure": the business's own document. It
+#: keeps "can you share your brochure with our team" and "how can I get your
+#: brochure?" requests, which the ownership and how-to rules would otherwise drop.
+_YOUR_DOCUMENT_RE = re.compile(rf"\byour\s+(?:[a-z0-9-]+\s+){{0,2}}{_ANY_NOUN}\b", re.IGNORECASE)
+#: The visitor's own paperwork: "the pdf of my contract", "my payslip pdf". A
+#: possessive that only gives contact details ("to my email", "my number") does
+#: not count.
+_VISITORS_OWN_RE = re.compile(
+    r"\b(?:my|our)\b(?!\s+(?:e-?mail|mail|inbox|whatsapp|phone|mobile|number|contact|address|id)\b)",
+    re.IGNORECASE,
+)
+#: A how-to question: "how do I send a pdf to a customer", "how do I download the ebook I bought".
+_HOW_TO_RE = re.compile(r"\bhow\s+(?:do|can|should)\s+(?:i|we)\b", re.IGNORECASE)
+#: A file sent to the business: "can I send you my pdf", "email you my brochure file".
+_TO_THE_BUSINESS_RE = re.compile(
+    r"\b(?:send|share|e-?mail|mail|forward|upload)\s+(?:(?:it|them|this|these|that)\s+)?(?:(?:to|with)\s+)?you\b",
+    re.IGNORECASE,
+)
+_PRODUCT = r"(?:bot|chatbot|widget|app|dashboard|platform|tool|system|users?|customers?|visitors?|leads?|clients?)"
+#: The product, or the visitor's own audience, handling the file: a feature question.
+_PRODUCT_RULES = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        # Doing the action: "can users download invoices", "does the bot share brochures".
+        rf"\b{_PRODUCT}\s+(?:(?:can|could|will|would|to)\s+)?(?:send|share|e-?mail|mail|forward|download|upload"
+        r"|get|give|export)\b",
+        # Receiving it: "send my brochure to leads", "share brochures with visitors".
+        rf"\b(?:to|with)\s+(?:(?:a|an|the|my|our|your|all|their)\s+)?{_PRODUCT}\b",
+        # Where it happens: "in the app", "from the dashboard", "using your tool".
+        rf"\b(?:in|from|using|via|through|inside)\s+(?:(?:a|the|my|our|your)\s+)?{_PRODUCT}\b",
+    )
+)
+#: A file format, not a file: "can I download reports as pdf?", "export to pdf".
+_AS_PDF_RE = re.compile(r"\b(?:as|to|in(?:to)?)\s+(?:a\s+)?pdfs?\b", re.IGNORECASE)
+#: A number of documents to be made is an order: "I need 1000 brochures". A year
+#: ("your 2026 brochure") and a singular noun are not a quantity.
+_QUANTITY_RE = re.compile(rf"\b(?!(?:19|20)\d\d\b)\d{{2,}}\s+{_ANY_NOUN}(?<=s)\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -130,13 +162,38 @@ class DocumentPick:
     exact: bool
 
 
+def _without_contacts(text: str) -> str:
+    return _CONTACT_RE.sub(" ", text)
+
+
+def _is_not_for_a_business_file(clause: str) -> bool:
+    """True when a clause names a document but is not asking for one of the business's files."""
+    if not _NOUN_RE.search(clause):
+        return False
+    if not _YOUR_DOCUMENT_RE.search(clause) and (_VISITORS_OWN_RE.search(clause) or _HOW_TO_RE.search(clause)):
+        return True
+    if _TO_THE_BUSINESS_RE.search(clause) or any(rule.search(clause) for rule in _PRODUCT_RULES):
+        return True
+    if _AS_PDF_RE.search(clause) and not _NAMED_DOCUMENT_RE.search(clause):
+        return True
+    return bool(_QUANTITY_RE.search(clause))
+
+
 def is_document_request(question: object) -> bool:
-    """True when the visitor asks for a downloadable document, not a service that makes one."""
+    """True when the visitor asks for one of the business's downloadable documents.
+
+    Not a service that makes one ("do you design brochures?"), a feature question
+    ("can users download invoices as pdf"), or the visitor's own file ("send me
+    the invoice pdf for my order").
+    """
     if not isinstance(question, str) or not question.strip():
         return False
-    if any(rule.search(question) for rule in _SERVICE_RULES):
+    text = _without_contacts(question)
+    if any(rule.search(text) for rule in _SERVICE_RULES):
         return False
-    return any(rule.search(question) for rule in _REQUEST_RULES)
+    if not any(rule.search(text) for rule in _REQUEST_RULES):
+        return False
+    return not any(_is_not_for_a_business_file(clause) for clause in _CLAUSE_BREAK.split(text))
 
 
 #: Verbs that ask for a document to be handed over, not merely mentioned.
@@ -162,31 +219,88 @@ def asks_for_delivery(question: object) -> bool:
     "get", "can I have" and "could I have" ask for the file itself."""
     if not isinstance(question, str) or not question.strip():
         return False
-    return any(rule.search(question) for rule in _DELIVERY_RULES)
+    text = _without_contacts(question)
+    return any(rule.search(text) for rule in _DELIVERY_RULES)
 
 
-def _is_file_url(url: object) -> bool:
-    """The check ``rag_service._is_valid_file_url`` applies to every catalog card.
-
-    The ingestion regex at position 0 (http(s), a known download extension), and a
-    path after the host, which rejects old junk entries like a bare ``https://hub.doc``.
-    """
-    if not isinstance(url, str) or not _FILE_URL_RE.match(url):
-        return False
-    return "/" in url[url.find("://") + 3 :]
+#: Kinds of document: the kind, how a question names it, and how a file name
+#: carries it once URL-decoded. A kind no question names here still marks a file,
+#: so a report is never the exact answer to a request for a datasheet.
+_KINDS: tuple[tuple[str, re.Pattern[str] | None, re.Pattern[str]], ...] = tuple(
+    (kind, re.compile(asked, re.IGNORECASE) if asked else None, re.compile(carried, re.IGNORECASE))
+    for kind, asked, carried in (
+        ("brochure", r"brochure", r"brochure"),
+        ("datasheet", r"data\s*sheet", r"data[\W_]*sheet"),
+        ("spec sheet", r"spec\s*sheet", r"spec[\W_]*sheet"),
+        ("whitepaper", r"white\s*paper", r"white[\W_]*paper"),
+        ("case study", r"case\s+stud", r"case[\W_]*stud"),
+        ("catalog", r"catalog", r"catalog"),
+        ("deck", r"\bdecks?\b", r"deck"),
+        ("one-pager", r"one[- ]?pager", r"one[\W_]*pager"),
+        # Not the "ebook" inside "facebook".
+        ("ebook", r"\be-?books?\b", r"(?<!fac)e[\W_]*book"),
+        # A "Risk Profile Assessment" is not the company's profile.
+        ("company profile", r"company\s+profile", r"company[\W_]*profile"),
+        ("report", None, r"report"),
+    )
+)
+#: Asks for the company as a whole, answered by a profile-like file when the
+#: catalog has nothing of the kind named.
+_GENERIC_KINDS = frozenset({"brochure", "company profile"})
+#: File names that describe the whole company.
+_PROFILE_RE = re.compile(r"brochure|company[-_ ]?profile|overview|capabilit|corporate", re.IGNORECASE)
+#: Words that say how a document is asked for, never which one. Includes
+#: greetings, politeness and filler that name no document either: "thanks!
+#: could you email me the brochure" and "hey guys send me your brochure" must
+#: not treat "thanks" or "guys" as the topic.
+_STOPWORDS = frozenset(
+    {
+        "the", "and", "for", "with", "our", "your", "you", "can", "could", "would", "will", "should", "please", "pls",
+        "plz", "kindly", "get", "give", "want", "need", "have", "any", "some", "this", "that", "these", "those", "what",
+        "which", "where", "there", "are", "does", "about", "regarding", "from", "over", "also", "just", "like", "send",
+        "share", "email", "mail", "download", "downloadable", "see", "show", "provide", "forward", "available", "copy",
+        "version", "latest", "link", "links", "pdf", "pdfs", "doc", "docx", "file", "files", "document", "documents",
+        "datasheet", "datasheets", "brochure", "brochures", "whitepaper", "whitepapers", "white", "paper", "papers",
+        "case", "study", "studies", "catalog", "catalogs", "catalogue", "catalogues", "deck", "decks", "sheet",
+        "sheets", "data", "spec", "ebook", "ebooks", "one", "pager", "pagers", "profile", "company", "pitch", "sales",
+        "slide", "investor", "product", "products", "info", "information", "details", "detail", "more", "thanks",
+        "thank", "thx", "hey", "hello", "hii", "guys", "team", "sir", "madam", "maam", "quick", "quickly", "asap",
+        "again", "bro", "dear", "folks", "everyone",
+    }
+)  # fmt: skip
 
 
 def _tokens(text: str | None) -> set[str]:
     return {t for t in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(t) >= 3 and t not in _STOPWORDS}
 
 
-def _catalog_files(catalog: object) -> list[dict[str, str]]:
-    """Every usable file in the catalog, once, as a download card.
+def _asked_kinds(text: str) -> frozenset[str]:
+    return frozenset(kind for kind, asked, _ in _KINDS if asked is not None and asked.search(text))
 
-    Named the way ``rag_service._topical_media_card`` names a card, so a card from
-    here looks the same as one attached to a generated answer.
+
+@dataclass(frozen=True)
+class _File:
+    """A usable catalog file: its download card and what its name says."""
+
+    card: dict[str, str]
+    tokens: frozenset[str]
+    kinds: frozenset[str]
+    profile_like: bool
+
+    @property
+    def url(self) -> str:
+        return self.card["url"]
+
+
+def _catalog_files(catalog: object, company: set[str]) -> list[_File]:
+    """Every usable file in the catalog, once.
+
+    The card is named the way ``rag_service._topical_media_card`` names one, so a
+    card from here looks the same as one attached to a generated answer. Matching
+    reads the URL-decoded name without the company's own words, which would
+    otherwise count toward every file the company named after itself.
     """
-    files: list[dict[str, str]] = []
+    files: list[_File] = []
     seen: set[str] = set()
     for payload in catalog if isinstance(catalog, list) else []:
         if not isinstance(payload, dict):
@@ -195,51 +309,99 @@ def _catalog_files(catalog: object) -> list[dict[str, str]]:
             if not isinstance(entry, dict):
                 continue
             url = entry.get("url")
-            if not _is_file_url(url) or url in seen:
+            if not is_valid_file_url(url) or url in seen:
                 continue
             seen.add(url)
             raw = entry.get("name")
-            name = raw if isinstance(raw, str) and raw.strip() else url.split("?", 1)[0].rsplit("/", 1)[-1]
-            files.append({"type": "download", "url": url, "name": name.strip() or "download"})
+            name = (raw if isinstance(raw, str) and raw.strip() else url.split("?", 1)[0].rsplit("/", 1)[-1]).strip()
+            readable = unquote(name)
+            files.append(
+                _File(
+                    card={"type": "download", "url": url, "name": name or "download"},
+                    tokens=frozenset(_tokens(readable) - company),
+                    kinds=frozenset(kind for kind, _, carried in _KINDS if carried.search(readable)),
+                    profile_like=bool(_PROFILE_RE.search(readable)),
+                )
+            )
     return files
+
+
+def _conflicts(asked: frozenset[str], file: _File) -> bool:
+    """True when the question names a kind and the file is plainly another kind."""
+    return bool(asked and file.kinds and not asked & file.kinds)
+
+
+def _offer(first: _File, others: list[_File], *, exact: bool, limit: int) -> DocumentPick:
+    """``first`` as the card, then the others that belong beside it.
+
+    The caller passes, for an exact pick, only files as good as the first. An
+    inexact pick is a guess, so a second file rides along only when it is the
+    same kind as the first: two spec sheets, not a datasheet and a report.
+    """
+    companions = others if exact else [f for f in others if f.kinds & first.kinds]
+    return DocumentPick(docs=[f.card for f in (first, *companions)][:limit], exact=exact)
 
 
 def pick_documents(question: str, company_name: str | None, catalog: object, limit: int = 2) -> DocumentPick:
     """The files to offer for a document request.
 
-    A question that names a topic ("the SOC as a Service datasheet") gets the files
-    whose names share a word with it, or nothing. One that names only a kind ("any
-    case studies?") gets the files of that kind. Otherwise the company profile or
-    brochure comes first, marked inexact. Ties break on the URL, so the same
-    question against the same catalog always offers the same files.
+    A question that names a topic ("the SOC as a Service datasheet") gets the
+    files whose names share the most words with it. That pick is exact when the
+    best file shares at least ``TOPIC_MIN_OVERLAP`` words, or every topic word,
+    and is not plainly another kind of document than the one asked for; a weaker
+    match is offered as inexact. When no file shares a word, or the question
+    names only a kind ("any case studies?"), the files of that kind are offered,
+    exact only when there was no topic to miss. A request for a brochure or a
+    company profile, or one naming neither a kind nor a topic, falls back to
+    profile-like files, marked inexact. Anything else gets no files: never an
+    unrelated one, like a third-party report the knowledge base happens to link.
 
-    ``limit`` defaults to two: one card and one "Also available" chip, the most the
-    generated path ever attaches.
+    Contact details are ignored. Ties break on the URL, so the same question
+    against the same catalog always offers the same files. ``limit`` defaults to
+    two: one card and one "Also available" chip, the most the generated path ever
+    attaches.
     """
-    files = _catalog_files(catalog)
+    text = _without_contacts(question if isinstance(question, str) else "")
     company = _tokens(company_name)
-    anchor = _tokens(question) - company
+    anchor = _tokens(text) - company
+    asked = _asked_kinds(text)
+    files = _catalog_files(catalog, company)
+
     if anchor:
         scored = sorted(
-            ((len(anchor & (_tokens(f["name"]) - company)), f) for f in files),
-            key=lambda sf: (-sf[0], sf[1]["url"]),
+            ((len(anchor & f.tokens), f) for f in files if anchor & f.tokens),
+            key=lambda sf: (-sf[0], _conflicts(asked, sf[1]), sf[1].url),
         )
-        return DocumentPick(docs=[f for score, f in scored if score > 0][:limit], exact=True)
+        if scored:
+            best_overlap, best = scored[0]
+            exact = (best_overlap >= TOPIC_MIN_OVERLAP or best_overlap == len(anchor)) and not _conflicts(asked, best)
+            others = [
+                f for overlap, f in scored[1:] if not exact or (overlap == best_overlap and not _conflicts(asked, f))
+            ]
+            return _offer(best, others, exact=exact, limit=limit)
 
-    stems = [stem for kind, stem in _KINDS if kind.search(question or "")]
-    by_kind = [f for f in files if any(stem in re.sub(r"[^a-z0-9]", "", f["name"].lower()) for stem in stems)]
-    if by_kind:
-        return DocumentPick(docs=sorted(by_kind, key=lambda f: f["url"])[:limit], exact=True)
-    profile = sorted((f for f in files if _PROFILE_RE.search(f["name"])), key=lambda f: f["url"])
-    rest = sorted((f for f in files if f not in profile), key=lambda f: f["url"])
-    return DocumentPick(docs=(profile + rest)[:limit], exact=False)
+    of_kind = sorted((f for f in files if asked & f.kinds), key=lambda f: f.url)
+    if of_kind:
+        return _offer(of_kind[0], of_kind[1:], exact=not anchor, limit=limit)
+
+    generic = asked <= _GENERIC_KINDS and (bool(asked) or not anchor)
+    profiles = sorted((f for f in files if f.profile_like), key=lambda f: f.url) if generic else []
+    if profiles:
+        return _offer(profiles[0], profiles[1:], exact=False, limit=limit)
+    return DocumentPick(docs=[], exact=False)
+
+
+#: A hash or id in a file name, "68d65d47051e1b0ca7a66228" or "29330f6b": noise to a reader.
+_HASH_WORD_RE = re.compile(r"[0-9a-f]{8,}", re.IGNORECASE)
 
 
 def _display(name: str) -> str:
-    """A file name as a reader sees it: no extension, separators as spaces, no markdown."""
-    stem = re.sub(r"\.[a-z0-9]{2,4}$", "", name, flags=re.IGNORECASE)
-    cleaned = " ".join(re.sub(r"[-_*`\[\]]+", " ", stem).split())
-    return cleaned or name
+    """A file name as a reader sees it: decoded, no extension, separators as spaces, no ids, no markdown."""
+    stem = re.sub(r"\.[a-z0-9]{2,4}$", "", unquote(name), flags=re.IGNORECASE)
+    words = re.sub(r"[-_*`\[\]]+", " ", stem).split()
+    readable = [word for word in words if not _HASH_WORD_RE.fullmatch(word)]
+    # A name that is nothing but an id keeps it: a bare id beats an empty name.
+    return " ".join(readable or words) or name
 
 
 def _listing(docs: list[dict[str, str]]) -> str:

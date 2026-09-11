@@ -912,6 +912,28 @@ class TestReadTimeJunkFilter:
         ):
             assert _is_valid_file_url(url) is True, f"real file rejected: {url}"
 
+    def test_the_document_catalog_applies_the_same_check(self):
+        from app.ingestion.cleaner import is_valid_file_url
+        from app.services import document_request
+        from app.services.rag_service import _is_valid_file_url
+
+        urls = [junk["url"] for junk in self._JUNK] + [
+            "https://cdn.x.com/foo.pdf",
+            "https://cdn.x.com/foo.pdf?v=1",
+            "https://cdn.x.com/foo.pdf#page=3",
+            "https://cdn.x.com/foo.pdf/preview",
+            "https://x.com/report.docx",
+            "ftp://acme.com/x.pdf",
+            "javascript:alert(1)",
+            "",
+            None,
+            3,
+        ]
+        for url in urls:
+            expected = is_valid_file_url(url)
+            assert _is_valid_file_url(url) is expected, url
+            assert document_request.is_valid_file_url(url) is expected, url
+
     def test_collect_available_media_drops_junk(self):
         # Whitelist used by the hallucination guard + safety-net promoter
         # must not include the pre-fix junk URLs, so no card can ever bind

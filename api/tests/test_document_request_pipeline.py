@@ -10,6 +10,7 @@ import pytest
 
 from app.db.models import ChatSession
 from app.services import rag_service as rs
+from app.services.document_request import TOPIC_MIN_OVERLAP
 from tests.test_rag_pipeline_defects import (
     _answer_text,
     _doc,
@@ -23,7 +24,8 @@ from tests.test_rag_pipeline_defects import (
 )
 
 RED = "https://acme.com/files/Red-Teaming.pdf"
-RED_CASE = "https://acme.com/files/Red-Teaming-Case-Study.pdf"
+RED_DATASHEET = "https://acme.com/files/Red-Teaming-Datasheet.pdf"
+BROCHURE = "https://acme.com/files/Acme-Company-Brochure-2025.pdf"
 PROFILE = "https://acme.com/files/Acme-Company-Profile.pdf"
 CATALOG = [{"files": [{"url": RED, "name": "Red-Teaming.pdf"}]}]
 PROFILE_CATALOG = [{"files": [{"url": PROFILE, "name": "Acme-Company-Profile.pdf"}]}]
@@ -77,7 +79,7 @@ async def test_a_second_matching_file_rides_as_the_chip(db, monkeypatch):
     _catalog(
         monkeypatch,
         [
-            {"files": [{"url": RED_CASE, "name": "Red-Teaming-Case-Study.pdf"}]},
+            {"files": [{"url": RED_DATASHEET, "name": "Red-Teaming-Datasheet.pdf"}]},
             {"files": [{"url": RED, "name": "Red-Teaming.pdf"}]},
         ],
     )
@@ -85,9 +87,9 @@ async def test_a_second_matching_file_rides_as_the_chip(db, monkeypatch):
     frames = await _drive_stream(bot, "share the red teaming datasheets please", "docs-2")
 
     meta = _final_meta(frames)
-    assert meta["media_card"]["url"] == RED_CASE
+    assert meta["media_card"]["url"] == RED_DATASHEET
     assert meta["media_secondary"] == [{"type": "download", "url": RED, "name": "Red-Teaming.pdf"}]
-    assert "**Red Teaming Case Study** and **Red Teaming** are ready to download below." in _answer_text(frames)
+    assert "**Red Teaming Datasheet** and **Red Teaming** are ready to download below." in _answer_text(frames)
 
 
 @pytest.mark.asyncio
@@ -268,3 +270,76 @@ async def test_a_document_request_with_person_words_uses_the_cache(db, monkeypat
 
     assert lookups != []
     assert "media_card" not in (_final_meta(frames) or {})
+
+
+@pytest.mark.asyncio
+async def test_an_email_address_in_the_request_still_gets_the_brochure(db, monkeypatch):
+    bot = _bot(db, "docs-14")
+    cap = _stub_pipeline(monkeypatch, retrieved=(_doc("Acme does red teaming."),), support=True)
+    _catalog(monkeypatch, [{"files": [{"url": BROCHURE, "name": "Acme-Company-Brochure-2025.pdf"}]}])
+
+    frames = await _drive_stream(bot, "can you email the brochure to rahul.sharma@gmail.com", "docs-14")
+
+    assert _final_meta(frames)["media_card"]["url"] == BROCHURE
+    assert "**Acme Company Brochure 2025** is ready to download below." in _answer_text(frames)
+    assert cap["prompts"] == []
+
+
+def _count_catalog_fetches(monkeypatch, catalog):
+    calls = []
+
+    def fetch(*_a, **_k):
+        calls.append(1)
+        return catalog
+
+    monkeypatch.setattr(rs, "get_bot_media_urls", fetch)
+    return calls
+
+
+def _record_metrics(monkeypatch):
+    names = []
+    original = rs._safety_net_metric
+
+    def record(name, **tags):
+        names.append(name)
+        original(name, **tags)
+
+    monkeypatch.setattr(rs, "_safety_net_metric", record)
+    return names
+
+
+@pytest.mark.asyncio
+async def test_a_document_question_left_to_the_model_is_counted_and_fetches_the_catalog_once(db, monkeypatch):
+    bot = _bot(db, "docs-15")
+    cap = _stub_pipeline(
+        monkeypatch,
+        retrieved=(_doc("Acme has worked with several fintech clients."),),
+        chunks=("We've worked with several fintech clients.",),
+    )
+    calls = _count_catalog_fetches(monkeypatch, [])
+    metrics = _record_metrics(monkeypatch)
+
+    await _drive_stream(bot, "do you have case studies of fintech clients?", "docs-15")
+
+    assert len(cap["prompts"]) == 1
+    assert "document_request_fell_through" in metrics
+    assert "document_request" not in metrics
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_generated_turn_fetches_the_catalog_once(db, monkeypatch):
+    bot = _bot(db, "docs-16")
+    cap = _stub_pipeline(monkeypatch, retrieved=(_doc("Acme opens at 9."),), chunks=("We open at 9.",))
+    calls = _count_catalog_fetches(monkeypatch, [])
+    metrics = _record_metrics(monkeypatch)
+
+    await _drive_stream(bot, "when do you open", "docs-16")
+
+    assert len(cap["prompts"]) == 1
+    assert "document_request_fell_through" not in metrics
+    assert len(calls) == 1
+
+
+def test_the_document_pick_and_the_topical_card_share_one_overlap_bar():
+    assert rs._TOPICAL_MEDIA_MIN_OVERLAP == TOPIC_MIN_OVERLAP

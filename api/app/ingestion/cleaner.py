@@ -55,6 +55,39 @@ _FILE_URL_RE = re.compile(
     re.IGNORECASE,
 )
 
+
+def is_valid_file_url(url: object) -> bool:
+    """True when ``url`` is a well-formed downloadable-file URL.
+
+    Read-time re-validation of file URLs pulled from the DB. Older ingestion runs
+    used a greedy regex that scraped domain labels like ``hub.docker.com`` as fake
+    ``.doc`` files, and those junk entries still live in existing bots'
+    ``metadata_info.media_urls.files``. Every reader of that catalog (the chat
+    pipeline's media catalog, whitelist and chip picker, and the document-request
+    route) applies this one check, so the junk is inert without a migration or a
+    re-crawl.
+
+    Two checks combined:
+      1. It matches ``_FILE_URL_RE`` starting at position 0, the same
+         boundary-aware regex ingestion now uses, so pre-fix domain-label
+         false positives (``hub.docker.com`` to ``hub.doc``) are rejected
+         when the regex sees a following letter or ``.<letter>``.
+      2. The URL contains a ``/`` in its path portion (after ``://``).
+         This rejects the terminally clipped junk like a bare
+         ``https://hub.doc``, which passes the regex on shape alone
+         (no letter follows) but has no path segment, so it cannot be a
+         real file. Real files always live at ``host/path.ext``.
+    """
+    if not isinstance(url, str) or not url:
+        return False
+    if not _FILE_URL_RE.match(url):
+        return False
+    scheme_sep = url.find("://")
+    if scheme_sep == -1:
+        return False
+    return "/" in url[scheme_sep + 3 :]
+
+
 # Trailing punctuation that URL regexes commonly sweep up. Strip before
 # using the URL so we don't emit ``https://example.com/file.pdf.`` etc.
 _URL_TRAILING_PUNCT = ".,;:!?)]}>\"'"

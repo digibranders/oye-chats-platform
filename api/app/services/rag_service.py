@@ -47,7 +47,13 @@ from app.services import currency_scoring as _currency_scoring
 from app.services import meeting_gate as _meeting_gate
 from app.services import plan_entitlements_service, runtime_config, urgent_route
 from app.services import pricing_gate as _pricing_gate
-from app.services.document_request import asks_for_delivery, document_reply, is_document_request, pick_documents
+from app.services.document_request import (
+    TOPIC_MIN_OVERLAP,
+    asks_for_delivery,
+    document_reply,
+    is_document_request,
+    pick_documents,
+)
 from app.services.email_service import (
     get_notification_recipients,
     send_handoff_request_email,
@@ -677,34 +683,9 @@ def _enrich_media_card_from_context(card: dict | None, retrieved_chunks) -> None
 # AVAILABLE MEDIA catalog, drop into the whitelist for hallucination checks,
 # and confuse the secondary-chip picker. Applying the current strict regex
 # at read-time means the junk is inert without any DB migration or re-crawl.
-# See ``_FILE_URL_RE`` in ``app.ingestion.cleaner`` for the authoritative
-# extension list + boundary lookahead.
-from app.ingestion.cleaner import _FILE_URL_RE  # noqa: E402
-
-
-def _is_valid_file_url(url: object) -> bool:
-    """True when ``url`` is a well-formed downloadable-file URL.
-
-    Two checks combined:
-      1. It matches ``_FILE_URL_RE`` starting at position 0, the same
-         boundary-aware regex ingestion now uses, so pre-fix domain-label
-         false positives (``hub.docker.com`` → ``hub.doc``) are rejected
-         when the regex sees a following letter or ``.<letter>``.
-      2. The URL contains a ``/`` in its path portion (after ``://``).
-         This kicks the *terminally-clipped* junk cases like a bare
-         ``https://hub.doc``, which passes the regex on shape alone
-         (no letter follows) but has no path segment, so it can't be a
-         real file. Real files always live at ``host/path.ext``.
-    """
-    if not isinstance(url, str) or not url:
-        return False
-    if not _FILE_URL_RE.match(url):
-        return False
-    scheme_sep = url.find("://")
-    if scheme_sep == -1:
-        return False
-    return "/" in url[scheme_sep + 3 :]
-
+# See ``is_valid_file_url`` in ``app.ingestion.cleaner``, which the document
+# request route applies too, for the two checks.
+from app.ingestion.cleaner import is_valid_file_url as _is_valid_file_url  # noqa: E402
 
 # Words we ignore when comparing a primary card's title against candidate
 # secondary asset names to score topical overlap. Everything below reads to
@@ -764,8 +745,9 @@ _TITLE_STOPWORDS = frozenset(
 
 # Minimum token overlap (after stopwords) before a candidate qualifies as
 # "same topic" as the primary card. Two content-words in common is a strong
-# signal (e.g. "base" + "images"); one is often incidental.
-_SECONDARY_MIN_OVERLAP = 2
+# signal (e.g. "base" + "images"); one is often incidental. Defined next to the
+# document-request picker, which holds an exact file to the same bar.
+_SECONDARY_MIN_OVERLAP = TOPIC_MIN_OVERLAP
 
 
 def _title_tokens(title: str | None) -> set[str]:
@@ -8586,13 +8568,28 @@ async def rag_pipeline_stream(
             # otherwise it falls through to the normal pipeline, where the model
             # reads the knowledge base and the topical media-card attach further
             # down can still offer a file.
+            #
+            # The catalog fetched here is reused by the media catalog and the card
+            # checks further down, so a turn reads it from the database once.
+            _bot_catalog: list[dict] | None = None
+            _pick = None
             if _document_route_applies(question, _company_name, _judges_bypassed):
-                _pick = pick_documents(
-                    question, _company_name, get_bot_media_urls(session, bot_id=bid) if bid is not None else []
-                )
-            else:
-                _pick = None
-            if _pick is not None and ((_pick.docs and _pick.exact) or asks_for_delivery(question)):
+                if bid is not None:
+                    _bot_catalog = get_bot_media_urls(session, bot_id=bid)
+                _pick = pick_documents(question, _company_name, _bot_catalog or [])
+                if not ((_pick.docs and _pick.exact) or asks_for_delivery(question)):
+                    # Counted, so a rule that sends real requests to the model, or one
+                    # that lets feature questions through, shows up in the metrics.
+                    _safety_net_metric(
+                        "document_request_fell_through",
+                        path="stream",
+                        found=str(len(_pick.docs)),
+                        exact=str(_pick.exact),
+                        session=session_id,
+                        bot_id=bid,
+                    )
+                    _pick = None
+            if _pick is not None:
                 _safety_net_metric(
                     "document_request",
                     path="stream",
@@ -9096,7 +9093,9 @@ async def rag_pipeline_stream(
             # video/file in the KB and can pick by topic match.
             media_sources = _iter_media_urls_from_chunks(final_results)
             if bid is not None:
-                media_sources.extend(get_bot_media_urls(session, bot_id=bid))
+                if _bot_catalog is None:
+                    _bot_catalog = get_bot_media_urls(session, bot_id=bid)
+                media_sources.extend(_bot_catalog)
             context_text += _build_media_catalog(media_sources)
             context_text += _maybe_events_block(session, bot_id=bid, question=question)
             context_text += _build_date_hints(context_text, date.today())
@@ -9460,7 +9459,9 @@ async def rag_pipeline_stream(
             _allowed_yt, _allowed_files = _collect_available_media(final_results)
             _bot_media_for_validate: list[dict] = []
             if bid is not None:
-                _bot_media_for_validate = get_bot_media_urls(session, bot_id=bid)
+                if _bot_catalog is None:
+                    _bot_catalog = get_bot_media_urls(session, bot_id=bid)
+                _bot_media_for_validate = _bot_catalog
                 for _bm in _bot_media_for_validate:
                     for _yt in _bm.get("youtube") or []:
                         if isinstance(_yt, dict) and isinstance(_yt.get("video_id"), str):
