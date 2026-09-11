@@ -2990,14 +2990,11 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
                         },
                     )
 
-            # Sync logos
-            if "bot_logo" in update_data:
-                update_data["launcher_logo"] = update_data["bot_logo"]
-            elif "launcher_logo" in update_data:
-                update_data["bot_logo"] = update_data["launcher_logo"]
-
             # Any avatar write here is the customer's, including clearing it,
-            # which is what stops the crawl re-deriving a deleted avatar.
+            # which is what stops the crawl re-deriving a deleted avatar. The
+            # launcher is a fixed OyeChats mark; legacy launcher_logo input is
+            # ignored and never changes avatar provenance.
+            update_data.pop("launcher_logo", None)
             stamp_manual_avatar(bot, update_data)
 
             # Same rule for the Deploy page's platform picker: choosing one

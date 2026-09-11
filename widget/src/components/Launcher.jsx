@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { Bot, ChevronDown, X, ArrowUp } from 'lucide-react';
-import { sanitizeColor, sanitizeImageUrl } from '../services/sanitize';
-import PremiumOrb from './PremiumOrb';
+import { ChevronDown, X, ArrowUp } from 'lucide-react';
+import { sanitizeColor } from '../services/sanitize';
+import BotAvatar from './BotAvatar';
+import LauncherMark from './LauncherMark';
 import { getLocale, onLocaleChange, t } from '../i18n/i18n.js';
 
 const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
@@ -19,8 +20,6 @@ const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
     // a missing value still falls back to the default label.
     const showLauncherText = settings?.launcher_name !== '';
     const launcherName = settings?.launcher_name || t('launcher.have_questions') || "Have Questions?";
-    const launcherLogo = sanitizeImageUrl(settings?.launcher_logo);
-    const avatarType = settings?.avatar_type || 'upload';
     const primaryColor = sanitizeColor(settings?.primary_color);
     const botName = settings?.bot_name || t('launcher.ai_assistant') || 'AI Assistant';
     const [isScrolling, setIsScrolling] = useState(false);
@@ -71,51 +70,7 @@ const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
     };
 
     const renderBotIcon = () => {
-        if (avatarType === 'orb') {
-            const oc = sanitizeColor(settings?.orb_color, primaryColor);
-            return <PremiumOrb color={oc} size={56} style={{ width: '100%', height: '100%' }} />;
-        }
-        if (avatarType === 'mascot') {
-            return (
-                <div className="w-full h-full flex items-center justify-center" style={{ backgroundColor: primaryColor }}>
-                    <Bot size={28} className="text-white" />
-                </div>
-            );
-        }
-        if (launcherLogo && launcherLogo !== "null") {
-            return (
-                <img
-                    src={launcherLogo}
-                    // Decorative: the enclosing button already carries the
-                    // launcher's accessible name, so alt text here would make a
-                    // screen reader announce the control twice. Matches the same
-                    // logo's treatment in the greeting bubble below.
-                    alt=""
-                    className="w-full h-full object-cover"
-                />
-            );
-        }
-        return (
-            <div className="w-full h-full flex items-center justify-center" style={{ backgroundColor: primaryColor }}>
-                <Bot size={28} className="text-white" />
-            </div>
-        );
-    };
-
-    // Small avatar for the greeting bubble
-    const renderSmallAvatar = () => {
-        if (avatarType === 'orb') {
-            const oc = sanitizeColor(settings?.orb_color, primaryColor);
-            return <PremiumOrb color={oc} size={28} />;
-        }
-        if (launcherLogo && launcherLogo !== "null") {
-            return <img src={launcherLogo} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0" />;
-        }
-        return (
-            <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: primaryColor }}>
-                <Bot size={14} className="text-white" />
-            </div>
-        );
+        return <LauncherMark />;
     };
 
     const greetingMessage = settings?.greeting_message
@@ -135,7 +90,9 @@ const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
                 >
                     {/* Bubble header */}
                     <div className="flex items-center gap-2 px-4 pt-3.5 pb-2">
-                        {renderSmallAvatar()}
+                        <span aria-hidden="true" className="flex-shrink-0">
+                            <BotAvatar settings={settings || {}} size="sm" />
+                        </span>
                         {/* The chatbot's name is the customer's, in whatever
                             language they named it. */}
                         <span dir="auto" className="text-[13px] font-semibold text-[#16202C] flex-1">{botName}</span>
@@ -200,19 +157,13 @@ const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
                 </div>
             )}
 
-            {/* Pulse ring. Visible when chat is open */}
-            <span
-                className={`absolute inset-0 rounded-full pointer-events-none transition-opacity duration-300 ${isOpen ? 'opacity-100' : 'opacity-0'}`}
-                style={isOpen ? { animation: 'launcherPulse 2s ease-in-out infinite', border: `2px solid ${primaryColor}` } : undefined}
-            />
-
-            {/* Main Button. Bot icon always visible */}
+            {/* Launcher identity is independent of the bot's in-chat avatar. */}
             <button
+                type="button"
                 onClick={() => { setShowGreeting(false); toggleChat(); }}
                 aria-label={isOpen ? (t('launcher.close_chat') || 'Close chat') : launcherName}
                 aria-expanded={isOpen}
-                className="relative w-14 h-14 rounded-full bg-white text-white flex items-center justify-center shadow-lg overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
-                style={{ '--tw-ring-color': primaryColor }}
+                className="oyechats-launcher"
             >
                 {renderBotIcon()}
 

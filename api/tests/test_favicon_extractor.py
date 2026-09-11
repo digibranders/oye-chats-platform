@@ -425,11 +425,9 @@ class TestTheAvatarWrite:
         assert _reread(db, 8001).bot_logo is None
 
     @pytest.mark.asyncio
-    async def test_a_found_favicon_fills_both_logo_fields(self, db, monkeypatch):
-        """`bot_routes` keeps these in lockstep on every API write and the
-        widget's launcher reads `launcher_logo`; setting only `bot_logo` left
-        the in-chat avatar as the favicon while the launcher bubble still
-        showed the fallback robot."""
+    async def test_a_found_favicon_fills_only_the_avatar_field(self, db, monkeypatch):
+        """A website favicon is an assistant avatar. The fixed OyeChats
+        launcher must never be populated by a crawl."""
         bot = _make_bot(db, 8002)
         fetch = AsyncMock(return_value=_image_bytes("PNG"))
 
@@ -438,7 +436,7 @@ class TestTheAvatarWrite:
 
         written = _reread(db, 8002)
         assert written.bot_logo == _UPLOADED_KEY
-        assert written.launcher_logo == _UPLOADED_KEY
+        assert written.launcher_logo is None
         # `avatar_type` is a style selector, not provenance. This can't tell
         # "never touched" from "reassigned to upload" (they're the same row)
         # but it does fail if the write ever puts a different value there,
@@ -447,10 +445,10 @@ class TestTheAvatarWrite:
 
     @pytest.mark.asyncio
     async def test_the_widget_config_cache_is_dropped_so_the_avatar_appears_now(self, db, monkeypatch):
-        """The widget serves bot_logo / launcher_logo from a 10-minute config
-        cache. Committing without invalidating leaves the customer's site
-        showing the fallback robot for up to `BOT_CONFIG_TTL` after a crawl
-        that reports itself finished."""
+        """The widget serves bot_logo from a 10-minute config cache for the
+        assistant avatar. Committing without invalidating leaves the customer's
+        site showing the fallback robot for up to `BOT_CONFIG_TTL` after a
+        crawl that reports itself finished."""
         from app.core.cache import bot_config_key
 
         bot = _make_bot(db, 8016)
@@ -476,9 +474,9 @@ class TestTheAvatarWrite:
         assert dropped == []
 
     @pytest.mark.asyncio
-    async def test_a_custom_launcher_image_is_not_overwritten(self, db, monkeypatch):
-        """A customer can run a distinct launcher bubble image with no in-chat
-        avatar. Filling the empty slot must not clobber the full one."""
+    async def test_a_legacy_launcher_image_is_left_inert(self, db, monkeypatch):
+        """Legacy launcher data remains stored for rollback, but cannot affect
+        the fixed launcher or the favicon avatar flow."""
         bot = _make_bot(db, 8003, launcher_logo="logos/customer-chosen.png")
         fetch = AsyncMock(return_value=_image_bytes("PNG"))
 

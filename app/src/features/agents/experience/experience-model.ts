@@ -800,7 +800,7 @@ export function patchFromDraft(
   if (changed.has('avatarType')) patch.avatar_type = draft.avatarType;
   // `orb_color` is a `HexColor` server-side, and the empty string is not one.
   if (changed.has('orbColor')) patch.orb_color = draft.orbColor || null;
-  // `launcher_logo` is not sent: the handler mirrors `bot_logo` onto it.
+  // The launcher is the fixed OyeChats mark. Avatar uploads stay avatar-only.
   if (changed.has('botLogo')) patch.bot_logo = draft.botLogo;
   if (changed.has('showBranding')) flags.show_branding = draft.showBranding;
 
