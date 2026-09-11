@@ -285,14 +285,24 @@ check.
     cd api
     cp eval/edge_suite/bots.example.json eval/edge_suite/bots.local.json   # add bots
     uv run python -m eval.edge_suite.edge_eval run --bots eval/edge_suite/bots.local.json
-    uv run python -m eval.edge_suite.edge_eval judge --bots eval/edge_suite/bots.local.json
+    GOOGLE_API_KEY=... uv run python -m eval.edge_suite.edge_eval judge --bots eval/edge_suite/bots.local.json
     uv run --with openpyxl python -m eval.edge_suite.edge_eval sheet --bots eval/edge_suite/bots.local.json
 
-Each turn costs the bot owner 1 credit (about 291 turns per bot). A run
-against any deployed bot needs the bot owner's approval first: it spends
-their credits and creates real sessions and leads in their workspace. Never
-run it against a customer's bot without that approval, and never point it at
-a production bot from an automated or unattended context.
+`judge` grades through `app.services.llm_service` with the gate model
+`gemini/gemini-2.5-flash` (`JUDGE_MODEL` in `edge_eval.py`), which needs
+`GOOGLE_API_KEY` in the environment. `cmd_judge` checks this itself, through
+the same `app.config._model_key_is_set` helper the rest of the backend uses,
+and stops with a clear message before making any judge call if the key is
+missing, instead of silently recording judge errors on every row.
+
+Each turn costs the bot owner 1 credit (about 291 turns per bot). By default
+the suite targets production, `https://api.oyechats.com`; override the host
+with `EDGE_SUITE_API_URL` to point `run` and `judge` at a different
+environment. A run against any deployed bot needs the bot owner's approval
+first: it spends their credits and creates real sessions and leads in their
+workspace, production included. Never run it against a customer's bot
+without that approval, and never point it at a production bot from an
+automated or unattended context.
 
 Export each bot's knowledge base to `out/kb_<id>.csv.gz` before judging;
 without it the judge calls grounded facts invented. Read replies from

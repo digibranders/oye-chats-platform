@@ -82,3 +82,8 @@ strix_runs/
 # reply/knowledge-base export from a real run are customer data)
 api/eval/edge_suite/out/
 api/eval/edge_suite/bots.local.json
+# Defensive: catch a customer export dropped beside the suite instead of in
+# out/ (the only place the suite itself reads and writes them).
+api/eval/edge_suite/*.csv.gz
+api/eval/edge_suite/*.jsonl
+api/eval/edge_suite/*.xlsx

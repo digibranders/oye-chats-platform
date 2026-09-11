@@ -3,6 +3,7 @@
 run    : drive every case through POST /chat/stream on each bot, write results.jsonl
 judge  : grade every result with an LLM judge (run from api/ so app config loads keys)
 sheet  : build the spreadsheet (all questions and answers, checks, verdicts, summary)
+count  : print the case and bot count only, no network call
 """
 
 from __future__ import annotations
@@ -23,10 +24,15 @@ OUT = Path(os.environ.get("EDGE_SUITE_OUT", HERE / "out"))
 RESULTS = OUT / "results.jsonl"
 JUDGED = OUT / "judged.jsonl"
 REVIEWED = OUT / "reviewed.jsonl"
-API = "https://api.oyechats.com"
+#: Target API host. Defaults to production; override for a staging environment.
+#: A run against a production bot needs the bot owner's approval (see docs/eval/README.md).
+API = os.environ.get("EDGE_SUITE_API_URL", "https://api.oyechats.com")
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
 PACE_S = 2.3
 VISITOR_NAME = "Eva"
+#: The gate model the judge grades with. Its provider key is checked via
+#: ``app.config._model_key_is_set`` before ``cmd_judge`` makes any call.
+JUDGE_MODEL = "gemini/gemini-2.5-flash"
 NAME_ASK = re.compile(r"(?i)may i know your name|what should i call you|your name so i can")
 
 #: Loaded by ``load_bots`` from a JSON file (``bots.example.json`` shows the shape).
@@ -1047,6 +1053,16 @@ def transcript_text(row: dict) -> str:
 
 def cmd_judge() -> None:
     sys.path.insert(0, ".")
+    from app.config import _model_key_is_set  # provider-to-env-var mapping lives here
+
+    if not _model_key_is_set(JUDGE_MODEL):
+        print(
+            f"judge: no provider API key configured for judge model '{JUDGE_MODEL}'. "
+            "Set GOOGLE_API_KEY (see app/config.py) before running judge.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
     from concurrent.futures import ThreadPoolExecutor
 
     from app.services.llm_service import generate_response  # noqa: E402  (run from api/)
@@ -1083,7 +1099,7 @@ def cmd_judge() -> None:
                 raw = generate_response(
                     prompt,
                     system_prompt=JUDGE_SYSTEM,
-                    model="gemini/gemini-2.5-flash",
+                    model=JUDGE_MODEL,
                     temperature=0,
                     max_tokens=700,
                     timeout=60,
@@ -1297,8 +1313,9 @@ if __name__ == "__main__":
     parser.add_argument("--only", type=int, nargs="*", help="bot ids to run")
     parser.add_argument("--sheet-path", type=Path, default=OUT / "edge-case-evaluation.xlsx")
     args = parser.parse_args()
-    OUT.mkdir(parents=True, exist_ok=True)
     BOTS[:] = load_bots(args.bots)
+    if args.command in ("run", "judge", "sheet"):
+        OUT.mkdir(parents=True, exist_ok=True)
     if args.command == "run":
         cmd_run(args.only or None)
     elif args.command == "judge":
