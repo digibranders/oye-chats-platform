@@ -444,7 +444,7 @@ class TestTheOfferWording:
         assert offer.suggest_handoff is True and offer.needs_message_card is False
         assert offer.text == (
             "I haven't been able to help with that here, but our team can. "
-            "Share your details in the form below and I'll let them know you're waiting."
+            "Share your details in the form below and I'll pass them to our team."
         )
         assert "connect you" not in offer.text
         assert intent_service.bot_offers_handoff(offer.text), "an ok on the next turn must open the form"

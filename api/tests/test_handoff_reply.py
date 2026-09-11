@@ -69,6 +69,26 @@ class TestNobodyOnTheDashboardIsNotOffline:
         assert handoff_reply(team_available=False, repeat=False) in texts
         assert unhelped_offer(live_chat_enabled=True, team_available=False).text in texts
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            handoff_reply(team_available=False, repeat=False),
+            handoff_reply(team_available=False, repeat=True),
+            unhelped_offer(live_chat_enabled=True, team_available=False).text,
+        ],
+        ids=["handoff", "handoff-repeat", "unhelped"],
+    )
+    def test_nobody_available_is_worded_true_in_every_unavailable_state(self, text):
+        """``team_available`` is False when nobody is on the dashboard, and also
+        outside business hours and when the queue is full, where the widget shows
+        the message form and nobody is waiting on the visitor. "I'll let our team
+        know you're waiting" was false in those two. Passing the details on is
+        true in all three."""
+        assert "waiting" not in text.lower()
+        for word in ("offline", "away", "unavailable"):
+            assert word not in text.lower(), word
+        assert text.endswith("I'll pass them to our team.")
+
 
 class TestTheWordsMatchTheForm:
     @pytest.mark.parametrize(("available", "repeat"), _ALL)
@@ -84,7 +104,7 @@ class TestTheWordsMatchTheForm:
 
     def test_first_ask_with_nobody_available_does_not_promise_a_live_chat(self):
         text = handoff_reply(team_available=False, repeat=False)
-        assert text == "Sure. Share your details in the form below and I'll let our team know you're waiting."
+        assert text == "Sure. Share your details in the form below and I'll pass them to our team."
         assert "connect you" not in text
 
     def test_first_ask_with_nobody_available_closes_on_an_offer(self):
@@ -96,7 +116,7 @@ class TestTheWordsMatchTheForm:
             "The form is just below. Share your details there and I'll connect you with our team."
         )
         assert handoff_reply(team_available=False, repeat=True) == (
-            "The form is just below. Share your details there and I'll let our team know you're waiting."
+            "The form is just below. Share your details there and I'll pass them to our team."
         )
 
     def test_a_repeat_with_nobody_available_still_closes_on_an_offer(self):

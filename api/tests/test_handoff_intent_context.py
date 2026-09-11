@@ -195,10 +195,14 @@ def _the_bots_offers() -> list[str]:
     offers.append(intent_router._recorded("Acme", support_enabled=True).answer)
     offers.append(intent_router._is_ai("Acme", support_enabled=True).answer)
     # The fixed replies above the live handoff form, including the ones sent when
-    # nobody is on the dashboard ("I'll let our team know you're waiting").
-    offers.append(handoff_reply(team_available=True, repeat=False))
-    offers.append(handoff_reply(team_available=True, repeat=True))
-    offers.append(handoff_reply(team_available=False, repeat=False))
+    # nobody can take the chat ("I'll pass them to our team").
+    offers += [
+        handoff_reply(team_available=available, repeat=repeat)
+        for available in (True, False)
+        for repeat in (False, True)
+    ]
+    # The same promise when the details are named rather than pointed at.
+    offers.append("Share your details in the form below and I'll pass your details to our team.")
     offers += [unhelped_offer(live_chat_enabled=True, team_available=available).text for available in (True, False)]
     return offers
 
@@ -255,9 +259,15 @@ ORDINARY_ANSWERS = [
     # The visitor tells the team, not the bot: no offer.
     "When you arrive, let our team know you're waiting at reception.",
     "Please let them know you are waiting outside and they will open the gate.",
+    # The bot tells someone other than our team, or passes on something else.
+    "Check in at the front desk and I'll let them know you're waiting.",
+    "I'll pass them to the courier",
+    "pass the salt to our team",
     # The bot tells the visitor something, not the team.
     "I'll let you know when the team has shipped your order.",
     "I'll let our team know about the typo on the pricing page. Anything else?",
+    # A knowledge answer about our team is not an offer of it.
+    "Our team reviews every application within two days and passes shortlisted ones to the hiring manager.",
 ]
 
 
