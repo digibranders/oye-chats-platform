@@ -4615,17 +4615,20 @@ _NAME_NON_ANSWERS = {
     "hey",
 }
 
-_NAME_INTRO_PATTERNS = [
-    re.compile(
-        r"\bmy name(?:'s| is)\s+([A-Za-z][A-Za-z'.\-]*(?:\s+[A-Za-z][A-Za-z'.\-]*)?)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\b(?:i am|i'm|im|call me|this is|it's|its|name's|you can call me)\s+"
-        r"([A-Za-z][A-Za-z'.\-]*(?:\s+[A-Za-z][A-Za-z'.\-]*)?)",
-        re.IGNORECASE,
-    ),
-]
+# One or two words of a name, as the intro patterns capture it. A word starts
+# with a letter in any script and continues with letters, the combining marks
+# Latin, Indic and Arabic names are written with, an apostrophe or a hyphen;
+# ASCII-only classes cut "José" to "Jos" and stored that. The marks alternative
+# excludes letters, so no character can match two alternatives and the repeat
+# stays linear. ``_NAME_WORD`` also allows full stops for initials ("J.R.
+# Smith"); ``_clean_visitor_name`` decides whether a full stop ended the
+# sentence instead.
+_NAME_LETTER = r"[^\W\d_]"
+_NAME_MARKS = rf"(?!{_NAME_LETTER})[\u0900-\u0dff]|[\u0300-\u036f\u064b-\u065f'\-]"
+_NAME_PLAIN_WORD = rf"{_NAME_LETTER}(?:{_NAME_LETTER}|{_NAME_MARKS})*"
+_NAME_WORD = rf"{_NAME_LETTER}(?:{_NAME_LETTER}|{_NAME_MARKS}|\.)*"
+_NAME_WORDS = rf"{_NAME_WORD}(?:\s+{_NAME_WORD})?"
+_NAME_CAPTURE = f"({_NAME_WORDS})"
 
 # The subset of intro phrasings that EXPLICITLY name the visitor. "my name is
 # Alex" / "call me Alex" state a name and nothing else, so they are safe to
@@ -4634,18 +4637,21 @@ _NAME_INTRO_PATTERNS = [
 # engineering manager"), which is how a real lead named Steve was renamed to
 # "The Engineering". A copula intro can still CAPTURE a first name (see
 # ``_extract_name_change``); it just may not REPLACE one.
-_NAME_EXPLICIT_INTRO_PATTERNS = [
-    re.compile(
-        r"\bmy name(?:'s| is)\s+([A-Za-z][A-Za-z'.\-]*(?:\s+[A-Za-z][A-Za-z'.\-]*)?)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\b(?:call me|you can call me|name's)\s+([A-Za-z][A-Za-z'.\-]*(?:\s+[A-Za-z][A-Za-z'.\-]*)?)",
-        re.IGNORECASE,
-    ),
-]
+_NAME_EXPLICIT_INTRO_PATTERNS = (
+    re.compile(r"\bmy name(?:'s| is)\s+" + _NAME_CAPTURE, re.IGNORECASE),
+    re.compile(r"\b(?:call me|you can call me|name's)\s+" + _NAME_CAPTURE, re.IGNORECASE),
+)
 
-_NAME_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z'.\-]*$")
+# The copula intro ("I'm Alex", "this is Priya"). It may capture a first name
+# but never replace a stored one, and a trailing function word only drops away
+# when the visitor capitalised the name (see ``_name_from_capture``).
+_NAME_COPULA_INTRO_PATTERN = re.compile(r"\b(?:i am|i'm|im|this is|it's|its)\s+" + _NAME_CAPTURE, re.IGNORECASE)
+
+# Every intro phrasing, the explicit ones first, so "this is Eva, call me Evie"
+# takes the name the visitor asked to be called.
+_NAME_INTRO_PATTERNS = (*_NAME_EXPLICIT_INTRO_PATTERNS, _NAME_COPULA_INTRO_PATTERN)
+
+_NAME_TOKEN_RE = re.compile(_NAME_WORD + "$")
 
 # Role / title / relationship words a visitor uses to describe WHO THEY ARE,
 # not what they are called ("I'm the manager", "I am a customer", "I'm the
@@ -4814,61 +4820,301 @@ _NON_NAME_COMMON_WORDS = frozenset(
     }
 )
 
-# Determiners that can lead a captured phrase ("the manager", "a customer").
-# Stripped before the role-word check; a candidate that is ONLY an article is
-# itself not a name.
-_LEADING_ARTICLES = frozenset({"the", "a", "an"})
-
-# Words that can TRAIL a two-token candidate and make it clearly not a name
-# ("launching my", "blocking our", "becoming a"). These come from the generic
-# intro anchors ("i'm", "it's", "this is") matching the first two words of an
-# ordinary sentence rather than a self-introduction. A visitor's real two-word
-# name never ends in a possessive pronoun or article, so <word> + <this> is a
-# sentence fragment, not a name. Bug report: leads list filled with "Launching
-# My", "Blocking Our", "Becoming A".
-_TRAILING_NON_NAME_WORDS = frozenset(
+# Words that are never part of a visitor's name: pronouns, determiners,
+# prepositions, conjunctions, negations, auxiliaries, and the timing and
+# politeness words that follow "call me". A candidate containing ANY of them is
+# a clipped phrase, not a name, so it is rejected whole.
+#
+# The production reports behind it. The generic intro anchors ("i'm", "it's",
+# "this is") matched the first two words of an ordinary sentence and the leads
+# list filled with "Launching My", "Blocking Our", "Becoming A". "I'm the
+# engineering manager" arrived as "the engineering" (the capture stops at two
+# words, so "manager" was never seen) and renamed a real lead. On 2026-09-11
+# "i need someone to call me back about hardened container images" went through
+# the "call me" anchor and the bot replied "Thanks, Back About!", and "actually
+# my name is not eva" renamed a lead to "Not Eva".
+#
+# Vetted against given names: "will", "may", "can", "do", "he", "per", "till",
+# "ever", "than" and "um" are names, or common romanisations of one, so they are left
+# out on purpose. A name that IS one of the words below is simply not captured
+# and the lead-capture form asks for it; a phrase stored as a name is shown to
+# the visitor and to the team.
+_NON_NAME_FUNCTION_WORDS = frozenset(
     {
+        # pronouns and possessives
+        "i",
+        "me",
         "my",
-        "our",
+        "mine",
+        "you",
+        "u",
         "your",
+        "yours",
+        "we",
+        "us",
+        "our",
+        "ours",
+        "they",
+        "them",
+        "their",
+        "theirs",
+        "him",
         "his",
         "her",
-        "their",
+        "it",
         "its",
-        "mine",
-        "ours",
-        "yours",
-        "theirs",
-        "me",
-        "us",
-        "him",
-        "them",
+        # determiners and demonstratives
         "a",
         "an",
         "the",
+        "this",
+        "that",
+        "these",
+        "those",
+        "some",
+        "any",
+        "every",
+        "all",
+        "here",
+        "there",
+        # negation
+        "not",
+        "never",
+        "dont",
+        "don't",
+        "cant",
+        "can't",
+        "wont",
+        "won't",
+        "isnt",
+        "isn't",
+        # prepositions
+        "about",
+        "regarding",
+        "re",
+        "on",
+        "at",
+        "for",
+        "in",
+        "into",
+        "onto",
+        "to",
+        "from",
+        "with",
+        "without",
+        "by",
+        "of",
+        "off",
+        "over",
+        "under",
+        "up",
+        "down",
+        "out",
+        "around",
+        "through",
+        "via",
+        "as",
+        "before",
+        "after",
+        "until",
+        "since",
+        # conjunctions and question words
+        "and",
+        "or",
+        "but",
+        "so",
+        "then",
+        "if",
+        "when",
+        "where",
+        "why",
+        "how",
+        "what",
+        "which",
+        "who",
+        "because",
+        "while",
+        # auxiliaries
+        "is",
+        "am",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "has",
+        "have",
+        "had",
+        "does",
+        "did",
+        "would",
+        "could",
+        "should",
+        "might",
+        "must",
+        # callback timing ("call me back / later / asap")
+        "back",
+        "later",
+        "tomorrow",
+        "tonight",
+        "today",
+        "now",
+        "soon",
+        "asap",
+        "again",
+        "anytime",
+        "sometime",
+        "whenever",
+        "once",
+        "already",
+        "still",
+        "immediately",
+        "urgently",
+        "quickly",
+        "directly",
+        "personally",
+        "instead",
+        "first",
+        "next",
+        "away",
+        # politeness and filler
+        "please",
+        "pls",
+        "plz",
+        "kindly",
+        "thanks",
+        "thank",
+        "thx",
+        "sorry",
+        "just",
+        "also",
+        "too",
+        "very",
+        "really",
+        "only",
+        "actually",
+        "ok",
+        "okay",
+        "yes",
+        "yeah",
+        # contractions and chat fillers, as a bare reply to the name question
+        # ("i'm fine", "hmm")
+        "i'm",
+        "i've",
+        "i'll",
+        "i'd",
+        "it's",
+        "that's",
+        "you're",
+        "we're",
+        "they're",
+        "let's",
+        "what's",
+        "hmm",
+        "hm",
+        "umm",
+        "uh",
+        "lol",
+        # what the visitor is doing, not who they are ("i'm looking for a quote")
+        "looking",
+        "trying",
+        "interested",
+        "calling",
+        "asking",
+        "wondering",
+        "checking",
+        "reaching",
+        "writing",
+        "planning",
+        "hoping",
+        "going",
+        "getting",
+        "having",
+        # indefinite people
+        "someone",
+        "somebody",
+        "anyone",
+        "anybody",
+        "everyone",
+        "nobody",
     }
 )
 
+# Titles whose full stop does not end a sentence ("Dr. Mehta").
+_NAME_TITLES = frozenset({"mr", "mrs", "ms", "mx", "dr", "prof", "st"})
+
 # Explicit mid-chat rename requests ("rename it to Jason", "change my name to
 # Jason", "actually I'm Jason"). Kept separate from intros so we only ever
-# OVERWRITE a stored name on a clear request, never on a stray word.
-_NAME_RENAME_PATTERNS = [
+# OVERWRITE a stored name on a clear request, never on a stray word. No two
+# neighbouring pieces can match the same characters, so a long run of spaces or
+# punctuation after "actually" or "fix" costs linear time; the previous
+# ``[,\s]+\s*`` took six seconds on 20k spaces.
+_NAME_RENAME_TO_PATTERN = re.compile(
+    r"\b(?:rename|change|update|correct|fix)\b[^A-Za-z]*(?:(?:it|me|my name|the name|that)\s+)?"
+    r"(?:to|as|into)\s+" + _NAME_CAPTURE,
+    re.IGNORECASE,
+)
+_NAME_ACTUALLY_PATTERN = re.compile(
+    r"\b(?:actually|no)[,\s]+(?:i'm|i am|im|it's|it is|its|call me|my name(?:'s| is))\s+" + _NAME_CAPTURE,
+    re.IGNORECASE,
+)
+_NAME_RENAME_PATTERNS = (_NAME_RENAME_TO_PATTERN, _NAME_ACTUALLY_PATTERN)
+
+# Captures made by phrasing that guarantees a name follows, so a trailing
+# function word may drop away from them ("my name is Priya and ..."). See
+# ``_name_from_capture``.
+_NAME_EXPLICIT_CAPTURES = frozenset({*_NAME_EXPLICIT_INTRO_PATTERNS, _NAME_RENAME_TO_PATTERN})
+
+# A correction names the wrong name and the right one: "my name is not Eva,
+# it's Priya", "not eva, i'm priya", "sorry my name is Priya not Eva". It is as
+# explicit as "rename it to Priya", so it may replace a stored name. Both shapes
+# are also ordinary contrasts ("it's not the price, it's the setup", "it's cheap
+# not expensive"), so ``_extract_name_correction`` counts a match only when the
+# message says "name" or the negated word is the name already stored. The
+# separators are character classes that never overlap their neighbours, which
+# keeps a long input linear.
+_NAME_OLD_WORD = f"(?P<old>{_NAME_PLAIN_WORD})"
+_NAME_CORRECTION_PATTERNS = (
+    # "not Eva, it's Priya"
     re.compile(
-        r"\b(?:rename|change|update|correct|fix)\b[^A-Za-z]*(?:it|me|my name|the name|that)?\s*"
-        r"(?:to|as|into)\s+([A-Za-z][A-Za-z'.\-]*(?:\s+[A-Za-z][A-Za-z'.\-]*)?)",
+        r"\b(?:not|isn't|isnt)\s+" + _NAME_OLD_WORD + r"[\s,.;:!]*(?:(?:but|and|actually|sorry)[\s,]+)?"
+        r"(?:it's|it is|its|i'm|i am|im|my name(?:'s| is)|call me)\s+(?:actually\s+)?"
+        r"(?P<new>" + _NAME_WORDS + r")",
         re.IGNORECASE,
     ),
+    # "Priya, not Eva"
     re.compile(
-        r"\b(?:actually|no)[,\s]+\s*(?:i'm|i am|im|it's|call me|my name(?:'s| is))\s+"
-        r"([A-Za-z][A-Za-z'.\-]*(?:\s+[A-Za-z][A-Za-z'.\-]*)?)",
+        r"\b(?:my name(?:'s| is)|call me|i'm|i am|im|it's|it is|its)\s+(?:actually\s+)?"
+        r"(?P<new>" + _NAME_PLAIN_WORD + r")[\s,]+not\s+" + _NAME_OLD_WORD,
         re.IGNORECASE,
     ),
-]
+)
+_NAME_WORD_RE = re.compile(r"\bname\b", re.IGNORECASE)
+
+
+def _is_non_name_token(token: str) -> bool:
+    """True when ``token`` can never be part of a name, allowing for a stretched
+    spelling ("pleaseee") and a closing full stop."""
+    low = token.lower().rstrip(".")
+    return any(spelling in _NON_NAME_FUNCTION_WORDS for spelling in term_spellings(low))
+
+
+def _ends_sentence(token: str) -> bool:
+    """True when a full stop closes a whole word ("priya."), not an initial
+    ("J.", "J.R.") or a title ("Dr.")."""
+    core = token[:-1]
+    return token.endswith(".") and len(core) > 1 and "." not in core and core.lower() not in _NAME_TITLES
 
 
 def _clean_visitor_name(raw: str) -> str | None:
     """Normalize an extracted name candidate, or None if it isn't a plausible name."""
     name = " ".join((raw or "").split()).strip(" .,!?;:\"'")
+    # A full stop after a whole word ends the sentence, so a second word belongs
+    # to the next one: "its priya. typo earlier" is Priya, not "Priya. Typo".
+    parts = name.split()
+    if len(parts) == 2 and _ends_sentence(parts[0]):
+        name = parts[0][:-1]
     if not name or any(ch.isdigit() for ch in name) or len(name) > 40:
         return None
     # A stretched filler word ("hiiiii", "okkkk") is the same non-answer as the plain one.
@@ -4877,41 +5123,78 @@ def _clean_visitor_name(raw: str) -> str | None:
     tokens = name.split()
     if not 1 <= len(tokens) <= 2:
         return None
+    # A name never contains a function word, in either position: "Back About",
+    # "Not Eva", "Launching My". That includes articles, which closes the
+    # article-led class ("the engineering", "the platform") without a list of
+    # every department noun in existence. See ``_NON_NAME_FUNCTION_WORDS``.
+    if any(_is_non_name_token(t) for t in tokens):
+        return None
     lowered = [t.lower() for t in tokens]
-    if len(lowered) == 2 and lowered[1] in _TRAILING_NON_NAME_WORDS:
-        return None
-    # A name never BEGINS with an article, so an article-led candidate is a
-    # noun phrase the capture clipped, not a name.
-    #
-    # This used to strip the article and test only what followed, which worked
-    # for "the manager" (role word, rejected) but not for "I'm the engineering
-    # manager": the capture group is capped at two words, so the guard only ever
-    # saw "the engineering" -- "manager", the token that would have rejected it,
-    # was never in the string. "The Engineering" was then stored as the lead's
-    # name, overwriting the real one. Rejecting article-led candidates outright
-    # closes the whole class ("the engineering", "the platform", "the security")
-    # without maintaining a list of every department noun in existence.
-    if lowered[0] in _LEADING_ARTICLES:
-        return None
-    core = lowered
-    # Reject self-described roles ("manager", "the owner"), common non-name
-    # words ("urgent", "good", "monthly"), and bare articles: they aren't the
-    # visitor's name. When every meaningful token is one of these, leave the
-    # name blank rather than storing a garbage lead name — the form collects the
-    # real name later. "John Manager" / "John Good" survive because "john" is in
-    # none of the sets.
-    if not core or all(
-        t in _NON_NAME_ROLE_WORDS or t in _NON_NAME_COMMON_WORDS or t in _LEADING_ARTICLES for t in core
-    ):
+    # Reject self-described roles ("manager", "owner") and common non-name words
+    # ("urgent", "good", "monthly"): they aren't the visitor's name. When every
+    # token is one of these, leave the name blank rather than storing a garbage
+    # lead name; the form collects the real name later. "John Manager" / "John
+    # Good" survive because "john" is in neither set.
+    if all(t in _NON_NAME_ROLE_WORDS or t in _NON_NAME_COMMON_WORDS for t in lowered):
         return None
     # Title-case only tokens the visitor left lowercase; preserve intentional
     # inner capitals (e.g. "McCarthy", "O'Brien").
     return " ".join(t if t[:1].isupper() else t[:1].upper() + t[1:] for t in tokens)
 
 
-def _extract_explicit_rename(question: str) -> str | None:
+def _name_from_capture(raw: str, *, explicit: bool) -> str | None:
+    """Clean an intro capture, dropping a second word that cannot be a name.
+
+    The capture takes up to two words, so a name followed by a function word
+    arrives as "Priya from" or "Priya and". The first word is kept when the
+    phrasing guarantees a name follows (``explicit``: "my name is", "call me",
+    "rename it to") or when the visitor capitalised it ("this is Priya from
+    Acme"). A lowercase copula capture keeps nothing, because "im looking for a
+    quote" would otherwise store "Looking".
+    """
+    tokens = (raw or "").split()
+    if len(tokens) == 2 and _is_non_name_token(tokens[1]) and (explicit or tokens[0][:1].isupper()):
+        return _clean_visitor_name(tokens[0])
+    return _clean_visitor_name(raw)
+
+
+def _first_name_capture(question: str, patterns: tuple[re.Pattern[str], ...]) -> str | None:
+    """The first plausible name one of ``patterns`` captures from ``question``, or None."""
+    for pattern in patterns:
+        match = pattern.search(question)
+        if match:
+            cleaned = _name_from_capture(match.group(1), explicit=pattern in _NAME_EXPLICIT_CAPTURES)
+            if cleaned:
+                return cleaned
+    return None
+
+
+def _extract_name_correction(question: str, known: str | None) -> str | None:
+    """The corrected name in "my name is not Eva, it's Priya" and the like, or None.
+
+    A match counts only when the message says "name" or the negated word is
+    part of ``known``, the name already stored. Without that, the same shapes
+    are ordinary contrasts: "it's not the price, it's the setup".
+    """
+    says_name = _NAME_WORD_RE.search(question) is not None
+    known_words = {word.lower() for word in (known or "").split()}
+    for pattern in _NAME_CORRECTION_PATTERNS:
+        match = pattern.search(question)
+        if match is None:
+            continue
+        old = match.group("old").lower()
+        if not (says_name or old in known_words):
+            continue
+        cleaned = _name_from_capture(match.group("new"), explicit=True)
+        if cleaned and cleaned.lower() != old:
+            return cleaned
+    return None
+
+
+def _extract_explicit_rename(question: str, known: str | None = None) -> str | None:
     """Detect ONLY an explicit request to change an ALREADY-STORED name
-    ("rename it to Jason", "actually I'm Jason").
+    ("rename it to Jason", "actually I'm Jason", "my name is not Eva, it's
+    Priya").
 
     Deliberately excludes the intro patterns ``_extract_name_change`` also
     scans. An intro is how a name is first GIVEN, not how it is changed, and
@@ -4921,34 +5204,29 @@ def _extract_explicit_rename(question: str) -> str | None:
     admin's Leads list. Once a name is known, only a clear rename request may
     replace it -- which is exactly what ``_NAME_RENAME_PATTERNS`` was split out
     to express.
+
+    A correction names the wrong name as well as the right one, which is as
+    explicit as a rename. ``known`` is the stored name, so "not eva, i'm priya"
+    counts as a correction when "Eva" is the name on file.
     """
     q = (question or "").strip()
     if not q:
         return None
-    for pattern in (*_NAME_RENAME_PATTERNS, *_NAME_EXPLICIT_INTRO_PATTERNS):
-        match = pattern.search(q)
-        if match:
-            cleaned = _clean_visitor_name(match.group(1))
-            if cleaned:
-                return cleaned
-    return None
+    return _extract_name_correction(q, known) or _first_name_capture(
+        q, (*_NAME_RENAME_PATTERNS, *_NAME_EXPLICIT_INTRO_PATTERNS)
+    )
 
 
 def _extract_name_change(question: str) -> str | None:
     """Detect an EXPLICIT request to change/correct the name mid-chat
     ("rename it to Jason", "actually I'm Jason", "call me Jason", "my name is
-    Jason"). Only explicit rename/intro phrasing counts (never a bare word) so
-    a stored name is overwritten only on clear intent. Returns the new name or None."""
+    Jason", "my name is not Eva, it's Jason"). Only explicit rename/intro
+    phrasing counts (never a bare word) so a stored name is overwritten only on
+    clear intent. Returns the new name or None."""
     q = (question or "").strip()
     if not q:
         return None
-    for pattern in (*_NAME_RENAME_PATTERNS, *_NAME_INTRO_PATTERNS):
-        match = pattern.search(q)
-        if match:
-            cleaned = _clean_visitor_name(match.group(1))
-            if cleaned:
-                return cleaned
-    return None
+    return _extract_name_correction(q, None) or _first_name_capture(q, (*_NAME_RENAME_PATTERNS, *_NAME_INTRO_PATTERNS))
 
 
 _NAME_DECLINE_STARTS = (
@@ -4997,12 +5275,9 @@ def _extract_visitor_name(question: str, history: list) -> str | None:
     q = (question or "").strip()
     if not q:
         return None
-    for pattern in _NAME_INTRO_PATTERNS:
-        match = pattern.search(q)
-        if match:
-            cleaned = _clean_visitor_name(match.group(1))
-            if cleaned:
-                return cleaned
+    introduced = _first_name_capture(q, _NAME_INTRO_PATTERNS)
+    if introduced:
+        return introduced
     # Bare reply to the name ask: find the most recent bot/operator turn.
     last_bot = ""
     for message in reversed(history or []):
@@ -5016,9 +5291,11 @@ def _extract_visitor_name(question: str, history: list) -> str | None:
             last_bot = (content or "").lower()
             break
     if _is_name_ask_message(last_bot):
-        words = q.split()
+        # Closing punctuation is not part of the reply's words: "Rahul!" is Rahul.
+        reply = q.strip(" .,!?;:\"'")
+        words = reply.split()
         if 1 <= len(words) <= 2 and all(_NAME_TOKEN_RE.match(w) for w in words):
-            return _clean_visitor_name(q)
+            return _clean_visitor_name(reply)
     return None
 
 
@@ -5469,7 +5746,7 @@ def resolve_name_flow(session, session_id, bot_id, client_id, question, company_
         if bot_id is not None:
             # An unknown name may be captured from an intro ("I'm Alex"); an
             # ESTABLISHED one may only be replaced by an explicit rename.
-            renamed = _extract_explicit_rename(question) if known else _extract_name_change(question)
+            renamed = _extract_explicit_rename(question, known) if known else _extract_name_change(question)
             if renamed and renamed != known:
                 create_or_update_lead_info(session, session_id=session_id, bot_id=bot_id, name=renamed)
                 # First name capture phrased as "I'm Alex" / "call me Alex" /
