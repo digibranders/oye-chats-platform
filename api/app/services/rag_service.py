@@ -3064,8 +3064,9 @@ def _drop_placeholder_chunks(results: list, bot_id: int | None) -> list:
     Production, 2026-09-11: CleanStart's bot gave a visitor "+1 (555) 123-4567"
     as its enterprise phone number, read off a crawled draft page. A chunk is
     dropped when ``kb_quality.first_visitor_placeholder`` finds a placeholder
-    phone number, filler text or an unfilled template field ("[Big 4 Firm
-    Name]") outside any code or documentation example.
+    phone number or lorem ipsum filler outside any code or documentation
+    example. Unfilled template fields ("[Big 4 Firm Name]") only appear in the
+    owner report: template and help pages legitimately carry them.
 
     Dropped, never redacted. On the retrieval path these are ORM ``Document``
     rows bound to the request session, so rewriting ``content`` could be
