@@ -1175,6 +1175,53 @@ def test_a_plan_or_package_named_beside_another_word_still_counts(text):
     _assert_nothing_from_the_figure_is_emitted(text, figure_start, signal=False, splits=_light_splits)
 
 
+#: "Business" is one of the most common plan TIER names, so it must not exclude a
+#: plan from being the company's own in an ANSWER, even though the question-side
+#: exclusion still lets "what's your business plan?" through with no signal (see
+#: ``test_an_ordinary_question_is_no_signal``). Production review, 2026-09-11.
+BUSINESS_PLAN_IS_A_TIER = [
+    "The Business plan costs $99 a month.",
+    "Our Business Plan is ₹4,999 per month.",
+    "Upgrade to the Business plan for $49/user.",
+]
+
+
+@pytest.mark.parametrize("text", BUSINESS_PLAN_IS_A_TIER)
+def test_a_business_plan_named_as_a_tier_trips_without_a_signal(text):
+    assert answer_trips_price_guard(text, signal=False) is True
+    figure_start = _FIGURE_START_RE.search(text).group()
+    _assert_nothing_from_the_figure_is_emitted(text, figure_start, signal=False, splits=_light_splits)
+
+
+def test_a_business_plan_document_still_trips_on_the_bare_plan_word():
+    """Dropping "business" from the answer-side exclusion is a plan-TIER fix, not a
+    phrase-level one, so it cannot tell a consultancy's "business plan" document
+    from a "Business" subscription tier. "Our consultants help you write a
+    business plan..." keeps its own-price signal from the bare word "plan"
+    (``_OWN_PRICE_WORDS`` reads it on its own) and the first-person "Our", so it
+    still trips: this test pins that known, accepted tradeoff rather than
+    asserting the sentence streams. A visitor wrongly handed to the team on a
+    sentence that was never a price is the safer failure of the two, next to a
+    company's own "$99 a month" streaming past the gate unsignalled.
+    """
+    text = "Our consultants help you write a business plan for about $2,000."
+    assert answer_trips_price_guard(text, signal=False) is True
+    figure_start = _FIGURE_START_RE.search(text).group()
+    _assert_nothing_from_the_figure_is_emitted(text, figure_start, signal=False, splits=_light_splits)
+
+
+def test_an_insurance_plan_with_no_first_person_word_still_streams_intact():
+    """ "Insurance" stays on both the question- and answer-side exclusions, so a plan
+    a visitor has elsewhere is unaffected by dropping "business" from the answer
+    side, with or without a first-person word nearby."""
+    text = "patients on standard insurance plans pay about $3,200 out of pocket"
+    assert answer_trips_price_guard(text, signal=False) is False
+    for chunks in _light_splits(text):
+        guard, out = _feed(chunks)
+        assert guard.tripped is False, chunks
+        assert out == text, chunks
+
+
 #: The section a price heading opened has ended before the figure.
 SECTION_ENDED = [
     # A heading of the same level.

@@ -38,7 +38,12 @@ words on ("set by the court, not by us", "not our firm"), and "rather than",
 "instead of", "other than", "separately from", "independent of" or "outside"
 before "us" or "our". Nor does a plan or a package in another sense: a salary,
 relief or benefits package, or an insurance, treatment or payment plan. The
-question signal skips the same plans and packages.
+question signal skips a wider set of plans, because a word that is a safe
+question-side exclusion can still be a plan TIER a company sells: "the Business
+plan", "our Care plan" and "the Recovery plan" all name a tier here, so "business",
+"care" and "recovery" no longer exclude a plan from being the company's own in an
+ANSWER, even though "what's your business plan?" still carries no pricing signal
+as a QUESTION.
 
 Price context. An own-price word, or a markdown table header row naming a price,
 cost, fee, rate, charge, amount or plan, opens a context that covers the figures
@@ -68,7 +73,7 @@ from collections.abc import Iterable
 from app.services.pricing_gate import (
     _CURRENCY_AMOUNT_RE,
     _NOT_OWN_PACKAGE_WORDS,
-    _NOT_OWN_PLAN_WORDS,
+    _NOT_OWN_PLAN_WORDS_ANSWER,
     normalize_url,
 )
 
@@ -227,12 +232,12 @@ _NOT_OURS = (
     rf"(?:not|never){_SEP}{_MIDDLE_WORD}(?:{_FIRST_PERSON_WORDS})"
     rf"|(?:(?:rather|other){_SEP}than|instead{_SEP}of|separately{_SEP}from|independent(?:ly)?{_SEP}of|outside)"
     rf"{_SEP}(?:our|(?-i:us|Us))"
-    rf"|(?:{_alternation(_NOT_OWN_PLAN_WORDS)}){_SEP}{_MIDDLE_WORD}plans?"
+    rf"|(?:{_alternation(_NOT_OWN_PLAN_WORDS_ANSWER)}){_SEP}{_MIDDLE_WORD}plans?"
     rf"|(?:{_alternation(_NOT_OWN_PACKAGE_WORDS)}){_SEP}{_MIDDLE_WORD}packages?"
 )
 #: The longest phrase ``_PRICE_WORDS_RE`` reads: a package in another sense with a middle word.
 _LONGEST_PHRASE_CHARS = (
-    max(len(word) for word in (*_NOT_OWN_PLAN_WORDS, *_NOT_OWN_PACKAGE_WORDS))
+    max(len(word) for word in (*_NOT_OWN_PLAN_WORDS_ANSWER, *_NOT_OWN_PACKAGE_WORDS))
     + 2 * _SEP_MAX
     + _MIDDLE_WORD_MAX
     + len("packages")

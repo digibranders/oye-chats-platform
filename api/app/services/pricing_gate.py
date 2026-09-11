@@ -407,13 +407,24 @@ _HOW_MUCH_RE = re.compile(
 _PLAN_QUESTION_RE = re.compile(r"\b(?:plans?|packages?|subscriptions?|tiers?|editions?)\b", re.IGNORECASE)
 #: A word up to two words before "plan" or "plans" that makes it a plan the visitor
 #: or a third party has, not one the company sells: "health insurance plan",
-#: "treatment plan", "business continuity plan". ``price_guard`` reads answers with
-#: the same words.
+#: "treatment plan", "business continuity plan". Question-side only: a visitor who
+#: asks about one of these is not asking what the company charges.
+#:
+#: ``price_guard`` reads answers with ``_NOT_OWN_PLAN_WORDS_ANSWER`` below, a
+#: shorter list, because a word that is a safe question-side exclusion can still be
+#: a common plan TIER name in an answer: "The Business plan costs $99 a month."
+#: (production review, 2026-09-11) must trip even though "what's your business
+#: plan?" must not signal. "Care" and "Recovery" are dropped for the same reason
+#: (a healthcare or DR vendor's own tier), leaving both only on the question side.
 _NOT_OWN_PLAN_WORDS = (
     "insurance", "health", "medical", "dental", "vision", "treatment", "payment", "instalment", "installment",
     "meal", "study", "lesson", "business", "continuity", "action", "floor", "project", "response", "retirement",
     "pension", "savings", "investment", "care", "recovery", "evacuation",
 )  # fmt: skip
+#: The answer-side list: ``_NOT_OWN_PLAN_WORDS`` minus the words that are commonly
+#: a plan TIER name a company sells under ("business", "care", "recovery"). See the
+#: note above; ``price_guard`` builds its exclusion phrase from this list.
+_NOT_OWN_PLAN_WORDS_ANSWER = tuple(word for word in _NOT_OWN_PLAN_WORDS if word not in {"business", "care", "recovery"})
 #: The same for "package" or "packages": "salary package", "relief package", and a
 #: placement report's "average annual package".
 _NOT_OWN_PACKAGE_WORDS = (
