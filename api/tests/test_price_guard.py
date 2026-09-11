@@ -690,10 +690,9 @@ PRICE_LISTS = [
     ("## Pricing\n\nSOC as a Service comes to ₹2,66,250 a month.", "₹"),
     ("**Our plans**\n\nSOC as a Service comes to ₹2,66,250 a month.", "₹"),
     ("These are the options we quote on:\n\n1. SOC as a Service, ₹2,66,250 a month", "₹"),
-    # A table header naming a rate, a charge or an amount (final review, 2026-09-11).
+    # A table header naming a rate or a charge (final review, 2026-09-11).
     ("| Service | Rate |\n|---|---|\n| Website audit | $2,400 |\n| SEO retainer | $1,800/month |", "$"),
     ("| Service | Charges |\n| --- | --- |\n| SOC | ₹2,66,250 |", "₹"),
-    ("| Item | Amount |\n|:--|--:|\n| Setup | ₹25,000 |", "₹"),
     # A heading naming prices, plans, packages or rates covers its whole section.
     ("## Pricing\n\nEvery option below is billed monthly.\n\n- Starter: $29\n- Growth: $79", "$"),
     ("# Plans\n\nPick what suits you.\n\nMost teams start small.\n\n**Starter** comes to ₹999 a month.", "₹"),
@@ -779,7 +778,7 @@ def test_a_price_word_past_the_hold_cap_does_not_trip_the_held_figure():
 @pytest.mark.parametrize(
     "abbreviation", ["p.m.", "p.a.", "a.m.", "approx.", "incl.", "excl.", "e.g.", "i.e.", "vs.", "no.", "nos.", "avg.",
                      "min.", "max.", "est.", "Rs.", "Dr.", "Mr.", "Mrs.", "Ms.", "St.", "Jr.", "Sr.", "Inc.", "Ltd.",
-                     "Pvt.", "Co.", "Corp.", "Bros.", "No.", "S.", "S.K."]
+                     "Pvt.", "Co.", "Corp.", "Bros.", "Adv.", "Prof.", "No.", "S.", "S.K."]
 )  # fmt: skip
 def test_an_abbreviation_does_not_end_the_held_figures_sentence(abbreviation):
     text = f"Fines reach €20 million {abbreviation} on the Pro plan."
@@ -1088,6 +1087,8 @@ TITLES_AND_INITIALS = [
     "We asked Ms. Iyer and Mr. Das, and our Corp. rate is $90.",
     "Our lead, J. Smith Jr., sets the fee at $250.",
     "We work with S.K. Traders, and the delivery charge is ₹200.",
+    "Our lawyer, Adv. Menon, sets the review fee at ₹5,000.",
+    "We invited Prof. Shah, and our workshop fee is ₹2,000.",
 ]
 
 
@@ -1307,3 +1308,180 @@ def test_the_whole_answer_decides_as_the_stream_does_on_random_answers():
                 assert text.startswith(out), (text, chunks)
             else:
                 assert out == text, (text, chunks)
+
+
+# Streaming review, 2026-09-11: the reader reads the last few dozen characters of the emitted answer again
+# with each new piece. When that tail began just after the "D" of "Dr." or the "R" of "Rs.", the full stop
+# lost the letters before it and was read as a sentence end, which forgot the sentence's "our": the whole
+# answer tripped and the stream released the figure. 140 of 300 generated answers disagreed.
+
+_DR_MEHTA = (
+    "Our clinic is run by Dr. Mehta and a team of six experienced physiotherapists and nurses, "
+    "and the consultation fee is Rs. 700."
+)
+
+
+def _stream_splits(text):
+    """Chunks of 1, 2, 3, 4 and 7 characters, and four random splits into chunks of 1 to 9 characters."""
+    for size in (1, 2, 3, 4, 7):
+        yield _chunked(text, size)
+    rng = random.Random(20260911)
+    for _ in range(4):
+        chunks, at = [], 0
+        while at < len(text):
+            size = rng.randint(1, 9)
+            chunks.append(text[at : at + size])
+            at += size
+        yield chunks
+
+
+def test_a_title_long_before_the_fee_does_not_end_the_sentence_in_a_stream():
+    assert answer_trips_price_guard(_DR_MEHTA, signal=False) is True
+    _assert_nothing_from_the_figure_is_emitted(_DR_MEHTA, "Rs. 700", signal=False, splits=_stream_splits)
+
+
+_GAP_FILLER = "and a team that has served families across the city for many years " * 4
+
+
+def _answer_with_gap(phrase, gap):
+    """ "Our clinic works with <phrase> ..., and the consultation fee is ₹800.", ``gap`` characters from the phrase's full stop to "fee"."""
+    head = f"Our clinic works with {phrase}"
+    after_full_stop = len(head) - head.index(".") - 1
+    lead = ", and the consultation "
+    filler = _GAP_FILLER[: gap - after_full_stop - 1 - len(lead)]
+    text = f"{head} {filler}{lead}fee is ₹800."
+    assert text.index(" fee is") + 1 - (head.index(".") + 1) == gap
+    return text
+
+
+@pytest.mark.parametrize("gap", [60, 85, 150])
+@pytest.mark.parametrize(
+    "phrase", ["Mrs. Iyer", "No. 12 Park Road", "St. Mary's", "Acme Inc.", "J. Rao", "approx. 40 staff", "e.g. Pune"]
+)
+def test_an_abbreviation_or_initial_far_before_the_fee_decides_as_the_whole_answer_does(phrase, gap):
+    text = _answer_with_gap(phrase, gap)
+    assert answer_trips_price_guard(text, signal=False) is True
+    _assert_nothing_from_the_figure_is_emitted(text, "₹", signal=False, splits=_stream_splits)
+
+
+_GAP_OPENERS = ["Our clinic works with", "We hired", "Our team visited", "We buy from", "The court appointed",
+                "Patients often see", "Our lawyer is", "The embassy uses"]  # fmt: skip
+_GAP_MARKERS = [
+    "Dr. Mehta", "Mrs. Iyer", "Mr. Das", "Ms. Pillai", "Prof. Shah", "Adv. Menon", "St. Mary's", "S.K. Traders",
+    "J. K. Rao", "Acme Pvt. Ltd.", "Acme Inc.", "Nair Bros.", "Kumar Corp.", "No. 12 Park Road", "Rao Jr.",
+    "Sr. Nurse A. Das", "approx. 40 staff", "e.g. Pune", "i.e. weekly", "Brightpath Co.", "vs. last year",
+    "Rs. 0 extra", "a firm whose fees are set by the court, not by us,", "a lab billed separately from our clinic,",
+    "branches in tier 1 and tier 2 cities", "a salary package",
+]  # fmt: skip
+_GAP_WORDS = ["who", "has", "worked", "in", "this", "field", "for", "many", "years", "and", "knows", "every", "detail",
+              "of", "the", "local", "process"]  # fmt: skip
+_GAP_PRICES = ["the consultation fee is", "our delivery charge is", "the Pro plan is", "the rate is",
+               "it starts at", "the court fee is", "fines reach", "our session price is"]  # fmt: skip
+_GAP_FIGURES = ["₹800", "$120", "Rs. 1,500", "INR 25,000", "€90", "AED 4,500", "12,000/month", "3 lakh rupees"]
+_GAP_ENDS = [".", ". ", "!", "", ".\n"]
+
+
+def _gap_sentence(rng):
+    """A sentence with an abbreviation, an initial or a disclaimer 55 to 200 characters before its price word."""
+    words = []
+    target = rng.randint(55, 200) - len(" and ")
+    while len(" ".join(words)) < target:
+        words.append(rng.choice(_GAP_WORDS))
+    return (
+        f"{rng.choice(_GAP_OPENERS)} {rng.choice(_GAP_MARKERS)} {' '.join(words)}, and "
+        f"{rng.choice(_GAP_PRICES)} {rng.choice(_GAP_FIGURES)}{rng.choice(_GAP_ENDS)}"
+    )
+
+
+def _gap_block(rng):
+    kind = rng.random()
+    if kind < 0.6:
+        return _gap_sentence(rng)
+    if kind < 0.7:
+        return f"## {rng.choice(['About us', 'Team', 'Dr. Rao', 'FAQ'])}\n"
+    if kind < 0.8:
+        return f"| Name | Role |\n|---|---|\n| {rng.choice(_GAP_MARKERS)} | Lead |\n"
+    if kind < 0.9:
+        return f"- {_gap_sentence(rng).rstrip()}\n- {rng.choice(_GAP_MARKERS)} is on call.\n"
+    return f"{rng.choice(_GAP_MARKERS)} is our partner."
+
+
+def _whole_answer_trip_point(text):
+    """Where the figure the whole answer trips on starts, or None: without a signal the guard reads everything it emits."""
+    guard = PriceStreamGuard(signal=False)
+    guard.feed(text)
+    guard.flush()
+    return guard._reader.position if guard.tripped else None
+
+
+def test_the_whole_answer_decides_as_the_stream_does_with_abbreviations_far_before_the_price():
+    """Seeded: 300 answers, each streamed in 12 chunkings, must decide exactly as the whole answer does."""
+    rng = random.Random(5)
+    disagreements = []
+    for _ in range(300):
+        text = rng.choice(["", " ", "\n", "\n\n"]).join(_gap_block(rng) for _ in range(rng.randint(1, 3)))
+        trip_point = _whole_answer_trip_point(text)
+        assert (trip_point is not None) is answer_trips_price_guard(text, signal=False)
+        splits = [_chunked(text, size) for size in (1, 2, 3, 4, 5, 6, 7, 9, 13)]
+        for _ in range(3):
+            cuts = sorted(rng.sample(range(1, len(text)), min(len(text) - 1, rng.randint(5, 40))))
+            splits.append([text[a:b] for a, b in zip([0, *cuts], [*cuts, len(text)], strict=True)])
+        for chunks in splits:
+            guard, out = _feed(chunks)
+            if guard.tripped is not (trip_point is not None):
+                disagreements.append((text, "trip" if guard.tripped else "no trip", len(chunks)))
+            elif guard.tripped and not (text.startswith(out) and len(out) <= trip_point):
+                disagreements.append((text, "emitted part of the figure", len(chunks)))
+            elif not guard.tripped and out != text:
+                disagreements.append((text, "output differs", len(chunks)))
+    assert not disagreements, (len(disagreements), disagreements[:3])
+
+
+#: "Tier 1 and tier 2 cities" is a kind of city, not a plan tier (blind review B3-09).
+TIER_OF_CITIES = [
+    "Retail chains in tier 1 and tier 2 cities pay a court fee of ₹12,000.",
+    "**Client:** A fashion retailer with 64 stores across tier 1 and tier 2 cities\n"
+    "**Client's project budget:** USD 180,000, set by their board for FY 2024/25",
+    "Stamp duty in Tier II towns is about ₹6 lakh.",
+    "GDPR fines reach €20 million in tier-1, tier-2 and tier-3 cities alike.",
+    "Salaries in tier 2/3 cities average ₹4 lakh.",
+    "A tier 2 city sees rents near ₹15,000 a month.",
+]
+
+
+@pytest.mark.parametrize("text", TIER_OF_CITIES)
+def test_a_numbered_tier_of_cities_or_towns_is_not_a_plan_tier(text):
+    assert answer_trips_price_guard(text, signal=False) is False
+    for chunks in _light_splits(text):
+        guard, out = _feed(chunks)
+        assert guard.tripped is False, chunks
+        assert out == text, chunks
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "The Growth tier costs 5 lakh a year.",
+        "Across tier 1 cities, the Tier 2 option is ₹999 a month.",
+        "Fines reach €20 million, and the tier 2 option is extra.",
+        "Our tiers: 1, 2 and 3. Tier 2 is $1,299/mo.",
+        "The tier 2 city plan is ₹999 a month.",
+    ],
+)
+def test_a_tier_that_names_no_cities_still_counts(text):
+    figure_start = _FIGURE_START_RE.search(text).group()
+    _assert_nothing_from_the_figure_is_emitted(text, figure_start, signal=False, splits=_light_splits)
+
+
+def test_a_table_header_naming_an_amount_opens_no_price_context():
+    """A loan desk's "Typical loan amount" column tripped (blind review B3-22)."""
+    text = (
+        "| Lender type | Typical loan amount | Collateral |\n|---|---|---|\n"
+        "| Public sector banks | Up to ₹1.5 crore | Required above ₹7.5 lakh |\n"
+        "| NBFCs | Up to ₹75 lakh | Often not needed |"
+    )
+    assert answer_trips_price_guard(text, signal=False) is False
+    for size in (1, 2, 3, 5, 8, 13, len(text)):
+        guard, out = _feed(_chunked(text, size))
+        assert guard.tripped is False, size
+        assert out == text, size

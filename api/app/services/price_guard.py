@@ -37,8 +37,9 @@ count and opens no context: "not" or "never" with "us", "our" or "we" at most tw
 words on ("set by the court, not by us", "not our firm"), and "rather than",
 "instead of", "other than", "separately from", "independent of" or "outside"
 before "us" or "our". Nor does a plan or a package in another sense: a salary,
-relief or benefits package, or an insurance, treatment or payment plan. The
-question signal skips a wider set of plans, because a word that is a safe
+relief or benefits package, or an insurance, treatment or payment plan; nor a
+numbered tier of cities or towns ("tier 1 and tier 2 cities", "Tier II towns").
+The question signal skips a wider set of plans, because a word that is a safe
 question-side exclusion can still be a plan TIER a company sells: "the Business
 plan", "our Care plan" and "the Recovery plan" all name a tier here, so "business",
 "care" and "recovery" no longer exclude a plan from being the company's own in an
@@ -46,15 +47,15 @@ ANSWER, even though "what's your business plan?" still carries no pricing signal
 as a QUESTION.
 
 Price context. An own-price word, or a markdown table header row naming a price,
-cost, fee, rate, charge, amount or plan, opens a context that covers the figures
+cost, fee, rate, charge or plan, opens a context that covers the figures
 after it until its paragraph, list or table ends: at a blank line, a line after a
 list that is not a list item or indented, or a line after a table that is not a
 table row. A lead ending in a colon, a heading, or a line naming plans or packages
 carries the context across one blank line. A context ends ``_CONTEXT_CAP_CHARS``
 characters after its last own-price word. A markdown heading naming pricing,
-prices, plans, packages or rates opens a context for its whole section: until a
-heading of the same or a higher level, or ``_SECTION_CAP_CHARS`` characters after
-the heading.
+price, prices, plans, packages or rates opens a context for its whole section:
+until a heading of the same or a higher level, or ``_SECTION_CAP_CHARS``
+characters after the heading.
 
 Without a turn signal or a context, a figure is held until its sentence ends,
 and released intact, or until its sentence names the company's price, and
@@ -165,6 +166,32 @@ def _prefixes(words: Iterable[str]) -> set[str]:
     return {word[:end] for word in words for end in range(1, len(word) + 1)}
 
 
+#: A part of a phrase: its pattern, and a pattern matching every prefix of a match
+#: of it, the empty one included. Built together, so the two can never disagree.
+_Part = tuple[str, str]
+
+
+def _words_part(*words: str) -> _Part:
+    return rf"(?:{_alternation(words)})", rf"(?:{_alternation(_prefixes(words))})?"
+
+
+def _sequence_part(*parts: _Part) -> _Part:
+    """A prefix of a sequence is a prefix of its first part, or all of that part and a prefix of the rest."""
+    prefix = parts[-1][1]
+    for pattern, part_prefix in reversed(parts[:-1]):
+        prefix = rf"(?:{pattern}{prefix}|{part_prefix})"
+    return rf"(?:{''.join(pattern for pattern, _ in parts)})", prefix
+
+
+def _choice_part(*parts: _Part) -> _Part:
+    return rf"(?:{'|'.join(pattern for pattern, _ in parts)})", rf"(?:{'|'.join(prefix for _, prefix in parts)})"
+
+
+def _optional_part(part: _Part) -> _Part:
+    pattern, prefix = part
+    return rf"{pattern}?", prefix
+
+
 _FIGURE_RE = re.compile(
     # A currency symbol before a digit: "₹2,66,250", "$ 499".
     rf"{_CURRENCY_AMOUNT_RE.pattern}"
@@ -216,14 +243,33 @@ _OWN_PRICE_WORDS = (
 _QUALIFIED_PRICE_WORDS = r"pric(?:e|es|ed)|fees?|charge[sd]?|tariffs?|rates?|costs?|invoices?|invoiced|billed|billing"
 #: "us" only in lower or title case: "US" is the country. "we're" and "we've" read as "we".
 _FIRST_PERSON_WORDS = r"our|we|(?-i:us|Us)"
-#: A word that names a price column in a table header and nothing else: "| Item | Amount |".
-_HEADER_ONLY_WORDS = r"amounts?"
 #: Every word ``_PRICE_WORDS_RE`` reads on its own. A disclaimer or a plan in another
 #: sense never takes one as its middle word: the stream settles such a word as soon as
 #: the character after it arrives, before the phrase around it is complete, so the
 #: whole answer must read it on its own too.
-_READ_ON_ITS_OWN = rf"(?:{_OWN_PRICE_WORDS}|{_QUALIFIED_PRICE_WORDS}|{_FIRST_PERSON_WORDS}|{_HEADER_ONLY_WORDS})\b"
+_READ_ON_ITS_OWN = rf"(?:{_OWN_PRICE_WORDS}|{_QUALIFIED_PRICE_WORDS}|{_FIRST_PERSON_WORDS})\b"
 _MIDDLE_WORD = rf"(?:(?!{_READ_ON_ITS_OWN})[a-z]{{1,{_MIDDLE_WORD_MAX}}}{_SEP})?"
+#: A numbered tier of cities or towns, not a plan tier: "tier 2 cities", "tier-1, tier-2
+#: and tier-3 cities", "Tier II towns". Unlike every other phrase it ends after the word
+#: it neutralises, so a "tier" is settled only once what has arrived after it can no
+#: longer grow into this phrase (``_TIER_PLACES_PREFIX_RE``).
+_TIER_GAP: _Part = (r"(?:-|[^\S\n])", r"(?:-|[^\S\n])?")
+_TIER: _Part = _words_part("tier", "tiers")
+_TIER_NUMBER: _Part = _words_part("1", "2", "3", "i", "ii", "iii", "one", "two", "three")
+_TIER_JOIN: _Part = _choice_part(
+    _sequence_part(_words_part(","), _optional_part(_TIER_GAP)),
+    _sequence_part(_TIER_GAP, _words_part("and", "or", "&"), _TIER_GAP),
+    _words_part("/"),
+)
+_TIER_NEXT: _Part = _optional_part(
+    _sequence_part(_TIER_JOIN, _optional_part(_sequence_part(_TIER, _TIER_GAP)), _TIER_NUMBER)
+)
+_TIER_PLACES, _TIER_PLACES_PREFIX = _sequence_part(
+    _TIER, _TIER_GAP, _TIER_NUMBER, _TIER_NEXT, _TIER_NEXT, _TIER_GAP, _words_part("city", "cities", "town", "towns")
+)
+_TIER_PLACES_PREFIX_RE = re.compile(_TIER_PLACES_PREFIX, re.IGNORECASE)
+#: The longest numbered tier of cities: "tiers three and tiers three and tiers three cities".
+_TIER_PLACES_CHARS = len("tiers three") + 2 * len(" and tiers three") + len(" cities")
 #: A first-person word that says whose the price is not ("set by the court, not by
 #: us", "billed separately from our clinic"), and a plan or a package in another sense
 #: ("salary package", "health insurance plans"). Neither counts. Each ends on the word
@@ -234,13 +280,16 @@ _NOT_OURS = (
     rf"{_SEP}(?:our|(?-i:us|Us))"
     rf"|(?:{_alternation(_NOT_OWN_PLAN_WORDS_ANSWER)}){_SEP}{_MIDDLE_WORD}plans?"
     rf"|(?:{_alternation(_NOT_OWN_PACKAGE_WORDS)}){_SEP}{_MIDDLE_WORD}packages?"
+    rf"|{_TIER_PLACES}"
 )
-#: The longest phrase ``_PRICE_WORDS_RE`` reads: a package in another sense with a middle word.
-_LONGEST_PHRASE_CHARS = (
+#: The longest phrase ``_PRICE_WORDS_RE`` reads: a package in another sense with a middle
+#: word, or a numbered tier of cities.
+_LONGEST_PHRASE_CHARS = max(
     max(len(word) for word in (*_NOT_OWN_PLAN_WORDS_ANSWER, *_NOT_OWN_PACKAGE_WORDS))
     + 2 * _SEP_MAX
     + _MIDDLE_WORD_MAX
-    + len("packages")
+    + len("packages"),
+    _TIER_PLACES_CHARS,
 )
 
 #: Every word the guard reads in an answer. Leftmost first, so a disclaimer or a plan
@@ -251,8 +300,7 @@ _PRICE_WORDS_RE = re.compile(
     rf"(?:(?P<not_ours>\b(?:{_NOT_OURS})\b)"
     rf"|(?P<own>\b(?:{_OWN_PRICE_WORDS})\b|/[^\S\n]{{0,{_SEP_MAX}}}(?:user|seat)s?\b)"
     rf"|(?P<qualified>\b(?:{_QUALIFIED_PRICE_WORDS})\b)"
-    rf"|(?P<first_person>\b(?:{_FIRST_PERSON_WORDS})\b)"
-    rf"|(?P<header>\b(?:{_HEADER_ONLY_WORDS})\b))",
+    rf"|(?P<first_person>\b(?:{_FIRST_PERSON_WORDS})\b))",
     re.IGNORECASE,
 )
 #: Own-price words that name plans or packages, for a lead line (see the module note).
@@ -261,21 +309,22 @@ _PLAN_WORDS = frozenset(
 )
 #: A table header row naming one of these opens a price context.
 _TABLE_HEADER_WORDS = frozenset(
-    {
-        "price", "prices", "pricing", "cost", "costs", "fee", "fees", "plan", "plans", "rate", "rates", "charge",
-        "charges", "amount", "amounts",
-    }
+    {"price", "prices", "pricing", "cost", "costs", "fee", "fees", "plan", "plans", "rate", "rates", "charge",
+     "charges"}
 )  # fmt: skip
 #: A markdown heading naming one of these opens a price context for its section.
 _SECTION_WORDS = frozenset({"pricing", "price", "prices", "plans", "packages", "rates"})
 
 
 #: Abbreviations whose full stop does not end a sentence: units, titles and company
-#: suffixes ("Dr. Rao", "Acme Pvt. Ltd.").
+#: suffixes ("Dr. Rao", "Adv. Menon", "Acme Pvt. Ltd.").
 _ABBREVIATIONS = (
     "rs", "p.m", "p.a", "a.m", "approx", "incl", "excl", "e.g", "i.e", "vs", "no", "nos", "avg", "min", "max", "est",
-    "dr", "mr", "mrs", "ms", "st", "jr", "sr", "inc", "ltd", "pvt", "co", "corp", "bros",
+    "dr", "mr", "mrs", "ms", "prof", "adv", "st", "jr", "sr", "inc", "ltd", "pvt", "co", "corp", "bros",
 )  # fmt: skip
+#: How many characters before a full stop ``_SENTENCE_END_RE`` reads: the longest
+#: abbreviation, and the character before it for ``\b``.
+_SENTENCE_END_LOOKBEHIND_CHARS = max(len(abbreviation) for abbreviation in _ABBREVIATIONS) + 1
 #: Where a sentence ends: a full stop, "!" or "?" followed by whitespace, or a
 #: line break. The whitespace keeps a decimal point ("4.45") and anything else
 #: inside a number out; the look-behinds keep "Rs. 5,000", "approx. 20" and an
@@ -309,10 +358,14 @@ _HOLD_CAP_CHARS = 300
 _CONTEXT_CAP_CHARS = 600
 #: How far after its heading a price section reaches.
 _SECTION_CAP_CHARS = 1_200
-#: The end of the emitted answer kept so a word or phrase split across chunks is
-#: still read whole. Longer than any phrase in ``_PRICE_WORDS_RE`` and than the
-#: look-behinds in ``_SENTENCE_END_RE``.
-_TAIL_CHARS = _LONGEST_PHRASE_CHARS + 8
+#: The end of the emitted answer kept and read again with the next piece. What is
+#: still undecided at the end of a piece must fit in it with everything it is read
+#: by: a word or phrase waiting for the characters after it, with the character
+#: before it for ``\b`` (``_LONGEST_PHRASE_CHARS`` and one), and a full stop, "!" or
+#: "?" waiting for the character after it, with the characters its look-behinds read
+#: (``_SENTENCE_END_LOOKBEHIND_CHARS`` and one). Anything the tail cuts was decided
+#: before and is skipped. Eight characters to spare.
+_TAIL_CHARS = max(_LONGEST_PHRASE_CHARS, _SENTENCE_END_LOOKBEHIND_CHARS) + 8
 #: The start of a line kept to tell a list item, a table row, a heading or a
 #: table separator; and the end kept to tell a lead ending in a colon.
 _LINE_HEAD_CHARS = 200
@@ -320,6 +373,11 @@ _LINE_END_CHARS = 16
 
 _END = 0
 _WORD = 1
+
+
+def _may_grow_into_places(word: re.Match[str], end: int) -> bool:
+    """Whether an own-price "tier" could still become "tier 2 cities" once more than ``word.string[:end]`` arrives."""
+    return word.lastgroup == "own" and _TIER_PLACES_PREFIX_RE.fullmatch(word.string, word.start(), end) is not None
 
 
 def _heading_level(head: str) -> int | None:
@@ -342,8 +400,12 @@ class _AnswerReader:
 
     ``read`` is handed each piece of emitted text with the character that follows
     it, if that has arrived. A word or full stop at the very end is settled only
-    once its next character is known, so the tail of the emitted text is kept and
-    read again with the next piece; everything already settled is skipped.
+    once its next character is known, and a "tier" only once it cannot still become
+    "tier 2 cities", so the tail of the emitted text is kept and read again with the
+    next piece. Everything already decided is skipped: each word is settled once,
+    and each candidate sentence end is judged once, whether it ended a sentence or
+    not, with the characters before and after it in hand. However the answer is
+    chunked, every decision is made on the same text.
     """
 
     def __init__(self, words: re.Pattern[str]) -> None:
@@ -351,9 +413,10 @@ class _AnswerReader:
         #: The end of the emitted text, and where it starts in the whole answer.
         self._tail = ""
         self._tail_start = 0
-        #: Where the last settled word and sentence end finish in the whole answer.
+        #: Where the last settled word finishes in the whole answer, and where the
+        #: candidate sentence ends still to be judged start.
         self._words_done = 0
-        self._ends_done = 0
+        self._ends_judged = 0
         #: The current sentence: a word that counts on its own, a fee or price
         #: word, and a first-person word.
         self._own = False
@@ -417,11 +480,18 @@ class _AnswerReader:
         for end in _SENTENCE_END_RE.finditer(probe):
             if end.start() >= len(scan):
                 break
-            if base + end.start() >= self._ends_done:
+            # A candidate judged before is not judged again: the tail may since have
+            # cut the letters its look-behinds read ("Dr." kept as "r.").
+            if base + end.start() >= self._ends_judged:
                 events.append((end.start(), _END, end))
+        # Every candidate is now judged, but a last full stop, "!" or "?" whose next
+        # character has not arrived.
+        waiting = not lookahead and scan[-1:] in (".", "!", "?")
+        self._ends_judged = base + len(scan) - (1 if waiting else 0)
         for word in self._words.finditer(probe):
-            # Settled only when the character after it has arrived ("plan" + "et").
-            if word.end() > len(scan) or word.end() == len(probe):
+            # Settled only when the character after it has arrived ("plan" + "et"),
+            # and a "tier" only when it cannot still become "tier 2 cities".
+            if word.end() > len(scan) or word.end() == len(probe) or _may_grow_into_places(word, len(probe)):
                 break
             # A word cut by the start of the tail was read whole before.
             if (word.start() > 0 or base == 0) and base + word.end() > self._words_done:
@@ -433,7 +503,6 @@ class _AnswerReader:
                 self._words_done = base + match.end()
                 self._read_word(match, base + match.end())
                 continue
-            self._ends_done = base + match.end()
             self._own = self._qualified = self._first_person = False
             if match.group() == "\n":
                 self._extend_line(scan[line_from:index])
@@ -682,8 +751,9 @@ class PriceStreamGuard:
             if word.start() >= stop or word.end() > limit:
                 break
             # A word at the very end of what has arrived may still grow into
-            # another one ("plan" + "et"): only a later chunk or ``flush`` decides.
-            if word.end() == len(window) and not final:
+            # another one ("plan" + "et"), and a "tier" into "tier 2 cities": only a
+            # later chunk, ``flush`` or the cap decides.
+            if not final and len(window) <= limit and (word.end() == len(window) or _may_grow_into_places(word, bound)):
                 break
             if word.end() - start <= self._held_word_end:
                 continue
