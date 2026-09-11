@@ -24,6 +24,8 @@ database, no model, no import from ``rag_service``.
 from __future__ import annotations
 
 import re
+from bisect import bisect_left
+from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import unquote
 
@@ -46,34 +48,36 @@ _FILE_NOUNS = (
 #: Every noun the service rules below look at, including the ones that need a
 #: sending verb to count as a request (a pdf, a catalog) and a bare deck.
 _ANY_NOUN = rf"(?:{_FILE_NOUNS}|pdfs?|catalog(?:ue)?s?|decks?)"
-#: Verbs that ask for a document. "I have" and "we have" describe the visitor's
-#: own copy ("I have a question about your brochure"), so only "you have" counts.
-_ASK_VERBS = r"(?:send|share|e-?mail|mail|give|get|download|(?<!\bi )(?<!\bwe )have|want|need|see|show|provide|forward)"
-#: Verbs that hand a file over. "I want a pdf" or "see the pdf" is too loose.
-_PDF_VERBS = r"(?:send|share|e-?mail|mail|give|get|download|forward)"
-#: A shop's "catalog of shoes" is its products, so a catalog counts only when it
-#: is sent or downloaded.
-_CATALOG_VERBS = r"(?:send|share|e-?mail|mail|download|forward)"
 
-_REQUEST_RULES = tuple(
+#: Nouns a document noun can describe instead of name: "case study sessions",
+#: "the ebook bundle", "whitepaper topic ideas", "the brochure printer". The
+#: visitor is asking about that other thing, not for the document.
+_HEAD_NOUNS = frozenset(
+    {
+        "idea", "ideas", "topic", "topics", "session", "sessions", "workshop", "workshops", "module", "modules",
+        "bundle", "bundles", "draft", "drafts", "template", "templates", "design", "designs", "writing", "printing",
+        "printer", "refund", "edition", "price", "prices", "value", "values", "format", "review", "reviews",
+        "feedback",
+    }
+)  # fmt: skip
+_NOT_A_HEAD = rf"(?![\s-]+(?:{'|'.join(sorted(_HEAD_NOUNS))})\b)"
+
+#: Requests that need no ask verb: a document followed by a request word.
+_NOUN_THEN_REQUEST_RULES = tuple(
     re.compile(pattern, re.IGNORECASE)
     for pattern in (
-        # An ask followed by a document: "can you send me your brochure?", "do you have a SOAR datasheet".
-        rf"\b{_ASK_VERBS}\b[^.?!]{{0,40}}\b{_FILE_NOUNS}\b",
-        # A pdf handed over: "can I get the report as a pdf", "share a pdf of the service".
-        rf"\b{_PDF_VERBS}\b[^.?!]{{0,40}}\bpdfs?\b",
-        # A catalog sent or downloaded: "send me your catalog pdf", "download the product catalogue".
-        rf"\b{_CATALOG_VERBS}\b[^.?!]{{0,40}}\bcatalog(?:ue)?s?\b",
-        # A document followed by a request word: "is the brochure available?", "case study please".
-        rf"\b{_FILE_NOUNS}\b[^.?!]{{0,20}}\b(?:please|pls|available|downloadable|download)\b",
-        # A catalog followed by "download": "a product catalogue I can download".
-        # Not "pdf": "the pdf file won't open" and "is the catalog file big" are
-        # not requests, and "file(s)" alone is too loose for either noun.
+        # "is the brochure available?", "case study please".
+        rf"\b{_FILE_NOUNS}\b{_NOT_A_HEAD}[^.?!]{{0,20}}\b(?:please|pls|available|downloadable|download)\b",
+        # "a product catalogue I can download". Not "pdf": "the pdf file won't open"
+        # and "is the catalog file big" are not requests, and "file(s)" alone is too
+        # loose for either noun.
         r"\bcatalog(?:ue)?s?\b[^.?!]{0,20}\bdownload(?:able)?\b",
-        # The whole message names a document: "any whitepapers?", "Brochure?".
-        rf"^\s*(?:any|some|a|the|your)?\s*{_FILE_NOUNS}\s*[?.!]*\s*$",
     )
 )
+#: The whole message names a document: "any whitepapers?", "Brochure?". Matched
+#: against the stripped message, so no leading or trailing whitespace run can
+#: make it backtrack.
+_WHOLE_MESSAGE_RE = re.compile(rf"(?:(?:any|some|a|the|your)\s+)?{_FILE_NOUNS}\s?[?.!]*", re.IGNORECASE)
 
 _MAKE_VERBS = r"(?:design|create|make|build|print|write|edit|draft|develop|produce|convert|redesign)"
 _MAKING = r"(?:designing|creating|making|building|printing|writing|editing|drafting|developing|producing|converting)"
@@ -100,11 +104,14 @@ _SERVICE_RULES = tuple(
 #: Contact details a visitor adds to a request ("email it to rahul.sharma@gmail.com",
 #: "my number is 98765 43210", a link). They name no document, so they are removed
 #: before a question is read: left in, "rahul" or "gmail" became the topic of the
-#: request and no file matched it.
+#: request and no file matched it. Every branch is bounded and an address must
+#: start where a run of address characters starts: an unbounded address took 80ms
+#: per call on "a" x 2,500 + "@" + "a" x 2,499, and a turn reads a question several
+#: times.
 _CONTACT_RE = re.compile(
-    r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"  # an email address
-    r"|\b(?:https?://|www\.)\S+"  # a link
-    r"|\+?\d(?:[\s.-]?\d){6,}",  # a phone number: 7 or more digits, with spaces, dashes or dots between
+    r"(?<![\w.+-])[\w.+-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63}){1,8}"  # an email address
+    r"|\b(?:https?://|www\.)\S{1,2048}"  # a link
+    r"|\+?\d(?:[\s.-]?\d){6,14}",  # a phone number: 7 to 15 digits, with spaces, dashes or dots between
     re.IGNORECASE,
 )
 
@@ -166,6 +173,204 @@ def _without_contacts(text: str) -> str:
     return _CONTACT_RE.sub(" ", text)
 
 
+# ── Does the ask verb govern the document? ──────────────────────────────────
+#
+# "can I get a refund if the ebook I bought is the wrong edition?" has an ask verb
+# and a document noun 25 characters apart, and it asks for a refund. So a verb
+# counts only when the document is its object: between them sit at most a
+# recipient ("me", "over") and a few words that describe the document ("the
+# latest SOAR platform", "a copy of your"). The check walks back from each
+# document noun over a bounded number of words, so it stays linear on any input.
+
+#: Where a verb's reach ends. A full stop only when a space or the end follows,
+#: so "v2.0" stays one phrase.
+_LINK_BREAK = re.compile(r"[,;:!?\n]|\.(?!\w)")
+_WORD_RE = re.compile(r"[a-z0-9]+(?:['’][a-z]+)?", re.IGNORECASE)
+_FILE_NOUN_RE = re.compile(rf"\b{_FILE_NOUNS}\b", re.IGNORECASE)
+_PDF_RE = re.compile(r"\bpdfs?\b", re.IGNORECASE)
+_CATALOG_RE = re.compile(r"\bcatalog(?:ue)?s?\b", re.IGNORECASE)
+
+#: Who the document goes to, directly after the verb: "send me", "send over".
+_RECIPIENTS = frozenset({"me", "us", "him", "her", "them", "over"})
+#: Words that pick out which copy is meant. Not counted toward the limit below.
+_DETERMINERS = frozenset({"a", "an", "the", "your", "our", "any", "some", "this", "that", "these", "those"})
+#: Words that describe the document: "the latest", "a copy of", "the pdf".
+_DESCRIBERS = frozenset(
+    {
+        "latest", "new", "updated", "recent", "current", "full", "complete", "detailed", "short", "official",
+        "company", "product", "products", "service", "services", "digital", "soft", "pdf", "copy", "copies", "link",
+        "links", "one", "relevant",
+    }
+)  # fmt: skip
+#: Words that end a verb's reach: they start another phrase ("if", "when", "for",
+#: "and"), stand for someone else ("someone", "I") or name what is really asked
+#: for ("a refund", "an invoice", "your feedback", "a minute"). Any other word
+#: between the verb and the noun is a topic word ("SOC", "red teaming",
+#: "healthcare").
+_ENDS_THE_REACH = frozenset(
+    {
+        # Pronouns, question words and possessives that are not the business's.
+        "i", "i'm", "im", "you", "u", "he", "she", "it", "it's", "we", "they", "my", "his", "their", "who", "whom",
+        "whose", "which", "what", "what's", "whats", "where", "when", "why", "how", "whether", "if", "someone",
+        "somebody", "anyone", "anybody", "everyone", "something", "anything", "nothing",
+        # Prepositions other than "of", and conjunctions.
+        "to", "for", "on", "in", "at", "about", "with", "without", "from", "by", "into", "onto", "after", "before",
+        "during", "than", "like", "as", "per", "via", "through", "until", "upon", "within", "regarding", "around",
+        "and", "or", "but", "so", "because", "since", "while", "unless", "though", "although", "plus", "then",
+        # Auxiliaries and negation.
+        "is", "are", "was", "were", "be", "been", "being", "am", "do", "does", "did", "done", "can", "could", "will",
+        "would", "shall", "should", "may", "might", "must", "has", "had", "have", "having", "not", "no", "never",
+        "don't", "dont", "doesn't", "didn't", "won't", "can't", "cannot",
+        # What the visitor wants instead of the document.
+        "refund", "refunds", "invoice", "invoices", "receipt", "receipts", "discount", "discounts", "feedback",
+        "idea", "ideas", "minute", "minutes", "moment", "second", "session", "sessions", "turnaround", "time",
+        "quote", "quotes", "quotation", "price", "prices", "pricing", "cost", "costs", "estimate", "update",
+        "updates", "reminder", "notification", "opinion", "thoughts", "review",
+    }
+)  # fmt: skip
+#: At most this many describing or topic words between the verb and the noun.
+_MAX_DESCRIBING_WORDS = 4
+#: How far back the walk looks at all: a copy of your latest red teaming (7 words)
+#: plus two recipients and the verb.
+_MAX_WALK = 10
+
+_VerbAt = Callable[[tuple[str, ...], int], bool]
+
+
+@dataclass(frozen=True)
+class _Phrase:
+    """Text between two link breaks, with its words lowercased and where each starts."""
+
+    text: str
+    words: tuple[str, ...]
+    starts: tuple[int, ...]
+
+
+def _phrases(text: str) -> list[_Phrase]:
+    phrases = []
+    for part in _LINK_BREAK.split(text):
+        found = list(_WORD_RE.finditer(part))
+        words = tuple(m.group().lower().replace("’", "'") for m in found)
+        phrases.append(_Phrase(part, words, tuple(m.start() for m in found)))
+    return phrases
+
+
+def _word(words: tuple[str, ...], index: int) -> str:
+    return words[index] if 0 <= index < len(words) else ""
+
+
+def _can_i_have(words: tuple[str, ...], index: int) -> bool:
+    """ "can I have", "could I have", "may I have", ending at ``index``."""
+    return (
+        words[index] == "have" and _word(words, index - 1) == "i" and _word(words, index - 2) in {"can", "could", "may"}
+    )
+
+
+def _asks_at(words: tuple[str, ...], index: int) -> bool:
+    """An ask for a document ends at ``index``: "send", "do you have", "can I have a look at", "u got a"."""
+    word = words[index]
+    if word == "have":
+        # "I have" and "we have" describe the visitor's own copy ("I have a
+        # question about your brochure"), unless it is "can I have".
+        return _word(words, index - 1) not in {"i", "we"} or _can_i_have(words, index)
+    if word == "at":
+        # "can I have a look at", "could I take a look at".
+        return (
+            _word(words, index - 1) == "look"
+            and _word(words, index - 2) == "a"
+            and _word(words, index - 3) in {"have", "take"}
+            and _word(words, index - 4) == "i"
+            and _word(words, index - 5) in {"can", "could", "may"}
+        )
+    if word == "got":
+        # "u got a wedding brochure?", "you got any case studies?"
+        return _word(words, index - 1) in {"u", "you"} and _word(words, index + 1) in {"a", "an", "any"}
+    return word in {
+        "send", "share", "email", "mail", "give", "get", "download", "want", "need", "see", "show", "provide",
+        "forward",
+    }  # fmt: skip
+
+
+def _hands_over_at(words: tuple[str, ...], index: int) -> bool:
+    """A verb that hands a file over. "I want a pdf" or "see the pdf" is too loose for a bare pdf."""
+    return _can_i_have(words, index) or words[index] in {
+        "send", "share", "email", "mail", "give", "get", "download", "forward",
+    }  # fmt: skip
+
+
+def _sends_at(words: tuple[str, ...], index: int) -> bool:
+    """A verb that sends a file. A shop's "catalog of shoes" is its products, so "show" and "get" do not count."""
+    return _can_i_have(words, index) or words[index] in {"send", "share", "email", "mail", "download", "forward"}
+
+
+def _after_recipient(words: tuple[str, ...], index: int, verb_at: _VerbAt) -> bool:
+    """True when the recipient at ``index`` ("me", or "me over") directly follows a verb."""
+    before = index - 1
+    if _word(words, before) in _RECIPIENTS:
+        before -= 1
+    return before >= 0 and verb_at(words, before)
+
+
+def _governed(words: tuple[str, ...], noun_index: int, verb_at: _VerbAt) -> bool:
+    """True when a verb governs the noun whose first word is ``words[noun_index]``.
+
+    Walking back from the noun, each word must describe it: a determiner, a
+    describing word ("latest", "copy", "of"), "link to", or a topic word ("SOAR",
+    "red teaming"). A topic word sits next to the noun, so none may come before a
+    determiner: "an overview of the whitepaper" asks for an overview. "as a
+    service" is part of a name, not a new phrase. A recipient must come straight
+    after the verb.
+    """
+    described = 0
+    determiner_seen = False
+    index = noun_index - 1
+    stop = max(0, noun_index - _MAX_WALK)
+    while index >= stop:
+        word = words[index]
+        if verb_at(words, index):
+            return True
+        if word in _RECIPIENTS:
+            return _after_recipient(words, index, verb_at)
+        if word in _DETERMINERS:
+            determiner_seen = True
+        elif word == "as" and _word(words, index + 1) == "a" and _word(words, index + 2) in {"service", "services"}:
+            # "the SOC as a Service datasheet": the "a" belongs to the name.
+            determiner_seen = False
+        elif word == "of":
+            pass
+        elif word in {"to", "for"} and _word(words, index - 1) in {"link", "links"}:
+            described += 1
+            index -= 1
+        elif word in _DESCRIBERS or (not determiner_seen and word not in _ENDS_THE_REACH):
+            described += 1
+        else:
+            return False
+        if described > _MAX_DESCRIBING_WORDS:
+            return False
+        index -= 1
+    return False
+
+
+def _verb_governs_a_noun(phrase: _Phrase, nouns: re.Pattern[str], verb_at: _VerbAt) -> bool:
+    """True when some noun in the phrase is the object of a verb, not the modifier of another noun."""
+    for noun in nouns.finditer(phrase.text):
+        after = bisect_left(phrase.starts, noun.end())
+        if _word(phrase.words, after) in _HEAD_NOUNS:
+            continue
+        if _governed(phrase.words, bisect_left(phrase.starts, noun.start()), verb_at):
+            return True
+    return False
+
+
+#: Asks that name a document: any ask verb for a named document, a handing-over
+#: verb for a pdf, a sending verb for a catalog.
+_ASKS: tuple[tuple[re.Pattern[str], _VerbAt], ...] = (
+    (_FILE_NOUN_RE, _asks_at),
+    (_PDF_RE, _hands_over_at),
+    (_CATALOG_RE, _sends_at),
+)
+
+
 def _is_not_for_a_business_file(clause: str) -> bool:
     """True when a clause names a document but is not asking for one of the business's files."""
     if not _NOUN_RE.search(clause):
@@ -182,45 +387,45 @@ def _is_not_for_a_business_file(clause: str) -> bool:
 def is_document_request(question: object) -> bool:
     """True when the visitor asks for one of the business's downloadable documents.
 
-    Not a service that makes one ("do you design brochures?"), a feature question
-    ("can users download invoices as pdf"), or the visitor's own file ("send me
-    the invoice pdf for my order").
+    The ask verb has to govern the document ("send me the SOAR datasheet"), not
+    something else in the sentence ("send me an invoice for the case study
+    workshop"). Not a service that makes one ("do you design brochures?"), a
+    feature question ("can users download invoices as pdf"), or the visitor's own
+    file ("send me the invoice pdf for my order").
     """
     if not isinstance(question, str) or not question.strip():
         return False
     text = _without_contacts(question)
     if any(rule.search(text) for rule in _SERVICE_RULES):
         return False
-    if not any(rule.search(text) for rule in _REQUEST_RULES):
+    asked = (
+        any(_verb_governs_a_noun(phrase, nouns, verb_at) for phrase in _phrases(text) for nouns, verb_at in _ASKS)
+        or any(rule.search(text) for rule in _NOUN_THEN_REQUEST_RULES)
+        or _WHOLE_MESSAGE_RE.fullmatch(text.strip()) is not None
+    )
+    if not asked:
         return False
     return not any(_is_not_for_a_business_file(clause) for clause in _CLAUSE_BREAK.split(text))
 
 
-#: Verbs that ask for a document to be handed over, not merely mentioned.
-#: "have", "see", "show" and "available" name a document without asking for
-#: delivery ("do you have a brochure?" wants an answer, not necessarily a
-#: file), so they are deliberately absent here even though they count for
-#: ``is_document_request`` above.
-_DELIVERY_VERBS = r"(?:send|share|e-?mail|mail|forward|download|give|get)"
-_DELIVERY_RULES = tuple(
-    re.compile(pattern, re.IGNORECASE)
-    for pattern in (
-        rf"\b{_DELIVERY_VERBS}\b",
-        r"\bcan\s+i\s+have\b",
-        r"\bcould\s+i\s+have\b",
-    )
-)
+def _delivers_at(words: tuple[str, ...], index: int) -> bool:
+    """A verb that asks for the file itself. "have", "see", "show" and "available" ask a question instead."""
+    return _can_i_have(words, index) or words[index] in {
+        "send", "share", "email", "mail", "forward", "download", "give", "get",
+    }  # fmt: skip
 
 
 def asks_for_delivery(question: object) -> bool:
     """True when the visitor asks for a file to be sent or downloaded, not just
     whether one exists. "do you have", "any", "is there", "see", "show" and
     "available" ask a question; "send", "share", "email", "download", "give",
-    "get", "can I have" and "could I have" ask for the file itself."""
+    "get", "can I have" and "could I have" ask for the file itself, but only when
+    the document is what they govern: "can you email me when the new catalog is
+    out?" asks for an email about it."""
     if not isinstance(question, str) or not question.strip():
         return False
     text = _without_contacts(question)
-    return any(rule.search(text) for rule in _DELIVERY_RULES)
+    return any(_verb_governs_a_noun(phrase, _NOUN_RE, _delivers_at) for phrase in _phrases(text))
 
 
 #: Kinds of document: the kind, how a question names it, and how a file name
@@ -270,12 +475,50 @@ _STOPWORDS = frozenset(
 )  # fmt: skip
 
 
+#: The ending of a contraction: "don't", "I'm", "Rahul's".
+_CONTRACTION_RE = re.compile(r"['’](?:s|t|m|d|ll|re|ve)\b")
+#: A short identifier: "Tower B", "Phase 2", "Block C".
+_SHORT_ID_RE = re.compile(r"[a-z]|\d{1,2}")
+_YEAR_RE = re.compile(r"(?:19|20)\d\d")
+_NUMBER_RE = re.compile(r"\d+")
+#: "I'm Rahul", "my name is Rahul Sharma", "this is Priya from Infosys": who is
+#: asking, never which document. The name words exclude the words that start a
+#: sentence about the request instead ("I'm looking for", "this is the").
+_NOT_A_NAME = (
+    r"(?:a|an|the|from|in|on|at|for|with|to|about|regarding|looking|interested|here|not|just|also|trying|wondering"
+    r"|asking|writing|reaching|planning|hoping|sure|very|so|really|still|currently)\b"
+)
+_SELF_INTRODUCTION_RE = re.compile(
+    rf"\b(?:i['’]?m|i\s+am|this\s+is|my\s+name\s+is)\s+(?!{_NOT_A_NAME})[a-z][\w'’-]*"
+    rf"(?:\s+(?!{_NOT_A_NAME})[a-z][\w'’-]*)?"
+    r"(?:\s+from\s+[a-z][\w&'’-]*(?:\s+[a-z][\w&'’-]*){0,2})?",
+    re.IGNORECASE,
+)
+#: "on whatsapp", "via email": how to send it, never which document.
+_CHANNEL_RE = re.compile(r"\b(?:on|via|over|by|through)\s+(?:whatsapp|e-?mail|mail|telegram|sms|text)\b", re.IGNORECASE)
+
+
 def _tokens(text: str | None) -> set[str]:
-    return {t for t in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(t) >= 3 and t not in _STOPWORDS}
+    """The topic words of a question or a file name.
 
-
-def _asked_kinds(text: str) -> frozenset[str]:
-    return frozenset(kind for kind, asked, _ in _KINDS if asked is not None and asked.search(text))
+    A one-letter or one- or two-digit word joins the word before it, on both
+    sides of a match, so "Tower B" is ``tower_b`` and matches ``Tower-B.pdf`` but
+    not ``Tower-A.pdf``, and "Phase 2" is not "Phase 1". Left apart, "b" was too
+    short to count and "tower" matched both files equally.
+    """
+    words = re.findall(r"[a-z0-9]+", _CONTRACTION_RE.sub("", (text or "").lower()))
+    tokens: set[str] = set()
+    index = 0
+    while index < len(words):
+        word = words[index]
+        index += 1
+        if len(word) < 3 or word in _STOPWORDS:
+            continue
+        if index < len(words) and _SHORT_ID_RE.fullmatch(words[index]):
+            word = f"{word}_{words[index]}"
+            index += 1
+        tokens.add(word)
+    return tokens
 
 
 @dataclass(frozen=True)
@@ -305,7 +548,10 @@ def _catalog_files(catalog: object, company: set[str]) -> list[_File]:
     for payload in catalog if isinstance(catalog, list) else []:
         if not isinstance(payload, dict):
             continue
-        for entry in payload.get("files") or []:
+        entries = payload.get("files")
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
             if not isinstance(entry, dict):
                 continue
             url = entry.get("url")
@@ -324,6 +570,19 @@ def _catalog_files(catalog: object, company: set[str]) -> list[_File]:
                 )
             )
     return files
+
+
+def _topic(text: str, company: set[str], files: list[_File]) -> set[str]:
+    """What the question is about: its tokens without who is asking, the channel,
+    the company's own words, or a year no file name carries ("your latest 2026
+    brochure" when the catalog holds the 2025 one)."""
+    words = _tokens(_CHANNEL_RE.sub(" ", _SELF_INTRODUCTION_RE.sub(" ", text))) - company
+    named = set().union(*(f.tokens for f in files))
+    return {w for w in words if not (_YEAR_RE.fullmatch(w) and w not in named)}
+
+
+def _asked_kinds(text: str) -> frozenset[str]:
+    return frozenset(kind for kind, asked, _ in _KINDS if asked is not None and asked.search(text))
 
 
 def _conflicts(asked: frozenset[str], file: _File) -> bool:
@@ -347,38 +606,46 @@ def pick_documents(question: str, company_name: str | None, catalog: object, lim
 
     A question that names a topic ("the SOC as a Service datasheet") gets the
     files whose names share the most words with it. That pick is exact when the
-    best file shares at least ``TOPIC_MIN_OVERLAP`` words, every topic word, or
-    every one of the file's own topic words ("the brochure for MBA program"
-    against ``MBA-Brochure.pdf``, whose only topic word is "mba"), and is not
-    plainly another kind of document than the one asked for; a weaker match is
-    offered as inexact. A file name with no topic words of its own (a bare
-    "Brochure.pdf") is never made exact by that last rule. When no file shares
-    a word, or the question names only a kind ("any case studies?"), the files
-    of that kind are offered,
-    exact only when there was no topic to miss. A request for a brochure or a
+    best file shares at least ``TOPIC_MIN_OVERLAP`` words or every topic word, and
+    is not plainly another kind of document than the one asked for; a weaker
+    match is offered as inexact. It is also exact when the question names every
+    one of the file's own topic words and the file is the kind asked for ("the
+    brochure for MBA program" against ``MBA-Brochure.pdf``). That rule needs the
+    kind in the file name and a word other than a number: ``SOC.pdf`` is not the
+    "SOC 2 report", ``Services.pdf`` not "the managed services case study", and a
+    bare "Brochure.pdf" or "Brochure-2025.pdf" is never made exact by it. Among
+    equally good files, one of the kind asked for comes first. When no file shares
+    a word, or the question names only a kind ("any case studies?"), the files of
+    that kind are offered, exact only when there was no topic to miss. A request for a brochure or a
     company profile, or one naming neither a kind nor a topic, falls back to
     profile-like files, marked inexact. Anything else gets no files: never an
     unrelated one, like a third-party report the knowledge base happens to link.
 
-    Contact details are ignored. Ties break on the URL, so the same question
+    Contact details, a self-introduction ("I'm Rahul from Infosys") and the
+    channel ("on whatsapp") are ignored. Ties break on the URL, so the same question
     against the same catalog always offers the same files. ``limit`` defaults to
     two: one card and one "Also available" chip, the most the generated path ever
     attaches.
     """
     text = _without_contacts(question if isinstance(question, str) else "")
     company = _tokens(company_name)
-    anchor = _tokens(text) - company
-    asked = _asked_kinds(text)
     files = _catalog_files(catalog, company)
+    anchor = _topic(text, company, files)
+    asked = _asked_kinds(text)
 
     if anchor:
         scored = sorted(
             ((len(anchor & f.tokens), f) for f in files if anchor & f.tokens),
-            key=lambda sf: (-sf[0], _conflicts(asked, sf[1]), sf[1].url),
+            key=lambda sf: (-sf[0], _conflicts(asked, sf[1]), not asked & sf[1].kinds, sf[1].url),
         )
         if scored:
             best_overlap, best = scored[0]
-            covers_file_name = bool(best.tokens) and best.tokens <= anchor
+            covers_file_name = (
+                bool(asked & best.kinds)
+                and bool(best.tokens)
+                and best.tokens <= anchor
+                and not all(_NUMBER_RE.fullmatch(token) for token in best.tokens)
+            )
             exact = (
                 best_overlap >= TOPIC_MIN_OVERLAP or best_overlap == len(anchor) or covers_file_name
             ) and not _conflicts(asked, best)

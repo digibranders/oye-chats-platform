@@ -5,6 +5,8 @@ detail sits with the team" and "email me a datasheet" got a message form, on all
 four bots, including one with a catalog of datasheets. 0 of 8 passed.
 """
 
+import timeit
+
 import pytest
 
 from app.services.document_request import (
@@ -78,6 +80,11 @@ def _catalog(*urls):
         # "your" names the business's document, whoever else the sentence mentions.
         "can you share your brochure with our team",
         "how can I get your brochure?",
+        # A product named "X as a Service".
+        "can you send me the SOC as a Service datasheet",
+        # Two shapes that were missed.
+        "can I have a look at the Skyline Towers brochure?",
+        "u got a wedding brochure?",
     ],
 )
 def test_document_requests_are_recognised(msg):
@@ -146,6 +153,29 @@ def test_other_questions_are_not(msg):
     assert is_document_request(msg) is False
 
 
+@pytest.mark.parametrize(
+    "msg",
+    [
+        # An ask verb that governs something other than the document: a quote, an
+        # invoice, a refund, feedback, a minute, a person.
+        "what's the turnaround time to get 200 flyers and a brochure?",
+        "please share your feedback on the whitepaper draft I emailed you",
+        "give me a minute, I'm reading the datasheet now",
+        "send me an invoice for the case study workshop I attended",
+        "can I get a refund if the ebook I bought is the wrong edition?",
+        "can you email me when the new catalog is out?",
+        "get me someone who can explain the SOAR datasheet",
+        # A document noun that only describes another noun.
+        "can you share whitepaper topic ideas for next quarter?",
+        "do students get case study sessions with industry mentors?",
+        "will you give a discount if we buy the ebook bundle for a class of 40?",
+    ],
+)
+def test_an_ask_for_something_else_is_not_a_document_request(msg):
+    assert is_document_request(msg) is False
+    assert asks_for_delivery(msg) is False
+
+
 def test_a_non_string_is_not_a_request():
     assert is_document_request(None) is False
 
@@ -210,7 +240,7 @@ def test_contact_details_are_not_a_topic(msg):
     assert pick.exact is True
 
 
-def test_a_generic_profile_request_with_a_topic_falls_back_to_the_brochure():
+def test_a_profile_request_from_a_named_visitor_falls_back_to_the_brochure():
     pick = pick_documents("I'm Rahul from Infosys, please send me your company profile", "Acme", BROCHURE_CATALOG)
     assert [d["url"] for d in pick.docs] == [BROCHURE]
     assert pick.exact is False
@@ -234,8 +264,9 @@ def test_a_soc_2_report_is_not_the_soc_as_a_service_datasheet():
     )
     pick = pick_documents("send me your SOC 2 report pdf", "Eventus Security", catalog)
     assert pick.exact is False
-    # A datasheet and a report are different kinds, so no second card.
-    assert [d["name"] for d in pick.docs] == ["Datasheet-for-SOC-as-a-Service.pdf"]
+    # "SOC 2" is one identifier, so the SOC as a Service datasheet shares no word
+    # with the question and is not offered.
+    assert "Datasheet-for-SOC-as-a-Service.pdf" not in [d["name"] for d in pick.docs]
 
 
 @pytest.mark.parametrize(
@@ -270,6 +301,76 @@ def test_every_word_of_a_multi_word_file_name_named_in_the_question_is_exact():
     pick = pick_documents("send me the Skyline brochure and floor plan", "Acme", _catalog(url))
     assert [d["url"] for d in pick.docs] == [url]
     assert pick.exact is True
+
+
+@pytest.mark.parametrize(
+    ("names", "msg"),
+    [
+        (["SOC.pdf"], "send me your SOC 2 report pdf"),
+        (["Services.pdf"], "can you share the managed services case study"),
+        (["2025.pdf"], "send me your 2025 case study on banking"),
+        (["Platform.pdf"], "share the SOAR platform datasheet"),
+        (["Cloud.pdf"], "do you have a case study on cloud migration?"),
+        (["Tower-A.pdf", "Tower-B.pdf"], "send me the Tower B floor plan pdf"),
+        # The file is a brochure, but a year is all its name says.
+        (["Brochure-2025.pdf"], "send me your 2025 brochure on banking"),
+    ],
+)
+def test_naming_every_word_of_a_file_is_not_exact_unless_the_file_is_the_kind_asked_for(names, msg):
+    pick = pick_documents(msg, "Acme", _catalog(*(f"https://acme.com/files/{name}" for name in names)))
+    assert pick.exact is False
+
+
+@pytest.mark.parametrize(
+    ("names", "msg", "picked", "exact"),
+    [
+        (
+            ["Tower-A-Brochure.pdf", "Tower-B-Brochure.pdf"],
+            "send me the Tower B brochure",
+            ["Tower-B-Brochure.pdf"],
+            True,
+        ),
+        (
+            ["Tower-A-Brochure.pdf", "Tower-B-Brochure.pdf"],
+            "send me the tower a brochure",
+            ["Tower-A-Brochure.pdf"],
+            True,
+        ),
+        (["Tower-A.pdf", "Tower-B.pdf"], "send me the Tower B floor plan pdf", ["Tower-B.pdf"], False),
+        (
+            ["Phase-1-Brochure.pdf", "Phase-2-Brochure.pdf"],
+            "can you share the phase 2 brochure",
+            ["Phase-2-Brochure.pdf"],
+            True,
+        ),
+        (
+            ["Phase-1-Brochure.pdf", "Phase-2-Brochure.pdf"],
+            "send me the Phase 1 brochure",
+            ["Phase-1-Brochure.pdf"],
+            True,
+        ),
+    ],
+)
+def test_a_short_identifier_picks_its_own_file(names, msg, picked, exact):
+    pick = pick_documents(msg, "Skyline Homes", _catalog(*(f"https://skyline.example.com/f/{name}" for name in names)))
+    assert [d["name"] for d in pick.docs] == picked
+    assert pick.exact is exact
+
+
+@pytest.mark.parametrize(
+    ("msg", "catalog", "url"),
+    [
+        ("hi, I'm Rahul. send me your brochure", BROCHURE_CATALOG, BROCHURE),
+        ("pls send brochure on whatsapp", BROCHURE_CATALOG, BROCHURE),
+        ("send me your latest 2026 brochure", BROCHURE_CATALOG, BROCHURE),
+        ("I'm Rahul from Infosys, please send me your company profile", CATALOG, PROFILE),
+    ],
+)
+def test_a_name_a_channel_or_an_unlisted_year_is_not_a_topic(msg, catalog, url):
+    pick = pick_documents(msg, "Acme", catalog)
+    assert [d["url"] for d in pick.docs] == [url]
+    assert pick.exact is True
+    assert "exact document" not in document_reply(pick, company_name="Acme", support_enabled=True)
 
 
 def test_a_file_name_with_no_topic_words_is_not_made_exact_by_the_covering_rule():
@@ -375,6 +476,30 @@ def test_a_malformed_catalog_returns_nothing():
     assert pick_documents("any brochures?", "Acme", ["x", {"files": ["y", {"url": 3}]}]).docs == []
 
 
+@pytest.mark.parametrize(
+    "catalog",
+    [
+        "x",
+        5,
+        {"files": [{"url": BROCHURE, "name": "Acme-Company-Brochure-2025.pdf"}]},
+        [{"files": 5}],
+        [{"files": "abc"}],
+        [{"files": {"url": BROCHURE, "name": "Acme-Company-Brochure-2025.pdf"}}],
+        [{"files": None}],
+        [{"files": [{"name": "Acme-Company-Brochure-2025.pdf"}]}],
+        [{"files": [{"url": None, "name": "Acme-Company-Brochure-2025.pdf"}]}],
+    ],
+)
+def test_an_odd_catalog_shape_offers_nothing(catalog):
+    assert pick_documents("send me your brochure", "Acme", catalog).docs == []
+
+
+@pytest.mark.parametrize("name", [None, 7, ["Brochure"], {"x": 1}])
+def test_a_file_with_a_name_that_is_not_text_is_named_from_its_url(name):
+    pick = pick_documents("send me your brochure", "Acme", [{"files": [{"url": BROCHURE, "name": name}]}])
+    assert [d["name"] for d in pick.docs] == ["Acme-Company-Brochure-2025.pdf"]
+
+
 def test_the_reply_never_promises_email():
     for pick in (pick_documents("email me a datasheet", "Acme", CATALOG), DocumentPick(docs=[], exact=False)):
         for support in (True, False):
@@ -434,6 +559,7 @@ def test_an_exact_reply_names_every_file_once_without_links():
         "give me the investor deck",
         "can I have the brochure",
         "could I have the datasheet",
+        "can you send me the SOC as a Service datasheet",
         "can I get the SOC datasheet as pdf",
         "download the product catalogue",
     ],
@@ -450,6 +576,7 @@ def test_asks_for_delivery_true(msg):
         "any whitepapers?",
         "is there a brochure for this product",
         "can I see the brochure",
+        "can I have a look at the brochure?",
         "show me the catalog",
         "is the datasheet available?",
         "what do you document during onboarding",
@@ -463,3 +590,40 @@ def test_asks_for_delivery_false(msg):
 
 def test_asks_for_delivery_of_a_non_string_is_false():
     assert asks_for_delivery(None) is False
+
+
+def _long(piece: str) -> str:
+    return (piece * (5000 // len(piece) + 1))[:5000]
+
+
+#: 5,000 characters, the most the chat schema accepts, shaped to make a careless
+#: pattern backtrack: long runs of spaces, letters, "a@", digits and repeated asks.
+ADVERSARIAL = {
+    "spaces then a document": " " * 4990 + "brochure x",
+    "a document then spaces": "brochure" + " " * 4991 + "x",
+    "your then spaces": "your" + " " * 4988 + "brochure",
+    "letters": "a" * 5000,
+    "letters around an at sign": "a" * 2500 + "@" + "a" * 2499,
+    "at signs": _long("a@"),
+    "dots": _long("a."),
+    "digits": "9" * 5000,
+    "spaced digits": _long("9 "),
+    "send me": _long("send me "),
+    "document nouns": _long("brochure "),
+    "my": _long("my "),
+    "links": _long("www."),
+    "data sheet": _long("data  "),
+    "mixed": _long("hi I'm Rahul, send me your SOC 2 brochure via email a@b.co +91 98765 43210 tower b of the "),
+}
+FIFTY_FILES = _catalog(*(f"https://acme.com/files/Topic-{n}-Tower-{n % 7}-Brochure.pdf" for n in range(50)))
+
+
+@pytest.mark.parametrize("text", list(ADVERSARIAL.values()), ids=list(ADVERSARIAL))
+def test_a_long_message_is_read_quickly(text):
+    assert len(text) == 5000
+    for read in (
+        lambda: is_document_request(text),
+        lambda: asks_for_delivery(text),
+        lambda: pick_documents(text, "Acme", FIFTY_FILES),
+    ):
+        assert min(timeit.repeat(read, number=1, repeat=3)) < 0.05

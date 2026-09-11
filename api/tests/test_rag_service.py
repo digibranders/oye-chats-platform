@@ -912,27 +912,38 @@ class TestReadTimeJunkFilter:
         ):
             assert _is_valid_file_url(url) is True, f"real file rejected: {url}"
 
-    def test_the_document_catalog_applies_the_same_check(self):
-        from app.ingestion.cleaner import is_valid_file_url
-        from app.services import document_request
-        from app.services.rag_service import _is_valid_file_url
+    @pytest.mark.parametrize(
+        ("url", "kept"),
+        [
+            ("https://cdn.x.com/files/Red-Teaming.pdf", True),
+            ("https://hub.doc", False),
+            ("javascript:alert(1)", False),
+        ],
+    )
+    def test_every_reader_that_checks_keeps_a_real_file_and_drops_junk(self, url, kept):
+        from app.services.document_request import pick_documents
+        from app.services.rag_service import (
+            _build_media_catalog,
+            _collect_available_media,
+            _collect_available_media_names,
+            _pick_secondary_media,
+            _topical_media_card,
+        )
 
-        urls = [junk["url"] for junk in self._JUNK] + [
-            "https://cdn.x.com/foo.pdf",
-            "https://cdn.x.com/foo.pdf?v=1",
-            "https://cdn.x.com/foo.pdf#page=3",
-            "https://cdn.x.com/foo.pdf/preview",
-            "https://x.com/report.docx",
-            "ftp://acme.com/x.pdf",
-            "javascript:alert(1)",
-            "",
-            None,
-            3,
-        ]
-        for url in urls:
-            expected = is_valid_file_url(url)
-            assert _is_valid_file_url(url) is expected, url
-            assert document_request.is_valid_file_url(url) is expected, url
+        payload = {"files": [{"url": url, "name": "Red-Teaming.pdf"}]}
+        chunk = SimpleNamespace(metadata_info={"media_urls": payload})
+        video = {"video_id": "abc", "title": "Red Teaming Explained"}
+
+        assert (url in _collect_available_media([chunk])[1]) is kept
+        assert ("red-teaming.pdf" in _collect_available_media_names([chunk])[1]) is kept
+        assert (url in _build_media_catalog([payload])) is kept
+        assert (_topical_media_card("what is red teaming", "Acme", [], [payload]) is not None) is kept
+        secondary = _pick_secondary_media(
+            {"type": "youtube", **video}, retrieved_chunks=[], extra_payloads=[{"youtube": [video], **payload}]
+        )
+        assert any(item.get("url") == url for item in secondary) is kept
+        pick = pick_documents("send me the red teaming datasheet", "Acme", [payload])
+        assert any(doc["url"] == url for doc in pick.docs) is kept
 
     def test_collect_available_media_drops_junk(self):
         # Whitelist used by the hallucination guard + safety-net promoter

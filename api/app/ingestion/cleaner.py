@@ -62,10 +62,12 @@ def is_valid_file_url(url: object) -> bool:
     Read-time re-validation of file URLs pulled from the DB. Older ingestion runs
     used a greedy regex that scraped domain labels like ``hub.docker.com`` as fake
     ``.doc`` files, and those junk entries still live in existing bots'
-    ``metadata_info.media_urls.files``. Every reader of that catalog (the chat
-    pipeline's media catalog, whitelist and chip picker, and the document-request
-    route) applies this one check, so the junk is inert without a migration or a
-    re-crawl.
+    ``metadata_info.media_urls.files``. The readers that build something from a
+    file entry apply this one check: in ``rag_service`` the retrieved-media
+    whitelist and name set, the AVAILABLE MEDIA catalog, the topical card and the
+    secondary-chip picker, and in ``document_request`` the file catalog. That keeps
+    the junk out of them without a migration or a re-crawl. The stream's bot-wide
+    URL whitelist does not apply it; it only admits string URLs.
 
     Two checks combined:
       1. It matches ``_FILE_URL_RE`` starting at position 0, the same
