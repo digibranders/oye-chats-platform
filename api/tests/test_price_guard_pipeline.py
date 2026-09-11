@@ -9,6 +9,7 @@ ends for the same bot.
 
 import asyncio
 import hashlib
+import re
 
 import pytest
 
@@ -30,6 +31,10 @@ from tests.test_rag_pipeline_defects import (
 
 CHUNKS = ("SOC as a Service starts at ", "₹", "2,66,250 per month for small teams.")
 ORDINARY_CHUNKS = ("We run 24/7 monitoring across ", "3", " regions and have since 2019.")
+#: A figure whose sentence names no price: it trips only on the turn's own signal.
+BARE_CHUNKS = ("SOC as a Service comes to ", "₹2,66,250", " a month for small teams.")
+FINES = "what are GDPR fines?"
+FINES_CHUNKS = ("GDPR fines can reach ", "€20", " million or 4% of annual turnover.")
 TYPO = "what is th picin for SOC"
 KB = (_doc("SOC as a Service pricing: ₹2,66,250 per month."),)
 
@@ -52,15 +57,19 @@ def _cards(db, session_id):
 
 @pytest.fixture()
 def metrics(monkeypatch):
-    seen: list[str] = []
+    seen: list[tuple[str, dict]] = []
     real = rs._safety_net_metric
 
     def spy(name, **tags):
-        seen.append(name)
+        seen.append((name, tags))
         real(name, **tags)
 
     monkeypatch.setattr(rs, "_safety_net_metric", spy)
     return seen
+
+
+def _named(metrics, name):
+    return [tags for seen, tags in metrics if seen == name]
 
 
 def _guarded(db, monkeypatch, session_id, *, chunks=CHUNKS, cards=None, **bot_kwargs):
@@ -90,7 +99,9 @@ async def test_figures_are_replaced_by_the_escalation(db, monkeypatch, metrics):
     messages = _messages(db, "guard-1", role="bot")
     assert [m.content for m in messages] == [expected]
     assert messages[0].is_unanswered is True
-    assert metrics.count("price_guard_tripped") == 1
+    assert len(_named(metrics, "price_guard_tripped")) == 1
+    # Counted with the gate's own escalations too.
+    assert [tags["reason"] for tags in _named(metrics, "pricing_gate_escalation")] == ["price_guard"]
 
 
 @pytest.mark.parametrize("live_chat", [True, False])
@@ -155,7 +166,7 @@ async def test_an_ordinary_answer_with_numbers_streams_unchanged_and_is_cached(d
 
     assert _answer_text(frames) == "".join(ORDINARY_CHUNKS)
     assert "answer_override" not in _final_meta(frames)
-    assert "price_guard_tripped" not in metrics
+    assert _named(metrics, "price_guard_tripped") == []
     assert len(captured["cache"].store) == 1
 
 
@@ -263,6 +274,19 @@ async def test_the_non_streaming_reply_is_the_escalation(db, monkeypatch):
     payload = await rs.collect_rag_pipeline(bot, TYPO, session_id="guard-collect", bot_id=bot.id)
 
     assert payload["answer"] == _expected(TYPO)
+    # The escalation is not drawn from the knowledge base; the gate's pivot returns no sources either.
+    assert payload["sources"] == []
+
+
+@pytest.mark.asyncio
+async def test_the_non_streaming_reply_of_an_untripped_turn_keeps_its_sources(db, monkeypatch):
+    """Control for the test above: this setup does return knowledge-base sources."""
+    bot, _ = _guarded(db, monkeypatch, "guard-collect-sources", chunks=FINES_CHUNKS)
+
+    payload = await rs.collect_rag_pipeline(bot, FINES, session_id="guard-collect-sources", bot_id=bot.id)
+
+    assert payload["answer"] == "".join(FINES_CHUNKS)
+    assert payload["sources"] == ["kb.txt"]
 
 
 @pytest.mark.parametrize(
@@ -316,3 +340,158 @@ async def test_a_disconnect_while_a_figure_is_held_keeps_it_out_of_the_transcrip
 
     assert "lakh" not in _answer_text(frames)
     assert [m.content for m in _messages(db, "guard-cancel", role="bot")] == ["Budget about"]
+
+
+@pytest.mark.asyncio
+async def test_a_typod_pricing_question_trips_on_a_figure_whose_sentence_names_no_price(db, monkeypatch):
+    bot, _ = _guarded(db, monkeypatch, "guard-bare", chunks=BARE_CHUNKS)
+
+    frames = await _drive_stream(bot, TYPO, "guard-bare")
+
+    assert "2,66,250" not in _answer_text(frames)
+    assert _final_meta(frames)["answer_override"] == _expected(TYPO)
+    assert _messages(db, "guard-bare", role="bot")[-1].content == _expected(TYPO)
+
+
+@pytest.mark.asyncio
+async def test_an_answer_about_fines_streams_unchanged_on_a_guarded_bot(db, monkeypatch, metrics):
+    """Review, 2026-09-11: a security bot's answer about GDPR fines was replaced by
+    "Pricing for X is best confirmed by the team" and saved as unanswered."""
+    bot, _ = _guarded(db, monkeypatch, "guard-fines", chunks=FINES_CHUNKS)
+
+    frames = await _drive_stream(bot, FINES, "guard-fines")
+
+    answer = "".join(FINES_CHUNKS)
+    meta = _final_meta(frames)
+    assert _answer_text(frames) == answer
+    assert "answer_override" not in meta
+    assert not meta.get("suggest_handoff")
+    messages = _messages(db, "guard-fines", role="bot")
+    assert [m.content for m in messages] == [answer]
+    assert messages[0].is_unanswered is False
+    assert _named(metrics, "price_guard_tripped") == []
+    assert "pricing_escalated" not in _cards(db, "guard-fines")
+
+
+@pytest.mark.parametrize("escalated", [True, False])
+@pytest.mark.asyncio
+async def test_after_an_escalation_a_figure_trips_without_a_price_word(db, monkeypatch, escalated):
+    """A follow-up on a session already escalated on pricing is a pricing turn,
+    whatever its words. The same turn on a fresh session is not."""
+    session_id = f"guard-after-escalation-{escalated}"
+    chunks = ("For 50 people it comes to ", "₹4,10,000", ".")
+    bot, _ = _guarded(
+        db, monkeypatch, session_id, chunks=chunks, cards={"pricing_escalated": True} if escalated else None
+    )
+    question = "and for 50 people?"
+
+    frames = await _drive_stream(bot, question, session_id)
+
+    last = _messages(db, session_id, role="bot")[-1].content
+    if escalated:
+        assert "4,10,000" not in _answer_text(frames)
+        assert last == _expected(question, repeat=True)
+    else:
+        assert _answer_text(frames) == "".join(chunks)
+        assert last == "".join(chunks)
+
+
+@pytest.mark.asyncio
+async def test_a_trip_after_a_name_opener_follows_it_without_a_blank_line(db, monkeypatch):
+    """The model streamed nothing before the figure, so the escalation follows the
+    by-name opener with no separator of its own (the opener already ends its
+    paragraph), and the widget, the transcript and the override agree."""
+    client = _make_client(db)
+    bot = _make_bot(db, client, live_chat_enabled=True)
+    _make_session(db, bot, client, "guard-opener")
+    _stub_pipeline(monkeypatch, retrieved=KB, support=True, chunks=("₹2,66,250 per month for SOC.",))
+
+    frames = await _drive_stream(bot, TYPO, "guard-opener")
+
+    expected = _expected(TYPO)
+    answer = _answer_text(frames)
+    opener = next(f for f in frames if not f.startswith(("METADATA:", "\nFINAL_METADATA:")))
+    assert opener.strip() == "Welcome back, Tester!"
+    assert answer == opener + expected
+    assert _final_meta(frames)["answer_override"] == answer
+    assert _messages(db, "guard-opener", role="bot")[-1].content == answer
+
+
+@pytest.mark.parametrize(
+    ("question", "streamed", "shown"),
+    [
+        (TYPO, "Budget about 50 lakh", "Budget about"),
+        (FINES, "GDPR fines can reach €20 million", "GDPR fines can reach"),
+    ],
+    ids=["held_figure", "held_sentence"],
+)
+@pytest.mark.asyncio
+async def test_a_stream_error_while_text_is_held_keeps_it_out_of_the_transcript(
+    db, monkeypatch, question, streamed, shown
+):
+    """The saved partial answer holds no more than the visitor saw, as on a disconnect."""
+    session_id = f"guard-error-{shown[:6]}"
+    bot, _ = _guarded(db, monkeypatch, session_id)
+
+    async def failing_stream(prompt, **kwargs):
+        yield streamed
+        raise RuntimeError("provider connection dropped")
+
+    monkeypatch.setattr(rs, "generate_response_stream", failing_stream)
+
+    frames = await _drive_stream(bot, question, session_id)
+
+    answer = _answer_text(frames)
+    assert answer.startswith(shown)
+    assert streamed not in answer
+    assert _final_meta(frames)["generation_interrupted"] is True
+    assert [m.content.strip() for m in _messages(db, session_id, role="bot")] == [shown]
+
+
+@pytest.mark.parametrize("escalated", [False, True])
+@pytest.mark.asyncio
+async def test_a_cached_answer_about_fines_is_served_unless_the_session_escalated(db, monkeypatch, escalated):
+    session_id = f"guard-cached-fines-{escalated}"
+    bot, captured = _guarded(
+        db, monkeypatch, session_id, chunks=FINES_CHUNKS, cards={"pricing_escalated": True} if escalated else None
+    )
+    question_hash = hashlib.sha256(rs._normalize_question_for_cache(FINES).encode()).hexdigest()[:32]
+    key = rs.qa_response_key(bot.id, question_hash, rs._cache_lang_segment(None))
+    cached = "GDPR fines can reach €20 million, which the regulator decides."
+    captured["cache"].store[key] = {"answer": cached, "sources": []}
+
+    frames = await _drive_stream(bot, FINES, session_id)
+
+    if escalated:
+        assert key in captured["cache"].deleted
+        assert "€20 million" not in _answer_text(frames)
+    else:
+        assert key not in captured["cache"].deleted
+        assert _answer_text(frames) == cached
+
+
+#: A card or CTA sentinel, as the widget's ``stripAllSentinels`` knows them.
+_SENTINEL_RE = re.compile(r"\[(?:LEAVE_MESSAGE_CARD|MEETING_CARD|(?:YOUTUBE_CARD|DOWNLOAD_CARD|CTA_Q|CTA):[^\]\n]*)\]")
+
+
+@pytest.mark.parametrize("source", ["prompt_leak", "output_moderation", "price_guard"])
+@pytest.mark.asyncio
+async def test_an_answer_override_carries_no_sentinel(db, monkeypatch, source):
+    """The widget shows ``answer_override`` as sent, without stripping sentinels
+    (widget/src/lib/answerOverride.js), so every replacement must arrive clean."""
+    session_id = f"guard-sentinel-{source}"
+    question, chunks = {
+        "prompt_leak": ("where do you operate", ("We cover 3 regions [CTA:budget] ", "<<<DOCUMENT 1>>>")),
+        "output_moderation": ("where do you operate", ("We cover 3 regions. [MEETING_CARD]",)),
+        "price_guard": (TYPO, ("[LEAVE_MESSAGE_CARD] SOC as a Service starts at ", "₹2,66,250 per month.")),
+    }[source]
+    bot, _ = _guarded(db, monkeypatch, session_id, chunks=chunks, live_chat_enabled=False)
+    if source == "output_moderation":
+        monkeypatch.setattr(rs, "check_generated_answer_safety", lambda *a, **k: (False, "harassment"))
+
+    frames = await _drive_stream(bot, question, session_id)
+
+    override = _final_meta(frames)["answer_override"]
+    assert override == _messages(db, session_id, role="bot")[-1].content
+    assert override.strip()
+    assert not _SENTINEL_RE.search(override), override

@@ -83,8 +83,7 @@ from app.services.llm_service import (
 from app.services.notification_service import notify_handoff_request
 from app.services.price_guard import (
     PriceStreamGuard,
-    contains_price_figure,
-    price_figure_start,
+    answer_trips_price_guard,
     price_guard_applies,
 )
 from app.services.qualification_service import (
@@ -7360,7 +7359,7 @@ async def collect_rag_pipeline(client, question: str, **kwargs) -> dict:
             answer_parts.append(frame)
 
     # A guard that fired after text had already streamed (prompt leak, output
-    # moderation) could only rewrite the persisted message. The final frame
+    # moderation, price guard) could only rewrite the persisted message. The final frame
     # carries that rewrite, and it wins over the frames the guard could not
     # recall, so this caller gets what the transcript holds.
     override = payload.pop("answer_override", None)
@@ -7374,6 +7373,52 @@ async def collect_rag_pipeline(client, question: str, **kwargs) -> dict:
     payload.setdefault("session_id", kwargs.get("session_id", "default_session"))
     payload.setdefault("sources", [])
     return payload
+
+
+def _price_guard_signal(question: str, chat_session) -> bool:
+    """The price guard's turn signal: every figure trips when this holds.
+
+    The question reads like a pricing question, typos included, or the session was
+    already escalated on pricing. See ``price_guard``.
+    """
+    return _pricing_gate.question_has_fuzzy_price_word(question) or _card_already_shown(
+        chat_session, "pricing_escalated"
+    )
+
+
+def _cached_answer_trips_price_guard(
+    answer: object, question: str, session, *, session_id: str, bid: int | None, cid: int | None
+) -> bool:
+    """Whether a cached answer would trip this turn's price guard.
+
+    The cache is read before the stream loads the chat session, so the session the
+    signal needs is looked up here, tenant-scoped, and only for an answer that
+    holds a figure at all.
+    """
+    if not answer_trips_price_guard(answer, signal=True):
+        return False
+    filters = [ChatSession.id == session_id]
+    if bid:
+        filters.append(ChatSession.bot_id == bid)
+    elif cid:
+        filters.append(ChatSession.client_id == cid)
+    chat_session = session.query(ChatSession).filter(*filters).first()
+    return answer_trips_price_guard(answer, signal=_price_guard_signal(question, chat_session))
+
+
+def _without_held_price_text(answer: str, guard: PriceStreamGuard | None) -> str:
+    """``answer`` without the text the price guard is still holding back.
+
+    The guard holds a possible figure, or an unpriced figure's sentence, until it
+    knows whether that may stream. A turn cut short before then (the visitor left,
+    or the stream failed) must not save what the visitor never saw. The held text
+    is always the end of what the model streamed, which ends ``answer`` until the
+    answer is replaced.
+    """
+    held = guard.held if guard is not None else ""
+    if held and answer.endswith(held):
+        return answer[: -len(held)]
+    return answer
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -7981,7 +8026,6 @@ async def rag_pipeline_stream(
                 cached_qa = await asyncio.to_thread(_qa_cache_lookup, _cache_key, bid)
                 if (
                     cached_qa
-                    and contains_price_figure(cached_qa.get("answer"))
                     and price_guard_applies(
                         # A pricing question never reads the cache (see
                         # ``_gate_may_intercept``), so a turn that got here is one
@@ -7992,10 +8036,14 @@ async def rag_pipeline_stream(
                         support_enabled=_plan_support_allowed,
                         judges_bypassed=_judges_bypassed,
                     )
+                    and _cached_answer_trips_price_guard(
+                        cached_qa.get("answer"), question, session, session_id=session_id, bid=bid, cid=cid
+                    )
                 ):
-                    # A figure cached before the price guard existed, or before the
-                    # owner turned knowledge-base pricing off, must not be replayed
-                    # past it. Dropped, so the regenerated turn is guarded instead.
+                    # A figure the guard would trip on, cached before the guard
+                    # existed or before the owner turned knowledge-base pricing off,
+                    # must not be replayed past it. Dropped, so the regenerated turn
+                    # is guarded instead.
                     await asyncio.to_thread(cache_delete, _cache_key)
                     logger.info(f"QA cache entry dropped (price figure on a guarded bot) | bot_id={bid}")
                     cached_qa = None
@@ -9226,8 +9274,12 @@ async def rag_pipeline_stream(
             # team: a typo ("picin") carries a pricing question past the gate, and
             # the model then quotes the knowledge base. See ``price_guard``.
             _price_guard_pricing_url = getattr(bot, "pricing_url", None) if bot else None
+            # The turn's price signal and the repeat flag are read here, before the
+            # connection is released below, so neither the stream loop nor the
+            # replacement after it does database work. With the signal every figure
+            # trips; without it only a figure whose sentence names a price does.
             _price_guard = (
-                PriceStreamGuard()
+                PriceStreamGuard(signal=_price_guard_signal(question, chat_session))
                 if price_guard_applies(
                     gate_outcome=_pricing_decision.outcome,
                     pricing_url=_price_guard_pricing_url,
@@ -9237,8 +9289,6 @@ async def rag_pipeline_stream(
                 )
                 else None
             )
-            # Read before the connection is released below, so neither the stream
-            # loop nor the replacement after it does database work.
             _price_guard_repeat = _price_guard is not None and _card_already_shown(chat_session, "pricing_escalated")
             # The pricing escalation that replaced the answer, once the guard trips.
             _price_guard_pivot: _pricing_gate.PricingPivot | None = None
@@ -9247,6 +9297,8 @@ async def rag_pipeline_stream(
             _answer_text_streamed = False
             _stream_error = False
             _leak_aborted = False
+            # The price guard tripped and the pricing escalation replaced the answer.
+            _answer_replaced = False
             # Set by the output moderation guard below; True until it says
             # otherwise, and it is skipped on a leak-abort or a stream error.
             _answer_safe = True
@@ -9368,12 +9420,13 @@ async def rag_pipeline_stream(
                             yield safe_chunk
                 if _price_guard is not None and _price_guard.tripped:
                     # The reply the pricing gate gives this bot, so a typo changes
-                    # nothing the visitor sees. ``_leak_aborted`` skips the drain
+                    # nothing the visitor sees. ``_answer_replaced`` skips the drain
                     # (the held tail may be half a figure), output moderation (the
-                    # reply is a template) and the topical media card, and carries
-                    # the reply to the widget and ``collect_rag_pipeline`` as
-                    # ``answer_override``. Bookkeeping follows ``_price_guard_pivot``
-                    # below: the card, the cache skip and the pricing_escalated mark.
+                    # reply is a template) and the topical media card, carries the
+                    # reply to the widget and ``collect_rag_pipeline`` as
+                    # ``answer_override`` and drops the sources. Bookkeeping follows
+                    # ``_price_guard_pivot`` below: the card, the cache skip and the
+                    # pricing_escalated mark.
                     _price_guard_pivot = _pricing_gate.pricing_pivot(
                         company_name=_company_name,
                         pricing_url=_price_guard_pricing_url,
@@ -9384,7 +9437,16 @@ async def rag_pipeline_stream(
                         subject=_pricing_gate.pricing_subject(_gate_question, _company_name, final_results),
                     )
                     _safety_net_metric("price_guard_tripped", path="stream", session=session_id, bot_id=bid)
-                    _leak_aborted = True
+                    # Also counted as one of the gate's escalations, so a view of
+                    # those includes the pricing questions the guard caught.
+                    _safety_net_metric(
+                        "pricing_gate_escalation",
+                        reason="price_guard",
+                        path="stream",
+                        session=session_id,
+                        bot_id=bid,
+                    )
+                    _answer_replaced = True
                     suggest_handoff = _price_guard_pivot.suggest_handoff
                     full_answer = _opener + _price_guard_pivot.text
                     if _show_qualified_popup:
@@ -9398,7 +9460,8 @@ async def rag_pipeline_stream(
                 # Drain any text the sanitiser was still holding (e.g. trailing
                 # "[" that turned out not to be a sentinel). Skip on leak-abort,
                 # the buffer at that point may be partial sentinel and is unsafe.
-                if not _leak_aborted:
+                # Skipped on a price-guard replacement for the same reason.
+                if not _leak_aborted and not _answer_replaced:
                     if _show_qualified_popup:
                         # Buffered answer-only turn: scrub CTA sentinels, strip any
                         # trailing question the model appended despite the rule,
@@ -9432,13 +9495,9 @@ async def rag_pipeline_stream(
                 # Persist what we have, then let the cancellation continue. Never
                 # swallow it, and never ``yield`` from here, an async generator
                 # being closed must not resume.
-                _partial = _scrub_cta_sentinels(full_answer)
-                # A figure the price guard was still holding never reached the
+                # Text the price guard was still holding never reached the
                 # visitor, and must not reach the transcript either.
-                _held_figure_at = price_figure_start(_partial) if _price_guard is not None else None
-                if _held_figure_at is not None:
-                    _partial = _partial[:_held_figure_at]
-                _partial = _partial.strip()
+                _partial = _scrub_cta_sentinels(_without_held_price_text(full_answer, _price_guard)).strip()
                 if _partial:
                     try:
                         add_chat_message(
@@ -9465,6 +9524,9 @@ async def rag_pipeline_stream(
                 raise
             except Exception as e:
                 logger.error(f"Streaming prompt error ({type(e).__name__}): {e}", exc_info=True)
+                # Saved below as the partial answer: without the text the price
+                # guard was still holding, which the visitor never saw.
+                full_answer = _without_held_price_text(full_answer, _price_guard)
                 yield " [I encountered an error. Please try again.]"
                 _stream_error = True
                 suggest_handoff = False  # Don't suggest handoff on errored/partial responses
@@ -9476,8 +9538,9 @@ async def rag_pipeline_stream(
             # keeps the DB/cache from persisting flagged text for reuse on
             # future turns, and makes a real occurrence observable via the
             # safety-net metric. Skipped when the leak-guard already fired
-            # (full_answer is already the refusal) or the stream errored.
-            if not _leak_aborted and not _stream_error:
+            # (full_answer is already the refusal), the price guard replaced the
+            # answer (a template), or the stream errored.
+            if not _leak_aborted and not _answer_replaced and not _stream_error:
                 # Sync HTTP call (up to 10s). Off the event loop, or every other
                 # in-flight stream on this worker stalls behind it.
                 _answer_safe, _answer_flag_category = await asyncio.to_thread(
@@ -9595,6 +9658,7 @@ async def rag_pipeline_stream(
                 _media_card is None
                 and not _stream_error
                 and not _leak_aborted
+                and not _answer_replaced
                 and not _meeting_card_detected
                 and not _leave_msg_card_detected
                 and not _is_known_refusal(full_answer, _company_name or "our company")
@@ -9899,13 +9963,17 @@ async def rag_pipeline_stream(
 
                     if bot_msg_id:
                         final_meta["message_id"] = bot_msg_id
-                    if _leak_aborted or not _answer_safe:
+                    if _leak_aborted or _answer_replaced or not _answer_safe:
                         # The stream cannot recall bytes it already sent, so
                         # a leak, a moderation hit or the price guard rewrote
                         # only the persisted text. Carry that text so the widget
                         # and ``collect_rag_pipeline`` (``POST /chat``) show what
                         # the transcript holds, not the frames already sent.
                         final_meta["answer_override"] = full_answer
+                    if _answer_replaced:
+                        # The escalation is not drawn from the knowledge base, and
+                        # the gate's own pivot returns no sources either.
+                        final_meta["sources"] = []
                     if _stream_error or (_llm_status.get("error") and not _llm_status.get("failed")):
                         # Distinct from ``generation_failed``: the SSE visitor
                         # read the partial, so no refund there. A collector

@@ -1633,6 +1633,9 @@ _SAFETY_NET_METRIC_NAMES = [
     "off_topic_refusal",
     "output_moderation_block",
     "pricing_gate_escalation",
+    # A figure the price guard stopped mid-stream (price_guard.py via
+    # rag_service.py); also counted above with reason=price_guard.
+    "price_guard_tripped",
     # Scheduling request answered deterministically because the bot has no
     # scheduler configured (meeting_gate.py via rag_service.py).
     "meeting_gate_pivot",

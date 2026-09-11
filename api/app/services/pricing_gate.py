@@ -334,6 +334,68 @@ def _has_near_miss_price_word(question: str) -> bool:
     return False
 
 
+#: The price guard's question signal (see ``price_guard``): each word with the
+#: number of edits it tolerates. Wider than ``_NEAR_MISS_PRICE_WORDS`` on purpose.
+#: The gate acts on the question alone, so a near miss there escalates a question
+#: the knowledge base could answer; the guard also needs a figure in the answer,
+#: so a question that only looks like a pricing question changes nothing on an
+#: answer without one. ``is_pricing_question`` does not use it.
+_FUZZY_PRICE_WORDS: tuple[tuple[str, int], ...] = (
+    ("pricing", 2),
+    ("price", 1),
+    ("prices", 1),
+    ("charges", 1),
+    ("quotation", 1),
+    ("costing", 1),
+)
+#: Price words the guard's signal takes only as spelled: one edit from "cost" is
+#: "cast" and "most", one from "fee" is "feel".
+_EXACT_PRICE_WORDS = frozenset({"cost", "costs", "fee", "fees", "rate", "rates", "quote"})
+#: Shorter words are too close to ordinary ones ("rice", "pric") to read as a typo.
+_FUZZY_MIN_LEN = 5
+_HOW_MUCH_RE = re.compile(r"\bhow\s+much\b", re.IGNORECASE)
+
+
+def _within_edits(a: str, b: str, limit: int) -> bool:
+    """True when ``a`` becomes ``b`` in at most ``limit`` insertions, deletions,
+    substitutions or swaps of two adjacent letters."""
+    if abs(len(a) - len(b)) > limit:
+        return False
+    before_previous: list[int] = []
+    previous = list(range(len(b) + 1))
+    for i in range(1, len(a) + 1):
+        row = [i] + [0] * len(b)
+        for j in range(1, len(b) + 1):
+            row[j] = min(previous[j] + 1, row[j - 1] + 1, previous[j - 1] + (a[i - 1] != b[j - 1]))
+            if i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]:
+                row[j] = min(row[j], before_previous[j - 2] + 1)
+        if min(row) > limit:
+            return False
+        before_previous, previous = previous, row
+    return previous[-1] <= limit
+
+
+def question_has_fuzzy_price_word(question: object) -> bool:
+    """True when the visitor's question carries a price word, typos included.
+
+    "what is th picin for SOC" is two edits from "pricing". The gate reads it as
+    not a pricing question; the price guard still treats a figure in its answer
+    as the company's price. Pure, and not part of the gate's own decision.
+    """
+    if not isinstance(question, str) or not question.strip():
+        return False
+    if _HOW_MUCH_RE.search(question):
+        return True
+    for word in _WORD_RE.findall(question.lower()):
+        if word in _EXACT_PRICE_WORDS:
+            return True
+        if len(word) >= _FUZZY_MIN_LEN and any(
+            _within_edits(word, target, limit) for target, limit in _FUZZY_PRICE_WORDS
+        ):
+            return True
+    return False
+
+
 def is_pricing_question(question: object) -> bool:
     """True when the visitor is asking what we charge.
 
