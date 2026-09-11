@@ -490,6 +490,12 @@ def test_a_part_of_a_document_is_a_request_for_that_part(names, msg, picked):
     assert pick.exact is True
 
 
+def test_std_is_an_alias_for_standard_like_vol_and_sem():
+    pick = pick_documents("share the standard X syllabus", "Acme", _named("Std-IX-Syllabus.pdf", "Std-X-Syllabus.pdf"))
+    assert [d["name"] for d in pick.docs] == ["Std-X-Syllabus.pdf"]
+    assert pick.exact is True
+
+
 def test_the_article_a_after_a_series_word_is_not_an_identifier():
     """ "study" is a series word, so a letter after it names a case study ("case study B"), but
     not an "a" that starts a phrase: this visitor wants the retail study, not Case Study A."""
@@ -689,6 +695,47 @@ def test_a_topic_named_outside_the_document_clause_does_not_make_a_file_on_anoth
     assert document_reply(pick, company_name="Acme", support_enabled=True).startswith(
         "I don't have that exact document, but"
     )
+
+
+#: A word from a clause other than the one naming the document, tying or beating the file that
+#: clause's own words name. Fresh pairs, 2026-09-11: 4 of 15 answered "Here you go" with the wrong
+#: file, including the "not the King Size one" negation shape.
+CLAUSE_OWN_TOPIC_WINS = [
+    (
+        "I live in Ahmedabad. send me the Pune campus brochure",
+        ["Ahmedabad-Campus-Brochure.pdf", "Pune-Campus-Brochure.pdf"],
+        "Pune-Campus-Brochure.pdf",
+    ),
+    (
+        "send the Pune brochure. we're comparing it with the Mumbai Phase II project",
+        ["Mumbai-Phase-II-Brochure.pdf", "Pune-Brochure.pdf"],
+        "Pune-Brochure.pdf",
+    ),
+    (
+        "can I get the Queen Size Bed catalogue, not the King Size one",
+        ["King-Size-Bed-Catalogue.pdf", "Queen-Size-Bed-Catalogue.pdf"],
+        "Queen-Size-Bed-Catalogue.pdf",
+    ),
+    (
+        "we do retail banking. please send the insurance case study",
+        ["Insurance-Case-Study.pdf", "Retail-Banking-Case-Study.pdf"],
+        "Insurance-Case-Study.pdf",
+    ),
+    (
+        "send the solar pump datasheet, we already have the diesel pump one",
+        ["Diesel-Pump-Datasheet.pdf", "Solar-Pump-Datasheet.pdf"],
+        "Solar-Pump-Datasheet.pdf",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("msg", "names", "first"), CLAUSE_OWN_TOPIC_WINS, ids=[row[0] for row in CLAUSE_OWN_TOPIC_WINS]
+)
+def test_a_word_from_another_clause_does_not_outrank_the_document_clauses_own_topic(msg, names, first):
+    pick = pick_documents(msg, "Acme", _named(*names))
+    assert pick.docs[0]["name"] == first
+    assert pick.exact is True
 
 
 def test_a_file_carrying_a_different_identifier_ranks_below_one_carrying_none():

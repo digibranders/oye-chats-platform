@@ -770,8 +770,9 @@ _ROMAN_SERIES_WORDS = frozenset(
 _ROMAN_NUMERALS: Mapping[str, int] = {
     "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7, "viii": 8, "ix": 9, "x": 10, "xi": 11, "xii": 12,
 }  # fmt: skip
-#: One word written two ways: "Ebook-Vol-2.pdf" is "volume 2 of the ebook", "Syllabus-Sem-5.pdf" "semester 5".
-_WORD_ALIASES = {"vol": "volume", "sem": "semester"}
+#: One word written two ways: "Ebook-Vol-2.pdf" is "volume 2 of the ebook", "Syllabus-Sem-5.pdf" "semester 5",
+#: "Std-X-Syllabus.pdf" "standard X".
+_WORD_ALIASES = {"vol": "volume", "sem": "semester", "std": "standard"}
 #: Language codes a file name carries ("Brochure-HI.pdf"), read as the language a
 #: visitor names ("the hindi brochure"). File names only: in a message "hi" is a greeting.
 _FILE_NAME_ALIASES = {
@@ -1064,8 +1065,9 @@ class _Question:
     """What a question asks about: topic words, identifiers, and whether it wants the latest copy.
 
     ``words`` come from the whole message and rank the files; ``clause_words``
-    come from the clauses that name a document, and an exact file must share
-    them all.
+    come from the clauses that name a document, rank a file on its own clause's
+    words before the message's other words, and, when the clause names any, an
+    exact file must share at least one of them.
     """
 
     words: frozenset[str]
@@ -1181,13 +1183,18 @@ def pick_documents(question: str, company_name: str | None, catalog: object, lim
     """The files to offer for a document request.
 
     A question that names a topic ("the SOC as a Service datasheet") gets the
-    files whose names share the most words with it. That pick is exact when the
+    files whose names share the most words with the clause that names the
+    document, then, among ties, with the message as a whole. That pick is exact when the
     best file shares at least ``TOPIC_MIN_OVERLAP`` words, or every topic word of
     the clause that names the document when that clause names one, and is not
     plainly another kind of document than the one asked for; a weaker match is
     offered as inexact. A clause that names no topic makes nothing exact on its
     own: "I'm interested in the Pune project, please send the brochure" is not
-    ``Mumbai-Project-Brochure.pdf``. It is also exact when the question names every
+    ``Mumbai-Project-Brochure.pdf``. When a clause does name a topic, the best file
+    must share at least one of that clause's own words: a word from another
+    clause is not enough, so "I live in Ahmedabad. send me the Pune campus
+    brochure" is not ``Ahmedabad-Campus-Brochure.pdf`` when a Pune one is in the
+    catalog. It is also exact when the question names every
     one of the file's own topic words and the file is the kind asked for ("the
     brochure for MBA program" against ``MBA-Brochure.pdf``). That rule needs the
     kind in the file name and a topic word: ``SOC.pdf`` is not the "SOC 2 report",
@@ -1232,6 +1239,7 @@ def pick_documents(question: str, company_name: str | None, catalog: object, lim
             ((shared, f) for shared, f in shared_by_file if shared),
             key=lambda sf: (
                 _identifier_rank(asked_about, sf[1]),
+                -len(sf[0] & asked_about.clause_words),
                 -len(sf[0]),
                 _conflicts(asked, sf[1]),
                 not asked & sf[1].kinds,
@@ -1246,6 +1254,7 @@ def pick_documents(question: str, company_name: str | None, catalog: object, lim
             exact = (
                 (len(best_shared) >= TOPIC_MIN_OVERLAP or covers_clause or covers_file_name)
                 and not _conflicts(asked, best)
+                and (not asked_about.clause_words or bool(best_shared & asked_about.clause_words))
                 and asked_about.ids <= best.ids
             )
             others = [
