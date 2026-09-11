@@ -49,9 +49,11 @@ from app.services import plan_entitlements_service, runtime_config, urgent_route
 from app.services import pricing_gate as _pricing_gate
 from app.services.document_request import (
     TOPIC_MIN_OVERLAP,
-    asks_for_delivery,
+    DocumentIntentDecision,
+    decide_document_intent,
     document_reply,
-    is_document_request,
+    fallback_document_intent,
+    mentions_document,
     pick_documents,
 )
 from app.services.email_service import (
@@ -3206,7 +3208,7 @@ def _qa_cache_lookup(cache_key: str, bot_id: int | None):
 
 
 def _document_route_applies(question: str, company_name: str | None, judges_bypassed: bool) -> bool:
-    """True when the document-request block below may run for this question.
+    """True when the document route may run for this question: it names a document.
 
     A cached answer to "can you send me your brochure?" would be served ahead
     of the document-request block and the block would never run, so both the
@@ -3216,14 +3218,14 @@ def _document_route_applies(question: str, company_name: str | None, judges_bypa
     gates around it) is English only: a conversation the judges are bypassed
     for keeps the model.
 
-    Whether a matching file exists is decided further down, inside the block:
-    a document request that turns out to have no exact file may still fall
-    through to the normal pipeline (see ``asks_for_delivery``), so this stays
-    permissive rather than trying to predict that outcome.
+    This is only the pure noun check (``mentions_document``). Whether the
+    visitor wants a file sent, is asking whether one exists, or neither, is the
+    classifier's call inside the block (``_detect_document_intent_bounded``),
+    so this stays permissive and costs no model call.
     """
     return (
         not judges_bypassed
-        and is_document_request(question)
+        and mentions_document(question)
         and not detect_handoff_intent_keywords(question)
         and not detect_company_deal_intent(question, company_name)
     )
@@ -6656,6 +6658,35 @@ async def _detect_urgent_bounded(question: str) -> bool:
         return urgent_route._fallback_is_urgent(question)
 
 
+# The document-request classifier has the same shape (a gate-tier one-word call)
+# and is awaited before the first frame of the turn, so it gets the same ceiling.
+_DOCUMENT_INTENT_TIMEOUT_S = _URGENT_INTENT_TIMEOUT_S
+
+
+async def _detect_document_intent_bounded(question: str) -> DocumentIntentDecision:
+    """What a message that names a document asks for, without blocking the event loop.
+
+    The caller runs ``_document_route_applies`` first, so a message that names no
+    document costs no thread and no model call, and this runs at most once per
+    turn. It runs ``document_request.decide_document_intent`` (which falls back
+    to its rules on a model error) on a worker thread under
+    ``_DOCUMENT_INTENT_TIMEOUT_S``. A stall uses the fallback rules; the worker
+    thread cannot be interrupted, so its late answer is discarded. The result
+    says whether the fallback decided, for the route's metrics.
+    """
+    task = asyncio.create_task(asyncio.to_thread(decide_document_intent, question))
+    try:
+        return await asyncio.wait_for(task, timeout=_DOCUMENT_INTENT_TIMEOUT_S)
+    except TimeoutError:
+        logger.warning(
+            "Document request classifier exceeded %.1fs. Using the fallback rules", _DOCUMENT_INTENT_TIMEOUT_S
+        )
+        return DocumentIntentDecision(fallback_document_intent(question), by_fallback=True)
+    except Exception as exc:  # noqa: BLE001 - never let the classifier break the turn
+        logger.warning("Document request classifier failed (%s). Using the fallback rules", type(exc).__name__)
+        return DocumentIntentDecision(fallback_document_intent(question), by_fallback=True)
+
+
 def rewrite_query(session_id: str, question: str, history: list) -> str:
     """Rewrite a follow-up question into a standalone search query using conversation history."""
     if not history or len(history) < 2:
@@ -8020,11 +8051,11 @@ async def rag_pipeline_stream(
             # (see "Document requests"). A cached answer to "can you send me your
             # brochure?" would be served ahead of it and the route would never run,
             # so it skips the cache on the same condition (``_document_route_applies``)
-            # the route below is gated on. The route itself may still fall through
-            # to the normal pipeline when the catalog has no exact match and the
-            # visitor never asked for delivery; that refinement is intentionally
-            # NOT part of this skip, so the cache stays off for every such
-            # question and the pipeline, not a stale cached answer, decides.
+            # the route below is gated on: the message names a document. Whether
+            # the visitor wants a file is the classifier's call inside the route,
+            # and that is intentionally NOT part of this skip: the classifier runs
+            # once, at the route, and the cache stays off for every message that
+            # names a document, so the pipeline, not a stale cached answer, decides.
             if (
                 _cache_key
                 and not _affirmed_handoff
@@ -8646,34 +8677,52 @@ async def rag_pipeline_stream(
             # is a pricing question) and before the relevance gate, which scores a
             # request for a file off-topic. An explicit request for a person, or a
             # deal for the company, still goes to the handoff reply below. English
-            # only, like the gates: the detector and the reply are English.
+            # only, like the gates: the classifier prompt and the reply are English.
             #
-            # Naming a document is not always asking for one to be sent: "do you
-            # have case studies of fintech clients?" on a bot whose case studies
-            # are web pages deserves an answer from those pages, not "I don't have
-            # a downloadable document". So an exact catalog match still answers
-            # here unconditionally, but an inexact or empty pick only answers here
-            # when the question actually asks for delivery (``asks_for_delivery``);
-            # otherwise it falls through to the normal pipeline, where the model
-            # reads the knowledge base and the topical media-card attach further
-            # down can still offer a file.
+            # Naming a document is not always asking for one. Rules tuned on
+            # labelled messages answered "we don't want the exhibitor brochure" with
+            # a card and missed "whatsapp me the brochure", so a document noun only
+            # decides whether to ask, and the gate-tier classifier decides, once per
+            # turn, what the visitor wants (the old rules decide when it fails or
+            # misses its deadline):
+            # - "send": answered here with the best file, exact or not, or with the
+            #   no-file offer when the catalog has none.
+            # - "exists" ("do you have a case study on banks?"): answered here only
+            #   with an exact file. Otherwise the model answers: on a bot whose case
+            #   studies are web pages it reads those pages instead of saying "I
+            #   don't have a downloadable document", and the topical media-card
+            #   attach further down can still offer a file.
+            # - "no": the model answers.
+            # Which file to offer is still decided by ``pick_documents``, never by
+            # the model.
             #
             # The catalog fetched here is reused by the media catalog and the card
             # checks further down, so a turn reads it from the database once.
             _bot_catalog: list[dict] | None = None
             _pick = None
+            _doc_intent_tags: dict[str, str] = {}
             if _document_route_applies(question, _company_name, _judges_bypassed):
+                _doc_intent = await _detect_document_intent_bounded(question)
+                _doc_intent_tags = {
+                    "document_intent": _doc_intent.intent,
+                    "document_intent_fallback": str(_doc_intent.by_fallback),
+                }
                 if bid is not None:
                     _bot_catalog = get_bot_media_urls(session, bot_id=bid)
                 _pick = pick_documents(question, _company_name, _bot_catalog or [])
-                if not ((_pick.docs and _pick.exact) or asks_for_delivery(question)):
-                    # Counted, so a rule that sends real requests to the model, or one
-                    # that lets feature questions through, shows up in the metrics.
+                if not (
+                    _doc_intent.intent == "send"
+                    or (_doc_intent.intent == "exists" and bool(_pick.docs) and _pick.exact)
+                ):
+                    # Counted with the label and whether the fallback decided, so a
+                    # classifier that sends real requests to the model, or lets other
+                    # questions through, shows up in the metrics.
                     _safety_net_metric(
                         "document_request_fell_through",
                         path="stream",
                         found=str(len(_pick.docs)),
                         exact=str(_pick.exact),
+                        **_doc_intent_tags,
                         session=session_id,
                         bot_id=bid,
                     )
@@ -8684,6 +8733,7 @@ async def rag_pipeline_stream(
                     path="stream",
                     found=str(len(_pick.docs)),
                     exact=str(_pick.exact),
+                    **_doc_intent_tags,
                     session=session_id,
                     bot_id=bid,
                 )
