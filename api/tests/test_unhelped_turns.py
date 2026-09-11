@@ -34,6 +34,7 @@ from tests.test_rag_pipeline_defects import (
     _make_bot,
     _make_client,
     _make_session,
+    _messages,
     _stub_pipeline,
 )
 
@@ -595,6 +596,28 @@ class TestTwoUnhelpedTurnsOfferThePerson:
         assert _OFFER_TEXT not in _answer_text(frames)
         assert not (_final_meta(frames) or {}).get("suggest_handoff")
         assert cap["prompts"] == []
+
+    @pytest.mark.asyncio
+    async def test_the_offer_is_saved_before_the_first_frame(self, db, monkeypatch):
+        """The offer is fixed text, like the urgent and document replies. A visitor
+        who closes the tab after the first frame still leaves the saved offer and
+        its flags, so the next turn does not offer the team a second time."""
+        bot, _cap = _paid_bot(db, monkeypatch, "unhelped-disconnect")
+        await _drive_stream(bot, "what is 2 plus 2", "unhelped-disconnect")
+
+        stream = rs.rag_pipeline_stream(bot, "what is the capital of france", "unhelped-disconnect", bot_id=bot.id)
+        first = await stream.__anext__()
+        await stream.aclose()
+
+        assert first.startswith("METADATA:")
+        db.expire_all()
+        replies = _messages(db, "unhelped-disconnect", role="bot")
+        assert len(replies) == 2
+        assert replies[-1].content.endswith(_OFFER_TEXT), replies[-1].content
+        assert replies[-1].is_unanswered is True
+        cards = _stored_cards(db, "unhelped-disconnect")
+        assert cards.get("handoff_offered") is True
+        assert "unhelped_streak" not in cards
 
     @pytest.mark.asyncio
     async def test_nobody_available_gets_the_offline_offer(self, db, monkeypatch):

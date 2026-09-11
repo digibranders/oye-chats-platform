@@ -9001,8 +9001,10 @@ async def rag_pipeline_stream(
                 _offer_text = (
                     _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + _offer.text
                 )
-                yield _stream_metadata(session_id, [], language)
-                yield _offer_text
+                # The offer is fixed text, so it and its flags are saved BEFORE the
+                # first frame, like the urgent and document replies: a visitor who
+                # closes the tab mid-stream still leaves the offer behind, and the
+                # next turn does not offer the team a second time.
                 _bot_msg = add_chat_message(
                     session,
                     session_id,
@@ -9026,6 +9028,8 @@ async def rag_pipeline_stream(
                     _mark_card_shown(chat_session, "handoff_offered")
                 _set_unhelped_streak(chat_session, 0)
                 session.commit()
+                yield _stream_metadata(session_id, [], language)
+                yield _offer_text
                 yield f"\nFINAL_METADATA:{json.dumps(_offer_meta)}\n"
                 return
             if _unhelped_turn:
