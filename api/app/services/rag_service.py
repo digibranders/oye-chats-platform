@@ -53,6 +53,7 @@ from app.services.document_request import (
     decide_document_intent,
     document_reply,
     fallback_document_intent,
+    looks_like_a_document_request,
     mentions_document,
     pick_documents,
 )
@@ -3210,10 +3211,9 @@ def _qa_cache_lookup(cache_key: str, bot_id: int | None):
 def _document_route_applies(question: str, company_name: str | None, judges_bypassed: bool) -> bool:
     """True when the document route may run for this question: it names a document.
 
-    A cached answer to "can you send me your brochure?" would be served ahead
-    of the document-request block and the block would never run, so both the
-    QA-cache skip and the block itself call this one function and always
-    agree. A request for a person, or a deal for the company, is left to the
+    The classifier task started before retrieval and the route both depend on
+    this, and the QA-cache skip reads it together with the shape of a request
+    (``_document_request_skips_cache``). A request for a person, or a deal for the company, is left to the
     handoff reply instead of the document route, and the route (like the
     gates around it) is English only: a conversation the judges are bypassed
     for keeps the model.
@@ -3229,6 +3229,20 @@ def _document_route_applies(question: str, company_name: str | None, judges_bypa
         and not detect_handoff_intent_keywords(question)
         and not detect_company_deal_intent(question, company_name)
     )
+
+
+def _document_request_skips_cache(question: str, company_name: str | None, judges_bypassed: bool) -> bool:
+    """True when the QA cache is skipped for this question so the document route answers it.
+
+    A cached answer to "can you send me your brochure?" would be served ahead of
+    the route and the route would never run, so a message the route applies to
+    and that is shaped like a request (``looks_like_a_document_request``) skips
+    the cache. A message that only mentions a document ("what's on the menu
+    today", "does the brochure mention fees") reads it: those are common FAQs,
+    and turning the cache off for every mention cost each of them a cache miss
+    and a classifier call. On a cache miss the route still asks the classifier.
+    """
+    return _document_route_applies(question, company_name, judges_bypassed) and looks_like_a_document_request(question)
 
 
 def _expand_company_query(question: str, company_name: str | None) -> str:
@@ -7546,6 +7560,10 @@ async def rag_pipeline_stream(
         _lf_trace = _lf_obs_mgr.__enter__()
 
     full_answer = ""
+    # The document classifier's task, when this turn starts one (see "Document
+    # classifier, alongside retrieval"). Declared before the try so its
+    # finally can cancel a task that no route awaited.
+    _doc_intent_task: asyncio.Task[DocumentIntentDecision] | None = None
     try:
         with get_session() as session:
             bot = (
@@ -8050,18 +8068,18 @@ async def rag_pipeline_stream(
             # A document request is answered from the file catalog further down
             # (see "Document requests"). A cached answer to "can you send me your
             # brochure?" would be served ahead of it and the route would never run,
-            # so it skips the cache on the same condition (``_document_route_applies``)
-            # the route below is gated on: the message names a document. Whether
-            # the visitor wants a file is the classifier's call inside the route,
-            # and that is intentionally NOT part of this skip: the classifier runs
-            # once, at the route, and the cache stays off for every message that
-            # names a document, so the pipeline, not a stale cached answer, decides.
+            # so a message shaped like a request skips the cache
+            # (``_document_request_skips_cache``). A message that only mentions a
+            # document ("what's on the menu today") reads it: those are common
+            # FAQs, and turning the cache off for every mention cost each of them a
+            # cache miss and a classifier call. Whether the visitor wants a file is
+            # still the classifier's call, at the route, on every cache miss.
             if (
                 _cache_key
                 and not _affirmed_handoff
                 and not _gate_may_intercept
                 and not (_prior_turns and _looks_like_follow_up(question))
-                and not _document_route_applies(question, _company_name, _judges_bypassed)
+                and not _document_request_skips_cache(question, _company_name, _judges_bypassed)
             ):
                 cached_qa = await asyncio.to_thread(_qa_cache_lookup, _cache_key, bid)
                 if (
@@ -8268,6 +8286,15 @@ async def rag_pipeline_stream(
             # this so a re-train cannot serve a stale refusal.
             _kb_version = f"{_total_chunks}:{_kb_max_id or 0}"
             _use_cag_lite = _cag_threshold > 0 and 0 < _total_chunks <= _cag_threshold
+
+            # ── Document classifier, alongside retrieval ─────────────────────
+            # A message that names a document starts its classifier call here, where
+            # the handoff classifier starts, so the call runs while the knowledge
+            # base is searched instead of after it. The document route below awaits
+            # the task; a turn that returns before the route (the pricing or meeting
+            # gate) or a visitor who leaves cancels it in this stream's ``finally``.
+            if _document_route_applies(question, _company_name, _judges_bypassed):
+                _doc_intent_task = asyncio.create_task(_detect_document_intent_bounded(question))
 
             if _use_cag_lite:
                 logger.info(f"CAG-lite stream mode: injecting all {_total_chunks} chunks (bot_id={bid})")
@@ -8700,7 +8727,7 @@ async def rag_pipeline_stream(
             _bot_catalog: list[dict] | None = None
             _pick = None
             _doc_intent_tags: dict[str, str] = {}
-            if _document_route_applies(question, _company_name, _judges_bypassed):
+            if _doc_intent_task is not None:
                 if bid is not None:
                     _bot_catalog = get_bot_media_urls(session, bot_id=bid)
                 _pick = pick_documents(question, _company_name, _bot_catalog or [])
@@ -8723,9 +8750,11 @@ async def rag_pipeline_stream(
                         session=session_id,
                         bot_id=bid,
                     )
+                    # The classifier's answer is not needed: stop waiting on it.
+                    _doc_intent_task.cancel()
                     _pick = None
                 else:
-                    _doc_intent = await _detect_document_intent_bounded(question)
+                    _doc_intent = await _doc_intent_task
                     _doc_intent_tags = {
                         "document_intent": _doc_intent.intent,
                         "document_intent_fallback": str(_doc_intent.by_fallback),
@@ -10184,6 +10213,11 @@ async def rag_pipeline_stream(
 
             logger.info(f"Hybrid RAG stream finished for session: {session_id}")
     finally:
+        # A document classifier started alongside retrieval that no route awaited
+        # (the turn returned before the route, or the visitor left) is cancelled
+        # rather than left pending on the loop.
+        if _doc_intent_task is not None and not _doc_intent_task.done():
+            _doc_intent_task.cancel()
         if _lf_trace is not None:
             with contextlib.suppress(Exception):
                 _lf_trace.update(output=redact_pii(full_answer))

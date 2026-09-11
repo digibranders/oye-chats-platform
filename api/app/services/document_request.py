@@ -532,6 +532,27 @@ def asks_for_delivery(question: object) -> bool:
     return any(_verb_governs_a_noun(phrase, _NOUN_RE, _delivers_at) for phrase in _phrases(text))
 
 
+def looks_like_a_document_request(question: object) -> bool:
+    """True when a message is shaped like a request for a document, not only a mention of one.
+
+    The chat stream skips the QA cache on this. Common FAQs name a document
+    without asking for one ("what's on the menu today", "does the brochure
+    mention fees"), and skipping the cache for every mention cost each of them a
+    cache miss and a classifier call. Built from the frozen rules: a request
+    ``is_document_request`` recognises, or a handing-over verb ("send", "share",
+    "email", "download", "give", "get", "can I have") that governs any document
+    ``mentions_document`` listens for, so "send me the menu" and "email me the
+    floor plan" count too. A miss only means the cache is read first: on a cache
+    miss the document route still asks the classifier.
+    """
+    if not isinstance(question, str) or not question.strip():
+        return False
+    if is_document_request(question):
+        return True
+    text = _without_contacts(question)
+    return any(_verb_governs_a_noun(phrase, _MENTION_RE, _delivers_at) for phrase in _phrases(text))
+
+
 # ── What the visitor wants: the classifier, and the rules when it fails ──────
 
 #: A document sent to the visitor, to know whether one exists, or neither.

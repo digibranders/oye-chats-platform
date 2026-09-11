@@ -8,6 +8,9 @@ when the classifier (stubbed here, never a real model) says the visitor wants a
 file sent, or asks whether one exists and the catalog has it exactly.
 """
 
+import asyncio
+import contextlib
+import threading
 import time
 
 import pytest
@@ -635,9 +638,7 @@ def _bot_with_a_pricing_page(db, monkeypatch, session_id):
 
 
 @pytest.mark.asyncio
-async def test_a_pricing_pdf_request_on_a_bot_with_a_pricing_page_gets_the_pricing_answer(
-    db, monkeypatch, classifier
-):
+async def test_a_pricing_pdf_request_on_a_bot_with_a_pricing_page_gets_the_pricing_answer(db, monkeypatch, classifier):
     """The pricing gate answers "send me your pricing pdf" from the pricing page. The
     document route used to run after it, hear SEND, find no pricing file, and replace
     that grounded answer with "I don't have a downloadable document"."""
@@ -689,3 +690,169 @@ async def test_a_pricing_pdf_request_on_a_bot_answering_pricing_from_its_knowled
     assert len(cap["prompts"]) == 1, answer
     assert knowledge in answer
     assert "downloadable" not in answer
+
+
+# ── The answer cache and the classifier task ─────────────────────────────────
+
+
+def _warm_cache(cap, bot, question, answer):
+    digest = rs.hashlib.sha256(rs._normalize_question_for_cache(question).encode()).hexdigest()[:32]
+    cap["cache"].store[rs.qa_response_key(bot.id, digest, None)] = {"answer": answer, "sources": ["kb.txt"]}
+
+
+def _spy_document_tasks(monkeypatch):
+    """The tasks the document classifier runs in, one per call."""
+    tasks: list[asyncio.Task] = []
+    real = rs._detect_document_intent_bounded
+
+    async def spy(question):
+        tasks.append(asyncio.current_task())
+        return await real(question)
+
+    monkeypatch.setattr(rs, "_detect_document_intent_bounded", spy)
+    return tasks
+
+
+@pytest.mark.asyncio
+async def test_a_question_that_only_mentions_a_document_is_served_from_the_warm_cache(db, monkeypatch, classifier):
+    """ "what's on the menu today" names a menu without asking for one. It used to
+    skip the cache, and every ask cost a generation and a classifier call."""
+    bot = _bot(db, "docs-menu-cached")
+    cached = "Today's lunch is dal, rice and salad."
+    cap = _stub_pipeline(monkeypatch, retrieved=(_doc(cached),), chunks=("SHOULD NOT BE GENERATED",))
+    question = "what's on the menu today"
+    _warm_cache(cap, bot, question, cached)
+    classifier.answer = "send"
+
+    frames = await _drive_stream(bot, question, "docs-menu-cached")
+
+    assert cached in _answer_text(frames)
+    assert classifier.calls == []
+    assert cap["prompts"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_request_for_the_menu_skips_the_cache_and_reaches_the_route(db, monkeypatch, classifier):
+    bot = _bot(db, "docs-menu-request")
+    cap = _stub_pipeline(monkeypatch, retrieved=(_doc("Acme serves lunch."),))
+    _catalog(monkeypatch, [])
+    lookups = []
+
+    def cache_hit(cache_key, bot_id):
+        lookups.append(cache_key)
+        return {"answer": "A cached answer about lunch.", "sources": []}
+
+    monkeypatch.setattr(rs, "_qa_cache_lookup", cache_hit)
+    classifier.answer = "send"
+
+    frames = await _drive_stream(bot, "send me the menu", "docs-menu-request")
+
+    assert lookups == []
+    assert classifier.calls == ["send me the menu"]
+    assert "cached answer" not in _answer_text(frames)
+    assert cap["prompts"] == []
+
+
+@pytest.mark.asyncio
+async def test_the_classifier_runs_alongside_retrieval(db, monkeypatch, classifier):
+    """Started when the handoff classifier starts, before retrieval, and awaited at
+    the route, so its call no longer adds its whole duration after retrieval."""
+    bot = _bot(db, "docs-concurrent")
+    _stub_pipeline(monkeypatch, retrieved=(_doc("Acme does red teaming."),))
+    _catalog(monkeypatch, CATALOG)
+    classifier.answer = "send"
+    started = threading.Event()
+
+    def classify(question):
+        started.set()
+        return classifier(question)
+
+    monkeypatch.setattr(document_request, "_classify_document_request_raw", classify)
+    classifier_started_during_retrieval: list[bool] = []
+
+    async def resolve(session_id, question, history, bid, cid, company_name, embedding_profile=None):
+        classifier_started_during_retrieval.append(await asyncio.to_thread(started.wait, 2.0))
+        return question, None
+
+    monkeypatch.setattr(rs, "_resolve_search_query_and_embedding", resolve)
+
+    frames = await _drive_stream(bot, DATASHEET_REQUEST, "docs-concurrent")
+
+    assert classifier_started_during_retrieval == [True]
+    assert _final_meta(frames)["media_card"]["url"] == RED
+    assert classifier.calls == [DATASHEET_REQUEST]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("label", ["send", "exists", "no"])
+async def test_the_classifier_task_is_started_once_and_finished_by_the_route(db, monkeypatch, classifier, label):
+    bot = _bot(db, f"docs-task-{label}")
+    _stub_pipeline(monkeypatch, retrieved=(_doc("Acme does red teaming."),), chunks=("Acme does red teaming.",))
+    _catalog(monkeypatch, CATALOG)
+    tasks = _spy_document_tasks(monkeypatch)
+    classifier.answer = label
+
+    await _drive_stream(bot, DATASHEET_REQUEST, f"docs-task-{label}")
+
+    assert len(tasks) == 1
+    assert tasks[0].done() and not tasks[0].cancelled()
+    assert classifier.calls == [DATASHEET_REQUEST]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("question", "early_reply"),
+    [
+        ("what does the red teaming datasheet cost?", "pricing_gate_escalation"),
+        ("can I book a call to go through the red teaming datasheet?", "meeting_gate_pivot"),
+    ],
+)
+async def test_a_turn_that_returns_before_the_route_leaves_no_classifier_task_running(
+    db, monkeypatch, classifier, question, early_reply
+):
+    """The pricing and meeting gates return after retrieval, once the classifier
+    task has started. It is cancelled on the way out rather than left pending."""
+    bot = _bot(db, f"docs-early-{early_reply}")
+    _stub_pipeline(monkeypatch, retrieved=(_doc("Acme does red teaming."),), support=True)
+    _catalog(monkeypatch, CATALOG)
+    metrics = _record_metrics(monkeypatch)
+    tasks = _spy_document_tasks(monkeypatch)
+    classifier.answer, classifier.delay_s = "send", 0.3
+
+    await _drive_stream(bot, question, f"docs-early-{early_reply}")
+    if tasks:
+        await asyncio.wait(tasks, timeout=1.0)
+
+    assert early_reply in _names(metrics), "precondition: the turn returned before the route"
+    assert "document_request" not in _names(metrics)
+    assert len(tasks) == 1
+    assert tasks[0].cancelled()
+
+
+@pytest.mark.asyncio
+async def test_a_visitor_who_leaves_mid_retrieval_leaves_no_classifier_task_running(db, monkeypatch, classifier):
+    bot = _bot(db, "docs-leave")
+    _stub_pipeline(monkeypatch, retrieved=(_doc("Acme does red teaming."),))
+    _catalog(monkeypatch, CATALOG)
+    tasks = _spy_document_tasks(monkeypatch)
+    classifier.answer, classifier.delay_s = "send", 0.3
+    retrieving = asyncio.Event()
+
+    async def slow_resolve(*_args, **_kwargs):
+        retrieving.set()
+        await asyncio.sleep(5)
+        return DATASHEET_REQUEST, None
+
+    monkeypatch.setattr(rs, "_resolve_search_query_and_embedding", slow_resolve)
+    stream = rs.rag_pipeline_stream(bot, DATASHEET_REQUEST, "docs-leave", bot_id=bot.id)
+    turn = asyncio.ensure_future(stream.__anext__())
+    await asyncio.wait_for(retrieving.wait(), timeout=2.0)
+    turn.cancel()
+    with contextlib.suppress(asyncio.CancelledError, StopAsyncIteration):
+        await turn
+    await stream.aclose()
+    if tasks:
+        await asyncio.wait(tasks, timeout=1.0)
+
+    assert len(tasks) == 1
+    assert tasks[0].cancelled()

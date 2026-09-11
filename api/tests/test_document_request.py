@@ -1415,3 +1415,49 @@ def test_a_long_message_is_read_quickly(text):
         lambda: pick_documents(text, "Acme", FIFTY_FILES),
     ):
         assert min(timeit.repeat(read, number=1, repeat=3)) < 0.05
+
+
+# ── The answer-cache skip: requests only, not every mention ──────────────────
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "send me the menu",
+        "email me the floor plan for the 3 BHK",
+        "can I have the syllabus?",
+        "share the timetable please",
+        "can you send me the red teaming datasheet?",
+        "do you have a brochure?",
+    ],
+)
+def test_a_request_for_a_document_skips_the_answer_cache(message):
+    assert document_request.looks_like_a_document_request(message) is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "what's on the menu today",
+        "guide me through onboarding",
+        "is there a manual for the pump",
+        "what is in your syllabus",
+        "can I see the floor plans of 3 BHK",
+        "does the brochure mention fees",
+    ],
+)
+def test_a_question_that_only_mentions_a_document_reads_the_answer_cache(message):
+    """Common FAQs name a document without asking for one. Skipping the cache for
+    every mention cost each of them a cache miss and a classifier call."""
+    assert document_request.mentions_document(message) is True
+    assert document_request.looks_like_a_document_request(message) is False
+
+
+@pytest.mark.parametrize("message", [None, 42, "", "   "])
+def test_no_message_is_no_document_request(message):
+    assert document_request.looks_like_a_document_request(message) is False
+
+
+def test_the_request_check_is_linear_on_long_input():
+    message = "send me the menu and the guide " * 800
+    assert timeit.timeit(lambda: document_request.looks_like_a_document_request(message), number=1) < 0.5
