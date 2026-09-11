@@ -81,6 +81,12 @@ from app.services.llm_service import (
     generate_response_stream,
 )
 from app.services.notification_service import notify_handoff_request
+from app.services.price_guard import (
+    PriceStreamGuard,
+    contains_price_figure,
+    price_figure_start,
+    price_guard_applies,
+)
 from app.services.qualification_service import (
     calculate_composite_score,
     get_framework_config,
@@ -7973,6 +7979,26 @@ async def rag_pipeline_stream(
                 and not _document_route_applies(question, _company_name, _judges_bypassed)
             ):
                 cached_qa = await asyncio.to_thread(_qa_cache_lookup, _cache_key, bid)
+                if (
+                    cached_qa
+                    and contains_price_figure(cached_qa.get("answer"))
+                    and price_guard_applies(
+                        # A pricing question never reads the cache (see
+                        # ``_gate_may_intercept``), so a turn that got here is one
+                        # the gate reads as not pricing.
+                        gate_outcome="not_pricing",
+                        pricing_url=getattr(bot, "pricing_url", None) if bot else None,
+                        answer_from_knowledge_base=_pricing_from_kb,
+                        support_enabled=_plan_support_allowed,
+                        judges_bypassed=_judges_bypassed,
+                    )
+                ):
+                    # A figure cached before the price guard existed, or before the
+                    # owner turned knowledge-base pricing off, must not be replayed
+                    # past it. Dropped, so the regenerated turn is guarded instead.
+                    await asyncio.to_thread(cache_delete, _cache_key)
+                    logger.info(f"QA cache entry dropped (price figure on a guarded bot) | bot_id={bid}")
+                    cached_qa = None
                 if cached_qa:
                     # Run handoff detection even on cache hit so the widget can
                     # trigger the handoff form when appropriate. ``live_chat_on``
@@ -9196,6 +9222,29 @@ async def rag_pipeline_stream(
             )
             logger.info(f"Hybrid RAG stream prompt built | Context chunks: {len(final_results)}")
 
+            # Price figures must not stream on a bot whose pricing goes to the
+            # team: a typo ("picin") carries a pricing question past the gate, and
+            # the model then quotes the knowledge base. See ``price_guard``.
+            _price_guard_pricing_url = getattr(bot, "pricing_url", None) if bot else None
+            _price_guard = (
+                PriceStreamGuard()
+                if price_guard_applies(
+                    gate_outcome=_pricing_decision.outcome,
+                    pricing_url=_price_guard_pricing_url,
+                    answer_from_knowledge_base=_pricing_from_kb,
+                    support_enabled=_plan_support_allowed,
+                    judges_bypassed=_judges_bypassed,
+                )
+                else None
+            )
+            # Read before the connection is released below, so neither the stream
+            # loop nor the replacement after it does database work.
+            _price_guard_repeat = _price_guard is not None and _card_already_shown(chat_session, "pricing_escalated")
+            # The pricing escalation that replaced the answer, once the guard trips.
+            _price_guard_pivot: _pricing_gate.PricingPivot | None = None
+            # Whether any of the model's own text reached the visitor, so a
+            # replacement knows whether it follows streamed text.
+            _answer_text_streamed = False
             _stream_error = False
             _leak_aborted = False
             # Set by the output moderation guard below; True until it says
@@ -9270,6 +9319,14 @@ async def rag_pipeline_stream(
                     if chunk:
                         chunk_count += 1
                         full_answer += chunk
+                        # The price guard holds back any tail that could be the
+                        # start of a figure and stops the stream on a whole one;
+                        # the escalation replaces the answer after the loop.
+                        visible_chunk = chunk
+                        if _price_guard is not None:
+                            visible_chunk = _price_guard.feed(chunk)
+                            if _price_guard.tripped:
+                                break
                         # Suppressed-probe turns (the qualified-lead card is
                         # showing) buffer the WHOLE answer instead of streaming
                         # it. See the post-loop strip. Streaming can't un-send a
@@ -9277,8 +9334,9 @@ async def rag_pipeline_stream(
                         # we hold the answer, strip any trailing question, then
                         # emit it at once. These turns are rare (once per session).
                         if not _show_qualified_popup:
-                            safe_chunk = cta_sanitizer.feed(chunk)
+                            safe_chunk = cta_sanitizer.feed(visible_chunk)
                             if safe_chunk:
+                                _answer_text_streamed = True
                                 yield safe_chunk
                         # Output-side leakage guard: if the accumulated answer
                         # contains a system-prompt sentinel, stop streaming and
@@ -9298,6 +9356,44 @@ async def rag_pipeline_stream(
                             yield f"\n\n{full_answer}"
                             suggest_handoff = False
                             break
+
+                # An answer that ENDS on a figure ("... about 50 lakh") is only
+                # known to be one when the stream is over.
+                if _price_guard is not None and not _leak_aborted and not _price_guard.tripped:
+                    held_text = _price_guard.flush()
+                    if held_text and not _show_qualified_popup:
+                        safe_chunk = cta_sanitizer.feed(held_text)
+                        if safe_chunk:
+                            _answer_text_streamed = True
+                            yield safe_chunk
+                if _price_guard is not None and _price_guard.tripped:
+                    # The reply the pricing gate gives this bot, so a typo changes
+                    # nothing the visitor sees. ``_leak_aborted`` skips the drain
+                    # (the held tail may be half a figure), output moderation (the
+                    # reply is a template) and the topical media card, and carries
+                    # the reply to the widget and ``collect_rag_pipeline`` as
+                    # ``answer_override``. Bookkeeping follows ``_price_guard_pivot``
+                    # below: the card, the cache skip and the pricing_escalated mark.
+                    _price_guard_pivot = _pricing_gate.pricing_pivot(
+                        company_name=_company_name,
+                        pricing_url=_price_guard_pricing_url,
+                        support_enabled=_plan_support_allowed,
+                        live_chat_enabled=live_chat_on,
+                        contact_url=_contact_url,
+                        repeat=_price_guard_repeat,
+                        subject=_pricing_gate.pricing_subject(_gate_question, _company_name, final_results),
+                    )
+                    _safety_net_metric("price_guard_tripped", path="stream", session=session_id, bot_id=bid)
+                    _leak_aborted = True
+                    suggest_handoff = _price_guard_pivot.suggest_handoff
+                    full_answer = _opener + _price_guard_pivot.text
+                    if _show_qualified_popup:
+                        # The buffered turn has emitted nothing yet, not even the opener.
+                        yield full_answer
+                    elif _answer_text_streamed:
+                        yield f"\n\n{_price_guard_pivot.text}"
+                    else:
+                        yield _price_guard_pivot.text
 
                 # Drain any text the sanitiser was still holding (e.g. trailing
                 # "[" that turned out not to be a sentinel). Skip on leak-abort,
@@ -9336,7 +9432,13 @@ async def rag_pipeline_stream(
                 # Persist what we have, then let the cancellation continue. Never
                 # swallow it, and never ``yield`` from here, an async generator
                 # being closed must not resume.
-                _partial = _scrub_cta_sentinels(full_answer).strip()
+                _partial = _scrub_cta_sentinels(full_answer)
+                # A figure the price guard was still holding never reached the
+                # visitor, and must not reach the transcript either.
+                _held_figure_at = price_figure_start(_partial) if _price_guard is not None else None
+                if _held_figure_at is not None:
+                    _partial = _partial[:_held_figure_at]
+                _partial = _partial.strip()
                 if _partial:
                     try:
                         add_chat_message(
@@ -9400,7 +9502,10 @@ async def rag_pipeline_stream(
             # previous list item (e.g. "- 24x7 supportWhich of these…"). Splice
             # in the missing paragraph break before persisting so the saved
             # history view is always clean.
-            full_answer = _ensure_followup_spacing(full_answer)
+            # Not on the pricing escalation, which is persisted exactly as the
+            # gate's own pivot is.
+            if _price_guard_pivot is None:
+                full_answer = _ensure_followup_spacing(full_answer)
 
             # Drift detection: the system prompt forbids asking a question in the
             # body when [CTA_Q:…] is emitted (avoids two prompts in one bubble).
@@ -9418,7 +9523,7 @@ async def rag_pipeline_stream(
             # Safety net: if the LLM asked a qualifying question but forgot the
             # [CTA:dim] marker, infer the CTA from the answer text so the
             # quick-reply chips still render.
-            if cta_data is None and is_bant_enabled and not _show_qualified_popup:
+            if cta_data is None and is_bant_enabled and not _show_qualified_popup and _price_guard_pivot is None:
                 cta_data = _infer_cta_fallback(full_answer, current_bant, bant_config, contextual_q=_cta_q)
 
             # Always yield FINAL_METADATA so the frontend never hangs waiting for it.
@@ -9440,6 +9545,10 @@ async def rag_pipeline_stream(
             if _leave_msg_card_detected:
                 full_answer = _leave_message_card_re.sub("", full_answer).rstrip()
                 logger.info("Leave-message card token detected | session=%s", session_id)
+            # A tripped price guard asks for the card exactly where the pricing
+            # pivot does; it is rendered below, on the model's own card path.
+            if _price_guard_pivot is not None and _price_guard_pivot.needs_message_card:
+                _leave_msg_card_detected = True
 
             # Detect + strip media card sentinels ([YOUTUBE_CARD:id] /
             # [DOWNLOAD_CARD:url|name]). At most one per response, the helper
@@ -9538,7 +9647,15 @@ async def rag_pipeline_stream(
 
             # Safety net: if the intent classifier missed handoff but the LLM
             # still produced a handoff-style response, override suggest_handoff.
-            if not suggest_handoff and not _stream_error and live_chat_on and _response_suggests_handoff(full_answer):
+            if (
+                not suggest_handoff
+                and not _stream_error
+                # The escalation already decided the handoff; its repeat wording
+                # ("I'll connect you") must not re-open the form.
+                and _price_guard_pivot is None
+                and live_chat_on
+                and _response_suggests_handoff(full_answer)
+            ):
                 suggest_handoff = True
                 _safety_net_metric(
                     "handoff_safety_net_triggered",
@@ -9555,6 +9672,7 @@ async def rag_pipeline_stream(
                 and not _meeting_card_detected
                 and not suggest_handoff
                 and not _stream_error
+                and _price_guard_pivot is None
                 and _question_suggests_leave_message(question)
                 and _response_suggests_leave_message(full_answer)
             ):
@@ -9608,7 +9726,11 @@ async def rag_pipeline_stream(
             # (the LLM's own "answer only what's asked" rules otherwise drop it).
             # Streamed live AND folded into full_answer so the saved transcript
             # matches what the visitor saw.
-            if _should_ask_visitor_name(visitor_name, history) and not _is_name_ask_message(full_answer):
+            if (
+                _price_guard_pivot is None
+                and _should_ask_visitor_name(visitor_name, history)
+                and not _is_name_ask_message(full_answer)
+            ):
                 _name_ask_chunk = f"\n\n{_name_ask_text(language)}"
                 full_answer = full_answer.rstrip() + _name_ask_chunk
                 yield _name_ask_chunk
@@ -9643,6 +9765,9 @@ async def rag_pipeline_stream(
                         source_language=_lang_base(language),
                         media_card=_media_card,
                         media_secondary=_media_secondary,
+                        # The pricing escalation is recorded as unanswered, as the
+                        # gate's own pivot is.
+                        is_unanswered=_price_guard_pivot is not None,
                     )
 
                     if _lf and hasattr(bot_msg, "trace_id"):
@@ -9652,7 +9777,7 @@ async def rag_pipeline_stream(
                     # Remember which dimension we probed this turn (skip on
                     # handoff/popup turns) so the next turn won't re-ask it and
                     # can bind the visitor's reply to it. Mirrors non-streaming.
-                    if is_bant_enabled and chat_session is not None:
+                    if is_bant_enabled and chat_session is not None and _price_guard_pivot is None:
                         chat_session.last_probed_dimension = (
                             None if (_show_qualified_popup or _team_connect_offer) else _next_probe
                         )
@@ -9666,6 +9791,11 @@ async def rag_pipeline_stream(
                     # Captured with the id, for the same reason: the commit
                     # expires the row and reading it afterwards costs a SELECT.
                     _bot_msg_trace_id = getattr(bot_msg, "trace_id", None)
+                    if _price_guard_pivot is not None:
+                        # The pricing pivot's bookkeeping: a second ask gets the
+                        # repeat wording, and the visitor was pointed at the team.
+                        _mark_card_shown(chat_session, "pricing_escalated")
+                        _set_unhelped_streak(chat_session, 0)
                     session.commit()
 
                     # Only cache a real LLM answer, never cache the zero-chunk
@@ -9676,6 +9806,9 @@ async def rag_pipeline_stream(
                     # on future hits, making a cached response miss its CTA.
                     _skip_cache_for_turn = (
                         suggest_handoff
+                        # A tripped price guard's escalation: served from the cache
+                        # it would lose its card and its repeat wording.
+                        or _price_guard_pivot is not None
                         or _meeting_card_detected
                         or _leave_msg_card_detected
                         or bool(cta_data)
@@ -9719,14 +9852,18 @@ async def rag_pipeline_stream(
                         )
 
                     _cta_signal = _score_cta_answer(_trusted_cta, question, bant_config)
-                    if is_bant_enabled and (
-                        _cta_signal is not None
-                        or not _should_skip_bant_extraction(
-                            question,
-                            current_bant,
-                            bant_config,
-                            is_probe_reply=_answers_last_probe,
-                            handoff_offered=_visitor_asked_for_human,
+                    if (
+                        is_bant_enabled
+                        and _price_guard_pivot is None
+                        and (
+                            _cta_signal is not None
+                            or not _should_skip_bant_extraction(
+                                question,
+                                current_bant,
+                                bant_config,
+                                is_probe_reply=_answers_last_probe,
+                                handoff_offered=_visitor_asked_for_human,
+                            )
                         )
                     ):
                         # Pass bid (id), not the bot ORM object. See the
@@ -9747,7 +9884,7 @@ async def rag_pipeline_stream(
                         )
                         _qualification_enqueued = True
 
-                    if should_sample():
+                    if should_sample() and _price_guard_pivot is None:
                         submit_background(
                             _background_groundedness_check,
                             question,
@@ -9764,10 +9901,10 @@ async def rag_pipeline_stream(
                         final_meta["message_id"] = bot_msg_id
                     if _leak_aborted or not _answer_safe:
                         # The stream cannot recall bytes it already sent, so
-                        # a leak or moderation hit rewrote only the persisted
-                        # text. Carry that text so ``collect_rag_pipeline``
-                        # (``POST /chat``) returns what the transcript holds,
-                        # not the leaked or unsafe frames.
+                        # a leak, a moderation hit or the price guard rewrote
+                        # only the persisted text. Carry that text so the widget
+                        # and ``collect_rag_pipeline`` (``POST /chat``) show what
+                        # the transcript holds, not the frames already sent.
                         final_meta["answer_override"] = full_answer
                     if _stream_error or (_llm_status.get("error") and not _llm_status.get("failed")):
                         # Distinct from ``generation_failed``: the SSE visitor
@@ -9819,6 +9956,7 @@ async def rag_pipeline_stream(
                     # already firing this turn so two CTAs never compete.
                     if (
                         _show_qualified_popup
+                        and _price_guard_pivot is None
                         and not final_meta.get("suggest_handoff")
                         and not final_meta.get("show_booking")
                         and not final_meta.get("show_leave_message")
@@ -9841,7 +9979,8 @@ async def rag_pipeline_stream(
                     # Also yields to the qualified-lead popup, which already carries
                     # a book-a-meeting CTA of its own.
                     if (
-                        not final_meta.get("team_connect_popup")
+                        _price_guard_pivot is None
+                        and not final_meta.get("team_connect_popup")
                         and not final_meta.get("show_booking")
                         and not final_meta.get("suggest_handoff")
                         and not _card_already_shown(chat_session, "meeting")
@@ -9858,7 +9997,7 @@ async def rag_pipeline_stream(
                     # regardless of the LLM's paraphrase fidelity. When the popup
                     # was eligible it owns the dedupe mark above (or retries later
                     # if a competing CTA suppressed it this turn).
-                    if _team_connect_offer and not _show_qualified_popup:
+                    if _team_connect_offer and not _show_qualified_popup and _price_guard_pivot is None:
                         _mark_card_shown(chat_session, "team_connect")
 
                     # Persist any mutation made to chat_session.inline_cards_shown
