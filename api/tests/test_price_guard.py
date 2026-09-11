@@ -1,7 +1,7 @@
 """The company's own prices must not stream on a bot whose pricing goes to the team.
 
 Production, 2026-09-10: "what is th picin for SOC as a Service" is two edits from
-"pricing", so the pricing gate never fired, and Eventus (no pricing page) quoted
+"pricing", so the pricing gate never fired, and a security company's bot (no pricing page) quoted
 ₹2,66,250 and more from its knowledge base.
 
 Review, 2026-09-11: the first guard tripped on any amount, so answers about GDPR
