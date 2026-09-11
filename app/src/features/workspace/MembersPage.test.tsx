@@ -551,7 +551,7 @@ describe('MembersPage — routing', () => {
     await waitFor(() =>
       expect(api.updateBot).toHaveBeenCalledWith(1, {
         operator_timeout_seconds: 120,
-        live_chat_queue_timeout_seconds: 20,
+        live_chat_queue_timeout_seconds: 60,
         live_chat_max_queue_size: 10,
         visitor_disconnect_timeout: 45,
       }),

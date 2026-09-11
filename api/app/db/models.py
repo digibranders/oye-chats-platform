@@ -518,9 +518,10 @@ class Bot(Base):
     # round_robin = strict cursor advance regardless of load.
     # first_available = first online+capacity operator returned by the index.
     live_chat_routing_strategy = Column(String, default="least_busy", server_default="least_busy", nullable=False)
-    # Seconds a visitor waits in the queue before the widget auto-falls back
-    # to the offline message form. Default 20s per product spec.
-    live_chat_queue_timeout_seconds = Column(Integer, default=20, server_default="20", nullable=False)
+    # Seconds a visitor waits in the queue before the widget offers the message
+    # form instead. 60s by default (b1000014queuetimeout), so an operator in
+    # another tab or answering a push on their phone has time to accept.
+    live_chat_queue_timeout_seconds = Column(Integer, default=60, server_default="60", nullable=False)
     # Reject queue entries past this cap (returns "queue_full" state).
     live_chat_max_queue_size = Column(Integer, default=10, server_default="10", nullable=False)
 

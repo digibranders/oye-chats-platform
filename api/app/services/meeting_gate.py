@@ -65,6 +65,49 @@ _MEETING_NOUN_SUFFIX = (
     r"cancellation|center|centre|link|page))"
 )
 
+# A first-person invitation: "let's", "lets" (either apostrophe), or "let us"
+# opening the message. The spaced "let us" is anchored because mid-sentence it
+# is usually a product question ("does it let us meet with clients online").
+_LETS = r"(?:^\s*let\s+us|\blet['’]?s)"
+
+_WEEKDAY = r"(?:mon|tues|wednes|thurs|fri|satur|sun)day"
+
+# A time the visitor offers: "tomorrow", "next week", "on Friday", "at 3pm", "in
+# an hour". "at" and "in" need a number or a time word, because "at your venue"
+# and "in HubSpot" are places and products. The number takes no word boundary,
+# since "3pm" runs straight on.
+_WHEN = (
+    r"(?:(?:at|in)\s+\d"
+    r"|(?:today|tomorrow|tonight|soon|sometime|later|asap"
+    r"|(?:this|next)\s+(?:week|weekend|month|morning|afternoon|evening|" + _WEEKDAY + r")"
+    r"|(?:on\s+)?" + _WEEKDAY + r"|in\s+(?:an?\s+(?:hour|few|couple|bit)|the\s+(?:morning|afternoon|evening)))\b)"
+)
+
+# The visitor has finished the request: punctuation or the end of the message.
+_REQUEST_END = r"\s*(?:[.?!,;:]|$)"
+
+# After an invited meeting noun, the request ends there, or goes on to say when,
+# with whom, or what about. Any other word makes the noun part of a thing: "a
+# call tracking number", "a demo account", "an appointment to Google Calendar",
+# "a call with WhatsApp Business", "a session of yoga". "with" needs a person, so
+# a product name after it stays an integration question.
+_MEETING_REQUEST_ENDS = (
+    r"(?=" + _REQUEST_END + r"|\s+(?:please\b|about\b|to\s+(?:discuss|talk)\b|" + _WHEN + r"|with\s+(?:you|us|me"
+    r"|(?:your|our|the)\s+(?:[a-z]+\s+)?(?:team|founders?|co-?founders?|experts?|specialists?|consultants?"
+    r"|people|staff))\b))"
+)
+
+# "let's meet" and "let's catch up" carry no noun, so what follows decides: the
+# end of the message or a time. "let's meet the founders", "let's meet at your
+# venue" and "let's catch up on the new pricing" are about a page, a place and a
+# topic.
+_INVITATION_ENDS = r"(?=" + _REQUEST_END + r"|\s+(?:please\b|" + _WHEN + r"))"
+
+_INVITED_MEETING = (
+    r"(?:(?:quick|short|brief|video|phone)\s+)?"
+    r"(?:meeting|call|demo|appointment|consultation|walkthrough|session)\b" + _MEETING_REQUEST_ENDS
+)
+
 # Scheduling VERB + meeting NOUN in tight co-occurrence. Requiring both keeps
 # "do you have meeting rooms?" (a product question about the customer's
 # offering) out of the gate while catching every ordinary way a visitor asks to
@@ -93,7 +136,31 @@ _MEETING_RE = re.compile(
     # the demo video") and a false positive here hijacks a legitimate
     # knowledge-base question into "I can't book that directly". Anchored
     # tightly to the article + noun instead.
-    r"|\bget\s+(?:a|an)\s+(?:meeting|demo|call|appointment|consultation|walkthrough|session)\b",
+    r"|\bget\s+(?:a|an)\s+(?:meeting|demo|call|appointment|consultation|walkthrough|session)\b"
+    # "lets connect a meeting", "let's connect on a call", "connect for a quick
+    # call". ``connect`` is NOT in the verb list above either: it is how a
+    # visitor asks for a person ("connect me with the team") and how they ask
+    # about an integration ("how many users can connect on a call", "does it
+    # connect to my meeting room system"). So it needs a first-person invitation
+    # in front, or to open the message, an article plus a meeting noun after,
+    # and the request has to end on that noun (``_MEETING_REQUEST_ENDS``), which
+    # drops "connect a call to my CRM" even behind "I want to".
+    r"|(?:^\s*|(?:" + _LETS + r"|\b(?:can|could|shall)\s+we|\bwe\s+(?:can|could|should)"
+    r"|\b(?:like|want)\s+to|\bwanna)\s+)"
+    r"connect\s+(?:(?:on|over|for|via|in)\s+)?(?:a|an)\s+"
+    + _INVITED_MEETING
+    # "let's meet", "let us catch up": the invitation is the request, so these
+    # need no noun, like "can we meet" above, but they must end there or on a
+    # time. "have" and "do" still need an article and a meeting noun, since
+    # "let's have a look at pricing" is not.
+    + r"|"
+    + _LETS
+    + r"\s+(?:meet|catch\s+up)\b"
+    + _INVITATION_ENDS
+    + r"|"
+    + _LETS
+    + r"\s+(?:have|do)\s+(?:a|an)\s+"
+    + _INVITED_MEETING,
     re.IGNORECASE,
 )
 

@@ -335,7 +335,7 @@ export const LIMITS = {
   smartLinks: 50,
 } as const;
 
-export const QUEUE_TIMEOUT = { min: 5, max: 600, default: 20 } as const;
+export const QUEUE_TIMEOUT = { min: 5, max: 600, default: 60 } as const;
 export const MAX_QUEUE = { min: 1, max: 100, default: 10 } as const;
 
 // Labels resolved per render by `handoffDelayLabel`; `value` is what is stored.

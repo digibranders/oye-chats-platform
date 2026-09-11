@@ -19,9 +19,13 @@ def handoff_reply(*, team_available: bool, repeat: bool) -> str:
     """The reply shown above the handoff form.
 
     ``team_available`` is whether anyone can take the chat now (inside business
-    hours and someone reachable). When nobody is, the widget still opens the form
-    and then falls back to the offline message flow, so the words promise a reply
-    later rather than a connection now.
+    hours and someone reachable). It is False in states the visitor cannot tell
+    apart: nobody on the dashboard, where ``POST /operators/handoff`` queues the
+    visitor and pushes anyone reachable on a phone or another tab; and outside
+    business hours or with the queue full, where the widget shows the message
+    form and nobody is waiting on the visitor. So the words promise only what is
+    true in all of them, that the details go to the team, and never call the
+    team offline, away or unavailable.
 
     ``repeat`` is True when this conversation was already offered the form. The
     widget re-opens it if the visitor closed it, so on a repeat the form is below
@@ -30,10 +34,10 @@ def handoff_reply(*, team_available: bool, repeat: bool) -> str:
     if repeat:
         if team_available:
             return "The form is just below. Share your details there and I'll connect you with our team."
-        return "The form is just below. Share your details there and our team will get back to you."
+        return "The form is just below. Share your details there and I'll pass them to our team."
     if team_available:
         return "Sure. Share your details in the form below and I'll connect you with our team."
-    return "Our team is offline right now. Share your details in the form below and they'll get back to you."
+    return "Sure. Share your details in the form below and I'll pass them to our team."
 
 
 @dataclass(frozen=True)
@@ -51,9 +55,10 @@ def unhelped_offer(*, live_chat_enabled: bool, team_available: bool) -> HandoffO
     On 2026-09-10 a visitor asked a live bot four times to buy the company and
     got a refusal or a model-written brush-off every time, never the team. This
     says plainly that the bot could not help, then offers the channel the plan
-    has: the live form when live chat is on (worded for nobody being available
-    when that is the case), the message card when it is off. Only called on a
-    plan that includes human support.
+    has: the live form when live chat is on, the message card when it is off.
+    When nobody can take the chat, the live form's words promise only to pass
+    the details to the team, for the reason ``handoff_reply`` gives. Only called
+    on a plan that includes human support.
     """
     if not live_chat_enabled:
         return HandoffOffer(
@@ -72,8 +77,8 @@ def unhelped_offer(*, live_chat_enabled: bool, team_available: bool) -> HandoffO
         )
     return HandoffOffer(
         text=(
-            "I haven't been able to help with that here, and our team is offline right now. "
-            "Share your details in the form below and they'll get back to you."
+            "I haven't been able to help with that here, but our team can. "
+            "Share your details in the form below and I'll pass them to our team."
         ),
         suggest_handoff=True,
         needs_message_card=False,

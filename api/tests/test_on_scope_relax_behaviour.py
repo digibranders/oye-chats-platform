@@ -394,7 +394,8 @@ async def test_an_opted_out_bot_with_nothing_retrieved_does_not_invent_a_price(
 # ── The live-team promise reads operator presence, not just the clock ────────
 
 _LIVE_PROMISE = "will be with them shortly"
-_OFFLINE_COPY = "the team is offline right now"
+_NOTIFY_COPY = "our team will be notified and will get back to them"
+_OFFLINE_CLAIM = "the team is offline right now"
 
 
 def _availability(monkeypatch, state):
@@ -432,10 +433,12 @@ async def test_nobody_online_means_no_promise_even_inside_hours(db, monkeypatch,
 
     await _drive("stream", bot, _ON_SCOPE, "live-all-offline")
 
-    prompt = "\n".join(_stub_generation["prompts"])
+    # Flattened: the support block wraps its lines, so a phrase can span a break.
+    prompt = " ".join("\n".join(_stub_generation["prompts"]).split())
     assert prompt, "the question never reached generation"
     assert _LIVE_PROMISE not in prompt
-    assert _OFFLINE_COPY in prompt
+    assert _NOTIFY_COPY in prompt
+    assert _OFFLINE_CLAIM not in prompt, "nobody on the dashboard is not the team being offline"
 
 
 @pytest.mark.asyncio

@@ -106,7 +106,10 @@ async def test_urgent_turn_is_fixed_wording_with_the_form_and_one_alert(db, monk
     answer = _answer_text(frames)
     meta = _final_meta(frames)
 
-    assert answer.startswith("This sounds urgent. Our team is offline right now"), answer
+    assert answer == (
+        "This sounds urgent, so I've flagged it to **Acme** as a priority. Share your details in the form "
+        "below so the team can contact you as soon as possible."
+    ), answer
     assert "Eva" not in answer, "no cheerful by-name opener above an incident"
     assert meta["suggest_handoff"] is True
     assert meta["qualification_pending"] is False
@@ -138,7 +141,7 @@ async def test_urgent_turn_is_fixed_wording_with_the_form_and_one_alert(db, monk
             "session_id": "urgent-1",
         }
     ]
-    assert _push_jobs(alerts) == [("urgent-1", bot.id, None, "Eva", "URGENT: active incident reported in chat", 20)]
+    assert _push_jobs(alerts) == [("urgent-1", bot.id, None, "Eva", "URGENT: active incident reported in chat", 60)]
     shown = _cards_shown(db, "urgent-1")
     assert shown.get("urgent_notified") is True
     assert shown.get("handoff_offered") is True

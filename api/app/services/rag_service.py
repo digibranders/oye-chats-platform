@@ -64,7 +64,7 @@ from app.services.email_service import (
 )
 from app.services.groundedness_gate import check_groundedness, should_sample
 from app.services.handoff_reply import handoff_reply, unhelped_offer
-from app.services.intent_router import route_intent, strip_greeting_lead
+from app.services.intent_router import route_intent, strip_greeting_lead, term_spellings
 from app.services.intent_service import (
     GENERIC_INVITE_RE,
     HANDOFF_OFFER_RE,
@@ -3104,7 +3104,7 @@ _URGENT_PUSH_REASON = "URGENT: active incident reported in chat"
 _URGENT_EMAIL_MESSAGE_LIMIT = 500
 #: The live-chat queue timeout a handoff push is enqueued with when the bot has none
 #: (the column default, and the fallback ``operator_routes`` uses).
-_DEFAULT_QUEUE_TIMEOUT_SECONDS = 20
+_DEFAULT_QUEUE_TIMEOUT_SECONDS = 60
 
 
 def _alert_team_of_urgent_incident(session, bot, client_id: int, session_id: str, visitor_message: str) -> None:
@@ -4752,7 +4752,8 @@ def _clean_visitor_name(raw: str) -> str | None:
     name = " ".join((raw or "").split()).strip(" .,!?;:\"'")
     if not name or any(ch.isdigit() for ch in name) or len(name) > 40:
         return None
-    if name.lower() in _NAME_NON_ANSWERS:
+    # A stretched filler word ("hiiiii", "okkkk") is the same non-answer as the plain one.
+    if any(spelling in _NAME_NON_ANSWERS for spelling in term_spellings(name.lower())):
         return None
     tokens = name.split()
     if not 1 <= len(tokens) <= 2:
@@ -4864,7 +4865,7 @@ def _is_name_decline(question: str) -> bool:
     low = " ".join((question or "").lower().split()).strip(" ?.!,")
     if not low:
         return True
-    if low in _NAME_NON_ANSWERS:
+    if any(spelling in _NAME_NON_ANSWERS for spelling in term_spellings(low)):
         return True
     return low.startswith(_NAME_DECLINE_STARTS)
 
@@ -5881,15 +5882,19 @@ LEAVE A MESSAGE (inline card):
 NO HUMAN HANDOFF: This workspace has no live-chat or message-forwarding channel. If the visitor asks to speak to a person, reach the team, or leave a message, do NOT promise a handoff, a callback, or a message form, and do NOT emit any card token. Briefly say you can help right here with what you know, then answer their underlying question if you can. Never say "connect you with the team" or imply someone will follow up."""
         handoff_offer = ""
     elif live_chat_enabled and not within_business_hours:
-        # Live chat is on, but nobody is there. Promising "shortly" outside the
-        # hours the customer configured is the promise the widget then breaks
-        # by showing the offline form.
+        # Live chat is on, but no one can take the chat on this turn: outside
+        # the configured hours, or inside them with no operator presence
+        # (``_live_team_reachable``). Promising "shortly" is the promise the
+        # widget then breaks by showing the offline form. Saying "offline" is
+        # just as wrong the other way: an operator in another tab is still
+        # reachable, and the handoff push can bring them in, so the model only
+        # says the team will be told and will reply.
         handoff_section = f"""
-SUPPORT REQUESTS (the team is offline right now):
-  If the visitor asks to speak with a person, say plainly that the team is not
-  available at the moment and offer to take a message so they can follow up.
-  Do not promise that anyone will join, and do not imply a live conversation is
-  starting.
+SUPPORT REQUESTS (no one is guaranteed to join a live chat right now):
+  If the visitor asks to speak with a person, say our team will be notified and
+  will get back to them, and offer to take a message. Never tell the visitor the
+  team is offline, away or unavailable, and do not promise that anyone will join
+  right away.
 {_leave_msg_block}
 
   Say "our team", never "human team"."""
@@ -6380,7 +6385,7 @@ VOICE:
 Answer visitor questions using the information provided below.
 
 RULES:
-1. Answer ONLY what was specifically asked, nothing more. If asked about the CEO, mention only the CEO, not the entire team. Keep answers to 1-3 sentences, up to 5 for a genuinely complex topic, and up to 150 words for a listing (services, team, features). Never pad, never repeat yourself, and never add filler to reach a length.
+1. Answer ONLY what was specifically asked, nothing more. If asked about the CEO, mention only the CEO, not the entire team. But when the reference material names several holders of the asked role (founders, co-founders or owners), name every one of them, even for a singular question like "who is the founder" or "who owns the company", unless the question narrows it (a practice area, location, department or product). Keep answers to 1-3 sentences, up to 5 for a genuinely complex topic, and up to 150 words for a listing (services, team, features). Never pad, never repeat yourself, and never add filler to reach a length.
 2. Bullet points for 3+ items. Keep each bullet to a few words, no descriptions after bullets.
 2a. STRUCTURED DATA, one item per bullet, NOT one attribute per bullet. When the reference material contains rows of tabular or structured data (events with dates + locations, products with prices + SKUs, team members with roles, sessions with speakers + times, etc.), each bullet represents ONE ROW, with the attributes inlined into that bullet. Never split a single row's fields (name, date, location, price, deadline) into three separate bullets that read as three separate items, the visitor sees three events when there was only one.
     ✓ RIGHT: "- **{{Event Name}}** - {{Date}}, {{Location}}"

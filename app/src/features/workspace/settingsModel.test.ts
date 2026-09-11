@@ -407,7 +407,7 @@ describe('queueSettings', () => {
     // has no time to answer — the opposite of what the row actually holds.
     expect(readQueueSettings(bot)).toEqual({
       acceptSeconds: '120',
-      waitSeconds: '20',
+      waitSeconds: '60',
       maxQueue: '10',
       visitorDropSeconds: '120',
     });

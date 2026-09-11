@@ -165,6 +165,10 @@ HANDOFF_OFFER_RE = re.compile(
     r"|leave (?:a|your) (?:message|details) (?:for|with) (?:" + _OFFER_TEAM + r"|them|us)\b"
     # "I can have the team reach out"
     r"|have (?:the|our) team (?:reach|follow up|get back|help)\b"
+    # Nobody can take the chat: "I'll pass them to our team", "I'll pass your
+    # details to our team". Anchored on "our team", so "I'll let them know you're
+    # waiting" at a front desk and "I'll pass them to the courier" are no offer.
+    r"|i(?:['\u2019]ll| will) pass (?:them|your details) to our team\b"
     r")"
 )
 

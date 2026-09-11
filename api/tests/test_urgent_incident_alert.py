@@ -77,7 +77,7 @@ def test_emails_the_handoff_request_list_with_the_visitor_contact(db, outbox):
     assert notification["visitor_name"] == "Eva"
     assert notification["session_id"] == "urgent-mail-1"
     assert notification["client_id"] == client.id
-    assert outbox["enqueue"] == [(PUSH_TASK, ("urgent-mail-1", bot.id, None, "Eva", PUSH_REASON, 20))]
+    assert outbox["enqueue"] == [(PUSH_TASK, ("urgent-mail-1", bot.id, None, "Eva", PUSH_REASON, 60))]
 
 
 def test_falls_back_to_the_default_list_without_a_lead(db, outbox):
@@ -88,7 +88,7 @@ def test_falls_back_to_the_default_list_without_a_lead(db, outbox):
     assert [email["to"] for email in outbox["emails"]] == ["owner@acme.test"]
     assert outbox["emails"][0]["contact"] is None
     assert outbox["notify"][0]["visitor_name"] is None
-    assert outbox["enqueue"] == [(PUSH_TASK, ("urgent-mail-2", bot.id, None, None, PUSH_REASON, 20))]
+    assert outbox["enqueue"] == [(PUSH_TASK, ("urgent-mail-2", bot.id, None, None, PUSH_REASON, 60))]
 
 
 def test_an_owner_who_turned_off_handoff_email_still_gets_the_inbox_alert_and_push(db, outbox):

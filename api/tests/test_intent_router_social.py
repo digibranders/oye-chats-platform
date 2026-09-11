@@ -20,7 +20,6 @@ from app.services.intent_router import (
     _ACK_TERMS,
     _GREETING_TERMS,
     _NEG_ACK_TERMS,
-    _UNCLEAR_RE,
     route_intent,
 )
 from app.services.intent_service import bot_offers_handoff
@@ -144,14 +143,25 @@ def test_real_words_are_not_swallowed_by_unclear(word):
     assert routed is None or routed.intent != "unclear", word
 
 
-def test_no_known_term_is_unclear():
-    """Confirms the assumption ``route_intent`` relies on instead of checking
-    membership on every call: none of the greeting/ack/neg-ack single-word
-    terms look like a keyboard run or a 6+ consonant string. If a future term
-    added to one of those sets breaks this, it needs its own exclusion back in
-    ``route_intent``."""
-    for term in _GREETING_TERMS | _ACK_TERMS | _NEG_ACK_TERMS:
-        assert not _UNCLEAR_RE.match(term), term
+def _stretched_spellings(term: str) -> list[str]:
+    """``term`` with each of its letters in turn repeated to a run of five."""
+    return [term[:i] + ch * 5 + term[i + 1 :] for i, ch in enumerate(term) if ch.isalpha()]
+
+
+@pytest.mark.parametrize(
+    ("terms", "intent"),
+    [(_GREETING_TERMS, "greeting"), (_ACK_TERMS, "ack"), (_NEG_ACK_TERMS, "neg_ack")],
+)
+def test_every_term_and_its_stretched_spellings_route_to_their_intent(terms, intent):
+    """A stretched term is still that term, and the gibberish route must not
+    take it first: "kkkkkk", "thxxxx", "gmmmmm" and "nnnnnn" are six or more
+    consonants, so they read as unclear before the term sets were matched ahead
+    of the gibberish check."""
+    for term in sorted(terms):
+        for msg in (term, *_stretched_spellings(term)):
+            routed = route_intent(msg, COMPANY)
+            assert routed is not None, msg
+            assert routed.intent == intent, msg
 
 
 def test_y_is_not_routed_as_unclear():

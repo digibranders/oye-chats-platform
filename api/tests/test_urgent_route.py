@@ -792,10 +792,16 @@ def test_team_available_opens_the_form_and_says_it_is_flagged():
     assert "flagged" in r.text and "form below" in r.text
 
 
-def test_team_offline_says_so_and_still_flags():
+def test_nobody_available_still_flags_and_does_not_call_the_team_offline():
+    """Nobody on the dashboard is not an offline team: the handoff route can still
+    queue the visitor and push the team, so the reply promises contact, not absence."""
     r = _reply(team_available=False)
-    assert "offline" in r.text and "flagged" in r.text
-    assert r.suggest_handoff is True
+    assert r.text == (
+        "This sounds urgent, so I've flagged it to **Acme** as a priority. Share your details in the form "
+        "below so the team can contact you as soon as possible."
+    )
+    assert "offline" not in r.text.lower()
+    assert r.suggest_handoff is True and r.needs_message_card is False
 
 
 def test_no_live_chat_opens_the_message_card():

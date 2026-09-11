@@ -38,7 +38,7 @@ _VISITOR_MSG_EMAIL_DEDUP_MAX = 1000
 # no per-bot setting is in scope (e.g. the visitor messaged after the WS
 # became the only context). Matches the same default as
 # ``Bot.live_chat_queue_timeout_seconds``.
-DEFAULT_QUEUE_TIMEOUT_SECONDS = 20
+DEFAULT_QUEUE_TIMEOUT_SECONDS = 60
 
 
 def _should_email_visitor_message(session_id: str) -> bool:

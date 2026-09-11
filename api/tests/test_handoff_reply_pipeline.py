@@ -68,7 +68,7 @@ class TestTheHandoffTurnUsesTheFormWording:
         assert cap["prompts"] == []
 
     @pytest.mark.asyncio
-    async def test_nobody_available_gets_the_offline_wording(self, db, monkeypatch):
+    async def test_nobody_available_gets_the_waiting_wording(self, db, monkeypatch):
         bot, _cap = _handoff_bot(db, monkeypatch, "handoff-3", team_online=False)
 
         frames = await _drive_stream(bot, "connect me", "handoff-3")

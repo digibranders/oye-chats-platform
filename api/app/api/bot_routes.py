@@ -935,7 +935,7 @@ class BotResponse(BaseModel):
     # column is not read by ``live_chat_service`` yet, so publishing it would
     # invite the console to render a control that does nothing.
     visitor_disconnect_timeout: int = 120
-    live_chat_queue_timeout_seconds: int = 20
+    live_chat_queue_timeout_seconds: int = 60
     live_chat_max_queue_size: int = 10
     # Manual lead follow-up kill switch. Default FALSE, matching the column.
     followup_sending_paused: bool = False

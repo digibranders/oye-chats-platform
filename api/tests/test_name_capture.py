@@ -11,6 +11,7 @@ from app.services.rag_service import (
     _clean_visitor_name,
     _extract_visitor_name,
     _is_first_bot_reply,
+    _is_name_decline,
     _name_ack_prefix,
 )
 
@@ -19,6 +20,32 @@ _NAME_ASK = "Hi there! Before I help you out, may I know your name so I can addr
 
 def _history_with_name_ask():
     return [{"role": "user", "content": "hi"}, {"role": "bot", "content": _NAME_ASK}]
+
+
+class TestStretchedNonAnswers:
+    """A stretched greeting or filler word is not a name.
+
+    On 2026-09-11 the router learned to read "hiiiiii" and "okkkk" as a greeting
+    and an ack, but the name flow runs first and matched its non-answer set
+    exactly, so a stretched "hiiiii" typed in reply to the name ask was stored on
+    the lead as the visitor's name.
+    """
+
+    def test_stretched_non_answers_are_rejected(self):
+        for w in ["hiiiiii", "Hellooooo", "heyyyy", "okkkkk", "okayyyy", "nooooo", "yesssss", "suuure"]:
+            assert _clean_visitor_name(w) is None, w
+
+    def test_stretched_reply_to_name_ask_is_not_captured(self):
+        assert _extract_visitor_name("hiiiiiiiiii", _history_with_name_ask()) is None
+
+    def test_stretched_refusal_is_a_decline(self):
+        assert _is_name_decline("nooooo") is True
+        assert _is_name_decline("nahhh") is True
+
+    def test_real_names_with_repeated_letters_survive(self):
+        assert _clean_visitor_name("aaron") == "Aaron"
+        assert _clean_visitor_name("Anna") == "Anna"
+        assert _extract_visitor_name("jason", _history_with_name_ask()) == "Jason"
 
 
 class TestCleanVisitorName:

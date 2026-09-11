@@ -91,7 +91,7 @@ export function readQueueSettings(bot: Bot): QueueSettings {
   const settings = bot as BotWithQueue;
   return {
     acceptSeconds: String(settings.operator_timeout_seconds ?? 120),
-    waitSeconds: String(settings.live_chat_queue_timeout_seconds ?? 20),
+    waitSeconds: String(settings.live_chat_queue_timeout_seconds ?? 60),
     maxQueue: String(settings.live_chat_max_queue_size ?? 10),
     // 120 is the column default and `live_chat_service`'s own
     // DEFAULT_VISITOR_DISCONNECT_TIMEOUT — the same number in both places.

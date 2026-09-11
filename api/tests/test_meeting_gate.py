@@ -9,7 +9,10 @@ reasons it could not be fixed in the prompt are pinned below.
 
 from __future__ import annotations
 
+import time
 from types import SimpleNamespace
+
+import pytest
 
 from app.services.meeting_gate import is_meeting_question, meeting_pivot, scheduler_is_configured
 
@@ -78,6 +81,132 @@ class TestIsMeetingQuestion:
         """``get`` is anchored to article+noun; on its own it is far too broad
         and a false positive hijacks a legitimate knowledge-base question."""
         assert is_meeting_question("where do I get a copy of the demo video") is False
+
+    def test_connect_with_a_meeting_noun_fires(self):
+        """Production, 2026-09-11: on a bot with Calendly configured, "lets
+        connect a meeting" did not read as a scheduling request, the handoff
+        classifier said YES, and the visitor got the live-chat form instead of
+        the booking card. "book a meeting" worked."""
+        for q in (
+            "lets connect a meeting",
+            "let's connect on a call",
+            "let’s connect on a call",
+            "connect for a quick call",
+            "can we connect over a call",
+            "we can connect via a short call",
+            "I'd like to connect over a video call",
+        ):
+            assert is_meeting_question(q) is True, q
+
+    def test_lets_meet_shapes_fire(self):
+        for q in (
+            "let's meet",
+            "lets meet",
+            "let us meet",
+            "let’s meet next week",
+            "let's catch up",
+            "let's have a call",
+            "lets have a quick meeting",
+            "let's do a demo",
+            "let's hop on a call",
+        ):
+            assert is_meeting_question(q) is True, q
+
+    def test_connect_without_a_meeting_request_does_not_fire(self):
+        """``connect`` is also how a visitor asks for a person and how they ask
+        about an integration. Neither is a request for time on a calendar."""
+        for q in (
+            "connect me with the team",
+            "connect me to a human",
+            "connect with sales",
+            "let's connect with sales",
+            "how do I connect the SOAR call API",
+            "does it connect to my meeting room system",
+            "how many users can connect on a call",
+            "can my customers connect via a call",
+            "I want to connect a call to my CRM",
+            "does the dialer connect a call to the next agent",
+            "let's connect a demo video",
+            "let's have a look at pricing",
+            "let's do a call recording review",
+            # "let us" after "does it" is a product question, not an invitation.
+            "does it let us meet with clients online",
+            "will the app let us connect on a call",
+            "does it let us have a video call",
+        ):
+            assert is_meeting_question(q) is False, q
+
+    @pytest.mark.parametrize(
+        "q",
+        [
+            "lets connect a meeting",
+            "let's connect on a call",
+            "can we connect over a quick call",
+            "connect for a call tomorrow",
+            "let's meet",
+            "lets meet tomorrow",
+            "let's meet next week?",
+            "let us meet",
+            "let's catch up",
+            "let's catch up this week",
+            "let's have a call",
+            "let's hop on a call",
+            "lets connect a meeting please",
+            "can we connect on a call to discuss pricing",
+            "let's connect on a call with your team",
+            "lets connect a meeting with your sales team",
+            "let's meet on Friday",
+            "let's have a quick call at 3pm",
+        ],
+    )
+    def test_an_invitation_that_ends_on_the_meeting_fires(self, q):
+        assert is_meeting_question(q) is True, q
+
+    @pytest.mark.parametrize(
+        "q",
+        [
+            "I want to connect a call to Salesforce",
+            "I want to connect an appointment to Google Calendar",
+            "I'd like to connect a call tracking number",
+            "Connect a demo account",
+            "connect an appointment calendar",
+            "I'd like to connect a meeting app",
+            "we could connect an appointment reminder SMS",
+            "we want to connect a call flow in IVR",
+            "lets meet at your venue for our wedding, what's the capacity?",
+            "Let's meet the founders",
+            "Let's do a session of yoga, what's the price per class",
+            "let's catch up on the new pricing",
+            "Connect a call with WhatsApp Business?",
+            "I want to connect a call in HubSpot",
+        ],
+    )
+    def test_a_meeting_noun_that_names_a_thing_does_not_fire(self, q):
+        """Review, 2026-09-11: once "connect", "let's meet" and "let's do" read
+        as invitations, each of these knowledge-base questions (an integration,
+        a venue, a page, a class) was answered "I can't book that directly" on
+        every bot without a scheduler. A request for time ends on the meeting,
+        or on when, with whom or what about; any other word after the noun makes
+        it part of a thing."""
+        assert is_meeting_question(q) is False, q
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "let's connect on a " * 1200,
+            "connect a call " * 1400,
+            "let's meet " * 2000,
+            "let's have a call" + " " * 20_000 + "x",
+            "connect " + " " * 20_000 + "a call x",
+            "lets connect a meeting with your " + "a" * 20_000,
+        ],
+        ids=["connect-on-a", "connect-a-call", "lets-meet", "trailing-spaces", "spaces-after-connect", "long-word"],
+    )
+    def test_a_long_adversarial_message_is_fast(self, text):
+        assert len(text) >= 20_000
+        started = time.perf_counter()
+        is_meeting_question(text)
+        assert time.perf_counter() - started < 1.0
 
     def test_disqualifiers(self):
         assert is_meeting_question("cancel my meeting") is False
