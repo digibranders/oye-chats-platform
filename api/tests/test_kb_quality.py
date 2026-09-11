@@ -1,14 +1,14 @@
 """Detectors for crawled content that must never be served as fact.
 
-Production, 2026-09-10: Eventus claimed to operate in about 250 countries (a
-crawled form's country dropdown) and CleanStart gave out "(555) 123-4567" (a
+Production, 2026-09-10: Northlane claimed to operate in about 250 countries (a
+crawled form's country dropdown) and Brightloop gave out "(555) 123-4567" (a
 placeholder on its own site).
 
 2026-09-11 review: two follow-on bugs found by re-running these detectors
 over real production knowledge-base exports. First, "we ship to all 28
 Indian states" (a real coverage claim, written as prose) tripped the same
 boolean as an actual scraped <select> dropdown, so the report told a bot
-owner their own correct content was junk. Second, 53 of CleanStart's 54
+owner their own correct content was junk. Second, 53 of Brightloop's 54
 placeholder hits were addresses inside their own CLI/JSON/YAML/shell
 documentation examples ("--email security@company.com"), correct
 documentation that the original report told the owner to go delete.
@@ -21,6 +21,20 @@ run -- whatever its separators -- goes to "place_list" instead. A bare,
 markerless list of names (previously "form_options" on density alone) now
 reads as "place_list" too, since density says nothing about whether a
 list is scraped or real.
+
+2026-09-11 review, round two: the "Select" prompt and ``<option>``/
+``value="`` markers were still checked anywhere in the whole chunk, so a
+real office or coverage list on a page that also carried an unrelated
+"Select a location below to see opening hours" widget, a "results found
+for your search" message, a "Country*" field on a contact form, or a
+stray ``value="..."`` attribute somewhere else on the page was reported as
+a picker (11 of 15 realistic reviewer chunks). Both markers now have to
+sit within a bounded window of the run's own span, the same as the
+dial-code/flag/ISO-code markers, and a "Select"/"Choose" prompt also has
+to be about a place ("country", "state", "region", "location",
+"nationality" or "residence") to count -- "Select an issue type" and
+"Choose a report year" name something else entirely and never count, even
+sitting right next to a run.
 """
 
 import itertools
@@ -46,9 +60,9 @@ US_STATES = "Alabama Alaska Arizona Arkansas California Colorado Connecticut Del
 
 INDIAN_STATES = "Andhra Pradesh Arunachal Pradesh Assam Bihar Chhattisgarh Goa Gujarat Haryana Himachal Pradesh Jharkhand Karnataka Kerala Madhya Pradesh Maharashtra Manipur Meghalaya Mizoram Nagaland Odisha Punjab Rajasthan Sikkim Tamil Nadu Telangana Tripura Uttar Pradesh Uttarakhand West Bengal"
 
-# The exact shape of Eventus's real phone-input picker (production, 2026-09-10):
+# The exact shape of Northlane's real phone-input picker (production, 2026-09-10):
 # bullet, name, dial code, newline, nothing else between entries.
-EVENTUS_DIAL_CODE_PICKER = "\n".join(
+NORTHLANE_DIAL_CODE_PICKER = "\n".join(
     f"*    {name}+{code}"
     for name, code in [
         ("Afghanistan", "93"),
@@ -209,6 +223,119 @@ INDIAN_COVERAGE_PROSE_2 = (
     "Tamil Nadu."
 )
 
+# ── Round-two reviewer fixtures: a marker elsewhere on the page must not
+# taint a real, unrelated place-name run (finding 1, round two) ────────────
+#
+# Unrelated filler with no place words and none of the marker regexes'
+# trigger words in it, long enough on its own to push whatever comes after
+# it well past ``_INSTRUCTION_MARKER_WINDOW`` (150 characters) from the
+# nearest edge of the place-name run that follows.
+_FAR_PADDING = (
+    "This paragraph exists only to add distance from the marker above, and "
+    "deliberately names no places and asks the reader to pick nothing at "
+    "all, so it cannot itself be mistaken for picker evidence. "
+)
+assert len(_FAR_PADDING) > 150
+
+# 1. Office list plus a "Select a location" widget three paragraphs above
+# it, not attached to the office list at all.
+OFFICE_LIST_WITH_DISTANT_LOCATION_PROMPT = (
+    "Select a location below to see opening hours. "
+    + _FAR_PADDING
+    + "Our offices are located across "
+    + COUNTRIES
+    + "."
+)
+
+# 2. Travel blog plus an unrelated "results found" search message.
+TRAVEL_BLOG_WITH_DISTANT_RESULTS_MESSAGE = (
+    "0 results found for your search. "
+    + _FAR_PADDING
+    + "Popular destinations our readers write about include "
+    + COUNTRIES
+    + "."
+)
+
+# 3. CMS page plus an unrelated value="subscribe" checkbox.
+CMS_PAGE_WITH_DISTANT_SUBSCRIBE_FIELD = (
+    '<input type="checkbox" value="subscribe"> Subscribe to updates. '
+    + _FAR_PADDING
+    + "This page lists our coverage across "
+    + COUNTRIES
+    + "."
+)
+
+# 4. Careers page plus a "Choose your nearest centre" prompt placed away
+# from the office list.
+CAREERS_PAGE_WITH_DISTANT_CENTRE_PROMPT = (
+    "Choose your nearest centre to apply. "
+    + _FAR_PADDING
+    + "We hire engineers across our offices in "
+    + COUNTRIES
+    + "."
+)
+
+# 5. Legal disclaimer plus a "Please select your country of residence"
+# prompt in another paragraph.
+LEGAL_DISCLAIMER_WITH_DISTANT_RESIDENCE_PROMPT = (
+    "Please select your country of residence before continuing. "
+    + _FAR_PADDING
+    + "This disclaimer applies to customers in "
+    + COUNTRIES
+    + "."
+)
+
+# 6. Investor-relations page plus a "Country*" field on a contact form
+# elsewhere on the page.
+IR_PAGE_WITH_DISTANT_COUNTRY_FIELD = (
+    "Country* (required field on the investor contact form) "
+    + _FAR_PADDING
+    + "Our shareholders are based across "
+    + COUNTRIES
+    + "."
+)
+
+# 7. Press page plus a "-- Select --" nav leftover.
+PRESS_PAGE_WITH_DISTANT_SELECT_LEFTOVER = (
+    "-- Select -- " + _FAR_PADDING + "Press coverage of our launch spanned " + COUNTRIES + "."
+)
+
+# 8. Sustainability report plus a "Choose a report year" archive picker.
+SUSTAINABILITY_REPORT_WITH_DISTANT_YEAR_PICKER = (
+    "Choose a report year to view archived filings. "
+    + _FAR_PADDING
+    + "Our sustainability initiatives operate in "
+    + COUNTRIES
+    + "."
+)
+
+# 9. Wholesale terms plus an unrelated value="in-stock" option.
+WHOLESALE_TERMS_WITH_DISTANT_STOCK_FIELD = (
+    '<select><option value="in-stock">In stock</option></select> '
+    + _FAR_PADDING
+    + "These wholesale terms apply to distributors in "
+    + COUNTRIES
+    + "."
+)
+
+# 10. Support article plus a "Select an issue type" ticket-category picker.
+SUPPORT_ARTICLE_WITH_DISTANT_ISSUE_TYPE_PICKER = (
+    "Select an issue type to get started. " + _FAR_PADDING + "Our support centers are staffed across " + COUNTRIES + "."
+)
+
+# Two more: the *same* two non-place prompts as #8 and #10, but sitting
+# right next to the run with no padding at all. These must still be
+# "place_list" -- the object check, not just the window, has to reject
+# them ("issue type" and "report year" are not places).
+SELECT_ISSUE_TYPE_NEXT_TO_RUN = "Select an issue type: " + COUNTRIES
+CHOOSE_REPORT_YEAR_NEXT_TO_RUN = "Choose a report year: " + COUNTRIES
+
+# The mirror image of #5: the same "Please select your country of
+# residence" prompt, but right next to the run (the shape of the three
+# genuine Northlane picker_instruction hits, marker 15-42 characters from
+# the run) -- this one must stay "form_options".
+SELECT_COUNTRY_OF_RESIDENCE_NEXT_TO_RUN = "Please select your country of residence: " + COUNTRIES
+
 
 # ── option_list_kind: form pickers vs real coverage prose (finding 1) ───────
 
@@ -260,11 +387,11 @@ def test_a_real_country_coverage_claim_is_a_place_list_not_an_option_list():
     assert option_list_kind(COUNTRY_COVERAGE_PROSE) == "place_list"
 
 
-def test_the_real_eventus_dial_code_picker_is_still_an_option_list():
+def test_the_real_northlane_dial_code_picker_is_still_an_option_list():
     # The exact production shape that started this whole review: a bullet,
     # a name, a dial code and a newline between entries, nothing else.
-    assert is_option_list(EVENTUS_DIAL_CODE_PICKER) is True
-    match = option_list_match(EVENTUS_DIAL_CODE_PICKER)
+    assert is_option_list(NORTHLANE_DIAL_CODE_PICKER) is True
+    match = option_list_match(NORTHLANE_DIAL_CODE_PICKER)
     assert match is not None
     assert match.kind == "form_options"
     assert match.category == "countries"
@@ -349,17 +476,85 @@ def test_dense_lists_without_a_marker_are_place_list_not_form_options(content):
 def test_comma_separated_coverage_prose_ending_in_and_stays_a_place_list(content):
     # All five: a real coverage sentence, comma-separated, whose last item
     # is joined with "and" -- never a picker, no matter how many places it
-    # names or whether it also happens to carry a stray "Select"/"Other".
+    # names. None of these five carry a stray "Select" or "Other" marker;
+    # see the tests below for coverage prose that does.
     match = option_list_match(content)
     assert match is not None
     assert match.kind == "place_list"
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        OFFICE_LIST_WITH_DISTANT_LOCATION_PROMPT,
+        TRAVEL_BLOG_WITH_DISTANT_RESULTS_MESSAGE,
+        CMS_PAGE_WITH_DISTANT_SUBSCRIBE_FIELD,
+        CAREERS_PAGE_WITH_DISTANT_CENTRE_PROMPT,
+        LEGAL_DISCLAIMER_WITH_DISTANT_RESIDENCE_PROMPT,
+        IR_PAGE_WITH_DISTANT_COUNTRY_FIELD,
+        PRESS_PAGE_WITH_DISTANT_SELECT_LEFTOVER,
+        SUSTAINABILITY_REPORT_WITH_DISTANT_YEAR_PICKER,
+        WHOLESALE_TERMS_WITH_DISTANT_STOCK_FIELD,
+        SUPPORT_ARTICLE_WITH_DISTANT_ISSUE_TYPE_PICKER,
+    ],
+    ids=[
+        "office_list_distant_location_prompt",
+        "travel_blog_distant_results_message",
+        "cms_page_distant_subscribe_field",
+        "careers_page_distant_centre_prompt",
+        "legal_disclaimer_distant_residence_prompt",
+        "ir_page_distant_country_field",
+        "press_page_distant_select_leftover",
+        "sustainability_report_distant_year_picker",
+        "wholesale_terms_distant_stock_field",
+        "support_article_distant_issue_type_picker",
+    ],
+)
+def test_coverage_with_a_distant_form_marker_stays_a_place_list(content):
+    # Round-two reviewer finding: a real, unrelated place-name run must not
+    # be reclassified as a picker just because the same page also carries a
+    # "Select"/"Choose" prompt, a search-results message, a "Country*"
+    # field, or leftover option markup -- as long as that marker sits more
+    # than _INSTRUCTION_MARKER_WINDOW characters from the run itself. Ten
+    # realistic shapes, each a different page type and a different marker.
+    match = option_list_match(content)
+    assert match is not None
+    assert match.kind == "place_list"
+    assert match.marker is None
+
+
+@pytest.mark.parametrize(
+    "content",
+    [SELECT_ISSUE_TYPE_NEXT_TO_RUN, CHOOSE_REPORT_YEAR_NEXT_TO_RUN],
+    ids=["select_issue_type", "choose_report_year"],
+)
+def test_a_select_prompt_about_something_other_than_a_place_stays_a_place_list_even_next_to_the_run(content):
+    # "Select an issue type" and "Choose a report year" sit immediately
+    # next to the run -- well inside the window -- but their object is not
+    # a place, so they must not count as picker evidence either.
+    match = option_list_match(content)
+    assert match is not None
+    assert match.kind == "place_list"
+    assert match.marker is None
+
+
+def test_a_select_prompt_about_a_place_next_to_the_run_is_still_form_options():
+    # The mirror image of the distant-residence-prompt case above: the same
+    # "Please select your country of residence" prompt, but right next to
+    # the run, the shape of the three genuine Northlane picker_instruction
+    # hits (marker 15 to 42 characters from the run) -- this must still be
+    # reported as a picker.
+    match = option_list_match(SELECT_COUNTRY_OF_RESIDENCE_NEXT_TO_RUN)
+    assert match is not None
+    assert match.kind == "form_options"
+    assert match.marker == "picker_instruction"
 
 
 def test_form_options_reason_names_the_marker():
     # Controller decision: the report must say *why* something looks like
     # a picker, not just that it does.
     cases = [
-        (EVENTUS_DIAL_CODE_PICKER, "dial_codes", "dial codes"),
+        (NORTHLANE_DIAL_CODE_PICKER, "dial_codes", "dial codes"),
         (SELECT_STATE_COMMA_LIST, "picker_instruction", "a Select prompt"),
         (OPTION_MARKUP_PICKER, "option_markup", "option markup"),
         (FLAG_PICKER, "flags", "flag icons"),
@@ -605,7 +800,7 @@ def test_low_risk_placeholder_names_and_filler_are_found():
 
 
 def test_bare_your_company_name_without_here_is_not_flagged():
-    # Production counter-example (Eventus, 2026-09-10): "Monitoring for your
+    # Production counter-example (Northlane, 2026-09-10): "Monitoring for your
     # company name, domain, executive names, and key vendors can reveal
     # threat activity" is real security-advice prose, not an unfilled
     # template field. Only the unambiguous "...Here" forms are flagged.
@@ -646,7 +841,7 @@ def test_a_yaml_example_is_in_example():
 
 
 def test_a_yaml_example_without_real_line_breaks_is_still_in_example():
-    # CleanStart's own crawl collapses a <pre> block's newlines into plain
+    # Brightloop's own crawl collapses a <pre> block's newlines into plain
     # whitespace, so this shape (a bareword key, colon, quoted value) has to
     # be recognized without a line anchor to rely on.
     text = 'env_vars: APP_ENV: "production" labels: maintainer: "platform-team@example.com" version: "1.2.3"'
@@ -662,7 +857,7 @@ def test_a_docker_compose_example_is_in_example():
 
 
 def test_a_shell_snippet_is_in_example():
-    text = 'kubectl create secret docker-registry cleanstart-secret \\\n  --docker-email="$username@example.com"'
+    text = 'kubectl create secret docker-registry brightloop-secret \\\n  --docker-email="$username@example.com"'
     findings = placeholder_findings(text)
     assert findings and all(f.in_example for f in findings)
 
@@ -682,7 +877,7 @@ def test_a_markdown_link_url_inherits_its_visible_texts_verdict():
 
 
 def test_a_documented_template_with_bracket_placeholders_is_in_example():
-    # CleanStart's incident-response runbook: a fill-in-the-blank template
+    # Brightloop's incident-response runbook: a fill-in-the-blank template
     # with square-bracket placeholders elsewhere in the same message.
     text = (
         "Review your audit logs for suspicious activity between [start_date] and [end_date]. "
@@ -697,7 +892,7 @@ def test_the_real_sla_phone_number_is_not_in_example():
     # The exact production leak that started this review: a real phone
     # number, written in plain prose, not inside any code or config sample.
     text = (
-        "**Email**: General support: support@cleanstart.com. "
+        "**Email**: General support: support@brightloop.com. "
         "**Phone**: +1 (555) 123-4567 (Enterprise tier customers only). "
         "**Effective Date**: 2026-03-22."
     )
@@ -896,13 +1091,13 @@ class TestFindJunkChunks:
         client = _make_client(db)
         bot = _make_bot(db, client)
         _add_document(
-            db, client=client, bot=bot, name="https://eventus.example/signup", content=EVENTUS_DIAL_CODE_PICKER
+            db, client=client, bot=bot, name="https://northlane.example/signup", content=NORTHLANE_DIAL_CODE_PICKER
         )
 
         result = find_junk_chunks(db, bot.id)
 
         assert len(result.findings) == 1
-        assert result.findings[0].document_name == "https://eventus.example/signup"
+        assert result.findings[0].document_name == "https://northlane.example/signup"
         assert any("dial codes" in reason for reason in result.findings[0].reasons)
         assert result.scanned_count == 1
 

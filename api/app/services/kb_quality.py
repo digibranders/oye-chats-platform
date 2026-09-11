@@ -62,6 +62,21 @@ consecutive "From:"/"To:"/"Reply-To:"/"Authorization:"/"Content-Type:"/
 "Host:" lines) -- a real one-field-per-line contact footer ("Email:
 yourname@company.com") never uses those protocol header names, so it
 still reports normally.
+
+2026-09-11 review, round two: ``picker_instruction`` and ``option_markup``
+were checked with a plain whole-chunk ``.search``, so a real office or
+coverage list on a page that also carried an unrelated "Select a location
+below to see opening hours" widget, a "results found for your search"
+message, a "Country*" field on a contact form, or a stray ``value="..."``
+attribute *anywhere else in the chunk* was reported as a picker, even when
+that marker had nothing to do with the place-name run itself. Both markers
+now have to sit within a bounded window of the run's own span, the same
+way the dial-code, flag and ISO-code markers already do (see
+``_INSTRUCTION_MARKER_WINDOW``). A "Select"/"Choose" prompt also has to be
+*about* a place to count: "Select your country of residence" is picker
+evidence, but "Select an issue type" and "Choose a report year" are a
+support form and a report archive, not a picker, even sitting right next
+to a run purely by coincidence (see ``_instruction_names_a_place``).
 """
 
 from __future__ import annotations
@@ -573,6 +588,25 @@ _DIAL_CODE_WINDOW = 10
 _FLAG_WINDOW = 6
 _ISO_CODE_WINDOW = 8
 
+#: Window (characters) checked before the run's first name and after its
+#: last name for a "Select"/"Choose" prompt or leftover <option>/value="
+#: markup -- the same "must sit next to the run, not merely anywhere in
+#: the chunk" requirement the per-name dial-code/flag/ISO-code checks
+#: already apply. A crawled form's picker prompt sits right next to its own
+#: options; a "Select a location below to see opening hours" widget three
+#: paragraphs above a genuine office list, or a "-- Select --" nav leftover
+#: at the top of an unrelated page, does not, and must not count.
+_INSTRUCTION_MARKER_WINDOW = 150
+
+#: Words that make a "Select"/"Choose" prompt's *object* a place, so
+#: "Select your country of residence" counts as picker evidence while
+#: "Select an issue type" or "Choose a report year" does not, even when the
+#: prompt happens to sit right next to a dense place-name run.
+_PLACE_OBJECT_WORDS_RE = re.compile(
+    r"(?i)\b(?:countr(?:y|ies)|states?|regions?|locations?|nationalit(?:y|ies)|residence)\b"
+)
+_SENTENCE_BOUNDARY_RE = re.compile(r"[.!?\n]")
+
 
 def _marker_adjacent_count(
     matches: list[re.Match[str]],
@@ -609,23 +643,52 @@ _MARKER_DESCRIPTIONS: dict[str, str] = {
 }
 
 
+def _instruction_names_a_place(window: str, match: re.Match[str]) -> bool:
+    """True if the sentence around ``match`` in ``window`` names a place.
+
+    Bounded by the nearest sentence-ending punctuation on each side (or the
+    window's own edge, for a match in the window's first or last sentence),
+    so a "Select"/"Choose" prompt whose own sentence is about something
+    else entirely ("Select an issue type") can't borrow a place word that
+    belongs to a different sentence two paragraphs away.
+    """
+    start_bound = 0
+    for boundary in _SENTENCE_BOUNDARY_RE.finditer(window, 0, match.start()):
+        start_bound = boundary.end()
+    end_match = _SENTENCE_BOUNDARY_RE.search(window, match.end())
+    end_bound = end_match.start() if end_match else len(window)
+    return bool(_PLACE_OBJECT_WORDS_RE.search(window[start_bound:end_bound]))
+
+
+def _find_instruction_marker(window: str) -> bool:
+    """True if ``window`` carries a Select/Choose prompt whose object is a place."""
+    return any(_instruction_names_a_place(window, match) for match in _PICKER_INSTRUCTION_RE.finditer(window))
+
+
 def _find_marker(category: Literal["countries", "us_states", "indian_states"], content: str) -> str | None:
     """The strongest picker marker in ``content`` for ``category``, or ``None``.
 
-    Checked cheapest and most-global first: a "Select a country" prompt or
-    a leftover ``<option>``/``value="`` attribute decides it outright,
-    wherever in the chunk it sits, since neither ever shows up in ordinary
-    prose. Dial codes, flags and ISO codes are only checked -- with a raw,
-    case-preserving re-scan of ``content`` -- once those two come up empty,
-    since they need to be tied to several of the run's own name
-    occurrences rather than merely present somewhere in the chunk.
+    A "Select a country" prompt or a leftover ``<option>``/``value="``
+    attribute only counts when it sits within ``_INSTRUCTION_MARKER_WINDOW``
+    characters of the run's own span (see the module docstring's 2026-09-11
+    round-two entry) -- neither shows up in ordinary prose, but a form
+    widget or nav leftover elsewhere on the same page is not evidence about
+    *this* run. A "Select"/"Choose" prompt additionally has to be about a
+    place (``_instruction_names_a_place``). Dial codes, flags and ISO codes
+    are checked after those two, with a raw, case-preserving re-scan of
+    ``content``, since they need to be tied to several of the run's own
+    name occurrences rather than merely present nearby.
     """
-    if _OPTION_MARKUP_RE.search(content):
-        return "option_markup"
-    if _PICKER_INSTRUCTION_RE.search(content):
-        return "picker_instruction"
-
     raw_matches = list(_RAW_PATTERNS[category].finditer(content))
+    if raw_matches:
+        window_start = max(0, raw_matches[0].start() - _INSTRUCTION_MARKER_WINDOW)
+        window_end = min(len(content), raw_matches[-1].end() + _INSTRUCTION_MARKER_WINDOW)
+        window = content[window_start:window_end]
+        if _OPTION_MARKUP_RE.search(window):
+            return "option_markup"
+        if _find_instruction_marker(window):
+            return "picker_instruction"
+
     if _marker_adjacent_count(
         raw_matches, content, _DIAL_CODE_BEFORE_RE, _DIAL_CODE_AFTER_RE, _DIAL_CODE_WINDOW, _MARKER_MIN_NAMES
     ):
