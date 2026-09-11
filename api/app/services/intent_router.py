@@ -135,8 +135,12 @@ _EMOJI_OR_PUNCT_RE = re.compile(r"^[\W_]+$", re.UNICODE)
 # - "real" and "automated" count only as the whole predicate, at the end of the
 #   message or before "or": "are you real estate agents" and "is this automated
 #   backup included" are questions for the knowledge base.
-# - A bot or model noun followed by a modifier names a product or a business:
-#   "is this AI-powered", "is this gpt based", "are you a machine learning firm".
+# - A bot, model or human noun followed by a modifier or a business noun names
+#   a product or a trade: "is this AI-powered", "is this gpt based", "are you a
+#   machine learning firm", "are you a computer repair shop", "is this human
+#   hair". So does a business noun after "or": "are you a person or company".
+# - "is that ..." in a message that names a photo, an image or a video asks
+#   about the picture: "is that a real person in the photo".
 # - "human" before "resources", "rights" or "capital" is not a person.
 # - "agent" counts only as a "real" or "live" agent: a visitor to an insurance or
 #   property business asking "are you an agent" means a licensed one.
@@ -152,10 +156,13 @@ _REAL_HUMAN = rf"(?:real|live|actual)\s+(?:{_HUMAN_NOUN}|people|agents?)"
 _WHOLE_PREDICATE = r"(?=\s*$|\s+or\b)"
 _NOT_A_MODIFIER = (
     r"(?![\s\-]*(?:powered|based|driven|enabled|generated|integration|integrated|plugin|api|compatible"
-    r"|tools?|features?|learning|company|companies|agency|firm|startup)\b)"
+    r"|tools?|features?|learning"
+    r"|(?:or\s+(?:an?\s+)?)?(?:shops?|stores?|dealers?|dealerships?|repairs?|hair|salons?|clinics?|company|companies"
+    r"|firms?|agency|agencies|startups?|business(?:es)?))\b)"
 )
 _SUSPECTED_IDENTITY = (
-    rf"(?:{_BOT_NOUN}{_NOT_A_MODIFIER}|{_HUMAN_NOUN}|{_REAL_HUMAN}|(?:real|automated){_WHOLE_PREDICATE}|someone\s+real)"
+    rf"(?:(?:{_BOT_NOUN}|{_HUMAN_NOUN}|{_REAL_HUMAN}){_NOT_A_MODIFIER}|(?:real|automated){_WHOLE_PREDICATE}"
+    r"|someone\s+real)"
 )
 _IS_AI_RE = re.compile(
     r"(?ix)\b(?:"
@@ -163,9 +170,10 @@ _IS_AI_RE = re.compile(
     rf"(?:are|r|re|ar)\s+(?:you|u|yu|ya)\s+(?:an?\s+)?{_SUSPECTED_IDENTITY}"
     # "am i talking to a real person"
     rf"|(?:am|are)\s+i\s+(?:talking|chatting|speaking|texting)\s+(?:to|with)\s+(?:an?\s+)?{_SUSPECTED_IDENTITY}"
-    # "is this chatgpt", "is it a bot", "is this a real person"
-    rf"|is\s+(?:this|it|that)\s+(?:an?\s+)?"
-    rf"(?:(?:bot|robot|chatbot|{_MODEL_NOUN}){_NOT_A_MODIFIER}|{_HUMAN_NOUN}|{_REAL_HUMAN})"
+    # "is this chatgpt", "is it a bot", "is this a real person". The "that" group
+    # lets ``_asks_if_ai`` drop the match in a message about a photo or a video.
+    rf"|is\s+(?:this|it|(?P<that>that))\s+(?:an?\s+)?"
+    rf"(?:bot|robot|chatbot|{_MODEL_NOUN}|{_HUMAN_NOUN}|{_REAL_HUMAN}){_NOT_A_MODIFIER}"
     # "is this ai", "is this real", "is this automated". "this" only: "is it an ai
     # tool" is usually a question about a product.
     rf"|is\s+this\s+(?:an?\s+)?(?:ai{_NOT_A_MODIFIER}"
@@ -177,6 +185,11 @@ _IS_AI_RE = re.compile(
     rf"|(?:real\s+)?(?:{_HUMAN_NOUN}|people)\s+or\s+(?:an?\s+)?{_BOT_NOUN}(?=\s*$)"
     rf"|{_BOT_NOUN}\s+or\s+(?:an?\s+)?(?:{_HUMAN_NOUN}|people|{_REAL_HUMAN}|real)(?=\s*$)"
     r")\b"
+)
+#: A picture the visitor is looking at, which an "is that ..." question is about.
+_MEDIA_RE = re.compile(
+    r"\b(?:photo(?:graph)?s?|pics?|pictures?|images?|videos?|vids?|clips?|footage|screenshots?|selfies?|reels?"
+    r"|thumbnails?)\b"
 )
 
 _WHO_MADE_YOU_RE = re.compile(
@@ -386,6 +399,21 @@ def term_spellings(norm: str) -> tuple[str, str, str]:
     )
 
 
+def _asks_if_ai(norm: str) -> bool:
+    """Whether ``norm``, in any of its ``term_spellings``, asks if the visitor is talking to a bot.
+
+    An "is that ..." match does not count in a message that names a photo, an
+    image or a video: "is that a real person in the photo" asks about the
+    picture. Linear: each spelling is scanned once.
+    """
+    names_media = _MEDIA_RE.search(norm) is not None
+    for spelling in term_spellings(norm):
+        for match in _IS_AI_RE.finditer(spelling):
+            if not (names_media and match.group("that")):
+                return True
+    return False
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Public router
 # ─────────────────────────────────────────────────────────────────────────────
@@ -446,7 +474,7 @@ def route_intent(
     # The rest of the identity family stands down when the message also asks
     # about the business, because there retrieval has the better answer.
     if not _ASKS_ABOUT_BUSINESS_RE.search(norm):
-        if any(_IS_AI_RE.search(spelling) for spelling in term_spellings(norm)):
+        if _asks_if_ai(norm):
             return _is_ai(company_name, support_enabled)
         if _WHO_MADE_YOU_RE.search(norm):
             return _who_made_you(company_name, platform_branded)

@@ -65,6 +65,8 @@ COMPANY = "Acme"
         "is this a person or a bot",
         "are you human or ai",
         "are you automated",
+        "is that a bot",
+        "is that a real person replying",
     ],
 )
 def test_identity_questions_route_to_is_ai(msg):
@@ -94,6 +96,21 @@ def test_identity_questions_route_to_is_ai(msg):
         "is this a live chat",
         "is this a real company",
         "are you open",
+        # A business noun after the bot or human noun names a trade, not the bot.
+        "is this human hair",
+        "are you a computer repair shop",
+        "r u a machine shop",
+        "are you a robot store",
+        "are you a machine dealer",
+        "are you a human hair salon",
+        "are you a computer clinic",
+        "are you a person or company",
+        "are you a real person or a business",
+        # "is that" about a photo, an image or a video asks about the picture.
+        "is that a real person in the photo",
+        "is that a real person in this picture",
+        "in the video, is that a real person",
+        "is that a robot in the image",
     ],
 )
 def test_questions_about_something_else_are_not_is_ai(msg):
@@ -212,6 +229,8 @@ def test_hinglish_questions_that_use_those_words_are_not_frustration(msg):
         "what name do u have for me " * 800,
         "am i talking to a " * 1200,
         "human or " * 2500,
+        "is that a real person " * 900 + "photo",
+        "are you a person or " * 1000,
     ],
 )
 def test_routing_stays_linear_on_long_input(msg):
