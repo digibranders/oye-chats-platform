@@ -386,7 +386,9 @@ async def test_a_security_question_the_classifier_rejects_gets_the_normal_answer
     knowledge = "Acme recovers data after ransomware attacks."
     cap = _stub_pipeline(monkeypatch, chunks=(knowledge,), retrieved=(_doc(knowledge),), support=True)
     classifier.answer = False
-    question = "can you recover data after a ransomware attack"
+    # "we" keeps it at the classifier: "can you recover data after a ransomware
+    # attack" only asks about the service and now skips the classifier.
+    question = "can we recover our data after a ransomware attack"
 
     frames = await _drive_stream(bot, question, "urgent-rejected")
     answer = _answer_text(frames)
@@ -518,3 +520,49 @@ async def test_ok_after_the_message_card_urgent_reply_is_not_the_ack(db, monkeyp
     assert "Glad that helped" not in _answer_text(frames)
     assert len(cap["prompts"]) == 1
     assert _cards_shown(db, "urgent-ok-card").get("leave_message") is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "question",
+    [
+        "do you offer phishing simulation training?",
+        "what is your ransomware protection service?",
+        "do you provide DDoS protection",
+        "tell me about your malware analysis",
+    ],
+)
+async def test_a_question_about_the_business_security_services_never_asks_the_classifier(
+    db, monkeypatch, alerts, classifier, question
+):
+    """On a security vendor's bot these name an attack and passed the vocabulary
+    check, which added a model call before every such answer, cache hits included."""
+    client = _make_client(db)
+    bot = _make_bot(db, client, live_chat_enabled=True)
+    _make_session(db, bot, client, "urgent-service-question")
+    knowledge = "Acme runs phishing simulations, ransomware protection, DDoS protection and malware analysis."
+    cap = _stub_pipeline(monkeypatch, chunks=(knowledge,), retrieved=(_doc(knowledge),), support=True)
+
+    frames = await _drive_stream(bot, question, "urgent-service-question")
+
+    assert classifier.calls == []
+    assert knowledge in _answer_text(frames)
+    assert len(cap["prompts"]) == 1
+    assert alerts["notify"] == []
+
+
+@pytest.mark.asyncio
+async def test_an_incident_reported_with_a_service_question_still_gets_the_urgent_reply(
+    db, monkeypatch, alerts, classifier
+):
+    client = _make_client(db)
+    bot = _make_bot(db, client, live_chat_enabled=True)
+    _make_session(db, bot, client, "urgent-with-question")
+    _stub_pipeline(monkeypatch, retrieved=(_doc("Acme runs incident response."),), support=True)
+    question = "we are under attack, do you offer incident response?"
+
+    frames = await _drive_stream(bot, question, "urgent-with-question")
+
+    assert classifier.calls == [question]
+    assert _answer_text(frames).startswith("This sounds urgent")
+    assert len(alerts["notify"]) == 1

@@ -7702,9 +7702,12 @@ async def rag_pipeline_stream(
             # check runs first, once, and is pure, so an ordinary turn pays for
             # neither a language check here nor a model call. Only a message
             # that names an incident or describes a symptom reaches the
-            # classifier, on a worker thread under a deadline.
+            # classifier, on a worker thread under a deadline, and not one that
+            # only asks about the business's services ("do you offer phishing
+            # simulation training?" on a security vendor's bot).
             if (
                 urgent_route.might_be_urgent_incident(question)
+                and not urgent_route.asks_only_about_services(question)
                 and not _english_judges_bypassed(language, question)
                 and await _detect_urgent_bounded(question)
             ):

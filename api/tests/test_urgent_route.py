@@ -888,3 +888,66 @@ def test_only_an_emergency_or_incident_response_link_counts(keyword):
 def test_an_incident_response_link_counts():
     links = [{"keyword": "incident response", "url": "https://acme.com/ir"}]
     assert emergency_url_from_answer_links(links) == "https://acme.com/ir"
+
+
+# ── Questions about the business's security services skip the classifier ────
+
+#: What a security vendor's visitors ask about its services. Each names an attack,
+#: so it passes the vocabulary check, but it reports nothing and asks for no help.
+_SERVICE_QUESTIONS = [
+    "do you offer phishing simulation training?",
+    "what is your ransomware protection service?",
+    "do you provide DDoS protection",
+    "tell me about your malware analysis",
+    "hi, do you provide website defacement monitoring?",
+    "how does your ransomware recovery service work?",
+    "is your SOC able to detect credential stuffing attacks?",
+    "could you explain your business email compromise protection?",
+    "which DDoS attack mitigation plans do you have?",
+    "can you tell me about your dark web monitoring?",
+]
+#: A question about the services that comes with a report, a plea for help, an
+#: incident in progress, or news about the business's own systems. The classifier
+#: still decides each one.
+_SERVICE_QUESTIONS_THAT_STILL_REACH_THE_CLASSIFIER = [
+    "we are under attack, do you offer incident response?",
+    "do you offer incident response? we've been hacked",
+    "could you help asap, ransomware attack",
+    "can you help? ransomware encrypted the file server",
+    "does your team remove malware? my laptop is infected",
+    "what do you charge for ransomware recovery, our servers are encrypted",
+    "tell me about your incident response, someone hacked us",
+    "do you handle an active breach?",
+    "is your website hacked? it redirects to a casino",
+    "do you offer ddos protection right now? the site is down under a ddos attack",
+    "are you aware your checkout page is sending card numbers somewhere?",
+    "did you know your login page shows a phishing warning?",
+    "do you offer ransomware recovery? urgent",
+]
+
+
+@pytest.mark.parametrize("message", _SERVICE_QUESTIONS)
+def test_a_question_about_the_business_services_skips_the_classifier(message):
+    assert might_be_urgent_incident(message), "precondition: the vocabulary check passes it"
+    assert urgent_route.asks_only_about_services(message) is True
+
+
+@pytest.mark.parametrize("message", _SERVICE_QUESTIONS_THAT_STILL_REACH_THE_CLASSIFIER)
+def test_a_service_question_with_a_report_or_a_plea_still_reaches_the_classifier(message):
+    assert might_be_urgent_incident(message), "precondition: the vocabulary check passes it"
+    assert urgent_route.asks_only_about_services(message) is False
+
+
+@pytest.mark.parametrize("message", _REPORTED_INCIDENTS + _REVIEWED_INCIDENTS)
+def test_no_labelled_incident_is_taken_for_a_service_question(message):
+    assert urgent_route.asks_only_about_services(message) is False
+
+
+@pytest.mark.parametrize("message", [None, 42, "", "   ", "what are your opening hours?"])
+def test_a_message_without_incident_words_is_not_a_service_question_about_them(message):
+    assert urgent_route.asks_only_about_services(message) is False
+
+
+def test_the_service_question_check_is_linear_on_long_input():
+    message = "do you offer ddos protection for your clients " * 500 + "?"
+    assert timeit.timeit(lambda: urgent_route.asks_only_about_services(message), number=1) < 0.5

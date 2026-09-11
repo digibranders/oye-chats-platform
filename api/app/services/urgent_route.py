@@ -27,6 +27,14 @@ So the decision has three stages:
    down per clause for a hypothetical, a past incident and a question about the
    service.
 
+Between stages 1 and 2, ``asks_only_about_services`` skips the classifier for a
+message that only asks the business about what it sells. On a security vendor's
+bot "do you offer phishing simulation training?" names an attack, passes stage 1
+and would cost a model call before every such answer. The skip needs every
+sentence naming an incident to open as a question or request to the business,
+and no first-person word, plea, incident verb or incident in progress anywhere,
+so "we are under attack, do you offer incident response?" still reaches the model.
+
 ``is_urgent_incident`` runs the three in order on the calling thread. The chat
 stream runs the vocabulary check itself on the event loop, then
 ``rag_service._detect_urgent_bounded``, which runs ``classify_urgent_incident``
@@ -623,7 +631,12 @@ def is_urgent_incident(question: object) -> bool:
     the classifier decides, and any classifier error hands the decision to the
     fallback rules.
     """
-    return isinstance(question, str) and might_be_urgent_incident(question) and classify_urgent_incident(question)
+    return (
+        isinstance(question, str)
+        and might_be_urgent_incident(question)
+        and not asks_only_about_services(question)
+        and classify_urgent_incident(question)
+    )
 
 
 # ── Stage 3: fallback rules, only when the model fails ────────────────────────
@@ -712,11 +725,14 @@ _PAST_RE = re.compile(
     r"|before(?!\s+(?:i|we|you|he|she|they|it|the|a|an|anyone|someone|everything)\b))\b"
 )
 
+#: A greeting before the first word that counts: "hi, do you ...".
+_GREETING = r"(?:(?:hi|hello|hey)\b[\s,!]*)?"
+#: Words that open a question to the business.
+_QUESTION_OPENERS = r"(?:do|does|can|could|is|are|will|would|what|which)"
+
 #: A sentence that opens as a question to the business: "do you handle an active
 #: breach?". A leading greeting is allowed so "hi, do you ..." reads the same.
-_SERVICE_QUESTION_RE = re.compile(
-    r"(?i)\s*(?:(?:hi|hello|hey)\b[\s,!]*)?(?:do|does|can|could|is|are|will|would|what|which)\b"
-)
+_SERVICE_QUESTION_RE = re.compile(rf"(?i)\s*{_GREETING}{_QUESTION_OPENERS}\b")
 
 #: A sentence: rules never cross a full stop or a question mark. "!" stays inside
 #: so "ransomware!!! help" is one sentence.
@@ -813,6 +829,88 @@ def _fallback_is_urgent(question: object) -> bool:
     if not isinstance(question, str) or not question.strip():
         return False
     return any(_sentence_reports_incident(sentence.group(0)) for sentence in _SENTENCE_RE.finditer(question))
+
+
+# ── Before stage 2: questions about the business's own services ──────────────
+#
+# Any doubt goes to the classifier. The skip only has to recognise the plain
+# question a vendor's visitor asks about what it sells; a report, a plea or an
+# incident in progress anywhere in the message is left to the model.
+
+#: A question or request to the business: the openers of ``_SERVICE_QUESTION_RE``
+#: plus "how", "who", "where", "what's", "tell me about", "explain" and "describe".
+_SERVICE_ASK_RE = re.compile(
+    rf"(?i)\s*{_GREETING}(?:{_QUESTION_OPENERS}|how|who|where|what['’]?s"
+    r"|tell\s+(?:me|us)\s+(?:more\s+)?about|explain|describe)\b"
+)
+
+#: The business addressed directly: "do you offer", "what is your".
+_SECOND_PERSON_RE = re.compile(r"(?i)\b(?:you|your|yours|u|ur)\b")
+
+#: The visitor or their organisation. "me" after "tell", "show", "send", "give" or
+#: "let" belongs to a request to the business ("can you tell me about your ..."),
+#: so it does not count.
+_FIRST_PERSON_RE = re.compile(
+    r"(?i)\b(?:we|we['’](?:re|ve|d|ll)|our|ours|ourselves|us|i|i['’](?:m|ve|d|ll)|im|ive|my|mine|myself"
+    r"|(?<!tell\s)(?<!show\s)(?<!send\s)(?<!give\s)(?<!let\s)me)\b"
+)
+
+#: A plea or urgency, or news about the business's own systems ("are you aware
+#: your checkout page...", "did you know your login page..."). "help companies
+#: recover" describes a service, so it does not count.
+_PLEA_RE = re.compile(
+    r"(?i)!|\b(?:help(?!\s+(?:companies|businesses|organi[sz]ations|clients|customers|firms|brands|teams)\b)"
+    r"|asap|urgent(?:ly)?|emergency|immediately|hurry|now|please|pls|plz|sos"
+    r"|aware|notic(?:e|ed|ing)|reali[sz](?:e|ed)|did\s+you\s+know)\b"
+)
+
+
+def asks_only_about_services(question: object) -> bool:
+    """Whether a message that passed ``might_be_urgent_incident`` only asks the business about its services.
+
+    True when every sentence that names an incident opens as a question or a
+    request to the business ("do you offer phishing simulation training?", "tell
+    me about your malware analysis"), names it in that opening clause and
+    addresses the business as "you" or "your", and the rest of the message has
+    no first-person word, no plea or urgency, no news about the business's own
+    systems, no incident verb ("hacked", "been breached"), nothing in progress and
+    no attacker acting on anyone. The chat stream then skips the classifier.
+    Everything else still reaches it: "we are under attack, do you offer incident
+    response?", "could you help asap, ransomware attack", "do you handle an active
+    breach?". Pure and linear.
+    """
+    if not isinstance(question, str) or not question.strip():
+        return False
+    # The same folding as ``might_be_urgent_incident``, which the vocabulary patterns expect.
+    text = question.replace("İ", "i").lower()
+    rest: list[str] = []
+    names_an_incident = False
+    for match in _SENTENCE_RE.finditer(text):
+        sentence = match.group(0)
+        if _VOCABULARY_RE.search(sentence) is None:
+            rest.append(sentence)
+            continue
+        opener = _SERVICE_ASK_RE.match(sentence)
+        if opener is None or _SECOND_PERSON_RE.search(sentence) is None:
+            return False
+        # "could you help asap, ransomware attack": the incident sits in a later clause.
+        clause_break = _CLAUSE_BREAK_RE.search(sentence, opener.end())
+        if clause_break is not None and _VOCABULARY_RE.search(sentence, clause_break.start()) is not None:
+            return False
+        names_an_incident = True
+        rest.append(sentence[opener.end() :])
+    if not names_an_incident:
+        # Only a pattern that spans a full stop (a ".locked" extension) passed stage 1.
+        return False
+    remainder = ". ".join(rest)
+    return not (
+        _FIRST_PERSON_RE.search(remainder)
+        or _PLEA_RE.search(remainder)
+        or _INCIDENT_VERB_RE.search(remainder)
+        or _IN_PROGRESS_RE.search(remainder)
+        or _PRESENT_RE.search(remainder)
+        or _ATTACKER_RE.search(remainder)
+    )
 
 
 def emergency_url_from_answer_links(answer_links: object) -> str | None:
