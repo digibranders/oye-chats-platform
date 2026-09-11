@@ -93,6 +93,63 @@ COUNTRY_COVERAGE_PROSE = (
     "Vietnam."
 )
 
+# ── B1 approval-review fixtures: six real picker shapes the first pass missed ─
+#
+# Six real-world picker layouts, all built from the same 31-country list
+# above so every one comfortably clears the 25-distinct-country threshold.
+
+# "AF Afghanistan\nAL Albania\n...": a two-letter code before every name, a
+# real newline between entries.
+ISO_CODE_PICKER = "\n".join(f"{name[:2].upper()} {name}" for name in COUNTRIES.split())
+
+# "🇺🇸 Afghanistan\n🇺🇸 Albania\n...": a flag emoji before every name. The
+# flag doesn't need to match the country for this test -- only that flag
+# *shaped* debris between two place names reads as a picker, not prose.
+FLAG_PICKER = "\n".join(f"\U0001f1fa\U0001f1f8 {name}" for name in COUNTRIES.split())
+
+# "Australia, Austria, ..., France, Other": a plain comma list ending in the
+# picker's own "Other" option, no "and" anywhere.
+COMMA_LIST_WITH_OTHER = ", ".join(COUNTRIES.split()) + ", Other"
+
+# "○ Australia ○ Austria ○ ...": a radio-button bullet before every name.
+RADIO_BUTTON_PICKER = " ".join(f"○ {name}" for name in COUNTRIES.split())
+
+# "1. Australia\n2. Austria\n...": a numbered list.
+NUMBERED_LIST_PICKER = "\n".join(f"{i}. {name}" for i, name in enumerate(COUNTRIES.split(), start=1))
+
+# "Select State: Andhra Pradesh, Arunachal Pradesh, ...": a comma list under
+# a "Select" header, no "and" anywhere. Spelled out by hand (rather than
+# reformatted from the space-separated INDIAN_STATES fixture above) since
+# several state names are themselves multi-word ("Andhra Pradesh") and
+# would be split apart by a naive word-by-word join.
+SELECT_STATE_COMMA_LIST = (
+    "Select State: Andhra Pradesh, Arunachal Pradesh, Assam, Bihar, Chhattisgarh, Goa, Gujarat, "
+    "Haryana, Himachal Pradesh, Jharkhand, Karnataka, Kerala, Madhya Pradesh, Maharashtra, Manipur, "
+    "Meghalaya, Mizoram, Nagaland, Odisha, Punjab, Rajasthan, Sikkim, Tamil Nadu, Telangana, Tripura, "
+    "Uttar Pradesh, Uttarakhand, West Bengal"
+)
+
+# ── B1: three more genuine coverage sentences (all comma-separated, all
+# ending in "and <last place>."), to make sure the new comma-picker check
+# doesn't start flagging real prose just because it's comma-separated.
+US_COVERAGE_PROSE = (
+    "Our support team covers customers across Alabama, Alaska, Arizona, Arkansas, California, "
+    "Colorado, Connecticut, Delaware, Florida, Georgia, Hawaii, Idaho, Illinois, Indiana, Iowa, "
+    "Kansas, Kentucky, Louisiana, Maine, Maryland, Massachusetts, Michigan, Minnesota, Mississippi, "
+    "Missouri, Montana, Nebraska, Nevada and Ohio."
+)
+COUNTRY_COVERAGE_PROSE_2 = (
+    "We proudly ship orders to Egypt, Estonia, Finland, France, Gabon, Gambia, Georgia, Germany, "
+    "Ghana, Greece, Greenland, Grenada, Guatemala, Guyana, Haiti, Honduras, Hungary, Iceland, India, "
+    "Indonesia, Iran, Iraq, Ireland, Israel, Italy, Jamaica, Japan, Jordan, Kazakhstan and Kenya."
+)
+INDIAN_COVERAGE_PROSE_2 = (
+    "Field engineers are based across Andhra Pradesh, Arunachal Pradesh, Assam, Bihar, Chhattisgarh, "
+    "Goa, Gujarat, Haryana, Himachal Pradesh, Jharkhand, Karnataka, Kerala, Madhya Pradesh, "
+    "Maharashtra, Manipur, Meghalaya, Mizoram, Nagaland, Odisha, Punjab, Rajasthan, Sikkim and "
+    "Tamil Nadu."
+)
+
 
 # ── option_list_kind: form pickers vs real coverage prose (finding 1) ───────
 
@@ -147,6 +204,47 @@ def test_the_real_eventus_dial_code_picker_is_still_an_option_list():
     assert match is not None
     assert match.kind == "form_options"
     assert match.category == "countries"
+
+
+# ── B1: six more picker shapes the approval review found reading as prose ──
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        ISO_CODE_PICKER,
+        FLAG_PICKER,
+        COMMA_LIST_WITH_OTHER,
+        RADIO_BUTTON_PICKER,
+        NUMBERED_LIST_PICKER,
+        SELECT_STATE_COMMA_LIST,
+    ],
+    ids=["iso_codes", "flags", "comma_with_other", "radio_bullets", "numbered", "select_state_commas"],
+)
+def test_more_picker_shapes_are_form_options(content):
+    match = option_list_match(content)
+    assert match is not None
+    assert match.kind == "form_options"
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        INDIAN_COVERAGE_PROSE,
+        COUNTRY_COVERAGE_PROSE,
+        US_COVERAGE_PROSE,
+        COUNTRY_COVERAGE_PROSE_2,
+        INDIAN_COVERAGE_PROSE_2,
+    ],
+    ids=["indian_reviewer", "country_reviewer", "us_new", "country_new", "indian_new"],
+)
+def test_comma_separated_coverage_prose_ending_in_and_stays_a_place_list(content):
+    # All five: a real coverage sentence, comma-separated, whose last item
+    # is joined with "and" -- never a picker, no matter how many places it
+    # names or whether it also happens to carry a stray "Select"/"Other".
+    match = option_list_match(content)
+    assert match is not None
+    assert match.kind == "place_list"
 
 
 # ── Country list coverage (finding 3) ────────────────────────────────────────
@@ -215,6 +313,78 @@ def test_option_list_kind_stays_linear_on_a_large_chunk():
     placeholder_findings(content)
     elapsed = time.perf_counter() - start
     assert elapsed < 0.2
+
+
+# ── B3: placeholder-example detection stays linear, not quadratic ──────────
+#
+# Production, 2026-09-11: ``_in_fenced_or_backtick_region`` rescanned the
+# entire chunk on every single match. 100,000 characters with about 4,800
+# example addresses took 240-325ms; each scenario below is a different
+# shape of "many matches in one chunk" and must independently finish well
+# under that, combining ``placeholder_findings`` and ``option_list_kind``
+# the same way the pre-existing linear test above does.
+
+_TIMING_CONTENT_CHARS = 100_000
+_TIMING_BUDGET_SECONDS = 0.2
+
+
+def _dense_unique_addresses(n_chars: int) -> str:
+    pieces: list[str] = []
+    length = 0
+    i = 0
+    while length < n_chars:
+        piece = f"contact{i}@example.com "
+        pieces.append(piece)
+        length += len(piece)
+        i += 1
+    return "".join(pieces)[:n_chars]
+
+
+def _dense_repeated_addresses(n_chars: int) -> str:
+    piece = "contact@example.com "
+    reps = n_chars // len(piece) + 1
+    return (piece * reps)[:n_chars]
+
+
+def _backtick_scattered_unique_addresses(n_chars: int) -> str:
+    pieces: list[str] = []
+    length = 0
+    i = 0
+    while length < n_chars:
+        piece = f"`contact{i}@example.com` "
+        pieces.append(piece)
+        length += len(piece)
+        i += 1
+    return "".join(pieces)[:n_chars]
+
+
+def _dense_matches_inside_one_fenced_block(n_chars: int) -> str:
+    prefix, suffix = "```\n", "\n```"
+    inner_len = n_chars - len(prefix) - len(suffix)
+    return prefix + _dense_unique_addresses(inner_len)[:inner_len] + suffix
+
+
+@pytest.mark.parametrize(
+    "content_factory",
+    [
+        _dense_unique_addresses,
+        _dense_repeated_addresses,
+        _backtick_scattered_unique_addresses,
+        _dense_matches_inside_one_fenced_block,
+    ],
+    ids=["dense_unique", "dense_repeated", "backtick_scattered_unique", "dense_inside_one_fenced_block"],
+)
+def test_placeholder_example_detection_stays_linear_on_dense_matches(content_factory):
+    import time
+
+    content = content_factory(_TIMING_CONTENT_CHARS)
+    assert len(content) == _TIMING_CONTENT_CHARS
+
+    start = time.perf_counter()
+    placeholder_findings(content)
+    option_list_kind(content)
+    elapsed = time.perf_counter() - start
+    assert elapsed < _TIMING_BUDGET_SECONDS
 
 
 # ── Placeholder findings: kind, dedup (finding 2 basics + finding 5) ────────
@@ -392,6 +562,55 @@ def test_a_real_prose_mention_of_a_placeholder_domain_is_not_in_example():
     # not a code sample -- still worth a human's attention.
     text = "File an issue or contact the platform team at platform-team@example.com for support."
     assert "platform-team@example.com" in placeholder_contacts(text)
+
+
+# ── B2: unfenced code examples (approval review) ────────────────────────────
+
+
+def test_an_unfenced_terraform_block_is_in_example():
+    text = 'variable "support_contact" {\n  default = "support@example.com"\n}'
+    findings = placeholder_findings(text)
+    assert findings and all(f.in_example for f in findings)
+    assert placeholder_contacts(text) == []
+
+
+def test_an_unfenced_ruby_constant_is_in_example():
+    text = 'ADMIN_EMAIL = "admin@example.com"'
+    findings = placeholder_findings(text)
+    assert findings and all(f.in_example for f in findings)
+    assert placeholder_contacts(text) == []
+
+
+def test_an_unfenced_sql_insert_is_in_example():
+    text = "INSERT INTO users (name, email, phone) VALUES ('Jane Doe', 'jane.doe@example.com', '555-123-4567');"
+    findings = placeholder_findings(text)
+    assert findings and all(f.in_example for f in findings)
+    assert placeholder_contacts(text) == []
+
+
+def test_a_footer_email_label_is_not_in_example():
+    # A real contact footer, one field per line, no indentation -- must not
+    # be mistaken for a YAML "key: value" config line.
+    text = "Contact us\nEmail: yourname@company.com\nPhone: (555) 123-4567\nAddress: 123 Main Street"
+    findings = placeholder_findings(text)
+    assert findings
+    assert all(not f.in_example for f in findings)
+    contacts = placeholder_contacts(text)
+    assert "yourname@company.com" in contacts
+    assert "(555) 123-4567" in contacts
+    assert "123 Main Street" in contacts
+
+
+def test_a_prose_phone_number_with_no_code_context_is_not_in_example():
+    text = "Call us at (555) 123-4567 for support any time."
+    findings = placeholder_findings(text)
+    assert findings and all(not f.in_example for f in findings)
+    assert "(555) 123-4567" in placeholder_contacts(text)
+
+
+def test_a_bracketed_zero_placeholder_is_found():
+    found = placeholder_contacts("Fax: (000) 000-0000")
+    assert "(000) 000-0000" in found
 
 
 @pytest.mark.skipif(os.getenv("DB_URL") is None, reason="needs a reachable Postgres at DB_URL")
