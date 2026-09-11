@@ -41,7 +41,7 @@ from dataclasses import dataclass
 # Words/phrases that, by themselves or with light decoration, are pure
 # greetings. Match must be the whole message (after trimming punctuation).
 # Stretched spellings ("hiiiiii", "heyyyy") are matched through
-# ``_term_spellings``, so a word is listed once plus any double-letter spelling
+# ``term_spellings``, so a word is listed once plus any double-letter spelling
 # visitors type ("hii", "heyy"), which that function leaves alone.
 _GREETING_TERMS = {
     "hi",
@@ -279,7 +279,7 @@ def _normalise(text: str) -> str:
 _STRETCHED_RUN_RE = re.compile(r"([a-z])\1{2,}")
 
 
-def _term_spellings(norm: str) -> tuple[str, str, str]:
+def term_spellings(norm: str) -> tuple[str, str, str]:
     """``norm`` and its two de-stretched spellings, for the term-set lookups.
 
     Visitors stretch short replies ("hiiiiiiiiii", "okkkk", "nooo") and the
@@ -369,11 +369,11 @@ def route_intent(
             return _bot_name(company_name)
 
     # 3) Greetings, acks and negative acks. Only if the WHOLE message is a
-    #    term, allowing for stretched letters (see ``_term_spellings``). Matched
+    #    term, allowing for stretched letters (see ``term_spellings``). Matched
     #    ahead of the gibberish check below: a stretched "k", "thx", "gm" or "n"
     #    is six or more consonants, which that check would read as unclear.
     if word_count <= 4:
-        spellings = _term_spellings(norm)
+        spellings = term_spellings(norm)
         if any(spelling in _GREETING_TERMS for spelling in spellings):
             return _greeting(company_name)
         if any(spelling in _ACK_TERMS for spelling in spellings):

@@ -64,7 +64,7 @@ from app.services.email_service import (
 )
 from app.services.groundedness_gate import check_groundedness, should_sample
 from app.services.handoff_reply import handoff_reply, unhelped_offer
-from app.services.intent_router import route_intent, strip_greeting_lead
+from app.services.intent_router import route_intent, strip_greeting_lead, term_spellings
 from app.services.intent_service import (
     GENERIC_INVITE_RE,
     HANDOFF_OFFER_RE,
@@ -4752,7 +4752,8 @@ def _clean_visitor_name(raw: str) -> str | None:
     name = " ".join((raw or "").split()).strip(" .,!?;:\"'")
     if not name or any(ch.isdigit() for ch in name) or len(name) > 40:
         return None
-    if name.lower() in _NAME_NON_ANSWERS:
+    # A stretched filler word ("hiiiii", "okkkk") is the same non-answer as the plain one.
+    if any(spelling in _NAME_NON_ANSWERS for spelling in term_spellings(name.lower())):
         return None
     tokens = name.split()
     if not 1 <= len(tokens) <= 2:
@@ -4864,7 +4865,7 @@ def _is_name_decline(question: str) -> bool:
     low = " ".join((question or "").lower().split()).strip(" ?.!,")
     if not low:
         return True
-    if low in _NAME_NON_ANSWERS:
+    if any(spelling in _NAME_NON_ANSWERS for spelling in term_spellings(low)):
         return True
     return low.startswith(_NAME_DECLINE_STARTS)
 
