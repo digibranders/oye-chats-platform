@@ -135,20 +135,35 @@ class TestAFollowUpReachesTheModel:
         assert len(cap["prompts"]) == 1
 
     @pytest.mark.asyncio
-    async def test_an_elliptical_follow_up_is_judged_in_context_and_skips_the_qa_cache(self, db, monkeypatch):
+    async def test_an_elliptical_follow_up_is_judged_in_context(self, db, monkeypatch):
         bot, cap, judge, _classifier = _bot(db, monkeypatch, "fu-3")
         question = "paid or unpaid? and is remote ok"
-        key = rs.qa_response_key(
-            bot.id, rs.hashlib.sha256(rs._normalize_question_for_cache(question).encode()).hexdigest()[:32], None
-        )
-        cap["cache"].store[key] = {"answer": "CACHED FROM ANOTHER CONVERSATION", "sources": []}
         first_reply = await _answered_first(db, bot, "fu-3", judge, question="do u offer internships")
         judge.relevant = True
 
         frames = await _drive_stream(bot, question, "fu-3")
 
-        assert "CACHED FROM ANOTHER CONVERSATION" not in _answer_text(frames)
+        assert _answer_text(frames) == _ANSWER
+        assert len(cap["prompts"]) == 2
         assert judge.calls[-1].context == ConversationContext(previous_reply=first_reply, visitor_message=question)
+
+    @pytest.mark.asyncio
+    async def test_a_short_faq_after_an_answer_is_served_from_the_qa_cache(self, db, monkeypatch):
+        """ "parking available?" names no strict on-scope word, but it is the same
+        question in every conversation: it reads the QA cache on turn two."""
+        bot, cap, judge, _classifier = _bot(db, monkeypatch, "fu-6")
+        question = "parking available?"
+        key = rs.qa_response_key(
+            bot.id, rs.hashlib.sha256(rs._normalize_question_for_cache(question).encode()).hexdigest()[:32], None
+        )
+        cap["cache"].store[key] = {"answer": "Yes, there is free parking on site.", "sources": []}
+        await _answered_first(db, bot, "fu-6", judge)
+        judge.relevant = True
+
+        frames = await _drive_stream(bot, question, "fu-6")
+
+        assert "Yes, there is free parking on site." in _answer_text(frames)
+        assert len(cap["prompts"]) == 1, "served from the cache, no generation"
 
     @pytest.mark.asyncio
     async def test_a_first_turn_and_a_standalone_question_are_judged_without_context(self, db, monkeypatch):
@@ -193,7 +208,7 @@ class TestOffTopicIsStillRefused:
         assert rs._is_known_refusal(_answer_text(frames), "Acme"), _answer_text(frames)
         assert len(cap["prompts"]) == 1
         assert classifier.calls == [], "no dissatisfaction vocabulary, so no model call"
-        assert (judge.calls[-1].context is not None) == rs._looks_like_follow_up(question)
+        assert (judge.calls[-1].context is not None) == rs._leans_on_the_last_reply(question)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("question", ["who won ipl last season", "write me a python function to reverse a string"])
@@ -231,6 +246,18 @@ class TestWaitingOnTheTeamGetsTheForm:
         persisted = _messages(db, session_id, role="bot")
         assert persisted[-1].id == meta["message_id"]
         assert persisted[-1].content == _answer_text(frames)
+
+    @pytest.mark.asyncio
+    async def test_a_real_question_after_the_form_is_answered(self, db, monkeypatch):
+        bot, cap, _judge, _classifier = _bot(db, monkeypatch, "wait-question")
+        monkeypatch.setattr(rs, "detect_handoff_intent", lambda q, **_k: q == "connect me to someone from sales")
+        first = await _drive_stream(bot, "connect me to someone from sales", "wait-question")
+        assert _final_meta(first)["suggest_handoff"] is True, "precondition: the form was offered"
+
+        frames = await _drive_stream(bot, "where is your team located", "wait-question")
+
+        assert _answer_text(frames) == _ANSWER
+        assert len(cap["prompts"]) == 1
 
     @pytest.mark.asyncio
     async def test_nobody_available_gets_the_waiting_wording(self, db, monkeypatch):

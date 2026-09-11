@@ -177,7 +177,7 @@ class ConversationContext:
     ``previous_reply`` is the bot's reply the visitor is answering and
     ``visitor_message`` the visitor's own words, before any rewrite. The caller
     passes one only for a follow-up-shaped turn right after a bot reply
-    (``rag_service._looks_like_follow_up``): a standalone question keeps its
+    (``rag_service._leans_on_the_last_reply``): a standalone question keeps its
     context-free prompt and its shared cache entry.
     """
 

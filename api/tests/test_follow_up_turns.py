@@ -51,10 +51,6 @@ class TestAFollowUpIsRecognised:
             "tell me about",
             "what can you tell me regarding",
             "more on",
-            # Short and elliptical: no pronoun, and no subject of its own.
-            "paid or unpaid? and is remote ok",
-            "d'accord, et c'est disponible en France ?",
-            "how long?",
             # The existing signals still count.
             "tell me more about it",
             "how about pricing?",
@@ -75,19 +71,64 @@ class TestAFollowUpIsRecognised:
             "",
             "Can you walk me through how onboarding works for a two hundred person company?",
             "आपकी सेवाएं क्या हैं",
+            # Short and subjectless, but asked the same way in any conversation.
+            # Only the relevance judge reads these in context; the QA cache and
+            # the rewrite treat them as the FAQs they usually are.
+            "parking available?",
+            "wheelchair access",
+            "gluten free options",
+            "cancellation policy",
+            "vegan menu",
+            "emi options",
+            "is the wifi on",
+            "paid or unpaid? and is remote ok",
         ],
     )
     def test_standalone_messages(self, question):
         assert rs._looks_like_follow_up(question) is False
 
-    def test_a_short_follow_up_is_never_served_from_or_written_to_the_qa_cache(self):
-        """The QA cache is keyed on the words alone, so "paid or unpaid?" answered
-        about internships in one conversation would be replayed about plans in
-        another. The write side reads the same definition as the read side."""
-        base = {"answer": "Yes, they are paid.", "visitor_name": None, "opener": "", "probe_active": False}
-        assert not rs._answer_is_cacheable(**base, question="paid or unpaid? and is remote ok", prior_turns=True)
+    def test_the_qa_cache_skips_a_follow_up_but_keeps_a_short_faq(self):
+        """The QA cache is keyed on the words alone, so "tell me moer about "
+        answered about one reply would be replayed after another. A short FAQ
+        with no subject word ("parking available?") is the same question in
+        every conversation, so it keeps its cache entry. The write side reads
+        the same definition as the read side."""
+        base = {"answer": "Yes, there is parking.", "visitor_name": None, "opener": "", "probe_active": False}
         assert not rs._answer_is_cacheable(**base, question="tell me moer about ", prior_turns=True)
-        assert rs._answer_is_cacheable(**base, question="paid or unpaid? and is remote ok", prior_turns=False)
+        assert not rs._answer_is_cacheable(**base, question="tell me more about it", prior_turns=True)
+        assert rs._answer_is_cacheable(**base, question="parking available?", prior_turns=True)
+        assert rs._answer_is_cacheable(**base, question="tell me moer about ", prior_turns=False)
+
+
+class TestTheJudgeReadsAShortFragmentInContext:
+    @pytest.mark.parametrize(
+        "question",
+        [
+            "paid or unpaid? and is remote ok",
+            "d'accord, et c'est disponible en France ?",
+            "how long?",
+            "parking available?",
+            "tell me moer about ",
+            "tell me more about it",
+            "who is he?",
+        ],
+    )
+    def test_leans_on_the_last_reply(self, question):
+        assert rs._leans_on_the_last_reply(question) is True
+
+    @pytest.mark.parametrize(
+        "question",
+        [
+            "What's your price?",
+            "office hours",
+            "when do you open",
+            "",
+            "Can you walk me through how onboarding works for a two hundred person company?",
+            "आपकी सेवाएं क्या हैं",
+        ],
+    )
+    def test_a_standalone_question_is_judged_alone(self, question):
+        assert rs._leans_on_the_last_reply(question) is False
 
 
 class TestAskingForMoreOfTheLastReply:
@@ -116,6 +157,9 @@ class TestAskingForMoreOfTheLastReply:
             "what can you tell me regarding",
             "i'd like to know more about",
             "Tell me more abt it!",
+            "more on",
+            "details on",
+            "any info re",
         ],
     )
     def test_asks_for_more(self, question):
@@ -137,6 +181,12 @@ class TestAskingForMoreOfTheLastReply:
             "ok",
             "yes",
             "",
+            # A trailing "on" or "re" is not a request on its own.
+            "is the wifi on",
+            "are the lights still on",
+            "which floor is the gym on",
+            "is the sale on",
+            "what time does the store open re",
         ],
     )
     def test_does_not(self, question):
@@ -257,3 +307,13 @@ class TestTheRewrite:
         monkeypatch.setattr(rs, "generate_response", boom)
         question = "Can you walk me through how onboarding works for a two hundred person company?"
         assert rs.rewrite_query("s", question, self._history()) == question
+
+    @pytest.mark.parametrize("question", ["parking available?", "wheelchair access", "emi options"])
+    def test_a_short_faq_costs_no_rewrite(self, monkeypatch, question):
+        """The rewrite is a 3s-capped model call, in sequence on CAG-lite bots.
+        ``rewrite_query`` swallows a model error, so the calls are counted."""
+        prompts: list[str] = []
+        monkeypatch.setattr(rs, "generate_response", lambda prompt, **_k: (prompts.append(prompt), "rewritten")[1])
+
+        assert rs.rewrite_query("s", question, self._history()) == question
+        assert prompts == []

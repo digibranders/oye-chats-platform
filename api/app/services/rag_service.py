@@ -7076,8 +7076,10 @@ _ASK_FOR_MORE_WORDS: tuple[str, ...] = (
 )
 _ABOUT_WORDS: tuple[str, ...] = ("about", "abt")
 # A message that stops on one of these is waiting for the subject the last
-# reply supplied: "tell me about", "what can you tell me regarding".
-_DANGLING_PREPOSITIONS: tuple[str, ...] = ("about", "abt", "regarding", "on", "re")
+# reply supplied: "tell me about", "what can you tell me regarding". "on" and
+# "re" are not here: "is the wifi on" names its subject. They count only after
+# a request word ("more on", "details re"), which the filler check allows.
+_DANGLING_PREPOSITIONS: tuple[str, ...] = ("about", "abt", "regarding")
 _CONTINUE_BIGRAMS = frozenset({("go", "on"), ("keep", "going"), ("carry", "on")})
 # Words that carry no subject of their own around a request for more. A message
 # made only of these and the words above names nothing, so its subject is the
@@ -7134,7 +7136,8 @@ def _follow_up_words(question: str) -> list[str]:
 def _asks_for_more(question: str) -> bool:
     """True when the message asks for more of whatever was just said, and names
     nothing else: "tell me moer about ", "elaborate", "details?", "and?",
-    "go on", or any short message stopping on "about", "on" or "regarding".
+    "go on", "more on", or any short message stopping on "about" or
+    "regarding".
 
     Context-free; the pipeline pairs it with a bot reply immediately before the
     turn. "tell me more about cricket" is not one: it names its own subject, and
@@ -7166,8 +7169,12 @@ def _is_elliptical_fragment(question: str) -> bool:
     at any point in a conversation, while "paid or unpaid? and is remote ok"
     names nothing it could be about. A message put to the business in the second
     person ("when do you open") is about the business, so it is not a fragment
-    either, and keeps its QA cache entry. A message in another script is left
-    alone, as the English-tuned judges are for it.
+    either. A message in another script is left alone, as the English-tuned
+    judges are for it.
+
+    Broad on purpose, so it feeds only ``_leans_on_the_last_reply``: "parking
+    available?" and "emi options" are fragments too, and are the same FAQ in
+    every conversation.
     """
     if _ADDRESSES_THE_BUSINESS_RE.search(question or ""):
         return False
@@ -7180,24 +7187,34 @@ def _is_elliptical_fragment(question: str) -> bool:
 
 
 def _looks_like_follow_up(question: str) -> bool:
-    """True when the message depends on the conversation before it: a pronoun,
-    determiner or phrase signal (``_FOLLOW_UP_SIGNALS``), a request for more in
-    any spelling (``_asks_for_more``), or a short fragment with no subject of
-    its own (``_is_elliptical_fragment``).
+    """True when the message refers back to the conversation: a pronoun,
+    determiner or phrase signal (``_FOLLOW_UP_SIGNALS``), or a request for more
+    in any spelling (``_asks_for_more``, ``_mentions_more_about``).
 
-    One definition for three consumers, which must agree: ``rewrite_query``
-    rewrites such a message against history, the relevance gate judges it with
-    the bot's last reply beside it, and the QA cache, keyed on the words alone,
-    neither serves nor stores an answer to it once there is earlier conversation.
+    Two consumers, which must agree: ``rewrite_query`` rewrites such a message
+    against history, and the QA cache, keyed on the words alone, neither serves
+    nor stores an answer to it once there is earlier conversation. A short
+    fragment with no subject word ("parking available?") is not one: it is the
+    same FAQ in any conversation, so it keeps its cache entry and costs no
+    rewrite call. The relevance judge reads it in context anyway, through
+    ``_leans_on_the_last_reply``.
     """
     if not question:
         return False
-    return bool(
-        _FOLLOW_UP_SIGNAL_RE.search(question)
-        or _asks_for_more(question)
-        or _is_elliptical_fragment(question)
-        or _mentions_more_about(question)
-    )
+    return bool(_FOLLOW_UP_SIGNAL_RE.search(question) or _asks_for_more(question) or _mentions_more_about(question))
+
+
+def _leans_on_the_last_reply(question: str) -> bool:
+    """True when the relevance judge should read the message beside the bot's
+    last reply: a follow-up (``_looks_like_follow_up``) or a short fragment with
+    no subject of its own (``_is_elliptical_fragment``).
+
+    Broader than the follow-up rule because the only cost is a verdict cache
+    key unique to the conversation, and a fragment judged alone scores 0.00:
+    "paid or unpaid? and is remote ok" after an internships answer was refused
+    that way (reported from production on 2026-09-11).
+    """
+    return _looks_like_follow_up(question) or _is_elliptical_fragment(question)
 
 
 def _mentions_more_about(question: str) -> bool:
@@ -9803,15 +9820,16 @@ async def rag_pipeline_stream(
             # judged on its own words, scored 0.00 and refused (reported from
             # production on 2026-09-11): the rewrite had not fired, and even a
             # rewritten "paid or unpaid?" reads as nothing without the internships
-            # answer before it. Only for a follow-up-shaped turn right after a bot
-            # reply, the same definition the rewrite and the QA cache use: a
+            # answer before it. Only for a turn that leans on the reply right
+            # after one (``_leans_on_the_last_reply``, a follow-up or a short
+            # fragment, broader than the rule the rewrite and the QA cache use): a
             # standalone question keeps its context-free prompt and shared cache
             # entry, since the context is part of the verdict's key. A deferred
             # question replayed after the name answers no reply.
             _prior_reply = _reply_before_this_turn(history)
             _gate_context = (
                 ConversationContext(previous_reply=_prior_reply, visitor_message=question)
-                if _prior_reply and _prior_turns and _deferred_q is None and _looks_like_follow_up(question)
+                if _prior_reply and _prior_turns and _deferred_q is None and _leans_on_the_last_reply(question)
                 else None
             )
             if _judges_bypassed:
