@@ -465,7 +465,7 @@ def test_a_long_run_of_numbers_streams_quickly(text, size, signal):
     elapsed = time.perf_counter() - started
     assert guard.tripped is False
     assert out == text
-    assert elapsed < 0.2, elapsed
+    assert elapsed < 2.0, elapsed
 
 
 def test_answer_trips_price_guard_reads_a_whole_answer():

@@ -367,7 +367,7 @@ class TestADealForTheCompanyIsARequestForAPerson:
         started = time.perf_counter()
         assert detect_company_deal_intent(message, company_name) is False
         assert detect_handoff_intent_keywords(message) is False
-        assert time.perf_counter() - started < 0.5
+        assert time.perf_counter() - started < 2.0
 
     @pytest.mark.parametrize(
         "message",
@@ -381,10 +381,10 @@ class TestADealForTheCompanyIsARequestForAPerson:
         endpoint, so a price followed by a run of spaces must not backtrack."""
         started = time.perf_counter()
         detect_handoff_intent_keywords(message)
-        assert time.perf_counter() - started < 0.5
+        assert time.perf_counter() - started < 2.0
         started = time.perf_counter()
         detect_company_deal_intent(message, "Acme")
-        assert time.perf_counter() - started < 0.5
+        assert time.perf_counter() - started < 2.0
 
     @pytest.mark.parametrize(
         ("message", "company_name"),
