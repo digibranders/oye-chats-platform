@@ -19,6 +19,8 @@ from app.db.models import ChatSession
 from app.services import document_request
 from app.services import rag_service as rs
 from app.services.document_request import TOPIC_MIN_OVERLAP, DocumentIntentDecision
+from app.services.intent_router import route_intent as real_route_intent
+from app.services.intent_service import bot_offers_handoff
 from tests.test_rag_pipeline_defects import (
     _answer_text,
     _doc,
@@ -856,3 +858,29 @@ async def test_a_visitor_who_leaves_mid_retrieval_leaves_no_classifier_task_runn
 
     assert len(tasks) == 1
     assert tasks[0].cancelled()
+
+
+@pytest.mark.asyncio
+async def test_frustration_after_the_no_file_offer_gets_an_offer_of_the_team_and_a_yes_opens_the_form(
+    db, monkeypatch, classifier
+):
+    """The no-file offer sets no card flag, so "useless" after it is the router's
+    frustration reply, which offers the team, and a "yes" to that opens the form."""
+    client = _make_client(db)
+    bot = _make_bot(db, client, live_chat_enabled=True)
+    _make_session(db, bot, client, "docs-frustrated")
+    _stub_pipeline(monkeypatch, retrieved=(_doc("Acme does red teaming."),), support=True)
+    monkeypatch.setattr(rs, "route_intent", real_route_intent)
+    monkeypatch.setattr(rs, "_live_team_reachable", lambda *_a, **_k: True)
+    _catalog(monkeypatch, [])
+    classifier.answer = "send"
+
+    no_file = await _drive_stream(bot, "email me the kubernetes hardening datasheet", "docs-frustrated")
+    assert "downloadable document" in _answer_text(no_file), "precondition: the no-file offer"
+    frustrated = await _drive_stream(bot, "useless", "docs-frustrated")
+    yes = await _drive_stream(bot, "yes", "docs-frustrated")
+
+    assert bot_offers_handoff(_answer_text(frustrated)), _answer_text(frustrated)
+    assert "downloadable document" not in _answer_text(frustrated)
+    assert _final_meta(yes)["suggest_handoff"] is True
+    assert _cards(db, "docs-frustrated").get("handoff_offered") is True

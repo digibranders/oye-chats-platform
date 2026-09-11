@@ -7,9 +7,9 @@ from sqlalchemy import text
 
 from app.db.models import ChatSession, LeadInfo
 from app.db.repository import get_lead_info_by_session
+from app.services import document_request, urgent_route
 from app.services import rag_service as rs
-from app.services import urgent_route
-from app.services.handoff_reply import handoff_reply
+from app.services.handoff_reply import handoff_reply, unhelped_offer
 from app.services.intent_router import route_intent as real_route_intent
 from tests.test_rag_pipeline_defects import (
     _answer_text,
@@ -485,7 +485,7 @@ async def test_the_bounded_check_takes_the_classifier_answer_in_time(monkeypatch
 
 @pytest.mark.asyncio
 async def test_ok_after_the_offline_urgent_reply_opens_the_form_not_the_ack(db, monkeypatch, alerts):
-    """"ok" answers the urgent reply's offer. The team-offline wording used to close
+    """ "ok" answers the urgent reply's offer. The team-offline wording used to close
     without one the offer pattern knows, so the router answered "Glad that helped"."""
     client = _make_client(db)
     bot = _make_bot(db, client, live_chat_enabled=True)
@@ -566,3 +566,64 @@ async def test_an_incident_reported_with_a_service_question_still_gets_the_urgen
     assert classifier.calls == [question]
     assert _answer_text(frames).startswith("This sounds urgent")
     assert len(alerts["notify"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_incident_with_a_document_request_gets_the_urgent_reply_and_no_card(db, monkeypatch, alerts):
+    """The urgent check runs before the document route. A visitor under attack who
+    also asks for a brochure gets the priority reply and one alert, and no model
+    call is spent deciding about the brochure."""
+    client = _make_client(db)
+    bot = _make_bot(db, client, live_chat_enabled=True)
+    _make_session(db, bot, client, "urgent-brochure")
+    cap = _stub_pipeline(monkeypatch, retrieved=(_doc("Acme runs incident response."),), support=True)
+    monkeypatch.setattr(rs, "_live_team_reachable", lambda *_a, **_k: True)
+    brochure = {
+        "url": "https://acme.com/files/Incident-Response-Brochure.pdf",
+        "name": "Incident-Response-Brochure.pdf",
+    }
+    monkeypatch.setattr(rs, "get_bot_media_urls", lambda *_a, **_k: [{"files": [brochure]}])
+    document_calls: list[str] = []
+    monkeypatch.setattr(
+        document_request, "_classify_document_request_raw", lambda q: document_calls.append(q) or "send"
+    )
+
+    frames = await _drive_stream(
+        bot, "we are under a ransomware attack right now, send me your incident response brochure", "urgent-brochure"
+    )
+
+    meta = _final_meta(frames)
+    assert _answer_text(frames).startswith("This sounds urgent")
+    assert "media_card" not in meta
+    assert meta["suggest_handoff"] is True
+    assert document_calls == []
+    assert cap["prompts"] == []
+    assert len(alerts["notify"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_follow_ups_after_the_urgent_reply_alert_no_one_again_and_get_no_unhelped_offer(db, monkeypatch, alerts):
+    """Follow-ups the relevance gate rejects ("please hurry, what do we do now?") go
+    down the normal refusal path. The team was already alerted and offered, so there
+    is no second alert, no repeat of the urgent reply and no unhelped offer, while
+    the unhelped count still records the misses."""
+    client = _make_client(db)
+    bot = _make_bot(db, client, live_chat_enabled=True)
+    _make_session(db, bot, client, "urgent-follow-ups")
+    _stub_pipeline(monkeypatch, retrieved=(_doc("Acme sells office chairs."),), support=True, relevant=False)
+    monkeypatch.setattr(rs, "_live_team_reachable", lambda *_a, **_k: True)
+    offer = unhelped_offer(live_chat_enabled=True, team_available=True).text
+
+    await _drive_stream(bot, URGENT, "urgent-follow-ups")
+    replies = [
+        _answer_text(await _drive_stream(bot, message, "urgent-follow-ups"))
+        for message in ("please hurry, what do we do now?", "hello?? is anyone there")
+    ]
+
+    assert len(alerts["notify"]) == 1
+    for reply in replies:
+        assert offer not in reply, reply
+        assert "This sounds urgent" not in reply and "flagged" not in reply, reply
+    shown = _cards_shown(db, "urgent-follow-ups")
+    assert shown.get("handoff_offered") is True
+    assert shown.get("unhelped_streak") == 2
