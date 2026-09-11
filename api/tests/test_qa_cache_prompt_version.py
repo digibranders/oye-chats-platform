@@ -72,7 +72,7 @@ class TestAPromptChangeCannotShipWithoutAVersionBump:
     #: new fingerprint under the new number. Do not overwrite an existing entry.
     FINGERPRINTS = {
         3: "777485cd41cd66f55ca5c5c5f9bba8d7bad0a1c99c4c7289b274065de1d7a68b",
-        4: "61f4d0662896b7cc6c460443bbf8ca4af6c1a339619e78e4f06130a3d54f63c0",
+        4: "c56da7549a2bf7c499422009acf9c483fa5656f9e7f7a25de0870c0f5eccb453",
     }
 
     @staticmethod

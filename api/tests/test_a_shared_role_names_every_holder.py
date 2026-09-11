@@ -42,11 +42,20 @@ class TestRuleOneNamesEveryHolderOfASharedRole:
         assert "names several holders of the asked role" in rule
         assert "name every one of them" in rule
 
-    def test_it_names_the_roles_that_are_commonly_shared(self):
+    def test_it_names_only_the_roles_a_company_shares(self):
+        """Review, 2026-09-11: "partners" and "directors" invited over-listing.
+        "who is the partner for family law?" wants one partner, and "who is your
+        delivery partner?" wants one company, not every partner on the site."""
         rule = _rule_one(_prompt())
 
-        for role in ("founders and co-founders", "owners", "partners", "directors"):
-            assert role in rule, role
+        assert "(founders, co-founders or owners)" in rule
+        for role in ("partner", "director"):
+            assert role not in rule, role
+
+    def test_a_question_that_narrows_the_role_gets_only_the_matching_holder(self):
+        rule = _rule_one(_prompt())
+
+        assert "unless the question narrows it (a practice area, location, department or product)" in rule
 
     def test_a_singular_question_is_covered(self):
         """The production questions were singular. A rule that only fired on

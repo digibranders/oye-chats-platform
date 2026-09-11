@@ -37,10 +37,11 @@ QA_RESPONSE_TTL = 3600  # 1 hour
 #: on 2026-09-10 two of three topical questions on a live bot were answered from
 #: an hour-old cache written under the previous rule. ``tests/test_qa_cache_prompt_version.py``
 #: fingerprints the prompt so the next change cannot ship without one.
-#: 4: RULE 1 now names every holder of a shared role (founders, co-founders,
-#: owners), after two live bots answered "who is the founder" with one of several
-#: co-founders, and the SUPPORT REQUESTS block no longer tells visitors the team
-#: is offline when no operator has a live presence (b36abf23).
+#: 4: RULE 1 now names every holder of a shared role (founders, co-founders or
+#: owners) unless the question narrows it, after two live bots answered "who is
+#: the founder" with one of several co-founders (db2e19b2), and the SUPPORT
+#: REQUESTS block no longer tells visitors the team is offline when no operator
+#: has a live presence (a0e0467a).
 QA_PROMPT_VERSION = 4
 TRANSLATION_TTL = 86400  # 24 hours (Phase 4 operator translation)
 
