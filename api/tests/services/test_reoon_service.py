@@ -38,7 +38,7 @@ def test_verify_email_not_safe_to_send(monkeypatch):
         "is_deliverable": False,
     }
     with patch("app.services.reoon_service.urllib.request.urlopen", return_value=_mock_response(payload)):
-        result = verify_email("gaurav@cleanstart.com")
+        result = verify_email("priya@fabrikam.com")
 
     assert result["is_safe_to_send"] is False
 

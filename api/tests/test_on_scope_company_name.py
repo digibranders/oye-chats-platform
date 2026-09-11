@@ -36,11 +36,11 @@ class TestNamingTheCompanyStillCounts:
             ("The Coding School", "what does Coding School offer"),
             ("Acme", "what does acme do"),
             ("My Fitness Lab", "is fitness lab open on sundays"),
-            ("CleanStart Pvt Ltd", "what is cleanstart"),
+            ("Fabrikam Pvt Ltd", "what is fabrikam"),
         ],
     )
     def test_a_distinctive_word_of_the_name_is_enough(self, company, question):
         assert _question_is_clearly_on_scope(question, company) is True
 
     def test_a_business_suffix_alone_is_not_enough(self):
-        assert _question_is_clearly_on_scope("is that ltd or plc", "CleanStart Pvt Ltd") is False
+        assert _question_is_clearly_on_scope("is that ltd or plc", "Fabrikam Pvt Ltd") is False

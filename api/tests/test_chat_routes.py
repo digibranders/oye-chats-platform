@@ -587,7 +587,7 @@ class TestValidateEmail:
         ):
             response = tc.post(
                 "/chat/validate-email",
-                json={"email": "gaurav@cleanstart.com"},
+                json={"email": "priya@fabrikam.com"},
                 headers={"X-Bot-Key": "bot-test123"},
             )
 

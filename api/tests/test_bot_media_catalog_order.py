@@ -3,8 +3,8 @@
 ``get_bot_media_urls`` is ``SELECT DISTINCT metadata_info->'media_urls' ...
 LIMIT :limit`` and had no ORDER BY, so Postgres returned rows in whatever order
 the plan produced. Two consequences. The topical card matcher broke a relevance
-tie by whichever asset arrived first, so two equally good SOAR documents on the
-Eventus bot could swap between identical questions. And on a knowledge base with
+tie by whichever asset arrived first, so two equally good SOAR documents on a
+customer's bot could swap between identical questions. And on a knowledge base with
 more distinct media payloads than ``limit``, which 100 came back was arbitrary,
 so an asset could be in the model's catalog on one turn and missing the next.
 

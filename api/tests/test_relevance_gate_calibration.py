@@ -2,7 +2,7 @@
 
 The judge's own rubric defines 0.5 as "related enough to help". A pass mark of
 0.55 sat above that, so a judge following its rubric failed the gate on every
-broad company question ("what does cleanstart do" scored at the anchor and was
+broad company question ("what does <company> do" scored at the anchor and was
 refused 3 of 3 times on the live bot). The gate exists to refuse "what's the
 weather", not to grade retrieval, so it fires only at the "no chunk bears on
 it" end of the scale.

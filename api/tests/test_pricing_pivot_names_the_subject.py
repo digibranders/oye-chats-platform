@@ -1,7 +1,7 @@
 """A pricing escalation names what the visitor asked about.
 
 Reported from a live bot on 2026-09-10. Every pricing escalation there in the
-previous two weeks read "Pricing for Eventus Security is best confirmed by the
+previous two weeks read "Pricing for <company> is best confirmed by the
 team", including "pricing of red teaming", "pricing for managed soc" and "soc
 pricng". The visitor asked about one service and was answered about the whole
 company, because ``pricing_pivot`` only ever received the company name.
@@ -44,7 +44,7 @@ class TestTheSubjectComesFromTheQuestion:
             ("iwant to know the soc pricng ?", "SOC"),
             ("pricing for managed soc", "Managed SOC"),
             ("pricing of red teaming ", "Red Teaming"),
-            ("how much does SOC as a Service cost?", "SOC as a Service"),
+            ("how much is SOC as a Service per month?", "SOC as a Service"),
             ("Price of soc ?", "SOC"),
         ],
     )
@@ -80,9 +80,9 @@ class TestNoSubjectMeansTheWordingStaysAsItIs:
         assert pricing_subject("pricing for my startup", "Acme", _KB) is None
 
     def test_one_stray_capital_does_not_make_a_name(self):
-        """Measured on Eventus content: "stages of a Startup in emerging
+        """Measured on a customer's content: "stages of a Startup in new
         markets" once, "startup" once. A tie is not a name."""
-        kb = [_chunk("the Business Development stages of a Startup in emerging markets. Any startup can apply.")]
+        kb = [_chunk("the Growth Planning stages of a Startup in new markets. Any startup can apply.")]
         assert pricing_subject("pricing for my startup", "Acme", kb) is None
 
     def test_a_single_leading_capital_needs_repeating(self):

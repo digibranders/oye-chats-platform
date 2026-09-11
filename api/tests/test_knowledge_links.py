@@ -21,11 +21,11 @@ from app.services.rag_service import resolve_contact_url
 class TestDetectContactUrl:
     def test_finds_a_contact_us_page(self):
         urls = [
-            "https://www.cleanstart.com/",
-            "https://www.cleanstart.com/about-us",
-            "https://www.cleanstart.com/contact-us",
+            "https://www.fabrikam.com/",
+            "https://www.fabrikam.com/about-us",
+            "https://www.fabrikam.com/contact-us",
         ]
-        assert detect_contact_url(urls) == "https://www.cleanstart.com/contact-us"
+        assert detect_contact_url(urls) == "https://www.fabrikam.com/contact-us"
 
     def test_finds_a_bare_contact_page(self):
         assert detect_contact_url(["https://fynix.digital/contact"]) == "https://fynix.digital/contact"
@@ -153,7 +153,7 @@ class TestFreeBotHandsOverTheContactPage:
 
     def test_the_visitor_is_handed_the_crawled_page(self):
         pivot = pg.pricing_pivot(
-            company_name="CleanStart",
+            company_name="Fabrikam",
             pricing_url=None,
             support_enabled=False,
             live_chat_enabled=False,
@@ -166,7 +166,7 @@ class TestFreeBotHandsOverTheContactPage:
 
     def test_a_paid_bot_is_unaffected_and_still_goes_to_the_team(self):
         pivot = pg.pricing_pivot(
-            company_name="CleanStart",
+            company_name="Fabrikam",
             pricing_url=None,
             support_enabled=True,
             live_chat_enabled=True,

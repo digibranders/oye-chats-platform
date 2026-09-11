@@ -19,14 +19,15 @@ FYNIX = """
 </head><body></body></html>
 """
 
-# cleanstart.com. Schema.org carries the LEGAL entity; the title is pure SEO copy.
-CLEANSTART = """
+# fabrikam.com, a customer's markup with the names changed. Schema.org carries the LEGAL entity;
+# the title is pure SEO copy.
+FABRIKAM = """
 <html><head>
-<title>Verified, zero-CVE container images and linux packages</title>
-<meta property="og:site_name" content="CleanStart">
+<title>Signed, reproducible build artifacts and software packages</title>
+<meta property="og:site_name" content="Fabrikam">
 <script type="application/ld+json">
-{"@context":"https://schema.org","@type":"Organization","name":"CleanStart, Inc.",
- "url":"https://cleanstart.com"}
+{"@context":"https://schema.org","@type":"Organization","name":"Fabrikam, Inc.",
+ "url":"https://fabrikam.com"}
 </script>
 </head><body></body></html>
 """
@@ -48,8 +49,8 @@ BARE = "<html><head><title>Home</title></head><body>Welcome!</body></html>"
 
 def test_schema_org_organization_wins_over_og_site_name():
     """schema.org gives the legal entity, which is the more precise answer."""
-    result = extract_from_markup(CLEANSTART, "cleanstart.com")
-    assert result["name"] == "CleanStart, Inc."
+    result = extract_from_markup(FABRIKAM, "fabrikam.com")
+    assert result["name"] == "Fabrikam, Inc."
 
 
 def test_og_site_name_used_when_no_schema_org():
@@ -83,11 +84,11 @@ def test_title_is_never_a_source(title, domain):
 
 
 def test_seo_sentence_title_is_rejected_rather_than_guessed():
-    """cleanstart's title is a sentence, not a name. Without og/schema we must
+    """fabrikam's title is a sentence, not a name. Without og/schema we must
     return nothing and let the LLM try, rather than store a sentence."""
-    html = CLEANSTART.split("<script")[0] + "</head><body></body></html>"
-    html = html.replace('<meta property="og:site_name" content="CleanStart">', "")
-    assert extract_from_markup(html, "cleanstart.com") is None
+    html = FABRIKAM.split("<script")[0] + "</head><body></body></html>"
+    html = html.replace('<meta property="og:site_name" content="Fabrikam">', "")
+    assert extract_from_markup(html, "fabrikam.com") is None
 
 
 @pytest.mark.parametrize("junk_title", ["Home", "Welcome", "Index", "Untitled", "   ", "404"])

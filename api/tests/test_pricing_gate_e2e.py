@@ -1853,8 +1853,8 @@ async def test_the_repeat_flag_is_per_conversation(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# The escalation names what was asked. Every Eventus pricing escalation in two
-# weeks said "Pricing for Eventus Security", including "pricing of red teaming"
+# The escalation names what was asked. Every pricing escalation on one live bot in two
+# weeks said "Pricing for <company>", including "pricing of red teaming"
 # and "soc pricng". The one prose assertion in this file, because the prose is
 # the defect: the pivot's name for the thing priced has to reach the visitor.
 # ═══════════════════════════════════════════════════════════════════════════

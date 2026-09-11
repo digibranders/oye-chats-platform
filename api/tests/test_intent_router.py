@@ -73,7 +73,7 @@ def test_short_circuits_match(msg, expected_intent):
         # On-topic questions that contain greeting/ack tokens
         "thanks for telling me about your services, what about pricing?",
         "ok so what's the price for a website?",
-        "hi can you tell me about Eventus?",
+        "hi can you tell me about Northwind?",
         "no I meant the SEO package",
         # Pure on-topic
         "what services do you offer",

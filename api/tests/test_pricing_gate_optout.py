@@ -2,7 +2,7 @@
 
 The gate had no opt-out at all: a bot with no ``pricing_url`` escalated every
 pricing question to the team even when the uploaded documents state the price.
-Live on the CleanStart bot, "what is your pricing" came back as "best confirmed
+Live on a customer's bot, "what is your pricing" came back as "best confirmed
 by the team" with zero sources.
 
 The setting defaults OFF, so a bot that never touches it is gated exactly as

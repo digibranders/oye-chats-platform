@@ -154,7 +154,7 @@ class TestADealForTheCompanyIsARequestForAPerson:
             ("our company needs to buy insurance", "Insurance Hub"),
             ("my business wants to buy coffee", "Coffee Co"),
             ("our company needs to buy freshdesk", "Freshdesk"),
-            ("my company wants to purchase eventus", "Eventus Security"),
+            ("my company wants to purchase northwind", "Northwind Security"),
             ("we are a small business and want to buy acme", "Acme"),
             ("i want to invest in mutual funds", "Mutual Funds Direct"),
             ("how do i invest in gold", "Gold Traders"),
@@ -168,19 +168,19 @@ class TestADealForTheCompanyIsARequestForAPerson:
             ("where can i buy shoes", "Shoes Express"),
             ("how do I buy insurance", "Insurance Hub"),
             ("buy apple", "Apple Inc"),
-            ("still i want to buy eventus", "Eventus Security"),
-            ("buy eventus?", "Eventus Security"),
-            ("i want to buy eventus security", "Eventus Security"),
-            ("i want to buy eventus soc", "Eventus Security"),
-            ("buy the eventus SOAR platform", "Eventus Security"),
-            ("sell me eventus security company", "Eventus Security"),
-            ("what is eventus", "Eventus Security"),
+            ("still i want to buy northwind", "Northwind Security"),
+            ("buy northwind?", "Northwind Security"),
+            ("i want to buy northwind security", "Northwind Security"),
+            ("i want to buy northwind soc", "Northwind Security"),
+            ("buy the northwind SOAR platform", "Northwind Security"),
+            ("sell me northwind security company", "Northwind Security"),
+            ("what is northwind", "Northwind Security"),
             ("buy the business?", "Acme"),
             ("i want to buy the business plan", "Acme"),
             ("i want to buy the", "The Hub"),
             ("i want to buy the hub", "The Hub"),
-            ("buy", "Eventus Security"),
-            ("", "Eventus Security"),
+            ("buy", "Northwind Security"),
+            ("", "Northwind Security"),
         ],
     )
     def test_buying_what_the_company_sells_is_not_a_deal(self, message, company_name):
@@ -214,12 +214,12 @@ class TestADealForTheCompanyIsARequestForAPerson:
             ("can i buy equity in gold", "Gold Traders"),
             ("how to buy stake in mutual funds", "Mutual Funds Direct"),
             ("i want to buy acme shares", "Acme"),
-            ("buy the shares of eventus security", "Eventus Security"),
+            ("buy the shares of northwind security", "Northwind Security"),
             ("i want to buy acme's shares", "Acme"),
             # Part of a two-word name is a product or a platform, not the company.
-            ("acquire eventus", "Eventus Security"),
-            ("i want to acquire eventus", "Eventus Security"),
-            ("i want to acquire the eventus platform", "Eventus Security"),
+            ("acquire northwind", "Northwind Security"),
+            ("i want to acquire northwind", "Northwind Security"),
+            ("i want to acquire the northwind platform", "Northwind Security"),
         ],
     )
     def test_a_name_word_or_another_company_is_not_a_deal(self, message, company_name):
@@ -339,12 +339,12 @@ class TestADealForTheCompanyIsARequestForAPerson:
             ("when was the acquisition of whole foods market?", "Whole Foods Market"),
             ("is fine art for sale?", "The Fine Art Group"),
             ("can I buy a stake in real estate?", "The Real Estate Company"),
-            ("I want to acquire Eventus Security", "Eventus Security"),
-            ("interested in acquiring eventus security", "Eventus Security"),
-            ("acquisition of eventus security?", "Eventus Security"),
+            ("I want to acquire Northwind Security", "Northwind Security"),
+            ("interested in acquiring northwind security", "Northwind Security"),
+            ("acquisition of northwind security?", "Northwind Security"),
             ("we want to acquire bank of baroda", "Bank of Baroda"),
-            ("buy a stake in eventus security", "Eventus Security"),
-            ("is eventus security for sale?", "Eventus Security"),
+            ("buy a stake in northwind security", "Northwind Security"),
+            ("is northwind security for sale?", "Northwind Security"),
         ],
     )
     def test_a_multi_word_descriptive_name_also_needs_a_company_word_after_it(self, message, company_name):
@@ -389,7 +389,7 @@ class TestADealForTheCompanyIsARequestForAPerson:
     @pytest.mark.parametrize(
         ("message", "company_name"),
         [
-            ("i want to buy the eventus security company", "Eventus Security"),
+            ("i want to buy the northwind security company", "Northwind Security"),
             ("we want to buy your company outright", "Acme"),
             ("buy your company", "Acme"),
             ("we'd like to buy your company", "Acme"),
@@ -404,15 +404,15 @@ class TestADealForTheCompanyIsARequestForAPerson:
             ("can we buy you out?", "Acme"),
             ("we want to buy out your company", "Acme"),
             ("is your company for sale?", "Acme"),
-            ("i want to acquire eventus security company", "Eventus Security"),
-            ("we want to acquire eventus security pvt ltd", "Eventus Security"),
+            ("i want to acquire northwind security company", "Northwind Security"),
+            ("we want to acquire northwind security pvt ltd", "Northwind Security"),
             ("i want to acquire acme company", "Acme"),
             ("we want to acquire hubspot inc", "HubSpot"),
             ("acquisition of bank of baroda ltd?", "Bank of Baroda"),
-            ("buy a stake in eventus security ltd", "Eventus Security"),
+            ("buy a stake in northwind security ltd", "Northwind Security"),
             ("take a stake in your company", "Acme"),
             ("take equity in your startup", "Acme"),
-            ("is eventus security pvt ltd for sale?", "Eventus Security"),
+            ("is northwind security pvt ltd for sale?", "Northwind Security"),
             ("is acme inc for sale?", "Acme"),
             ("is acme pvt ltd for sale?", "Acme"),
             ("is your company up for sale?", "Acme"),
@@ -422,7 +422,7 @@ class TestADealForTheCompanyIsARequestForAPerson:
         assert detect_company_deal_intent(message, company_name) is True
 
     def test_no_company_name_falls_back_to_the_second_person_phrasings(self):
-        assert detect_company_deal_intent("buy eventus", None) is False
+        assert detect_company_deal_intent("buy northwind", None) is False
         assert detect_company_deal_intent("we want to buy the company outright", None) is False
         assert detect_company_deal_intent("we want to acquire your company", None) is True
         assert detect_company_deal_intent("we want to buy your company outright", None) is True

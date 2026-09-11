@@ -7,7 +7,7 @@ This does: it runs the pipeline with a judge that says "not relevant", and
 asserts that an on-scope question with chunks in hand reaches generation while
 the two cases that must still be refused still are.
 
-Reproduces the live CleanStart failure: "what does cleanstart do" retrieved
+Reproduces a live failure on a customer's bot: "what does <company> do" retrieved
 fifteen chunks and was answered with the canned "I don't have that specific
 detail on hand" pivot.
 """

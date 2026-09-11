@@ -1,7 +1,7 @@
 """A second pricing ask must not get the first answer again.
 
 Reported from a live bot on 2026-09-10. One visitor asked for pricing, was told
-"Pricing for Eventus Security is best confirmed by the team so you get an
+"Pricing for <company> is best confirmed by the team so you get an
 accurate figure. Want me to connect you with them now?" and was shown the
 "Talk to a human" form. Four minutes later they asked again and received the
 identical sentence and the form a second time. Every branch of ``pricing_pivot``

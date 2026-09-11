@@ -156,7 +156,7 @@ def test_stale_cache_bot_without_new_attrs_is_treated_as_disabled():
 
 
 def test_our_own_host_is_allowed_so_the_demo_page_works():
-    bot = _bot(enabled=True, domains=["eventussecurity.com"])
+    bot = _bot(enabled=True, domains=["northwindsecurity.com"])
     request = _request(
         {"origin": "https://api.oyechats.com"},
         base_url="https://api.oyechats.com/",
@@ -167,7 +167,7 @@ def test_our_own_host_is_allowed_so_the_demo_page_works():
 def test_our_own_host_is_matched_exactly_not_as_a_suffix():
     # The exemption is an equality test. A host that merely ENDS with ours is a
     # domain somebody else can register.
-    bot = _bot(enabled=True, domains=["eventussecurity.com"])
+    bot = _bot(enabled=True, domains=["northwindsecurity.com"])
     for forged in ("api.oyechats.com.evil.com", "evil-api.oyechats.com.co", "notapi.oyechats.com"):
         request = _request({"origin": f"https://{forged}"}, base_url="https://api.oyechats.com/")
         with pytest.raises(HTTPException) as excinfo:
@@ -179,7 +179,7 @@ def test_a_foreign_site_is_still_refused_while_the_demo_works():
     # The exemption must not become a general fail-open: the whole point of the
     # allowlist is that a browser on somebody else's site cannot boot this
     # widget, and a browser cannot claim to be our host.
-    bot = _bot(enabled=True, domains=["eventussecurity.com"])
+    bot = _bot(enabled=True, domains=["northwindsecurity.com"])
     request = _request({"origin": "https://evil.com"}, base_url="https://api.oyechats.com/")
     with pytest.raises(HTTPException) as excinfo:
         _enforce_bot_origin(bot, request)

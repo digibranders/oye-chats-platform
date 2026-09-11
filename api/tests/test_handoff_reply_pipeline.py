@@ -101,7 +101,7 @@ class TestTheModelStillAnswersWhereTheFixedWordsDoNotFit:
 class TestQualificationPendingTellsTheWidgetWhetherToWait:
     """The widget polls for a quote card for up to 4.5s after a reply, because
     lead scoring runs after the stream closes. A turn that queued no scoring has
-    nothing to wait for, and on Eventus that wait sat between "connect me" and
+    nothing to wait for, and on a live bot that wait sat between "connect me" and
     the form."""
 
     @pytest.mark.asyncio

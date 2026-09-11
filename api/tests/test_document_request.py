@@ -30,14 +30,14 @@ from app.services.document_request import (
 )
 from app.services.intent_service import bot_offers_handoff
 
-SOC = "https://acme.com/files/Datasheet-for-SOC-as-a-Service.pdf"
+SOC = "https://acme.com/files/SOC-as-a-Service-Datasheet.pdf"
 RED = "https://acme.com/files/Red-Teaming.pdf"
 PROFILE = "https://acme.com/files/Acme-Company-Profile.pdf"
 
 CATALOG = [
     {
         "files": [
-            {"url": SOC, "name": "Datasheet-for-SOC-as-a-Service.pdf"},
+            {"url": SOC, "name": "SOC-as-a-Service-Datasheet.pdf"},
             {"url": RED, "name": "Red-Teaming.pdf"},
             {"url": PROFILE, "name": "Acme-Company-Profile.pdf"},
             {"url": "javascript:alert(1)", "name": "bad.pdf"},
@@ -229,7 +229,7 @@ def test_a_named_topic_picks_the_matching_file():
 
 def test_a_picked_file_is_shaped_like_a_download_card():
     pick = pick_documents("send me the SOC as a Service datasheet", "Acme", CATALOG)
-    assert pick.docs[0] == {"type": "download", "url": SOC, "name": "Datasheet-for-SOC-as-a-Service.pdf"}
+    assert pick.docs[0] == {"type": "download", "url": SOC, "name": "SOC-as-a-Service-Datasheet.pdf"}
 
 
 def test_a_file_with_no_name_is_named_from_its_url():
@@ -300,14 +300,14 @@ def test_one_shared_word_is_not_an_exact_match():
 
 def test_a_soc_2_report_is_not_the_soc_as_a_service_datasheet():
     catalog = _catalog(
-        "https://eventussecurity.com/files/Datasheet-for-SOC-as-a-Service.pdf",
-        "https://eventussecurity.com/files/Sample_Web_Application_Penetration_Testing_Report_v1.0.pdf",
+        "https://northwindsecurity.com/files/SOC-as-a-Service-Datasheet.pdf",
+        "https://northwindsecurity.com/files/Sample_Network_Penetration_Testing_Report_v2.0.pdf",
     )
-    pick = pick_documents("send me your SOC 2 report pdf", "Eventus Security", catalog)
+    pick = pick_documents("send me your SOC 2 report pdf", "Northwind Security", catalog)
     assert pick.exact is False
     # "SOC 2" is one identifier, so the SOC as a Service datasheet shares no word
     # with the question and is not offered.
-    assert "Datasheet-for-SOC-as-a-Service.pdf" not in [d["name"] for d in pick.docs]
+    assert "SOC-as-a-Service-Datasheet.pdf" not in [d["name"] for d in pick.docs]
 
 
 @pytest.mark.parametrize(
@@ -324,8 +324,8 @@ def test_a_different_item_of_the_same_line_is_not_exact(msg, url):
 
 
 def test_a_single_topic_word_that_matches_is_exact():
-    url = "https://eventussecurity.com/files/Eventus-SOAR-Platform-Datasheet.pdf"
-    pick = pick_documents("send me the SOAR datasheet", "Eventus Security", _catalog(url, SOC))
+    url = "https://northwindsecurity.com/files/Northwind-SOAR-Platform-Datasheet.pdf"
+    pick = pick_documents("send me the SOAR datasheet", "Northwind Security", _catalog(url, SOC))
     assert [d["url"] for d in pick.docs] == [url]
     assert pick.exact is True
 
@@ -759,10 +759,10 @@ def test_a_topic_match_without_the_identifier_asked_for_is_not_exact():
 def test_a_capital_letter_in_a_message_typed_in_capitals_is_not_an_identifier():
     pick = pick_documents(
         "CAN YOU SEND ME A SOAR DATASHEET",
-        "Eventus Security",
-        _catalog("https://eventussecurity.com/files/Eventus-SOAR-Platform-Datasheet.pdf"),
+        "Northwind Security",
+        _catalog("https://northwindsecurity.com/files/Northwind-SOAR-Platform-Datasheet.pdf"),
     )
-    assert [d["name"] for d in pick.docs] == ["Eventus-SOAR-Platform-Datasheet.pdf"]
+    assert [d["name"] for d in pick.docs] == ["Northwind-SOAR-Platform-Datasheet.pdf"]
     assert pick.exact is True
 
 
@@ -852,8 +852,8 @@ def test_a_risk_profile_is_not_a_company_profile():
 
 
 def test_a_file_of_another_kind_is_not_exact():
-    catalog = _catalog("https://eventussecurity.com/files/Sample_Web_Application_Penetration_Testing_Report_v1.0.pdf")
-    pick = pick_documents("send me the penetration testing datasheet", "Eventus Security", catalog)
+    catalog = _catalog("https://northwindsecurity.com/files/Sample_Network_Penetration_Testing_Report_v2.0.pdf")
+    pick = pick_documents("send me the penetration testing datasheet", "Northwind Security", catalog)
     assert len(pick.docs) == 1
     assert pick.exact is False
 
@@ -990,9 +990,9 @@ def test_no_file_on_a_plan_without_a_human_points_to_the_website():
 @pytest.mark.parametrize(
     ("name", "shown"),
     [
-        ("68d65d47051e1b0ca7a66228_Solution%20Document%20-%20Cleanstart.pdf", "**Solution Document Cleanstart**"),
-        ("iifl-case-study-29330f6b.pdf", "**iifl case study**"),
-        ("53450e6e5dc0bfa85ebd78686cadad39.pdf", "**53450e6e5dc0bfa85ebd78686cadad39**"),
+        ("5e1f0a9c3b7d2e4f6a8b0c1d_Solution%20Document%20-%20Fabrikam.pdf", "**Solution Document Fabrikam**"),
+        ("harbor-bank-case-study-7c41d2e9.pdf", "**harbor bank case study**"),
+        ("9e1d4c7b2a6f8e3d5c0b1a2f4e6d8c7b.pdf", "**9e1d4c7b2a6f8e3d5c0b1a2f4e6d8c7b**"),
     ],
 )
 def test_a_reply_shows_a_readable_file_name(name, shown):
@@ -1010,7 +1010,7 @@ def test_an_exact_reply_names_every_file_once_without_links():
     pick = DocumentPick(docs=docs[:2], exact=True)
     reply = document_reply(pick, company_name="Acme", support_enabled=True)
     assert "**Acme Company Profile**" in reply
-    assert "**Datasheet for SOC as a Service**" in reply
+    assert "**SOC as a Service Datasheet**" in reply
     # The cards carry the links; the text does not repeat them.
     assert "https://" not in reply
 
