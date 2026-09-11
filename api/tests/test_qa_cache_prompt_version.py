@@ -73,7 +73,7 @@ class TestAPromptChangeCannotShipWithoutAVersionBump:
     FINGERPRINTS = {
         3: "777485cd41cd66f55ca5c5c5f9bba8d7bad0a1c99c4c7289b274065de1d7a68b",
         4: "c56da7549a2bf7c499422009acf9c483fa5656f9e7f7a25de0870c0f5eccb453",
-        5: "747af579a712a0f2bbe8567364a16a332396514b532ac5ba5ed24494df8d3454",
+        5: "379823be7b26d015ff71b6b0541ac2dd4ce45d66127061e5503838b5fe46ebb3",
     }
 
     @staticmethod

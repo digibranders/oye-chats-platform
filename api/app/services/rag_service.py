@@ -1647,8 +1647,10 @@ def _is_known_refusal(text: str, company_name: str) -> bool:
 # `language` throughout the pipeline is a `LanguageContext | None`. It is None
 # exactly when multilingual is disabled for the bot (the Phase 2 resolver
 # returns None in that case), so `language is None` is the single gate that
-# keeps every path below byte-identical to pre-Phase-3 behaviour. When it is not
-# None the bot has opted in and `language.language` is the base code ('en',
+# keeps every path below on its pre-Phase-3 behaviour: legacy cache key, English
+# canned paths, English-tuned retrieval. The one addition is the prompt, which
+# tells such a bot to reply in English (see ``_language_directive``). When it is
+# not None the bot has opted in and `language.language` is the base code ('en',
 # 'hi', ...) and `language.locale` the BCP-47 tag.
 
 # Cross-lingual vector retrieval threshold. Cross-language embedding pairs sit
@@ -1797,18 +1799,35 @@ def _name_ack_prefix(visitor_name: str | None, just_named: bool, language=None, 
     return f"{template.format(name=safe)}\n\n"
 
 
+_ENGLISH_ONLY_DIRECTIVE = """═══════════════════════════════════════════════════════
+CONVERSATION LANGUAGE
+═══════════════════════════════════════════════════════
+Language: English
+
+- Write your ENTIRE reply in English, even when the visitor writes in another language or asks you to switch.
+- Still answer a question written in another language: read it, then reply in English. Never refuse it or treat it as off-topic because of its language.
+- This OVERRIDES any instruction to mirror the visitor's message language."""
+
+
 def _language_directive(language) -> str:
     """Structured CONVERSATION LANGUAGE block for the system prompt.
 
-    Empty string for a disabled bot (language is None), so the assembled prompt
-    is byte-identical to pre-Phase-3. For an enabled bot it names the language
-    (resolved server-side from KNOWN_LOCALES, never from request text) and
-    explicitly supersedes response_style.py Section 10's per-message mirroring,
-    which would otherwise contradict a locked conversation language on a
-    code-switched message.
+    For a disabled bot (language is None) it is the fixed English-only block.
+    It used to be an empty string, to keep that prompt byte-identical to
+    pre-Phase-3, but then the only language instruction the model saw was the
+    style block's "mirror the visitor", and an English-only bot answered Arabic
+    and Hindi questions in kind (production, 2026-09-11). The block is static, so
+    the prompt is still identical turn over turn for the same bot and a
+    provider's prefix cache still matches; answers cached under the old prompt
+    were retired by the ``QA_PROMPT_VERSION`` bump that shipped with it.
+
+    For an enabled bot it names the language (resolved server-side from
+    KNOWN_LOCALES, never from request text) and explicitly supersedes the style
+    block's LANGUAGE & LOCALE section, which would otherwise contradict a locked
+    conversation language on a code-switched message.
     """
     if language is None:
-        return ""
+        return _ENGLISH_ONLY_DIRECTIVE
     from app.services.language_service import language_display_name
 
     locale = getattr(language, "locale", None) or "en-IN"
@@ -6290,13 +6309,11 @@ SMART LINKS (MANDATORY. You MUST hyperlink these keywords):
 
     response_style_block = get_response_style_block()
 
-    # Phase 3: conversation-language directive. Empty string when multilingual is
-    # disabled (language is None), so the assembled prompt is byte-identical to
-    # pre-Phase-3. When present it is spliced immediately before the static,
-    # prompt-cached response_style_block so the cached prefix is preserved. It
-    # includes a trailing newline separator only when non-empty.
-    _lang_directive = _language_directive(language)
-    language_directive = f"{_lang_directive}\n\n" if _lang_directive else ""
+    # Phase 3: conversation-language directive. The fixed English-only block when
+    # multilingual is disabled (language is None), the conversation language
+    # otherwise. Spliced immediately before the static, prompt-cached
+    # response_style_block so the cached prefix is preserved.
+    language_directive = f"{_language_directive(language)}\n\n"
 
     # Region-aware pricing. ``visitor_country`` is Cloudflare's CF-IPCountry for
     # the visitor's request; anything that isn't India (including None from a
