@@ -8112,13 +8112,16 @@ async def collect_rag_pipeline(client, question: str, **kwargs) -> dict:
     answer_parts: list[str] = []
     payload: dict = {}
 
-    async for frame in rag_pipeline_stream(client, question, **kwargs):
-        if frame.startswith(_METADATA_PREFIX):
-            payload.update(json.loads(frame[len(_METADATA_PREFIX) :].strip() or "{}"))
-        elif frame.lstrip().startswith(_FINAL_METADATA_PREFIX):
-            payload.update(json.loads(frame.split(_FINAL_METADATA_PREFIX, 1)[1].strip() or "{}"))
-        else:
-            answer_parts.append(frame)
+    # Closed in this task if reading a frame raises, so the turn unwinds here and
+    # not in a finalizer task (see ``ClosingStreamingResponse``).
+    async with contextlib.aclosing(rag_pipeline_stream(client, question, **kwargs)) as frames:
+        async for frame in frames:
+            if frame.startswith(_METADATA_PREFIX):
+                payload.update(json.loads(frame[len(_METADATA_PREFIX) :].strip() or "{}"))
+            elif frame.lstrip().startswith(_FINAL_METADATA_PREFIX):
+                payload.update(json.loads(frame.split(_FINAL_METADATA_PREFIX, 1)[1].strip() or "{}"))
+            else:
+                answer_parts.append(frame)
 
     # A guard that fired after text had already streamed (prompt leak, output
     # moderation, price guard) could only rewrite the persisted message. The final frame

@@ -137,7 +137,8 @@ async def test_a_stream_that_ends_on_its_own_still_detaches_and_ends_its_span(
     assert langfuse.unended() == []
 
 
-_TOKEN_STREAMS = frozenset({"generate_response_stream", "_stream_from_model"})
+#: The model's token streams, and the RAG turn that streams them to the route.
+_STREAMS = frozenset({"generate_response_stream", "_stream_from_model", "rag_pipeline_stream"})
 _APP = Path(__file__).resolve().parents[1] / "app"
 
 
@@ -151,17 +152,17 @@ def _called_name(node: ast.AST) -> str | None:
     return None
 
 
-def test_every_token_stream_consumer_closes_the_stream():
+def test_every_stream_consumer_closes_the_stream():
     """``async for`` straight over one of these calls hands the generator to the
-    finalizer whenever the loop stops early. Each consumer holds the stream in
-    ``contextlib.aclosing`` instead."""
+    finalizer whenever the loop stops early or is closed from above. Each
+    consumer holds the stream in ``contextlib.aclosing`` instead."""
     unclosed: list[str] = []
     closed: set[str | None] = set()
     for path in sorted(_APP.rglob("*.py")):
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            if isinstance(node, ast.AsyncFor) and _called_name(node.iter) in _TOKEN_STREAMS:
+            if isinstance(node, ast.AsyncFor) and _called_name(node.iter) in _STREAMS:
                 unclosed.append(f"{path.relative_to(_APP.parent)}:{node.lineno}")
-            if _called_name(node) == "aclosing" and node.args and _called_name(node.args[0]) in _TOKEN_STREAMS:
+            if _called_name(node) == "aclosing" and node.args and _called_name(node.args[0]) in _STREAMS:
                 closed.add(_called_name(node.args[0]))
     assert unclosed == []
-    assert closed == _TOKEN_STREAMS, "each token stream has a consumer, and that consumer closes it"
+    assert closed == _STREAMS, "each stream has a consumer, and that consumer closes it"

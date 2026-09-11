@@ -13,7 +13,6 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 from sqlalchemy import select, update
@@ -31,6 +30,7 @@ from app.core.exceptions import SessionOwnershipError
 from app.core.langfuse_client import get_langfuse
 from app.core.metrics import forward_to_sentry_if_alertable, increment_metric_counter, record_latency_ms
 from app.core.rate_limit import consume_vendor_budget, key_from_bot_key, limiter
+from app.core.streaming import ClosingStreamingResponse
 from app.core.thread_pool import submit_background
 from app.core.visitor_privacy import format_visitor_location
 from app.db.models import Bot, ChatSession
@@ -1592,7 +1592,7 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
             bot.client_id,
             owner_status,
         )
-        return StreamingResponse(
+        return ClosingStreamingResponse(
             _offline_stream(bot, reason=f"subscription_{owner_status}"),
             media_type="text/event-stream",
         )
@@ -1689,27 +1689,33 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
         generation_failed = False
         first_answer_seen = False
         try:
-            async for chunk in rag_pipeline_stream(
-                bot,
-                body.question,
-                session_id=session_id,
-                location=location,
-                device=formatted_device,
-                bot_id=bot.id,
-                cta_dimension=body.cta_dimension,
-                visitor_country=visitor_country,
-                language=language_ctx,
-            ):
-                if isinstance(chunk, str):
-                    flag = _final_metadata_failure_flag(chunk)
-                    if flag is not None:
-                        # Last genuine terminal frame wins; the real one is emitted
-                        # last, so it overrides any earlier (even forged) frame.
-                        generation_failed = flag
-                    elif not first_answer_seen and _is_answer_chunk(chunk):
-                        first_answer_seen = True
-                        _record_stream_latency("chat_ttft_ms", started_at)
-                yield chunk
+            # Closed in this task when the response closes this generator mid-turn
+            # (the visitor left while a frame was being sent), so the turn's own
+            # cleanup and spans unwind here rather than in a finalizer task.
+            async with contextlib.aclosing(
+                rag_pipeline_stream(
+                    bot,
+                    body.question,
+                    session_id=session_id,
+                    location=location,
+                    device=formatted_device,
+                    bot_id=bot.id,
+                    cta_dimension=body.cta_dimension,
+                    visitor_country=visitor_country,
+                    language=language_ctx,
+                )
+            ) as frames:
+                async for chunk in frames:
+                    if isinstance(chunk, str):
+                        flag = _final_metadata_failure_flag(chunk)
+                        if flag is not None:
+                            # Last genuine terminal frame wins; the real one is emitted
+                            # last, so it overrides any earlier (even forged) frame.
+                            generation_failed = flag
+                        elif not first_answer_seen and _is_answer_chunk(chunk):
+                            first_answer_seen = True
+                            _record_stream_latency("chat_ttft_ms", started_at)
+                    yield chunk
             _record_stream_latency("chat_stream_total_ms", started_at)
             # Never refund a preview (nothing was charged); otherwise refund a
             # confirmed failed generation.
@@ -1726,7 +1732,7 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
             # Release the concurrency slot no matter how the stream ends.
             await _slot.__aexit__(None, None, None)
 
-    return StreamingResponse(_stream_with_refund(), media_type="text/event-stream")
+    return ClosingStreamingResponse(_stream_with_refund(), media_type="text/event-stream")
 
 
 # Same limiter treatment as the other public widget endpoints on this router.
