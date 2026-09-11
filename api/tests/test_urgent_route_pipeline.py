@@ -46,9 +46,12 @@ class _Classifier:
 @pytest.fixture(autouse=True)
 def classifier(monkeypatch):
     """No test here reaches a real model. The fake says YES to every message that
-    passes the vocabulary check unless a test says otherwise."""
+    passes the vocabulary check unless a test says otherwise. The support route's
+    classifier says NO: "my order hasn't arrived" passes its vocabulary check, and
+    these tests are about the urgent route."""
     fake = _Classifier()
     monkeypatch.setattr(urgent_route, "_classify_urgent_incident_raw", fake)
+    monkeypatch.setattr("app.services.support_route._classify_support_request_raw", lambda _question: False)
     return fake
 
 

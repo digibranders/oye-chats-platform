@@ -45,7 +45,7 @@ from app.security.injection_patterns import (
 )
 from app.services import currency_scoring as _currency_scoring
 from app.services import meeting_gate as _meeting_gate
-from app.services import plan_entitlements_service, runtime_config, urgent_route
+from app.services import plan_entitlements_service, runtime_config, support_route, urgent_route
 from app.services import pricing_gate as _pricing_gate
 from app.services.document_request import (
     TOPIC_MIN_OVERLAP,
@@ -7863,6 +7863,89 @@ async def rag_pipeline_stream(
                 yield _stream_metadata(session_id, [], language)
                 yield _urgent.text
                 yield f"\nFINAL_METADATA:{json.dumps(_urgent_meta)}\n"
+                return
+
+            # ── Support request from an existing customer ───────────────────
+            # A customer whose service is failing, whose account manager went
+            # quiet or who wants their money back needs the team, not DIY steps.
+            # On 2026-09-11 "im already a customer, our portal is not loading
+            # since morning" got a troubleshooting checklist and "paid for the
+            # service, not happy at all, want my money back" got the refund
+            # clause of the terms, with no team offered.
+            #
+            # After the urgent check, so an incident gets the urgent reply, and
+            # before the name question for the urgent route's reasons. The same
+            # shape: the pure vocabulary check and the policy-question skip run
+            # here, and only a hit reaches the classifier, on a worker thread
+            # under a deadline.
+            if (
+                support_route.might_be_support_request(question)
+                and not support_route.asks_only_about_policies(question)
+                and not _english_judges_bypassed(language, question)
+                and await support_route.detect_support_request_bounded(question)
+            ):
+                _support_filters = [ChatSession.id == session_id]
+                if bid:
+                    _support_filters.append(ChatSession.bot_id == bid)
+                elif cid:
+                    _support_filters.append(ChatSession.client_id == cid)
+                _support_session = session.query(ChatSession).filter(*_support_filters).first()
+                # Set once the team was alerted, by this route or the urgent one: a
+                # second request gets its own words and alerts no one again.
+                _support_repeat = _card_already_shown(_support_session, "support_notified") or _card_already_shown(
+                    _support_session, "urgent_notified"
+                )
+                _support = support_route.support_reply(
+                    company_name=_company_name,
+                    support_enabled=_plan_support_allowed,
+                    live_chat_enabled=live_chat_on,
+                    team_available=bool(_team_online),
+                    contact_url=_contact_url,
+                    repeat=_support_repeat,
+                )
+                _safety_net_metric(
+                    "support_request",
+                    path="stream",
+                    repeat=str(_support_repeat),
+                    session=session_id,
+                    bot_id=bid,
+                )
+                # Fixed text, so saved and the team alerted BEFORE the first frame,
+                # as the urgent reply is.
+                _support_bot_msg = add_chat_message(
+                    session,
+                    session_id,
+                    client_id=cid,
+                    role="bot",
+                    content=_support.text,
+                    bot_id=bid,
+                    source_language=_lang_base(language),
+                )
+                session.flush()
+                _support_meta = {
+                    "message_id": _support_bot_msg.id,
+                    "suggest_handoff": _support.suggest_handoff,
+                    "qualification_pending": False,
+                }
+                if _support.needs_message_card:
+                    _support_meta["show_leave_message"] = True
+                    _mark_card_shown(_support_session, "leave_message")
+                if _support.suggest_handoff:
+                    _mark_card_shown(_support_session, "handoff_offered")
+                _set_unhelped_streak(_support_session, 0)
+                if _plan_support_allowed and not _support_repeat:
+                    _mark_card_shown(_support_session, "support_notified")
+                    # The reply and its flags are committed before the alert,
+                    # which commits on its own and rolls back on failure.
+                    session.commit()
+                    if _is_preview:
+                        logger.info("support_request_alert_skipped_for_preview | bot=%s session=%s", bid, session_id)
+                    else:
+                        support_route.alert_team_of_support_request(session, bot, cid, session_id, question)
+                session.commit()
+                yield _stream_metadata(session_id, [], language)
+                yield _support.text
+                yield f"\nFINAL_METADATA:{json.dumps(_support_meta)}\n"
                 return
 
             # ── Two-step name capture (ask first, answer next turn) ──────────
