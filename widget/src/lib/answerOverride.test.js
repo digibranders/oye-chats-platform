@@ -24,9 +24,12 @@ test('the streamed bubble shows the text the server persisted, keeping what it c
     assert.equal(messages[1].text, STREAMED.text, 'the input is not mutated');
 });
 
-test('the override is cleaned of sentinels the way streamed text is', () => {
-    const next = applyAnswerOverride([STREAMED], 2, { answer_override: 'Leave us a message.\n[LEAVE_MESSAGE_CARD]' });
-    assert.equal(next[0].text, 'Leave us a message.\n');
+test('the override is shown as the server sent it', () => {
+    // The server persists the replacement with its sentinels already stripped
+    // (tests/test_price_guard_pipeline.py pins that for every replacement).
+    const text = 'Leave us a message and the team will reply.\n\nAnything else?';
+    const next = applyAnswerOverride([STREAMED], 2, { answer_override: text });
+    assert.equal(next[0].text, text);
 });
 
 test('a frame without a usable override returns the same list, so nothing re-renders', () => {
@@ -39,7 +42,6 @@ test('a frame without a usable override returns the same list, so nothing re-ren
         { answer_override: 42 },
         { answer_override: '' },
         { answer_override: '   \n' },
-        { answer_override: '[MEETING_CARD]' },
     ]) {
         assert.equal(applyAnswerOverride(messages, 2, meta), messages, JSON.stringify(meta));
     }
