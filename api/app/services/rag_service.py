@@ -8698,31 +8698,53 @@ async def rag_pipeline_stream(
             _pick = None
             _doc_intent_tags: dict[str, str] = {}
             if _document_route_applies(question, _company_name, _judges_bypassed):
-                _doc_intent = await _detect_document_intent_bounded(question)
-                _doc_intent_tags = {
-                    "document_intent": _doc_intent.intent,
-                    "document_intent_fallback": str(_doc_intent.by_fallback),
-                }
                 if bid is not None:
                     _bot_catalog = get_bot_media_urls(session, bot_id=bid)
                 _pick = pick_documents(question, _company_name, _bot_catalog or [])
-                if not (
-                    _doc_intent.intent == "send"
-                    or (_doc_intent.intent == "exists" and bool(_pick.docs) and _pick.exact)
+                # A pricing question belongs to the pricing gate, whichever way the
+                # gate went. "can you send me your pricing pdf?" on a bot with a
+                # pricing page is answered from that page (the gate narrowed the
+                # context above), and on a bot that answers pricing from its
+                # knowledge base, from the knowledge base. Replacing either with the
+                # no-file offer loses a grounded answer, so only an exact file (a
+                # real "Pricing-Brochure.pdf") is still offered as a card.
+                if (_pricing_decision.fired or _pricing_gate.is_pricing_question(_gate_question)) and not (
+                    _pick.docs and _pick.exact
                 ):
-                    # Counted with the label and whether the fallback decided, so a
-                    # classifier that sends real requests to the model, or lets other
-                    # questions through, shows up in the metrics.
                     _safety_net_metric(
                         "document_request_fell_through",
                         path="stream",
+                        reason="pricing",
                         found=str(len(_pick.docs)),
                         exact=str(_pick.exact),
-                        **_doc_intent_tags,
                         session=session_id,
                         bot_id=bid,
                     )
                     _pick = None
+                else:
+                    _doc_intent = await _detect_document_intent_bounded(question)
+                    _doc_intent_tags = {
+                        "document_intent": _doc_intent.intent,
+                        "document_intent_fallback": str(_doc_intent.by_fallback),
+                    }
+                    if not (
+                        _doc_intent.intent == "send"
+                        or (_doc_intent.intent == "exists" and bool(_pick.docs) and _pick.exact)
+                    ):
+                        # Counted with the label and whether the fallback decided, so a
+                        # classifier that sends real requests to the model, or lets other
+                        # questions through, shows up in the metrics.
+                        _safety_net_metric(
+                            "document_request_fell_through",
+                            path="stream",
+                            reason="intent",
+                            found=str(len(_pick.docs)),
+                            exact=str(_pick.exact),
+                            **_doc_intent_tags,
+                            session=session_id,
+                            bot_id=bid,
+                        )
+                        _pick = None
             if _pick is not None:
                 _safety_net_metric(
                     "document_request",

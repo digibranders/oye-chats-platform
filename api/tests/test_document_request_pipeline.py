@@ -39,6 +39,10 @@ CATALOG = [{"files": [{"url": RED, "name": "Red-Teaming.pdf"}]}]
 PROFILE_CATALOG = [{"files": [{"url": PROFILE, "name": "Acme-Company-Profile.pdf"}]}]
 RETAIL_CATALOG = [{"files": [{"url": RETAIL_CASE_STUDY, "name": "Retail-Case-Study.pdf"}]}]
 DATASHEET_REQUEST = "can you send me the red teaming datasheet?"
+PRICING_PAGE = "https://acme.com/pricing"
+PRICING_BROCHURE = "https://acme.com/files/Pricing-Brochure.pdf"
+PRICING_PDF_REQUEST = "can you send me your pricing pdf?"
+PRICING_ANSWER = "Starter costs ₹999 per month and Growth costs ₹2,499 per month."
 
 
 class _Classifier:
@@ -613,3 +617,75 @@ def test_the_document_classifier_gets_the_urgent_classifier_deadline():
 
 def test_the_document_pick_and_the_topical_card_share_one_overlap_bar():
     assert rs._TOPICAL_MEDIA_MIN_OVERLAP == TOPIC_MIN_OVERLAP
+
+
+def _bot_with_a_pricing_page(db, monkeypatch, session_id):
+    """A paid bot whose pricing gate answers from its pricing page: the gate narrows
+    the context to that page and lets generation run."""
+    client = _make_client(db)
+    bot = _make_bot(db, client, live_chat_enabled=True, pricing_url=PRICING_PAGE)
+    _make_session(db, bot, client, session_id)
+    cap = _stub_pipeline(
+        monkeypatch,
+        retrieved=(_doc(f"Acme pricing: {PRICING_ANSWER}", name=PRICING_PAGE),),
+        chunks=(PRICING_ANSWER,),
+        support=True,
+    )
+    return bot, cap
+
+
+@pytest.mark.asyncio
+async def test_a_pricing_pdf_request_on_a_bot_with_a_pricing_page_gets_the_pricing_answer(
+    db, monkeypatch, classifier
+):
+    """The pricing gate answers "send me your pricing pdf" from the pricing page. The
+    document route used to run after it, hear SEND, find no pricing file, and replace
+    that grounded answer with "I don't have a downloadable document"."""
+    bot, cap = _bot_with_a_pricing_page(db, monkeypatch, "docs-pricing-page")
+    _catalog(monkeypatch, CATALOG)
+    metrics = _record_metrics(monkeypatch)
+    classifier.answer = "send"
+
+    frames = await _drive_stream(bot, PRICING_PDF_REQUEST, "docs-pricing-page")
+
+    answer = _answer_text(frames)
+    assert len(cap["prompts"]) == 1, answer
+    assert PRICING_ANSWER in answer
+    assert "downloadable" not in answer
+    assert "media_card" not in (_final_meta(frames) or {})
+    assert "document_request" not in _names(metrics)
+
+
+@pytest.mark.asyncio
+async def test_a_pricing_pdf_request_with_an_exact_pricing_file_still_gets_the_card(db, monkeypatch, classifier):
+    bot, cap = _bot_with_a_pricing_page(db, monkeypatch, "docs-pricing-file")
+    _catalog(monkeypatch, [{"files": [{"url": PRICING_BROCHURE, "name": "Pricing-Brochure.pdf"}]}])
+    classifier.answer = "send"
+
+    frames = await _drive_stream(bot, PRICING_PDF_REQUEST, "docs-pricing-file")
+
+    assert _final_meta(frames)["media_card"]["url"] == PRICING_BROCHURE
+    assert cap["prompts"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_pricing_pdf_request_on_a_bot_answering_pricing_from_its_knowledge_base_gets_the_model_answer(
+    db, monkeypatch, classifier
+):
+    """The gate stands down for a bot that answers pricing from its knowledge base,
+    but the question is still about pricing, so the model answers it from that
+    knowledge base rather than the no-file offer."""
+    client = _make_client(db)
+    bot = _make_bot(db, client, live_chat_enabled=True, pricing_from_knowledge_base=True)
+    _make_session(db, bot, client, "docs-pricing-kb")
+    knowledge = "Acme lists its Starter and Growth plans on the pricing page."
+    cap = _stub_pipeline(monkeypatch, retrieved=(_doc(knowledge),), chunks=(knowledge,), support=True)
+    _catalog(monkeypatch, CATALOG)
+    classifier.answer = "send"
+
+    frames = await _drive_stream(bot, PRICING_PDF_REQUEST, "docs-pricing-kb")
+
+    answer = _answer_text(frames)
+    assert len(cap["prompts"]) == 1, answer
+    assert knowledge in answer
+    assert "downloadable" not in answer
