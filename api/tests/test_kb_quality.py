@@ -3,16 +3,32 @@
 Production, 2026-09-10: Eventus claimed to operate in about 250 countries (a
 crawled form's country dropdown) and CleanStart gave out "(555) 123-4567" (a
 placeholder on its own site).
+
+2026-09-11 review: two follow-on bugs found by re-running these detectors
+over real production knowledge-base exports. First, "we ship to all 28
+Indian states" (a real coverage claim, written as prose) tripped the same
+boolean as an actual scraped <select> dropdown, so the report told a bot
+owner their own correct content was junk. Second, 53 of CleanStart's 54
+placeholder hits were addresses inside their own CLI/JSON/YAML/shell
+documentation examples ("--email security@company.com"), correct
+documentation that the original report told the owner to go delete.
 """
 
 import itertools
 import os
+import sys
 
 import pytest
 
 from app.db.models import Bot, Client, Document
-from app.services.kb_quality import is_option_list, placeholder_contacts
-from scripts.kb_junk_report import find_junk_chunks
+from app.services.kb_quality import (
+    is_option_list,
+    option_list_kind,
+    option_list_match,
+    placeholder_contacts,
+    placeholder_findings,
+)
+from scripts.kb_junk_report import find_junk_chunks, main
 
 COUNTRIES = "Australia Austria Azerbaijan Bahamas Bahrain Bangladesh Barbados Belarus Belgium Belize Benin Bermuda Bhutan Bolivia Botswana Brazil Bulgaria Cambodia Cameroon Canada Chile China Colombia Croatia Cuba Cyprus Denmark Egypt Estonia Finland France"
 
@@ -20,27 +36,188 @@ US_STATES = "Alabama Alaska Arizona Arkansas California Colorado Connecticut Del
 
 INDIAN_STATES = "Andhra Pradesh Arunachal Pradesh Assam Bihar Chhattisgarh Goa Gujarat Haryana Himachal Pradesh Jharkhand Karnataka Kerala Madhya Pradesh Maharashtra Manipur Meghalaya Mizoram Nagaland Odisha Punjab Rajasthan Sikkim Tamil Nadu Telangana Tripura Uttar Pradesh Uttarakhand West Bengal"
 
+# The exact shape of Eventus's real phone-input picker (production, 2026-09-10):
+# bullet, name, dial code, newline, nothing else between entries.
+EVENTUS_DIAL_CODE_PICKER = "\n".join(
+    f"*    {name}+{code}"
+    for name, code in [
+        ("Afghanistan", "93"),
+        ("Åland Islands", "358"),
+        ("Albania", "355"),
+        ("Algeria", "213"),
+        ("American Samoa", "1"),
+        ("Andorra", "376"),
+        ("Angola", "244"),
+        ("Anguilla", "1"),
+        ("Antigua & Barbuda", "1"),
+        ("Argentina", "54"),
+        ("Armenia", "374"),
+        ("Aruba", "297"),
+        ("Ascension Island", "247"),
+        ("Australia", "61"),
+        ("Austria", "43"),
+        ("Azerbaijan", "994"),
+        ("Bahamas", "1"),
+        ("Bahrain", "973"),
+        ("Bangladesh", "880"),
+        ("Barbados", "1"),
+        ("Belarus", "375"),
+        ("Belgium", "32"),
+        ("Belize", "501"),
+        ("Benin", "229"),
+        ("Bermuda", "1"),
+        ("Bhutan", "975"),
+    ]
+)
+
+# The reviewer's P-to-S slice: real ISO country names, no connecting words.
+P_TO_S_COUNTRIES = (
+    "Pakistan Palau Palestine Panama Papua New Guinea Paraguay Peru Philippines Poland Portugal "
+    "Qatar Romania Russia Rwanda Saint Kitts and Nevis Saint Lucia Samoa San Marino Saudi Arabia "
+    "Senegal Serbia Seychelles Sierra Leone Singapore Slovakia Slovenia Solomon Islands Somalia "
+    "South Africa South Korea South Sudan Spain Sri Lanka Sudan Suriname Sweden Switzerland Syria"
+)
+
+# The reviewer's two "real coverage list" examples: dense in place names, but
+# written as prose/commas, not picker debris.
+INDIAN_COVERAGE_PROSE = (
+    "We deliver pan-India across Andhra Pradesh, Arunachal Pradesh, Assam, Bihar, Chhattisgarh, Goa, "
+    "Gujarat, Haryana, Himachal Pradesh, Jharkhand, Karnataka, Kerala, Madhya Pradesh, Maharashtra, "
+    "Manipur, Meghalaya, Mizoram, Nagaland, Odisha, Punjab, Rajasthan, Sikkim, Tamil Nadu, Telangana, "
+    "Tripura, Uttar Pradesh, Uttarakhand and West Bengal."
+)
+COUNTRY_COVERAGE_PROSE = (
+    "Our customers reach us from offices across Australia, Austria, Azerbaijan, Bahamas, Bahrain, "
+    "Bangladesh, Barbados, Belarus, Belgium, Belize, Benin, Bermuda, Bhutan, Bolivia, Botswana, Brazil, "
+    "Bulgaria, Cambodia, Cameroon, Canada, Chile, China, Colombia, Croatia, Cuba, Cyprus, Denmark and "
+    "Vietnam."
+)
+
+
+# ── option_list_kind: form pickers vs real coverage prose (finding 1) ───────
+
 
 def test_a_country_dropdown_is_an_option_list():
     assert is_option_list(COUNTRIES) is True
+    assert option_list_kind(COUNTRIES) == "form_options"
 
 
 def test_prose_mentioning_a_few_countries_is_not():
     assert (
         is_option_list("We have offices in India, the United States and Germany, serving clients in Canada.") is False
     )
+    assert (
+        option_list_kind("We have offices in India, the United States and Germany, serving clients in Canada.") is None
+    )
 
 
 def test_a_us_state_dropdown_is_an_option_list():
     assert is_option_list(US_STATES) is True
+    assert option_list_kind(US_STATES) == "form_options"
 
 
 def test_an_indian_state_dropdown_is_an_option_list():
     assert is_option_list(INDIAN_STATES) is True
+    assert option_list_kind(INDIAN_STATES) == "form_options"
 
 
 def test_prose_naming_a_handful_of_states_is_not():
     assert is_option_list("We ship to California, Texas and New York, with a support desk in Maharashtra.") is False
+    assert option_list_kind("We ship to California, Texas and New York, with a support desk in Maharashtra.") is None
+
+
+def test_a_real_indian_coverage_claim_is_a_place_list_not_an_option_list():
+    # "We deliver pan-India ... Andhra Pradesh, Arunachal Pradesh, Assam, ...
+    # Uttarakhand and West Bengal." is real content a bot owner wrote, not a
+    # scraped <select>. It must not be reported as a dropdown to delete.
+    assert is_option_list(INDIAN_COVERAGE_PROSE) is False
+    assert option_list_kind(INDIAN_COVERAGE_PROSE) == "place_list"
+
+
+def test_a_real_country_coverage_claim_is_a_place_list_not_an_option_list():
+    assert is_option_list(COUNTRY_COVERAGE_PROSE) is False
+    assert option_list_kind(COUNTRY_COVERAGE_PROSE) == "place_list"
+
+
+def test_the_real_eventus_dial_code_picker_is_still_an_option_list():
+    # The exact production shape that started this whole review: a bullet,
+    # a name, a dial code and a newline between entries, nothing else.
+    assert is_option_list(EVENTUS_DIAL_CODE_PICKER) is True
+    match = option_list_match(EVENTUS_DIAL_CODE_PICKER)
+    assert match is not None
+    assert match.kind == "form_options"
+    assert match.category == "countries"
+
+
+# ── Country list coverage (finding 3) ────────────────────────────────────────
+
+
+def test_previously_missing_common_countries_are_recognized():
+    text = (
+        "United States United Kingdom South Africa South Korea Saudi Arabia New Zealand "
+        "United Arab Emirates Czech Republic Ivory Coast Russia Vietnam Germany France Italy "
+        "Spain Portugal Poland Sweden Norway Finland Denmark Netherlands Belgium Austria "
+        "Switzerland Greece Ireland Iceland Japan"
+    )
+    assert is_option_list(text) is True
+
+
+def test_the_reviewers_p_to_s_slice_reaches_the_threshold():
+    # 38 real ISO country names, P through S, with no connecting language:
+    # exactly the kind of picker slice the old, sparser whitelist missed.
+    match = option_list_match(P_TO_S_COUNTRIES)
+    assert match is not None
+    assert match.kind == "form_options"
+    assert match.category == "countries"
+    assert match.distinct_count >= 25
+
+
+def test_accented_country_names_match_their_ascii_form():
+    accented = "Åland Islands Côte d'Ivoire Curaçao Réunion São Tomé and Príncipe"
+    ascii_form = "Aland Islands Cote d'Ivoire Curacao Reunion Sao Tome and Principe"
+    # Each accented name is recognized as its own distinct country, both in
+    # its accented form and its plain-ASCII form, when combined with 30
+    # more ordinary countries (COUNTRIES) to clear the density threshold.
+    assert is_option_list(f"{accented} {COUNTRIES}") is True
+    assert is_option_list(f"{ascii_form} {COUNTRIES}") is True
+
+
+def test_niger_inside_nigeria_is_not_double_counted():
+    from app.services.kb_quality import _COUNTRY_PATTERN, _fold
+
+    text = _fold("Nigeria and Niger are both in West Africa")
+    matches = _COUNTRY_PATTERN.findall(text)
+    # "Nigeria" is one country name; "niger" is not a separate match hiding
+    # inside it. "Niger" the country IS a separate, correct match here since
+    # it is genuinely also named in the sentence.
+    assert sorted(matches) == sorted(["nigeria", "niger"])
+
+
+def test_guinea_inside_papua_new_guinea_is_not_double_counted():
+    from app.services.kb_quality import _COUNTRY_PATTERN, _fold
+
+    text = _fold("Papua New Guinea and Equatorial Guinea and Guinea-Bissau and Guinea")
+    matches = _COUNTRY_PATTERN.findall(text)
+    # Four distinct countries, each matched to its full, correct name -- not
+    # "papua new" plus a stray "guinea", and not "guinea-bissau" truncated
+    # to "guinea".
+    assert sorted(matches) == sorted(["papua new guinea", "equatorial guinea", "guinea-bissau", "guinea"])
+
+
+def test_option_list_kind_stays_linear_on_a_large_chunk():
+    import time
+
+    content = ("Ask us about our services in Springfield. " * 2500)[:100_000]
+    assert len(content) == 100_000
+
+    start = time.perf_counter()
+    option_list_kind(content)
+    placeholder_findings(content)
+    elapsed = time.perf_counter() - start
+    assert elapsed < 0.2
+
+
+# ── Placeholder findings: kind, dedup (finding 2 basics + finding 5) ────────
 
 
 def test_placeholder_phone_numbers_and_emails_are_found():
@@ -90,17 +267,175 @@ def test_reserved_555_01xx_numbers_are_flagged_even_with_a_real_area_code():
     assert "415 555 0199" in found
 
 
-def test_is_option_list_stays_linear_on_a_large_chunk():
-    import time
+def test_low_risk_placeholder_names_and_filler_are_found():
+    findings = placeholder_findings(
+        "QA Sign-off: Jane Smith. Security Review: John Doe. Backup contact: Jane Doe. "
+        "Use Your Name Here as the reviewer. Template footer: Company Name Here. "
+        "Also try Your Company Name Here."
+    )
+    by_value = {f.value.lower(): f.kind for f in findings}
+    assert by_value["jane smith"] == "name"
+    assert by_value["john doe"] == "name"
+    assert by_value["jane doe"] == "name"
+    assert by_value["your name here"] == "name"
+    assert by_value["company name here"] == "filler"
+    assert by_value["your company name here"] == "filler"
 
-    content = ("Ask us about our services in Springfield. " * 2500)[:100_000]
-    assert len(content) == 100_000
 
-    start = time.perf_counter()
-    is_option_list(content)
-    placeholder_contacts(content)
-    elapsed = time.perf_counter() - start
-    assert elapsed < 0.2
+def test_bare_your_company_name_without_here_is_not_flagged():
+    # Production counter-example (Eventus, 2026-09-10): "Monitoring for your
+    # company name, domain, executive names, and key vendors can reveal
+    # threat activity" is real security-advice prose, not an unfilled
+    # template field. Only the unambiguous "...Here" forms are flagged.
+    text = "Monitoring for your company name, domain, executive names, and key vendors can reveal threat activity."
+    assert placeholder_contacts(text) == []
+
+
+def test_placeholder_contacts_dedupes_case_insensitively_keeping_first_case():
+    found = placeholder_contacts(
+        "Email Security@Company.com, then security@company.com again, then SECURITY@COMPANY.COM."
+    )
+    assert found == ["Security@Company.com"]
+
+
+# ── in_example: code and documentation examples are not leaks (finding 2) ──
+
+
+def test_a_cli_flag_example_is_in_example():
+    text = "Configure alerts:\n`intelligence monitor --packages sbom.spdx --email security@company.com`\nDone."
+    findings = placeholder_findings(text)
+    assert findings
+    assert all(f.in_example for f in findings if f.value.lower() == "security@company.com")
+    assert placeholder_contacts(text) == []
+
+
+def test_a_json_example_is_in_example():
+    text = '{\n  "pubkeys": [\n    "release-lead@company.com"\n  ]\n}'
+    findings = placeholder_findings(text)
+    assert findings and all(f.in_example for f in findings)
+    assert placeholder_contacts(text) == []
+
+
+def test_a_yaml_example_is_in_example():
+    text = 'labels:\n  maintainer: "platform-team@example.com"\n  version: "1.2.3"'
+    findings = placeholder_findings(text)
+    assert findings and all(f.in_example for f in findings)
+    assert placeholder_contacts(text) == []
+
+
+def test_a_yaml_example_without_real_line_breaks_is_still_in_example():
+    # CleanStart's own crawl collapses a <pre> block's newlines into plain
+    # whitespace, so this shape (a bareword key, colon, quoted value) has to
+    # be recognized without a line anchor to rely on.
+    text = 'env_vars: APP_ENV: "production" labels: maintainer: "platform-team@example.com" version: "1.2.3"'
+    findings = placeholder_findings(text)
+    matches = [f for f in findings if f.value.lower() == "platform-team@example.com"]
+    assert matches and all(f.in_example for f in matches)
+
+
+def test_a_docker_compose_example_is_in_example():
+    text = "environment:\n  - PGADMIN_DEFAULT_EMAIL=admin@example.com\n  - PGADMIN_DEFAULT_PASSWORD=secret"
+    findings = placeholder_findings(text)
+    assert findings and all(f.in_example for f in findings)
+
+
+def test_a_shell_snippet_is_in_example():
+    text = 'kubectl create secret docker-registry cleanstart-secret \\\n  --docker-email="$username@example.com"'
+    findings = placeholder_findings(text)
+    assert findings and all(f.in_example for f in findings)
+
+
+def test_text_after_such_as_is_in_example():
+    text = "A security alert is sent to designated recipients (such as security@company.com) automatically."
+    findings = placeholder_findings(text)
+    assert findings and all(f.in_example for f in findings)
+
+
+def test_a_markdown_link_url_inherits_its_visible_texts_verdict():
+    # "[value](mailto:value)" repeats the address as the href; the href
+    # match is judged the same way as the paired visible-text match.
+    text = "such as [security@company.com](mailto:security@company.com) for alerts."
+    findings = placeholder_findings(text)
+    assert findings and all(f.in_example for f in findings)
+
+
+def test_a_documented_template_with_bracket_placeholders_is_in_example():
+    # CleanStart's incident-response runbook: a fill-in-the-blank template
+    # with square-bracket placeholders elsewhere in the same message.
+    text = (
+        "Review your audit logs for suspicious activity between [start_date] and [end_date]. "
+        "Contact us if you need assistance: [incident-support@company.com](mailto:incident-support@company.com)."
+    )
+    findings = placeholder_findings(text)
+    matches = [f for f in findings if "incident-support@company.com" in f.value]
+    assert matches and all(f.in_example for f in matches)
+
+
+def test_the_real_sla_phone_number_is_not_in_example():
+    # The exact production leak that started this review: a real phone
+    # number, written in plain prose, not inside any code or config sample.
+    text = (
+        "**Email**: General support: support@cleanstart.com. "
+        "**Phone**: +1 (555) 123-4567 (Enterprise tier customers only). "
+        "**Effective Date**: 2026-03-22."
+    )
+    findings = placeholder_findings(text)
+    phone = [f for f in findings if "555" in f.value]
+    assert phone
+    assert all(not f.in_example for f in phone)
+    assert "(555) 123-4567" in placeholder_contacts(text)
+
+
+def test_a_real_prose_mention_of_a_placeholder_domain_is_not_in_example():
+    # "File an issue or contact the platform team at platform-team@example.com."
+    # is a genuine (if placeholder-domain) contact channel written in prose,
+    # not a code sample -- still worth a human's attention.
+    text = "File an issue or contact the platform team at platform-team@example.com for support."
+    assert "platform-team@example.com" in placeholder_contacts(text)
+
+
+@pytest.mark.skipif(os.getenv("DB_URL") is None, reason="needs a reachable Postgres at DB_URL")
+def test_include_examples_flag_lists_the_example_section(monkeypatch, db, capsys):
+    client = _make_client(db)
+    bot = _make_bot(db, client)
+    _add_document(
+        db,
+        client=client,
+        bot=bot,
+        name="config-example.md",
+        content="`--email security@company.com`\nCall us at (555) 123-4567 for support.",
+    )
+
+    monkeypatch.setattr(sys, "argv", ["kb_junk_report.py", "--bot-id", str(bot.id), "--include-examples"])
+    exit_code = main()
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "(555) 123-4567" in out
+    assert "security@company.com" not in out.split("usually correct)")[0]
+    assert "usually correct" in out
+    assert "security@company.com" in out.split("usually correct)")[1]
+
+
+@pytest.mark.skipif(os.getenv("DB_URL") is None, reason="needs a reachable Postgres at DB_URL")
+def test_without_the_flag_example_placeholders_are_omitted(monkeypatch, db, capsys):
+    client = _make_client(db)
+    bot = _make_bot(db, client)
+    _add_document(
+        db,
+        client=client,
+        bot=bot,
+        name="config-example.md",
+        content="`--email security@company.com`",
+    )
+
+    monkeypatch.setattr(sys, "argv", ["kb_junk_report.py", "--bot-id", str(bot.id)])
+    exit_code = main()
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "security@company.com" not in out
+    assert "usually correct" not in out
 
 
 # ── find_junk_chunks (the read-only report) ──────────────────────────────────
@@ -160,11 +495,24 @@ class TestFindJunkChunks:
         bot = _make_bot(db, client)
         _add_document(db, client=client, bot=bot, name="https://eventus.example/signup", content=COUNTRIES)
 
-        findings = find_junk_chunks(db, bot.id)
+        result = find_junk_chunks(db, bot.id)
 
-        assert len(findings) == 1
-        assert findings[0].document_name == "https://eventus.example/signup"
-        assert any("option list" in reason for reason in findings[0].reasons)
+        assert len(result.findings) == 1
+        assert result.findings[0].document_name == "https://eventus.example/signup"
+        assert any("country dial-code picker" in reason for reason in result.findings[0].reasons)
+        assert result.scanned_count == 1
+
+    def test_flags_a_place_list_chunk_separately_and_lower_priority(self, db):
+        client = _make_client(db)
+        bot = _make_bot(db, client)
+        _add_document(db, client=client, bot=bot, name="coverage.html", content=INDIAN_COVERAGE_PROSE)
+
+        result = find_junk_chunks(db, bot.id)
+
+        assert len(result.findings) == 1
+        finding = result.findings[0]
+        assert finding.reasons == ()
+        assert finding.place_list_reasons != ()
 
     def test_flags_a_placeholder_contact_chunk(self, db):
         client = _make_client(db)
@@ -177,10 +525,28 @@ class TestFindJunkChunks:
             content="Call us at (555) 123-4567 any time.",
         )
 
-        findings = find_junk_chunks(db, bot.id)
+        result = find_junk_chunks(db, bot.id)
 
-        assert len(findings) == 1
-        assert any("(555) 123-4567" in reason for reason in findings[0].reasons)
+        assert len(result.findings) == 1
+        assert any("(555) 123-4567" in reason for reason in result.findings[0].reasons)
+
+    def test_a_documentation_example_placeholder_is_not_a_main_finding(self, db):
+        client = _make_client(db)
+        bot = _make_bot(db, client)
+        _add_document(
+            db,
+            client=client,
+            bot=bot,
+            name="cli-docs.md",
+            content="Run `intelligence monitor --email security@company.com` to subscribe.",
+        )
+
+        result = find_junk_chunks(db, bot.id)
+
+        assert len(result.findings) == 1
+        finding = result.findings[0]
+        assert finding.reasons == ()
+        assert any("security@company.com" in reason for reason in finding.example_reasons)
 
     def test_clean_content_is_not_flagged(self, db):
         client = _make_client(db)
@@ -193,7 +559,9 @@ class TestFindJunkChunks:
             content="We are a small team in Bangalore helping local shops with their books.",
         )
 
-        assert find_junk_chunks(db, bot.id) == []
+        result = find_junk_chunks(db, bot.id)
+        assert result.findings == []
+        assert result.scanned_count == 1
 
     def test_inactive_chunks_are_not_scanned(self, db):
         client = _make_client(db)
@@ -207,7 +575,9 @@ class TestFindJunkChunks:
             is_active=False,
         )
 
-        assert find_junk_chunks(db, bot.id) == []
+        result = find_junk_chunks(db, bot.id)
+        assert result.findings == []
+        assert result.scanned_count == 0
 
     def test_only_scans_the_given_bot(self, db):
         client = _make_client(db)
@@ -215,7 +585,9 @@ class TestFindJunkChunks:
         other_bot = _make_bot(db, client)
         _add_document(db, client=client, bot=other_bot, name="other.html", content=COUNTRIES)
 
-        assert find_junk_chunks(db, bot.id) == []
+        result = find_junk_chunks(db, bot.id)
+        assert result.findings == []
+        assert result.scanned_count == 0
 
     def test_never_prints_chunk_content(self, db, capsys):
         client = _make_client(db)
@@ -232,3 +604,37 @@ class TestFindJunkChunks:
         find_junk_chunks(db, bot.id)
 
         assert secret not in capsys.readouterr().out
+
+
+# ── main(): missing bot, scanned-count summary (finding 4) ─────────────────
+
+
+class TestMainMissingBot:
+    pytestmark = pytest.mark.skipif(
+        os.getenv("DB_URL") is None,
+        reason="main() integration tests need a reachable Postgres at DB_URL",
+    )
+
+    def test_a_missing_bot_id_is_reported_and_exits_nonzero(self, monkeypatch, db, capsys):
+        monkeypatch.setattr(sys, "argv", ["kb_junk_report.py", "--bot-id", "999999999"])
+
+        exit_code = main()
+
+        out = capsys.readouterr().out
+        assert exit_code == 1
+        assert "Bot 999999999 not found." in out
+        # A typo'd bot id must not print the same line a real, clean bot does.
+        assert "suspicious" not in out
+
+    def test_a_real_bot_reports_the_scanned_chunk_count(self, monkeypatch, db, capsys):
+        client = _make_client(db)
+        bot = _make_bot(db, client)
+        _add_document(db, client=client, bot=bot, name="a.html", content="Ordinary page content, nothing odd here.")
+        _add_document(db, client=client, bot=bot, name="b.html", content="More ordinary content about our product.")
+
+        monkeypatch.setattr(sys, "argv", ["kb_junk_report.py", "--bot-id", str(bot.id)])
+        exit_code = main()
+
+        out = capsys.readouterr().out
+        assert exit_code == 0
+        assert f"0 suspicious of 2 active chunks for bot {bot.id}" in out
