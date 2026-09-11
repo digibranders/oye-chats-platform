@@ -39,6 +39,9 @@ words on ("set by the court, not by us", "not our firm"), and "rather than",
 before "us" or "our". Nor does a plan or a package in another sense: a salary,
 relief or benefits package, or an insurance, treatment or payment plan; nor a
 numbered tier of cities or towns ("tier 1 and tier 2 cities", "Tier II towns").
+A "tier" followed by a figure still names a plan tier ("the Scale tier
+2,499/month", "our top tier INR 25,000 a month"): once a figure starts where the
+number of a tier of cities would go, no tier of cities can follow.
 The question signal skips a wider set of plans, because a word that is a safe
 question-side exclusion can still be a plan TIER a company sells: "the Business
 plan", "our Care plan" and "the Recovery plan" all name a tier here, so "business",
@@ -252,7 +255,8 @@ _MIDDLE_WORD = rf"(?:(?!{_READ_ON_ITS_OWN})[a-z]{{1,{_MIDDLE_WORD_MAX}}}{_SEP})?
 #: A numbered tier of cities or towns, not a plan tier: "tier 2 cities", "tier-1, tier-2
 #: and tier-3 cities", "Tier II towns". Unlike every other phrase it ends after the word
 #: it neutralises, so a "tier" is settled only once what has arrived after it can no
-#: longer grow into this phrase (``_TIER_PLACES_PREFIX_RE``).
+#: longer grow into this phrase (``_TIER_PLACES_PREFIX_RE``), or a figure starts where
+#: the phrase would continue.
 _TIER_GAP: _Part = (r"(?:-|[^\S\n])", r"(?:-|[^\S\n])?")
 _TIER: _Part = _words_part("tier", "tiers")
 _TIER_NUMBER: _Part = _words_part("1", "2", "3", "i", "ii", "iii", "one", "two", "three")
@@ -472,7 +476,13 @@ class _AnswerReader:
         level = _heading_level(self._head)
         return level is None or level > self._section_level
 
-    def read(self, text: str, lookahead: str) -> None:
+    def read(self, text: str, lookahead: str, *, figure_follows: bool) -> None:
+        """Read ``text``, the next piece of emitted text, with ``lookahead``, the character after it if it has arrived.
+
+        ``figure_follows`` says a figure starts at ``lookahead``. A "tier" whose tier
+        of cities could only continue through that figure is then settled as a plan
+        tier: "tier " and "2,499/month" can never become "tier 2 cities".
+        """
         scan = self._tail + text
         probe = scan + lookahead
         base = self._tail_start
@@ -490,8 +500,14 @@ class _AnswerReader:
         self._ends_judged = base + len(scan) - (1 if waiting else 0)
         for word in self._words.finditer(probe):
             # Settled only when the character after it has arrived ("plan" + "et"),
-            # and a "tier" only when it cannot still become "tier 2 cities".
-            if word.end() > len(scan) or word.end() == len(probe) or _may_grow_into_places(word, len(probe)):
+            # and a "tier" only when it cannot still become "tier 2 cities". A tier
+            # of cities that could still grow reaches the end of ``probe``, so with a
+            # figure starting there it would have to run through the figure: it cannot.
+            if (
+                word.end() > len(scan)
+                or word.end() == len(probe)
+                or (not figure_follows and _may_grow_into_places(word, len(probe)))
+            ):
                 break
             # A word cut by the start of the tail was read whole before.
             if (word.start() > 0 or base == 0) and base + word.end() > self._words_done:
@@ -708,8 +724,8 @@ class PriceStreamGuard:
                 self._trip()
                 return False
             # The text before the figure is emitted first, so the answer is read
-            # up to the figure itself.
-            self._emit(emitted, window, start, match.start())
+            # up to the figure itself, knowing a figure comes next.
+            self._emit(emitted, window, start, match.start(), figure_follows=True)
             if self._reader.sentence_names_own_price() or self._reader.in_price_context(self._reader.position):
                 self._trip()
                 return False
@@ -724,7 +740,7 @@ class PriceStreamGuard:
             hold = _HOLD_RE.search(window, start)
             if hold:
                 cut = hold.start()
-        self._emit(emitted, window, start, cut)
+        self._emit(emitted, window, start, cut, figure_follows=False)
         return False
 
     def _settle_held_figure(self, emitted: list[str], *, final: bool) -> bool:
@@ -769,17 +785,17 @@ class PriceStreamGuard:
             return False
         figure_end = start + self._held_figure_len
         self._held_figure_len = 0
-        self._emit(emitted, window, start, figure_end)
+        self._emit(emitted, window, start, figure_end, figure_follows=False)
         return True
 
-    def _emit(self, emitted: list[str], window: str, start: int, cut: int) -> None:
-        """Emit ``window[start:cut]`` and keep the rest pending."""
+    def _emit(self, emitted: list[str], window: str, start: int, cut: int, *, figure_follows: bool) -> None:
+        """Emit ``window[start:cut]`` and keep the rest pending. ``figure_follows``: a figure starts at ``cut``."""
         text = window[start:cut]
         if text:
             emitted.append(text)
         lookahead = window[cut : cut + 1]
         if not self._signal and (text or lookahead):
-            self._reader.read(text, lookahead)
+            self._reader.read(text, lookahead, figure_follows=figure_follows)
         self._pending = window[cut:]
         self._context = window[max(0, cut - _CONTEXT_CHARS) : cut]
 
