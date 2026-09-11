@@ -161,9 +161,7 @@ KNOWN LIMITATIONS (deliberate, revisit with evidence):
 
 from __future__ import annotations
 
-import contextlib
 import re
-from collections import Counter
 from dataclasses import dataclass
 from typing import Literal
 from urllib.parse import urlsplit
@@ -560,6 +558,7 @@ GateOutcome = Literal[
     "answer",
     "escalate_no_url",
     "escalate_no_content",
+    "escalate_deferred",
 ]
 
 
@@ -571,6 +570,10 @@ class PricingGateDecision:
     (``quote_standdown``, ``no_support_path_standdown``, ``not_pricing``); in
     all three the caller must use ``chunks`` unchanged and continue exactly as
     it does today.
+
+    ``escalate_deferred`` is not fired either: the gate would have escalated, but
+    the visitor also asked something besides the price, so the caller keeps
+    ``chunks``, generates, and lets the price guard trip on any figure.
 
     The two standdowns are deliberately distinct values rather than one shared
     "standdown", because they are different failures to reason about and are
@@ -653,6 +656,8 @@ def evaluate_pricing_gate(
     support_enabled: bool = True,
     contact_url: object = None,
     answer_from_knowledge_base: bool = False,
+    asks_price: bool | None = None,
+    asks_more: bool = False,
 ) -> PricingGateDecision:
     """Decide how a turn should be handled under the pricing answer gate.
 
@@ -702,14 +707,34 @@ def evaluate_pricing_gate(
     it could have escalated, costing one Free visitor a link, rather than
     escalating with nothing to hand over.
 
+    ``asks_price`` is the turn's price decision (``price_intent``): whether the
+    visitor asks what this business charges for its own products or services.
+    It only narrows the wording rule (``is_pricing_question``), never widens it:
+    False keeps "can i get a quote from your leadership" and "whats the share
+    price" from being escalated (production, 2026-09-11), and True escalates only
+    a question the wording rule also reads as pricing. The classifier counts
+    plans, packages, rates and budgets as price questions, and "what plans do you
+    have" or "what is the interest rate on a home loan" are answered from the
+    knowledge base as they always were; a typo the wording rule misses is the
+    price guard's to catch. None leaves the wording rule alone to decide, for a
+    caller that has no decision.
+
+    ``asks_more`` says the visitor also asked something besides the price. An
+    escalation replaces the whole answer, so it would drop that part of the turn;
+    the escalation is deferred instead (``escalate_deferred``, chunks untouched)
+    and generation answers the turn with the price guard watching every figure.
+    An ``answer`` still narrows to the pricing page, and every standdown still
+    wins.
+
     ``chunks`` is the finalized retrieval result (fused, trimmed, reranked): a
     list of anything exposing ``document_name`` and ``content``.
     """
     if quote_active:
         return PricingGateDecision(fired=False, outcome="quote_standdown", chunks=chunks)
-    if answer_from_knowledge_base and is_pricing_question(question):
+    asks = asks_price is not False and is_pricing_question(question)
+    if answer_from_knowledge_base and asks:
         return PricingGateDecision(fired=False, outcome="owner_optout", chunks=chunks)
-    if not is_pricing_question(question):
+    if not asks:
         return PricingGateDecision(fired=False, outcome="not_pricing", chunks=chunks)
 
     # Checked AFTER intent, not before, so a non-pricing turn on a Free bot
@@ -733,15 +758,22 @@ def evaluate_pricing_gate(
         # gets here at all, because the standdown above took the other branch.
         # Chunks are emptied for both, so the contact link is the entire reply
         # rather than a link appended to a stale knowledge-base price.
-        return PricingGateDecision(fired=True, outcome="escalate_no_url", chunks=[])
-
-    kept = [c for c in chunks if normalize_url(getattr(c, "document_name", None)) == target]
-    if not kept or not any(has_price_signal(getattr(c, "content", None)) for c in kept):
+        escalation: GateOutcome = "escalate_no_url"
+    else:
+        kept = [c for c in chunks if normalize_url(getattr(c, "document_name", None)) == target]
+        if kept and any(has_price_signal(getattr(c, "content", None)) for c in kept):
+            return PricingGateDecision(fired=True, outcome="answer", chunks=kept)
         # Either the page never made it into the knowledge base, or it did and
         # says nothing about money. Both mean the same thing to the visitor.
-        return PricingGateDecision(fired=True, outcome="escalate_no_content", chunks=[])
+        escalation = "escalate_no_content"
 
-    return PricingGateDecision(fired=True, outcome="answer", chunks=kept)
+    if asks_more:
+        # The visitor asked something besides the price. The canned escalation
+        # would be the whole reply and leave that unanswered, so generation
+        # answers the turn from every chunk and the price guard, applied to this
+        # outcome and told the turn asks the price, trips on any figure.
+        return PricingGateDecision(fired=False, outcome="escalate_deferred", chunks=chunks)
+    return PricingGateDecision(fired=True, outcome=escalation, chunks=[])
 
 
 @dataclass(frozen=True)
@@ -822,14 +854,14 @@ def pricing_pivot(
     that decides this combination never arrives; the pivot's job is to be correct
     if it does.
 
-    ``subject`` is the service the visitor asked the price OF, as
-    ``pricing_subject`` recovered it ("SOC", "Red Teaming"), or None. With it the
-    reply prices that service at the company ("Pricing for **SOC** at **Acme**")
-    instead of the whole company. Without it every branch is byte-identical to
-    the wording before the argument existed. It is re-validated here, like both
-    URLs, because it is rendered to the visitor and persisted: anything that is
-    not a short run of letters, digits, spaces and hyphens is dropped rather than
-    trusted from the caller.
+    ``subject`` is the configured service the visitor asked the price OF, as
+    ``pricing_subject`` found it ("SOC as a Service", "Red Teaming"), or None.
+    With it the reply prices that service at the company ("Pricing for **Red
+    Teaming** at **Acme**") instead of the whole company. Without it every branch
+    is byte-identical to the wording before the argument existed. It is
+    re-validated here, like both URLs, because it is rendered to the visitor and
+    persisted: anything that is not a short run of letters, digits, spaces and
+    ``& + . ' / -`` is dropped rather than trusted from the caller.
     """
     cn = f"**{company_name}**" if company_name else "us"
     subject_text = subject.strip() if isinstance(subject, str) else ""
@@ -963,170 +995,103 @@ def pricing_pivot(
 # answered "pricing of red teaming", "pricing for managed soc" and "soc pricng"
 # with "Pricing for Eventus Security is best confirmed by the team" for two
 # weeks: the visitor named a service and the reply named something else.
+#
+# The first fix recovered the service from capitalised phrases in the retrieved
+# knowledge base, and on 2026-09-11 production replied "Pricing for **Story**",
+# "Pricing for **INDIA**", "Pricing for **Data**" and "Pricing for **Per-User**":
+# any capitalised word in the content could fill the slot. The slot now takes
+# only a service the owner configured, and only when the visitor names it.
 
-#: Words that carry the pricing intent, never the thing priced. They end a
-#: candidate phrase, as the company name does.
-_SUBJECT_PRICE_WORDS = frozenset(
-    {
-        "price", "prices", "priced", "pricing", "pricelist", "cost", "costs", "costing",
-        "fee", "fees", "charge", "charges", "charged", "quotation", "quotations", "quote",
-        "quotes", "rate", "rates", "card", "list", "much", "budget", "estimate", "estimates",
-    }
-)  # fmt: skip
-
-#: Question scaffolding. A subject may not begin or end on one of these, though
-#: one may sit inside it ("SOC as a Service").
-_SUBJECT_FILLER = frozenset(
-    {
-        "a", "an", "the", "of", "for", "on", "in", "to", "at", "as", "and", "or", "with",
-        "about", "abt", "regarding", "re", "i", "iwant", "im", "me", "my", "we", "our", "us",
-        "you", "your", "yours", "u", "ur", "it", "its", "this", "that", "these", "those",
-        "they", "them", "is", "are", "was", "be", "do", "does", "did", "can", "could", "would",
-        "will", "should", "may", "please", "pls", "plz", "what", "whats", "wat", "how", "which",
-        "where", "when", "why", "who", "want", "wanna", "need", "know", "tell", "give", "get",
-        "share", "send", "show", "see", "like", "looking", "interested", "more", "some", "any",
-        "info", "information", "detail", "details", "exactly", "roughly", "approx",
-        "approximately", "current", "latest", "hi", "hello", "hey", "ok", "okay", "so", "just",
-        "also", "then", "now", "there", "here", "teh", "th", "fro", "em", "s",
-    }
-)  # fmt: skip
-
-#: Nouns that name no particular offering. "your services" is the company again,
-#: so a phrase needs at least one word outside this set and the filler.
-_SUBJECT_GENERIC = frozenset(
-    {
-        "service", "services", "product", "products", "plan", "plans", "package", "packages",
-        "solution", "solutions", "offering", "offerings", "subscription", "subscriptions",
-        "option", "options", "tier", "tiers", "one", "ones", "thing", "things", "stuff",
-    }
-)  # fmt: skip
-
-_SUBJECT_MAX_WORDS = 5
-_SUBJECT_MAX_QUESTION_WORDS = 40
-_SUBJECT_MAX_CORPUS_CHARS = 200_000
+#: How many services each list contributes: the cap the prompt's SERVICES section reads.
+_MAX_CONFIGURED_SERVICES = 50
+#: A configured name of more words than this is a description, and is never rendered.
+_SUBJECT_MAX_WORDS = 8
+#: How many words of the visitor's message are searched for a service name.
+_SUBJECT_MAX_QUESTION_WORDS = 400
 _SUBJECT_WORD_RE = re.compile(r"[a-z0-9]+")
-_SUBJECT_URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
 #: What ``pricing_pivot`` will render: a short run of letters, digits, spaces and
-#: hyphens. Anything else is dropped there, whoever computed it.
-_SAFE_SUBJECT_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9 \-]{0,46}[A-Za-z0-9])?")
+#: ``& + . ' / -`` ("Brand Identity & Storytelling", "C++ Training"), and never a
+#: character markdown reads or a line break. Anything else is dropped there,
+#: whoever computed it.
+_SAFE_SUBJECT_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9 &+.'/\-]{0,58}[A-Za-z0-9+.])?")
 
 
-def _company_word_mask(words: list[str], company_name: object) -> list[bool]:
-    """Which question words belong to the company name.
+def configured_service_names(services: object, quotation_catalog: object) -> list[str]:
+    """The service names the bot owner configured, in order, without duplicates.
 
-    The full name as a run ("acme cloud"), and its first word on its own
-    ("eventus"), which is how visitors shorten a brand. The other words of the
-    name are NOT dropped one at a time: "Eventus Security" must not make
-    "security" unusable in "pricing for security operations".
+    ``services`` is ``Bot.services``: a list of names or of ``{"name", "url"}``
+    objects, both shapes live (the prompt's SERVICES section reads both).
+    ``quotation_catalog`` is ``Bot.quotation_catalog``, whose ``services`` are
+    objects with a ``name``; a disabled catalog still names the owner's services.
+    Anything else in either value is skipped. Names compare case-insensitively
+    and the first spelling is kept.
     """
-    mask = [False] * len(words)
-    name = _SUBJECT_WORD_RE.findall(company_name.lower()) if isinstance(company_name, str) else []
-    if not name:
-        return mask
-    n = len(name)
-    for i in range(len(words) - n + 1):
-        if words[i : i + n] == name:
-            for j in range(i, i + n):
-                mask[j] = True
-    for i, word in enumerate(words):
-        if word == name[0]:
-            mask[i] = True
-    return mask
-
-
-def _is_price_word(word: str) -> bool:
-    if word in _SUBJECT_PRICE_WORDS:
-        return True
-    return len(word) >= _NEAR_MISS_MIN_LEN and any(_within_one_edit(word, t) for t in _NEAR_MISS_PRICE_WORDS)
-
-
-def pricing_subject(question: object, company_name: object, chunks: object) -> str | None:
-    """The service a pricing question is about, spelled the way the bot's own
-    content spells it, or None.
-
-    Candidates are runs of the visitor's words between the pricing words and the
-    company name: "iwant to know the soc pricng" leaves "soc". A run must start
-    and end on a content word and hold at least one word that names something
-    more specific than "services". The longest candidate is tried first.
-
-    A candidate counts only when the retrieved ``chunks`` (the same list the gate
-    judged) contain it as a NAME: capitalised in more places than it is written
-    in lower case, and either capitalised past its first letter ("SOC", "Red
-    Teaming") or capitalised more than once; or capitalised at all and also the
-    slug of a page it came from. That is what makes "soc" come back as "SOC" and
-    "managed soc" as "Managed SOC", and what keeps "pricing for my startup" from
-    turning into "Pricing for startup". Occurrences inside URLs do not count.
-
-    Nothing the visitor typed is returned unless the knowledge base already says
-    it, so a reply cannot be made to repeat arbitrary input. English-only, like
-    the detector: the pipeline never escalates a non-English turn.
-    """
-    if not isinstance(question, str) or not question.strip():
-        return None
-    if not isinstance(chunks, (list, tuple)) or not chunks:
-        return None
-
-    texts: list[str] = []
-    slugs: list[str] = []
-    budget = _SUBJECT_MAX_CORPUS_CHARS
-    for chunk in chunks:
-        content = getattr(chunk, "content", None)
-        if isinstance(content, str) and content and budget > 0:
-            texts.append(_SUBJECT_URL_RE.sub(" ", content[:budget]))
-            budget -= len(content)
-        name = getattr(chunk, "document_name", None)
-        if isinstance(name, str):
-            with contextlib.suppress(ValueError):
-                slugs.append(urlsplit(name.strip()).path.lower())
-    corpus = "\n".join(texts)
-    if not corpus.strip():
-        return None
-
-    words = _SUBJECT_WORD_RE.findall(question.lower())[:_SUBJECT_MAX_QUESTION_WORDS]
-    company = _company_word_mask(words, company_name)
-    breaks = [company[i] or _is_price_word(w) for i, w in enumerate(words)]
-
-    candidates: list[tuple[int, int]] = []
-    for start, first in enumerate(words):
-        if breaks[start] or first in _SUBJECT_FILLER:
-            continue
-        for end in range(start, min(start + _SUBJECT_MAX_WORDS, len(words))):
-            if breaks[end]:
-                break
-            last = words[end]
-            if last in _SUBJECT_FILLER:
-                continue
-            span = words[start : end + 1]
-            if all(w in _SUBJECT_FILLER or w in _SUBJECT_GENERIC for w in span):
-                continue
-            candidates.append((start, end))
-    candidates.sort(key=lambda se: (-(se[1] - se[0]), se[0]))
-
-    for start, end in candidates:
-        span = words[start : end + 1]
-        pattern = re.compile(
-            r"(?<![A-Za-z0-9])" + r"[\s\-]+".join(re.escape(w) for w in span) + r"(?![A-Za-z0-9])",
-            re.IGNORECASE,
+    candidates: list[object] = []
+    if isinstance(services, list):
+        candidates.extend(
+            item.get("name") if isinstance(item, dict) else item for item in services[:_MAX_CONFIGURED_SERVICES]
         )
-        forms = [re.sub(r"\s+", " ", m.group(0)) for m in pattern.finditer(corpus)]
-        if not forms:
+    catalog_services = quotation_catalog.get("services") if isinstance(quotation_catalog, dict) else None
+    if isinstance(catalog_services, list):
+        candidates.extend(
+            item.get("name") for item in catalog_services[:_MAX_CONFIGURED_SERVICES] if isinstance(item, dict)
+        )
+    names: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not isinstance(candidate, str):
             continue
-        named = [f for f in forms if any(ch.isupper() for ch in f)]
-        if not named:
+        name = " ".join(candidate.split())
+        if name and name.casefold() not in seen:
+            seen.add(name.casefold())
+            names.append(name)
+    return names
+
+
+def _run_in(words: list[str], target: list[str], *, plural: bool) -> bool:
+    """Whether ``target`` appears in ``words`` as one run; with ``plural``, its last word may carry "s" or "es"."""
+    size = len(target)
+    head, last = target[:-1], target[-1]
+    endings = {last, f"{last}s", f"{last}es"} if plural else {last}
+    return any(words[i : i + size - 1] == head and words[i + size - 1] in endings for i in range(len(words) - size + 1))
+
+
+def pricing_subject(question: object, company_name: object, service_names: object) -> str | None:
+    """The configured service the visitor's message names, spelled as the owner spelled it, or None.
+
+    ``service_names`` is ``configured_service_names``. A service counts only when
+    every word of its name appears in the message as one run, in order: "pricing
+    for managed soc" names "Managed SOC", and "soc pricing" does not name "SOC as
+    a Service". Case and punctuation do not matter ("Red-Teaming"), and the last
+    word may be plural ("landing pages"). The longest name wins, then the first
+    configured.
+
+    Never a name inside the company's own name, and never a name
+    ``pricing_pivot`` would not render. Nothing the visitor typed is returned:
+    only the owner's spelling of a service the owner configured. English-only,
+    like the detector.
+    """
+    if not isinstance(question, str) or not isinstance(service_names, (list, tuple)):
+        return None
+    words = _SUBJECT_WORD_RE.findall(question.lower())[:_SUBJECT_MAX_QUESTION_WORDS]
+    if not words:
+        return None
+    company = _SUBJECT_WORD_RE.findall(company_name.lower()) if isinstance(company_name, str) else []
+    best_size, best = 0, None
+    for candidate in service_names:
+        if not isinstance(candidate, str):
             continue
-        # A capital past the first letter ("SOC", "Red Teaming") is a name on
-        # its own; a lone leading capital ("Startup") could be a heading or a
-        # stray, so it needs repeating. Either way capitals must outnumber
-        # lower case, unless the phrase is the slug of a page it came from.
-        strong = [f for f in named if any(ch.isupper() for ch in f[1:])]
-        slug = "-".join(span)
-        on_a_page = any(re.search(rf"(?:^|[/\-]){re.escape(slug)}(?:[/\-]|$)", path) for path in slugs)
-        if not on_a_page and (len(named) <= len(forms) - len(named) or not (strong or len(named) >= 2)):
+        name = candidate.strip()
+        if not _SAFE_SUBJECT_RE.fullmatch(name):
             continue
-        subject = Counter(strong or named).most_common(1)[0][0]
-        if _SAFE_SUBJECT_RE.fullmatch(subject):
-            return subject
-    return None
+        target = _SUBJECT_WORD_RE.findall(name.lower())
+        if not target or len(target) > _SUBJECT_MAX_WORDS or len(target) <= best_size:
+            continue
+        if company and _run_in(company, target, plural=False):
+            continue
+        if _run_in(words, target, plural=True):
+            best_size, best = len(target), name
+    return best
 
 
 def merge_pricing_smart_link(

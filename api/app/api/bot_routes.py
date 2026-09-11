@@ -76,7 +76,7 @@ from app.schemas.validators import (
     validate_http_url,
 )
 from app.services.brand_tone import BRAND_TONE_PRESETS, CUSTOM_PRESET, is_valid_preset_value, preset_text
-from app.services.email_service import send_install_invite_email
+from app.services.email_service import send_install_invite_email, uses_owner_notification_fallback
 from app.services.install_probe import probe_is_running
 from app.services.install_registry import list_domain_installs, record_observed_domain
 from app.services.knowledge_quota_service import release_kb_usage_for_bot
@@ -896,6 +896,11 @@ class BotResponse(BaseModel):
     install_platform_source: str | None = None
     notification_email: str | None = None
     notification_emails: dict | None = None
+    # True when some notification email goes to the account owner's address
+    # because no default list and no legacy address is saved (see
+    # ``email_service.uses_owner_notification_fallback``). Lets the console say
+    # where alerts go instead of implying they go nowhere.
+    notifications_use_owner_fallback: bool = False
     reply_to_email: str | None = None
     email_on_qualified: bool = True
     email_on_handoff: bool = True
@@ -1062,6 +1067,7 @@ def _bot_to_response(bot: Bot, request: Request, *, plan_slug: str = "free", pla
         install_platform_source=bot.install_platform_source,
         notification_email=bot.notification_email,
         notification_emails=bot.notification_emails,
+        notifications_use_owner_fallback=uses_owner_notification_fallback(bot),
         reply_to_email=bot.reply_to_email,
         email_on_qualified=bot.email_on_qualified,
         email_on_handoff=bot.email_on_handoff,
@@ -1663,6 +1669,7 @@ def list_bots(
                     lead_form_fields=b.lead_form_fields,
                     notification_email=b.notification_email,
                     notification_emails=b.notification_emails,
+                    notifications_use_owner_fallback=uses_owner_notification_fallback(b),
                     reply_to_email=b.reply_to_email,
                     email_on_qualified=b.email_on_qualified,
                     email_on_handoff=b.email_on_handoff,

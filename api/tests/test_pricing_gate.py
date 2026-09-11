@@ -610,6 +610,10 @@ def test_the_only_way_off_is_the_owner_setting():
     the one that re-opens the stale-price hole and therefore has to be countable
     on its own.
 
+    ``escalate_deferred`` is not a way off either: no setting reaches it, and it
+    only defers an escalation to generation, with the price guard tripping on
+    every figure, for a turn that also asks something besides the price.
+
     The vocabulary is still the cheapest place to spot a SECOND way off
     appearing: anything that reads as a bare switch is one.
     """
@@ -621,6 +625,7 @@ def test_the_only_way_off_is_the_owner_setting():
         "answer",
         "escalate_no_url",
         "escalate_no_content",
+        "escalate_deferred",
     }
     assert not [o for o in get_args(GateOutcome) if o in ("off", "disabled", "gate_off", "opted_out")]
 

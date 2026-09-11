@@ -54,10 +54,14 @@ def _build(language, question="hello"):
 
 
 class TestLanguageDirective:
-    def test_disabled_bot_has_no_directive(self):
+    def test_disabled_bot_is_told_to_reply_in_english(self):
+        # A disabled bot used to get no directive, and the style block's
+        # "mirror the visitor" then answered Hindi and Arabic questions in kind
+        # on an English-only bot (production, 2026-09-11).
         sp, _ = _build(None)
-        assert "CONVERSATION LANGUAGE" not in sp
-        # Section 10 (the pre-Phase-3 fallback) is still present, unmodified.
+        assert sp.count("\nCONVERSATION LANGUAGE\n") == 1
+        assert "Language: English" in sp
+        # The style block's language section still carries the locale formatting.
         assert "LANGUAGE & LOCALE" in sp
 
     def test_enabled_hindi_has_directive_named_in_english(self):

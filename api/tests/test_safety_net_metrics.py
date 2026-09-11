@@ -191,7 +191,7 @@ class TestSafetyNetMetricsEndpoint:
             assert name in body["series"], name
 
     def test_reports_the_edge_case_routes(self):
-        """The urgent, document, unhelped-offer and handoff-reply routes each
+        """The urgent, support, document, unhelped-offer and handoff-reply routes each
         count their firings in rag_service.py; unlisted, they read as zero here."""
         client = self._client()
         with patch("app.core.metrics.get_redis", return_value=None):
@@ -199,6 +199,7 @@ class TestSafetyNetMetricsEndpoint:
 
         for name in (
             "urgent_incident",
+            "support_request",
             "document_request",
             "document_request_fell_through",
             "unhelped_offer",

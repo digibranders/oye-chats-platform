@@ -125,15 +125,71 @@ _NEG_ACK_TERMS = {
 _EMOJI_OR_PUNCT_RE = re.compile(r"^[\W_]+$", re.UNICODE)
 
 # Identity / meta. Patterns that ask about the bot itself, not the company.
+#
+# Visitors ask in chat shorthand ("r u a bot or real", "u a bot?"), by a model's
+# name ("is this chatgpt?") and as a choice ("human or bot"). On 2026-09-11 "is
+# this chatgpt?" went to retrieval and got "That specific detail sits with the
+# team", because the branches only knew "are you ..." and "is this a bot".
+#
+# Guards that keep a question about something else out:
+# - "real" and "automated" count only as the whole predicate, at the end of the
+#   message or before "or": "are you real estate agents" and "is this automated
+#   backup included" are questions for the knowledge base.
+# - A bot, model or human noun followed by a modifier or a business noun names
+#   a product or a trade: "is this AI-powered", "is this gpt based", "are you a
+#   machine learning firm", "are you a computer repair shop", "is this human
+#   hair". So does a business noun after "or": "are you a person or company".
+# - "is that ..." in a message that names a photo, an image or a video asks
+#   about the picture: "is that a real person in the photo".
+# - "human" before "resources", "rights" or "capital" is not a person.
+# - "agent" counts only as a "real" or "live" agent: a visitor to an insurance or
+#   property business asking "are you an agent" means a licensed one.
+# - The "human or bot" choice counts only at the end of the message, so "do you
+#   do ai or human translation" reaches retrieval.
+# Stretched spellings ("are youuu a bottt") are matched through
+# ``term_spellings`` at the call site. Every branch is a sequence of bounded
+# pieces with no nested repeats, so a long message costs linear time.
+_MODEL_NOUN = r"(?:chat\s?gpt|gpt(?:-?\d[\w.]*)?|open\s?ai)"
+_BOT_NOUN = rf"(?:ai|bot|robot|chatbot|machine|computer|{_MODEL_NOUN})"
+_HUMAN_NOUN = r"(?:humans?(?!\s+(?:resources?|rights|capital))|person)"
+_REAL_HUMAN = rf"(?:real|live|actual)\s+(?:{_HUMAN_NOUN}|people|agents?)"
+_WHOLE_PREDICATE = r"(?=\s*$|\s+or\b)"
+_NOT_A_MODIFIER = (
+    r"(?![\s\-]*(?:powered|based|driven|enabled|generated|integration|integrated|plugin|api|compatible"
+    r"|tools?|features?|learning"
+    r"|(?:or\s+(?:an?\s+)?)?(?:shops?|stores?|dealers?|dealerships?|repairs?|hair|salons?|clinics?|company|companies"
+    r"|firms?|agency|agencies|startups?|business(?:es)?))\b)"
+)
+_SUSPECTED_IDENTITY = (
+    rf"(?:(?:{_BOT_NOUN}|{_HUMAN_NOUN}|{_REAL_HUMAN}){_NOT_A_MODIFIER}|(?:real|automated){_WHOLE_PREDICATE}"
+    r"|someone\s+real)"
+)
 _IS_AI_RE = re.compile(
     r"(?ix)\b(?:"
-    r"are\s+you\s+(?:an?\s+)?(ai|bot|robot|chatbot|machine|computer|human|real\s+(?:person|human))"
-    r"|(?:am|are)\s+i\s+(?:talking\s+to|chatting\s+with)\s+(?:a\s+)?(?:human|person|bot|ai|robot)"
-    r"|is\s+this\s+(?:a\s+)?(?:bot|ai|chatbot|human|real)"
-    r"|are\s+you\s+(?:a\s+)?(?:real|live)\s+(?:person|human|agent)"
-    # typos: "re you a human", "r u a bot", "are u human"
-    r"|(?:r|re|ar|are)\s+(?:you|u|yu)\s+(?:an?\s+)?(?:ai|bot|robot|chatbot|human|real\s+(?:person|human))"
+    # "are you a bot", with the chat spellings "r u", "re you", "ar yu"
+    rf"(?:are|r|re|ar)\s+(?:you|u|yu|ya)\s+(?:an?\s+)?{_SUSPECTED_IDENTITY}"
+    # "am i talking to a real person"
+    rf"|(?:am|are)\s+i\s+(?:talking|chatting|speaking|texting)\s+(?:to|with)\s+(?:an?\s+)?{_SUSPECTED_IDENTITY}"
+    # "is this chatgpt", "is it a bot", "is this a real person". The "that" group
+    # lets ``_asks_if_ai`` drop the match in a message about a photo or a video.
+    rf"|is\s+(?:this|it|(?P<that>that))\s+(?:an?\s+)?"
+    rf"(?:bot|robot|chatbot|{_MODEL_NOUN}|{_HUMAN_NOUN}|{_REAL_HUMAN}){_NOT_A_MODIFIER}"
+    # "is this ai", "is this real", "is this automated". "this" only: "is it an ai
+    # tool" is usually a question about a product.
+    rf"|is\s+this\s+(?:an?\s+)?(?:ai{_NOT_A_MODIFIER}"
+    rf"|(?:real|automated(?:\s+(?:reply|replies|response|responses|chat|messages?))?){_WHOLE_PREDICATE})"
+    # "u a bot", "you're a bot", "you are a bot", "u r a bot", as the whole message
+    rf"|^(?:(?:u|you|yu)(?:\s+(?:are|r))?|ur|your|youre|you're)\s+(?:an?\s+)?"
+    rf"(?:ai|bot|robot|chatbot|machine|{_MODEL_NOUN}|{_HUMAN_NOUN}|{_REAL_HUMAN}|real){_WHOLE_PREDICATE}"
+    # "human or bot", "bot or real", as the end of the message
+    rf"|(?:real\s+)?(?:{_HUMAN_NOUN}|people)\s+or\s+(?:an?\s+)?{_BOT_NOUN}(?=\s*$)"
+    rf"|{_BOT_NOUN}\s+or\s+(?:an?\s+)?(?:{_HUMAN_NOUN}|people|{_REAL_HUMAN}|real)(?=\s*$)"
     r")\b"
+)
+#: A picture the visitor is looking at, which an "is that ..." question is about.
+_MEDIA_RE = re.compile(
+    r"\b(?:photo(?:graph)?s?|pics?|pictures?|images?|videos?|vids?|clips?|footage|screenshots?|selfies?|reels?"
+    r"|thumbnails?)\b"
 )
 
 _WHO_MADE_YOU_RE = re.compile(
@@ -148,6 +204,10 @@ _BOT_NAME_RE = re.compile(
     r"(?ix)\b(?:"
     r"what(?:'s|\s+is)\s+your\s+name"
     r"|who\s+are\s+you"
+    # "who am i talking to" and a bare "what are you", as the whole message only:
+    # "what are you offering this month" is a question for the knowledge base.
+    r"|^who\s+am\s+i\s+(?:talking|chatting|speaking)\s+(?:to|with)$"
+    r"|^what\s+are\s+(?:you|u)$"
     r")\b"
 )
 
@@ -200,6 +260,22 @@ _FRUSTRATION_RE = re.compile(
     r"|you(?:'re|\s+are)\s+(?:useless|stupid|dumb|wrong|not\s+helpful|no\s+help)"
     r"|this\s+is\s+(?:useless|stupid|nonsense|not\s+helpful))$"
 )
+# Hindi and Hinglish verdicts on the bot, whole message only: "bakwas"
+# (nonsense), "bekaar" (useless), "faltu" (worthless), "ghatiya" (lousy). On
+# 2026-09-11 "bakwas bot hai yaar" missed the frustration route, so it went to
+# generation, and a bot with multilingual off answered in Hinglish ("Samjha.")
+# while another refused it as off-topic. The word may only be wrapped in the
+# particles a chat verdict carries ("ye bot bakwas hai yaar", "bakwas band
+# karo"), so a question that uses it ("faltu charges kyu lagaye", why the extra
+# charges) still reaches retrieval. Every repeat is bounded, so matching stays
+# linear.
+_HINGLISH_FRUSTRATION_RE = re.compile(
+    r"^(?:(?:ye|yeh|yah|kya|kitna|bilkul|ekdum|bahut|bohot|total|full)\s+){0,2}"
+    r"(?:(?:bot|chatbot|service|jawab|reply|answer)\s+)?"
+    r"(?:bakwa+s|bakva+s|beka+r|fa+ltu|ghatiy?a+)"
+    r"(?:\s+(?:bot|chatbot|service|jawab|reply|answer|hai|he|h|ho|hain|yaar|yar|bhai|bro|re|chat|cheez"
+    r"|band|mat|karo|kar)){0,4}$"
+)
 # Directed abuse, whole message only. An unanchored word search would swallow
 # real questions that merely contain a swear word ("what the fuck is your
 # pricing"), so every branch below matches the full normalised message, not a
@@ -229,8 +305,23 @@ _UNCLEAR_RE = re.compile(
     r"|[b-df-hj-np-tv-xz]{6,}"
     r"|[a-z]*(?:asdf|sdfg|dfgh|fghj|ghjk|hjkl|qwer|werty|rtyu|tyui|yuio|uiop|zxcv)[a-z]*)$"
 )
+# "What name do you have for me?" Whole message only and anchored at both ends,
+# so it needs no word-count gate: "so what name do u have for me now" is nine
+# words and got an off-topic refusal on 2026-09-11. A question that only mentions
+# a name ("what name should i use for the invoice", "whats my name on the
+# account") does not match.
 _NAME_RECALL_RE = re.compile(
-    r"^(?:what(?:'s|\s+is)\s+my\s+name|do\s+you\s+(?:know|remember)\s+my\s+name|who\s+am\s+i)$"
+    r"^(?:(?:so|ok|okay|and|then|hey|hmm|wait)\s+)?"
+    r"(?:what(?:'s|s|\s+is)\s+my\s+name"
+    r"|what\s+name\s+(?:do|did|have)\s+(?:you|u)\s+(?:have|got|get|save|saved|use|know)(?:\s+(?:for|of|on)\s+me)?"
+    r"|what\s+name\s+did\s+i\s+give(?:\s+(?:you|u))?"
+    r"|what\s+did\s+i\s+(?:say|tell\s+(?:you|u))\s+my\s+name\s+(?:was|is)"
+    r"|(?:(?:do|did)\s+)?(?:you|u)\s+(?:know|remember|have|get)\s+my\s+name"
+    r"|remember\s+my\s+name"
+    r"|(?:tell\s+me|say)\s+my\s+name"
+    r"|what\s+(?:do|will|did)\s+(?:you|u)\s+call\s+me"
+    r"|who\s+am\s+i)"
+    r"(?:\s+(?:now|again|then))?$"
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -269,10 +360,17 @@ def _normalise(text: str) -> str:
     miss real intent matches downstream.
     """
     s = (text or "").strip().lower()
-    # Strip leading/trailing punctuation and whitespace (keeps internal "'")
-    s = re.sub(r"^[\s\W_]+|[\s\W_]+$", "", s, flags=re.UNICODE)
-    s = re.sub(r"\s+", " ", s)
-    return s
+    # Strip leading/trailing punctuation and whitespace (keeps internal "'").
+    # An index walk, not ``[\s\W_]+$``: searching for that suffix retries at
+    # every position of a run of punctuation that does not reach the end, which
+    # is quadratic (20k characters of "!" took most of a second). A character
+    # is in ``[\s\W_]`` exactly when it is not alphanumeric.
+    start, end = 0, len(s)
+    while start < end and not s[start].isalnum():
+        start += 1
+    while end > start and not s[end - 1].isalnum():
+        end -= 1
+    return re.sub(r"\s+", " ", s[start:end])
 
 
 # A run of three or more of the same letter: the "iiii" in "hiiii".
@@ -299,6 +397,21 @@ def term_spellings(norm: str) -> tuple[str, str, str]:
         _STRETCHED_RUN_RE.sub(r"\1\1", norm),
         _STRETCHED_RUN_RE.sub(r"\1", norm),
     )
+
+
+def _asks_if_ai(norm: str) -> bool:
+    """Whether ``norm``, in any of its ``term_spellings``, asks if the visitor is talking to a bot.
+
+    An "is that ..." match does not count in a message that names a photo, an
+    image or a video: "is that a real person in the photo" asks about the
+    picture. Linear: each spelling is scanned once.
+    """
+    names_media = _MEDIA_RE.search(norm) is not None
+    for spelling in term_spellings(norm):
+        for match in _IS_AI_RE.finditer(spelling):
+            if not (names_media and match.group("that")):
+                return True
+    return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -361,7 +474,7 @@ def route_intent(
     # The rest of the identity family stands down when the message also asks
     # about the business, because there retrieval has the better answer.
     if not _ASKS_ABOUT_BUSINESS_RE.search(norm):
-        if _IS_AI_RE.search(norm):
+        if _asks_if_ai(norm):
             return _is_ai(company_name, support_enabled)
         if _WHO_MADE_YOU_RE.search(norm):
             return _who_made_you(company_name, platform_branded)
@@ -387,15 +500,16 @@ def route_intent(
     if word_count == 1 and norm.isascii() and norm.isalpha() and _UNCLEAR_RE.match(norm):
         return _unclear(company_name, support_enabled)
 
-    # 5) Small talk and social reflexes, whole message only.
+    # 5) Small talk and social reflexes, whole message only. Name recall sits
+    #    outside the word gate because its pattern is anchored at both ends.
+    if _NAME_RECALL_RE.match(norm):
+        return _name_recall(company_name, visitor_name)
     if word_count <= 8:
-        if _NAME_RECALL_RE.match(norm):
-            return _name_recall(company_name, visitor_name)
         if _HOW_ARE_YOU_RE.match(norm):
             return _how_are_you(company_name)
         if _COMPLIMENT_RE.match(norm):
             return _compliment(company_name)
-        if _FRUSTRATION_RE.match(norm):
+        if _FRUSTRATION_RE.match(norm) or _HINGLISH_FRUSTRATION_RE.match(norm):
             return _frustration(company_name, support_enabled)
         if _ABUSE_RE.match(norm):
             return _abuse(company_name)

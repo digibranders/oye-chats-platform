@@ -831,7 +831,15 @@ def price_guard_applies(
     a human to escalate to, and a turn the gate read as ``not_pricing``. A turn it
     answered, escalated or stood down on is already handled. English only, like
     the gate: a bypassed-judges conversation is left to the knowledge base.
+
+    ``escalate_deferred`` is a turn the gate would have escalated, deferred
+    because the visitor also asked something besides the price. Its answer is
+    generated from the whole knowledge base, so the guard watches it on every bot
+    the gate escalates on, a bot whose pricing page carries no prices and a Free
+    bot that hands over its contact page included.
     """
+    if gate_outcome == "escalate_deferred":
+        return not answer_from_knowledge_base and not judges_bypassed
     return (
         gate_outcome == "not_pricing"
         and not answer_from_knowledge_base

@@ -302,9 +302,9 @@ def _resolve_visitor_language_and_update_session(
     Returns:
       * ``None`` when multilingual is disabled for this bot, OR when the
         platform-wide ``feature.multilingual_chat_enabled`` switch is off. This
-        is the single signal the RAG pipeline uses to stay byte-identical to
-        pre-Phase-3 behaviour (no directive, legacy cache key, English canned
-        paths, English-tuned retrieval).
+        is the single signal the RAG pipeline uses to keep pre-Phase-3
+        behaviour (legacy cache key, English canned paths, English-tuned
+        retrieval) and to tell the model to reply in English only.
       * a ``LanguageContext`` for every enabled bot, whether the language was
         already locked, already settled, freshly resolved, or detected.
 

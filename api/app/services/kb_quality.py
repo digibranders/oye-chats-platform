@@ -1,6 +1,7 @@
 """Pure detectors for knowledge-base content that is not a statement of fact.
 
-Used by ``scripts/kb_junk_report.py`` today and intended for the ingestion
+Used by ``scripts/kb_junk_report.py``, by retrieval in ``rag_service`` (see
+``first_visitor_placeholder`` at the end), and intended for the ingestion
 pipeline in Phase 2.
 
 Production, 2026-09-10: Eventus told visitors it operates in about 250
@@ -810,6 +811,9 @@ def option_list_reason(match: OptionListMatch) -> str:
 # also records whether it sits inside that kind of example.
 PlaceholderKind = Literal["phone", "email", "address", "name", "filler"]
 
+#: Lorem-ipsum filler, the one filler pattern a visitor-facing chunk is dropped for.
+_LOREM_IPSUM_RE = re.compile(r"(?i)\blorem ipsum\b")
+
 _PLACEHOLDER_PATTERNS: tuple[tuple[re.Pattern[str], PlaceholderKind], ...] = (
     # "(555) 123-4567": 555 used as an area code. This is the exact shape
     # that CleanStart's own site gave out as its phone number.
@@ -845,7 +849,7 @@ _PLACEHOLDER_PATTERNS: tuple[tuple[re.Pattern[str], PlaceholderKind], ...] = (
     # ordinary advice prose ("monitor for your company name, domain,
     # executive names..." on an Eventus threat-intel page), so matching it
     # would flag real content, not a leaked placeholder.
-    (re.compile(r"(?i)\blorem ipsum\b"), "filler"),
+    (_LOREM_IPSUM_RE, "filler"),
     (re.compile(r"(?i)\byour\s+company\s+name\s+here\b"), "filler"),
     (re.compile(r"(?i)\bcompany\s+name\s+here\b"), "filler"),
 )
@@ -924,7 +928,7 @@ _HTTP_HEADER_BLOCK_RE = re.compile(
 )
 
 
-def _looks_like_code_line(context: str) -> bool:
+def _looks_like_code_line(context: str, *, markdown_tables: bool = True) -> bool:
     if '"' in context and _JSON_LINE_RE.search(context):
         return True
     if ":" in context and (_YAML_LINE_RE.search(context) or _HTTP_HEADER_BLOCK_RE.search(context)):
@@ -935,7 +939,7 @@ def _looks_like_code_line(context: str) -> bool:
         return True
     if ("$" in context or "#" in context) and _SHELL_PROMPT_OR_VAR_RE.search(context):
         return True
-    if "|" in context and _MARKDOWN_TABLE_ROW_RE.search(context):
+    if markdown_tables and "|" in context and _MARKDOWN_TABLE_ROW_RE.search(context):
         return True
     if ("{" in context or "}" in context) and (
         _BRACE_ASSIGNMENT_RE.search(context) or _BRACE_DIRECTIVE_RE.search(context)
@@ -1062,13 +1066,19 @@ def _local_context(ctx: _ExampleContext, start: int, end: int) -> str:
     return content[window_start:window_end]
 
 
-def _is_in_example(ctx: _ExampleContext, start: int, end: int) -> bool:
+def _is_in_example(ctx: _ExampleContext, start: int, end: int, *, for_visitors: bool = False) -> bool:
+    """True if the match at ``start``-``end`` sits inside a code or documentation example.
+
+    ``for_visitors`` drops the two signals that only make sense for the owner's
+    report (see "Placeholders a visitor must never be told" below): a markdown
+    table row and a nearby bracketed field. Every other signal is shared.
+    """
     if _in_fenced_or_backtick_region(ctx, start):
         return True
     context = _local_context(ctx, start, end)
-    if _looks_like_code_line(context):
+    if _looks_like_code_line(context, markdown_tables=not for_visitors):
         return True
-    if "[" in context and _BRACKET_PLACEHOLDER_RE.search(context):
+    if not for_visitors and "[" in context and _BRACKET_PLACEHOLDER_RE.search(context):
         return True
     content = ctx.content
     lookback = content[max(0, start - _LOOKBACK_CHARS) : start]
@@ -1128,3 +1138,77 @@ def placeholder_contacts(content: str) -> list[str]:
     keeping the first-seen original case for display.
     """
     return [finding.value for finding in placeholder_findings(content) if not finding.in_example]
+
+
+# ── Placeholders a visitor must never be told ────────────────────────────────
+#
+# Production, 2026-09-11: CleanStart's bot told a visitor "The enterprise
+# phone number is +1 (555) 123-4567 for Enterprise tier customers only." The
+# number sat on a crawled draft page (/knowledge-hub/sla-documentation) along
+# with "+1-XXX-XXX-XXXX" and "[Big 4 Firm Name]", and retrieval put the chunk
+# in the prompt like any other.
+#
+# ``placeholder_findings`` answers the report's question: should the owner
+# delete this? Retrieval asks a different one: may the model read this chunk
+# as fact? A dropped chunk takes every true sentence in it along, so three
+# rules follow from the difference.
+#
+# - Only values that are never real. Every phone shape above is a block
+#   reserved for fiction or a digit mask, and "lorem ipsum" is filler.
+#   Placeholder emails, addresses and names stay report-only: "email.com" and
+#   "company.com" are real domains, and a real "123 Main Street" or "Jane
+#   Smith" exists.
+# - Template fields stay report-only too. "Enter your [First Name]",
+#   "Welcome, [Your Name]!" and "Your Company Name Here" are the product of an
+#   email-marketing, legal-document or invoicing tenant, and dropping them hid
+#   that tenant's help content. The accepted cost: a draft page's unfilled
+#   "[Big 4 Firm Name]" reaches the model.
+# - A bracketed field or a markdown table row near a match is not evidence of
+#   documentation. The report reads "[CISO Name]" near a match as a template
+#   example and stays quiet, and its bracket check also matches any
+#   "[Contact us](...)" link, which says nothing about the number beside it;
+#   an SLA page lays out its escalation numbers in exactly a table row.
+#
+# Everything else that marks real documentation still exempts a match: a
+# fenced or backticked span, a JSON/YAML/CLI/assignment/shell/SQL line, a
+# "Copy code" block, an "e.g." cue, a link target.
+
+VisitorPlaceholderKind = PlaceholderKind
+
+#: Placeholder phone numbers and lorem-ipsum filler. The report's other filler
+#: patterns ("Company Name Here") are template labels.
+_VISITOR_PLACEHOLDER_PATTERNS = tuple(
+    entry for entry in _PLACEHOLDER_PATTERNS if entry[1] == "phone" or entry[0] is _LOREM_IPSUM_RE
+)
+
+
+@dataclass(frozen=True)
+class VisitorPlaceholder:
+    """A placeholder a chunk states outside any example: its kind and the matched text."""
+
+    kind: VisitorPlaceholderKind
+    value: str
+
+
+def first_visitor_placeholder(content: str) -> VisitorPlaceholder | None:
+    """The first placeholder in ``content`` a visitor must never be told, or ``None``.
+
+    Only a placeholder phone number or lorem-ipsum filler counts; a template
+    field such as "[First Name]" never does. The scan stops at the first one
+    found outside an example: one is enough to keep the chunk out of the
+    prompt. The example context is only built once a candidate turns up, so a
+    clean chunk costs a few single-pass regex scans.
+
+    Linear in ``len(content)``: every pattern is bounded, the context is built
+    at most once, and each candidate is checked against a fixed-size window
+    (see ``_is_in_example``).
+    """
+    text = content or ""
+    ctx: _ExampleContext | None = None
+    for pattern, kind in _VISITOR_PLACEHOLDER_PATTERNS:
+        for match in pattern.finditer(text):
+            if ctx is None:
+                ctx = _build_example_context(text)
+            if not _is_in_example(ctx, match.start(), match.end(), for_visitors=True):
+                return VisitorPlaceholder(kind=kind, value=match.group(0))
+    return None

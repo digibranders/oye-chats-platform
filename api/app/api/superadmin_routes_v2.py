@@ -1640,11 +1640,12 @@ _SAFETY_NET_METRIC_NAMES = [
     # scheduler configured (meeting_gate.py via rag_service.py).
     "meeting_gate_pivot",
     # Edge-case routes in rag_service.py: a reported incident answered with the
-    # urgent reply (urgent_route.py), a file request answered from the catalog or
-    # left to the model (document_request.py), the offer of a person after two
-    # unhelped turns, and the fixed reply to a request for a person
-    # (handoff_reply.py).
+    # urgent reply (urgent_route.py), an existing customer's problem handed to the
+    # team (support_route.py), a file request answered from the catalog or left to
+    # the model (document_request.py), the offer of a person after two unhelped
+    # turns, and the fixed reply to a request for a person (handoff_reply.py).
     "urgent_incident",
+    "support_request",
     "document_request",
     "document_request_fell_through",
     "unhelped_offer",

@@ -42,7 +42,14 @@ QA_RESPONSE_TTL = 3600  # 1 hour
 #: the founder" with one of several co-founders (db2e19b2), and the SUPPORT
 #: REQUESTS block no longer tells visitors the team is offline when no operator
 #: has a live presence (a0e0467a).
-QA_PROMPT_VERSION = 4
+#: 5: RULE 5a states a certification, compliance status or contract term as the
+#: company's own only when the reference material says the company holds or
+#: offers it, after a live bot called itself ISO 27001 certified from a page
+#: selling ISO 27001 compliance services. RULES 5c and 5d answer "do you handle X"
+#: and competitor comparisons instead of the gap line or the scope refusal, and a
+#: bot with multilingual off is told to reply in English, after one answered Arabic
+#: and Hindi questions in kind (production, 2026-09-11).
+QA_PROMPT_VERSION = 5
 TRANSLATION_TTL = 86400  # 24 hours (Phase 4 operator translation)
 
 
