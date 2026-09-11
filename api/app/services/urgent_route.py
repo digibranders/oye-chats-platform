@@ -995,13 +995,15 @@ def urgent_reply(
             )
         )
         return HandoffOffer(text=text + urgent_link, suggest_handoff=True, needs_message_card=False)
+    # Nobody on the dashboard is not an offline team: the handoff route still
+    # queues the visitor and pushes anyone reachable on a phone or another tab.
     text = (
         f"{already_flagged} The form is just below: share your details there so the team can contact you as soon "
         "as possible."
         if repeat
         else (
-            "This sounds urgent. Our team is offline right now, but I've flagged it to them as a priority. "
-            "Share your details in the form below so the team can contact you as soon as possible."
+            f"This sounds urgent, so I've flagged it to {co} as a priority. Share your details in the form "
+            f"below so the team can contact you as soon as possible."
         )
     )
     return HandoffOffer(text=text + urgent_link, suggest_handoff=True, needs_message_card=False)

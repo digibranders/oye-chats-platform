@@ -441,8 +441,13 @@ class TestTheOfferWording:
 
     def test_live_chat_with_nobody_available(self):
         offer = unhelped_offer(live_chat_enabled=True, team_available=False)
-        assert offer.suggest_handoff is True
-        assert "offline" in offer.text and "connect you" not in offer.text
+        assert offer.suggest_handoff is True and offer.needs_message_card is False
+        assert offer.text == (
+            "I haven't been able to help with that here, but our team can. "
+            "Share your details in the form below and I'll let them know you're waiting."
+        )
+        assert "connect you" not in offer.text
+        assert intent_service.bot_offers_handoff(offer.text), "an ok on the next turn must open the form"
 
     def test_no_live_chat_opens_the_message_card(self):
         offer = unhelped_offer(live_chat_enabled=False, team_available=False)
@@ -620,7 +625,7 @@ class TestTwoUnhelpedTurnsOfferThePerson:
         assert "unhelped_streak" not in cards
 
     @pytest.mark.asyncio
-    async def test_nobody_available_gets_the_offline_offer(self, db, monkeypatch):
+    async def test_nobody_available_gets_the_waiting_offer(self, db, monkeypatch):
         bot, _cap = _paid_bot(db, monkeypatch, "unhelped-5", team_online=False)
 
         await _drive_stream(bot, "what is 2 plus 2", "unhelped-5")

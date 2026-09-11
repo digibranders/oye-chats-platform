@@ -165,6 +165,9 @@ HANDOFF_OFFER_RE = re.compile(
     r"|leave (?:a|your) (?:message|details) (?:for|with) (?:" + _OFFER_TEAM + r"|them|us)\b"
     # "I can have the team reach out"
     r"|have (?:the|our) team (?:reach|follow up|get back|help)\b"
+    # Nobody on the dashboard: "I'll let our team know you're waiting". The bot
+    # tells the team, so "let our team know you're waiting at reception" is no offer.
+    r"|i(?:['\u2019]ll| will) let (?:" + _OFFER_TEAM + r"|them) know you(?:['\u2019]re| are) waiting\b"
     r")"
 )
 
