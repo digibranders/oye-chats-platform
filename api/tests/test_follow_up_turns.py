@@ -71,9 +71,9 @@ class TestAFollowUpIsRecognised:
             "",
             "Can you walk me through how onboarding works for a two hundred person company?",
             "आपकी सेवाएं क्या हैं",
-            # Short and subjectless, but asked the same way in any conversation.
-            # Only the relevance judge reads these in context; the QA cache and
-            # the rewrite treat them as the FAQs they usually are.
+            # Short and subjectless: no rewrite call for these. The QA cache and
+            # the relevance judge still read them as depending on the
+            # conversation (``_leans_on_the_last_reply``).
             "parking available?",
             "wheelchair access",
             "gluten free options",
@@ -87,17 +87,18 @@ class TestAFollowUpIsRecognised:
     def test_standalone_messages(self, question):
         assert rs._looks_like_follow_up(question) is False
 
-    def test_the_qa_cache_skips_a_follow_up_but_keeps_a_short_faq(self):
-        """The QA cache is keyed on the words alone, so "tell me moer about "
-        answered about one reply would be replayed after another. A short FAQ
-        with no subject word ("parking available?") is the same question in
-        every conversation, so it keeps its cache entry. The write side reads
-        the same definition as the read side."""
-        base = {"answer": "Yes, there is parking.", "visitor_name": None, "opener": "", "probe_active": False}
+    def test_a_follow_up_or_a_fragment_is_never_written_to_the_qa_cache_after_turn_one(self):
+        """The QA cache is keyed on the words alone, so "paid or unpaid?" answered
+        about internships in one conversation would be replayed about plans in
+        another. The write side reads the same definition as the read side, and
+        a first turn has nothing to depend on, so it stays cacheable."""
+        base = {"answer": "Yes, they are paid.", "visitor_name": None, "opener": "", "probe_active": False}
+        assert not rs._answer_is_cacheable(**base, question="paid or unpaid? and is remote ok", prior_turns=True)
+        assert not rs._answer_is_cacheable(**base, question="how long?", prior_turns=True)
         assert not rs._answer_is_cacheable(**base, question="tell me moer about ", prior_turns=True)
-        assert not rs._answer_is_cacheable(**base, question="tell me more about it", prior_turns=True)
-        assert rs._answer_is_cacheable(**base, question="parking available?", prior_turns=True)
+        assert rs._answer_is_cacheable(**base, question="paid or unpaid? and is remote ok", prior_turns=False)
         assert rs._answer_is_cacheable(**base, question="tell me moer about ", prior_turns=False)
+        assert rs._answer_is_cacheable(**base, question="What's your price?", prior_turns=True)
 
 
 class TestTheJudgeReadsAShortFragmentInContext:

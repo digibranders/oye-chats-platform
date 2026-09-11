@@ -135,35 +135,58 @@ class TestAFollowUpReachesTheModel:
         assert len(cap["prompts"]) == 1
 
     @pytest.mark.asyncio
-    async def test_an_elliptical_follow_up_is_judged_in_context(self, db, monkeypatch):
+    async def test_an_elliptical_follow_up_is_judged_in_context_and_skips_the_qa_cache(self, db, monkeypatch):
+        """Neither read nor written: the answer depends on the conversation, and
+        "paid or unpaid?" means something else after a plans answer."""
         bot, cap, judge, _classifier = _bot(db, monkeypatch, "fu-3")
         question = "paid or unpaid? and is remote ok"
+        stored = {"answer": "CACHED FROM ANOTHER CONVERSATION", "sources": []}
+        key = rs.qa_response_key(
+            bot.id, rs.hashlib.sha256(rs._normalize_question_for_cache(question).encode()).hexdigest()[:32], None
+        )
+        cap["cache"].store[key] = dict(stored)
         first_reply = await _answered_first(db, bot, "fu-3", judge, question="do u offer internships")
         judge.relevant = True
 
         frames = await _drive_stream(bot, question, "fu-3")
 
         assert _answer_text(frames) == _ANSWER
-        assert len(cap["prompts"]) == 2
+        assert len(cap["prompts"]) == 2, "generated, not served from the cache"
         assert judge.calls[-1].context == ConversationContext(previous_reply=first_reply, visitor_message=question)
+        assert cap["cache"].store[key] == stored, "and the turn-two answer is not written over it"
+
+        standalone = "Can you walk me through how onboarding works for a two hundred person company?"
+        await _drive_stream(bot, standalone, "fu-3")
+        standalone_key = rs.qa_response_key(
+            bot.id, rs.hashlib.sha256(rs._normalize_question_for_cache(standalone).encode()).hexdigest()[:32], None
+        )
+        assert standalone_key in cap["cache"].store, "control: a later standalone answer on this path is written"
 
     @pytest.mark.asyncio
-    async def test_a_short_faq_after_an_answer_is_served_from_the_qa_cache(self, db, monkeypatch):
-        """ "parking available?" names no strict on-scope word, but it is the same
-        question in every conversation: it reads the QA cache on turn two."""
-        bot, cap, judge, _classifier = _bot(db, monkeypatch, "fu-6")
-        question = "parking available?"
-        key = rs.qa_response_key(
-            bot.id, rs.hashlib.sha256(rs._normalize_question_for_cache(question).encode()).hexdigest()[:32], None
-        )
-        cap["cache"].store[key] = {"answer": "Yes, there is free parking on site.", "sources": []}
+    async def test_a_short_fragment_after_an_answer_costs_no_rewrite(self, db, monkeypatch):
+        """The rewrite is a 3s-capped model call. A fragment skips it; a pronoun
+        follow-up in the same conversation still pays for it."""
+        bot, _cap, judge, _classifier = _bot(db, monkeypatch, "fu-6")
+        rewrites: list[str] = []
+
+        def spy_generate(prompt, **_k):
+            if "FOLLOW-UP QUESTION:" in prompt:
+                rewrites.append(prompt)
+            return "rewritten query"
+
+        async def resolve_with_the_real_rewrite(session_id, question, history, *_a, **_k):
+            return await rs.asyncio.to_thread(rs.rewrite_query, session_id, question, history), None
+
+        monkeypatch.setattr(rs, "generate_response", spy_generate)
+        monkeypatch.setattr(rs, "_resolve_search_query_and_embedding", resolve_with_the_real_rewrite)
         await _answered_first(db, bot, "fu-6", judge)
         judge.relevant = True
 
-        frames = await _drive_stream(bot, question, "fu-6")
+        await _drive_stream(bot, "parking available?", "fu-6")
+        assert rewrites == []
 
-        assert "Yes, there is free parking on site." in _answer_text(frames)
-        assert len(cap["prompts"]) == 1, "served from the cache, no generation"
+        await _drive_stream(bot, "tell me more about it", "fu-6")
+        assert len(rewrites) == 1, "control: a follow-up on the same path is rewritten"
 
     @pytest.mark.asyncio
     async def test_a_first_turn_and_a_standalone_question_are_judged_without_context(self, db, monkeypatch):

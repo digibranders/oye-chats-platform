@@ -3181,7 +3181,7 @@ def _answer_is_cacheable(
         return False
     if probe_active:
         return False
-    if prior_turns and _looks_like_follow_up(question):
+    if prior_turns and _leans_on_the_last_reply(question):
         return False
     return not _answer_mentions_visitor_name(answer, visitor_name)
 
@@ -7173,8 +7173,8 @@ def _is_elliptical_fragment(question: str) -> bool:
     judges are for it.
 
     Broad on purpose, so it feeds only ``_leans_on_the_last_reply``: "parking
-    available?" and "emi options" are fragments too, and are the same FAQ in
-    every conversation.
+    available?" and "emi options" are fragments too, and paying a rewrite call
+    for each of them buys nothing.
     """
     if _ADDRESSES_THE_BUSINESS_RE.search(question or ""):
         return False
@@ -7191,13 +7191,10 @@ def _looks_like_follow_up(question: str) -> bool:
     determiner or phrase signal (``_FOLLOW_UP_SIGNALS``), or a request for more
     in any spelling (``_asks_for_more``, ``_mentions_more_about``).
 
-    Two consumers, which must agree: ``rewrite_query`` rewrites such a message
-    against history, and the QA cache, keyed on the words alone, neither serves
-    nor stores an answer to it once there is earlier conversation. A short
-    fragment with no subject word ("parking available?") is not one: it is the
-    same FAQ in any conversation, so it keeps its cache entry and costs no
-    rewrite call. The relevance judge reads it in context anyway, through
-    ``_leans_on_the_last_reply``.
+    This alone triggers ``rewrite_query``. A short fragment with no subject word
+    ("parking available?") is not one, so it costs no rewrite call; the QA cache
+    and the relevance judge still treat it as depending on the conversation,
+    through ``_leans_on_the_last_reply``.
     """
     if not question:
         return False
@@ -7205,14 +7202,17 @@ def _looks_like_follow_up(question: str) -> bool:
 
 
 def _leans_on_the_last_reply(question: str) -> bool:
-    """True when the relevance judge should read the message beside the bot's
-    last reply: a follow-up (``_looks_like_follow_up``) or a short fragment with
-    no subject of its own (``_is_elliptical_fragment``).
+    """True when the message's meaning depends on the conversation before it: a
+    follow-up (``_looks_like_follow_up``) or a short fragment with no subject of
+    its own (``_is_elliptical_fragment``).
 
-    Broader than the follow-up rule because the only cost is a verdict cache
-    key unique to the conversation, and a fragment judged alone scores 0.00:
-    "paid or unpaid? and is remote ok" after an internships answer was refused
-    that way (reported from production on 2026-09-11).
+    Two consumers, which must agree. The QA cache, keyed on the words alone,
+    neither serves nor stores an answer to it once there are earlier visitor
+    turns: "how long?" after onboarding and after a free trial are different
+    questions, and a wrong answer costs more than a cache miss. The relevance
+    judge reads it beside the bot's last reply: a fragment judged alone scores
+    0.00, and "paid or unpaid? and is remote ok" after an internships answer was
+    refused that way (reported from production on 2026-09-11).
     """
     return _looks_like_follow_up(question) or _is_elliptical_fragment(question)
 
@@ -8946,7 +8946,7 @@ async def rag_pipeline_stream(
                 _cache_key
                 and not _affirmed_handoff
                 and not _gate_may_intercept
-                and not (_prior_turns and _looks_like_follow_up(question))
+                and not (_prior_turns and _leans_on_the_last_reply(question))
                 and not _document_request_skips_cache(question, _company_name, _judges_bypassed)
             ):
                 cached_qa = await asyncio.to_thread(_qa_cache_lookup, _cache_key, bid)
@@ -9822,7 +9822,7 @@ async def rag_pipeline_stream(
             # rewritten "paid or unpaid?" reads as nothing without the internships
             # answer before it. Only for a turn that leans on the reply right
             # after one (``_leans_on_the_last_reply``, a follow-up or a short
-            # fragment, broader than the rule the rewrite and the QA cache use): a
+            # fragment, the rule the QA cache uses, broader than the rewrite's): a
             # standalone question keeps its context-free prompt and shared cache
             # entry, since the context is part of the verdict's key. A deferred
             # question replayed after the name answers no reply.
