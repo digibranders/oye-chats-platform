@@ -513,8 +513,8 @@ async def test_an_answer_override_carries_no_sentinel(db, monkeypatch, source):
 @pytest.mark.parametrize(
     ("question", "chunks", "figure"),
     [
-        # The company's name makes a fee its own (review, 2026-09-11).
-        ("tell me about onboarding", ("Acme's onboarding fee is ", "₹25,000", " for small teams."), "25,000"),
+        # A first-person word makes a fee its own (review, 2026-09-11).
+        ("tell me about onboarding", ("Our onboarding fee is ", "₹25,000", " for small teams."), "25,000"),
         # A price word outside the figure's sentence opens a price context.
         ("tell me about SOC", ("We offer three plans:\n- Starter: ", "₹9,999/month\n- Growth: ₹24,999/month"), "9,999"),
         ("tell me about SOC", ("Here are our SOC packages.\n\n**Essentials**: ", "₹1,20,000 a month"), "1,20,000"),
@@ -522,7 +522,7 @@ async def test_an_answer_override_carries_no_sentinel(db, monkeypatch, source):
         ("hw much", ("For 50 users it is ", "€3,200", " a year."), "3,200"),
         ("qoute for 3 sites", ("For three sites it would be around ", "7 lakh", "."), "7 lakh"),
     ],
-    ids=["company_fee", "plan_list", "packages_blank_line", "hw_much", "qoute"],
+    ids=["our_fee", "plan_list", "packages_blank_line", "hw_much", "qoute"],
 )
 @pytest.mark.asyncio
 async def test_an_own_price_outside_the_old_sentence_rule_is_replaced(db, monkeypatch, question, chunks, figure):
@@ -535,28 +535,57 @@ async def test_an_own_price_outside_the_old_sentence_rule_is_replaced(db, monkey
     assert _messages(db, session_id, role="bot")[-1].content == _expected(question)
 
 
+@pytest.mark.parametrize(
+    "chunks",
+    [
+        ("For a ₹10 lakh suit in Delhi, the court fee works out to roughly ", "₹12,000", " under the Act."),
+        # Final review, 2026-09-11: a disclaimer's "us", billing by someone else, and the company
+        # named in the third person do not make a fee the company's own.
+        ("Visa fees are set by the government, not by us. The fee is ", "$185", "."),
+        ("Ambulance transport is billed separately from our clinic services; expect ", "$500", " to $1,200."),
+        ("Acme's onboarding fee is ", "₹25,000", " for small teams."),
+    ],
+    ids=["court_fee", "not_by_us", "billed_separately", "company_third_person"],
+)
 @pytest.mark.asyncio
-async def test_a_statutory_fee_streams_unchanged_on_a_guarded_bot(db, monkeypatch, metrics):
-    chunks = ("For a ₹10 lakh suit in Delhi, the court fee works out to roughly ", "₹12,000", " under the Act.")
-    bot, _ = _guarded(db, monkeypatch, "guard-court-fee", chunks=chunks)
+async def test_someone_elses_fee_streams_unchanged_on_a_guarded_bot(db, monkeypatch, metrics, chunks):
+    session_id = f"guard-third-party-{chunks[1][1:4]}"
+    bot, _ = _guarded(db, monkeypatch, session_id, chunks=chunks)
 
     # The question names no price, so only the answer's own words decide.
-    frames = await _drive_stream(bot, "how do I file a recovery suit in Delhi", "guard-court-fee")
+    frames = await _drive_stream(bot, "how do I file a recovery suit in Delhi", session_id)
 
     assert _answer_text(frames) == "".join(chunks)
     assert _named(metrics, "price_guard_tripped") == []
 
 
+@pytest.mark.parametrize(
+    ("company", "cached", "served"),
+    [
+        ("Acme", "Our onboarding fee is ₹25,000 for small teams.", False),
+        # The company named in the third person: the stream releases it, so the cache serves it.
+        ("Acme", "Acme's onboarding fee is ₹25,000 for small teams.", True),
+        # The cache check tripped on this while the stream released it (final review, 2026-09-11).
+        ("S.K. Traders", "The delivery charge is ₹25,000 at S.K. Traders.", True),
+    ],
+    ids=["our_fee", "company_third_person", "initials"],
+)
 @pytest.mark.asyncio
-async def test_a_cached_fee_named_by_the_company_is_not_served(db, monkeypatch):
-    """The cache read passes the company name to the guard, as the stream does."""
+async def test_the_cache_read_decides_a_fee_as_the_stream_does(db, monkeypatch, company, cached, served):
     question = "tell me about onboarding"
-    bot, captured = _guarded(db, monkeypatch, "guard-cached-company")
+    session_id = f"guard-cached-{int(served)}-{cached[:3]}"
+    bot, captured = _guarded(db, monkeypatch, session_id)
+    bot.company_name = company
+    db.commit()
     question_hash = hashlib.sha256(rs._normalize_question_for_cache(question).encode()).hexdigest()[:32]
     key = rs.qa_response_key(bot.id, question_hash, rs._cache_lang_segment(None))
-    captured["cache"].store[key] = {"answer": "Acme's onboarding fee is ₹25,000 for small teams.", "sources": []}
+    captured["cache"].store[key] = {"answer": cached, "sources": []}
 
-    frames = await _drive_stream(bot, question, "guard-cached-company")
+    frames = await _drive_stream(bot, question, session_id)
 
-    assert "25,000" not in _answer_text(frames)
-    assert key in captured["cache"].deleted
+    if served:
+        assert key not in captured["cache"].deleted
+        assert _answer_text(frames) == cached
+    else:
+        assert "25,000" not in _answer_text(frames)
+        assert key in captured["cache"].deleted

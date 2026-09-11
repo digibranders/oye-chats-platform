@@ -10,6 +10,7 @@ long comma-separated list of numbers stalled the stream for seconds.
 """
 
 import itertools
+import random
 import time
 
 import pytest
@@ -19,8 +20,8 @@ from app.services.price_guard import PriceStreamGuard, answer_trips_price_guard,
 from app.services.pricing_gate import _CURRENCY_AMOUNT_RE, is_pricing_question, question_has_fuzzy_price_word
 
 
-def _feed(chunks, *, signal=False, company_name=None):
-    guard = PriceStreamGuard(signal=signal, company_name=company_name)
+def _feed(chunks, *, signal=False):
+    guard = PriceStreamGuard(signal=signal)
     out = "".join(guard.feed(c) for c in chunks)
     out += guard.flush()
     return guard, out
@@ -70,8 +71,8 @@ PRICED_FIGURES = [
     ("Plans from USD 499 monthly.", "USD"),
     ("We priced it at EUR 99 flat.", "EUR"),
     ("Our price is GBP 80 flat.", "GBP"),
-    ("Billed at 1,20,000/year.", "1,20,000"),
-    ("Billed at 1,20,000 / yr.", "1,20,000"),
+    ("We billed it at 1,20,000/year.", "1,20,000"),
+    ("We billed it at 1,20,000 / yr.", "1,20,000"),
     ("It is 45,000 per user.", "45,000"),
     ("It is 3,500 per seat per month.", "3,500"),
     ("It is 12,000 per endpoint.", "12,000"),
@@ -194,10 +195,10 @@ def _splits(text):
     yield list(text)
 
 
-def _assert_nothing_from_the_figure_is_emitted(text, figure_start, *, signal, company_name=None, splits=None):
+def _assert_nothing_from_the_figure_is_emitted(text, figure_start, *, signal, splits=None):
     cut = text.index(figure_start)
     for chunks in (splits or _splits)(text):
-        guard, out = _feed(chunks, signal=signal, company_name=company_name)
+        guard, out = _feed(chunks, signal=signal)
         assert guard.tripped is True, chunks
         assert text.startswith(out), chunks
         assert len(out) <= cut, (chunks, out)
@@ -424,7 +425,7 @@ class _CountingPattern:
         return counted
 
 
-_PATTERNS = ("_FIGURE_RE", "_HOLD_RE", "_OWN_PRICE_RE", "_SENTENCE_END_RE")
+_PATTERNS = ("_FIGURE_RE", "_HOLD_RE", "_PRICE_WORDS_RE", "_SENTENCE_END_RE")
 
 
 def _characters_scanned(monkeypatch, answer):
@@ -575,7 +576,7 @@ def _light_splits(text):
 
 
 #: Someone else's fee or price: a court, a registry, a university, a regulator. A
-#: fee or price word counts only as the company's own ("our", "we", the name).
+#: fee or price word counts only as the company's own ("our", "we" or "us").
 NOT_THE_COMPANYS_FEE = [
     "For a money recovery suit of ₹10 lakh in Delhi, the court fee works out to roughly ₹12,000 under the Court Fees Act.",
     "Filing a civil case in a US federal district court costs $405, which covers the $350 filing fee and a $55 administrative fee.",
@@ -591,19 +592,20 @@ NOT_THE_COMPANYS_FEE = [
 @pytest.mark.parametrize("text", NOT_THE_COMPANYS_FEE)
 def test_a_fee_or_price_word_that_is_not_the_companys_own_does_not_trip(text):
     for size in (1, 4, len(text)):
-        guard, out = _feed(_chunked(text, size), company_name="Acme")
+        guard, out = _feed(_chunked(text, size))
         assert guard.tripped is False, size
         assert out == text, size
 
 
 UNQUALIFIED_PRICE_WORDS = [
     "plan", "plans", "package", "packages", "subscription", "subscriptions", "tier", "tiers", "edition",
-    "editions", "annual licence", "software license", "retainer", "quote", "quoted", "quotation", "invoice",
-    "invoices", "invoiced", "billed", "billing", "pricing",
+    "editions", "annual licence", "software license", "retainer", "quote", "quoted", "quotation", "pricing",
 ]  # fmt: skip
+#: Billing words describe a hospital's or a courier's bill as readily as the company's (final review,
+#: 2026-09-11), so they count only beside a first-person word too.
 QUALIFIED_PRICE_WORDS = [
     "price", "prices", "priced", "fee", "fees", "charge", "charges", "charged", "tariff", "tariffs", "rate", "rates",
-    "cost", "costs",
+    "cost", "costs", "invoice", "invoices", "invoiced", "billed", "billing",
 ]  # fmt: skip
 
 
@@ -643,35 +645,33 @@ def test_a_fee_or_price_word_alone_does_not_make_a_figure_the_companys_price(wor
 
 @pytest.mark.parametrize("word", QUALIFIED_PRICE_WORDS)
 @pytest.mark.parametrize(
-    ("template", "company_name"),
+    "template",
     [
-        ("Our {word} comes to ₹5,000 for small teams.", None),
-        ("The {word} we set comes to ₹5,000 for small teams.", None),
-        ("The {word} comes to ₹5,000 for small teams with us.", None),
-        ("We're told the {word} comes to ₹5,000 for small teams.", None),
-        ("The Acme Security {word} comes to ₹5,000 for small teams.", "Acme Security"),
-        ("The {word} at ACME   SECURITY comes to ₹5,000 for small teams.", "Acme Security"),
+        "Our {word} comes to ₹5,000 for small teams.",
+        "The {word} we set comes to ₹5,000 for small teams.",
+        "The {word} comes to ₹5,000 for small teams with us.",
+        "The {word} comes to ₹5,000 for small teams with Us.",
+        "We're told the {word} comes to ₹5,000 for small teams.",
+        "We've set the {word} at ₹5,000 for small teams.",
     ],
 )
-def test_a_fee_or_price_word_with_our_we_us_or_the_company_name_trips(word, template, company_name):
+def test_a_fee_or_price_word_with_our_we_or_us_trips(word, template):
     text = template.format(word=word)
-    _assert_nothing_from_the_figure_is_emitted(text, "₹", signal=False, company_name=company_name, splits=_light_splits)
+    _assert_nothing_from_the_figure_is_emitted(text, "₹", signal=False, splits=_light_splits)
 
 
 @pytest.mark.parametrize(
-    ("text", "company_name"),
+    "text",
     [
         # "US" is the country, not "us".
-        ("In the US the filing fee is $350.", None),
-        # The name is matched as a whole phrase.
-        ("Acmeville fees are ₹5,000 a year.", "Acme"),
-        ("The Acme fee is ₹5,000 a year.", "Acme Security"),
-        # A name too short to be told from an ordinary word is not read.
-        ("A fee of ₹5,000 applies.", "A"),
+        "In the US the filing fee is $350.",
+        "The USCIS filing fee in the US is $460.",
+        # A company named in the third person is not a first-person word.
+        "The Acme fee is ₹5,000 a year.",
     ],
 )
-def test_a_marker_that_is_not_the_company_does_not_qualify_a_fee(text, company_name):
-    guard, out = _feed(_chunked(text, 2), company_name=company_name)
+def test_a_word_that_is_not_first_person_does_not_qualify_a_fee(text):
+    guard, out = _feed(_chunked(text, 2))
     assert guard.tripped is False
     assert out == text
 
@@ -690,6 +690,14 @@ PRICE_LISTS = [
     ("## Pricing\n\nSOC as a Service comes to ₹2,66,250 a month.", "₹"),
     ("**Our plans**\n\nSOC as a Service comes to ₹2,66,250 a month.", "₹"),
     ("These are the options we quote on:\n\n1. SOC as a Service, ₹2,66,250 a month", "₹"),
+    # A table header naming a rate, a charge or an amount (final review, 2026-09-11).
+    ("| Service | Rate |\n|---|---|\n| Website audit | $2,400 |\n| SEO retainer | $1,800/month |", "$"),
+    ("| Service | Charges |\n| --- | --- |\n| SOC | ₹2,66,250 |", "₹"),
+    ("| Item | Amount |\n|:--|--:|\n| Setup | ₹25,000 |", "₹"),
+    # A heading naming prices, plans, packages or rates covers its whole section.
+    ("## Pricing\n\nEvery option below is billed monthly.\n\n- Starter: $29\n- Growth: $79", "$"),
+    ("# Plans\n\nPick what suits you.\n\nMost teams start small.\n\n**Starter** comes to ₹999 a month.", "₹"),
+    ("## Our rates\n\nWe work in two ways.\n\n### Hourly\n\nSupport is $120 an hour.", "$"),
     # A list item's indented continuation stays in the list.
     ("Our plans:\n- Starter\n  ₹9,999 a month", "₹"),
     # A plain line right after a priced line continues its paragraph, and so does
@@ -770,7 +778,8 @@ def test_a_price_word_past_the_hold_cap_does_not_trip_the_held_figure():
 
 @pytest.mark.parametrize(
     "abbreviation", ["p.m.", "p.a.", "a.m.", "approx.", "incl.", "excl.", "e.g.", "i.e.", "vs.", "no.", "nos.", "avg.",
-                     "min.", "max.", "est.", "Rs."]
+                     "min.", "max.", "est.", "Rs.", "Dr.", "Mr.", "Mrs.", "Ms.", "St.", "Jr.", "Sr.", "Inc.", "Ltd.",
+                     "Pvt.", "Co.", "Corp.", "Bros.", "No.", "S.", "S.K."]
 )  # fmt: skip
 def test_an_abbreviation_does_not_end_the_held_figures_sentence(abbreviation):
     text = f"Fines reach €20 million {abbreviation} on the Pro plan."
@@ -849,6 +858,15 @@ def test_a_decimal_amount_billed_by_a_period_trips_a_signalled_guard(text):
         "ratecard",
         "rate card please",
         "what are the charges",
+        # Final review, 2026-09-11.
+        "rtae for night guards",
+        "what do u chrage",
+        "chrage for setup",
+        "budjet for a website",
+        "subscripton options",
+        "how muc is it",
+        "which plans do you have for small clinics",
+        "is there a tier for 3 users",
     ],
 )
 def test_a_typod_how_much_quote_or_plan_question_is_a_signal(question):
@@ -878,6 +896,19 @@ def test_a_typod_how_much_quote_or_plan_question_is_a_signal(question):
         "do you support SIEM integration",
         "how does it work",
         "what did we lose last year",
+        # Final review, 2026-09-11.
+        "who is in charge of onboarding",
+        "is EV charging available at the office",
+        "can I charge my phone at the venue",
+        "do you have offices in tier 1 cities",
+        "we are a tier 2 city startup",
+        "do you hire in tier-3 towns",
+        "what changes did you make to the app",
+        "can I change the date",
+        "is there a gate pass",
+        "what is the average salary package for freshers",
+        "do you accept health insurance plans",
+        "can you share a treatment plan",
     ],
 )
 def test_an_ordinary_question_is_no_signal(question):
@@ -958,8 +989,9 @@ REVIEW_BLIND_NOT_OWN_PRICES = [
 ]
 
 #: The company's own prices named in the figure's sentence (review, 2026-09-11). "Charges for the VAPT
-#: engagement come to INR 1.8 lakh." is left out: "charges" with no "our", "we" or company name reads
-#: the same as a registry's charges, and streams unless the question or session carries a signal.
+#: engagement come to INR 1.8 lakh." is left out: "charges" with no "our", "we" or "us" reads the same
+#: as a registry's charges, and streams unless the question or session carries a signal. So is "You will
+#: be invoiced ¥30,000 each month.": a hospital invoices too (final review, 2026-09-11).
 REVIEW_OWN_PRICES = [
     "Our Growth plan is $49 per seat per month.",
     "The retainer is ₹1,50,000 a quarter.",
@@ -979,7 +1011,7 @@ REVIEW_OWN_PRICES = [
     "Here is the quotation for your three sites: ₹3,40,000 plus GST.",
     "Tier 2 is $ 1,299/mo with 24x7 monitoring.",
     "₹2,66,250 a month is what the SOC as a Service plan comes to for small teams.",
-    "You will be invoiced ¥30,000 each month.",
+    "We will invoice you ¥30,000 each month.",
 ]
 
 
@@ -1007,3 +1039,224 @@ def test_the_reviews_own_prices_trip_without_a_signal(text):
 
 
 _FIGURE_START_RE = price_guard_module._FIGURE_RE
+
+
+# Final approval review, 2026-09-11: a company name with full stops ("S.K. Traders") made the cache
+# check and the stream disagree, initials and titles ended a sentence early, "set by the court, not by
+# us" opened a price context, and salary packages or insurance plans read as the company's plans.
+
+
+def test_the_guard_takes_no_company_name():
+    """Only a first-person word marks a fee or price as the company's own."""
+    with pytest.raises(TypeError):
+        PriceStreamGuard(company_name="S.K. Traders")
+    with pytest.raises(TypeError):
+        answer_trips_price_guard("The delivery charge is ₹200.", signal=False, company_name="S.K. Traders")
+
+
+#: A company named in the third person, with full stops or price words in its name. No first-person
+#: word makes the fee the company's own, so each streams.
+THIRD_PERSON_COMPANY = [
+    "The delivery charge is ₹200 at S.K. Traders.",
+    "S.K. Traders' delivery charge is ₹200 per order.",
+    "The GST registration fee is ₹0, but S.K. Traders can file it for you.",
+    "Dr. Lal PathLabs charges ₹500 for a CBC test.",
+    "The CBC test fee is ₹500 at Dr. Lal PathLabs.",
+    "St. Mary's Clinic fee for a consultation is ₹800.",
+    "A.I. Solutions's fee for the audit is $500.",
+    "Yahoo! Japan charges ¥500 a month.",
+    "Rate Plus's fee for the audit is $500.",
+    "Price Chopper Movers charges ₹12,000 for a 2BHK move.",
+    "The delivery charge is ₹200 at Sri Venkateshwara Security Pvt. Ltd.",
+]
+
+
+@pytest.mark.parametrize("text", THIRD_PERSON_COMPANY)
+def test_a_company_named_in_the_third_person_does_not_make_a_fee_its_own(text):
+    assert answer_trips_price_guard(text, signal=False) is False
+    for chunks in _light_splits(text):
+        guard, out = _feed(chunks)
+        assert guard.tripped is False, chunks
+        assert out == text, chunks
+
+
+#: A title, a company suffix or an initial between a first-person word and a fee.
+TITLES_AND_INITIALS = [
+    "Our partner Dr. Rao sets the consultation fee at ₹800.",
+    "We buy from Acme Inc. and Acme Pvt. Ltd. at a rate of $40 a unit.",
+    "Our clinic on St. John's Road charges ₹500 for a CBC test.",
+    "We asked Ms. Iyer and Mr. Das, and our Corp. rate is $90.",
+    "Our lead, J. Smith Jr., sets the fee at $250.",
+    "We work with S.K. Traders, and the delivery charge is ₹200.",
+]
+
+
+@pytest.mark.parametrize("text", TITLES_AND_INITIALS)
+def test_a_title_or_initial_does_not_end_the_sentence_of_a_first_person_word(text):
+    figure_start = _FIGURE_START_RE.search(text).group()
+    _assert_nothing_from_the_figure_is_emitted(text, figure_start, signal=False, splits=_light_splits)
+
+
+#: A first-person word that says whose the fee is NOT, and billing by someone else.
+NOT_BY_US = [
+    "Visa fees are set by the government, not by us. The fee is $185.",
+    "The renewal fee is set by the passport office, not by us. Expect Rs. 1,500.",
+    "Court filing fees are set by the court itself, not our firm. Filing costs $75.",
+    "Customs duty is set by the destination country's tariff schedule, not by us. On a €2,000 shipment that is about €80.",
+    "The consular fee is paid to the embassy rather than us, and it is €90.",
+    "Stamp duty goes to the state, never to us, and comes to about ₹6 lakh.",
+    "Registration charges are paid to the registrar instead of us: roughly ₹30,000.",
+    "Room charges are set independent of our clinic, at about $3,000 a night.",
+    "Lab fees are collected by the lab, outside our clinic, at around ₹2,500.",
+    "Ambulance transport is billed separately from our clinic services; expect $500 to $1,200.",
+    "The hospital sends its own invoice, other than our bill, for about $3,000.",
+    "Ambulance transport is billed at $500 to $1,200 by the provider.",
+    "Invoices from the lab come to about ₹2,500.",
+]
+
+
+@pytest.mark.parametrize("text", NOT_BY_US)
+def test_a_disclaimer_or_a_third_partys_bill_streams_intact(text):
+    assert answer_trips_price_guard(text, signal=False) is False
+    for chunks in _light_splits(text):
+        guard, out = _feed(chunks)
+        assert guard.tripped is False, chunks
+        assert out == text, chunks
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "The court fee is set by the court, not by us; our own fee is ₹5,000.",
+        "It is not our court fee, but we charge ₹5,000 for the filing.",
+        "Filing is not included; our fee is $250.",
+        "The embassy bills separately, and we are billed ₹1,500 for the courier.",
+    ],
+)
+def test_a_first_person_word_outside_a_disclaimer_still_qualifies_a_fee(text):
+    figure_start = _FIGURE_START_RE.search(text).group()
+    _assert_nothing_from_the_figure_is_emitted(text, figure_start, signal=False, splits=_light_splits)
+
+
+#: A salary package, a relief package, or a plan the visitor has with someone else.
+NOT_THE_COMPANYS_PLAN = [
+    "Our most recent placement report showed an average annual package of around ₹14.5 lakh.",
+    "Freshers get a salary package of about ₹6 lakh a year.",
+    "The relocation assistance package is worth up to $5,000.",
+    "The government's stimulus package was worth $1.9 trillion.",
+    "Patients with standard insurance plans pay about $3,200.",
+    "Most health insurance plans cover up to ₹5 lakh.",
+    "Your treatment plan may come to around $2,000 in total.",
+    "An instalment plan spreads ₹60,000 over twelve months.",
+    "A dental care plan from your employer may reimburse $1,500 a year.",
+]
+
+
+@pytest.mark.parametrize("text", NOT_THE_COMPANYS_PLAN)
+def test_a_package_or_plan_in_another_sense_streams_intact(text):
+    assert answer_trips_price_guard(text, signal=False) is False
+    for chunks in _light_splits(text):
+        guard, out = _feed(chunks)
+        assert guard.tripped is False, chunks
+        assert out == text, chunks
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Our Growth plan for health teams is ₹5,000 a month.",
+        "The insurance-grade Pro plan is $99 a month.",
+        "Our care package is ₹5,000 a month.",
+        "The salary is paid in full, and the Pro package is $99 a month.",
+    ],
+)
+def test_a_plan_or_package_named_beside_another_word_still_counts(text):
+    figure_start = _FIGURE_START_RE.search(text).group()
+    _assert_nothing_from_the_figure_is_emitted(text, figure_start, signal=False, splits=_light_splits)
+
+
+#: The section a price heading opened has ended before the figure.
+SECTION_ENDED = [
+    # A heading of the same level.
+    "## Pricing\n\nAsk the team for details.\n\n## Compliance\n\nGDPR fines can reach €20 million.",
+    # A heading of a higher level, with the figure on the heading's own line.
+    "### Pricing\n\nAsk the team for details.\n\n## Compliance fines reach €20 million",
+    # More than 1,200 characters after the heading.
+    "## Pricing\n\nAsk the team for details."
+    + "\n\nIt is reviewed every quarter." * 40
+    + "\n\nGDPR fines reach €20 million.",
+    # A heading that names no price.
+    "## Compliance\n\nAsk the team for details.\n\nGDPR fines can reach €20 million.",
+]
+
+
+@pytest.mark.parametrize("text", SECTION_ENDED)
+def test_a_figure_outside_a_price_section_streams_intact(text):
+    assert answer_trips_price_guard(text, signal=False) is False
+    for size in (1, 2, 3, 5, 8, 13, len(text)):
+        guard, out = _feed(_chunked(text, size))
+        assert guard.tripped is False, size
+        assert out == text, size
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        *THIRD_PERSON_COMPANY,
+        *TITLES_AND_INITIALS,
+        *NOT_BY_US,
+        *NOT_THE_COMPANYS_PLAN,
+        *SECTION_ENDED[:2],
+        "Welcome to Plan B Travel! The Schengen visa fee is €90, paid to the embassy.",
+        "Plan International raised €1.1 billion for children's rights last year.",
+        "Our partner firm J.K. Associates handles filings; the ROC fee is ₹600.",
+        "Acme Inc. charges $500 for setup.",
+    ],
+)
+def test_the_whole_answer_decides_as_the_stream_does_with_names_titles_and_disclaimers(text):
+    whole = answer_trips_price_guard(text, signal=False)
+    for chunks in _light_splits(text):
+        guard, out = _feed(chunks)
+        assert guard.tripped is whole, chunks
+        if not whole:
+            assert out == text, chunks
+
+
+#: Lines for the random whole-answer and stream comparison.
+_FUZZ_LINES = [
+    "We offer three plans:", "Here are our SOC packages.", "Our pricing is simple.", "## Pricing", "### Hourly",
+    "## Compliance", "**Our plans**", "GDPR fines can reach €20 million.", "- Starter: ₹9,999/month", "- Growth",
+    "  ₹24,999 a month", "| Plan | Price |", "| Service | Rate |", "| Law | Maximum |", "|---|---|",
+    "| SOC | ₹2,66,250 |", "| GDPR | €20 million |", "", "", "The court fee is ₹12,000 under the Act.",
+    "The delivery charge is ₹200 at S.K. Traders.", "S.K. Traders' delivery charge is ₹200 per order.",
+    "Dr. Lal PathLabs charges ₹500 for a CBC test.", "Our partner Dr. Rao sets the fee at ₹800.",
+    "St. Mary's Clinic, Pvt. Ltd. and Acme Corp. charge Rs. 5,000 approx. for teams.",
+    "Visa fees are set by the government, not by us. The fee is $185.",
+    "Court fees are set by the court, not our firm. Filing costs $75.",
+    "Ambulance transport is billed separately from our clinic; expect $500 to $1,200.",
+    "Freshers get an average annual package of ₹14.5 lakh.", "Patients with standard insurance plans pay about $3,200.",
+    "Fines reach €20 million" + " and it rose again" * 18 + " on the Pro plan.", "We are in the US and the price is $350.",
+    "It costs 49.99 per month.", "Our team of 1,200 analysts works 3 shifts per day.", "Mr. J. K. Rao, Jr. quoted it.",
+    "It is not by us", "that our fee is ₹5,000.", "never", "us, and the rate is $40.",
+]  # fmt: skip
+
+
+def test_the_whole_answer_decides_as_the_stream_does_on_random_answers():
+    """Seeded, so a failure reproduces: lines with names, titles, initials and disclaimers, split at random."""
+    rng = random.Random(20260911)
+    for _ in range(250):
+        text = rng.choice(["\n", " "]).join(rng.choice(_FUZZ_LINES) for _ in range(rng.randint(1, 7)))
+        if len(text) < 2:
+            continue
+        whole = answer_trips_price_guard(text, signal=False)
+        cut_sets = [sorted(rng.sample(range(1, len(text)), min(len(text) - 1, rng.randint(1, 15)))) for _ in range(3)]
+        splits = [list(text)] + [
+            [text[a:b] for a, b in zip([0, *cuts], [*cuts, len(text)], strict=True)] for cuts in cut_sets
+        ]
+        for chunks in splits:
+            guard, out = _feed(chunks)
+            assert guard.tripped is whole, (text, chunks)
+            if whole:
+                assert text.startswith(out), (text, chunks)
+            else:
+                assert out == text, (text, chunks)

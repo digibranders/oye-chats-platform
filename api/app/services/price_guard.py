@@ -19,23 +19,37 @@ records the turn as unanswered. So a figure trips only on a price signal:
 * or the figure's own sentence names the company's price;
 * or the figure is inside a price context.
 
-Own-price words. Plan and billing words count on their own: plan, package,
-subscription, tier, edition, a product licence ("annual licence"), retainer,
-quote, quotation, invoice, billed, billing, pricing, "starts at", "starting at"
-or "starting from", and a rate per user, seat, licence, device or endpoint. Fee
-and price words (price, fee, charge, tariff, rate, cost) count only in a
-sentence that also says whose: "our", "we" or "us" (not "US"), or the company's
-name. "The court fee is ₹12,000" is the court's; "our onboarding fee is ₹25,000"
-is the company's. A cadence ("per month", "a year") never counts: fines,
-breaches and salaries come in it too.
+Own-price words. Plan words count on their own: plan, package, subscription,
+tier, edition, a product licence ("annual licence"), retainer, quote, quotation,
+pricing, "starts at", "starting at" or "starting from", and a rate per user,
+seat, licence, device or endpoint. Fee, price and billing words (price, fee,
+charge, tariff, rate, cost, invoice, billed, billing) count only in a sentence
+that also says the price is the company's: "our", "we" or "us" (not "US"). "The
+court fee is ₹12,000" is the court's; "our onboarding fee is ₹25,000" is the
+company's. The company's name is not read: a name with full stops in it ("S.K.
+Traders", "Dr. Lal PathLabs") split the sentence differently in a whole answer
+and in a stream, so a company that speaks of itself in the third person streams.
+A cadence ("per month", "a year") never counts: fines, breaches and salaries come
+in it too.
+
+Not the company's. A first-person word that says whose the price is not does not
+count and opens no context: "not" or "never" with "us", "our" or "we" at most two
+words on ("set by the court, not by us", "not our firm"), and "rather than",
+"instead of", "other than", "separately from", "independent of" or "outside"
+before "us" or "our". Nor does a plan or a package in another sense: a salary,
+relief or benefits package, or an insurance, treatment or payment plan. The
+question signal skips the same plans and packages.
 
 Price context. An own-price word, or a markdown table header row naming a price,
-cost, fee or plan, opens a context that covers the figures after it until its
-paragraph, list or table ends: at a blank line, a line after a list that is not
-a list item or indented, or a line after a table that is not a table row. A lead
-ending in a colon, a heading, or a line naming plans or packages carries the
-context across one blank line. A context ends ``_CONTEXT_CAP_CHARS`` characters
-after its last own-price word.
+cost, fee, rate, charge, amount or plan, opens a context that covers the figures
+after it until its paragraph, list or table ends: at a blank line, a line after a
+list that is not a list item or indented, or a line after a table that is not a
+table row. A lead ending in a colon, a heading, or a line naming plans or packages
+carries the context across one blank line. A context ends ``_CONTEXT_CAP_CHARS``
+characters after its last own-price word. A markdown heading naming pricing,
+prices, plans, packages or rates opens a context for its whole section: until a
+heading of the same or a higher level, or ``_SECTION_CAP_CHARS`` characters after
+the heading.
 
 Without a turn signal or a context, a figure is held until its sentence ends,
 and released intact, or until its sentence names the company's price, and
@@ -50,9 +64,13 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from functools import lru_cache
 
-from app.services.pricing_gate import _CURRENCY_AMOUNT_RE, normalize_url
+from app.services.pricing_gate import (
+    _CURRENCY_AMOUNT_RE,
+    _NOT_OWN_PACKAGE_WORDS,
+    _NOT_OWN_PLAN_WORDS,
+    normalize_url,
+)
 
 #: The gate's own "currency symbol carrying a digit" pattern is reused as is, and
 #: its symbol class is lifted out of it so the hold below can never know fewer
@@ -174,72 +192,95 @@ _HOLD_RE = re.compile(
     re.IGNORECASE,
 )
 
-#: Words that make a figure the company's price on their own. Phrases never cross
-#: a line break, so a match cannot span two sentences.
+#: Up to three spaces between the words of a phrase, and never a line break, so a
+#: phrase never spans two sentences and never outgrows ``_TAIL_CHARS``.
+_SEP_MAX = 3
+_SEP = rf"[^\S\n]{{1,{_SEP_MAX}}}"
+#: The longest word a disclaimer, or a plan in another sense, may carry in between.
+_MIDDLE_WORD_MAX = 20
+
+#: Words that make a figure the company's price on their own.
 _OWN_PRICE_WORDS = (
-    r"plans?|packages?|subscriptions?|tiers?|editions?|retainers?"
-    r"|quote|quoted|quotations?|invoices?|invoiced|billed|billing|pricing"
-    r"|starts[^\S\n]+at|starting[^\S\n]+(?:at|from)"
-    r"|per[^\S\n]+(?:user|seat|licen[cs]e|device|endpoint)s?"
-    r"|(?:annual|perpetual|software|enterprise|site|volume|subscription)[^\S\n]+licen[cs]es?"
+    r"plans?|packages?|subscriptions?|tiers?|editions?|retainers?|quote|quoted|quotations?|pricing"
+    rf"|starts{_SEP}at|starting{_SEP}(?:at|from)"
+    rf"|per{_SEP}(?:user|seat|licen[cs]e|device|endpoint)s?"
+    rf"|(?:annual|perpetual|software|enterprise|site|volume|subscription){_SEP}licen[cs]es?"
 )
-#: Words that name a price without saying whose: a court's fee or a home's price
-#: reads the same. They count only beside a first-person word or the company name.
-_QUALIFIED_PRICE_WORDS = r"pric(?:e|es|ed)|fees?|charge[sd]?|tariffs?|rates?|costs?"
-#: "us" only in lower or title case: "US" is the country.
+#: Words that name a price or a bill without saying whose: a court's fee, a home's
+#: price and a hospital's invoice read the same. They count only beside a first-person word.
+_QUALIFIED_PRICE_WORDS = r"pric(?:e|es|ed)|fees?|charge[sd]?|tariffs?|rates?|costs?|invoices?|invoiced|billed|billing"
+#: "us" only in lower or title case: "US" is the country. "we're" and "we've" read as "we".
 _FIRST_PERSON_WORDS = r"our|we|(?-i:us|Us)"
+#: A word that names a price column in a table header and nothing else: "| Item | Amount |".
+_HEADER_ONLY_WORDS = r"amounts?"
+#: Every word ``_PRICE_WORDS_RE`` reads on its own. A disclaimer or a plan in another
+#: sense never takes one as its middle word: the stream settles such a word as soon as
+#: the character after it arrives, before the phrase around it is complete, so the
+#: whole answer must read it on its own too.
+_READ_ON_ITS_OWN = rf"(?:{_OWN_PRICE_WORDS}|{_QUALIFIED_PRICE_WORDS}|{_FIRST_PERSON_WORDS}|{_HEADER_ONLY_WORDS})\b"
+_MIDDLE_WORD = rf"(?:(?!{_READ_ON_ITS_OWN})[a-z]{{1,{_MIDDLE_WORD_MAX}}}{_SEP})?"
+#: A first-person word that says whose the price is not ("set by the court, not by
+#: us", "billed separately from our clinic"), and a plan or a package in another sense
+#: ("salary package", "health insurance plans"). Neither counts. Each ends on the word
+#: it neutralises, so the stream never settles that word before the phrase is known.
+_NOT_OURS = (
+    rf"(?:not|never){_SEP}{_MIDDLE_WORD}(?:{_FIRST_PERSON_WORDS})"
+    rf"|(?:(?:rather|other){_SEP}than|instead{_SEP}of|separately{_SEP}from|independent(?:ly)?{_SEP}of|outside)"
+    rf"{_SEP}(?:our|(?-i:us|Us))"
+    rf"|(?:{_alternation(_NOT_OWN_PLAN_WORDS)}){_SEP}{_MIDDLE_WORD}plans?"
+    rf"|(?:{_alternation(_NOT_OWN_PACKAGE_WORDS)}){_SEP}{_MIDDLE_WORD}packages?"
+)
+#: The longest phrase ``_PRICE_WORDS_RE`` reads: a package in another sense with a middle word.
+_LONGEST_PHRASE_CHARS = (
+    max(len(word) for word in (*_NOT_OWN_PLAN_WORDS, *_NOT_OWN_PACKAGE_WORDS))
+    + 2 * _SEP_MAX
+    + _MIDDLE_WORD_MAX
+    + len("packages")
+)
+
+#: Every word the guard reads in an answer. Leftmost first, so a disclaimer or a plan
+#: in another sense is found before the word it ends on. Every alternative starts a
+#: word or a slash, and checking that first keeps a long run of digits cheap.
+_PRICE_WORDS_RE = re.compile(
+    r"(?=\b[a-z]|/)"
+    rf"(?:(?P<not_ours>\b(?:{_NOT_OURS})\b)"
+    rf"|(?P<own>\b(?:{_OWN_PRICE_WORDS})\b|/[^\S\n]{{0,{_SEP_MAX}}}(?:user|seat)s?\b)"
+    rf"|(?P<qualified>\b(?:{_QUALIFIED_PRICE_WORDS})\b)"
+    rf"|(?P<first_person>\b(?:{_FIRST_PERSON_WORDS})\b)"
+    rf"|(?P<header>\b(?:{_HEADER_ONLY_WORDS})\b))",
+    re.IGNORECASE,
+)
 #: Own-price words that name plans or packages, for a lead line (see the module note).
 _PLAN_WORDS = frozenset(
     {"plan", "plans", "package", "packages", "tier", "tiers", "edition", "editions", "subscription", "subscriptions"}
 )
 #: A table header row naming one of these opens a price context.
-_TABLE_HEADER_WORDS = frozenset({"price", "prices", "pricing", "cost", "costs", "fee", "fees", "plan", "plans"})
-#: A company name with fewer letters and digits is too close to an ordinary word.
-_MIN_COMPANY_NAME_CHARS = 2
+_TABLE_HEADER_WORDS = frozenset(
+    {
+        "price", "prices", "pricing", "cost", "costs", "fee", "fees", "plan", "plans", "rate", "rates", "charge",
+        "charges", "amount", "amounts",
+    }
+)  # fmt: skip
+#: A markdown heading naming one of these opens a price context for its section.
+_SECTION_WORDS = frozenset({"pricing", "price", "prices", "plans", "packages", "rates"})
 
 
-def _price_words_pattern(company_phrase: str | None) -> str:
-    company = rf"|(?<!\w){company_phrase}(?!\w)" if company_phrase else ""
-    return (
-        rf"(?P<own>\b(?:{_OWN_PRICE_WORDS})\b|/[^\S\n]*(?:user|seat)s?\b)"
-        rf"|(?P<qualified>\b(?:{_QUALIFIED_PRICE_WORDS})\b)"
-        rf"|(?P<first_person>\b(?:{_FIRST_PERSON_WORDS})\b{company})"
-    )
-
-
-#: The price words for a guard that does not know the company's name.
-_OWN_PRICE_RE = re.compile(_price_words_pattern(None), re.IGNORECASE)
-
-
-@lru_cache(maxsize=512)
-def _company_price_words_re(company_phrase: str) -> re.Pattern[str]:
-    return re.compile(_price_words_pattern(company_phrase), re.IGNORECASE)
-
-
-def _company_phrase(company_name: object) -> str | None:
-    """The company name as a pattern matched as a whole phrase, whatever its spacing; None when unusable."""
-    if not isinstance(company_name, str):
-        return None
-    tokens = company_name.split()
-    if sum(ch.isalnum() for token in tokens for ch in token) < _MIN_COMPANY_NAME_CHARS:
-        return None
-    return r"[^\S\n]+".join(re.escape(token) for token in tokens)
-
-
-def _price_words_re(company_phrase: str | None) -> re.Pattern[str]:
-    return _OWN_PRICE_RE if company_phrase is None else _company_price_words_re(company_phrase)
-
-
-#: Abbreviations whose full stop does not end a sentence.
+#: Abbreviations whose full stop does not end a sentence: units, titles and company
+#: suffixes ("Dr. Rao", "Acme Pvt. Ltd.").
 _ABBREVIATIONS = (
     "rs", "p.m", "p.a", "a.m", "approx", "incl", "excl", "e.g", "i.e", "vs", "no", "nos", "avg", "min", "max", "est",
+    "dr", "mr", "mrs", "ms", "st", "jr", "sr", "inc", "ltd", "pvt", "co", "corp", "bros",
 )  # fmt: skip
 #: Where a sentence ends: a full stop, "!" or "?" followed by whitespace, or a
 #: line break. The whitespace keeps a decimal point ("4.45") and anything else
-#: inside a number out; the look-behinds keep "Rs. 5,000" and "approx. 20" out.
-#: The end of the stream ends a sentence too, which ``flush`` handles.
+#: inside a number out; the look-behinds keep "Rs. 5,000", "approx. 20" and an
+#: initial ("S.K. Traders", "J. Smith") out. The full stop is matched before the
+#: look-behinds, so they run only at a full stop. The end of the stream ends a
+#: sentence too, which ``flush`` handles.
 _SENTENCE_END_RE = re.compile(
-    "(?:" + "".join(rf"(?<!\b{re.escape(abbreviation)})" for abbreviation in _ABBREVIATIONS) + r"\.|[!?])(?=\s)|\n",
+    r"(?:\."
+    + "".join(rf"(?<!\b{re.escape(abbreviation)}\.)" for abbreviation in _ABBREVIATIONS)
+    + r"(?<!\b(?-i:[A-Z])\.)|[!?])(?=\s)|\n",
     re.IGNORECASE,
 )
 
@@ -261,10 +302,12 @@ _CONTEXT_CHARS = 1
 _HOLD_CAP_CHARS = 300
 #: How far after its last own-price word a price context reaches.
 _CONTEXT_CAP_CHARS = 600
-#: The end of the emitted answer kept so a word split across chunks is still read.
-#: Longer than any fixed phrase in ``_OWN_PRICE_RE`` and than the look-behinds in
-#: ``_SENTENCE_END_RE``; a guard that knows the company name keeps that much more.
-_TAIL_CHARS = 32
+#: How far after its heading a price section reaches.
+_SECTION_CAP_CHARS = 1_200
+#: The end of the emitted answer kept so a word or phrase split across chunks is
+#: still read whole. Longer than any phrase in ``_PRICE_WORDS_RE`` and than the
+#: look-behinds in ``_SENTENCE_END_RE``.
+_TAIL_CHARS = _LONGEST_PHRASE_CHARS + 8
 #: The start of a line kept to tell a list item, a table row, a heading or a
 #: table separator; and the end kept to tell a lead ending in a colon.
 _LINE_HEAD_CHARS = 200
@@ -272,6 +315,11 @@ _LINE_END_CHARS = 16
 
 _END = 0
 _WORD = 1
+
+
+def _heading_level(head: str) -> int | None:
+    heading = _HEADING_RE.match(head)
+    return heading.group().count("#") if heading else None
 
 
 def _line_kind(head: str) -> str:
@@ -293,9 +341,8 @@ class _AnswerReader:
     read again with the next piece; everything already settled is skipped.
     """
 
-    def __init__(self, words: re.Pattern[str], *, tail_chars: int) -> None:
+    def __init__(self, words: re.Pattern[str]) -> None:
         self._words = words
-        self._tail_chars = tail_chars
         #: The end of the emitted text, and where it starts in the whole answer.
         self._tail = ""
         self._tail_start = 0
@@ -303,7 +350,7 @@ class _AnswerReader:
         self._words_done = 0
         self._ends_done = 0
         #: The current sentence: a word that counts on its own, a fee or price
-        #: word, and a first-person word or the company name.
+        #: word, and a first-person word.
         self._own = False
         self._qualified = False
         self._first_person = False
@@ -315,6 +362,7 @@ class _AnswerReader:
         self._line_has_text = False
         self._line_names_plans = False
         self._line_has_header_word = False
+        self._line_names_price_section = False
         #: The last line with text, and the blank lines since it.
         self._previous_kind = _PLAIN
         self._previous_lead = False
@@ -324,6 +372,10 @@ class _AnswerReader:
         self._context_open = False
         self._context_line = -1
         self._context_until = -1
+        #: The section a heading naming prices opened: open, the heading's level, and its cap.
+        self._section_open = False
+        self._section_level = 0
+        self._section_until = -1
 
     @property
     def position(self) -> int:
@@ -338,9 +390,19 @@ class _AnswerReader:
 
     def in_price_context(self, position: int) -> bool:
         """Whether a figure starting at ``position``, the end of the emitted text, is in a price context."""
+        return self._in_paragraph_context(position) or self._in_price_section(position)
+
+    def _in_paragraph_context(self, position: int) -> bool:
         if not self._context_open or position > self._context_until:
             return False
         return self._context_line == self._line or self._continues(_line_kind(self._head))
+
+    def _in_price_section(self, position: int) -> bool:
+        """A heading of the section's level or a higher one ends the section, on its own line too."""
+        if not self._section_open or position > self._section_until:
+            return False
+        level = _heading_level(self._head)
+        return level is None or level > self._section_level
 
     def read(self, text: str, lookahead: str) -> None:
         scan = self._tail + text
@@ -373,12 +435,14 @@ class _AnswerReader:
                 self._end_line(base + index)
                 line_from = index + 1
         self._extend_line(scan[line_from:])
-        keep = scan[-self._tail_chars :]
+        keep = scan[-_TAIL_CHARS:]
         self._tail_start = base + len(scan) - len(keep)
         self._tail = keep
 
     def _read_word(self, match: re.Match[str], end: int) -> None:
         group = match.lastgroup
+        if group == "not_ours":
+            return
         word = match.group().lower()
         was_own_price = self.sentence_names_own_price()
         if group == "own":
@@ -386,9 +450,10 @@ class _AnswerReader:
             self._line_names_plans = self._line_names_plans or word in _PLAN_WORDS
         elif group == "qualified":
             self._qualified = True
-        else:
+        elif group == "first_person":
             self._first_person = True
         self._line_has_header_word = self._line_has_header_word or word in _TABLE_HEADER_WORDS
+        self._line_names_price_section = self._line_names_price_section or word in _SECTION_WORDS
         if (
             group == "own"
             or (group == "qualified" and self._first_person)
@@ -429,6 +494,7 @@ class _AnswerReader:
                 and _TABLE_SEPARATOR_RE.fullmatch(self._head.strip())
             ):
                 self._open_context(newline)
+            self._read_heading(newline)
             self._previous_kind = kind
             self._previous_lead = self._is_lead()
             self._previous_header_word = self._line_has_header_word
@@ -440,6 +506,24 @@ class _AnswerReader:
         self._line_has_text = False
         self._line_names_plans = False
         self._line_has_header_word = False
+        self._line_names_price_section = False
+
+    def _read_heading(self, newline: int) -> None:
+        """A heading ends a price section of its level or a deeper one; a heading naming prices opens one."""
+        level = _heading_level(self._head)
+        if level is None:
+            return
+        if self._section_open and level <= self._section_level:
+            self._section_open = False
+        if not self._line_names_price_section:
+            return
+        if self._section_open:
+            # A deeper price heading inside a price section extends that section.
+            self._section_until = max(self._section_until, newline + _SECTION_CAP_CHARS)
+            return
+        self._section_open = True
+        self._section_level = level
+        self._section_until = newline + _SECTION_CAP_CHARS
 
     def _continues(self, kind: str) -> bool:
         """Whether a line of ``kind``, after the lines already read, stays in the context's block."""
@@ -467,8 +551,7 @@ class PriceStreamGuard:
     ``signal`` is the turn's own price signal (see the module note). With it every
     figure trips. Without it a figure trips when its sentence names the company's
     price or it is inside a price context; otherwise the figure and the rest of its
-    sentence are held until that is known. ``company_name`` is the bot's company,
-    which counts as a first-person word.
+    sentence are held until that is known.
 
     Each ``feed`` scans the text still held plus the new chunk, and a short tail of
     the emitted answer, never the whole answer. What is held is bounded (a figure
@@ -478,15 +561,10 @@ class PriceStreamGuard:
     symbol, code or amount, which is held in full until something else arrives.
     """
 
-    def __init__(self, *, signal: bool = False, company_name: str | None = None) -> None:
+    def __init__(self, *, signal: bool = False) -> None:
         self._signal = signal
-        company_phrase = _company_phrase(company_name)
-        self._words = _price_words_re(company_phrase)
-        #: How far back a word may start and still be read whole with the next chunk.
-        self._word_overlap = _TAIL_CHARS + (
-            len(company_name) if company_phrase and isinstance(company_name, str) else 0
-        )
-        self._reader = _AnswerReader(self._words, tail_chars=self._word_overlap)
+        self._words = _PRICE_WORDS_RE
+        self._reader = _AnswerReader(self._words)
         #: Emitted text just before ``_pending``, so ``\b`` reads the real neighbour.
         self._context = ""
         #: Text fed in and not emitted yet.
@@ -595,7 +673,7 @@ class PriceStreamGuard:
             # A full stop that has arrived last may still be followed by whitespace.
             self._held_end_from = max(self._held_figure_len, bound - start - 1)
         stop = end.start() if end is not None and sentence_ended else limit
-        for word in self._words.finditer(window, start + max(0, self._held_read - self._word_overlap), bound):
+        for word in self._words.finditer(window, start + max(0, self._held_read - _TAIL_CHARS), bound):
             if word.start() >= stop or word.end() > limit:
                 break
             # A word at the very end of what has arrived may still grow into
@@ -636,11 +714,11 @@ class PriceStreamGuard:
         self._held_figure_len = 0
 
 
-def answer_trips_price_guard(text: object, *, signal: bool, company_name: str | None = None) -> bool:
-    """True when a complete answer would trip a guard with this turn's ``signal`` and ``company_name``."""
+def answer_trips_price_guard(text: object, *, signal: bool) -> bool:
+    """True when a complete answer would trip a guard with this turn's ``signal``."""
     if not isinstance(text, str) or not text:
         return False
-    guard = PriceStreamGuard(signal=signal, company_name=company_name)
+    guard = PriceStreamGuard(signal=signal)
     guard.feed(text)
     guard.flush()
     return guard.tripped

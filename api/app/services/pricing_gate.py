@@ -343,7 +343,6 @@ def _has_near_miss_price_word(question: str) -> bool:
 _FUZZY_PRICE_WORDS: tuple[tuple[str, int], ...] = (
     ("pricing", 2),
     ("prices", 1),
-    ("charges", 1),
     ("quotation", 1),
     ("costing", 1),
 )
@@ -353,6 +352,16 @@ _FUZZY_MIN_LEN = 5
 #: "qoute", "prcie"), in words of four or five letters.
 _SHORT_PRICE_WORDS = ("cost", "costs", "quote", "price", "rates", "fees")
 _SHORT_WORD_LENGTHS = range(4, 6)
+#: Price words read through one typo, a swap of two letters included, only in words
+#: of these lengths: "rtae", "chrage", "budjet", "subscripton". The lengths keep
+#: "rated", "charging" and "budge" out.
+_TYPO_PRICE_WORDS: tuple[tuple[str, range], ...] = (
+    ("rate", range(4, 5)),
+    ("charge", range(6, 8)),
+    ("charges", range(6, 8)),
+    ("budget", range(6, 8)),
+    ("subscription", range(11, 14)),
+)
 #: Ordinary words within the tolerated edits of a price word. "most" is one edit
 #: from "cost", "quite" from "quote", "writing" two from "pricing"; none of them
 #: is a pricing question.
@@ -378,24 +387,48 @@ _NOT_A_PRICE_TYPO = frozenset(
         "riving", "slicing", "spicing", "splicing", "tracing", "tricking", "uprising", "voicing", "writing",
         # charges, costing
         "charger", "chargers", "charles", "casting", "coasting", "coating", "hosting", "posting",
+        # rate
+        "date", "fate", "gate", "hate", "kate", "late", "mate", "nate", "pate", "race", "rage", "rake", "rape",
+        "rare", "rath", "rave", "raze", "rite", "rote", "sate", "tate",
+        # charge, charges, budget
+        "change", "changes", "chargee", "budged", "budger", "budges",
     }
 )  # fmt: skip
 #: Price words the guard's signal takes only as spelled: one edit from "fee" is
 #: "fed", one from "rate" is "date".
-_EXACT_PRICE_WORDS = frozenset(
-    {"fee", "rate", "budget", "tariff", "tarrif", "tarif", "pricelist", "ratecard", "charges"}
-)
+_EXACT_PRICE_WORDS = frozenset({"fee", "rate", "budget", "tariff", "tarrif", "tarif", "pricelist", "ratecard"})
 #: "how much", typos included, and the other ways of asking what something costs.
 _HOW_MUCH_RE = re.compile(
-    r"\b(?:(?:how|hw|hoe|hwo|hows)\s+(?:much|mch|mcuh|muhc|mich|mutch)|how\s+(?:expensive|pricey)"
+    r"\b(?:(?:how|hw|hoe|hwo|hows)\s+(?:much|muc|mch|mcuh|muhc|mich|mutch)|how\s+(?:expensive|pricey)"
     r"|price\s+list|rate\s+card)\b",
     re.IGNORECASE,
 )
 #: Plan words in a question: "what plans do you offer?", "your SOC packages".
 _PLAN_QUESTION_RE = re.compile(r"\b(?:plans?|packages?|subscriptions?|tiers?|editions?)\b", re.IGNORECASE)
-#: Plans that are not something the company sells.
-_NOT_A_PRICE_PLAN_RE = re.compile(
-    r"\b(?:continuity|action|floor|treatment|study|meal|lesson|project|business|response)\s+plans?\b",
+#: A word up to two words before "plan" or "plans" that makes it a plan the visitor
+#: or a third party has, not one the company sells: "health insurance plan",
+#: "treatment plan", "business continuity plan". ``price_guard`` reads answers with
+#: the same words.
+_NOT_OWN_PLAN_WORDS = (
+    "insurance", "health", "medical", "dental", "vision", "treatment", "payment", "instalment", "installment",
+    "meal", "study", "lesson", "business", "continuity", "action", "floor", "project", "response", "retirement",
+    "pension", "savings", "investment", "care", "recovery", "evacuation",
+)  # fmt: skip
+#: The same for "package" or "packages": "salary package", "relief package", and a
+#: placement report's "average annual package".
+_NOT_OWN_PACKAGE_WORDS = (
+    "salary", "compensation", "pay", "ctc", "relocation", "benefit", "benefits", "severance", "stimulus", "relief",
+    "aid", "average", "median",
+)  # fmt: skip
+#: Phrases whose price or plan word is not a pricing question: a plan or package in
+#: another sense, "tier 2 cities", "in charge" and "charge my phone".
+_NOT_A_PRICE_PHRASE_RE = re.compile(
+    rf"\b(?:{'|'.join(_NOT_OWN_PLAN_WORDS)})\s+(?:[a-z]+\s+)?plans?\b"
+    rf"|\b(?:{'|'.join(_NOT_OWN_PACKAGE_WORDS)})\s+(?:[a-z]+\s+)?packages?\b"
+    r"|\btiers?[\s-]*(?:[1-3]|i{1,3}|one|two|three)\s+(?:cit(?:y|ies)|towns?)\b"
+    r"|\b(?:in|take|takes|took|taking)\s+charge\b"
+    r"|\bcharge\s+(?:(?:my|your|the|a|an|his|her|their|our)\s+)?"
+    r"(?:phones?|mobiles?|laptops?|batter(?:y|ies)|devices?|cars?|evs?|tablets?|watch(?:es)?|scooters?|vehicles?)\b",
     re.IGNORECASE,
 )
 
@@ -425,15 +458,16 @@ def question_has_fuzzy_price_word(question: object) -> bool:
     "what is th picin for SOC" is two edits from "pricing", "hw much" and "qoute
     for 3 sites" are typos, and "what plans do you offer?" asks for plans. The
     gate reads none of them as a pricing question; the price guard still treats a
-    figure in the answer as the company's price. A plan of the visitor's own
-    ("business continuity plan", "incident response plan") does not count. Pure,
-    and not part of the gate's own decision.
+    figure in the answer as the company's price. A plan or package in another sense
+    ("business continuity plan", "salary package"), "tier 2 cities" and "in charge"
+    do not count. Pure, and not part of the gate's own decision.
     """
     if not isinstance(question, str) or not question.strip():
         return False
     if _HOW_MUCH_RE.search(question):
         return True
-    if _PLAN_QUESTION_RE.search(_NOT_A_PRICE_PLAN_RE.sub(" ", question)):
+    question = _NOT_A_PRICE_PHRASE_RE.sub(" ", question)
+    if _PLAN_QUESTION_RE.search(question):
         return True
     for word in _WORD_RE.findall(question.lower()):
         if word in _EXACT_PRICE_WORDS:
@@ -445,6 +479,8 @@ def question_has_fuzzy_price_word(question: object) -> bool:
         if len(word) >= _FUZZY_MIN_LEN and any(
             _within_edits(word, target, limit) for target, limit in _FUZZY_PRICE_WORDS
         ):
+            return True
+        if any(len(word) in lengths and _within_edits(word, target, 1) for target, lengths in _TYPO_PRICE_WORDS):
             return True
     return False
 
