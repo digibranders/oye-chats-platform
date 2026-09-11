@@ -1329,7 +1329,9 @@ async def request_handoff(request: HandoffRequest, http_request: Request, bot: B
         if may_notify and getattr(db_bot, "email_on_handoff", True):
             from app.services.email_service import get_notification_recipients, send_handoff_request_email
 
-            recipients = get_notification_recipients(db_bot, "handoff_requested")
+            # The ``notification_emails`` bucket name, not the webhook/audit
+            # event name ``handoff_requested`` used above.
+            recipients = get_notification_recipients(db_bot, "handoff_request")
             if recipients:
                 contact = {"name": lead_info.name, "email": lead_info.email} if lead_info else None
                 reply_to = getattr(db_bot, "reply_to_email", None)
