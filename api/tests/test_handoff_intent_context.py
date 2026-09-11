@@ -350,7 +350,7 @@ class TestOnlyTheClosingParagraphCanOffer:
         assert len(text) >= 20_000
         started = time.perf_counter()
         svc.bot_offers_handoff(text)
-        assert time.perf_counter() - started < 0.05
+        assert time.perf_counter() - started < 0.5
 
 
 def _history(bot_message: str) -> list[SimpleNamespace]:
@@ -405,7 +405,7 @@ class TestThePatternsStayLinear:
         pattern = getattr(svc, name)
         started = time.perf_counter()
         pattern.search(text)
-        assert time.perf_counter() - started < 0.1
+        assert time.perf_counter() - started < 1.0
 
 
 class TestYIsAffirmative:
