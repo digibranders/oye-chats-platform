@@ -25,8 +25,9 @@ from __future__ import annotations
 
 import re
 from bisect import bisect_left
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from typing import Literal
 from urllib.parse import unquote
 
 from app.ingestion.cleaner import is_valid_file_url
@@ -50,14 +51,15 @@ _FILE_NOUNS = (
 _ANY_NOUN = rf"(?:{_FILE_NOUNS}|pdfs?|catalog(?:ue)?s?|decks?)"
 
 #: Nouns a document noun can describe instead of name: "case study sessions",
-#: "the ebook bundle", "whitepaper topic ideas", "the brochure printer". The
-#: visitor is asking about that other thing, not for the document.
+#: "the ebook bundle", "whitepaper topic ideas", "the brochure printer", "the
+#: catalogue enquiry". The visitor is asking about that other thing, not for the
+#: document.
 _HEAD_NOUNS = frozenset(
     {
         "idea", "ideas", "topic", "topics", "session", "sessions", "workshop", "workshops", "module", "modules",
         "bundle", "bundles", "draft", "drafts", "template", "templates", "design", "designs", "writing", "printing",
         "printer", "refund", "edition", "price", "prices", "value", "values", "format", "review", "reviews",
-        "feedback",
+        "feedback", "enquiry", "enquiries", "inquiry", "inquiries", "request", "requests", "order", "orders",
     }
 )  # fmt: skip
 _NOT_A_HEAD = rf"(?![\s-]+(?:{'|'.join(sorted(_HEAD_NOUNS))})\b)"
@@ -159,6 +161,36 @@ _AS_PDF_RE = re.compile(r"\b(?:as|to|in(?:to)?)\s+(?:a\s+)?pdfs?\b", re.IGNORECA
 #: A number of documents to be made is an order: "I need 1000 brochures". A year
 #: ("your 2026 brochure") and a singular noun are not a quantity.
 _QUANTITY_RE = re.compile(rf"\b(?!(?:19|20)\d\d\b)\d{{2,}}\s+{_ANY_NOUN}(?<=s)\b", re.IGNORECASE)
+#: Where a document goes that is not the visitor: "the printer", "our CFO". The
+#: visitor's own address ("my email", "my whatsapp number") keeps it a request.
+_NOT_THE_VISITOR = (
+    r"(?:the|a|an|his|her|their|our|my|your)\s+(?=[a-z])"
+    r"(?![a-z]{0,20}\s*(?:e-?mail|gmail|mail|inbox|whatsapp|phone|mobile|number|address|id)\b)"
+)
+#: A clause that names a document but asks for something else to happen to it.
+#: Every repeat is bounded, so a 5,000-character message is read in one pass.
+_NOT_ASKING_RULES = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        # Shared on a platform for the business's own audience: "share the whitepaper on LinkedIn for us".
+        r"\b(?:share|post|put|publish|upload|promote)\b[^.?!,;]{0,60}\bon\s+"
+        r"(?:linkedin|facebook|instagram|twitter|x|social\s+media|(?:our|my)\s+(?:website|site|blog|page))"
+        r"(?=\s{0,3}(?:$|[.?!,;]|(?:for|too|and|please|pls|today|tomorrow|now)\b))",
+        # Sent to someone else: "send the updated brochure to the printer".
+        rf"\b{_ANY_NOUN}(?:\s+(?:files?|copy|copies|links?))?\s+to\s+{_NOT_THE_VISITOR}",
+        # The visitor's own upload: "the case study PDF I uploaded".
+        rf"\b{_ANY_NOUN}(?:\s+(?:files?|docs?))?\s+(?:(?:that|which)\s+)?(?:i|we)(?:['’]ve)?\s+"
+        r"(?:(?:just|already|have|had|recently)\s+)?"
+        r"(?:uploaded|sent|attached|shared|wrote|written|made|created|submitted|emailed|mailed|gave|given)\b",
+        # Work on the document: "give the whitepaper a better title".
+        rf"\bgive\s+(?:the|this|that|our|my|your|a|an)\s+(?:[a-z0-9-]+\s+){{0,3}}{_ANY_NOUN}\s+(?:a|an|some|more)\b",
+        # Sent back to be changed: "send the brochure files back to me with the logo fixed".
+        r"\bback\s+to\s+(?:me|us)\b",
+        r"\b(?:fixed|corrected|updated|edited|changed|redesigned)\W{0,3}$",
+        # What the visitor has to do: "do I need to download the ebook before the first class?"
+        r"\b(?:do|does|should|must)\s+(?:i|we)\s+(?:need|have)\s+to\b",
+    )
+)
 
 
 @dataclass(frozen=True)
@@ -217,6 +249,7 @@ _ENDS_THE_REACH = frozenset(
         "to", "for", "on", "in", "at", "about", "with", "without", "from", "by", "into", "onto", "after", "before",
         "during", "than", "like", "as", "per", "via", "through", "until", "upon", "within", "regarding", "around",
         "and", "or", "but", "so", "because", "since", "while", "unless", "though", "although", "plus", "then",
+        "instead", "besides", "except",
         # Auxiliaries and negation.
         "is", "are", "was", "were", "be", "been", "being", "am", "do", "does", "did", "done", "can", "could", "will",
         "would", "shall", "should", "may", "might", "must", "has", "had", "have", "having", "not", "no", "never",
@@ -228,6 +261,11 @@ _ENDS_THE_REACH = frozenset(
         "updates", "reminder", "notification", "opinion", "thoughts", "review",
     }
 )  # fmt: skip
+#: "volume 2 of the ebook", "part B of the catalogue": a part of the document asked for.
+_PART_WORDS = frozenset({"part", "volume", "vol", "chapter", "edition", "issue", "version"})
+_PART_ID_RE = re.compile(r"\d{1,4}|[a-z]")
+#: Negations written as one word: "I can't get the brochure to open".
+_NEGATIONS = frozenset({"can't", "cant", "cannot", "couldn't", "couldnt", "won't", "wont"})
 #: At most this many describing or topic words between the verb and the noun.
 _MAX_DESCRIBING_WORDS = 4
 #: How far back the walk looks at all: a copy of your latest red teaming (7 words)
@@ -303,12 +341,24 @@ def _sends_at(words: tuple[str, ...], index: int) -> bool:
     return _can_i_have(words, index) or words[index] in {"send", "share", "email", "mail", "download", "forward"}
 
 
+def _negated(words: tuple[str, ...], index: int) -> bool:
+    """True when the verb at ``index`` is negated: "can't get", "can not send", "unable to download",
+    "not able to get". The visitor reports a problem with the document instead of asking for it."""
+    before = _word(words, index - 1)
+    if before == "not":
+        return _word(words, index - 2) in {"can", "could"}
+    if before == "to":
+        two_back = _word(words, index - 2)
+        return two_back == "unable" or (two_back == "able" and _word(words, index - 3) == "not")
+    return before in _NEGATIONS
+
+
 def _after_recipient(words: tuple[str, ...], index: int, verb_at: _VerbAt) -> bool:
     """True when the recipient at ``index`` ("me", or "me over") directly follows a verb."""
     before = index - 1
     if _word(words, before) in _RECIPIENTS:
         before -= 1
-    return before >= 0 and verb_at(words, before)
+    return before >= 0 and verb_at(words, before) and not _negated(words, before)
 
 
 def _governed(words: tuple[str, ...], noun_index: int, verb_at: _VerbAt) -> bool:
@@ -317,9 +367,10 @@ def _governed(words: tuple[str, ...], noun_index: int, verb_at: _VerbAt) -> bool
     Walking back from the noun, each word must describe it: a determiner, a
     describing word ("latest", "copy", "of"), "link to", or a topic word ("SOAR",
     "red teaming"). A topic word sits next to the noun, so none may come before a
-    determiner: "an overview of the whitepaper" asks for an overview. "as a
-    service" is part of a name, not a new phrase. A recipient must come straight
-    after the verb.
+    determiner: "an overview of the whitepaper" asks for an overview, but "volume
+    2 of the ebook" still asks for the ebook. "as a service" is part of a name,
+    not a new phrase. A recipient must come straight after the verb, and a negated
+    verb ("I can't get the brochure to open") asks for nothing.
     """
     described = 0
     determiner_seen = False
@@ -328,7 +379,7 @@ def _governed(words: tuple[str, ...], noun_index: int, verb_at: _VerbAt) -> bool
     while index >= stop:
         word = words[index]
         if verb_at(words, index):
-            return True
+            return not _negated(words, index)
         if word in _RECIPIENTS:
             return _after_recipient(words, index, verb_at)
         if word in _DETERMINERS:
@@ -337,7 +388,10 @@ def _governed(words: tuple[str, ...], noun_index: int, verb_at: _VerbAt) -> bool
             # "the SOC as a Service datasheet": the "a" belongs to the name.
             determiner_seen = False
         elif word == "of":
-            pass
+            if _word(words, index - 2) in _PART_WORDS and _PART_ID_RE.fullmatch(_word(words, index - 1)):
+                # "volume 2 of the ebook": skip the part named, the ebook is still the object.
+                determiner_seen = False
+                index -= 2
         elif word in {"to", "for"} and _word(words, index - 1) in {"link", "links"}:
             described += 1
             index -= 1
@@ -375,6 +429,8 @@ def _is_not_for_a_business_file(clause: str) -> bool:
     """True when a clause names a document but is not asking for one of the business's files."""
     if not _NOUN_RE.search(clause):
         return False
+    if any(rule.search(clause) for rule in _NOT_ASKING_RULES):
+        return True
     if not _YOUR_DOCUMENT_RE.search(clause) and (_VISITORS_OWN_RE.search(clause) or _HOW_TO_RE.search(clause)):
         return True
     if _TO_THE_BUSINESS_RE.search(clause) or any(rule.search(clause) for rule in _PRODUCT_RULES):
@@ -470,17 +526,38 @@ _STOPWORDS = frozenset(
         "sheets", "data", "spec", "ebook", "ebooks", "one", "pager", "pagers", "profile", "company", "pitch", "sales",
         "slide", "investor", "product", "products", "info", "information", "details", "detail", "more", "thanks",
         "thank", "thx", "hey", "hello", "hii", "guys", "team", "sir", "madam", "maam", "quick", "quickly", "asap",
-        "again", "bro", "dear", "folks", "everyone",
+        "again", "bro", "dear", "folks", "everyone", "newest", "current", "recent", "most",
     }
 )  # fmt: skip
 
 
 #: The ending of a contraction: "don't", "I'm", "Rahul's".
-_CONTRACTION_RE = re.compile(r"['’](?:s|t|m|d|ll|re|ve)\b")
-#: A short identifier: "Tower B", "Phase 2", "Block C".
-_SHORT_ID_RE = re.compile(r"[a-z]|\d{1,2}")
+_CONTRACTION_RE = re.compile(r"['’](?:s|t|m|d|ll|re|ve)\b", re.IGNORECASE)
+#: "e-book" and "e-mail" are one word, not the letter "e" and a word.
+_E_PREFIX_RE = re.compile(r"\be[\s_-]+(?=(?:books?|mail)\b)", re.IGNORECASE)
+#: A word, a number or a mix of both, or the end of a sentence. A full stop ends a
+#: sentence only when no letter or digit follows, so "v2.0" stays in one.
+_TERM_RE = re.compile(r"[A-Za-z0-9]+|[!?\n]|\.(?![A-Za-z0-9])")
+_SENTENCE_BREAK = re.compile(r"[!?\n]|\.(?![A-Za-z0-9])")
+_DIGITS_RE = re.compile(r"\d+")
+_LETTERS_RE = re.compile(r"[a-z]+")
 _YEAR_RE = re.compile(r"(?:19|20)\d\d")
-_NUMBER_RE = re.compile(r"\d+")
+#: The longest run of digits read as an identifier, and the longest mix of letters
+#: and digits ("q3", "v2", "x200", "3bhk"). Longer runs are names or hashes.
+_MAX_ID_DIGITS = 4
+_MAX_MIXED_ID = 6
+#: Words a single letter can follow as the name of one of a series: "Tower B",
+#: "case study a", "Plan B".
+_SERIES_WORDS = frozenset(
+    {
+        "study", "tower", "block", "phase", "plan", "part", "volume", "vol", "chapter", "edition", "version", "option",
+        "type", "wing", "building", "unit", "level", "floor", "grade", "class", "section",
+    }
+)  # fmt: skip
+#: One word written two ways: "Ebook-Vol-2.pdf" is "volume 2 of the ebook".
+_WORD_ALIASES = {"vol": "volume"}
+#: "the latest brochure": the newest of the files that differ by year.
+_RECENT_RE = re.compile(r"\b(?:latest|newest|current|(?:most\s+)?recent)\b", re.IGNORECASE)
 #: "I'm Rahul", "my name is Rahul Sharma", "this is Priya from Infosys": who is
 #: asking, never which document. The name words exclude the words that start a
 #: sentence about the request instead ("I'm looking for", "this is the").
@@ -497,28 +574,109 @@ _SELF_INTRODUCTION_RE = re.compile(
 #: "on whatsapp", "via email": how to send it, never which document.
 _CHANNEL_RE = re.compile(r"\b(?:on|via|over|by|through)\s+(?:whatsapp|e-?mail|mail|telegram|sms|text)\b", re.IGNORECASE)
 
+_IdKind = Literal["number", "letter", "year"]
 
-def _tokens(text: str | None) -> set[str]:
-    """The topic words of a question or a file name.
 
-    A one-letter or one- or two-digit word joins the word before it, on both
-    sides of a match, so "Tower B" is ``tower_b`` and matches ``Tower-B.pdf`` but
-    not ``Tower-A.pdf``, and "Phase 2" is not "Phase 1". Left apart, "b" was too
-    short to count and "tower" matched both files equally.
+@dataclass(frozen=True)
+class _Id:
+    """What tells one file of a series from another: the 2 of "case study 2", the B of "Tower B", a year."""
+
+    kind: _IdKind
+    value: str
+
+
+@dataclass(frozen=True)
+class _Terms:
+    """What a question or a file name says: topic words, identifiers, and the identifiers
+    written straight after a topic word ("SOC 2" ties 2 to "soc")."""
+
+    words: frozenset[str]
+    ids: frozenset[_Id]
+    bound: Mapping[str, frozenset[_Id]]
+
+
+def _number_id(digits: str) -> _Id:
+    """A run of digits as an identifier. "2025" is a year; "02" and "2" are the same number."""
+    if _YEAR_RE.fullmatch(digits):
+        return _Id("year", digits)
+    return _Id("number", str(int(digits)))
+
+
+def _split(token: str) -> tuple[tuple[str, ...], tuple[_Id, ...]]:
+    """The words and identifiers in one lowercased token of two or more characters.
+
+    Letters and digits are read apart, so "3bhk" is the number 3 and the word
+    "bhk", the same as "3 bhk", and "v2" is the number 2, the same as "version 2".
     """
-    words = re.findall(r"[a-z0-9]+", _CONTRACTION_RE.sub("", (text or "").lower()))
-    tokens: set[str] = set()
-    index = 0
-    while index < len(words):
-        word = words[index]
-        index += 1
-        if len(word) < 3 or word in _STOPWORDS:
+    if token.isdigit():
+        return ((), (_number_id(token),)) if len(token) <= _MAX_ID_DIGITS else ((token,), ())
+    if token.isalpha():
+        return (_WORD_ALIASES.get(token, token),), ()
+    if len(token) > _MAX_MIXED_ID:
+        return (token,), ()
+    digits = tuple(_number_id(run) for run in _DIGITS_RE.findall(token) if len(run) <= _MAX_ID_DIGITS)
+    return tuple(_LETTERS_RE.findall(token)), digits
+
+
+def _is_letter_id(token: str, before: str, after: str, *, sentence_start: bool, cased: bool) -> bool:
+    """True when a one-letter token names one of a series.
+
+    After a series word any letter counts ("Tower B", "case study b"), except
+    that a lowercase "a" or "i" must end the phrase or come before a word that
+    names no topic: "the tower a brochure" asks for Tower A, "the case study a
+    colleague mentioned" does not. Elsewhere only a capital counts ("vitamin D"),
+    and not at the start of a sentence, in a message typed in capitals, or as the
+    pronoun "I".
+    """
+    letter = token.lower()
+    if before in _SERIES_WORDS and (letter not in {"a", "i"} or not after or after in _STOPWORDS):
+        return True
+    return token.isupper() and letter != "i" and cased and not sentence_start
+
+
+def _terms(text: str | None) -> _Terms:
+    """The topic words and identifiers of a question or a file name.
+
+    Identifiers are kept apart from topic words, on both sides of a match, so
+    "case study 2" and "Case-Study-2.pdf" share the identifier 2 and
+    "Case-Study-1.pdf" carries a different one. Joined to the word before them,
+    as they once were, "2" after "study" and "Q3" were dropped and every file of
+    the kind looked the same.
+    """
+    source = _E_PREFIX_RE.sub("e", _CONTRACTION_RE.sub("", text or ""))
+    cased = source != source.upper()
+    tokens = _TERM_RE.findall(source)
+    words: set[str] = set()
+    ids: set[_Id] = set()
+    bound: dict[str, set[_Id]] = {}
+    sentence_start = True
+    last_word = ""
+    for position, token in enumerate(tokens):
+        if not token[0].isalnum():
+            sentence_start, last_word = True, ""
             continue
-        if index < len(words) and _SHORT_ID_RE.fullmatch(words[index]):
-            word = f"{word}_{words[index]}"
-            index += 1
-        tokens.add(word)
-    return tokens
+        lower = token.lower()
+        if len(lower) == 1 and lower.isalpha():
+            before = tokens[position - 1].lower() if position else ""
+            following = tokens[position + 1] if position + 1 < len(tokens) else ""
+            after = following.lower() if following[:1].isalnum() else ""
+            letter_id = _is_letter_id(token, before, after, sentence_start=sentence_start, cased=cased)
+            found_words: tuple[str, ...] = ()
+            found_ids: tuple[_Id, ...] = (_Id("letter", lower),) if letter_id else ()
+        else:
+            found_words, found_ids = _split(lower)
+        topic = [word for word in found_words if len(word) >= 3 and word not in _STOPWORDS]
+        words.update(topic)
+        ids.update(found_ids)
+        if found_ids and last_word:
+            bound.setdefault(last_word, set()).update(found_ids)
+        last_word = topic[-1] if topic and not found_ids else ""
+        sentence_start = False
+    return _Terms(
+        words=frozenset(words),
+        ids=frozenset(ids),
+        bound={word: frozenset(tied) for word, tied in bound.items()},
+    )
 
 
 @dataclass(frozen=True)
@@ -526,7 +684,8 @@ class _File:
     """A usable catalog file: its download card and what its name says."""
 
     card: dict[str, str]
-    tokens: frozenset[str]
+    words: frozenset[str]
+    ids: frozenset[_Id]
     kinds: frozenset[str]
     profile_like: bool
 
@@ -534,14 +693,19 @@ class _File:
     def url(self) -> str:
         return self.card["url"]
 
+    @property
+    def year(self) -> int:
+        """The latest year in the file name, 0 when it carries none."""
+        return max((int(i.value) for i in self.ids if i.kind == "year"), default=0)
 
-def _catalog_files(catalog: object, company: set[str]) -> list[_File]:
+
+def _catalog_files(catalog: object, company: _Terms) -> list[_File]:
     """Every usable file in the catalog, once.
 
     The card is named the way ``rag_service._topical_media_card`` names one, so a
     card from here looks the same as one attached to a generated answer. Matching
-    reads the URL-decoded name without the company's own words, which would
-    otherwise count toward every file the company named after itself.
+    reads the URL-decoded name without the company's own words and identifiers,
+    which would otherwise count toward every file the company named after itself.
     """
     files: list[_File] = []
     seen: set[str] = set()
@@ -561,10 +725,12 @@ def _catalog_files(catalog: object, company: set[str]) -> list[_File]:
             raw = entry.get("name")
             name = (raw if isinstance(raw, str) and raw.strip() else url.split("?", 1)[0].rsplit("/", 1)[-1]).strip()
             readable = unquote(name)
+            terms = _terms(readable)
             files.append(
                 _File(
                     card={"type": "download", "url": url, "name": name or "download"},
-                    tokens=frozenset(_tokens(readable) - company),
+                    words=terms.words - company.words,
+                    ids=terms.ids - company.ids,
                     kinds=frozenset(kind for kind, _, carried in _KINDS if carried.search(readable)),
                     profile_like=bool(_PROFILE_RE.search(readable)),
                 )
@@ -572,13 +738,44 @@ def _catalog_files(catalog: object, company: set[str]) -> list[_File]:
     return files
 
 
-def _topic(text: str, company: set[str], files: list[_File]) -> set[str]:
-    """What the question is about: its tokens without who is asking, the channel,
-    the company's own words, or a year no file name carries ("your latest 2026
-    brochure" when the catalog holds the 2025 one)."""
-    words = _tokens(_CHANNEL_RE.sub(" ", _SELF_INTRODUCTION_RE.sub(" ", text))) - company
-    named = set().union(*(f.tokens for f in files))
-    return {w for w in words if not (_YEAR_RE.fullmatch(w) and w not in named)}
+@dataclass(frozen=True)
+class _Question:
+    """What a question asks about: topic words, identifiers, and whether it wants the latest copy."""
+
+    words: frozenset[str]
+    ids: frozenset[_Id]
+    bound: Mapping[str, frozenset[_Id]]
+    recent: bool
+
+
+def _question(text: str, company: _Terms, files: list[_File]) -> _Question:
+    """The terms of a question, without who is asking, the channel or the company's own words.
+
+    An identifier counts only in a sentence that names a document, so "We have 3
+    sites." after a request is not a third file. A year counts only when the
+    catalog dates its files, and a year no file carries is dropped when the
+    question asks for the latest copy: "your latest 2026 brochure" is still the
+    newest brochure there is.
+    """
+    text = _CHANNEL_RE.sub(" ", _SELF_INTRODUCTION_RE.sub(" ", text))
+    terms = _terms(text)
+    recent = bool(_RECENT_RE.search(text))
+    catalog_years = {i for f in files for i in f.ids if i.kind == "year"}
+    in_document_sentences: set[_Id] = set()
+    for sentence in _SENTENCE_BREAK.split(text):
+        if _NOUN_RE.search(sentence):
+            in_document_sentences |= _terms(sentence).ids
+    ids = frozenset(
+        i
+        for i in in_document_sentences - company.ids
+        if i.kind != "year" or i in catalog_years or (catalog_years and not recent)
+    )
+    return _Question(
+        words=terms.words - company.words,
+        ids=ids,
+        bound={word: tied & ids for word, tied in terms.bound.items() if tied & ids},
+        recent=recent,
+    )
 
 
 def _asked_kinds(text: str) -> frozenset[str]:
@@ -588,6 +785,42 @@ def _asked_kinds(text: str) -> frozenset[str]:
 def _conflicts(asked: frozenset[str], file: _File) -> bool:
     """True when the question names a kind and the file is plainly another kind."""
     return bool(asked and file.kinds and not asked & file.kinds)
+
+
+def _shared_words(question: _Question, file: _File) -> int:
+    """How many topic words the file shares with the question. A word the question
+    ties to an identifier counts only when the file carries that identifier too:
+    ``Datasheet-for-SOC-as-a-Service.pdf`` is not "the SOC 2 report"."""
+    return sum(1 for word in question.words & file.words if question.bound.get(word, frozenset()) <= file.ids)
+
+
+def _identifier_rank(question: _Question, file: _File) -> tuple[bool, bool]:
+    """Lower is better. First whether the file carries a different identifier of a
+    kind the question names ("Case-Study-2" for "case study 3"), then whether it
+    misses one of the question's identifiers."""
+    named_kinds = {i.kind for i in question.ids}
+    matched_kinds = {i.kind for i in file.ids & question.ids}
+    different = any(i.kind in named_kinds and i.kind not in matched_kinds for i in file.ids)
+    return different, not question.ids <= file.ids
+
+
+def _recency_rank(question: _Question, file: _File) -> int:
+    """Lower is better: the newest year first when the question asks for the latest copy."""
+    return -file.year if question.recent else 0
+
+
+def _extra_terms(question: _Question, file: _File) -> int:
+    """Words and identifiers in the file name the question does not name. Among
+    equally good files the plainest comes first: ``Brochure-2025.pdf`` before
+    ``Brochure-2025-Hindi.pdf`` for "the 2025 brochure"."""
+    return len(file.words - question.words) + len(file.ids - question.ids)
+
+
+def _as_well_placed(question: _Question, file: _File, first: _File) -> bool:
+    """True when ``file`` fits the question's identifiers and recency as well as ``first``."""
+    return _identifier_rank(question, file) == _identifier_rank(question, first) and _recency_rank(
+        question, file
+    ) == _recency_rank(question, first)
 
 
 def _offer(first: _File, others: list[_File], *, exact: bool, limit: int) -> DocumentPick:
@@ -611,9 +844,9 @@ def pick_documents(question: str, company_name: str | None, catalog: object, lim
     match is offered as inexact. It is also exact when the question names every
     one of the file's own topic words and the file is the kind asked for ("the
     brochure for MBA program" against ``MBA-Brochure.pdf``). That rule needs the
-    kind in the file name and a word other than a number: ``SOC.pdf`` is not the
-    "SOC 2 report", ``Services.pdf`` not "the managed services case study", and a
-    bare "Brochure.pdf" or "Brochure-2025.pdf" is never made exact by it. Among
+    kind in the file name and a topic word: ``SOC.pdf`` is not the "SOC 2 report",
+    ``Services.pdf`` not "the managed services case study", and a bare
+    "Brochure.pdf" or "Brochure-2025.pdf" is never made exact by it. Among
     equally good files, one of the kind asked for comes first. When no file shares
     a word, or the question names only a kind ("any case studies?"), the files of
     that kind are offered, exact only when there was no topic to miss. A request for a brochure or a
@@ -621,45 +854,68 @@ def pick_documents(question: str, company_name: str | None, catalog: object, lim
     profile-like files, marked inexact. Anything else gets no files: never an
     unrelated one, like a third-party report the knowledge base happens to link.
 
+    Identifiers come before words. A file that carries a different identifier of
+    the same kind ("Case-Study-2.pdf" for "case study 3", "Tower-A" for "Tower
+    B", 2024 for "the 2023 brochure") ranks below the rest and is never exact, a
+    file carrying every identifier the question names ranks first, and a pick is
+    exact only when its first file carries them all. "the latest brochure" puts
+    the highest year first.
+
     Contact details, a self-introduction ("I'm Rahul from Infosys") and the
-    channel ("on whatsapp") are ignored. Ties break on the URL, so the same question
-    against the same catalog always offers the same files. ``limit`` defaults to
-    two: one card and one "Also available" chip, the most the generated path ever
-    attaches.
+    channel ("on whatsapp") are ignored. Ties go to the file naming the fewest
+    words the question does not, then to the URL, so the same question against
+    the same catalog always offers the same files. ``limit`` defaults to two: one
+    card and one "Also available" chip, the most the generated path ever attaches.
     """
     text = _without_contacts(question if isinstance(question, str) else "")
-    company = _tokens(company_name)
+    company = _terms(company_name)
     files = _catalog_files(catalog, company)
-    anchor = _topic(text, company, files)
+    asked_about = _question(text, company, files)
     asked = _asked_kinds(text)
 
-    if anchor:
+    def tie_break(file: _File) -> tuple[int, int, str]:
+        return _recency_rank(asked_about, file), _extra_terms(asked_about, file), file.url
+
+    def rank(file: _File) -> tuple[tuple[bool, bool], tuple[int, int, str]]:
+        return _identifier_rank(asked_about, file), tie_break(file)
+
+    if asked_about.words:
+        overlaps = [(_shared_words(asked_about, f), f) for f in files]
         scored = sorted(
-            ((len(anchor & f.tokens), f) for f in files if anchor & f.tokens),
-            key=lambda sf: (-sf[0], _conflicts(asked, sf[1]), not asked & sf[1].kinds, sf[1].url),
+            ((overlap, f) for overlap, f in overlaps if overlap),
+            key=lambda sf: (
+                _identifier_rank(asked_about, sf[1]),
+                -sf[0],
+                _conflicts(asked, sf[1]),
+                not asked & sf[1].kinds,
+                tie_break(sf[1]),
+            ),
         )
         if scored:
             best_overlap, best = scored[0]
-            covers_file_name = (
-                bool(asked & best.kinds)
-                and bool(best.tokens)
-                and best.tokens <= anchor
-                and not all(_NUMBER_RE.fullmatch(token) for token in best.tokens)
-            )
+            covers_file_name = bool(asked & best.kinds) and bool(best.words) and best.words <= asked_about.words
             exact = (
-                best_overlap >= TOPIC_MIN_OVERLAP or best_overlap == len(anchor) or covers_file_name
-            ) and not _conflicts(asked, best)
+                (best_overlap >= TOPIC_MIN_OVERLAP or best_overlap == len(asked_about.words) or covers_file_name)
+                and not _conflicts(asked, best)
+                and asked_about.ids <= best.ids
+            )
             others = [
-                f for overlap, f in scored[1:] if not exact or (overlap == best_overlap and not _conflicts(asked, f))
+                f
+                for overlap, f in scored[1:]
+                if not exact
+                or (overlap == best_overlap and not _conflicts(asked, f) and _as_well_placed(asked_about, f, best))
             ]
             return _offer(best, others, exact=exact, limit=limit)
 
-    of_kind = sorted((f for f in files if asked & f.kinds), key=lambda f: f.url)
+    of_kind = sorted((f for f in files if asked & f.kinds), key=rank)
     if of_kind:
-        return _offer(of_kind[0], of_kind[1:], exact=not anchor, limit=limit)
+        first = of_kind[0]
+        exact = not asked_about.words and asked_about.ids <= first.ids
+        others = [f for f in of_kind[1:] if not exact or _as_well_placed(asked_about, f, first)]
+        return _offer(first, others, exact=exact, limit=limit)
 
-    generic = asked <= _GENERIC_KINDS and (bool(asked) or not anchor)
-    profiles = sorted((f for f in files if f.profile_like), key=lambda f: f.url) if generic else []
+    generic = asked <= _GENERIC_KINDS and (bool(asked) or not asked_about.words)
+    profiles = sorted((f for f in files if f.profile_like), key=rank) if generic else []
     if profiles:
         return _offer(profiles[0], profiles[1:], exact=False, limit=limit)
     return DocumentPick(docs=[], exact=False)
