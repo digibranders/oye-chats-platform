@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 import os
 import re
@@ -935,11 +936,16 @@ async def generate_response_stream(
     # responses. In that case we end gracefully instead of falling back.
     primary_chunks_yielded = 0
     try:
-        async for chunk in _stream_from_model(
-            _primary_model(), prompt, max_tokens, metadata, temperature, system_prompt
-        ):
-            primary_chunks_yielded += 1
-            yield chunk
+        # Each model stream is closed where this generator stops. A consumer that
+        # closes it mid-answer (the RAG turn's price or leak guard, a visitor who
+        # left) then ends the model stream and its Langfuse generation in its own
+        # task, not later in a finalizer task where the span cannot be detached.
+        async with contextlib.aclosing(
+            _stream_from_model(_primary_model(), prompt, max_tokens, metadata, temperature, system_prompt)
+        ) as primary_stream:
+            async for chunk in primary_stream:
+                primary_chunks_yielded += 1
+                yield chunk
         return
     except TimeoutError as e:
         if primary_chunks_yielded > 0:
@@ -984,11 +990,12 @@ async def generate_response_stream(
     try:
         logger.info(f"LLM stream fallback | model={_fallback_model()}")
         increment_metric_counter("llm_fallback_triggered")
-        async for chunk in _stream_from_model(
-            _fallback_model(), prompt, max_tokens, metadata, temperature, system_prompt
-        ):
-            fallback_chunks_yielded += 1
-            yield chunk
+        async with contextlib.aclosing(
+            _stream_from_model(_fallback_model(), prompt, max_tokens, metadata, temperature, system_prompt)
+        ) as fallback_stream:
+            async for chunk in fallback_stream:
+                fallback_chunks_yielded += 1
+                yield chunk
     except TimeoutError as e:
         logger.error(f"Fallback stream timed out: {e}")
         _mark(fallback_chunks_yielded == 0)
