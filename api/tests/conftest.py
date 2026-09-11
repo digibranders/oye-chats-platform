@@ -90,6 +90,24 @@ def _no_real_llm_calls(request: pytest.FixtureRequest, monkeypatch: pytest.Monke
         )
 
 
+@pytest.fixture(autouse=True)
+def _price_classifier_is_down(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The price-intent classifier answers as if its model were down, so the fallback rules decide.
+
+    ``price_intent`` asks the gate model about every message with a price word,
+    and price words are in most pipeline tests; each would reach LiteLLM and fail
+    above. The fallback rules are the gate's own wording rule less the price words
+    in another sense, so a test written against the gate keeps its meaning. A test
+    of the classifier stubs ``price_intent.generate_response_checked`` or
+    ``price_intent._classify_price_intent_raw`` itself, which overrides this.
+    """
+    if request.node.get_closest_marker(ALLOW_REAL_LLM_CALL) is not None:
+        return
+    from app.services import price_intent
+
+    monkeypatch.setattr(price_intent, "generate_response_checked", lambda *_args, **_kwargs: ("", True))
+
+
 # ── Real-Postgres throwaway DB (for DB-layer tests: locks, ledger, clawback) ──
 #
 # Mirrors the throwaway-database pattern in test_affiliate_service.py. Requires a

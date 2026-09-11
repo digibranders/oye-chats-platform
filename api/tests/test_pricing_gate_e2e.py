@@ -1866,7 +1866,9 @@ async def test_the_escalation_names_the_service_the_visitor_asked_about(
     db, pipeline, _stub_outside_world, _stub_generation, _gate_metrics, _no_cag_lite
 ):
     client = _make_client(db)
-    bot = _make_bot(db, client, live_chat_enabled=True)
+    # Only a service the owner configured is named (production, 2026-09-11: a
+    # capitalised word lifted from the content gave "Pricing for **Story**").
+    bot = _make_bot(db, client, live_chat_enabled=True, services=[{"name": "SOC", "url": None}])
     _make_document(
         db,
         bot,

@@ -5,6 +5,13 @@ Production, 2026-09-10: "what is th picin for SOC as a Service" is two edits fro
 the team streamed rupee figures from its knowledge base. The stream guard trips
 on the first figure, and the turn must end exactly as the gate's own escalation
 ends for the same bot.
+
+Since 2026-09-11 the gate acts on the turn's price decision (``price_intent``),
+and a gate model reads that typo as a pricing question and escalates before
+generation. What still reaches the guard with the turn's own signal is a message
+that asks the price and something else: the gate defers its escalation to
+generation. The typo'd questions below stand in for such a turn, answered MIXED
+by a fake gate model; every other message is decided by the fallback rules.
 """
 
 import asyncio
@@ -14,8 +21,9 @@ import re
 import pytest
 
 from app.db.models import ChatSession
+from app.services import price_intent
 from app.services import rag_service as rs
-from app.services.pricing_gate import pricing_pivot, pricing_subject
+from app.services.pricing_gate import pricing_pivot
 from tests.test_rag_pipeline_defects import (
     _anonymous_visitor,
     _answer_text,
@@ -38,15 +46,38 @@ FINES_CHUNKS = ("GDPR fines can reach ", "€20", " million or 4% of annual turn
 TYPO = "what is th picin for SOC"
 KB = (_doc("SOC as a Service pricing: ₹2,66,250 per month."),)
 
+#: Messages the fake gate model reads as asking the price and something else.
+_ASKS_THE_PRICE_AND_MORE = frozenset({TYPO, "and whats th picin for SOC again", "hw much", "qoute for 3 sites"})
 
-def _expected(question, *, live_chat=True, repeat=False):
+
+class _Classifier:
+    """Stands in for the gate model behind ``price_intent.decide_price_intent``."""
+
+    def __init__(self) -> None:
+        self.answers: dict[str, str] = {}
+
+    def __call__(self, question: str) -> str:
+        if question in self.answers:
+            return self.answers[question]
+        if question in _ASKS_THE_PRICE_AND_MORE:
+            return "mixed"
+        return price_intent.fallback_price_intent(question)
+
+
+@pytest.fixture(autouse=True)
+def classifier(monkeypatch):
+    fake = _Classifier()
+    monkeypatch.setattr(price_intent, "_classify_price_intent_raw", fake)
+    return fake
+
+
+def _expected(*, live_chat=True, repeat=False):
     return pricing_pivot(
         company_name="Acme",
         pricing_url=None,
         support_enabled=True,
         live_chat_enabled=live_chat,
         repeat=repeat,
-        subject=pricing_subject(question, "Acme", KB),
     ).text
 
 
@@ -87,7 +118,7 @@ async def test_figures_are_replaced_by_the_escalation(db, monkeypatch, metrics):
 
     frames = await _drive_stream(bot, TYPO, "guard-1")
 
-    expected = _expected(TYPO)
+    expected = _expected()
     answer = _answer_text(frames)
     meta = _final_meta(frames)
     assert "best confirmed by the team" in expected
@@ -121,8 +152,8 @@ async def test_a_tripped_turn_ends_exactly_like_the_gate_escalation(db, monkeypa
 
     gate_msg = _messages(db, gate_sid, role="bot")[-1]
     guard_msg = _messages(db, guard_sid, role="bot")[-1]
-    assert gate_msg.content == _expected(spelled, live_chat=live_chat)
-    assert guard_msg.content == _expected(TYPO, live_chat=live_chat)
+    assert gate_msg.content == _expected(live_chat=live_chat)
+    assert guard_msg.content == _expected(live_chat=live_chat)
     assert guard_msg.is_unanswered == gate_msg.is_unanswered
     for flag in ("suggest_handoff", "show_leave_message", "qualification_pending"):
         assert bool(guard_meta.get(flag)) == bool(gate_meta.get(flag)), flag
@@ -139,7 +170,7 @@ async def test_a_second_tripped_turn_uses_the_repeat_wording_and_opens_no_second
     await _drive_stream(bot, TYPO, "guard-repeat")
     frames = await _drive_stream(bot, again, "guard-repeat")
 
-    expected = _expected(again, repeat=True)
+    expected = _expected(repeat=True)
     assert "still sits with the team" in expected
     assert _messages(db, "guard-repeat", role="bot")[-1].content == expected
     # "I'll connect you" in the repeat wording must not re-open the handoff form
@@ -174,15 +205,18 @@ async def test_an_ordinary_answer_with_numbers_streams_unchanged_and_is_cached(d
 async def test_a_cached_figure_is_not_served_on_a_guarded_bot(db, monkeypatch):
     """An answer cached before the guard existed, or before the owner turned
     knowledge-base pricing off, would otherwise be replayed ahead of it."""
+    # A message with a price word never reads the cache on a guarded bot, so the
+    # cached answer is to a question without one.
+    question = "tell me about SOC"
     bot, captured = _guarded(db, monkeypatch, "guard-cached-figure")
-    question_hash = hashlib.sha256(rs._normalize_question_for_cache(TYPO).encode()).hexdigest()[:32]
+    question_hash = hashlib.sha256(rs._normalize_question_for_cache(question).encode()).hexdigest()[:32]
     key = rs.qa_response_key(bot.id, question_hash, rs._cache_lang_segment(None))
-    captured["cache"].store[key] = {"answer": "SOC as a Service is ₹2,66,250 per month.", "sources": []}
+    captured["cache"].store[key] = {"answer": "Our SOC plan is ₹2,66,250 per month.", "sources": []}
 
-    frames = await _drive_stream(bot, TYPO, "guard-cached-figure")
+    frames = await _drive_stream(bot, question, "guard-cached-figure")
 
     assert "2,66,250" not in _answer_text(frames)
-    assert _messages(db, "guard-cached-figure", role="bot")[-1].content == _expected(TYPO)
+    assert _messages(db, "guard-cached-figure", role="bot")[-1].content == _expected()
     assert key not in captured["cache"].store
 
 
@@ -210,7 +244,7 @@ async def test_a_bot_with_live_chat_off_gets_the_message_card(db, monkeypatch):
     frames = await _drive_stream(bot, TYPO, "guard-card")
 
     meta = _final_meta(frames)
-    expected = _expected(TYPO, live_chat=False)
+    expected = _expected(live_chat=False)
     assert meta["show_leave_message"] is True
     assert not meta.get("suggest_handoff")
     assert rs.LEAVE_MESSAGE_CARD_SENTINEL not in _answer_text(frames)
@@ -258,7 +292,7 @@ async def test_a_buffered_popup_turn_emits_the_escalation_once(db, monkeypatch):
 
     frames = await _drive_stream(bot, TYPO, "guard-popup")
 
-    expected = _expected(TYPO)
+    expected = _expected()
     meta = _final_meta(frames)
     assert _answer_text(frames) == expected
     assert "team_connect_popup" not in meta
@@ -273,7 +307,7 @@ async def test_the_non_streaming_reply_is_the_escalation(db, monkeypatch):
 
     payload = await rs.collect_rag_pipeline(bot, TYPO, session_id="guard-collect", bot_id=bot.id)
 
-    assert payload["answer"] == _expected(TYPO)
+    assert payload["answer"] == _expected()
     # The escalation is not drawn from the knowledge base; the gate's pivot returns no sources either.
     assert payload["sources"] == []
 
@@ -299,7 +333,10 @@ async def test_the_non_streaming_reply_of_an_untripped_turn_keeps_its_sources(db
     ids=["owner_opted_in", "bot_has_a_pricing_page", "plan_has_no_human"],
 )
 @pytest.mark.asyncio
-async def test_figures_stream_where_the_guard_does_not_apply(db, monkeypatch, bot_kwargs, support):
+async def test_figures_stream_where_the_guard_does_not_apply(db, monkeypatch, classifier, bot_kwargs, support):
+    # A turn the gate reads as not pricing. A bot with a pricing page the gate
+    # cannot answer from defers a MIXED turn, and the guard watches that one.
+    classifier.answers[TYPO] = "no"
     client = _make_client(db)
     bot = _make_bot(db, client, live_chat_enabled=True, **bot_kwargs)
     _make_session(db, bot, client, "guard-off")
@@ -362,8 +399,8 @@ async def test_a_typod_pricing_question_trips_on_a_figure_whose_sentence_names_n
     frames = await _drive_stream(bot, TYPO, "guard-bare")
 
     assert "2,66,250" not in _answer_text(frames)
-    assert _final_meta(frames)["answer_override"] == _expected(TYPO)
-    assert _messages(db, "guard-bare", role="bot")[-1].content == _expected(TYPO)
+    assert _final_meta(frames)["answer_override"] == _expected()
+    assert _messages(db, "guard-bare", role="bot")[-1].content == _expected()
 
 
 @pytest.mark.asyncio
@@ -403,7 +440,7 @@ async def test_after_an_escalation_a_figure_trips_without_a_price_word(db, monke
     last = _messages(db, session_id, role="bot")[-1].content
     if escalated:
         assert "4,10,000" not in _answer_text(frames)
-        assert last == _expected(question, repeat=True)
+        assert last == _expected(repeat=True)
     else:
         assert _answer_text(frames) == "".join(chunks)
         assert last == "".join(chunks)
@@ -421,7 +458,7 @@ async def test_a_trip_after_a_name_opener_follows_it_without_a_blank_line(db, mo
 
     frames = await _drive_stream(bot, TYPO, "guard-opener")
 
-    expected = _expected(TYPO)
+    expected = _expected()
     answer = _answer_text(frames)
     opener = next(f for f in frames if not f.startswith(("METADATA:", "\nFINAL_METADATA:")))
     assert opener.strip() == "Welcome back, Tester!"
@@ -532,7 +569,7 @@ async def test_an_own_price_outside_the_old_sentence_rule_is_replaced(db, monkey
     frames = await _drive_stream(bot, question, session_id)
 
     assert figure not in _answer_text(frames)
-    assert _messages(db, session_id, role="bot")[-1].content == _expected(question)
+    assert _messages(db, session_id, role="bot")[-1].content == _expected()
 
 
 @pytest.mark.parametrize(

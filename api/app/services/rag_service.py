@@ -90,6 +90,13 @@ from app.services.price_guard import (
     answer_trips_price_guard,
     price_guard_applies,
 )
+from app.services.price_intent import (
+    NOT_A_PRICE_QUESTION,
+    PriceIntentDecision,
+    decide_price_intent,
+    fallback_price_intent,
+    might_ask_price,
+)
 from app.services.qualification_service import (
     calculate_composite_score,
     get_framework_config,
@@ -7009,6 +7016,51 @@ async def _detect_document_intent_bounded(question: str) -> DocumentIntentDecisi
         return DocumentIntentDecision(fallback_document_intent(question), by_fallback=True)
 
 
+# The price-intent classifier has the same shape (a gate-tier one-word call) and
+# is awaited before the first frame of the turn, so it gets the same ceiling.
+_PRICE_INTENT_TIMEOUT_S = _URGENT_INTENT_TIMEOUT_S
+
+
+async def _detect_price_intent_bounded(question: str) -> PriceIntentDecision:
+    """What a message with a price word asks, without blocking the event loop.
+
+    The caller runs ``price_intent.might_ask_price`` first, so a message without a
+    price word costs no thread and no model call. This runs
+    ``price_intent.decide_price_intent`` (which falls back to its rules on a model
+    error) on a worker thread under ``_PRICE_INTENT_TIMEOUT_S``. A stall uses the
+    fallback rules; the worker thread cannot be interrupted, so its late answer is
+    discarded.
+    """
+    task = asyncio.create_task(asyncio.to_thread(decide_price_intent, question))
+    try:
+        return await asyncio.wait_for(task, timeout=_PRICE_INTENT_TIMEOUT_S)
+    except TimeoutError:
+        logger.warning("Price intent classifier exceeded %.1fs. Using the fallback rules", _PRICE_INTENT_TIMEOUT_S)
+        return PriceIntentDecision(fallback_price_intent(question), by_fallback=True)
+    except Exception as exc:  # noqa: BLE001 - never let the classifier break the turn
+        logger.warning("Price intent classifier failed (%s). Using the fallback rules", type(exc).__name__)
+        return PriceIntentDecision(fallback_price_intent(question), by_fallback=True)
+
+
+async def _turn_price_intent(
+    question: str, rewritten: str, raw_task: asyncio.Task[PriceIntentDecision] | None
+) -> tuple[PriceIntentDecision, str]:
+    """The turn's one price decision, and the phrasing it was made on.
+
+    ``raw_task`` decides the visitor's own words; the stream starts it alongside
+    retrieval when they carry a price word. A follow-up with no price word of its
+    own ("and that one?") carries the intent only in its rewrite, so when the raw
+    words do not ask the price, and the rewrite differs and carries a price word,
+    the rewrite is decided too. The two are decided separately rather than
+    concatenated, as the gate always read them.
+    """
+    decision = await raw_task if raw_task is not None else NOT_A_PRICE_QUESTION
+    if decision.asks_price or rewritten == question or not might_ask_price(rewritten):
+        return decision, question
+    rewritten_decision = await _detect_price_intent_bounded(rewritten)
+    return (rewritten_decision, rewritten) if rewritten_decision.asks_price else (decision, question)
+
+
 def rewrite_query(session_id: str, question: str, history: list) -> str:
     """Rewrite a follow-up question into a standalone search query using conversation history."""
     if not history or len(history) < 2:
@@ -7730,15 +7782,14 @@ async def collect_rag_pipeline(client, question: str, **kwargs) -> dict:
     return payload
 
 
-def _price_guard_signal(question: str, chat_session) -> bool:
+def _price_guard_signal(asks_price: bool, chat_session) -> bool:
     """The price guard's turn signal: every figure trips when this holds.
 
-    The question reads like a pricing question, typos included, or the session was
-    already escalated on pricing. See ``price_guard``.
+    The turn asks what the business charges (the turn's price decision, see
+    ``price_intent``), or the session was already escalated on pricing. See
+    ``price_guard``.
     """
-    return _pricing_gate.question_has_fuzzy_price_word(question) or _card_already_shown(
-        chat_session, "pricing_escalated"
-    )
+    return asks_price or _card_already_shown(chat_session, "pricing_escalated")
 
 
 def _cached_answer_trips_price_guard(
@@ -7764,7 +7815,11 @@ def _cached_answer_trips_price_guard(
     elif cid:
         filters.append(ChatSession.client_id == cid)
     chat_session = session.query(ChatSession).filter(*filters).first()
-    return answer_trips_price_guard(answer, signal=_price_guard_signal(question, chat_session))
+    # The cache is read before the turn's price decision is made, and a message
+    # with a price word never reads it on a guarded bot (``_gate_may_intercept``),
+    # so the vocabulary stands in for the decision. A dropped entry only costs a
+    # regenerated turn, which is decided properly.
+    return answer_trips_price_guard(answer, signal=_price_guard_signal(might_ask_price(question), chat_session))
 
 
 def _without_held_price_text(answer: str, guard: PriceStreamGuard | None) -> str:
@@ -7874,6 +7929,9 @@ async def rag_pipeline_stream(
     # classifier, alongside retrieval"). Declared before the try so its
     # finally can cancel a task that no route awaited.
     _doc_intent_task: asyncio.Task[DocumentIntentDecision] | None = None
+    # The price classifier's task, when this turn starts one (see "Price
+    # classifier, alongside retrieval"), cancelled by the same finally.
+    _price_intent_task: asyncio.Task[PriceIntentDecision] | None = None
     try:
         with get_session() as session:
             bot = (
@@ -8453,7 +8511,10 @@ async def rag_pipeline_stream(
                 # a full uncached run for nothing. Same shared-predicate
                 # reasoning as the standdown below.
                 and not _pricing_from_kb
-                and _pricing_gate.is_pricing_question(question)
+                # The price vocabulary, not the wording rule: the gate acts on the
+                # classifier's decision, which can escalate any message with a
+                # price word, so the bypass must be at least that broad.
+                and might_ask_price(question)
                 and not _pricing_gate.no_support_path_standdown(
                     support_enabled=_plan_support_allowed,
                     pricing_url=getattr(bot, "pricing_url", None) if bot else None,
@@ -8733,6 +8794,15 @@ async def rag_pipeline_stream(
             if _document_route_applies(question, _company_name, _judges_bypassed):
                 _doc_intent_task = asyncio.create_task(_detect_document_intent_bounded(question))
 
+            # ── Price classifier, alongside retrieval ────────────────────────
+            # The turn's one price decision (``price_intent``) feeds the pricing
+            # gate and the price guard below. A message with a price word starts
+            # its classifier here, so the call runs while the knowledge base is
+            # searched, and the gate awaits it. A non-English turn is left to the
+            # knowledge base like the gate itself, so it never asks.
+            if not _judges_bypassed and might_ask_price(question):
+                _price_intent_task = asyncio.create_task(_detect_price_intent_bounded(question))
+
             if _use_cag_lite:
                 logger.info(f"CAG-lite stream mode: injecting all {_total_chunks} chunks (bot_id={bid})")
                 final_results = _drop_placeholder_chunks(
@@ -8949,6 +9019,15 @@ async def rag_pipeline_stream(
                 if _pricing_gate.is_pricing_question(question) or _gate_search_query == question
                 else _gate_search_query
             )
+            # The services an escalation may name, read while the bot is loaded so
+            # neither escalation below reads the database for them.
+            _service_names = (
+                _pricing_gate.configured_service_names(
+                    getattr(bot, "services", None), getattr(bot, "quotation_catalog", None)
+                )
+                if bot
+                else []
+            )
             # ``support_enabled`` is the PLAN half of the human-support gate, the
             # same value handed to ``pricing_pivot`` a few lines below, and it is
             # passed for one combination only: a plan with no live queue and no
@@ -8989,23 +9068,39 @@ async def rag_pipeline_stream(
             # LIMITATION 1 in pricing_gate.py: a non-English pricing question is
             # answered from the knowledge base rather than gated.
             if _judges_bypassed:
+                _price_intent, _price_question = NOT_A_PRICE_QUESTION, question
                 _pricing_decision = _pricing_gate.PricingGateDecision(
                     fired=False, outcome="not_pricing", chunks=final_results
                 )
             else:
+                # One price decision for the turn, on the raw question or its
+                # rewrite, and the gate acts on it rather than on the wording: on
+                # 2026-09-11 "a quote from your leadership" and "whats the share
+                # price" were escalated as pricing questions.
+                _price_intent, _price_question = await _turn_price_intent(
+                    question, _gate_search_query, _price_intent_task
+                )
                 _pricing_decision = _pricing_gate.evaluate_pricing_gate(
-                    question=_gate_question,
+                    question=_price_question,
                     quote_active=_quote_active_or_pending(bot, chat_session, current_bant),
                     pricing_url=getattr(bot, "pricing_url", None) if bot else None,
                     chunks=final_results,
                     support_enabled=_plan_support_allowed,
                     contact_url=_contact_url,
                     answer_from_knowledge_base=_pricing_from_kb,
+                    asks_price=_price_intent.asks_price,
+                    asks_more=_price_intent.asks_more,
                 )
             if _pricing_decision.fired and _pricing_decision.outcome == "answer":
                 # Narrow the context to the pricing page and let the normal
                 # generation path run: the answer is grounded in that page alone.
                 final_results = _pricing_decision.chunks
+            elif _pricing_decision.outcome == "escalate_deferred":
+                # The visitor asked the price and something else. The escalation
+                # would be the whole reply, so generation answers the turn instead,
+                # and the price guard below, told the turn asks the price, replaces
+                # the answer with this bot's escalation on any figure.
+                _safety_net_metric("pricing_gate_deferred", path="stream", session=session_id, bot_id=bid)
             elif _pricing_decision.fired:
                 _safety_net_metric(
                     "pricing_gate_escalation",
@@ -9026,9 +9121,8 @@ async def rag_pipeline_stream(
                     live_chat_enabled=live_chat_on,
                     contact_url=_contact_url,
                     repeat=_pricing_repeat,
-                    # The chunks the gate judged, not the emptied escalation list:
-                    # the service is named only as the knowledge base spells it.
-                    subject=_pricing_gate.pricing_subject(_gate_question, _company_name, final_results),
+                    # Only a service the owner configured, spelled as the owner spells it.
+                    subject=_pricing_gate.pricing_subject(_price_question, _company_name, _service_names),
                 )
                 _pivot_text = (
                     _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + _pivot.text
@@ -9182,9 +9276,7 @@ async def rag_pipeline_stream(
                 # knowledge base, from the knowledge base. Replacing either with the
                 # no-file offer loses a grounded answer, so only an exact file (a
                 # real "Pricing-Brochure.pdf") is still offered as a card.
-                if (_pricing_decision.fired or _pricing_gate.is_pricing_question(_gate_question)) and not (
-                    _pick.docs and _pick.exact
-                ):
+                if (_pricing_decision.fired or _price_intent.asks_price) and not (_pick.docs and _pick.exact):
                     _safety_net_metric(
                         "document_request_fell_through",
                         path="stream",
@@ -9949,7 +10041,7 @@ async def rag_pipeline_stream(
             # trips; without it only a figure whose sentence or paragraph names the
             # company's own price in the first person does.
             _price_guard = (
-                PriceStreamGuard(signal=_price_guard_signal(question, chat_session))
+                PriceStreamGuard(signal=_price_guard_signal(_price_intent.asks_price, chat_session))
                 if price_guard_applies(
                     gate_outcome=_pricing_decision.outcome,
                     pricing_url=_price_guard_pricing_url,
@@ -10104,7 +10196,7 @@ async def rag_pipeline_stream(
                         live_chat_enabled=live_chat_on,
                         contact_url=_contact_url,
                         repeat=_price_guard_repeat,
-                        subject=_pricing_gate.pricing_subject(_gate_question, _company_name, final_results),
+                        subject=_pricing_gate.pricing_subject(_price_question, _company_name, _service_names),
                     )
                     _safety_net_metric("price_guard_tripped", path="stream", session=session_id, bot_id=bid)
                     # Also counted as one of the gate's escalations, so a view of
@@ -10763,11 +10855,13 @@ async def rag_pipeline_stream(
 
             logger.info(f"Hybrid RAG stream finished for session: {session_id}")
     finally:
-        # A document classifier started alongside retrieval that no route awaited
-        # (the turn returned before the route, or the visitor left) is cancelled
+        # A document or price classifier started alongside retrieval that nothing
+        # awaited (the turn returned first, or the visitor left) is cancelled
         # rather than left pending on the loop.
         if _doc_intent_task is not None and not _doc_intent_task.done():
             _doc_intent_task.cancel()
+        if _price_intent_task is not None and not _price_intent_task.done():
+            _price_intent_task.cancel()
         if _lf_trace is not None:
             with contextlib.suppress(Exception):
                 _lf_trace.update(output=redact_pii(full_answer))

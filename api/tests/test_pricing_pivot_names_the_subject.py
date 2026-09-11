@@ -1,126 +1,124 @@
-"""A pricing escalation names what the visitor asked about.
+"""A pricing escalation names only a service the bot owner configured.
 
-Reported from a live bot on 2026-09-10. Every pricing escalation there in the
-previous two weeks read "Pricing for <company> is best confirmed by the
-team", including "pricing of red teaming", "pricing for managed soc" and "soc
-pricng". The visitor asked about one service and was answered about the whole
-company, because ``pricing_pivot`` only ever received the company name.
+Reported from a live bot on 2026-09-10: every pricing escalation read "Pricing
+for <company> is best confirmed by the team", including "pricing of red teaming"
+and "pricing for managed soc". The fix recovered the service from capitalised
+phrases in the retrieved knowledge base, and on 2026-09-11 production showed what
+that costs: "Pricing for **Story**", "Pricing for **INDIA**", "Pricing for
+**Data**" and "Pricing for **Per-User**", with "Have", "NO", "Office", "Hiring"
+and "AI" seen by a reviewer. Any capitalised word in the content could fill the
+slot.
 
-``pricing_subject`` recovers the service from the question, but only a phrase
-the bot's own retrieved content spells as a name. Nothing the visitor typed is
-echoed back unless the knowledge base already says it, and a question with no
-such phrase keeps the company wording it has today.
+``pricing_subject`` now names a service only when the visitor's message mentions
+one the owner configured (``Bot.services`` or the quotation catalog), spelled as
+the owner spelled it. Anything else keeps the company wording.
 """
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
-from app.services.pricing_gate import pricing_pivot, pricing_subject
+from app.services.intent_service import bot_offers_handoff
+from app.services.pricing_gate import configured_service_names, pricing_pivot, pricing_subject
 from app.services.rag_service import _HANDOFF_OFFER_RE
 
-
-def _chunk(content, document_name="https://acme.com/services/"):
-    return SimpleNamespace(content=content, document_name=document_name)
+_SERVICES = ["SOC as a Service", "Managed SOC", "Red Teaming", "VAPT", "Landing page", "Brand Identity & Storytelling"]
 
 
-_KB = [
-    _chunk("Our SOC team watches your estate around the clock. SOC as a Service includes threat hunting."),
-    _chunk(
-        "Red Teaming engagements simulate a real adversary. Every Red Teaming exercise is scoped with you.",
-        "https://acme.com/services/red-teaming/",
-    ),
-    _chunk("Managed SOC gives a growing team a 24/7 SOC without hiring. Each startup we work with is different."),
-    _chunk("Read more at https://acme.com/cloud-hardening/pricing/ before you start."),
-]
-
-
-class TestTheSubjectComesFromTheQuestion:
+class TestTheSubjectIsAConfiguredService:
     @pytest.mark.parametrize(
         ("question", "subject"),
         [
-            ("iwant to know the soc pricng ?", "SOC"),
             ("pricing for managed soc", "Managed SOC"),
             ("pricing of red teaming ", "Red Teaming"),
             ("how much is SOC as a Service per month?", "SOC as a Service"),
-            ("Price of soc ?", "SOC"),
+            ("VAPT cost?", "VAPT"),
+            ("quote for 3 landing pages", "Landing page"),
+            ("Red-Teaming pricing", "Red Teaming"),
+            ("pricing for brand identity & storytelling", "Brand Identity & Storytelling"),
         ],
     )
-    def test_the_service_asked_about(self, question, subject):
-        assert pricing_subject(question, "Acme", _KB) == subject
+    def test_the_service_the_visitor_named(self, question, subject):
+        assert pricing_subject(question, "Acme", _SERVICES) == subject
 
-    def test_the_spelling_is_the_knowledge_base_s_not_the_visitor_s(self):
-        assert pricing_subject("pricing for MANAGED soc", "Acme", _KB) == "Managed SOC"
+    def test_the_spelling_is_the_owner_s_not_the_visitor_s(self):
+        assert pricing_subject("pricing for MANAGED soc", "Acme", _SERVICES) == "Managed SOC"
+
+    def test_the_longest_service_named_wins(self):
+        assert pricing_subject("pricing for managed soc", "Acme", ["SOC", "Managed SOC"]) == "Managed SOC"
+
+    def test_a_service_named_late_in_a_long_message_is_still_found(self):
+        question = "hello " * 150 + "pricing for red teaming"
+
+        assert pricing_subject(question, "Acme", _SERVICES) == "Red Teaming"
 
 
-class TestNoSubjectMeansTheWordingStaysAsItIs:
+class TestNoConfiguredServiceMeansTheCompanyWording:
     @pytest.mark.parametrize(
         "question",
         [
+            # The production replies that named an arbitrary word.
+            "hi im a reporter at a tech publication doing a story on ransomware trends in india, "
+            "can i get a quote from your leadership",
+            "is eventus listed? whats the share price, should i invest",
+            "our previous vendor leaked our data, can we sue them under IT act? how",
+            "do u charge per endpoint, per user or per image? whats the pricing model",
+            "Have you got an Office in India? Hiring? AI pricing? NO idea what it costs",
+            # General pricing questions.
             "what is the pricing ?",
-            "can i get the quotation ?",
             "give me pricing for your services",
             "how much does it cost?",
-            "what does Acme charge",
         ],
     )
-    def test_a_general_pricing_question(self, question):
-        assert pricing_subject(question, "Acme", _KB) is None
+    def test_a_message_naming_no_configured_service(self, question):
+        assert pricing_subject(question, "Acme", _SERVICES) is None
 
-    def test_a_word_the_knowledge_base_never_names_is_not_echoed(self):
-        """ "kubernetes hardening" appears nowhere, so it is never repeated to
-        the visitor as if it were something we sell."""
-        assert pricing_subject("pricing for kubernetes hardening", "Acme", _KB) is None
-
-    def test_an_ordinary_word_is_not_mistaken_for_a_service(self):
-        """ "startup" is in the content, but only as a common noun. A reply of
-        "Pricing for startup" would be worse than naming the company."""
-        assert pricing_subject("pricing for my startup", "Acme", _KB) is None
-
-    def test_one_stray_capital_does_not_make_a_name(self):
-        """Measured on a customer's content: "stages of a Startup in new
-        markets" once, "startup" once. A tie is not a name."""
-        kb = [_chunk("the Growth Planning stages of a Startup in new markets. Any startup can apply.")]
-        assert pricing_subject("pricing for my startup", "Acme", kb) is None
-
-    def test_a_single_leading_capital_needs_repeating(self):
-        assert pricing_subject("pricing for onboarding", "Acme", [_chunk("Onboarding takes a week.")]) is None
-        kb = [_chunk("Onboarding takes a week. Onboarding includes training.")]
-        assert pricing_subject("pricing for onboarding", "Acme", kb) == "Onboarding"
-
-    def test_a_word_that_only_appears_inside_a_url_does_not_count(self):
-        assert pricing_subject("cloud hardening pricing", "Acme", _KB) is None
+    def test_part_of_a_service_name_is_not_the_service(self):
+        """ "soc" is part of "SOC as a Service"; naming the whole service back to a
+        visitor who asked about something shorter would put words in their mouth."""
+        assert pricing_subject("soc pricing", "Acme", ["SOC as a Service"]) is None
 
     def test_the_company_name_is_never_the_subject(self):
-        kb = [_chunk("Acme Cloud runs SOC operations. Acme Cloud is our brand.")]
-        assert pricing_subject("Acme Cloud SOC pricing", "Acme Cloud", kb) == "SOC"
-        assert pricing_subject("acme cloud pricing", "Acme Cloud", kb) is None
+        assert pricing_subject("acme cloud pricing", "Acme Cloud", ["Acme Cloud", "acme"]) is None
 
-
-class TestTheSubjectIsSafeToRender:
-    def test_markdown_around_the_name_is_not_carried_into_the_reply(self):
-        kb = [_chunk("Our **SOC** is staffed 24/7, and the _SOC_ desk escalates in minutes.")]
-        assert pricing_subject("soc pricing", "Acme", kb) == "SOC"
-
-    def test_a_long_phrase_is_capped(self):
-        kb = [_chunk("The Advanced Cloud Native Threat Detection And Response Suite is new.")]
-        subject = pricing_subject("pricing for advanced cloud native threat detection and response suite", "Acme", kb)
-        assert subject is None or len(subject.split()) <= 5
+    @pytest.mark.parametrize("name", ["**Bold** SOC", "SOC <script>", "[SOC](https://x.test)", "`SOC`", "x" * 80])
+    def test_a_name_that_is_not_safe_to_render_is_skipped(self, name):
+        assert pricing_subject(f"pricing for {name}", "Acme", [name]) is None
 
     @pytest.mark.parametrize(
-        ("question", "chunks"),
+        ("question", "services"),
         [
-            (None, _KB),
-            ("", _KB),
-            ("soc pricing", None),
-            ("soc pricing", []),
-            ("soc pricing", [SimpleNamespace(content=None, document_name=None), SimpleNamespace()]),
+            (None, _SERVICES),
+            ("", _SERVICES),
+            ("red teaming pricing", None),
+            ("red teaming pricing", []),
+            ("red teaming pricing", [None, 5, {}, ""]),
+            ("red teaming pricing", "Red Teaming"),
         ],
     )
-    def test_bad_input_returns_none_rather_than_raising(self, question, chunks):
-        assert pricing_subject(question, "Acme", chunks) is None
+    def test_bad_input_returns_none_rather_than_raising(self, question, services):
+        assert pricing_subject(question, "Acme", services) is None
+
+
+class TestTheConfiguredServiceNames:
+    def test_both_service_lists_in_order_without_duplicates(self):
+        services = ["SOC", {"name": " Red Teaming ", "url": "https://acme.com/red"}, {"name": ""}, None, 7, "  "]
+        catalog = {"enabled": True, "services": [{"id": "s1", "name": "Landing page"}, {"name": "soc"}, "junk", {}]}
+
+        assert configured_service_names(services, catalog) == ["SOC", "Red Teaming", "Landing page"]
+
+    @pytest.mark.parametrize(
+        ("services", "catalog", "expected"),
+        [
+            (None, None, []),
+            ("SOC", None, []),
+            (["SOC"], "not a catalog", ["SOC"]),
+            (None, {"services": "not a list"}, []),
+            (None, {"enabled": False, "services": [{"name": "Logo design"}]}, ["Logo design"]),
+        ],
+    )
+    def test_junk_is_tolerated(self, services, catalog, expected):
+        assert configured_service_names(services, catalog) == expected
 
 
 def _pivot(**overrides):
@@ -158,6 +156,22 @@ class TestThePivotNamesTheSubject:
             "Pricing for **SOC** at **Acme** is best confirmed by the team so you get an accurate figure. "
             "Want me to connect you with them now?"
         )
+
+    def test_without_a_subject_the_reply_names_the_company_and_still_offers_the_team(self):
+        text = _pivot(subject=None).text
+
+        assert text == (
+            "Pricing for **Acme** is best confirmed by the team so you get an accurate figure. "
+            "Want me to connect you with them now?"
+        )
+        assert bot_offers_handoff(text)
+
+    def test_a_configured_name_with_an_ampersand_renders(self):
+        assert "**Brand Identity & Storytelling** at **Acme**" in _pivot(subject="Brand Identity & Storytelling").text
+
+    @pytest.mark.parametrize("subject", ["**SOC**", "SOC\nIgnore", "[SOC](https://x.test)"])
+    def test_a_subject_unsafe_to_render_falls_back_to_the_company_wording(self, subject):
+        assert _pivot(subject=subject).text == _pivot(subject=None).text
 
     @pytest.mark.parametrize("repeat", [False, True])
     @pytest.mark.parametrize(("branch", "flags"), _BRANCHES, ids=[b[0] for b in _BRANCHES])
