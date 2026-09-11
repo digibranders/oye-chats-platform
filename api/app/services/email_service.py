@@ -908,6 +908,7 @@ def send_handoff_request_email(
     *,
     reply_to: str | None = None,
     urgent: bool = False,
+    support: bool = False,
     session_id: str | None = None,
 ):
     """Send email when a visitor requests live agent support.
@@ -916,9 +917,19 @@ def send_handoff_request_email(
     not in the queue, so that email drops the queue wording, says URGENT in the
     subject, shows the phone number when the lead has one, and links straight to
     the conversation (``session_id``). ``reason`` is then the visitor's message.
+
+    ``support`` marks an existing customer who reported a problem with the
+    service or their account (``support_route``). They were shown the form, not
+    queued, so that email drops the queue wording the same way and says "Support
+    request" in the subject. ``urgent`` wins when both are set.
     """
     if urgent:
         _send_urgent_incident_email(
+            notification_email, bot_name, reason, contact or {}, reply_to=reply_to, session_id=session_id
+        )
+        return
+    if support:
+        _send_support_request_email(
             notification_email, bot_name, reason, contact or {}, reply_to=reply_to, session_id=session_id
         )
         return
@@ -993,6 +1004,51 @@ def _send_urgent_incident_email(
     html_body = shell(
         subject=subject,
         preheader=f"A visitor reported an active incident on {bot_name}.",
+        inner=inner,
+    )
+    send_email_async(
+        notification_email,
+        subject,
+        html_body,
+        reply_to=reply_to,
+        sender_name=_branded_sender_name(bot_name),
+    )
+
+
+def _send_support_request_email(
+    notification_email: str,
+    bot_name: str,
+    message: str | None,
+    contact: dict,
+    *,
+    reply_to: str | None,
+    session_id: str | None,
+) -> None:
+    """The ``support`` variant of :func:`send_handoff_request_email`."""
+    who = contact.get("name") or "A visitor"
+    subject = f"Support request: {who} needs help on {bot_name}"
+    rows = [
+        ("Name", esc(contact.get("name")) if contact.get("name") else "Unknown"),
+        ("Email", _mailto(contact.get("email"))),
+    ]
+    if contact.get("phone"):
+        rows.append(("Phone", esc(contact.get("phone"))))
+    rows.append(("Message", esc(message) if message else "No message provided"))
+    conversation_url = f"{APP_URL}/support?session={quote(session_id, safe='')}" if session_id else f"{APP_URL}/support"
+    inner = (
+        h1(f"Support request from {esc(who)}")
+        + p(
+            f"A visitor on {strong(esc(bot_name))} described a problem with a service they already have with you, "
+            f"or with their account, and was offered a way to reach your team."
+        )
+        + ed.section_label("Visitor")
+        + info_table(rows)
+        + ed.alert("Reply as soon as you can. Their details may still be on the way from the chat form.", "warning")
+        + button("Open conversation", conversation_url)
+    )
+    html_body = shell(
+        subject=subject,
+        preheader=f"A visitor asked for help with their service on {bot_name}.",
         inner=inner,
     )
     send_email_async(
