@@ -753,35 +753,66 @@ _FENCED_BLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
 # alternation in C, while each *separate* pattern object is a full extra
 # pass over the context string. Kept as one tuple entry per *shape* only
 # where combining would make an already-hard-to-read pattern unreadable.
-_CODE_LINE_PATTERNS = (
-    re.compile(r"(?:^|[\s\"'])--[A-Za-z][\w-]*"),  # CLI flag: --email, --docker-email
-    # JSON "key": [ / { / "value" opener, or "key": "value".
-    re.compile(r'"[\w.-]+"\s*:\s*(?:[\["{]|")'),
-    # YAML key: value, at the start of a real, indented line (a top-level,
-    # unindented "Email: yourname@company.com" is exactly the shape a real
-    # contact footer uses, so that must stay unmatched); or a YAML key:
-    # "value" with no real line break to anchor on, unanchored -- some
-    # crawls collapse every newline in a <pre> block into plain whitespace
-    # (seen on CleanStart's own site), so a bareword key immediately
-    # followed by a colon and an opening quote is checked on its own too.
-    re.compile(r'(?m)^[ \t]+[\w.-]+:\s+\S|\b[a-z_][\w.-]{1,40}:\s*"'),
-    # A general "identifier = value" assignment (HCL, Ruby constant, an
-    # ENV_VAR, an ini file, ...), any case, with or without spaces or
-    # quotes around "=": `default = "support@example.com"`,
-    # `ADMIN_EMAIL = "admin@example.com"`.
-    re.compile(r"\b[A-Za-z_][\w.-]{0,40}\s*=\s*[\"']?\S"),
-    # A shell prompt line, a $VAR reference, or a markdown table row.
-    re.compile(r"(?m)^\s*[$#]\s|\$[A-Za-z_][A-Za-z0-9_]*|\|[^|\n]*\|"),
-    # SQL statements: an address sitting inside INSERT/VALUES/UPDATE/SELECT
-    # is a database seed script or a query example, not a leaked contact.
-    re.compile(r"""(?ix) \b insert \s+ into \b | \b values \s* \( | \b update \s+ [\w.\"'`]+ \s+ set \b
-                    | \b select \b [\s\S]{0,120}? \b from \b"""),
-    # A brace paired with an assignment operator nearby: an HCL block
-    # (`variable "x" {`) or an object literal wrapping a key: value or
-    # key = value pair, even when the value itself isn't on the same line
-    # as the brace.
-    re.compile(r"[{}][\s\S]{0,150}?[=:]|[=:][\s\S]{0,150}?[{}]"),
+# Every one of these is checked against a match's own local context, so
+# each is paired with a cheap literal-character guard (a plain Python
+# ``in`` substring test, O(context length) at C speed) that must pass
+# before the backtracking regex itself ever runs: a match sitting in a
+# stretch of ordinary prose contains none of the punctuation any of these
+# shapes need, and the guard rejects it in a fraction of the time a full
+# regex search over the same context would take. This matters because
+# every match in a chunk runs the whole list: on a chunk with a few
+# thousand matches and no code-shaped punctuation anywhere near any of
+# them, the guards turn "N full regex scans" into "N cheap substring
+# checks", which is most of what keeps this linear-time in practice, not
+# just in big-O.
+_JSON_LINE_RE = re.compile(r'"[\w.-]+"\s*:\s*(?:[\["{]|")')  # "key": [ / { / "value"
+# YAML key: value, at the start of a real, indented line (a top-level,
+# unindented "Email: yourname@company.com" is exactly the shape a real
+# contact footer uses, so that must stay unmatched); or a YAML key: "value"
+# with no real line break to anchor on, unanchored -- some crawls collapse
+# every newline in a <pre> block into plain whitespace (seen on
+# CleanStart's own site), so a bareword key immediately followed by a
+# colon and an opening quote is checked on its own too.
+_YAML_LINE_RE = re.compile(r'(?m)^[ \t]+[\w.-]+:\s+\S|\b[a-z_][\w.-]{1,40}:\s*"')
+_CLI_FLAG_RE = re.compile(r"(?:^|[\s\"'])--[A-Za-z][\w-]*")  # --email, --docker-email
+# A general "identifier = value" assignment (HCL, Ruby constant, an
+# ENV_VAR, an ini file, ...), any case, with or without spaces or quotes
+# around "=": `default = "support@example.com"`, `ADMIN_EMAIL = "..."`.
+_ASSIGNMENT_RE = re.compile(r"\b[A-Za-z_][\w.-]{0,40}\s*=\s*[\"']?\S")
+_SHELL_PROMPT_OR_VAR_RE = re.compile(r"(?m:^\s*[$#]\s)|\$[A-Za-z_][A-Za-z0-9_]*")
+_MARKDOWN_TABLE_ROW_RE = re.compile(r"\|[^|\n]*\|")
+# SQL statements: an address inside INSERT/VALUES/UPDATE/SELECT is a
+# database seed script or a query example, not a leaked contact.
+_SQL_STATEMENT_RE = re.compile(
+    r"""(?ix) \b insert \s+ into \b | \b values \s* \( | \b update \s+ [\w.\"'`]+ \s+ set \b
+         | \b select \b [\s\S]{0,120}? \b from \b"""
 )
+# A brace paired with an assignment operator nearby: an HCL block
+# (`variable "x" {`) or an object literal wrapping a key: value or key =
+# value pair, even when the value isn't on the same line as the brace.
+_BRACE_ASSIGNMENT_RE = re.compile(r"[{}][\s\S]{0,150}?[=:]|[=:][\s\S]{0,150}?[{}]")
+
+
+def _looks_like_code_line(context: str) -> bool:
+    if '"' in context and _JSON_LINE_RE.search(context):
+        return True
+    if ":" in context and _YAML_LINE_RE.search(context):
+        return True
+    if "-" in context and _CLI_FLAG_RE.search(context):
+        return True
+    if "=" in context and _ASSIGNMENT_RE.search(context):
+        return True
+    if ("$" in context or "#" in context) and _SHELL_PROMPT_OR_VAR_RE.search(context):
+        return True
+    if "|" in context and _MARKDOWN_TABLE_ROW_RE.search(context):
+        return True
+    if ("{" in context or "}" in context) and _BRACE_ASSIGNMENT_RE.search(context):
+        return True
+    lowered = context.lower()
+    return any(kw in lowered for kw in ("insert", "values", "update", "select")) and bool(
+        _SQL_STATEMENT_RE.search(context)
+    )
+
 
 _EXAMPLE_TRIGGER_RE = re.compile(r"(?i)(?:e\.g\.,?|for example,?|such as|like)\s*[:\-]?\s*[\[(]?\s*$")
 # A markdown link's URL target, "[shown text](mailto:...)": the address is
@@ -902,9 +933,9 @@ def _is_in_example(ctx: _ExampleContext, start: int, end: int) -> bool:
     if _in_fenced_or_backtick_region(ctx, start):
         return True
     context = _local_context(ctx, start, end)
-    if any(pattern.search(context) for pattern in _CODE_LINE_PATTERNS):
+    if _looks_like_code_line(context):
         return True
-    if _BRACKET_PLACEHOLDER_RE.search(context):
+    if "[" in context and _BRACKET_PLACEHOLDER_RE.search(context):
         return True
     content = ctx.content
     lookback = content[max(0, start - _LOOKBACK_CHARS) : start]
