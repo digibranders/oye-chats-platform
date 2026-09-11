@@ -8182,8 +8182,24 @@ async def rag_pipeline_stream(
             # shape: the pure vocabulary check and the policy-question skip run
             # here, and only a hit reaches the classifier, on a worker thread
             # under a deadline.
+            #
+            # A visitor chasing a reply after the handoff form ("hello?? nobody
+            # is replying") is waiting on the team, not reporting a problem with
+            # the service. The waiting reply below points back at the form; this
+            # route would ask the classifier and alert the team a second time.
+            _waiting_on_offered_form = False
+            if live_chat_on and visitor_reaction.is_waiting_for_a_person(question):
+                _waiting_filters = [ChatSession.id == session_id]
+                if bid:
+                    _waiting_filters.append(ChatSession.bot_id == bid)
+                elif cid:
+                    _waiting_filters.append(ChatSession.client_id == cid)
+                _waiting_on_offered_form = _card_already_shown(
+                    session.query(ChatSession).filter(*_waiting_filters).first(), "handoff_offered"
+                )
             if (
-                support_route.might_be_support_request(question)
+                not _waiting_on_offered_form
+                and support_route.might_be_support_request(question)
                 and not support_route.asks_only_about_policies(question)
                 and not _english_judges_bypassed(language, question)
                 and await support_route.detect_support_request_bounded(question)
