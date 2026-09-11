@@ -173,7 +173,7 @@ export function BrandingSection({
         <CardBody className="flex flex-col gap-6">
           <ColorField
             label={t('agents.brandColour') || 'Brand colour'}
-            hint={t('agents.theLauncherTheSendButton') || 'The launcher, the send button and the icon avatar are painted with it.'}
+            hint={t('agents.theLauncherTheSendButton') || 'The send button and icon avatar use this colour. The launcher uses the fixed OyeChats mark.'}
             value={draft.primaryColor}
             onChange={(primaryColor) => onChange({ primaryColor })}
             swatches={swatches}
@@ -183,7 +183,7 @@ export function BrandingSection({
               {
                 foreground: WIDGET_ON_PRIMARY,
                 background: draft.primaryColor,
-                label: t('agents.whiteIconsOnItLauncher') || 'White icons on it: launcher, send button',
+                label: t('agents.whiteIconsOnItLauncher') || 'White icons on it: send button',
                 min: NON_TEXT_CONTRAST_MIN,
               },
               {

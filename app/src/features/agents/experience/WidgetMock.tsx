@@ -136,6 +136,18 @@ function Avatar({ draft, size }: { draft: ExperienceDraft; size: number }): Reac
   return <WidgetAvatar appearance={appearanceOf(draft)} size={size} />;
 }
 
+/** Fixed OyeChats launcher mark; assistant avatar settings never affect it. */
+function LauncherMark(): ReactElement {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 64 64" width="42" height="42" fill="#171B21">
+      <path d="M56.25 18a28 28 0 1 0 0 28l-8.66-5a18 18 0 0 1-9.59 7.97L32 55v-5a18 18 0 1 1 15.59-27Z" />
+      <circle cx="23" cy="32" r="3.2" />
+      <circle cx="32.5" cy="32" r="3.2" />
+      <circle cx="42" cy="32" r="3.2" />
+    </svg>
+  );
+}
+
 /** The bot's identity, floating over the top of the messages. `renderAgentBadge`. */
 function AgentBadge({ draft, agentName }: { draft: ExperienceDraft; agentName: string }): ReactElement {
   return (
@@ -488,12 +500,15 @@ export function WidgetMock({
             style={{
               width: 56,
               height: 56,
-              borderRadius: '50%',
-              backgroundColor: '#FFFFFF',
-              boxShadow: '0 10px 15px -3px rgba(16, 32, 44, 0.15)',
+              borderRadius: 18,
+              padding: 7,
+              background: 'linear-gradient(145deg, #FFFFFF 0%, #F4F6FA 100%)',
+              border: '1px solid rgba(255, 255, 255, 0.92)',
+              boxShadow:
+                '0 18px 28px -16px rgba(16, 24, 40, 0.5), 0 7px 12px -8px rgba(16, 24, 40, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.95)',
             }}
           >
-            <Avatar draft={draft} size={56} />
+            <LauncherMark />
           </span>
         </div>
       </div>

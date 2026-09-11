@@ -69,20 +69,19 @@ class TestTheStampItself:
         stamp_manual_avatar(bot, {"primary_color": "#059669", "launcher_name": "Hi"})
         assert bot.bot_logo_source is None
 
-    def test_launcher_logo_alone_counts_too(self, db):
-        """Both settings routes mirror one field onto the other, so a patch can
-        legitimately arrive carrying only `launcher_logo`."""
+    def test_launcher_logo_alone_does_not_claim_the_avatar(self, db):
+        """The launcher is a fixed platform mark, so legacy launcher writes
+        must not claim or modify the assistant avatar."""
         bot = _bot(db, 8305)
         stamp_manual_avatar(bot, {"launcher_logo": "logos/mine.png"})
-        assert bot.bot_logo_source == AVATAR_SOURCE_MANUAL
+        assert bot.bot_logo_source is None
 
-    def test_clearing_via_launcher_logo_alone_stamps_too(self, db):
-        """The falsy-value trap: a removal sends None, so a stamp written as
-        `if update_data.get(...)` would skip precisely the case this exists
-        for. Membership is the test, not truthiness."""
+    def test_clearing_via_launcher_logo_alone_does_not_clear_avatar_provenance(self, db):
+        """Legacy launcher clearing is ignored and cannot clear the avatar's
+        manual/derived provenance."""
         bot = _bot(db, 8310, bot_logo="logos/favicon.png", bot_logo_source=AVATAR_SOURCE_DERIVED)
         stamp_manual_avatar(bot, {"launcher_logo": None})
-        assert bot.bot_logo_source == AVATAR_SOURCE_MANUAL
+        assert bot.bot_logo_source == AVATAR_SOURCE_DERIVED
 
 
 class TestBothSettingsRoutesStamp:

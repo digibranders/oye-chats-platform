@@ -2011,5 +2011,5 @@ def stamp_manual_avatar(bot, update_data: dict) -> None:
     a no-op write as "no opinion" would leave the slot open to derivation for
     anyone whose editor saves unchanged values.
     """
-    if "bot_logo" in update_data or "launcher_logo" in update_data:
+    if "bot_logo" in update_data:
         bot.bot_logo_source = AVATAR_SOURCE_MANUAL

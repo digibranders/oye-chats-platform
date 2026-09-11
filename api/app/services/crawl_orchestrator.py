@@ -437,17 +437,11 @@ async def _maybe_apply_favicon_avatar(bot_id: int | None, client_id: int, url: s
                 return
             bot.bot_logo = logo_key
             bot.bot_logo_source = AVATAR_SOURCE_DERIVED
-            # Write BOTH. `bot_routes` keeps these in lockstep on every API
-            # write and the widget's launcher reads `launcher_logo`, so
-            # setting only bot_logo left the in-chat avatar as the favicon
-            # while the launcher bubble still showed the fallback robot.
-            if not bot.launcher_logo:
-                bot.launcher_logo = logo_key
             bot_key = bot.bot_key
             session.commit()
-            # The widget reads bot_logo / launcher_logo out of a 10-minute
-            # config cache, so a commit alone leaves the customer's site
-            # showing the fallback robot for up to BOT_CONFIG_TTL. Every
+            # The widget reads bot_logo out of a 10-minute config cache for
+            # the assistant avatar, so a commit alone leaves the customer's
+            # site showing the fallback robot for up to BOT_CONFIG_TTL. Every
             # mutating route in `bot_routes` drops this key after its commit;
             # this write is no different just because a crawl made it.
             cache_delete(bot_config_key(bot_key))

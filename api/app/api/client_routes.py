@@ -118,14 +118,10 @@ def update_client_settings(
 
             update_data = request.dict(exclude_unset=True)
 
-            if "bot_logo" in update_data:
-                update_data["launcher_logo"] = update_data["bot_logo"]
-            elif "launcher_logo" in update_data:
-                update_data["bot_logo"] = update_data["launcher_logo"]
-
-            # Same stamp as the primary settings patch in `bot_routes`. This
-            # legacy route writes the same columns, so leaving it out would let
-            # an avatar removal made through it be silently re-derived.
+            # Same stamp as the primary settings patch in `bot_routes`. The
+            # launcher is a fixed OyeChats mark; legacy launcher_logo input is
+            # ignored here too and never changes avatar provenance.
+            update_data.pop("launcher_logo", None)
             from app.db.repository import stamp_manual_avatar
 
             stamp_manual_avatar(bot_db, update_data)
@@ -135,7 +131,7 @@ def update_client_settings(
             for key, value in update_data.items():
                 bot_key = field_mapping.get(key, key)
                 if hasattr(bot_db, bot_key):
-                    if (bot_key in ("bot_logo", "launcher_logo")) and value and "/files/" in value:
+                    if bot_key == "bot_logo" and value and "/files/" in value:
                         value = value.split("/files/")[-1]
                     setattr(bot_db, bot_key, value)
 
