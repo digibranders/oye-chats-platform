@@ -21,30 +21,30 @@ golden_set.jsonl ──► run_eval ──POST /chat (X-Bot-Key)──► live b
                               report.json + report.md, exit 0/1
 ```
 
-1. **Golden set** — `api/eval/golden_set.jsonl`, 40 cases over eleven
+1. **Golden set**: `api/eval/golden_set.jsonl`, 41 cases over eleven
    categories (`greeting`, `company`, `services`, `pricing`, `team`, `hours`,
    `events`, `followup`, `offtopic`, `adversarial`, `trust`). Every answerable
    case lists the facts a correct answer conveys; every refusal case lists
    what a bad answer would say.
-2. **Fixture knowledge base** — `api/eval/fixtures/acme/`, six Markdown
+2. **Fixture knowledge base**: `api/eval/fixtures/acme/`, six Markdown
    documents about a fictional consultancy, *Acme Analytics*: services,
    pricing in INR and USD (GST-exclusive, like the real product), team, hours
    and contact, an events calendar with past and future dates, and policies.
    Every `expected_facts` entry in the shipped set is verifiable in these files.
-3. **Runner** — `python -m eval.run_eval` asks each question through the real
+3. **Runner**: `python -m eval.run_eval` asks each question through the real
    widget endpoint, `POST /chat`, in a fresh session per case, exactly as a
    visitor would. History turns are replayed first. The bot asks every new
    session for the visitor's name before answering (`rag_service.
    resolve_name_flow`); the runner recognises that request, answers with a
    name (`--visitor-name`, default `Eva`) and takes the deferred answer.
-4. **Judge** — one `gemini/gemini-2.5-flash` call per answer (the same cheap
+4. **Judge**: one `gemini/gemini-2.5-flash` call per answer (the same cheap
    tier the relevance gate trusts), strict `json_schema` output, reasoning
    disabled through `llm_service._apply_model_family_kwargs`, 20 s timeout.
    The verdict is `{grounded: 0–1, refusal_correct, facts_covered,
    fabricated, notes}`. For the shipped set the judge also sees the fixture
    documents, so a true fact that is not in `expected_facts` is not marked
    fabricated.
-5. **Report** — `report.md` (per-category table, every failure with question,
+5. **Report**: `report.md` (per-category table, every failure with question,
    answer and verdict, an all-cases table) and `report.json` (the same, plus
    every answer and verdict in full). In GitHub Actions the Markdown is also
    written to the job summary.
@@ -76,7 +76,7 @@ questions, one per failure class the audit found.
 | `company` | 5 | Questions about the business itself ("what does Acme do", "what is Acme Analytics", "tell me about your company", "who are you and what do you do", an indirect "what is this place?") are answered from the KB. In September 2026 the relevance gate refused these; every case lists "Refuses or says it cannot help with that" as a forbidden claim and a tempting fabrication (a founding year other than 2019, a team size other than 18, an office outside Pune or Berlin, selling a BI product, building apps) |
 | `services` | 4 | The four offerings, supported warehouses, what Acme does not do, migration duration |
 | `pricing` | 4 | INR and USD prices, GST exclusivity, the annual discount, workshop pricing |
-| `team` | 3 | Founders, team size, the CTO's role and city |
+| `team` | 4 | Founders (asked as "who founded" and as a singular "who is the founder", which must still name both co-founders), team size, the CTO's role and city |
 | `hours` | 3 | Office hours, weekend support, how to reach sales |
 | `events` | 3 | Past versus upcoming events under `TODAY'S DATE` reasoning |
 | `followup` | 3 | Pronoun and elliptical follow-ups resolved from session history |

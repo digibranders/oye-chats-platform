@@ -696,7 +696,7 @@ class TestCli:
     def test_dry_run_validates_and_prints_the_plan(self, clean_env, capsys):
         assert run_eval.main(["--dry-run"]) == 0
         out = capsys.readouterr().out
-        assert "40 cases" in out and "43 chat requests" in out
+        assert "41 cases" in out and "44 chat requests" in out
         assert "coverage: meets the shipped minimums" in out
         assert "Judge: gemini/gemini-2.5-flash" in out
         assert "Dry run: no request was made." in out
