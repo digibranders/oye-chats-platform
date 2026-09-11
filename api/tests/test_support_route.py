@@ -12,6 +12,7 @@ written for precision when the model fails.
 """
 
 import logging
+import time
 import timeit
 
 import pytest
@@ -138,6 +139,30 @@ _NO_VOCABULARY = [
     "how do I reset my password",
     "my laptop is very slow, any tips",
 ]
+#: A prospect's or a how-to question in words a customer also uses: "broken", "crashed",
+#: "can you ... my", "billed", "complain". With no relationship or engagement in the
+#: message, each would add a model call of up to 4s before the name flow and the router.
+_PROSPECT_WORDING = [
+    "could you add a chatbot to my site",
+    "can you help me upgrade my website",
+    "do you fix broken screens",
+    "my laptop is broken do you repair macbooks",
+    "my tooth is broken can i get an appointment today",
+    "my car crashed, do you do repairs",
+    "when am i billed",
+    "is gst charged on my invoice",
+    "how do i complain about a doctor",
+]
+#: The same words from someone who has the service, or said as a statement, still pass.
+_ENGAGED_WORDING = [
+    "our dashboard is broken since the update",
+    "can you upgrade our plan to annual billing",
+    "could you add two seats to my account",
+    "the portal you set up for us crashed again, account manager is on leave",
+    "i was charged twice this month",
+    "why was i charged twice",
+    "i want to complain about the delay",
+]
 
 # ── Stage 1: vocabulary check ─────────────────────────────────────────────────
 
@@ -150,6 +175,16 @@ def test_every_known_support_request_passes_the_vocabulary_check(msg):
 @pytest.mark.parametrize("msg", _NO_VOCABULARY)
 def test_an_ordinary_question_does_not_pass(msg):
     assert might_be_support_request(msg) is False
+
+
+@pytest.mark.parametrize("msg", _PROSPECT_WORDING)
+def test_a_prospect_using_a_customers_words_does_not_pass(msg):
+    assert might_be_support_request(msg) is False
+
+
+@pytest.mark.parametrize("msg", _ENGAGED_WORDING)
+def test_those_words_pass_with_an_engagement_or_as_a_statement(msg):
+    assert might_be_support_request(msg) is True
 
 
 @pytest.mark.parametrize("value", [None, 42, "", "   \n"])
@@ -413,6 +448,47 @@ def test_the_fallback_rules_catch_a_clear_support_request(msg):
 @pytest.mark.parametrize("value", [None, 42, "", "   "])
 def test_the_fallback_rules_ignore_a_non_string_or_blank_message(value):
     assert _fallback_is_support_request(value) is False
+
+
+#: A demand about another business, a move to this one, or a career: each passes the
+#: vocabulary check, and none is an existing customer of this business.
+_THIRD_PARTY_DEMANDS = [
+    "we'd like to end our contract with our current agency and switch to you",
+    "i want to cancel my subscription with hubspot and move to you",
+    "i want a refund from my airline, can you help",
+    "i want to escalate my career",
+]
+#: The same shapes about this business, or a time or manner rather than a party.
+_OWN_DEMANDS = [
+    "i want to cancel our contract with you",
+    "i want to cancel my subscription with immediate effect",
+    "i want a refund from you",
+    "please cancel my plan from next month",
+    "we moved to your enterprise plan last year and now our portal is not loading",
+]
+
+
+@pytest.mark.parametrize("msg", _THIRD_PARTY_DEMANDS)
+def test_a_demand_about_another_business_never_alerts_the_team_when_the_model_fails(model, msg):
+    model.error = RuntimeError("provider down")
+
+    assert might_be_support_request(msg), "precondition: the vocabulary check passes it"
+    assert is_support_request(msg) is False
+    assert len(model.calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("msg", _THIRD_PARTY_DEMANDS)
+async def test_a_demand_about_another_business_never_alerts_the_team_when_the_model_stalls(monkeypatch, msg):
+    monkeypatch.setattr(support_route, "_SUPPORT_INTENT_TIMEOUT_S", 0.01)
+    monkeypatch.setattr(support_route, "classify_support_request", lambda _question: time.sleep(0.2) or True)
+
+    assert await support_route.detect_support_request_bounded(msg) is False
+
+
+@pytest.mark.parametrize("msg", _OWN_DEMANDS)
+def test_a_demand_about_this_business_is_still_caught_by_the_fallback_rules(msg):
+    assert _fallback_is_support_request(msg) is True
 
 
 # ── Linear time on hostile input ──────────────────────────────────────────────

@@ -22,7 +22,11 @@ three stages:
    money back or a cancellation, escalates, chases a ticket or an order, or
    complains. A message with none of these ("do you offer 24/7 support?", "what
    is your refund policy", "how do I reset my password") stops here, so an
-   ordinary turn costs no model call.
+   ordinary turn costs no model call. Words a prospect uses as often pass only
+   with an engagement in the message ("our portal", "my account", "account
+   manager", "ticket"): "broken", "crashed" and a change request ("could you
+   add a chatbot to my site"), and a bare "billed" or "complain" unless it is
+   said as a statement ("i was charged twice", not "when am i billed").
 2. ``_classify_support_request_raw``: on a vocabulary hit, the gate-tier model
    answers YES or NO: is this an existing customer with a problem the team has
    to handle? It tells a customer from a prospect asking about support plans, a
@@ -32,8 +36,10 @@ three stages:
    rules decide instead: the visitor's own portal or account failing, an
    unresponsive account manager or ticket, an escalation, a refund or
    cancellation demand, or a claimed relationship together with a problem. They
-   stand down for a clause that opens as a question or a hypothetical, and for a
-   message from a job seeker, a vendor or about a security incident.
+   stand down for a clause that opens as a question or a hypothetical, for a
+   message from a job seeker, a vendor or about a security incident, and for a
+   demand about another business ("cancel my subscription with hubspot", "a
+   refund from my airline") or a move to this one ("switch to you").
 
 Between stages 1 and 2, ``asks_only_about_policies`` skips the classifier for a
 message that only asks the business about its support, escalation, refund or
@@ -121,21 +127,29 @@ _FAILURE = (
     r"|outages?\b"
     r"|keeps?\s+(?:on\s+)?(?:crashing|failing|freezing|timing\s+out|logging\s+(?:me|us)\s+out|going\s+down"
     r"|(?:showing|throwing|giving)\s+(?:an?\s+|me\s+|us\s+)?errors?)"
-    r"|crash(?:ed|es|ing)\b|broken\b|blank\s+(?:page|screen)|stuck\s+(?:on|at)\b|tim(?:ed|es|ing)\s*-?\s*out\b"
+    r"|blank\s+(?:page|screen)|stuck\s+(?:on|at)\b|tim(?:ed|es|ing)\s*-?\s*out\b"
     r"|(?:getting|got|shows?|showing|throw(?:s|ing)?|gives?|giving|returns?|returning|seeing)\s+(?:an?\s+|this\s+"
     r"|the\s+|some\s+)?(?:\w+\s+)?errors?\b"
     r"|(?:500|502|503|504)\s+errors?\b)"
 )
 
-#: Money going the wrong way: a refund, a double or wrong charge. "be charged"
-#: and "billed annually" describe pricing, not a dispute.
+#: "broken" and "crashed": as often a prospect's own screen, laptop or car ("do you
+#: fix broken screens") as a customer's service, so they pass only with an engagement.
+_BREAKAGE = r"(?:crash(?:ed|es|ing)|broken)\b"
+
+#: Money going the wrong way: a refund, a double or wrong charge.
 _MONEY_PROBLEM = (
     r"(?:refund(?:s|ed|ing)?\b|money\s+back\b|reimburs\w*|charge\s*-?\s*backs?\b|overcharg\w*|double[\s-]?charg\w*"
-    r"|(?<!be\s)(?<!get\s)(?:charged|billed|debited|deducted)\b"
-    r"(?!\s+(?:per|monthly|annually|yearly|quarterly|weekly|upfront|for\s+(?:each|every|extra)))"
     r"|wrong\s+(?:amount|charges?|invoices?|bills?|billing)\b"
     r"|(?:incorrect|duplicate|extra|hidden|unexpected)\s+(?:charges?|invoices?|bills?|payments?|deductions?|amount)\b"
     r"|invoice\s+amount\s+is\s+wrong\b)"
+)
+
+#: A bare "charged" or "billed": a dispute in "i was charged twice", a pricing question
+#: in "when am i billed". "be charged" and "billed annually" describe pricing either way.
+_BILLED = (
+    r"(?<!be\s)(?<!get\s)(?:charged|billed|debited|deducted)\b"
+    r"(?!\s+(?:per|monthly|annually|yearly|quarterly|weekly|upfront|for\s+(?:each|every|extra)))"
 )
 
 #: Ending something the visitor has: "cancel", "terminate", "close my account".
@@ -189,7 +203,7 @@ _STANDALONE_FAMILIES: tuple[tuple[str, ...], ...] = (
         r"\b(?:raise[ds]?|raising|open(?:ed|ing)?|log(?:ged|ging)?|create[ds]?|creating|file[ds]?|filing|submit(?:ted)?"
         r"|lodge[ds]?)\s+(?:an?\s+|the\s+|my\s+|our\s+|another\s+)?(?:support\s+)?(?:tickets?|complaints?|cases?)\b",
         r"\b(?:my|our)\s+(?:support\s+|previous\s+|last\s+|open\s+)?(?:tickets?|complaints?|cases?)\b",
-        r"\bcomplain\w*",
+        r"\bcomplaints?\b",
         r"\b(?:dissatisf|unsatisf|disappoint|frustrat)\w*",
         r"\b(?:fed\s+up|unacceptable|unhappy|ripp?ed\s+off|waste\s+of\s+(?:money|time))\b",
         r"\bnot\s+(?:at\s+all\s+|very\s+|really\s+|too\s+)?(?:happy|satisfied|pleased)\b",
@@ -224,10 +238,6 @@ _STANDALONE_FAMILIES: tuple[tuple[str, ...], ...] = (
         r"(?:locked|blocked|suspended|disabled|deactivated|closed|deleted|restricted|frozen|on\s+hold|banned"
         r"|terminated)\b",
         r"\b(?:lost|no|without)\s+access\s+to\s+(?:my|our)\b",
-        r"\b(?:please|pls|plz|kindly|can\s+you|could\s+you|would\s+you|need\s+you\s+to|want\s+you\s+to)\s+"
-        r"(?:\w+\s+){0,2}?(?:change|update|upgrade|downgrade|add|remove|transfer|reset|re-?activate|unlock|unblock"
-        r"|restore|recover|renew|extend|pause|freeze|suspend|merge|correct|refund|cancel|raise|escalate)\w*\s+"
-        r"(?:\w+\s+){0,3}?(?:my|our)\b",
         r"\b(?:my|our)\s+(?:\w+\s+){0,2}?(?:orders?|packages?|parcels?|deliver(?:y|ies)|shipments?|bookings?"
         r"|appointments?|refunds?)\b"
         + _WITHIN
@@ -267,6 +277,50 @@ _ANCHORED_FAMILIES: tuple[tuple[re.Pattern[str], re.Pattern[str]], ...] = (
     (_CANCELLATION_RE, _FIRST_PERSON_NEAR_RE),
 )
 
+#: Words a prospect uses as often as a customer. The 2026-09-11 review found "do you
+#: fix broken screens", "could you add a chatbot to my site", "when am i billed" and
+#: "how do i complain about a doctor" passing, each adding a model call of up to 4s
+#: before the name flow, the router and the answer cache.
+_BREAKAGE_RE = re.compile(r"\b" + _BREAKAGE)
+#: A request to change something: "can you upgrade our plan", "please unlock my account".
+_CHANGE_REQUEST_RE = re.compile(
+    r"\b(?:please|pls|plz|kindly|can\s+you|could\s+you|would\s+you|need\s+you\s+to|want\s+you\s+to)\s+"
+    r"(?:\w+\s+){0,2}?(?:change|update|upgrade|downgrade|add|remove|transfer|reset|re-?activate|unlock|unblock"
+    r"|restore|recover|renew|extend|pause|freeze|suspend|merge|correct|refund|cancel|raise|escalate)\w*\s+"
+    r"(?:\w+\s+){0,3}?(?:my|our)\b"
+)
+_BILLED_RE = re.compile(r"\b" + _BILLED)
+_COMPLAIN_VERB_RE = re.compile(r"\bcomplain(?:s|ed|ing)?\b")
+#: Something the visitor already has with the business, beyond the relationship
+#: families above that pass on their own: "our portal", "my account", "a contract
+#: with you", "account manager", "ticket".
+_ENGAGEMENT_RE = re.compile(
+    r"\b(?:(?:our|my)\s+(?:\w+\s+)?(?:portals?|dashboards?|instances?|workspaces?|accounts?|subscriptions?"
+    r"|contracts?|plans?|memberships?|licen[cs]es?|retainers?)"
+    r"|(?:subscriptions?|contracts?|plans?|accounts?|agreements?|retainers?)\s+with\s+(?:you|your|u)"
+    r"|account\s+managers?|tickets?)\b"
+)
+
+
+def _passes_with_engagement(text: str) -> bool:
+    """Whether a word a prospect uses as often as a customer passes the vocabulary check.
+
+    "broken", "crashed" and a change request need an engagement in the message.
+    A bare "charged" near the visitor, or "complain", needs an engagement or a
+    clause that does not open as a question: "why was i charged twice" passes,
+    "when am i billed" does not.
+    """
+    breakage_or_request = _BREAKAGE_RE.search(text) is not None or _CHANGE_REQUEST_RE.search(text) is not None
+    billed = _anchor_has_context(text, _BILLED_RE, _FIRST_PERSON_NEAR_RE)
+    complains = _COMPLAIN_VERB_RE.search(text) is not None
+    if not (breakage_or_request or billed or complains):
+        return False
+    if _ENGAGEMENT_RE.search(text) is not None:
+        return True
+    return (billed and _statement_matches(text, _BILLED_RE)) or (
+        complains and _statement_matches(text, _COMPLAIN_VERB_RE)
+    )
+
 
 def _fold(question: str) -> str:
     """Lowercase, with "İ" folded to "i" first: it lowercases to "i" plus a
@@ -291,14 +345,17 @@ def might_be_support_request(question: object) -> bool:
     Pure and linear. A question about support plans, SLAs or the refund policy
     with no relationship, failure or demand in it ("do you offer 24/7 support?",
     "what is your refund policy") does not pass, and neither does a plain how-to
-    question ("how do I reset my password").
+    question ("how do I reset my password"), and neither does a prospect's
+    "do you fix broken screens" (see ``_passes_with_engagement``).
     """
     if not isinstance(question, str) or not question.strip():
         return False
     text = _fold(question)
     if _STANDALONE_RE.search(text) is not None:
         return True
-    return any(_anchor_has_context(text, anchor, context) for anchor, context in _ANCHORED_FAMILIES)
+    if any(_anchor_has_context(text, anchor, context) for anchor, context in _ANCHORED_FAMILIES):
+        return True
+    return _passes_with_engagement(text)
 
 
 # ── Stage 2: the classifier ───────────────────────────────────────────────────
@@ -465,6 +522,19 @@ _UNRESPONSIVE = (
     r"(?:" + _NOT + r"\s+(?:been\s+|even\s+)?(?:respond\w*|repl\w*|answer\w*|get\w*\s+back|got\s+back|pick\w*\s+up"
     r"|return\w*)|unresponsive|ignor\w*|no\s+(?:response|reply|answer|update))"
 )
+#: After a refund or a cancellation, "with hubspot" or "from my airline" names another
+#: business's contract or money. "with you", "with immediate effect" and "from next
+#: month" do not.
+_NOT_A_THIRD_PARTY = (
+    r"(?!\s+(?:with|from)\s+(?!(?:(?:you|your|yours|u|ur|us|this|today|tomorrow|now|next|immediate|immediately"
+    r"|effect|end|the\s+(?:next|end|start|date))\b|\d)))"
+)
+#: A prospect moving their business here. "we moved to your enterprise plan" is a
+#: customer, so the past tense does not count.
+_SWITCHING_TO_YOU_RE = re.compile(
+    r"\b(?:switch|switching|move|moving|migrate|migrating|shift|shifting)\s+(?:over\s+|across\s+)?(?:to|with)\s+"
+    r"(?:you|your|u)\b"
+)
 
 _FALLBACK_RULES = tuple(
     re.compile(pattern)
@@ -498,10 +568,10 @@ _FALLBACK_RULES = tuple(
         r"(?:matrix|contacts?|path|list|details|e-?mail|number|chain|point)\b",
         # Money back: "want my money back", "i want a refund", "you charged us twice".
         r"\b(?:want|need|demand|expect|give|get|return|refund|send)\s+(?:me\s+|us\s+)?(?:my|our|the)\s+(?:\w+\s+)?"
-        r"money\s+back\b",
+        r"money\s+back\b" + _NOT_A_THIRD_PARTY,
         r"\b(?:i|we)(?:['’]d|\s+(?:would|really|just))?\s+(?:like|want|need|demand|expect|request|am\s+requesting"
         r"|are\s+requesting|am\s+asking\s+for|are\s+asking\s+for)\s+(?:to\s+(?:get|have|receive|claim)\s+)?"
-        r"(?:(?:an?|my|our|the|full|immediate)\s+){0,3}refund\b",
+        r"(?:(?:an?|my|our|the|full|immediate)\s+){0,3}refund\b" + _NOT_A_THIRD_PARTY,
         r"\brefund\s+(?:me|us|my\s+money|our\s+money)\b",
         r"\b(?:charged|billed|debited|deducted)\s+(?:me\s+|us\s+)?(?:twice|two\s+times|double|again\s+after"
         r"|after\s+(?:i|we)\s+(?:had\s+)?cancel\w*)\b",
@@ -509,9 +579,11 @@ _FALLBACK_RULES = tuple(
         # A cancellation: "i want to cancel my subscription", "please cancel our contract".
         r"\b(?:i|we)(?:['’]d|\s+(?:would|really|just))?\s+(?:like|want|need|wish|have\s+decided|decided|am\s+going"
         r"|are\s+going)\s+to\s+(?:cancel|terminate|end|discontinue|stop)\s+(?:my|our|the|this)\s+(?:\w+\s+)?"
-        r"(?:subscriptions?|contracts?|services?|plans?|memberships?|accounts?|retainers?|agreements?|orders?)\b",
+        r"(?:subscriptions?|contracts?|services?|plans?|memberships?|accounts?|retainers?|agreements?|orders?)\b"
+        + _NOT_A_THIRD_PARTY,
         r"\b(?:please|pls|plz|kindly)\s+(?:\w+\s+)?(?:cancel|terminate|close|end)\s+(?:my|our)\s+(?:\w+\s+)?"
-        r"(?:subscriptions?|contracts?|services?|plans?|memberships?|accounts?|retainers?|agreements?|orders?)\b",
+        r"(?:subscriptions?|contracts?|services?|plans?|memberships?|accounts?|retainers?|agreements?|orders?)\b"
+        + _NOT_A_THIRD_PARTY,
     )
 )
 
@@ -533,6 +605,8 @@ _FALLBACK_PROBLEM_RE = re.compile(
     + r"|"
     + _FAILURE
     + r"|"
+    + _BREAKAGE
+    + r"|"
     + _UNRESPONSIVE
     + r"|money\s+back|refund|not\s+(?:at\s+all\s+)?(?:happy|satisfied)|unhappy|dissatisf\w*|terrible|worst)"
 )
@@ -549,10 +623,11 @@ _SENTENCE_RE = re.compile(r"[^.?\n]+")
 #: Where a clause ends inside a sentence.
 _CLAUSE_BREAK_RE = re.compile(r"[,;:]|\b(?:but|so|and|because)\b")
 
-#: A job seeker or a vendor: an unanswered application or proposal is not a customer's problem.
+#: A job seeker, someone talking about their career, or a vendor: an unanswered
+#: application or proposal, or "i want to escalate my career", is not a customer's problem.
 _NOT_A_CUSTOMER_RE = re.compile(
     r"\b(?:applied\s+(?:for|to)|(?:job|my|our)\s+applications?|interview\w*|vacanc\w*|hiring|internships?|resumes?"
-    r"|\bcv\b|recruit\w*"
+    r"|\bcv\b|recruit\w*|careers?\b"
     r"|(?:we\s+are|i\s+am|i['’]m|im|we['’]re)\s+(?:an?\s+)?(?:\w+\s+)?(?:vendors?|suppliers?|agency|reseller"
     r"|distributor|freelancer)|become\s+(?:your|a)\s+(?:vendor|supplier|partner)|(?:our|my)\s+(?:proposal|quotation"
     r"|pitch)|supplied\b|you\s+(?:still\s+)?owe\b|(?:invoice|payment)\s+(?:to\s+you\s+)?(?:is\s+)?still\s+unpaid)"
@@ -604,7 +679,7 @@ def _fallback_is_support_request(question: object) -> bool:
     if not isinstance(question, str) or not question.strip():
         return False
     text = _fold(question)
-    if _NOT_A_CUSTOMER_RE.search(text) or _SECURITY_WORD_RE.search(text):
+    if _NOT_A_CUSTOMER_RE.search(text) or _SECURITY_WORD_RE.search(text) or _SWITCHING_TO_YOU_RE.search(text):
         return False
     if any(_statement_matches(text, rule) for rule in _FALLBACK_RULES):
         return True
@@ -632,6 +707,8 @@ _ASKER_RE = re.compile(
 _PROBLEM_STATE_RE = re.compile(
     r"\b(?:"
     + _FAILURE
+    + r"|"
+    + _BREAKAGE
     + r"|"
     + "|".join(_STANDALONE_FAMILIES[3])
     + r"|(?:portals?|dashboards?|sites?|web\s*sites?|apps?|platforms?|services?|systems?|servers?|apis?"
