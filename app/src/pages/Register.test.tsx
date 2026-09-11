@@ -2,15 +2,23 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readSignupIntent } from '../lib/analytics/signupIntent';
+import { dataLayerEvents } from '../test/dataLayerEvents';
 import Register from './Register';
 
 const registerClient = vi.fn();
 const detectCountry = vi.fn();
+const googleAuthButton = vi.fn();
 vi.mock('../services/api', () => ({
   registerClient: (...args: unknown[]) => registerClient(...args),
   detectCountry: (...args: unknown[]) => detectCountry(...args),
 }));
-vi.mock('./auth/GoogleAuthButton', () => ({ GoogleAuthButton: () => null }));
+vi.mock('./auth/GoogleAuthButton', () => ({
+  GoogleAuthButton: (props: Record<string, unknown>) => {
+    googleAuthButton(props);
+    return null;
+  },
+}));
 
 function renderRegister(entry = '/register') {
   const client = new QueryClient({
@@ -55,8 +63,64 @@ describe('Register', () => {
   afterEach(() => {
     registerClient.mockReset();
     detectCountry.mockReset();
+    googleAuthButton.mockReset();
     localStorage.clear();
     sessionStorage.clear();
+    delete window.dataLayer;
+  });
+
+  it('keeps the plan chosen on the pricing page until the account is confirmed', async () => {
+    // Confirmation happens a screen later, or after a round trip to Google, so
+    // the choice has to outlive this URL.
+    renderRegister('/register?plan=standard&billing=annual');
+
+    await waitFor(() =>
+      expect(readSignupIntent()).toEqual({ planId: 'standard', billingPeriod: 'annual' }),
+    );
+  });
+
+  it('does not report a registration before the address is verified', async () => {
+    registerClient.mockResolvedValue({
+      access_token: 'k',
+      name: 'Priya Sharma',
+      client_id: 12,
+      is_verified: false,
+    });
+
+    renderRegister('/register?plan=starter');
+    await fillForm();
+    fireEvent.click(screen.getByRole('button', { name: /create account/i }));
+
+    expect(await screen.findByText('VERIFY')).toBeInTheDocument();
+    expect(dataLayerEvents('registration_success')).toEqual([]);
+  });
+
+  it('reports a registration at once when the server has already verified the address', async () => {
+    registerClient.mockResolvedValue({
+      access_token: 'k',
+      name: 'Priya Sharma',
+      client_id: 12,
+      is_verified: true,
+    });
+
+    renderRegister('/register?plan=starter');
+    await fillForm();
+    fireEvent.click(screen.getByRole('button', { name: /create account/i }));
+
+    expect(await screen.findByText('HOME')).toBeInTheDocument();
+    expect(dataLayerEvents('registration_success')).toEqual([
+      { event: 'registration_success', method: 'email', plan_id: 'starter' },
+    ]);
+  });
+
+  it('carries the affiliate code into a Google sign-up as well', () => {
+    // The promo code was forwarded and the referral code was not, so an
+    // affiliate's visitor who chose Google arrived unattributed.
+    renderRegister('/register?ref=LAUNCH25&code=LAUNCH50');
+
+    expect(googleAuthButton).toHaveBeenLastCalledWith(
+      expect.objectContaining({ promoCode: 'LAUNCH50', referralCode: 'LAUNCH25' }),
+    );
   });
 
   it('asks for four things: name, email, country, password', () => {

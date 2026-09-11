@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Alert, Button, Spinner } from '../ui';
 import { AuthShell } from './auth/AuthShell';
 import { getCurrentUser } from '../services/api';
+import { trackRegistrationSuccess } from '../lib/analytics/registration';
 import { clearAuthStorage, setAuthBundle, setAuthItem } from '../utils/authStorage';
 import { keys } from '../query/keys';
 import { safeRelativePath } from './auth/authFlow';
@@ -96,6 +97,7 @@ export default function OAuthCallback() {
   const [callback] = useState<Callback>(() => classifyCallback(searchParams));
   const [slow, setSlow] = useState(false);
   const scrubbed = useRef(false);
+  const reportedRegistration = useRef(false);
 
   useEffect(() => {
     if (callback.kind !== 'working' || scrubbed.current) return;
@@ -147,6 +149,18 @@ export default function OAuthCallback() {
     if (profile.company_name !== undefined) setAuthItem('company_name', profile.company_name ?? '');
     setAuthItem('is_superadmin', profile.is_superadmin ? 'true' : 'false');
     if (profile.website !== undefined) setAuthItem('company_website', profile.website ?? '');
+
+    // `new=1` is the API's own answer (`_resolve_client_for_profile`), and a
+    // Google account is verified at source, so this is the same moment an
+    // email signup reaches on the verify screen. The ref holds it to one report
+    // when StrictMode or a refetch of `/auth/me` re-runs this effect.
+    if (callback.isNew && !reportedRegistration.current) {
+      reportedRegistration.current = true;
+      trackRegistrationSuccess({
+        clientId: typeof profile.id === 'number' ? profile.id : null,
+        method: 'google',
+      });
+    }
 
     // A partner who is not a customer has no console to land in.
     // Otherwise: the deep link, or Home. Home is where a brand new account

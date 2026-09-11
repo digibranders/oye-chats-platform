@@ -2,6 +2,8 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { captureSignupIntent } from '../lib/analytics/signupIntent';
+import { dataLayerEvents } from '../test/dataLayerEvents';
 import OAuthCallback from './OAuthCallback';
 
 const getCurrentUser = vi.fn();
@@ -33,6 +35,33 @@ describe('OAuthCallback', () => {
     localStorage.clear();
     sessionStorage.clear();
     window.location.hash = '';
+    delete window.dataLayer;
+  });
+
+  it('reports a brand new Google account as a registration, with the plan it came for', async () => {
+    captureSignupIntent(new URLSearchParams('plan=professional&billing=monthly'));
+    getCurrentUser.mockResolvedValue({ id: 9, name: 'New', bot_count: 0 });
+
+    renderCallback('/auth/callback?new=1');
+
+    expect(await screen.findByText('HOME')).toBeInTheDocument();
+    expect(dataLayerEvents('registration_success')).toEqual([
+      {
+        event: 'registration_success',
+        method: 'google',
+        plan_id: 'professional',
+        billing_period: 'monthly',
+      },
+    ]);
+  });
+
+  it('does not report a returning Google sign-in as a registration', async () => {
+    getCurrentUser.mockResolvedValue({ id: 4, name: 'Priya', bot_count: 3 });
+
+    renderCallback('/auth/callback?new=0');
+
+    expect(await screen.findByText('HOME')).toBeInTheDocument();
+    expect(dataLayerEvents('registration_success')).toEqual([]);
   });
 
   it('signs a returning customer in and lands them home', async () => {

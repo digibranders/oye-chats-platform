@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { MailCheck, RotateCcw } from 'lucide-react';
 import { Alert, Button, Spinner, buttonClass } from '../ui';
 import { getCurrentUser, resendVerification, verifyEmail } from '../services/api';
+import { trackRegistrationSuccess } from '../lib/analytics/registration';
 import {
   clearAuthStorage,
   getAuthItem,
@@ -103,7 +104,13 @@ export default function VerifyEmail() {
     // Drop any standing "new code sent" notice: an expired-code error read as a
     // contradiction sitting directly underneath it.
     onMutate: () => resend.reset(),
-    onSuccess: release,
+    onSuccess: () => {
+      // Here and not inside `release()`: the effect below also releases a
+      // session the server had already verified, and that account was
+      // registered long before this screen rendered.
+      trackRegistrationSuccess({ clientId: getAuthItem('admin_client_id'), method: 'email' });
+      release();
+    },
     onError: () => {
       setCode('');
       lastSubmitted.current = '';
