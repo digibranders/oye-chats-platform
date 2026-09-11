@@ -46,12 +46,15 @@ def _set_server_default(seconds: int) -> None:
 
 
 def upgrade() -> None:
-    # SET DEFAULT is a catalog change and the UPDATE takes only row locks, but a
-    # long transaction holding the table could still queue this behind it. Fail
-    # fast rather than stall the deploy.
+    # The UPDATE takes row locks. SET DEFAULT only changes the catalog, but it
+    # takes an ACCESS EXCLUSIVE lock on bots, which blocks every read and write of
+    # the table and is held until the transaction commits. So the UPDATE runs
+    # first and the exclusive lock is taken last, for as short a time as
+    # possible. Either lock can queue behind a long transaction on the table:
+    # fail fast rather than stall the deploy, and every read waiting behind it.
     op.execute("SET LOCAL lock_timeout = '5s'")
-    _set_server_default(NEW_DEFAULT_SECONDS)
     op.execute(LIFT_OLD_DEFAULT_SQL)
+    _set_server_default(NEW_DEFAULT_SECONDS)
 
 
 def downgrade() -> None:
