@@ -27,8 +27,9 @@ from __future__ import annotations
 
 import os
 from contextlib import contextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi import FastAPI
@@ -40,6 +41,21 @@ pytestmark = pytest.mark.skipif(
     not os.getenv("DB_URL"),
     reason="BL-3 resume tests need a reachable Postgres at DB_URL",
 )
+
+# Customer-facing billing dates are IST calendar dates. Spelled out here rather
+# than imported from ``app.core.dates``, so a test cannot pass by sharing the
+# code's mistake.
+IST = ZoneInfo("Asia/Kolkata")
+
+
+def _ist_small_hours(days_ahead: int) -> datetime:
+    """01:30 IST, ``days_ahead`` days from today: 20:00 UTC the day before.
+
+    Its IST and UTC calendar dates always differ, so every run covers the case
+    that used to fail only when the suite ran between 00:00 and 05:30 IST.
+    """
+    day = (datetime.now(IST) + timedelta(days=days_ahead)).date()
+    return datetime.combine(day, time(1, 30), tzinfo=IST)
 
 
 # ── Builders ──────────────────────────────────────────────────────────────────
@@ -358,7 +374,7 @@ def test_resume_after_sweep_defers_first_charge_to_the_paid_period_end(db):
     """
     client = _make_client(db, email="bl3-startat@e.com")
     plan = _make_plan(db, slug="std-bl3-startat")
-    paid_through = datetime.now(UTC) + timedelta(days=26)
+    paid_through = _ist_small_hours(26)
     sub = _make_sub(
         db,
         client,
@@ -387,10 +403,11 @@ def test_resume_after_sweep_defers_first_charge_to_the_paid_period_end(db):
     assert kwargs["start_at"] == int(paid_through.timestamp())
 
     body = resp.json()
-    assert body["first_charge_at"] == paid_through.date().isoformat()
+    first_charge_ist = paid_through.astimezone(IST).date().isoformat()
+    assert body["first_charge_at"] == first_charge_ist
     # The customer is told when they'll actually be billed, not just that a
     # mandate is needed.
-    assert paid_through.date().isoformat() in body["message"]
+    assert first_charge_ist in body["message"]
 
     db.refresh(sub)
     assert sub.upgrade_credit_pending_cents == 0
@@ -482,7 +499,7 @@ def test_resume_before_the_sweep_clears_the_flag_without_any_checkout(db):
     be a flag flip, no fresh subscription, no checkout, no payment."""
     client = _make_client(db, email="bl3-live@e.com")
     plan = _make_plan(db, slug="std-bl3-live")
-    period_end = datetime.now(UTC) + timedelta(days=20)
+    period_end = _ist_small_hours(20)
     sub = _make_sub(
         db,
         client,
@@ -508,7 +525,7 @@ def test_resume_before_the_sweep_clears_the_flag_without_any_checkout(db):
     body = resp.json()
     assert body["mandate_action"] == "none"
     assert body["status"] == "resumed"
-    assert body["renews_on"] == period_end.date().isoformat()
+    assert body["renews_on"] == period_end.astimezone(IST).date().isoformat()
 
     live.assert_called_once_with("sub_live_bl3")
     create_sub.assert_not_called()
