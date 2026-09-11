@@ -26,7 +26,7 @@ def _bot(**overrides):
         client_id=overrides.get("client_id", 1),
         live_chat_enabled=overrides.get("live_chat_enabled", True),
         business_hours=overrides.get("business_hours"),
-        live_chat_queue_timeout_seconds=overrides.get("queue_timeout", 20),
+        live_chat_queue_timeout_seconds=overrides.get("queue_timeout", 60),
         live_chat_max_queue_size=overrides.get("max_queue", 10),
     )
 
@@ -134,8 +134,8 @@ def test_returns_queue_full_when_queue_at_capacity(_mock_presence):
 @patch("app.services.live_chat_availability_service.presence.get_online_operator_ids", return_value={1, 2})
 def test_returns_all_busy_when_operators_at_capacity(_mock_ids, _mock_capacity):
     """Operators online but all at ``max_concurrent_chats`` → visitor enters
-    queue with the 20s timeout so the widget shows the WAIT screen."""
-    bot = _bot(queue_timeout=20, max_queue=10)
+    queue with the bot's timeout so the widget shows the WAIT screen."""
+    bot = _bot(queue_timeout=45, max_queue=10)
     # queue_size 2 means new visitor would be position 3
     session = _mock_session_with_operator_count_and_queue_size(operator_count=2, queue_size=2)
 
@@ -144,8 +144,21 @@ def test_returns_all_busy_when_operators_at_capacity(_mock_ids, _mock_capacity):
     assert result.state == LiveChatState.ALL_BUSY
     assert result.suggested_action == SuggestedAction.WAIT
     assert result.queue_position == 3
-    assert result.queue_timeout_seconds == 20
+    assert result.queue_timeout_seconds == 45
     assert result.online_operator_count == 2
+
+
+@patch("app.services.live_chat_availability_service.presence.get_online_operators_with_capacity", return_value=[])
+@patch("app.services.live_chat_availability_service.presence.get_online_operator_ids", return_value={1, 2})
+def test_a_bot_without_a_queue_timeout_waits_the_default_sixty_seconds(_mock_ids, _mock_capacity):
+    """The fallback matches the ``Bot.live_chat_queue_timeout_seconds`` column default."""
+    bot = _bot(queue_timeout=None, max_queue=10)
+    session = _mock_session_with_operator_count_and_queue_size(operator_count=2, queue_size=0)
+
+    result = _compute(bot, session)
+
+    assert result.state == LiveChatState.ALL_BUSY
+    assert result.queue_timeout_seconds == 60
 
 
 # ── 7. AVAILABLE ───────────────────────────────────────────────────────────

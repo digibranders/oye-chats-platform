@@ -141,7 +141,7 @@ async def test_urgent_turn_is_fixed_wording_with_the_form_and_one_alert(db, monk
             "session_id": "urgent-1",
         }
     ]
-    assert _push_jobs(alerts) == [("urgent-1", bot.id, None, "Eva", "URGENT: active incident reported in chat", 20)]
+    assert _push_jobs(alerts) == [("urgent-1", bot.id, None, "Eva", "URGENT: active incident reported in chat", 60)]
     shown = _cards_shown(db, "urgent-1")
     assert shown.get("urgent_notified") is True
     assert shown.get("handoff_offered") is True

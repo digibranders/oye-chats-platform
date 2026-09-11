@@ -1294,7 +1294,7 @@ async def request_handoff(request: HandoffRequest, http_request: Request, bot: B
         # Cache queue timeout for the response. Read BEFORE the session
         # closes so the value travels out cleanly. Needed on every call,
         # deduped or not, because the widget uses it to time its own fallback.
-        queue_timeout = db_bot.live_chat_queue_timeout_seconds or 20
+        queue_timeout = db_bot.live_chat_queue_timeout_seconds or 60
 
         if not may_notify:
             logger.info(

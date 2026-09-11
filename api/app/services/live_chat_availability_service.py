@@ -20,7 +20,8 @@ The seven possible outcomes, in priority order (first matching wins):
 5. ``QUEUE_FULL``. Operators online but queue is at ``max_queue_size``.
    Widget shows offline form + "very busy" copy.
 6. ``ALL_BUSY``. Every online operator is at ``max_concurrent_chats``.
-   Widget enters queue UI with progressive messaging + 20s timeout to form.
+   Widget enters queue UI with progressive messaging + the bot's queue
+   timeout (60s by default) before it offers the form.
 7. ``AVAILABLE``, at least one operator can take the chat now. Routes.
 
 ## Why a state machine, not nested ifs
@@ -282,7 +283,7 @@ def _compute(bot: Bot, db_session: Session, *, department_id: int | None = None)
             message_key="all_busy",
             queue_position=current_queue_size + 1,
             eta_seconds=_estimate_wait_seconds(current_queue_size + 1, online_ids, db_session),
-            queue_timeout_seconds=bot.live_chat_queue_timeout_seconds or 20,
+            queue_timeout_seconds=bot.live_chat_queue_timeout_seconds or 60,
             online_operator_count=len(online_ids),
         )
 

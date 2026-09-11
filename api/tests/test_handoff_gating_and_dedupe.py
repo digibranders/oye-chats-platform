@@ -69,7 +69,7 @@ class Harness:
             client_id=1,
             name="Bot",
             operator_timeout_seconds=120,
-            live_chat_queue_timeout_seconds=20,
+            live_chat_queue_timeout_seconds=60,
             email_on_handoff=True,
             reply_to_email=None,
         )
@@ -171,6 +171,19 @@ def test_a_reachable_workspace_is_still_promoted(harness, monkeypatch, state):
     assert resp.json()["suggested_action"] == "wait"
     assert harness.chat_session.status == "waiting"
     assert [name for name, *_ in harness.enqueued] == ["task_dispatch_handoff_push", "task_handoff_escalation"]
+
+
+def test_a_bot_without_a_queue_timeout_waits_the_default_sixty_seconds(harness, monkeypatch):
+    """The fallback matches the ``Bot.live_chat_queue_timeout_seconds`` column default,
+    for the widget's own timer and for the push the team gets."""
+    harness.db_bot.live_chat_queue_timeout_seconds = None
+    verdict = _verdict(availsvc.LiveChatState.AVAILABLE, availsvc.SuggestedAction.ROUTE)
+
+    body = _post(harness, monkeypatch, verdict).json()
+
+    assert body["queue_timeout_seconds"] == 60
+    push = next(job for job in harness.enqueued if job[0] == "task_dispatch_handoff_push")
+    assert push[-1] == 60
 
 
 # ── Defect 5: the 15s re-poll must not re-fire the fan-out ───────────────────
