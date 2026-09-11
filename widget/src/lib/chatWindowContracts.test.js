@@ -203,3 +203,21 @@ test('a turn that queued no lead scoring does not open a new quote-poll window',
     );
 });
 
+// ── W8: a reply the server rewrote shows the rewrite ─────────────────────────
+
+test('the final frame replaces the streamed bubble with answer_override', () => {
+    // A prompt leak, a moderation hit or the price guard rewrites the persisted
+    // answer after part of it streamed. The bubble kept "It starts at " plus the
+    // replacement while the transcript held only the replacement.
+    const handler = CHAT_WINDOW.slice(CHAT_WINDOW.indexOf('onFinalMetadata: async (finalMeta) => {'));
+    assert.match(CHAT_WINDOW, /import \{ applyAnswerOverride \} from '\.\.\/lib\/answerOverride\.js';/);
+    assert.match(
+        handler,
+        /setMessages\(prev => applyAnswerOverride\(prev, placeholderId, finalMeta\)\);/,
+        'the override never reaches the streamed bubble',
+    );
+    assert.ok(
+        handler.indexOf('applyAnswerOverride(prev') < handler.indexOf('finalMeta.message_id && placeholderId !== null'),
+        'the text must be replaced before the placeholder id is swapped for the message id',
+    );
+});

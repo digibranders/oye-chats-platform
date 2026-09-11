@@ -18,6 +18,7 @@ import {
     SYSTEM_MSG,
     TRAILING_QUESTION_TAIL_RE,
 } from '../lib/chatWindowHelpers.js';
+import { applyAnswerOverride } from '../lib/answerOverride.js';
 
 import { themeConfigs } from './themeConfigs';
 import {
@@ -1552,6 +1553,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                         setMessages(prev => prev.map(msg =>
                             msg.id === placeholderId ? { ...msg, text: msg.text + remaining } : msg
                         ));
+                    }
+
+                    // The server rewrote this reply after part of it streamed (a
+                    // prompt leak, a moderation hit, or a price figure on a bot
+                    // whose pricing goes to the team). Show what the transcript
+                    // holds instead of the fragment plus the replacement.
+                    // Every such path streams the replacement too, so the bubble exists.
+                    if (placeholderId !== null) {
+                        setMessages(prev => applyAnswerOverride(prev, placeholderId, finalMeta));
                     }
 
                     if (finalMeta.message_id && placeholderId !== null) {
