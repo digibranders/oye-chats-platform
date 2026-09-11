@@ -19,8 +19,8 @@ from app.services.price_guard import PriceStreamGuard, answer_trips_price_guard,
 from app.services.pricing_gate import _CURRENCY_AMOUNT_RE, is_pricing_question, question_has_fuzzy_price_word
 
 
-def _feed(chunks, *, signal=False):
-    guard = PriceStreamGuard(signal=signal)
+def _feed(chunks, *, signal=False, company_name=None):
+    guard = PriceStreamGuard(signal=signal, company_name=company_name)
     out = "".join(guard.feed(c) for c in chunks)
     out += guard.flush()
     return guard, out
@@ -62,14 +62,14 @@ def test_ordinary_numbers_pass_through_intact(chunks, signal):
 #: reach the visitor, however the answer is chunked.
 PRICED_FIGURES = [
     ("SOC as a Service starts at ₹2,66,250 per month.", "₹"),
-    ("The fee is ₹ 50,000 in total.", "₹"),
+    ("Our fee is ₹ 50,000 in total.", "₹"),
     ("Plans from $499 a month.", "$"),
     ("About €1.200 per seat.", "€"),
     ("Roughly £30 per user.", "£"),
     ("It is Rs. 5,000 per endpoint.", "Rs"),
     ("Plans from USD 499 monthly.", "USD"),
-    ("Priced at EUR 99 flat.", "EUR"),
-    ("Priced at GBP 80 flat.", "GBP"),
+    ("We priced it at EUR 99 flat.", "EUR"),
+    ("Our price is GBP 80 flat.", "GBP"),
     ("Billed at 1,20,000/year.", "1,20,000"),
     ("Billed at 1,20,000 / yr.", "1,20,000"),
     ("It is 45,000 per user.", "45,000"),
@@ -194,10 +194,10 @@ def _splits(text):
     yield list(text)
 
 
-def _assert_nothing_from_the_figure_is_emitted(text, figure_start, *, signal):
+def _assert_nothing_from_the_figure_is_emitted(text, figure_start, *, signal, company_name=None, splits=None):
     cut = text.index(figure_start)
-    for chunks in _splits(text):
-        guard, out = _feed(chunks, signal=signal)
+    for chunks in (splits or _splits)(text):
+        guard, out = _feed(chunks, signal=signal, company_name=company_name)
         assert guard.tripped is True, chunks
         assert text.startswith(out), chunks
         assert len(out) <= cut, (chunks, out)
@@ -290,12 +290,13 @@ def test_a_price_word_before_the_figure_in_an_earlier_chunk_trips_it(chunks):
     [
         # "plan" that keeps going is "planet", not a price word.
         ["Our plan", "et team saved ₹50 lakh."],
-        # The price word is in the previous sentence.
-        ["Our plans are flexible. ", "Fines can reach €20 million."],
-        ["Our plans are flexible.", "\nFines can reach €20 million."],
+        # The price word is in the previous paragraph. (In the previous sentence of
+        # the same paragraph it opens a price context: see ``PRICE_LISTS``.)
+        ["Our pricing is simple. ", "\n\nFines can reach €20 million."],
+        ["Our pricing is simple.", "\n", "\n", "Fines can reach €20 million."],
     ],
 )
-def test_a_price_word_outside_the_figures_sentence_does_not_trip_it(chunks):
+def test_a_price_word_outside_the_figures_paragraph_does_not_trip_it(chunks):
     guard, out = _feed(chunks)
     assert guard.tripped is False
     assert out == "".join(chunks)
@@ -304,10 +305,11 @@ def test_a_price_word_outside_the_figures_sentence_does_not_trip_it(chunks):
 @pytest.mark.parametrize(
     "text",
     [
-        # The full stop in "Rs." does not end the sentence that named the price.
-        "The plan is priced in Rs. and the total comes to 2,66,250 rupees.",
+        # The full stop in "Rs." does not end the sentence whose "we" makes the fee
+        # the company's own.
+        "We work in Rs. and the fee comes to 2,66,250 rupees.",
         # Nor does a decimal point.
-        "The fee is 4.5 percent, which comes to 2,66,250 rupees.",
+        "We add 4.5 percent, so the fee comes to 2,66,250 rupees.",
     ],
 )
 def test_a_full_stop_inside_a_sentence_does_not_end_it(text):
@@ -438,7 +440,9 @@ def _characters_scanned(monkeypatch, answer):
 
 def test_a_long_answer_streamed_in_small_chunks_is_scanned_in_linear_time(monkeypatch):
     """Held figures included: the bare figures are held until their sentences end."""
-    paragraph = " ".join(ORDINARY + [text for text, _ in BARE_FIGURES])
+    # One paragraph per answer: "Up to 5 per user" opens a price context that would
+    # otherwise cover the bare figures after it.
+    paragraph = "\n\n".join(ORDINARY + [text for text, _ in BARE_FIGURES])
     short = _characters_scanned(monkeypatch, " ".join([paragraph] * 5))
     long = _characters_scanned(monkeypatch, " ".join([paragraph] * 20))
     assert long < 4.5 * short
@@ -485,6 +489,8 @@ def test_answer_trips_price_guard_reads_a_whole_answer():
         "what does it cost",
         "can I get a quote",
         "How much for 50 people?",
+        # One letter short of "price" (approval review, 2026-09-11).
+        "pric",
     ],
 )
 def test_a_question_with_a_price_word_is_a_signal_typos_included(question):
@@ -498,7 +504,6 @@ def test_a_question_with_a_price_word_is_a_signal_typos_included(question):
         "and for 50 people?",
         "what places do you cover",
         "tell me about your team",
-        "pric",
         "",
         None,
     ],
@@ -549,3 +554,456 @@ def test_an_unusable_pricing_url_is_no_pricing_page(pricing_url):
 )
 def test_does_not_apply_where_prices_may_be_quoted_or_nothing_can_replace_them(over):
     assert _applies(**over) is False
+
+
+# Approval review, 2026-09-11: statutory and third-party fees still tripped, a
+# plan list whose price word sat outside the figure's sentence streamed in full,
+# and typo'd "how much" and "quote" questions gave no signal.
+
+
+def _chunked(text, size):
+    return [text[i : i + size] for i in range(0, len(text), size)]
+
+
+def _light_splits(text):
+    """The whole text, every two-way split, and fixed chunk sizes: for answers too long for ``_splits``."""
+    yield [text]
+    for i in range(1, len(text)):
+        yield [text[:i], text[i:]]
+    for size in (1, 2, 3, 5, 8, 13):
+        yield _chunked(text, size)
+
+
+#: Someone else's fee or price: a court, a registry, a university, a regulator. A
+#: fee or price word counts only as the company's own ("our", "we", the name).
+NOT_THE_COMPANYS_FEE = [
+    "For a money recovery suit of ₹10 lakh in Delhi, the court fee works out to roughly ₹12,000 under the Court Fees Act.",
+    "Filing a civil case in a US federal district court costs $405, which covers the $350 filing fee and a $55 administrative fee.",
+    "Registration charges are 1% of the property value, capped at ₹30,000 for properties in Mumbai.",
+    "The Chevening scholarship covers your tuition fees, a monthly stipend of around £1,400 and your return flights.",
+    "From April 2025, first-time buyers in England pay no Stamp Duty Land Tax on homes priced up to £300,000.",
+    "There is no court fee for filing a consumer complaint at the District Commission if the value of your claim is up to ₹5 lakh.",
+    "Under the Motor Vehicles Act, driving without a valid licence can attract a fine of up to ₹5,000.",
+    "Acmeville charges a toll of ₹150 per car.",
+]
+
+
+@pytest.mark.parametrize("text", NOT_THE_COMPANYS_FEE)
+def test_a_fee_or_price_word_that_is_not_the_companys_own_does_not_trip(text):
+    for size in (1, 4, len(text)):
+        guard, out = _feed(_chunked(text, size), company_name="Acme")
+        assert guard.tripped is False, size
+        assert out == text, size
+
+
+UNQUALIFIED_PRICE_WORDS = [
+    "plan", "plans", "package", "packages", "subscription", "subscriptions", "tier", "tiers", "edition",
+    "editions", "annual licence", "software license", "retainer", "quote", "quoted", "quotation", "invoice",
+    "invoices", "invoiced", "billed", "billing", "pricing",
+]  # fmt: skip
+QUALIFIED_PRICE_WORDS = [
+    "price", "prices", "priced", "fee", "fees", "charge", "charges", "charged", "tariff", "tariffs", "rate", "rates",
+    "cost", "costs",
+]  # fmt: skip
+
+
+@pytest.mark.parametrize("word", UNQUALIFIED_PRICE_WORDS)
+def test_a_plan_or_billing_word_makes_a_figure_the_companys_price_on_its_own(word):
+    text = f"The {word} comes to ₹5,000 for small teams."
+    _assert_nothing_from_the_figure_is_emitted(text, "₹", signal=False, splits=_light_splits)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "It starts at ₹5,000 for small teams.",
+        "Starting at ₹5,000 for small teams.",
+        "Starting from ₹5,000 for small teams.",
+        "It is ₹5,000 per user.",
+        "It is ₹5,000 per seat.",
+        "It is ₹5,000 per licence.",
+        "It is ₹5,000 per license.",
+        "It is ₹5,000 per device.",
+        "It is ₹5,000 per endpoint.",
+        "It is ₹5,000/user.",
+        "It is ₹5,000 / seat.",
+    ],
+)
+def test_a_starting_or_per_unit_phrase_makes_a_figure_the_companys_price_on_its_own(text):
+    _assert_nothing_from_the_figure_is_emitted(text, "₹", signal=False, splits=_light_splits)
+
+
+@pytest.mark.parametrize("word", QUALIFIED_PRICE_WORDS)
+def test_a_fee_or_price_word_alone_does_not_make_a_figure_the_companys_price(word):
+    text = f"The {word} comes to ₹5,000 for small teams."
+    guard, out = _feed(_chunked(text, 3))
+    assert guard.tripped is False
+    assert out == text
+
+
+@pytest.mark.parametrize("word", QUALIFIED_PRICE_WORDS)
+@pytest.mark.parametrize(
+    ("template", "company_name"),
+    [
+        ("Our {word} comes to ₹5,000 for small teams.", None),
+        ("The {word} we set comes to ₹5,000 for small teams.", None),
+        ("The {word} comes to ₹5,000 for small teams with us.", None),
+        ("We're told the {word} comes to ₹5,000 for small teams.", None),
+        ("The Acme Security {word} comes to ₹5,000 for small teams.", "Acme Security"),
+        ("The {word} at ACME   SECURITY comes to ₹5,000 for small teams.", "Acme Security"),
+    ],
+)
+def test_a_fee_or_price_word_with_our_we_us_or_the_company_name_trips(word, template, company_name):
+    text = template.format(word=word)
+    _assert_nothing_from_the_figure_is_emitted(text, "₹", signal=False, company_name=company_name, splits=_light_splits)
+
+
+@pytest.mark.parametrize(
+    ("text", "company_name"),
+    [
+        # "US" is the country, not "us".
+        ("In the US the filing fee is $350.", None),
+        # The name is matched as a whole phrase.
+        ("Acmeville fees are ₹5,000 a year.", "Acme"),
+        ("The Acme fee is ₹5,000 a year.", "Acme Security"),
+        # A name too short to be told from an ordinary word is not read.
+        ("A fee of ₹5,000 applies.", "A"),
+    ],
+)
+def test_a_marker_that_is_not_the_company_does_not_qualify_a_fee(text, company_name):
+    guard, out = _feed(_chunked(text, 2), company_name=company_name)
+    assert guard.tripped is False
+    assert out == text
+
+
+#: Price lists whose price word is outside the figure's sentence (review, 2026-09-11).
+PRICE_LISTS = [
+    ("We offer three plans:\n- Starter: ₹9,999/month\n- Growth: ₹24,999/month\n- Enterprise: custom", "₹"),
+    ("| Plan | Price |\n|---|---|\n| Starter | $49 |\n| Growth | $149 |", "$"),
+    ("Our pricing is simple. SOC as a Service is ₹2,66,250 a month for small teams.", "₹"),
+    ("Here are our SOC packages.\n\n**Essentials**: ₹1,20,000 a month\n**Advanced**: ₹2,66,250 a month", "₹"),
+    ("Pricing depends on endpoints. For 100 endpoints it is about $3,000 a month.", "$"),
+    # A table whose header names a cost or a fee, and no other price word.
+    ("| Service | Cost |\n|---|---|\n| SOC as a Service | ₹2,66,250 |", "₹"),
+    ("| Service | Monthly fee |\n| --- | ---: |\n| SOC | ₹2,66,250 |", "₹"),
+    # A heading, or a lead ending in a colon, carries the context across one blank line.
+    ("## Pricing\n\nSOC as a Service comes to ₹2,66,250 a month.", "₹"),
+    ("**Our plans**\n\nSOC as a Service comes to ₹2,66,250 a month.", "₹"),
+    ("These are the options we quote on:\n\n1. SOC as a Service, ₹2,66,250 a month", "₹"),
+    # A list item's indented continuation stays in the list.
+    ("Our plans:\n- Starter\n  ₹9,999 a month", "₹"),
+    # A plain line right after a priced line continues its paragraph, and so does
+    # the next sentence.
+    ("Our plans are flexible.\nFines can reach €20 million.", "€"),
+    ("Our plans are flexible. Fines can reach €20 million.", "€"),
+]
+
+
+@pytest.mark.parametrize(("text", "figure_start"), PRICE_LISTS)
+def test_a_figure_in_the_paragraph_list_or_table_of_a_price_word_trips(text, figure_start):
+    _assert_nothing_from_the_figure_is_emitted(text, figure_start, signal=False, splits=_light_splits)
+
+
+_LONG_PARAGRAPH = " It is flexible and it is reviewed every quarter." * 13
+
+
+#: The context has ended before the figure.
+CONTEXT_ENDED = [
+    # A blank line after a lead that neither ends in a colon, is a heading, nor names plans.
+    "Our pricing is simple.\n\nGDPR fines can reach €20 million.",
+    # Two blank lines, even after a lead.
+    "Here are our plans:\n\n\nGDPR fines can reach €20 million.",
+    # A plain line after a list.
+    "We offer three plans:\n- Starter\n- Growth\nGDPR fines can reach €20 million.",
+    # A plain line after a table.
+    "| Plan | Seats |\n|---|---|\n| Starter | 5 |\nGDPR fines can reach €20 million.",
+    # More than 600 characters after the last price word.
+    "Our pricing is simple." + _LONG_PARAGRAPH + " GDPR fines can reach €20 million.",
+    # A table header without a price word, and a data row that names a fee.
+    "| Law | Maximum |\n|---|---|\n| GDPR | €20 million |",
+]
+
+
+@pytest.mark.parametrize("text", CONTEXT_ENDED)
+def test_a_figure_after_the_price_context_ends_streams_intact(text):
+    for chunks in _light_splits(text):
+        guard, out = _feed(chunks)
+        assert guard.tripped is False, chunks
+        assert out == text, chunks
+
+
+def test_the_price_context_cap_counts_from_the_last_price_word():
+    text = "Our pricing is simple." + _LONG_PARAGRAPH + " Every plan is reviewed. GDPR fines can reach €20 million."
+    assert len(_LONG_PARAGRAPH) > 600
+    _assert_nothing_from_the_figure_is_emitted(text, "€", signal=False, splits=_light_splits)
+
+
+#: Answers for the whole-answer and stream comparison: every list above, and the
+#: held-sentence cap cases.
+_HOLD_CAP_TAIL = " and it rose again" * 20
+EQUIVALENCE = [
+    *(text for text, _ in PRICE_LISTS),
+    *CONTEXT_ENDED,
+    *NOT_THE_COMPANYS_FEE,
+    "Fines reach €20 million" + _HOLD_CAP_TAIL + " on the Pro plan.",
+    "Fines reach €20 million" + _HOLD_CAP_TAIL + " and €30 million on the Pro plan.",
+    "The fee is €20 million" + _HOLD_CAP_TAIL + " for us.",
+    "Fines reach €20 million" + " and more" * 30 + " on the Pro plan.",
+]
+
+
+@pytest.mark.parametrize("text", EQUIVALENCE)
+def test_the_whole_answer_decides_as_the_stream_does(text):
+    whole = answer_trips_price_guard(text, signal=False)
+    for chunks in _light_splits(text):
+        guard, out = _feed(chunks)
+        assert guard.tripped is whole, chunks
+        if not whole:
+            assert out == text, chunks
+
+
+def test_a_price_word_past_the_hold_cap_does_not_trip_the_held_figure():
+    """The whole answer tripped here while the stream released it (review, 2026-09-11)."""
+    text = "Fines reach €20 million" + _HOLD_CAP_TAIL + " on the Pro plan."
+    assert answer_trips_price_guard(text, signal=False) is False
+
+
+@pytest.mark.parametrize(
+    "abbreviation", ["p.m.", "p.a.", "a.m.", "approx.", "incl.", "excl.", "e.g.", "i.e.", "vs.", "no.", "nos.", "avg.",
+                     "min.", "max.", "est.", "Rs."]
+)  # fmt: skip
+def test_an_abbreviation_does_not_end_the_held_figures_sentence(abbreviation):
+    text = f"Fines reach €20 million {abbreviation} on the Pro plan."
+    _assert_nothing_from_the_figure_is_emitted(text, "€", signal=False, splits=_light_splits)
+
+
+_NEW_CODES = [
+    "AED", "SGD", "AUD", "CAD", "JPY", "CNY", "CHF", "NZD", "ZAR", "SAR", "QAR", "KWD", "MYR", "IDR", "PHP", "BDT",
+    "LKR", "NPR", "PKR", "HKD", "SEK", "NOK", "DKK", "THB", "VND", "KRW", "BRL", "MXN", "TRY", "EGP", "NGN", "KES",
+]  # fmt: skip
+
+
+@pytest.mark.parametrize("code", _NEW_CODES)
+def test_a_currency_code_before_an_amount_is_a_figure(code):
+    _assert_nothing_from_the_figure_is_emitted(f"It is {code} 4,500 flat.", code, signal=True, splits=_light_splits)
+    _assert_nothing_from_the_figure_is_emitted(f"It is {code} 49.99 flat.", code, signal=True, splits=_light_splits)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Try 3 options first.",
+        "try 20 times.",
+        "We support PHP 8.2 and PHP 7.4.",
+        "Use CAD 3 for drafting.",
+        "No 5 is out.",
+    ],
+)
+def test_a_word_or_version_that_looks_like_a_currency_code_is_not_a_figure(text):
+    guard, out = _feed(_chunked(text, 2), signal=True)
+    assert guard.tripped is False
+    assert out == text
+
+
+@pytest.mark.parametrize("text", ["It costs 49.99 per month.", "It is 19.99/mo.", "It is 4.50 per user per month."])
+def test_a_decimal_amount_billed_by_a_period_trips_a_signalled_guard(text):
+    figure_start = next(ch for ch in text if ch.isdigit())
+    _assert_nothing_from_the_figure_is_emitted(text, figure_start, signal=True, splits=_light_splits)
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "hw much",
+        "how mcuh for vapt",
+        "qoute for 3 sites",
+        "whats the cots of soc",
+        "hoe much is it",
+        "hwo much for 50 seats",
+        "hows much",
+        "how mch",
+        "how muhc",
+        "how mich for SOC",
+        "how mutch",
+        "how expensive is SOC",
+        "how pricey is it",
+        "what plans do you offer?",
+        "tell me about your SOC packages",
+        "which plan suits 100 endpoints?",
+        "do you have a subscription",
+        "which tier do I need",
+        "is there an enterprise edition",
+        "prcie for soc",
+        "cosst of vapt",
+        "raets for pen testing",
+        "fese for onboarding",
+        "quoet for 3 sites",
+        "what is the fee",
+        "whats the rate",
+        "our budget is limited",
+        "send the tariff",
+        "tarrif pls",
+        "tarif pls",
+        "pricelist",
+        "price list please",
+        "ratecard",
+        "rate card please",
+        "what are the charges",
+    ],
+)
+def test_a_typod_how_much_quote_or_plan_question_is_a_signal(question):
+    assert question_has_fuzzy_price_word(question) is True
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "how many clients do you have",
+        "what's your business continuity plan?",
+        "do you have an incident response plan",
+        "can you share an action plan",
+        "what do most clients use",
+        "is it quite secure",
+        "what dates are you open",
+        "where is your head office",
+        "do you host on AWS",
+        "I feel the dashboard is slow",
+        "what is the prime benefit",
+        "who won the prize",
+        "can you post a case study",
+        "is there a storage quota",
+        "what gates do you check",
+        "how long does onboarding take",
+        "what certifications do you hold",
+        "do you support SIEM integration",
+        "how does it work",
+        "what did we lose last year",
+    ],
+)
+def test_an_ordinary_question_is_no_signal(question):
+    assert question_has_fuzzy_price_word(question) is False
+
+
+@pytest.mark.parametrize("question", ["hw much", "qoute for 3 sites", "whats the cots of soc", "how mcuh for vapt"])
+def test_the_typo_signal_stays_out_of_the_gates_decision(question):
+    assert is_pricing_question(question) is False
+
+
+#: Amounts that are not the company's price, from the approval review's first set (2026-09-11).
+REVIEW_NOT_OWN_PRICES = [
+    "Under the CCPA, each intentional violation can draw a civil penalty of up to $7,500.",
+    "The Consumer Protection Authority can impose a penalty of up to ₹10 lakh on a misleading advertisement, rising to ₹50 lakh for repeat offences.",
+    "Under Singapore's PDPA, the regulator can fine an organisation up to S$1 million or 10% of its annual turnover in Singapore.",
+    "India's cybersecurity services market is projected to cross USD 7.6 billion by 2027.",
+    "The global SIEM market was valued at roughly $5.5 billion last year and is growing about 10% a year.",
+    "The Startup India Seed Fund Scheme gives up to ₹20 lakh as a grant for proof of concept and up to ₹50 lakh as debt for market entry.",
+    "The Chevening scholarship covers your tuition fees, a monthly stipend of around £1,400 and your return flights.",
+    "Eligible students receive ₹12,000 a year under the National Means-cum-Merit Scholarship.",
+    "With a net monthly salary of ₹75,000, you could be eligible for a home loan of about ₹55 lakh over 20 years, depending on your existing EMIs.",
+    "Personal loans are available from ₹50,000 up to ₹40 lakh, with tenures of 12 to 72 months.",
+    "For a two-wheeler loan we finance up to 95% of the on-road price, so a bike costing ₹1,20,000 needs a down payment of about ₹6,000.",
+    "The policy covers hospitalisation expenses up to ₹5 lakh a year for the whole family.",
+    "The personal accident rider pays ₹25 lakh to your nominee in case of accidental death.",
+    "Motor third-party cover has no upper limit for death or injury, and damage to third-party property is covered up to ₹7.5 lakh.",
+    "The government guideline value for residential sites in Whitefield is about ₹6,200 per sq ft.",
+    "Stamp duty in Mumbai is 6%, so a flat with an agreement value of ₹1.2 crore attracts about ₹7.2 lakh in stamp duty.",
+    "Registration charges are 1% of the property value, capped at ₹30,000 for properties in Mumbai.",
+    "For a money recovery suit of ₹10 lakh in Delhi, the court fee works out to roughly ₹12,000 under the Court Fees Act.",
+    "Filing a consumer complaint for claims up to ₹5 lakh is free at the District Commission.",
+    "Under PM-KISAN, eligible farmer families get ₹6,000 a year, paid in three instalments of ₹2,000.",
+    "The Atal Pension Yojana guarantees a monthly pension between ₹1,000 and ₹5,000 from age 60.",
+    "Under the PM Surya Ghar scheme, households get a subsidy of up to ₹78,000 for a 3 kW rooftop solar system.",
+    "Cash donations above ₹2,000 do not qualify for a deduction under Section 80G, so please donate online or by cheque.",
+    "For any single gift of $250 or more, the IRS requires a written acknowledgment from the charity.",
+    "The NotPetya attack in 2017 cost Maersk an estimated $300 million in lost business.",
+    "Equifax agreed to a settlement of up to $700 million after its 2017 breach.",
+    "Under the new regime for FY 2025-26, income from ₹4 lakh to ₹8 lakh is taxed at 5%, and a rebate makes income up to ₹12 lakh tax free.",
+    "TDS on rent applies once payments cross ₹50,000 a month.",
+    "Overtime is paid at twice the ordinary rate, so a worker earning ₹600 for an eight-hour day gets ₹150 for each overtime hour.",
+    "In Delhi the minimum wage for unskilled workers is ₹18,066 a month from October.",
+]
+
+#: The approval review's second, independent set (2026-09-11).
+REVIEW_BLIND_NOT_OWN_PRICES = [
+    "Under the Motor Vehicles (Amendment) Act, 2019, driving without a valid licence can attract a fine of up to ₹5,000. Repeat offences may also lead to other action by the traffic authorities.",
+    "The Central Consumer Protection Authority can impose a penalty of up to ₹10 lakh on a manufacturer or endorser for a false or misleading advertisement. For repeat offences this can go up to ₹50 lakh.",
+    "In the US, each email that violates the CAN-SPAM Act can lead to civil penalties of up to $53,088, so it's worth checking your unsubscribe links and sender details.",
+    "Most analyst reports put the global cloud computing market at over $600 billion in 2024, and it is still growing at double digits every year.",
+    "Several industry estimates project India's D2C market to reach about $60 billion by 2027, driven mainly by beauty, fashion and food brands.",
+    "According to Ecommerce Europe, B2C e-commerce turnover in Europe reached nearly €887 billion in 2023.",
+    "The INSPIRE Scholarship for Higher Education offers ₹80,000 per year to students pursuing a degree in the natural and basic sciences.",
+    "For the 2024 to 2025 award year, the maximum Federal Pell Grant is $7,395. Your actual award depends on your financial need and enrolment status.",
+    "Under the Startup India Seed Fund Scheme, eligible startups can receive a grant of up to ₹20 lakh for proof of concept and prototype development.",
+    "With a net monthly income of ₹50,000 and no existing EMIs, you may be eligible for a home loan of roughly ₹30 to 35 lakh. The final amount depends on your age, tenure and credit score.",
+    "To apply for our personal loan, you need a minimum net monthly salary of ₹25,000 if you live in a metro city.",
+    "Education loans of up to ₹7.5 lakh generally don't need any collateral, as they can be covered under the government's credit guarantee scheme.",
+    "Our term plan lets you choose a sum assured anywhere from ₹25 lakh up to ₹5 crore, subject to your income and medical underwriting.",
+    "Your family floater policy has a room rent limit of 1% of the sum insured, so on a ₹5 lakh cover you can claim up to ₹5,000 per day for the room.",
+    "Our Schengen travel insurance includes medical cover of €30,000, which is the minimum the embassies require for a visa application.",
+    "In Mumbai, stamp duty is 6% of the property value including the 1% metro cess, so a ₹1 crore flat would attract about ₹6 lakh.",
+    "In Delhi, stamp duty is 6% for men and 4% for women, so a ₹50 lakh flat registered in a woman's name attracts around ₹2 lakh.",
+    "From April 2025, first-time buyers in England pay no Stamp Duty Land Tax on homes priced up to £300,000.",
+    "There is no court fee for filing a consumer complaint at the District Commission if the value of your claim is up to ₹5 lakh.",
+    "Filing a civil case in a US federal district court costs $405, which covers the $350 filing fee and a $55 administrative fee.",
+    "Under PM-KISAN, eligible farmer families receive ₹6,000 a year, paid in three equal instalments of ₹2,000 directly to their bank account.",
+    "Ayushman Bharat PM-JAY gives eligible families free treatment cover of up to ₹5 lakh per family per year at empanelled hospitals.",
+    "If you want to claim the 80G tax deduction, please donate by UPI, cheque or bank transfer, because cash donations above ₹2,000 are not eligible.",
+    "If you're a UK taxpayer and tick the Gift Aid box, we can claim an extra 25p from HMRC for every £1 you donate, at no cost to you.",
+    "IBM's Cost of a Data Breach Report 2024 puts the global average cost of a data breach at USD 4.88 million, the highest figure the report has recorded.",
+    "The 2017 NotPetya attack caused an estimated $10 billion in damages worldwide, and Maersk alone reported losses of around $300 million.",
+    "Under the new tax regime for FY 2025-26, income up to ₹4 lakh is tax-free, and with the Section 87A rebate you pay no tax on income up to ₹12 lakh.",
+    "In the UK, the personal allowance is £12,570, and income between £12,571 and £50,270 is taxed at the basic rate of 20%.",
+    "The US federal minimum wage is $7.25 an hour, and non-exempt employees must be paid 1.5 times their regular rate for any hours over 40 in a week.",
+    "From April 2025, the UK National Living Wage for workers aged 21 and over is £12.21 per hour.",
+]
+
+#: The company's own prices named in the figure's sentence (review, 2026-09-11). "Charges for the VAPT
+#: engagement come to INR 1.8 lakh." is left out: "charges" with no "our", "we" or company name reads
+#: the same as a registry's charges, and streams unless the question or session carries a signal.
+REVIEW_OWN_PRICES = [
+    "Our Growth plan is $49 per seat per month.",
+    "The retainer is ₹1,50,000 a quarter.",
+    "Annual subscription: €2,400.",
+    "The Starter tier costs ₹9,999 a month and covers up to 50 endpoints.",
+    "Managed SOC pricing begins at USD 3,500 monthly.",
+    "We charge a one-time onboarding fee of Rs. 25,000.",
+    "Implementation for a 200-seat rollout is quoted at ₹4.5 lakh.",
+    "Our penetration testing packages start from $2,000 per application.",
+    "Billed annually, the Pro plan works out to 1,20,000 rupees.",
+    "The Enterprise package comes to INR 12 lakh a year.",
+    "Endpoint protection is ₹450 per device per month.",
+    "MDR is £12 per endpoint per month on the Essentials plan.",
+    "Our audit fee is 75,000/year for up to 50 users.",
+    "Premium support adds EUR 800 a year to your subscription.",
+    "The Basic tariff is 2,999 per user per month.",
+    "Here is the quotation for your three sites: ₹3,40,000 plus GST.",
+    "Tier 2 is $ 1,299/mo with 24x7 monitoring.",
+    "₹2,66,250 a month is what the SOC as a Service plan comes to for small teams.",
+    "You will be invoiced ¥30,000 each month.",
+]
+
+
+@pytest.mark.parametrize("answers", [REVIEW_NOT_OWN_PRICES, REVIEW_BLIND_NOT_OWN_PRICES], ids=["first", "blind"])
+def test_the_reviews_amounts_that_are_not_the_companys_price_rarely_trip(answers):
+    tripped = [text for text in answers if answer_trips_price_guard(text, signal=False)]
+    assert len(answers) == 30
+    assert len(tripped) <= 3, tripped
+
+
+@pytest.mark.parametrize("text", REVIEW_NOT_OWN_PRICES + REVIEW_BLIND_NOT_OWN_PRICES)
+def test_a_review_answer_streams_as_the_whole_answer_decides(text):
+    whole = answer_trips_price_guard(text, signal=False)
+    for size in (1, 3, 7):
+        guard, out = _feed(_chunked(text, size))
+        assert guard.tripped is whole, size
+        if not whole:
+            assert out == text, size
+
+
+@pytest.mark.parametrize("text", REVIEW_OWN_PRICES)
+def test_the_reviews_own_prices_trip_without_a_signal(text):
+    figure_start = _FIGURE_START_RE.search(text).group()
+    _assert_nothing_from_the_figure_is_emitted(text, figure_start, signal=False, splits=_light_splits)
+
+
+_FIGURE_START_RE = price_guard_module._FIGURE_RE

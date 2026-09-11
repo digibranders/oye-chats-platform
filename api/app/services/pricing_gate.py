@@ -334,26 +334,70 @@ def _has_near_miss_price_word(question: str) -> bool:
     return False
 
 
-#: The price guard's question signal (see ``price_guard``): each word with the
-#: number of edits it tolerates. Wider than ``_NEAR_MISS_PRICE_WORDS`` on purpose.
-#: The gate acts on the question alone, so a near miss there escalates a question
-#: the knowledge base could answer; the guard also needs a figure in the answer,
-#: so a question that only looks like a pricing question changes nothing on an
-#: answer without one. ``is_pricing_question`` does not use it.
+#: The price guard's question signal (see ``price_guard``): each long word with
+#: the number of edits it tolerates. Wider than ``_NEAR_MISS_PRICE_WORDS`` on
+#: purpose. The gate acts on the question alone, so a near miss there escalates a
+#: question the knowledge base could answer; the guard also needs a figure in the
+#: answer, so a question that only looks like a pricing question changes nothing
+#: on an answer without one. ``is_pricing_question`` does not use it.
 _FUZZY_PRICE_WORDS: tuple[tuple[str, int], ...] = (
     ("pricing", 2),
-    ("price", 1),
     ("prices", 1),
     ("charges", 1),
     ("quotation", 1),
     ("costing", 1),
 )
-#: Price words the guard's signal takes only as spelled: one edit from "cost" is
-#: "cast" and "most", one from "fee" is "feel".
-_EXACT_PRICE_WORDS = frozenset({"cost", "costs", "fee", "fees", "rate", "rates", "quote"})
-#: Shorter words are too close to ordinary ones ("rice", "pric") to read as a typo.
+#: Words of five letters or more are tried against ``_FUZZY_PRICE_WORDS``.
 _FUZZY_MIN_LEN = 5
-_HOW_MUCH_RE = re.compile(r"\bhow\s+much\b", re.IGNORECASE)
+#: Short price words read through one typo, a swap of two letters included ("cots",
+#: "qoute", "prcie"), in words of four or five letters.
+_SHORT_PRICE_WORDS = ("cost", "costs", "quote", "price", "rates", "fees")
+_SHORT_WORD_LENGTHS = range(4, 6)
+#: Ordinary words within the tolerated edits of a price word. "most" is one edit
+#: from "cost", "quite" from "quote", "writing" two from "pricing"; none of them
+#: is a pricing question.
+_NOT_A_PRICE_TYPO = frozenset(
+    {
+        # cost, costs
+        "cast", "casts", "coast", "coat", "coats", "colt", "colts", "coot", "cosh", "cosy", "cyst", "cysts",
+        "host", "hosts", "lost", "most", "post", "posts",
+        # quote
+        "quite", "quota", "quoth",
+        # price, prices
+        "pride", "prides", "prime", "primes", "prize", "prizes", "prick", "pricks", "rice", "trice",
+        # rates
+        "rated", "rater", "dates", "gates", "hates", "mates", "fates", "races", "rakes", "raves", "rites", "rats",
+        "rotes", "pates",
+        # fees
+        "bees", "feed", "feeds", "feel", "feels", "feet", "fess", "foes", "feds", "fens", "sees", "tees", "lees",
+        "frees", "flees",
+        # pricing
+        "arcing", "bracing", "bricking", "dicing", "driving", "griping", "icing", "paining", "piecing", "piking",
+        "piling", "pining", "piping", "praising", "prancing", "prating", "praying", "pricking", "prickling",
+        "priding", "priming", "printing", "prosing", "proving", "pruning", "prying", "racing", "riding", "rising",
+        "riving", "slicing", "spicing", "splicing", "tracing", "tricking", "uprising", "voicing", "writing",
+        # charges, costing
+        "charger", "chargers", "charles", "casting", "coasting", "coating", "hosting", "posting",
+    }
+)  # fmt: skip
+#: Price words the guard's signal takes only as spelled: one edit from "fee" is
+#: "fed", one from "rate" is "date".
+_EXACT_PRICE_WORDS = frozenset(
+    {"fee", "rate", "budget", "tariff", "tarrif", "tarif", "pricelist", "ratecard", "charges"}
+)
+#: "how much", typos included, and the other ways of asking what something costs.
+_HOW_MUCH_RE = re.compile(
+    r"\b(?:(?:how|hw|hoe|hwo|hows)\s+(?:much|mch|mcuh|muhc|mich|mutch)|how\s+(?:expensive|pricey)"
+    r"|price\s+list|rate\s+card)\b",
+    re.IGNORECASE,
+)
+#: Plan words in a question: "what plans do you offer?", "your SOC packages".
+_PLAN_QUESTION_RE = re.compile(r"\b(?:plans?|packages?|subscriptions?|tiers?|editions?)\b", re.IGNORECASE)
+#: Plans that are not something the company sells.
+_NOT_A_PRICE_PLAN_RE = re.compile(
+    r"\b(?:continuity|action|floor|treatment|study|meal|lesson|project|business|response)\s+plans?\b",
+    re.IGNORECASE,
+)
 
 
 def _within_edits(a: str, b: str, limit: int) -> bool:
@@ -376,18 +420,27 @@ def _within_edits(a: str, b: str, limit: int) -> bool:
 
 
 def question_has_fuzzy_price_word(question: object) -> bool:
-    """True when the visitor's question carries a price word, typos included.
+    """True when the visitor's question carries a price or plan word, typos included.
 
-    "what is th picin for SOC" is two edits from "pricing". The gate reads it as
-    not a pricing question; the price guard still treats a figure in its answer
-    as the company's price. Pure, and not part of the gate's own decision.
+    "what is th picin for SOC" is two edits from "pricing", "hw much" and "qoute
+    for 3 sites" are typos, and "what plans do you offer?" asks for plans. The
+    gate reads none of them as a pricing question; the price guard still treats a
+    figure in the answer as the company's price. A plan of the visitor's own
+    ("business continuity plan", "incident response plan") does not count. Pure,
+    and not part of the gate's own decision.
     """
     if not isinstance(question, str) or not question.strip():
         return False
     if _HOW_MUCH_RE.search(question):
         return True
+    if _PLAN_QUESTION_RE.search(_NOT_A_PRICE_PLAN_RE.sub(" ", question)):
+        return True
     for word in _WORD_RE.findall(question.lower()):
         if word in _EXACT_PRICE_WORDS:
+            return True
+        if word in _NOT_A_PRICE_TYPO:
+            continue
+        if len(word) in _SHORT_WORD_LENGTHS and any(_within_edits(word, target, 1) for target in _SHORT_PRICE_WORDS):
             return True
         if len(word) >= _FUZZY_MIN_LEN and any(
             _within_edits(word, target, limit) for target, limit in _FUZZY_PRICE_WORDS

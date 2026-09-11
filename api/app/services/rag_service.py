@@ -7387,7 +7387,14 @@ def _price_guard_signal(question: str, chat_session) -> bool:
 
 
 def _cached_answer_trips_price_guard(
-    answer: object, question: str, session, *, session_id: str, bid: int | None, cid: int | None
+    answer: object,
+    question: str,
+    session,
+    *,
+    session_id: str,
+    bid: int | None,
+    cid: int | None,
+    company_name: str | None,
 ) -> bool:
     """Whether a cached answer would trip this turn's price guard.
 
@@ -7403,7 +7410,9 @@ def _cached_answer_trips_price_guard(
     elif cid:
         filters.append(ChatSession.client_id == cid)
     chat_session = session.query(ChatSession).filter(*filters).first()
-    return answer_trips_price_guard(answer, signal=_price_guard_signal(question, chat_session))
+    return answer_trips_price_guard(
+        answer, signal=_price_guard_signal(question, chat_session), company_name=company_name
+    )
 
 
 def _without_held_price_text(answer: str, guard: PriceStreamGuard | None) -> str:
@@ -8037,7 +8046,13 @@ async def rag_pipeline_stream(
                         judges_bypassed=_judges_bypassed,
                     )
                     and _cached_answer_trips_price_guard(
-                        cached_qa.get("answer"), question, session, session_id=session_id, bid=bid, cid=cid
+                        cached_qa.get("answer"),
+                        question,
+                        session,
+                        session_id=session_id,
+                        bid=bid,
+                        cid=cid,
+                        company_name=_company_name,
                     )
                 ):
                     # A figure the guard would trip on, cached before the guard
@@ -9277,9 +9292,10 @@ async def rag_pipeline_stream(
             # The turn's price signal and the repeat flag are read here, before the
             # connection is released below, so neither the stream loop nor the
             # replacement after it does database work. With the signal every figure
-            # trips; without it only a figure whose sentence names a price does.
+            # trips; without it only a figure whose sentence or paragraph names the
+            # company's own price does, and the company name counts as "our".
             _price_guard = (
-                PriceStreamGuard(signal=_price_guard_signal(question, chat_session))
+                PriceStreamGuard(signal=_price_guard_signal(question, chat_session), company_name=_company_name)
                 if price_guard_applies(
                     gate_outcome=_pricing_decision.outcome,
                     pricing_url=_price_guard_pricing_url,

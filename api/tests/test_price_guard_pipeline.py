@@ -310,36 +310,49 @@ async def test_figures_stream_where_the_guard_does_not_apply(db, monkeypatch, bo
     assert "2,66,250" in _answer_text(frames)
 
 
+@pytest.mark.parametrize(
+    ("question", "streamed", "shown"),
+    [
+        (TYPO, "Budget about 50 lakh", "Budget about"),
+        # No signal: the figure and the rest of its sentence wait for the sentence to end.
+        (FINES, "GDPR fines can reach €20 million or 4% of", "GDPR fines can reach"),
+    ],
+    ids=["held_figure", "held_sentence"],
+)
 @pytest.mark.asyncio
-async def test_a_disconnect_while_a_figure_is_held_keeps_it_out_of_the_transcript(db, monkeypatch):
-    """ "50 lakh" at the end of a chunk is held until the next chunk decides it. A
-    visitor who leaves in between saw only the text before it, and the partial
-    answer saved on disconnect must hold no more than that."""
-    bot, _ = _guarded(db, monkeypatch, "guard-cancel")
+async def test_a_disconnect_while_text_is_held_keeps_it_out_of_the_transcript(
+    db, monkeypatch, question, streamed, shown
+):
+    """ "50 lakh" at the end of a chunk is held until the next chunk decides it, and
+    an unpriced figure is held until its sentence ends. A visitor who leaves in
+    between saw only the text before it, and the partial answer saved on
+    disconnect must hold no more than that."""
+    session_id = f"guard-cancel-{shown[:6]}"
+    bot, _ = _guarded(db, monkeypatch, session_id)
 
     async def stalling_stream(prompt, **kwargs):
-        yield "Budget about 50 lakh"
+        yield streamed
         await asyncio.sleep(3600)  # the visitor leaves while the model is still streaming
         yield " for this."  # pragma: no cover - never reached
 
     monkeypatch.setattr(rs, "generate_response_stream", stalling_stream)
     frames: list[str] = []
-    shown = asyncio.Event()
+    seen = asyncio.Event()
 
     async def consume():
-        async for frame in rs.rag_pipeline_stream(bot, TYPO, "guard-cancel", bot_id=bot.id):
+        async for frame in rs.rag_pipeline_stream(bot, question, session_id, bot_id=bot.id):
             frames.append(frame)
-            if "Budget about" in frame:
-                shown.set()
+            if shown in "".join(frames):
+                seen.set()
 
     task = asyncio.create_task(consume())
-    await asyncio.wait_for(shown.wait(), timeout=10)
+    await asyncio.wait_for(seen.wait(), timeout=10)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    assert "lakh" not in _answer_text(frames)
-    assert [m.content for m in _messages(db, "guard-cancel", role="bot")] == ["Budget about"]
+    assert streamed[len(shown) :].strip() not in _answer_text(frames)
+    assert [m.content.strip() for m in _messages(db, session_id, role="bot")] == [shown]
 
 
 @pytest.mark.asyncio
@@ -495,3 +508,55 @@ async def test_an_answer_override_carries_no_sentinel(db, monkeypatch, source):
     assert override == _messages(db, session_id, role="bot")[-1].content
     assert override.strip()
     assert not _SENTINEL_RE.search(override), override
+
+
+@pytest.mark.parametrize(
+    ("question", "chunks", "figure"),
+    [
+        # The company's name makes a fee its own (review, 2026-09-11).
+        ("tell me about onboarding", ("Acme's onboarding fee is ", "₹25,000", " for small teams."), "25,000"),
+        # A price word outside the figure's sentence opens a price context.
+        ("tell me about SOC", ("We offer three plans:\n- Starter: ", "₹9,999/month\n- Growth: ₹24,999/month"), "9,999"),
+        ("tell me about SOC", ("Here are our SOC packages.\n\n**Essentials**: ", "₹1,20,000 a month"), "1,20,000"),
+        # Typo'd pricing questions are a signal.
+        ("hw much", ("For 50 users it is ", "€3,200", " a year."), "3,200"),
+        ("qoute for 3 sites", ("For three sites it would be around ", "7 lakh", "."), "7 lakh"),
+    ],
+    ids=["company_fee", "plan_list", "packages_blank_line", "hw_much", "qoute"],
+)
+@pytest.mark.asyncio
+async def test_an_own_price_outside_the_old_sentence_rule_is_replaced(db, monkeypatch, question, chunks, figure):
+    session_id = f"guard-own-{figure[:5]}"
+    bot, _ = _guarded(db, monkeypatch, session_id, chunks=chunks)
+
+    frames = await _drive_stream(bot, question, session_id)
+
+    assert figure not in _answer_text(frames)
+    assert _messages(db, session_id, role="bot")[-1].content == _expected(question)
+
+
+@pytest.mark.asyncio
+async def test_a_statutory_fee_streams_unchanged_on_a_guarded_bot(db, monkeypatch, metrics):
+    chunks = ("For a ₹10 lakh suit in Delhi, the court fee works out to roughly ", "₹12,000", " under the Act.")
+    bot, _ = _guarded(db, monkeypatch, "guard-court-fee", chunks=chunks)
+
+    # The question names no price, so only the answer's own words decide.
+    frames = await _drive_stream(bot, "how do I file a recovery suit in Delhi", "guard-court-fee")
+
+    assert _answer_text(frames) == "".join(chunks)
+    assert _named(metrics, "price_guard_tripped") == []
+
+
+@pytest.mark.asyncio
+async def test_a_cached_fee_named_by_the_company_is_not_served(db, monkeypatch):
+    """The cache read passes the company name to the guard, as the stream does."""
+    question = "tell me about onboarding"
+    bot, captured = _guarded(db, monkeypatch, "guard-cached-company")
+    question_hash = hashlib.sha256(rs._normalize_question_for_cache(question).encode()).hexdigest()[:32]
+    key = rs.qa_response_key(bot.id, question_hash, rs._cache_lang_segment(None))
+    captured["cache"].store[key] = {"answer": "Acme's onboarding fee is ₹25,000 for small teams.", "sources": []}
+
+    frames = await _drive_stream(bot, question, "guard-cached-company")
+
+    assert "25,000" not in _answer_text(frames)
+    assert key in captured["cache"].deleted
