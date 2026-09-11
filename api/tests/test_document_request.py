@@ -258,6 +258,26 @@ def test_a_single_topic_word_that_matches_is_exact():
     assert pick.exact is True
 
 
+def test_every_word_of_the_file_name_named_in_the_question_is_exact():
+    url = "https://acme.com/files/MBA-Brochure.pdf"
+    pick = pick_documents("send me the brochure for MBA program", "Acme", _catalog(url))
+    assert [d["url"] for d in pick.docs] == [url]
+    assert pick.exact is True
+
+
+def test_every_word_of_a_multi_word_file_name_named_in_the_question_is_exact():
+    url = "https://acme.com/files/Skyline-Brochure.pdf"
+    pick = pick_documents("send me the Skyline brochure and floor plan", "Acme", _catalog(url))
+    assert [d["url"] for d in pick.docs] == [url]
+    assert pick.exact is True
+
+
+def test_a_file_name_with_no_topic_words_is_not_made_exact_by_the_covering_rule():
+    url = "https://acme.com/files/Brochure.pdf"
+    pick = pick_documents("send me the brochure for MBA program", "Acme", _catalog(url))
+    assert pick.exact is False
+
+
 def test_a_risk_profile_is_not_a_company_profile():
     catalog = _catalog("https://agency.example.com/wp/Risk-Profile-Assessment-Sample.pdf")
     assert pick_documents("do you have a company profile?", "Acme", catalog).docs == []

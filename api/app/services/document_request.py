@@ -347,10 +347,14 @@ def pick_documents(question: str, company_name: str | None, catalog: object, lim
 
     A question that names a topic ("the SOC as a Service datasheet") gets the
     files whose names share the most words with it. That pick is exact when the
-    best file shares at least ``TOPIC_MIN_OVERLAP`` words, or every topic word,
-    and is not plainly another kind of document than the one asked for; a weaker
-    match is offered as inexact. When no file shares a word, or the question
-    names only a kind ("any case studies?"), the files of that kind are offered,
+    best file shares at least ``TOPIC_MIN_OVERLAP`` words, every topic word, or
+    every one of the file's own topic words ("the brochure for MBA program"
+    against ``MBA-Brochure.pdf``, whose only topic word is "mba"), and is not
+    plainly another kind of document than the one asked for; a weaker match is
+    offered as inexact. A file name with no topic words of its own (a bare
+    "Brochure.pdf") is never made exact by that last rule. When no file shares
+    a word, or the question names only a kind ("any case studies?"), the files
+    of that kind are offered,
     exact only when there was no topic to miss. A request for a brochure or a
     company profile, or one naming neither a kind nor a topic, falls back to
     profile-like files, marked inexact. Anything else gets no files: never an
@@ -374,7 +378,10 @@ def pick_documents(question: str, company_name: str | None, catalog: object, lim
         )
         if scored:
             best_overlap, best = scored[0]
-            exact = (best_overlap >= TOPIC_MIN_OVERLAP or best_overlap == len(anchor)) and not _conflicts(asked, best)
+            covers_file_name = bool(best.tokens) and best.tokens <= anchor
+            exact = (
+                best_overlap >= TOPIC_MIN_OVERLAP or best_overlap == len(anchor) or covers_file_name
+            ) and not _conflicts(asked, best)
             others = [
                 f for overlap, f in scored[1:] if not exact or (overlap == best_overlap and not _conflicts(asked, f))
             ]
