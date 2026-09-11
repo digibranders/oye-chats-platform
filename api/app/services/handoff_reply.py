@@ -32,7 +32,7 @@ def handoff_reply(*, team_available: bool, repeat: bool) -> str:
     if repeat:
         if team_available:
             return "The form is just below. Share your details there and I'll connect you with our team."
-        return "The form is just below. Share your details there and our team will get back to you."
+        return "The form is just below. Share your details there and I'll let our team know you're waiting."
     if team_available:
         return "Sure. Share your details in the form below and I'll connect you with our team."
     return "Sure. Share your details in the form below and I'll let our team know you're waiting."

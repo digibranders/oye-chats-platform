@@ -96,8 +96,12 @@ class TestTheWordsMatchTheForm:
             "The form is just below. Share your details there and I'll connect you with our team."
         )
         assert handoff_reply(team_available=False, repeat=True) == (
-            "The form is just below. Share your details there and our team will get back to you."
+            "The form is just below. Share your details there and I'll let our team know you're waiting."
         )
+
+    def test_a_repeat_with_nobody_available_still_closes_on_an_offer(self):
+        """The repeat is an offer too, so an "ok" after it reopens the form like the first reply."""
+        assert bot_offers_handoff(handoff_reply(team_available=False, repeat=True))
 
     @pytest.mark.parametrize("available", [True, False])
     def test_a_repeat_is_worded_differently(self, available):

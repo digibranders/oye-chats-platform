@@ -3104,7 +3104,7 @@ _URGENT_PUSH_REASON = "URGENT: active incident reported in chat"
 _URGENT_EMAIL_MESSAGE_LIMIT = 500
 #: The live-chat queue timeout a handoff push is enqueued with when the bot has none
 #: (the column default, and the fallback ``operator_routes`` uses).
-_DEFAULT_QUEUE_TIMEOUT_SECONDS = 20
+_DEFAULT_QUEUE_TIMEOUT_SECONDS = 60
 
 
 def _alert_team_of_urgent_incident(session, bot, client_id: int, session_id: str, visitor_message: str) -> None:
