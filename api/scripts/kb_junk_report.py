@@ -35,7 +35,9 @@ from app.services.kb_quality import option_list_match, option_list_reason, place
 #: Reason text for the place-name check: names a lot of places, but might be
 #: a real coverage claim rather than a scraped picker, so it needs a human
 #: to look before anything is removed.
-PLACE_LIST_HEADER = "Many place names listed. Check whether this is a real coverage list before removing anything."
+PLACE_LIST_HEADER = (
+    "Many place names listed: check whether this is a real coverage or office list before removing anything."
+)
 EXAMPLE_SECTION_HEADER = "placeholder text in code or documentation examples (usually correct)"
 
 

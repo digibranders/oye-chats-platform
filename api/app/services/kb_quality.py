@@ -36,6 +36,32 @@ without swallowing genuine prose. ``_in_fenced_or_backtick_region``
 rescanned the whole chunk per placeholder match, which made a chunk with a
 few thousand matches quadratic; fenced-block spans, backtick positions and
 line starts are now computed once per chunk and looked up with ``bisect``.
+
+2026-09-11 controller decision: four review rounds of layout rules for the
+*gaps* between place names kept finding new shapes in both directions --
+a bracketed dial code, a semicolon-separated picker or "(1)" numbering
+read as prose, while "Customer support is available in the following
+countries:" followed by a numbered list, a bold "**Delivery coverage**:
+..." sentence, and an "Australia vs Austria vs Azerbaijan ..." sports
+sentence (its "vs" stripped as if it were a list code) all read as a
+picker. Chasing separator shapes cannot end well: a separator says
+nothing about whether a list is a scraped form or real prose, so this
+was never going to converge. ``form_options`` now requires a marker that
+actually says "this is a picker" -- a dial code, a "Select" prompt or
+placeholder, ``<option>``/``value="`` markup, a flag emoji, or an ISO
+code, each attached to several of the run's own names -- and every other
+dense place-name run, whatever its separators, goes to ``place_list``
+instead. The former per-gap "strip every kind of debris and see what's
+left" pass is gone; a 2-3 letter token is never generic debris now, only
+possible ISO-code evidence when it is genuinely upper-case and sitting
+right next to a name, so "vs", "and", "or", "the", "us" are never
+stripped. Two more documentation-example shapes are recognized while
+we're in here: an nginx/Apache directive block (bare "key value;" lines
+between "{" and "}") and a raw HTTP/email header dump (two or more
+consecutive "From:"/"To:"/"Reply-To:"/"Authorization:"/"Content-Type:"/
+"Host:" lines) -- a real one-field-per-line contact footer ("Email:
+yourname@company.com") never uses those protocol header names, so it
+still reports normally.
 """
 
 from __future__ import annotations
@@ -51,14 +77,21 @@ from typing import Literal
 # A crawled form's <select> options land in the knowledge base as ordinary
 # prose-looking text ("Afghanistan Albania Algeria ..."). Nobody wrote a
 # sentence claiming "we operate in these 190 countries"; the crawler just
-# captured every <option> on a country picker. The signal that separates
-# this from real prose ("we have offices in India and Canada") is *how many
-# distinct places are named with no connecting language*. Prose about a
-# handful of countries is normal; a chunk naming 25+ distinct countries (or
-# 20+ distinct US or Indian states) with picker-shaped separators (nothing
-# but whitespace, dial codes and list debris between names) is a dropdown.
-# The same density written with commas and "and" is a real coverage list
-# and gets a lower-priority "check before removing" callout instead.
+# captured every <option> on a country picker. Density alone -- a chunk
+# naming 25+ distinct countries (or 20+ distinct US or Indian states) --
+# only says the chunk is a *dense place-name run*; it says nothing about
+# whether that run is a scraped dropdown or a real coverage claim a bot
+# owner wrote themselves ("we ship to all 28 states"). Separators cannot
+# settle that either: a real sentence and a scraped picker are both
+# routinely comma-separated, and a picker can just as easily be written
+# with semicolons, slashes or "(1)" numbering. What actually distinguishes
+# a picker is a marker that only a picker carries: a dial code, a "Select"
+# prompt, leftover ``<option>``/``value="`` markup, a flag emoji, or an
+# ISO code, each tied to the run's own names (see ``_find_marker`` below).
+# A dense run with one of those markers is reported as "form_options" --
+# usually safe to remove. Every other dense run, whatever its separators,
+# is a "place_list": possibly real content, so it gets a lower-priority
+# "check before removing" callout instead of a removal suggestion.
 
 # Full ISO 3166-1 country and territory short names, plus common alternate
 # forms a real site is likely to use (official short name is not always
@@ -438,10 +471,6 @@ OPTION_LIST_MIN_COUNTRIES = 25
 #: How many distinct US or Indian state names make a chunk a list of options.
 OPTION_LIST_MIN_STATES = 20
 
-#: A category is "form_options" only when at least this fraction of the gaps
-#: between consecutive matches look like picker debris rather than prose.
-_FORM_OPTIONS_GAP_THRESHOLD = 0.8
-
 
 def _fold(text: str) -> str:
     """Lowercase and strip accents, so "Côte d'Ivoire" and "cote d'ivoire" match.
@@ -473,153 +502,174 @@ _COUNTRY_PATTERN = _compile_phrase_alternation(_COUNTRY_NAMES)
 _US_STATE_PATTERN = _compile_phrase_alternation(_US_STATES)
 _INDIAN_STATE_PATTERN = _compile_phrase_alternation(_INDIAN_STATES)
 
-# Text that separates two consecutive picker entries and nothing else: list
-# bullets, a dial code ("+93"), a result count ("244 results found"), the
-# picker's own chrome ("Select a country", "-- Select --"), a two- or
-# three-letter list code ("AF", "AL"), a flag or other emoji/symbol, a list
-# number ("1.", "2)"), a tab or a pipe. Stripped out one kind at a time;
-# whatever whitespace is left over decides the verdict.
+
+def _compile_raw_phrase_alternation(phrases: frozenset[str]) -> re.Pattern[str]:
+    """Build the same alternation as ``_compile_phrase_alternation``, case-insensitively but unfolded.
+
+    Used only for marker detection (see ``_find_marker`` below), which has
+    to tell "AF" (an upper-case ISO code) apart from "vs" or "and" -- a
+    distinction that only survives if the source text is matched as-is,
+    not lowercased first. ``re.IGNORECASE`` still matches a name in any
+    case; it just does not erase the case of everything *around* the match
+    the way folding the whole chunk to lowercase would.
+    """
+    ordered = sorted(phrases, key=len, reverse=True)
+    return re.compile(r"\b(?:" + "|".join(re.escape(p) for p in ordered) + r")\b", re.IGNORECASE)
+
+
+_COUNTRY_PATTERN_RAW = _compile_raw_phrase_alternation(_COUNTRY_NAMES)
+_US_STATE_PATTERN_RAW = _compile_raw_phrase_alternation(_US_STATES)
+_INDIAN_STATE_PATTERN_RAW = _compile_raw_phrase_alternation(_INDIAN_STATES)
+_RAW_PATTERNS: dict[str, re.Pattern[str]] = {
+    "countries": _COUNTRY_PATTERN_RAW,
+    "us_states": _US_STATE_PATTERN_RAW,
+    "indian_states": _INDIAN_STATE_PATTERN_RAW,
+}
+
+# ── Picker markers ───────────────────────────────────────────────────────
 #
-# 2026-09-11 review: six real picker shapes were misread as prose because
-# their gaps carried debris this list didn't know about yet (an ISO code, a
-# flag emoji, a radio bullet, a list number) or because the picker was
-# comma-separated, which used to be treated the same as a real "A, B and C"
-# coverage sentence. Comma-separated pickers get their own check below,
-# since a bare comma is exactly what separates the items in a genuine
-# prose coverage list too; the only way to tell them apart is other
-# evidence (a "Select" header, an "Other" list item) or the absence of any
-# sentence-like language around the list.
-_DIAL_CODE_RE = re.compile(r"\+\d{1,4}")
-_PICKER_WORDS_RE = re.compile(r"(?i)\b(?:select|choose|results?\s+found)\b")
-_LIST_NUMBER_RE = re.compile(r"\b\d{1,3}[.)]")
+# A dense place-name run is "form_options" only when it carries one of
+# these markers. Two are global: real prose never contains a "Select a
+# country" prompt or a leftover ``<option value="...">`` tag, so finding
+# either anywhere in the chunk decides it outright. The other three --
+# a dial code, a flag emoji, an ISO code -- are common enough on their own
+# ("+1" is also a US area code someone dialed from; a bare 2-3 letter
+# upper-case token could be almost anything) that they only count when
+# several of them sit right next to the run's own names; see
+# ``_marker_adjacent_count``.
+_PICKER_INSTRUCTION_RE = re.compile(
+    r"(?i)\bselect\b|\bchoose\b|please\s+select|--\s*select\s*--|country\*|results?\s+found|no\s+results"
+)
+_OPTION_MARKUP_RE = re.compile(r'(?i)<option\b|value\s*=\s*["\']')
+
 # Regional-indicator flag pairs, plus the common emoji/symbol blocks a
 # picker's own icons are drawn from (misc symbols & pictographs, dingbats,
 # the variation-selector and zero-width-joiner marks emoji sequences use).
 _EMOJI_RE = re.compile(r"[\U0001F1E6-\U0001F1FF\U0001F300-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]")
-_BULLET_RE = re.compile(r"[○●◦▪·•\-–\*\d\t|]")
 
-# ``text`` is already folded to lowercase (see ``option_list_match``), so a
-# two- or three-letter list *code* ("AF", "AL") is indistinguishable, once
-# folded, from a two- or three-letter English word that legitimately joins
-# two place names in a real sentence ("the US and Canada"). Anything on this
-# list is left alone; anything else that short is treated as list-code
-# debris, which is what strips a bare "af"/"al"/"dz" out of a gap.
-_GAP_CONNECTOR_WORDS = frozenset(
-    {
-        "a",
-        "an",
-        "and",
-        "as",
-        "at",
-        "by",
-        "for",
-        "if",
-        "in",
-        "is",
-        "no",
-        "nor",
-        "not",
-        "of",
-        "off",
-        "on",
-        "or",
-        "our",
-        "per",
-        "so",
-        "the",
-        "to",
-        "up",
-        "us",
-        "via",
-        "we",
-        "yet",
-    }
-)
-_SHORT_TOKEN_RE = re.compile(r"\b[a-z]{2,3}\b")
+# A dial code right before or after a name: "+93 Afghanistan", "Afghanistan
+# +93", "Australia (+1)". Optional parens, 1-4 digits (covers every real
+# country calling code).
+_DIAL_CODE_BEFORE_RE = re.compile(r"\(?\+\d{1,4}\)?\s*$")
+_DIAL_CODE_AFTER_RE = re.compile(r"^\s*\(?\+\d{1,4}\)?")
+# An upper-case 2-3 letter ISO code right before or after a name: "AF
+# Afghanistan", "Afghanistan (AF)". Deliberately case-sensitive -- see the
+# module docstring's 2026-09-11 controller-decision entry -- so a lower-case
+# connector word ("vs", "and", "the", "us") sitting next to a name in
+# ordinary prose is never mistaken for a code; only a genuine all-caps token
+# is.
+_ISO_CODE_BEFORE_RE = re.compile(r"\b[A-Z]{2,3}\s*$")
+_ISO_CODE_AFTER_RE = re.compile(r"^\s*\(?[A-Z]{2,3}\)?\b")
+
+#: How many of the run's own name occurrences must carry the same marker
+#: right next to them before it counts as evidence of a picker.
+_MARKER_MIN_NAMES = 5
+#: Window (characters) checked immediately before/after each name match for
+#: a dial code, a flag emoji or an ISO code. Deliberately small and fixed:
+#: these markers sit right next to the name they belong to ("+93
+#: Afghanistan", not "+93 ... a few sentences later ... Afghanistan"), and a
+#: small fixed window keeps this linear in the number of name occurrences.
+_DIAL_CODE_WINDOW = 10
+_FLAG_WINDOW = 6
+_ISO_CODE_WINDOW = 8
 
 
-def _strip_gap_codes(text: str) -> str:
-    return _SHORT_TOKEN_RE.sub(lambda m: m.group(0) if m.group(0) in _GAP_CONNECTOR_WORDS else "", text)
+def _marker_adjacent_count(
+    matches: list[re.Match[str]],
+    content: str,
+    before_re: re.Pattern[str],
+    after_re: re.Pattern[str],
+    window: int,
+    minimum: int,
+) -> bool:
+    """True once ``minimum`` of ``matches`` each carry the marker right next to them.
+
+    Exits as soon as the minimum is reached rather than scanning every
+    match, so a chunk with thousands of name occurrences and an obvious
+    marker on the first handful never pays for the rest.
+    """
+    count = 0
+    for match in matches:
+        start, end = match.start(), match.end()
+        before = content[max(0, start - window) : start]
+        after = content[end : end + window]
+        if before_re.search(before) or after_re.search(after):
+            count += 1
+            if count >= minimum:
+                return True
+    return False
 
 
-def _clean_gap(gap: str) -> str:
-    cleaned = _DIAL_CODE_RE.sub(" ", gap)
-    cleaned = _PICKER_WORDS_RE.sub(" ", cleaned)
-    cleaned = _LIST_NUMBER_RE.sub(" ", cleaned)
-    cleaned = _EMOJI_RE.sub(" ", cleaned)
-    cleaned = _BULLET_RE.sub(" ", cleaned)
-    cleaned = _strip_gap_codes(cleaned)
-    return cleaned.strip()
+_MARKER_DESCRIPTIONS: dict[str, str] = {
+    "dial_codes": "dial codes",
+    "picker_instruction": "a Select prompt",
+    "option_markup": "option markup",
+    "flags": "flag icons",
+    "iso_codes": "country codes",
+}
 
 
-def _is_picker_gap(gap: str) -> bool:
-    return _clean_gap(gap) == ""
+def _find_marker(category: Literal["countries", "us_states", "indian_states"], content: str) -> str | None:
+    """The strongest picker marker in ``content`` for ``category``, or ``None``.
 
+    Checked cheapest and most-global first: a "Select a country" prompt or
+    a leftover ``<option>``/``value="`` attribute decides it outright,
+    wherever in the chunk it sits, since neither ever shows up in ordinary
+    prose. Dial codes, flags and ISO codes are only checked -- with a raw,
+    case-preserving re-scan of ``content`` -- once those two come up empty,
+    since they need to be tied to several of the run's own name
+    occurrences rather than merely present somewhere in the chunk.
+    """
+    if _OPTION_MARKUP_RE.search(content):
+        return "option_markup"
+    if _PICKER_INSTRUCTION_RE.search(content):
+        return "picker_instruction"
 
-# A comma-separated run of place names ("Afghanistan, Albania, ...") reads
-# exactly like the gaps in a real coverage sentence written with commas, so
-# a bare comma is deliberately never picker debris on its own (see
-# ``_clean_gap`` above). It only counts as a picker when every gap in the
-# run is nothing but a comma (no "and"/"or" joining the last item, no other
-# words) AND the content carries independent evidence of being a form: a
-# picker marker ("Select", "Choose", "Please select", "--", "results
-# found", an "Other" list item), or no sentence-like language around it.
-_COMMA_PICKER_MARKER_RE = re.compile(r"(?i)\bselect\b|\bchoose\b|please\s+select|--|results?\s+found")
-_OTHER_LIST_ITEM_RE = re.compile(r"(?i)(?:^|,)\s*other\s*(?:,|\.|$)")
-
-
-def _has_picker_marker(text: str) -> bool:
-    return bool(_COMMA_PICKER_MARKER_RE.search(text)) or bool(_OTHER_LIST_ITEM_RE.search(text))
-
-
-# Verb-like and first-person language that marks a comma run as sitting
-# inside an actual sentence ("We deliver ... across ...") rather than being
-# a bare list. Deliberately permissive: any one of these words anywhere in
-# the content is enough to keep a comma-separated run classified as prose.
-_SENTENCE_LANGUAGE_RE = re.compile(
-    r"(?i)\b(?:"
-    r"we|our|deliver|delivers|delivering|ship|ships|shipping|operate|operates|operating|"
-    r"serve|serves|serving|reach|reaches|reaching|offer|offers|offering|support|supports|"
-    r"provide|provides|providing|cover|covers|covering|work|works|working|across|include|"
-    r"includes|including|available|customers|clients|team|company|business|based"
-    r")\b"
-)
-
-
-def _is_comma_run_picker(gaps: list[str], text: str) -> bool:
-    if not gaps or not all(_clean_gap(gap) == "," for gap in gaps):
-        return False
-    if _has_picker_marker(text):
-        return True
-    return not _SENTENCE_LANGUAGE_RE.search(text)
+    raw_matches = list(_RAW_PATTERNS[category].finditer(content))
+    if _marker_adjacent_count(
+        raw_matches, content, _DIAL_CODE_BEFORE_RE, _DIAL_CODE_AFTER_RE, _DIAL_CODE_WINDOW, _MARKER_MIN_NAMES
+    ):
+        return "dial_codes"
+    if _marker_adjacent_count(raw_matches, content, _EMOJI_RE, _EMOJI_RE, _FLAG_WINDOW, _MARKER_MIN_NAMES):
+        return "flags"
+    if _marker_adjacent_count(
+        raw_matches, content, _ISO_CODE_BEFORE_RE, _ISO_CODE_AFTER_RE, _ISO_CODE_WINDOW, _MARKER_MIN_NAMES
+    ):
+        return "iso_codes"
+    return None
 
 
 @dataclass(frozen=True)
 class OptionListMatch:
-    """One place-name category that reached the option-list density threshold."""
+    """One place-name category that reached the option-list density threshold.
+
+    ``marker`` names which picker marker was found for a "form_options"
+    match ("dial_codes", "picker_instruction", "option_markup", "flags" or
+    "iso_codes"); it is ``None`` for a "place_list" match, which by
+    definition carries none of them.
+    """
 
     kind: Literal["form_options", "place_list"]
     category: Literal["countries", "us_states", "indian_states"]
     distinct_count: int
+    marker: str | None = None
 
 
 def _category_match(
-    pattern: re.Pattern[str], text: str, minimum: int, category: Literal["countries", "us_states", "indian_states"]
+    pattern: re.Pattern[str],
+    text: str,
+    minimum: int,
+    category: Literal["countries", "us_states", "indian_states"],
+    original: str,
 ) -> OptionListMatch | None:
     matches = list(pattern.finditer(text))
     distinct_count = len({m.group(0) for m in matches})
     if distinct_count < minimum:
         return None
 
-    gaps = [text[a.end() : b.start()] for a, b in zip(matches, matches[1:], strict=False)]
-    picker_gaps = sum(1 for gap in gaps if _is_picker_gap(gap))
-    if _is_comma_run_picker(gaps, text):
-        picker_gaps = len(gaps)
-    fraction_picker = (picker_gaps / len(gaps)) if gaps else 1.0
-    kind: Literal["form_options", "place_list"] = (
-        "form_options" if fraction_picker >= _FORM_OPTIONS_GAP_THRESHOLD else "place_list"
-    )
-    return OptionListMatch(kind=kind, category=category, distinct_count=distinct_count)
+    marker = _find_marker(category, original)
+    kind: Literal["form_options", "place_list"] = "form_options" if marker is not None else "place_list"
+    return OptionListMatch(kind=kind, category=category, distinct_count=distinct_count, marker=marker)
 
 
 def option_list_match(content: str) -> OptionListMatch | None:
@@ -630,17 +680,21 @@ def option_list_match(content: str) -> OptionListMatch | None:
     happens to name a lot of both countries and states is unusual enough
     in practice that picking one category to report is fine.
 
-    Linear in ``len(content)``: three single-pass regex scans plus one pass
-    over each category's own matches to classify the gaps between them, no
+    Linear in ``len(content)``: three single-pass regex scans to find the
+    density, plus -- only for a category that actually reaches its
+    threshold -- a marker search that is either two whole-chunk regex
+    scans (the global markers) or one more single-pass scan plus a
+    fixed-window check per name occurrence (the per-name markers). No
     nested quantifiers, no backtracking blowup risk.
     """
-    text = _fold(content or "").replace("&", " and ")
+    original = content or ""
+    text = _fold(original).replace("&", " and ")
     for pattern, minimum, category in (
         (_COUNTRY_PATTERN, OPTION_LIST_MIN_COUNTRIES, "countries"),
         (_US_STATE_PATTERN, OPTION_LIST_MIN_STATES, "us_states"),
         (_INDIAN_STATE_PATTERN, OPTION_LIST_MIN_STATES, "indian_states"),
     ):
-        match = _category_match(pattern, text, minimum, category)  # type: ignore[arg-type]
+        match = _category_match(pattern, text, minimum, category, original)  # type: ignore[arg-type]
         if match is not None:
             return match
     return None
@@ -656,22 +710,20 @@ def is_option_list(content: str) -> bool:
     """True if ``content`` reads like a dropdown of countries or states.
 
     Kept for compatibility: only the "form_options" classification counts.
-    A real coverage list ("we ship to all 28 states") is reported
-    separately by ``option_list_kind`` returning "place_list", not here.
+    A dense place-name run with no picker marker -- a real coverage list
+    ("we ship to all 28 states") just as much as a bare, markerless list of
+    names -- is reported separately by ``option_list_kind`` returning
+    "place_list", not here.
     """
     return option_list_kind(content) == "form_options"
 
 
-_OPTION_LIST_REASONS: dict[str, str] = {
-    "countries": "country dial-code picker",
-    "us_states": "US states list",
-    "indian_states": "Indian states list",
-}
-
-
 def option_list_reason(match: OptionListMatch) -> str:
-    """Human-readable reason naming which category tripped, for the report."""
-    return _OPTION_LIST_REASONS[match.category]
+    """Human-readable reason for the report, naming the marker for a form_options match."""
+    if match.kind == "form_options" and match.marker is not None:
+        marker_desc = _MARKER_DESCRIPTIONS[match.marker]
+        return f"looks like a form's country or state picker (it has {marker_desc}): usually safe to remove"
+    return "many place names listed: check whether this is a real coverage or office list before removing anything"
 
 
 # ── Placeholder contacts (never a real phone number, email or address) ──────
@@ -791,12 +843,28 @@ _SQL_STATEMENT_RE = re.compile(
 # (`variable "x" {`) or an object literal wrapping a key: value or key =
 # value pair, even when the value isn't on the same line as the brace.
 _BRACE_ASSIGNMENT_RE = re.compile(r"[{}][\s\S]{0,150}?[=:]|[=:][\s\S]{0,150}?[{}]")
+# An nginx/Apache-style config directive: a bare identifier, whitespace,
+# some content, a terminating semicolon ("listen 80;", "server_name
+# example.com;"). Paired with the brace guard below, since a directive line
+# on its own (no enclosing `{`/`}` block anywhere in the context) is common
+# enough in ordinary prose ("Contact us; we reply within a day.") that it
+# needs the block shape to mean anything.
+_BRACE_DIRECTIVE_RE = re.compile(r"(?m)^[ \t]*[A-Za-z_][\w-]*[ \t]+\S[^\n;]*;[ \t]*$")
+# Two or more consecutive email/HTTP header lines ("From:", "To:",
+# "Reply-To:", "Authorization:", "Content-Type:", "Host:", ...): a raw
+# request/header dump, not a real contact footer (a genuine footer is one
+# field per line under a human label like "Email:"/"Phone:", never these
+# protocol header names).
+_HTTP_HEADER_NAME = r"(?:From|To|Reply-To|Authorization|Content-Type|Host|Cc|Bcc)"
+_HTTP_HEADER_BLOCK_RE = re.compile(
+    rf"(?im)^[ \t]*{_HTTP_HEADER_NAME}:[ \t]*\S[^\n]*\n[ \t]*{_HTTP_HEADER_NAME}:[ \t]*\S"
+)
 
 
 def _looks_like_code_line(context: str) -> bool:
     if '"' in context and _JSON_LINE_RE.search(context):
         return True
-    if ":" in context and _YAML_LINE_RE.search(context):
+    if ":" in context and (_YAML_LINE_RE.search(context) or _HTTP_HEADER_BLOCK_RE.search(context)):
         return True
     if "-" in context and _CLI_FLAG_RE.search(context):
         return True
@@ -806,7 +874,9 @@ def _looks_like_code_line(context: str) -> bool:
         return True
     if "|" in context and _MARKDOWN_TABLE_ROW_RE.search(context):
         return True
-    if ("{" in context or "}" in context) and _BRACE_ASSIGNMENT_RE.search(context):
+    if ("{" in context or "}" in context) and (
+        _BRACE_ASSIGNMENT_RE.search(context) or _BRACE_DIRECTIVE_RE.search(context)
+    ):
         return True
     lowered = context.lower()
     return any(kw in lowered for kw in ("insert", "values", "update", "select")) and bool(

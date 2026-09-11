@@ -12,6 +12,15 @@ owner their own correct content was junk. Second, 53 of CleanStart's 54
 placeholder hits were addresses inside their own CLI/JSON/YAML/shell
 documentation examples ("--email security@company.com"), correct
 documentation that the original report told the owner to go delete.
+
+2026-09-11 controller decision: four rounds of layout rules for the gaps
+between names never converged, so "form_options" now requires an actual
+picker marker (a dial code, a "Select" prompt, ``<option>`` markup, a flag
+emoji or an ISO code) tied to the run, and every other dense place-name
+run -- whatever its separators -- goes to "place_list" instead. A bare,
+markerless list of names (previously "form_options" on density alone) now
+reads as "place_list" too, since density says nothing about whether a
+list is scraped or real.
 """
 
 import itertools
@@ -25,6 +34,7 @@ from app.services.kb_quality import (
     is_option_list,
     option_list_kind,
     option_list_match,
+    option_list_reason,
     placeholder_contacts,
     placeholder_findings,
 )
@@ -129,6 +139,55 @@ SELECT_STATE_COMMA_LIST = (
     "Uttar Pradesh, Uttarakhand, West Bengal"
 )
 
+# ── Controller-decision fixtures: markers earn "form_options", not density
+# or separator shape ──────────────────────────────────────────────────────
+
+# "Australia (+1); Austria (+1); ...": a bracketed dial code after every
+# name, semicolon-separated -- the separator variety the old gap rules kept
+# chasing; the marker (the dial code) is what actually decides this one.
+BRACKETED_DIAL_CODE_PICKER = "; ".join(f"{name} (+1)" for name in COUNTRIES.split())
+
+# "Select country: Australia; Austria; ...": a "Select" prompt with a
+# semicolon-separated list.
+SELECT_COUNTRY_SEMICOLON_LIST = "Select country: " + "; ".join(COUNTRIES.split())
+
+# "Select country: Australia/Austria/...": a "Select" prompt with a
+# slash-separated list.
+SELECT_COUNTRY_SLASH_LIST = "Select country: " + "/".join(COUNTRIES.split())
+
+# "Select country:\n(1) Australia\n(2) Austria\n...": a "Select" prompt with
+# "(1)"-style numbering.
+SELECT_COUNTRY_NUMBERED_LIST = "Select country:\n" + "\n".join(
+    f"({i}) {name}" for i, name in enumerate(COUNTRIES.split(), start=1)
+)
+
+# "<option value=\"Australia\">Australia</option>...": leftover <select>
+# markup a crawl failed to strip out.
+OPTION_MARKUP_PICKER = "\n".join(f'<option value="{name}">{name}</option>' for name in COUNTRIES.split())
+
+# "Customer support is available in the following countries:" plus a plain
+# numbered list, no "Select" prompt anywhere -- real content the old
+# numbering-shaped gap rule misread as a picker.
+CUSTOMER_SUPPORT_NUMBERED_LIST = "Customer support is available in the following countries:\n" + "\n".join(
+    f"{i}. {name}" for i, name in enumerate(COUNTRIES.split(), start=1)
+)
+
+# "**Delivery coverage**: Andhra Pradesh, ... and all union territories.":
+# real content, a bold markdown lead-in, comma-separated, no picker marker.
+DELIVERY_COVERAGE_PROSE = (
+    "**Delivery coverage**: Andhra Pradesh, Arunachal Pradesh, Assam, Bihar, Chhattisgarh, Goa, Gujarat, "
+    "Haryana, Himachal Pradesh, Jharkhand, Karnataka, Kerala, Madhya Pradesh, Maharashtra, Manipur, "
+    "Meghalaya, Mizoram, Nagaland, Odisha, Punjab, Rajasthan, Sikkim, Tamil Nadu, Telangana, Tripura, "
+    "Uttar Pradesh, Uttarakhand, and all union territories."
+)
+
+# "The qualifying matches pitted Australia vs Austria vs ... in the group
+# stage.": a sports sentence. "vs" must never be mistaken for a list code.
+COUNTRY_VS_SPORTS_SENTENCE = "The qualifying matches pitted " + " vs ".join(COUNTRIES.split()) + " in the group stage."
+
+# A bare newline-separated list of 30 country names, no marker at all.
+BARE_NEWLINE_COUNTRY_LIST = "\n".join(COUNTRIES.split())
+
 # ── B1: three more genuine coverage sentences (all comma-separated, all
 # ending in "and <last place>."), to make sure the new comma-picker check
 # doesn't start flagging real prose just because it's comma-separated.
@@ -154,9 +213,14 @@ INDIAN_COVERAGE_PROSE_2 = (
 # ── option_list_kind: form pickers vs real coverage prose (finding 1) ───────
 
 
-def test_a_country_dropdown_is_an_option_list():
-    assert is_option_list(COUNTRIES) is True
-    assert option_list_kind(COUNTRIES) == "form_options"
+def test_a_bare_country_list_with_no_marker_is_a_place_list_not_form_options():
+    # Controller decision: density alone no longer earns "form_options". A
+    # dense, markerless list of names (previously reported as a dropdown
+    # on density alone) now goes to the lower-priority "place_list"
+    # section, since a bare list of names by itself could just as well be
+    # real content.
+    assert is_option_list(COUNTRIES) is False
+    assert option_list_kind(COUNTRIES) == "place_list"
 
 
 def test_prose_mentioning_a_few_countries_is_not():
@@ -168,14 +232,14 @@ def test_prose_mentioning_a_few_countries_is_not():
     )
 
 
-def test_a_us_state_dropdown_is_an_option_list():
-    assert is_option_list(US_STATES) is True
-    assert option_list_kind(US_STATES) == "form_options"
+def test_a_bare_us_state_list_with_no_marker_is_a_place_list_not_form_options():
+    assert is_option_list(US_STATES) is False
+    assert option_list_kind(US_STATES) == "place_list"
 
 
-def test_an_indian_state_dropdown_is_an_option_list():
-    assert is_option_list(INDIAN_STATES) is True
-    assert option_list_kind(INDIAN_STATES) == "form_options"
+def test_a_bare_indian_state_list_with_no_marker_is_a_place_list_not_form_options():
+    assert is_option_list(INDIAN_STATES) is False
+    assert option_list_kind(INDIAN_STATES) == "place_list"
 
 
 def test_prose_naming_a_handful_of_states_is_not():
@@ -214,17 +278,61 @@ def test_the_real_eventus_dial_code_picker_is_still_an_option_list():
     [
         ISO_CODE_PICKER,
         FLAG_PICKER,
-        COMMA_LIST_WITH_OTHER,
-        RADIO_BUTTON_PICKER,
-        NUMBERED_LIST_PICKER,
         SELECT_STATE_COMMA_LIST,
+        BRACKETED_DIAL_CODE_PICKER,
+        SELECT_COUNTRY_SEMICOLON_LIST,
+        SELECT_COUNTRY_SLASH_LIST,
+        SELECT_COUNTRY_NUMBERED_LIST,
+        OPTION_MARKUP_PICKER,
     ],
-    ids=["iso_codes", "flags", "comma_with_other", "radio_bullets", "numbered", "select_state_commas"],
+    ids=[
+        "iso_codes",
+        "flags",
+        "select_state_commas",
+        "bracketed_dial_codes",
+        "select_country_semicolons",
+        "select_country_slashes",
+        "select_country_numbered",
+        "option_markup",
+    ],
 )
-def test_more_picker_shapes_are_form_options(content):
+def test_picker_shapes_with_a_marker_are_form_options(content):
     match = option_list_match(content)
     assert match is not None
     assert match.kind == "form_options"
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        COMMA_LIST_WITH_OTHER,
+        RADIO_BUTTON_PICKER,
+        NUMBERED_LIST_PICKER,
+        CUSTOMER_SUPPORT_NUMBERED_LIST,
+        DELIVERY_COVERAGE_PROSE,
+        COUNTRY_VS_SPORTS_SENTENCE,
+        BARE_NEWLINE_COUNTRY_LIST,
+    ],
+    ids=[
+        "comma_with_other_no_select",
+        "radio_bullets_no_marker",
+        "numbered_no_marker",
+        "customer_support_numbered_list",
+        "delivery_coverage_prose",
+        "vs_sports_sentence",
+        "bare_newline_list",
+    ],
+)
+def test_dense_lists_without_a_marker_are_place_list_not_form_options(content):
+    # Controller decision: a separator (commas, bullets, numbering) is
+    # never enough on its own, and neither is a bare "Other" list item --
+    # only a dial code, a Select prompt, option markup, flags or ISO codes
+    # tied to the run earn "form_options". Everything else this dense goes
+    # to the lower-priority "place_list" section instead.
+    match = option_list_match(content)
+    assert match is not None
+    assert match.kind == "place_list"
+    assert match.marker is None
 
 
 @pytest.mark.parametrize(
@@ -247,25 +355,64 @@ def test_comma_separated_coverage_prose_ending_in_and_stays_a_place_list(content
     assert match.kind == "place_list"
 
 
+def test_form_options_reason_names_the_marker():
+    # Controller decision: the report must say *why* something looks like
+    # a picker, not just that it does.
+    cases = [
+        (EVENTUS_DIAL_CODE_PICKER, "dial_codes", "dial codes"),
+        (SELECT_STATE_COMMA_LIST, "picker_instruction", "a Select prompt"),
+        (OPTION_MARKUP_PICKER, "option_markup", "option markup"),
+        (FLAG_PICKER, "flags", "flag icons"),
+        (ISO_CODE_PICKER, "iso_codes", "country codes"),
+    ]
+    for content, expected_marker, expected_text in cases:
+        match = option_list_match(content)
+        assert match is not None
+        assert match.kind == "form_options"
+        assert match.marker == expected_marker
+        reason = option_list_reason(match)
+        assert expected_text in reason
+        assert reason.endswith("usually safe to remove")
+
+
+def test_place_list_reason_is_generic_and_never_names_a_marker():
+    match = option_list_match(INDIAN_COVERAGE_PROSE)
+    assert match is not None
+    assert match.marker is None
+    assert option_list_reason(match) == (
+        "many place names listed: check whether this is a real coverage or office list before removing anything"
+    )
+
+
 # ── Country list coverage (finding 3) ────────────────────────────────────────
 
 
 def test_previously_missing_common_countries_are_recognized():
+    # A bare list, so it now reads as "place_list" (see the controller
+    # decision above) rather than "form_options" -- what this test actually
+    # pins is that every one of these country names is recognized at all,
+    # which is what widened the whitelist that this test is named for.
     text = (
         "United States United Kingdom South Africa South Korea Saudi Arabia New Zealand "
         "United Arab Emirates Czech Republic Ivory Coast Russia Vietnam Germany France Italy "
         "Spain Portugal Poland Sweden Norway Finland Denmark Netherlands Belgium Austria "
         "Switzerland Greece Ireland Iceland Japan"
     )
-    assert is_option_list(text) is True
+    match = option_list_match(text)
+    assert match is not None
+    assert match.category == "countries"
+    assert match.kind == "place_list"
 
 
 def test_the_reviewers_p_to_s_slice_reaches_the_threshold():
     # 38 real ISO country names, P through S, with no connecting language:
-    # exactly the kind of picker slice the old, sparser whitelist missed.
+    # exactly the kind of slice the old, sparser whitelist missed. Bare
+    # (no marker), so it is a "place_list" under the controller decision,
+    # not "form_options" -- this test is about country-name recognition
+    # breadth, not classification.
     match = option_list_match(P_TO_S_COUNTRIES)
     assert match is not None
-    assert match.kind == "form_options"
+    assert match.kind == "place_list"
     assert match.category == "countries"
     assert match.distinct_count >= 25
 
@@ -276,8 +423,13 @@ def test_accented_country_names_match_their_ascii_form():
     # Each accented name is recognized as its own distinct country, both in
     # its accented form and its plain-ASCII form, when combined with 30
     # more ordinary countries (COUNTRIES) to clear the density threshold.
-    assert is_option_list(f"{accented} {COUNTRIES}") is True
-    assert is_option_list(f"{ascii_form} {COUNTRIES}") is True
+    # No marker here, so this stays a "place_list", not "form_options";
+    # what this test pins is recognition, not classification.
+    accented_match = option_list_match(f"{accented} {COUNTRIES}")
+    ascii_match = option_list_match(f"{ascii_form} {COUNTRIES}")
+    assert accented_match is not None
+    assert ascii_match is not None
+    assert accented_match.category == ascii_match.category == "countries"
 
 
 def test_niger_inside_nigeria_is_not_double_counted():
@@ -588,6 +740,37 @@ def test_an_unfenced_sql_insert_is_in_example():
     assert placeholder_contacts(text) == []
 
 
+def test_an_nginx_directive_block_is_in_example():
+    # Controller decision item 4: an nginx/Apache-style directive block
+    # ("key value;" lines between "{" and "}") is documentation, not a
+    # leaked real address.
+    text = "server {\n    listen 80;\n    server_name example.com;\n    email_contact admin@example.com;\n}"
+    findings = placeholder_findings(text)
+    assert findings and all(f.in_example for f in findings)
+    assert placeholder_contacts(text) == []
+
+
+def test_a_multi_line_http_header_block_is_in_example():
+    # Controller decision item 4: two or more consecutive header-style
+    # lines ("From:", "To:", "Reply-To:", ...) is a raw header dump, not a
+    # real contact footer.
+    text = "From: alerts@example.com\nTo: security@example.com\nReply-To: noreply@example.com\nSubject: Alert triggered"
+    findings = placeholder_findings(text)
+    assert findings and all(f.in_example for f in findings)
+    assert placeholder_contacts(text) == []
+
+
+def test_a_single_email_footer_line_is_not_in_example():
+    # Controller decision item 4: a lone flush-left "Email: ..." line
+    # stays prose -- it must not be swept up by the new HTTP-header-block
+    # detection, which requires two or more consecutive header lines, and
+    # "Email" is not one of the protocol header names it looks for anyway.
+    text = "Reach out any time.\nEmail: yourname@company.com"
+    findings = placeholder_findings(text)
+    assert findings and all(not f.in_example for f in findings)
+    assert "yourname@company.com" in placeholder_contacts(text)
+
+
 def test_a_footer_email_label_is_not_in_example():
     # A real contact footer, one field per line, no indentation -- must not
     # be mistaken for a YAML "key: value" config line.
@@ -712,13 +895,15 @@ class TestFindJunkChunks:
     def test_flags_an_option_list_chunk_by_id_and_reason(self, db):
         client = _make_client(db)
         bot = _make_bot(db, client)
-        _add_document(db, client=client, bot=bot, name="https://eventus.example/signup", content=COUNTRIES)
+        _add_document(
+            db, client=client, bot=bot, name="https://eventus.example/signup", content=EVENTUS_DIAL_CODE_PICKER
+        )
 
         result = find_junk_chunks(db, bot.id)
 
         assert len(result.findings) == 1
         assert result.findings[0].document_name == "https://eventus.example/signup"
-        assert any("country dial-code picker" in reason for reason in result.findings[0].reasons)
+        assert any("dial codes" in reason for reason in result.findings[0].reasons)
         assert result.scanned_count == 1
 
     def test_flags_a_place_list_chunk_separately_and_lower_priority(self, db):
