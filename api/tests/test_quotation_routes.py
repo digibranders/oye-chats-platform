@@ -1007,6 +1007,29 @@ class TestQuotationEmails:
         assert _capture_emails["document"] == []
         assert len(_capture_emails["client"]) == 1
 
+    def test_a_bot_with_no_recipients_sends_the_quote_to_the_account_owner(self, db, _capture_emails):
+        """Production, 2026-09-11: Eventus has no notification addresses saved.
+        The visitor got both quotation emails and the owner got nothing."""
+        client = _make_client(db, email="eventus-owner@example.com", api_key="e-owner")
+        bot = _make_bot(db, client.id, bot_key="bot-e-owner", catalog=_catalog())
+        _make_session(
+            db,
+            session_id="e-owner-s",
+            bot_id=bot.id,
+            client_id=client.id,
+            need=1,
+            budget=1,
+            quotation_state=dict(_QUOTING_STATE),
+        )
+        _make_message(db, session_id="e-owner-s")
+        _make_lead(db, session_id="e-owner-s", bot_id=bot.id, email="jason@buyer.com", name="Jason")
+        api = _bot_api(_app(), bot)
+        with _patch_session(db):
+            res = api.post("/chat/quotation/accept", json={"session_id": "e-owner-s"})
+        assert res.status_code == 200
+        assert len(_capture_emails["visitor"]) == 1
+        assert [args[0] for args, _kwargs in _capture_emails["client"]] == ["eventus-owner@example.com"]
+
     def test_email_failure_never_breaks_accept(self, db, monkeypatch):
         client = _make_client(db, email="e3@example.com", api_key="e3")
         bot = _make_bot(db, client.id, bot_key="bot-e3", catalog=_catalog(), notification_email="owner@acme.com")

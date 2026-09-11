@@ -27,6 +27,8 @@ from urllib.request import Request, urlopen
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 from botocore.exceptions import ConnectionError as BotoConnectionError
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy import select
 
 from app.config import (
     APP_URL,
@@ -41,6 +43,8 @@ from app.config import (
     SES_AWS_SECRET_ACCESS_KEY,
     SUPPORT_EMAIL,
 )
+from app.db.models import Client
+from app.db.session import get_session
 from app.services import email_design as ed
 from app.services.email_design import button, code_box, esc, h1, info_table, link, p, pre_box, shell, strong
 
@@ -690,19 +694,118 @@ def get_notification_recipients(bot, event_type: str) -> list[str]:
     """Resolve notification email recipients for a given event type.
 
     Resolution chain (first non-empty wins): per-event override → default list →
-    legacy comma-separated single field → empty list.
+    legacy comma-separated single field → the workspace owner's account email.
+
+    The last step keeps a notification from vanishing. Production, 2026-09-11:
+    Eventus had no address saved anywhere, the chain ended in ``[]``, and its
+    quotes, offline messages, handoff requests and qualified leads went nowhere
+    with nothing telling the team. An ``email_on_*`` opt-out is not decided
+    here: every caller checks its flag before asking for recipients, so an
+    opted-out event never reaches the fallback.
+    """
+    saved = _saved_notification_recipients(bot, event_type)
+    if saved:
+        return saved
+    owner_email = _workspace_owner_email(bot)
+    if owner_email is None:
+        return []
+    logger.info(
+        "Notification recipients fall back to the workspace owner | bot=%s event=%s to=%s",
+        _loaded_bot_id(bot),
+        event_type,
+        redact_email(owner_email),
+    )
+    return [owner_email]
+
+
+def uses_owner_notification_fallback(bot) -> bool:
+    """True when at least one notification event is sent to the workspace owner.
+
+    That holds exactly when no default list and no legacy address is saved:
+    every event without a list of its own then falls back, and quotes, which
+    have no bucket, always do. Reads only the bot's own columns, never the
+    database. Published on ``BotResponse`` so the console can say where alerts
+    go instead of implying they go nowhere.
+    """
+    return not _saved_notification_recipients(bot, None)
+
+
+def _saved_notification_recipients(bot, event_type: str | None) -> list[str]:
+    """The addresses the customer saved for ``event_type``, or ``[]``.
+
+    Per-event list → default list → legacy comma-separated single field.
+    ``None`` skips the per-event list, which asks whether a saved list covers
+    every event. A list of blank strings counts as unset, the same as ``[]``,
+    which is what the console saves for a bucket nobody filled in.
     """
     ne = bot.notification_emails
     if isinstance(ne, dict):
-        event_list = ne.get(event_type)
-        if isinstance(event_list, list) and event_list:
-            return [e.strip() for e in event_list if e and e.strip()]
-        default_list = ne.get("default")
-        if isinstance(default_list, list) and default_list:
-            return [e.strip() for e in default_list if e and e.strip()]
+        buckets = ("default",) if event_type is None else (event_type, "default")
+        for bucket in buckets:
+            listed = ne.get(bucket)
+            if isinstance(listed, list):
+                recipients = _clean_addresses(listed)
+                if recipients:
+                    return recipients
     if bot.notification_email:
-        return [e.strip() for e in bot.notification_email.split(",") if e.strip()]
+        return _clean_addresses(bot.notification_email.split(","))
     return []
+
+
+def _clean_addresses(values: list) -> list[str]:
+    return [value.strip() for value in values if isinstance(value, str) and value.strip()]
+
+
+def _loaded_bot_id(bot) -> object:
+    """``bot.id`` when it is already in memory. Never triggers a load, so it is safe in a log call."""
+    return getattr(bot, "__dict__", {}).get("id")
+
+
+def _workspace_owner_email(bot) -> str | None:
+    """The account email of the workspace that owns ``bot``, or ``None``.
+
+    The account row (``Client.email``), not an owner operator row.
+    ``bot.client_id`` is the workspace, and its account is the one identity
+    every workspace is guaranteed to have: ``email`` is NOT NULL, unique, and
+    the address the owner signed up and verified with. Operator rows are per
+    bot and optional (an owner who never added themselves as an operator has
+    none), and a workspace can hold several ``role='owner'`` rows, one of them
+    an invited member who is a different person (see
+    ``operator_identity_service``).
+
+    Callers pass three shapes of bot, and ``bot.client`` is not safe on all of
+    them:
+
+    - ``client`` already loaded: read it, no query.
+    - Bound to a live session (the offline-message routes, the worker tasks,
+      the BANT merge): one primary-key read on that session, from the thread
+      the caller is already using it on, so no second pooled connection.
+    - Detached (``get_current_bot`` expunges the row it returns and the
+      quotation routes pass it on) or a cache stand-in: a lazy load would
+      raise ``DetachedInstanceError``, so a short session of its own.
+
+    Never raises. A failed lookup is logged and reads as "no owner", which
+    leaves the caller where it was before this fallback existed.
+    """
+    try:
+        state = sa_inspect(bot, raiseerr=False)
+        if state is not None and "client" not in state.unloaded:
+            return _clean_address(getattr(state.attrs.client.loaded_value, "email", None))
+        client_id = getattr(bot, "client_id", None)
+        if not isinstance(client_id, int):
+            return None
+        query = select(Client.email).where(Client.id == client_id)
+        if state is not None and state.session is not None:
+            return _clean_address(state.session.execute(query).scalar_one_or_none())
+        with get_session() as session:
+            return _clean_address(session.execute(query).scalar_one_or_none())
+    except Exception:  # noqa: BLE001 - a lookup failure must not break the request that is notifying
+        logger.warning("Notification owner lookup failed | bot=%s", _loaded_bot_id(bot), exc_info=True)
+        return None
+
+
+def _clean_address(value: object) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
 
 
 def _branded_sender_name(bot_name: str) -> str:
