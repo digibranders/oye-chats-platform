@@ -40,14 +40,26 @@ from dataclasses import dataclass
 
 # Words/phrases that, by themselves or with light decoration, are pure
 # greetings. Match must be the whole message (after trimming punctuation).
+# Stretched spellings ("hiiiiii", "heyyyy") are matched through
+# ``_term_spellings``, so a word is listed once plus any double-letter spelling
+# visitors type ("hii", "heyy"), which that function leaves alone.
 _GREETING_TERMS = {
     "hi",
     "hii",
-    "hiii",
     "hello",
     "helloo",
     "hey",
     "heyy",
+    # Common misspellings and chat spellings.
+    "halo",
+    "hallo",
+    "helo",
+    "hlo",
+    "hlw",
+    "hy",
+    "hye",
+    "hiya",
+    "heya",
     "hey there",
     "hi there",
     "hello there",
@@ -263,6 +275,32 @@ def _normalise(text: str) -> str:
     return s
 
 
+# A run of three or more of the same letter: the "iiii" in "hiiii".
+_STRETCHED_RUN_RE = re.compile(r"([a-z])\1{2,}")
+
+
+def _term_spellings(norm: str) -> tuple[str, str, str]:
+    """``norm`` and its two de-stretched spellings, for the term-set lookups.
+
+    Visitors stretch short replies ("hiiiiiiiiii", "okkkk", "nooo") and the
+    term sets cannot list every length. Each run of three or more of the same
+    letter is collapsed to two letters in one spelling and to one in the other,
+    because the word underneath may have either ("helloo" keeps a double "o",
+    "no" has a single one). A run of exactly two is left alone, so "gee" never
+    becomes "ge", the "good evening" abbreviation.
+
+    Both spellings collapse every run the same way, so a message that stretches
+    a double letter and a single letter at once ("gooood morninggg") matches
+    only when one of the two results is a term. Two fixed spellings, rather
+    than one per combination of runs, keep the cost linear in the message.
+    """
+    return (
+        norm,
+        _STRETCHED_RUN_RE.sub(r"\1\1", norm),
+        _STRETCHED_RUN_RE.sub(r"\1", norm),
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Public router
 # ─────────────────────────────────────────────────────────────────────────────
@@ -330,13 +368,26 @@ def route_intent(
         if _BOT_NAME_RE.search(norm):
             return _bot_name(company_name)
 
-    # 2b) One-word gibberish. The ASCII-letters-only guard keeps matching
-    #     linear for a long adversarial input. No greeting/ack/neg-ack term
-    #     matches ``_UNCLEAR_RE`` (see
-    #     test_intent_router_social.py::test_no_known_term_is_unclear), so this
-    #     check does not need to exclude those sets separately.
+    # 3) Greetings, acks and negative acks. Only if the WHOLE message is a
+    #    term, allowing for stretched letters (see ``_term_spellings``). Matched
+    #    ahead of the gibberish check below: a stretched "k", "thx", "gm" or "n"
+    #    is six or more consonants, which that check would read as unclear.
+    if word_count <= 4:
+        spellings = _term_spellings(norm)
+        if any(spelling in _GREETING_TERMS for spelling in spellings):
+            return _greeting(company_name)
+        if any(spelling in _ACK_TERMS for spelling in spellings):
+            return _ack(company_name)
+        if any(spelling in _NEG_ACK_TERMS for spelling in spellings):
+            return _neg_ack(company_name)
+
+    # 4) One-word gibberish. The ASCII-letters-only guard keeps matching
+    #    linear for a long adversarial input. The term sets are matched above,
+    #    so this check does not need to exclude them.
     if word_count == 1 and norm.isascii() and norm.isalpha() and _UNCLEAR_RE.match(norm):
         return _unclear(company_name, support_enabled)
+
+    # 5) Small talk and social reflexes, whole message only.
     if word_count <= 8:
         if _NAME_RECALL_RE.match(norm):
             return _name_recall(company_name, visitor_name)
@@ -348,18 +399,6 @@ def route_intent(
             return _frustration(company_name, support_enabled)
         if _ABUSE_RE.match(norm):
             return _abuse(company_name)
-
-    # 3) Greetings. Only if the WHOLE message is a greeting term
-    if word_count <= 4 and norm in _GREETING_TERMS:
-        return _greeting(company_name)
-
-    # 4) Acks. Only if WHOLE message is an ack term
-    if word_count <= 4 and norm in _ACK_TERMS:
-        return _ack(company_name)
-
-    # 5) Negative ack
-    if word_count <= 4 and norm in _NEG_ACK_TERMS:
-        return _neg_ack(company_name)
 
     return None
 

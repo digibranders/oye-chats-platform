@@ -225,3 +225,77 @@ class TestPrivacyAnswersSurviveTheBusinessWordGuard:
     )
     def test_recording_and_retention_still_short_circuit(self, msg):
         assert route_intent(msg, COMPANY) is not None, msg
+
+
+# ── Recall: stretched and misspelled short replies ──────────────────────────
+
+
+class TestStretchedAndMisspelledGreetings:
+    """Production, 2026-09-11: "hiiiiiiiiii" and "halo" missed the router, went
+    to retrieval, and the relevance gate refused them as off-topic ("That one's
+    outside my lane"). "hellloooo" missed the same way. The term sets match the
+    whole message exactly, so a stretched letter or a common misspelling fell
+    through to a refusal."""
+
+    @pytest.mark.parametrize(
+        "msg",
+        [
+            "hiiiiiiiiii",
+            "halo",
+            "hellloooo",
+            "Hiiiii!!",
+            "heyyyyy there",
+            "goood morning",
+            "hallo",
+            "helo",
+            "hlo",
+            "hy",
+            "hye",
+            "hiya",
+            "heya",
+            "hlw",
+        ],
+    )
+    def test_routes_as_a_greeting(self, msg):
+        routed = route_intent(msg, COMPANY)
+        assert routed is not None, msg
+        assert routed.intent == "greeting", msg
+
+    @pytest.mark.parametrize(
+        ("msg", "intent"),
+        [
+            ("okkkk", "ack"),
+            ("thanksss", "ack"),
+            ("coool", "ack"),
+            ("nooo", "neg_ack"),
+            ("nopeee", "neg_ack"),
+        ],
+    )
+    def test_stretched_acks_route_to_their_intent(self, msg, intent):
+        routed = route_intent(msg, COMPANY)
+        assert routed is not None, msg
+        assert routed.intent == intent, msg
+
+    @pytest.mark.parametrize(
+        "msg",
+        [
+            # A run of exactly two letters is left alone: "gee" is not "ge", the
+            # "good evening" abbreviation, and "good" is not "god".
+            "see",
+            "gee",
+            "good",
+            "too",
+            "free trial",
+            # Misspellings match the whole message only, as every term does.
+            "halo effect pricing",
+            "hello, what is your pricing",
+            "hiiiii, what is your pricing",
+            # De-stretched, these are still not terms.
+            "seee",
+            "sooo",
+            "gooood",
+            "yessss",
+        ],
+    )
+    def test_falls_through(self, msg):
+        assert route_intent(msg, COMPANY) is None, msg
