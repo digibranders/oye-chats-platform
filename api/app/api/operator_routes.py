@@ -1144,6 +1144,7 @@ async def request_handoff(request: HandoffRequest, http_request: Request, bot: B
                 from sqlalchemy import exists, or_
 
                 from app.db.models import Operator as _OperatorModel
+                from app.db.models import OperatorExpoPushToken as _ExpoToken
                 from app.db.models import OperatorPushSubscription as _PushSub
 
                 workspace_operator_ids = (
@@ -1151,16 +1152,20 @@ async def request_handoff(request: HandoffRequest, http_request: Request, bot: B
                     .scalars()
                     .all()
                 )
-                has_push_subscriber = session.execute(
-                    select(
-                        exists().where(
-                            or_(
-                                _PushSub.client_id == db_bot.client_id,
-                                _PushSub.operator_id.in_(workspace_operator_ids) if workspace_operator_ids else False,
-                            )
+                # Web push and the mobile app both count: ``task_dispatch_handoff_push``
+                # sends to either transport, for operators and for the owner, so an
+                # operator with only the app installed is as reachable as one with
+                # a browser subscription. Both probes run in one statement.
+                owned_by_workspace = [
+                    exists().where(
+                        or_(
+                            model.client_id == db_bot.client_id,
+                            model.operator_id.in_(workspace_operator_ids) if workspace_operator_ids else False,
                         )
                     )
-                ).scalar()
+                    for model in (_PushSub, _ExpoToken)
+                ]
+                has_push_subscriber = session.execute(select(or_(*owned_by_workspace))).scalar()
 
                 from app.services.notification_broadcaster import broadcaster
 
