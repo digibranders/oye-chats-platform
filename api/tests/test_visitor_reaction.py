@@ -57,6 +57,7 @@ class TestWaitingForAPerson:
             "where is the agent",
             "any update?",
             "waiting for someone to reply",
+            "this is taking forever",
         ],
     )
     def test_a_visitor_waiting_on_the_team(self, message):
@@ -115,6 +116,7 @@ class TestTheDissatisfactionPrefilter:
             "ugh",
             "waste of time",
             "not what i asked",
+            "this is taking forever",
         ],
     )
     def test_the_model_is_asked(self, message):

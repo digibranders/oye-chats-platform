@@ -1987,12 +1987,10 @@ _STRICT_ON_SCOPE_RE = re.compile(
     r")\b"
 )
 
-# The visitor addressing the business in the second person, as a comparison or
-# an assurance question names it: "you", "u", "your company".
-_VISITOR_ADDRESSES_US = (
-    r"(?:you|u|ur|yourself|yourselves|y'?all"
-    r"|your\s+(?:company|firm|team|product|platform|service|solution|offering))"
-)
+# The visitor addressing the business in the second person, as a comparison
+# names it: "you", "u", or "your" and whatever the business is ("your clinic",
+# "your coffee", "your platform").
+_VISITOR_ADDRESSES_US = r"(?:you|u|ur|yourself|yourselves|y'?all|your\s+\w+)"
 
 # A visitor weighing this company against another is asking about this company.
 # "how r u better than crowdstrike" and "why pick you over sentinelone" are sales
@@ -2021,14 +2019,22 @@ _COMPARES_US_RE = re.compile(
 
 # Service levels and assurances asked of the business: "whats ur MTTD and MTTR
 # sla" (a managed SOC's bot) and "are you gdpr compliant" were both refused
-# (reported from production on 2026-09-11). Asked in the second person, so "is it
-# legal to scrape linkedin under gdpr" stays unknown. The gap is bounded, so the
-# match stays linear.
+# (reported from production on 2026-09-11). Only in the shapes that ask the
+# business for one ("are you ... compliant", "your ... sla", "do you offer ...
+# uptime"), so "is it legal to scrape linkedin under gdpr" and "can you explain
+# what gdpr is" stay unknown. At most three words sit between, so the match
+# stays linear.
+_ASSURANCE_TERMS = (
+    r"(?:slas?|mttd|mttr|uptime|response\s+times?|compliance|certifications?"
+    r"|gdpr|hipaa|dpdp|iso\s*27001|soc\s*2|pci(?:[\s-]*dss)?)"
+)
 _ASKS_OUR_ASSURANCES_RE = re.compile(
-    r"(?i)\b(?:you|u|ur|your|yours)\b[^.?!\n]{0,40}?\b(?:"
-    r"slas?|mttd|mttr|uptime|response\s+times?|compliant|compliance|certified|certifications?|accredited|audited"
-    r"|gdpr|hipaa|dpdp|iso\s*27001|soc\s*2|pci(?:[\s-]*dss)?"
-    r")\b"
+    r"(?i)(?:"
+    r"\b(?:are|r)\s+(?:you|u|y'?all)\s+(?:[\w-]+\s+){0,3}?"
+    r"(?:compliant|certified|accredited|audited|insured|licensed|registered)\b"
+    r"|\b(?:your|ur|(?:you|u)\s+(?:have|offer|provide|guarantee|follow|meet|support|comply\s+with))\s+"
+    rf"(?:[\w-]+\s+){{0,3}}?{_ASSURANCE_TERMS}\b"
+    r")"
 )
 
 

@@ -167,6 +167,11 @@ class TestCompanyQuestionsAreOnScope:
             "are you gdpr compliant",
             "are u soc 2 certified",
             "what is your sla",
+            "is your clinic better than apollo",
+            "is your coffee better than starbucks",
+            "do you comply with gdpr",
+            "is your platform hipaa compliant",
+            "are you licensed",
         ],
     )
     def test_on_scope(self, question):
@@ -186,6 +191,9 @@ class TestCompanyQuestionsAreOnScope:
             "can i sue my landlord for keeping my deposit",
             "is it legal to scrape linkedin under gdpr",
             "can you pick a movie for me",
+            "can you explain what gdpr is",
+            "who is the prime minister of india",
+            "translate hello to french",
         ],
     )
     def test_still_off_scope(self, question):

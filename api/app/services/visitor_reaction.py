@@ -99,6 +99,8 @@ _WAITING_PHRASE_RE = re.compile(
     # "waiting for someone to reply"
     rf"|waiting\s+(?:for|on)\s+(?:{_SOMEONE_ON_THE_TEAM}|a\s+(?:reply|response)|your\s+(?:reply|response)|you|u)"
     r"|hurry\s+up"
+    # "this is taking forever"
+    r"|taking\s+(?:so\s+|too\s+)?(?:forever|ages|long)"
     r")\b"
 )
 
@@ -141,6 +143,7 @@ _DISSATISFIED_VOCABULARY_RE = re.compile(
     r"|wow|cool|great|brilliant|genius|amazing|wonderful|fantastic|perfect|lovely|nice|yeah\s+right"
     r"|seriously|come\s+on|whatever|forget\s+it|never\s?mind|nvm|i\s+give\s+up|lol|lmao|smh|ugh+|bruh|meh|wtf|omg"
     r"|so\s+(?:i'll|ill|i\s+will|i\s+should|i\s+guess|we'll|i\s+just)|just\s+(?:sit|wait|leave|give\s+up)"
+    r"|taking\s+(?:so\s+|too\s+)?(?:forever|ages|long)"
     rf")\b|{_ANNOYED_EMOJI}"
 )
 
