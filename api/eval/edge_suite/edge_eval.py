@@ -1022,7 +1022,7 @@ whether it offers a sensible next step, and conversational context.
 
 Rules for fairness:
 - You cannot see the knowledge base. A GROUNDING CHECK is provided: facts listed as FOUND appear in the bot's own knowledge base and are grounded, not invented. Only call a fact invented or hallucinated when it is listed as NOT FOUND, or when it contradicts the conversation. Do not use outside knowledge about the company.
-- The BOT CONFIGURATION tells you what the bot can do. "No operator online" means "Our team is offline right now" is TRUE, and the form then becomes a message form; that wording is correct, not a fault.
+- The BOT CONFIGURATION tells you what the bot can do. "No operator online" does NOT mean the team is offline: an operator may be in another tab or answer a notification. A reply that offers the form and says the team will be notified, will get back to the visitor, or will receive their details is correct. Telling the visitor the team is offline, away or unavailable is a fault (severity medium).
 - Some replies are fixed by design and are correct when they fit: asking the visitor's name on the first reply; routing pricing to the team when no pricing page is configured; "The form is just below" when the visitor asks to connect again.
 - When multilingual is off or the visitor's language is not enabled, answering in English is expected and is at most a low-severity partial, never a fail.
 - Judge tone and usefulness as a real visitor would experience them.
