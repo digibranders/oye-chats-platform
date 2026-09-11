@@ -71,12 +71,27 @@ class TestLiveSupportIsNotPromisedOutsideBusinessHours:
 
         assert "will be with them shortly" in prompt
 
-    def test_outside_hours_the_bot_says_the_team_is_offline(self):
-        prompt = _prompt(live_chat_enabled=True, support_enabled=True, within_business_hours=False)
+    def test_when_no_one_can_join_the_bot_says_the_team_will_be_notified(self):
+        prompt = " ".join(_prompt(live_chat_enabled=True, support_enabled=True, within_business_hours=False).split())
 
         assert "will be with them shortly" not in prompt
-        assert "the team is offline right now" in prompt
+        assert "our team will be notified and will get back to them" in prompt
         assert "[LEAVE_MESSAGE_CARD]" in prompt, "the visitor still needs somewhere to go"
+
+    def test_the_visitor_is_never_told_the_team_is_offline(self):
+        """This branch also fires inside hours when no operator has a live
+        presence, and an operator in another tab is brought in by the handoff
+        push. "Offline" would be false to the visitor in that case, so the
+        prompt neither asserts it nor lets the model say it.
+
+        Whitespace is flattened first: the block wraps its lines, and a phrase
+        split across a line break would pass a ``not in`` check while still
+        reaching the model."""
+        prompt = " ".join(_prompt(live_chat_enabled=True, support_enabled=True, within_business_hours=False).split())
+
+        assert "the team is offline right now" not in prompt
+        assert "not available at the moment" not in prompt
+        assert "Never tell the visitor the team is offline, away or unavailable" in prompt
 
     def test_the_default_is_open(self):
         """An unknown or unconfigured schedule means 24/7, matching

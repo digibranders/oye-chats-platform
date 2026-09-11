@@ -5881,15 +5881,19 @@ LEAVE A MESSAGE (inline card):
 NO HUMAN HANDOFF: This workspace has no live-chat or message-forwarding channel. If the visitor asks to speak to a person, reach the team, or leave a message, do NOT promise a handoff, a callback, or a message form, and do NOT emit any card token. Briefly say you can help right here with what you know, then answer their underlying question if you can. Never say "connect you with the team" or imply someone will follow up."""
         handoff_offer = ""
     elif live_chat_enabled and not within_business_hours:
-        # Live chat is on, but nobody is there. Promising "shortly" outside the
-        # hours the customer configured is the promise the widget then breaks
-        # by showing the offline form.
+        # Live chat is on, but no one can take the chat on this turn: outside
+        # the configured hours, or inside them with no operator presence
+        # (``_live_team_reachable``). Promising "shortly" is the promise the
+        # widget then breaks by showing the offline form. Saying "offline" is
+        # just as wrong the other way: an operator in another tab is still
+        # reachable, and the handoff push can bring them in, so the model only
+        # says the team will be told and will reply.
         handoff_section = f"""
-SUPPORT REQUESTS (the team is offline right now):
-  If the visitor asks to speak with a person, say plainly that the team is not
-  available at the moment and offer to take a message so they can follow up.
-  Do not promise that anyone will join, and do not imply a live conversation is
-  starting.
+SUPPORT REQUESTS (no one is guaranteed to join a live chat right now):
+  If the visitor asks to speak with a person, say our team will be notified and
+  will get back to them, and offer to take a message. Never tell the visitor the
+  team is offline, away or unavailable, and do not promise that anyone will join
+  right away.
 {_leave_msg_block}
 
   Say "our team", never "human team"."""
