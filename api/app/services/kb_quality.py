@@ -1,6 +1,7 @@
 """Pure detectors for knowledge-base content that is not a statement of fact.
 
-Used by ``scripts/kb_junk_report.py`` today and intended for the ingestion
+Used by ``scripts/kb_junk_report.py``, by retrieval in ``rag_service`` (see
+``first_visitor_placeholder`` at the end), and intended for the ingestion
 pipeline in Phase 2.
 
 Production, 2026-09-10: Eventus told visitors it operates in about 250
@@ -924,7 +925,7 @@ _HTTP_HEADER_BLOCK_RE = re.compile(
 )
 
 
-def _looks_like_code_line(context: str) -> bool:
+def _looks_like_code_line(context: str, *, markdown_tables: bool = True) -> bool:
     if '"' in context and _JSON_LINE_RE.search(context):
         return True
     if ":" in context and (_YAML_LINE_RE.search(context) or _HTTP_HEADER_BLOCK_RE.search(context)):
@@ -935,7 +936,7 @@ def _looks_like_code_line(context: str) -> bool:
         return True
     if ("$" in context or "#" in context) and _SHELL_PROMPT_OR_VAR_RE.search(context):
         return True
-    if "|" in context and _MARKDOWN_TABLE_ROW_RE.search(context):
+    if markdown_tables and "|" in context and _MARKDOWN_TABLE_ROW_RE.search(context):
         return True
     if ("{" in context or "}" in context) and (
         _BRACE_ASSIGNMENT_RE.search(context) or _BRACE_DIRECTIVE_RE.search(context)
@@ -1062,13 +1063,19 @@ def _local_context(ctx: _ExampleContext, start: int, end: int) -> str:
     return content[window_start:window_end]
 
 
-def _is_in_example(ctx: _ExampleContext, start: int, end: int) -> bool:
+def _is_in_example(ctx: _ExampleContext, start: int, end: int, *, for_visitors: bool = False) -> bool:
+    """True if the match at ``start``-``end`` sits inside a code or documentation example.
+
+    ``for_visitors`` drops the two signals that only make sense for the owner's
+    report (see "Placeholders a visitor must never be told" below): a markdown
+    table row and a nearby bracketed field. Every other signal is shared.
+    """
     if _in_fenced_or_backtick_region(ctx, start):
         return True
     context = _local_context(ctx, start, end)
-    if _looks_like_code_line(context):
+    if _looks_like_code_line(context, markdown_tables=not for_visitors):
         return True
-    if "[" in context and _BRACKET_PLACEHOLDER_RE.search(context):
+    if not for_visitors and "[" in context and _BRACKET_PLACEHOLDER_RE.search(context):
         return True
     content = ctx.content
     lookback = content[max(0, start - _LOOKBACK_CHARS) : start]
@@ -1128,3 +1135,120 @@ def placeholder_contacts(content: str) -> list[str]:
     keeping the first-seen original case for display.
     """
     return [finding.value for finding in placeholder_findings(content) if not finding.in_example]
+
+
+# ── Placeholders a visitor must never be told ────────────────────────────────
+#
+# Production, 2026-09-11: CleanStart's bot told a visitor "The enterprise
+# phone number is +1 (555) 123-4567 for Enterprise tier customers only." The
+# number sat on a crawled draft page (/knowledge-hub/sla-documentation) along
+# with "+1-XXX-XXX-XXXX" and "[Big 4 Firm Name]", and retrieval put the chunk
+# in the prompt like any other.
+#
+# ``placeholder_findings`` answers the report's question: should the owner
+# delete this? Retrieval asks a different one: may the model read this chunk
+# as fact? Three rules follow from the difference.
+#
+# - Only kinds that are never real. Every phone shape above is a block
+#   reserved for fiction or a digit mask, and "lorem ipsum" is filler.
+#   Placeholder emails, addresses and names stay report-only: "email.com" and
+#   "company.com" are real domains, and a real "123 Main Street" or "Jane
+#   Smith" exists.
+# - A bracketed field is the finding, not evidence of documentation. The
+#   report reads "[CISO Name]" near a match as a template example and stays
+#   quiet; for a visitor an unfilled "[Big 4 Firm Name]" is exactly the draft
+#   text that must not be repeated. The report's bracket check also matches
+#   any "[Contact us](...)" link, which says nothing about the number beside
+#   it.
+# - A markdown table row is not an example either. The report exempts one;
+#   an SLA page lays out its escalation numbers in exactly that shape.
+#
+# Everything else that marks real documentation still exempts a match: a
+# fenced or backticked span, a JSON/YAML/CLI/assignment/shell/SQL line, a
+# "Copy code" block, an "e.g." cue, a link target.
+
+VisitorPlaceholderKind = PlaceholderKind | Literal["template_field"]
+
+_VISITOR_PLACEHOLDER_KINDS: frozenset[PlaceholderKind] = frozenset({"phone", "filler"})
+_VISITOR_PLACEHOLDER_PATTERNS = tuple(
+    entry for entry in _PLACEHOLDER_PATTERNS if entry[1] in _VISITOR_PLACEHOLDER_KINDS
+)
+
+# An unfilled template field: "[Company Name]", "[Big 4 Firm Name]",
+# "[start_date]". The lookarounds rule out a markdown link or image
+# ("[text](url)", "![alt](src)"), a reference link or definition ("[text][ref]",
+# "[ref]: url") and indexing ("row[first_name]") before any word is looked at.
+# The inner run is bounded, so a string of unclosed brackets costs one short
+# failed attempt per bracket.
+_TEMPLATE_FIELD_RE = re.compile(r"(?<![\w\])!])\[([A-Za-z][A-Za-z0-9 _'&/.-]{1,48})\](?![(\[:])")
+_TEMPLATE_FIELD_WORD_SPLIT_RE = re.compile(r"[\s_/-]+")
+#: The noun an unfilled field ends in. Deliberately short: a citation, a file
+#: tag or a button label ("[12]", "[PDF]", "[Download Now]", "[Terms of
+#: Service]") never ends in one of these.
+_TEMPLATE_FIELD_NOUNS = frozenset(
+    {"name", "date", "email", "phone", "number", "address", "title", "city", "amount", "url", "website", "logo"}
+)
+#: A leading word that makes any bracketed phrase an instruction to fill it in.
+_TEMPLATE_FIELD_LEADS = frozenset({"insert", "placeholder"})
+#: A single bracketed word ("[Date]", "[Enter]") is too often a key, a label or
+#: a tag to call a draft field on its own.
+_TEMPLATE_FIELD_MIN_WORDS = 2
+_TEMPLATE_FIELD_MAX_WORDS = 6
+# Prose about a field ("the [First Name] merge tag", "map the [Account Name]
+# field") documents a product feature, not an unfilled value.
+_FIELD_REFERENCE_AFTER_RE = re.compile(
+    r"[ \t]{0,3}(?:fields?|columns?|parameters?|params?|placeholders?|tags?|tokens?|variables?"
+    r"|merge[ \t]+(?:tags?|fields?))\b",
+    re.IGNORECASE,
+)
+
+
+def _is_template_field(inner: str) -> bool:
+    """True if the text between the brackets reads as an unfilled field name."""
+    words = [word.lower() for word in _TEMPLATE_FIELD_WORD_SPLIT_RE.split(inner.strip()) if word]
+    if not _TEMPLATE_FIELD_MIN_WORDS <= len(words) <= _TEMPLATE_FIELD_MAX_WORDS:
+        return False
+    if words[0] in _TEMPLATE_FIELD_LEADS:
+        return True
+    # "[Your Logo Here]" names its field one word before "Here"; "[Click Here]" names none.
+    noun = words[-2] if words[-1] == "here" else words[-1]
+    return noun in _TEMPLATE_FIELD_NOUNS
+
+
+@dataclass(frozen=True)
+class VisitorPlaceholder:
+    """A placeholder a chunk states outside any example: its kind and the matched text."""
+
+    kind: VisitorPlaceholderKind
+    value: str
+
+
+def first_visitor_placeholder(content: str) -> VisitorPlaceholder | None:
+    """The first placeholder in ``content`` a visitor must never be told, or ``None``.
+
+    Placeholder phone numbers and filler text are checked first, then unfilled
+    template fields. The scan stops at the first one found outside an example:
+    one is enough to keep the chunk out of the prompt. The example context is
+    only built once a candidate turns up, so a clean chunk costs a few
+    single-pass regex scans.
+
+    Linear in ``len(content)``: every pattern is bounded, the context is built
+    at most once, and each candidate is checked against a fixed-size window
+    (see ``_is_in_example``).
+    """
+    text = content or ""
+    ctx: _ExampleContext | None = None
+    for pattern, kind in _VISITOR_PLACEHOLDER_PATTERNS:
+        for match in pattern.finditer(text):
+            if ctx is None:
+                ctx = _build_example_context(text)
+            if not _is_in_example(ctx, match.start(), match.end(), for_visitors=True):
+                return VisitorPlaceholder(kind=kind, value=match.group(0))
+    for match in _TEMPLATE_FIELD_RE.finditer(text):
+        if not _is_template_field(match.group(1)) or _FIELD_REFERENCE_AFTER_RE.match(text, match.end()):
+            continue
+        if ctx is None:
+            ctx = _build_example_context(text)
+        if not _is_in_example(ctx, match.start(), match.end(), for_visitors=True):
+            return VisitorPlaceholder(kind="template_field", value=match.group(0))
+    return None

@@ -20,7 +20,7 @@ from app import config
 from app.core.cache import QA_RESPONSE_TTL, cache_delete, cache_get, cache_set, qa_response_key
 from app.core.embedding_profiles import EMBEDDING_PROFILE_LEGACY, normalize_profile, query_task_type
 from app.core.langfuse_client import get_langfuse, langfuse_generation, redact_pii
-from app.core.metrics import forward_to_sentry_if_alertable, increment_metric_counter
+from app.core.metrics import forward_to_sentry_if_alertable, increment_metric_counter, increment_metric_counter_by
 from app.core.thread_pool import submit_background
 from app.db.models import BANTSignal, Bot, ChatSession, MeetingBooking
 from app.db.repository import (
@@ -73,6 +73,7 @@ from app.services.intent_service import (
     detect_handoff_intent,
     detect_handoff_intent_keywords,
 )
+from app.services.kb_quality import first_visitor_placeholder
 from app.services.live_chat_availability_service import (
     LiveChatState,
     _within_business_hours,
@@ -2989,6 +2990,40 @@ def _trim_results(results: list, top_k: int = 15) -> list:
     is responsible for trimming to the final top_n before prompt assembly.
     """
     return results[:top_k]
+
+
+def _drop_placeholder_chunks(results: list, bot_id: int | None) -> list:
+    """Drop retrieved chunks that state a placeholder, keeping the rest in order.
+
+    Production, 2026-09-11: CleanStart's bot gave a visitor "+1 (555) 123-4567"
+    as its enterprise phone number, read off a crawled draft page. A chunk is
+    dropped when ``kb_quality.first_visitor_placeholder`` finds a placeholder
+    phone number, filler text or an unfilled template field ("[Big 4 Firm
+    Name]") outside any code or documentation example.
+
+    Dropped, never redacted. On the retrieval path these are ORM ``Document``
+    rows bound to the request session, so rewriting ``content`` could be
+    flushed back into the customer's knowledge base. A draft page's other
+    sentences (the SLA terms around the fake number, the audit claim around
+    the unfilled firm) are no more verified than the placeholder line either.
+    Removing the source stays the owner's decision, made in the console
+    (``scripts/kb_junk_report.py`` lists these chunks); this only keeps them out
+    of the prompt.
+
+    Logs document ids and placeholder kinds, never chunk text.
+    """
+    kept: list = []
+    dropped: list[str] = []
+    for doc in results:
+        found = first_visitor_placeholder(getattr(doc, "content", None) or "")
+        if found is None:
+            kept.append(doc)
+        else:
+            dropped.append(f"{getattr(doc, 'id', None)}:{found.kind}")
+    if dropped:
+        increment_metric_counter_by("kb_placeholder_chunk_dropped", len(dropped), bot_id=bot_id)
+        logger.info("kb_placeholder_chunk_dropped | bot=%s count=%d chunks=%s", bot_id, len(dropped), ",".join(dropped))
+    return kept
 
 
 # ─── Company-related query expansion ────────────────────────────────────────
@@ -8327,7 +8362,9 @@ async def rag_pipeline_stream(
 
             if _use_cag_lite:
                 logger.info(f"CAG-lite stream mode: injecting all {_total_chunks} chunks (bot_id={bid})")
-                final_results = await asyncio.to_thread(_fetch_all_chunks_isolated, bid, cid)
+                final_results = _drop_placeholder_chunks(
+                    await asyncio.to_thread(_fetch_all_chunks_isolated, bid, cid), bid
+                )
                 search_query = question
                 suggest_handoff = (
                     detect_company_deal_intent(question, _company_name)
@@ -8413,15 +8450,20 @@ async def rag_pipeline_stream(
 
                 _fuse_start = _t.perf_counter()
                 final_results = reciprocal_rank_fusion(vector_results, keyword_results)
+                # Before the trim, so a dropped placeholder chunk frees its slot for the next-ranked one.
+                final_results = _drop_placeholder_chunks(final_results, bid)
                 final_results = _trim_results(final_results, top_k=_retrieval_k)
                 if not final_results:
-                    final_results = await asyncio.to_thread(
-                        _zero_result_multi_query_fallback,
-                        question,
-                        cid,
+                    final_results = _drop_placeholder_chunks(
+                        await asyncio.to_thread(
+                            _zero_result_multi_query_fallback,
+                            question,
+                            cid,
+                            bid,
+                            _retrieval_k,
+                            embedding_profile=_embedding_profile,
+                        ),
                         bid,
-                        _retrieval_k,
-                        embedding_profile=_embedding_profile,
                     )
                 _fuse_ms = (_t.perf_counter() - _fuse_start) * 1000
 
