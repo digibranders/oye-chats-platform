@@ -1,8 +1,11 @@
 """Shared test fixtures for OyeChats API tests."""
 
 import os
+import threading
+from collections.abc import Iterator
 from contextlib import contextmanager
 from types import SimpleNamespace
+from typing import NoReturn
 from unittest.mock import MagicMock
 
 import pytest
@@ -19,6 +22,73 @@ from app.api.auth import (
 )
 from app.db.models import Base as _Base
 from tests.throwaway_db import drop_stale, throwaway_db_name
+
+# ── No real model calls ──────────────────────────────────────────────────────
+#
+# Every model call in the app goes through LiteLLM's ``completion`` or
+# ``acompletion``: ``app/services/llm_service.py``, the ingestion enrichers and
+# the ``/health/full`` probe. A test that forgot to stub one reached the provider
+# for real, which is slow, fails offline and is billed whenever a key is set.
+# The services catch the error and answer with a canned failure string, so a
+# raise alone could leave such a test passing on that string: every attempt is
+# also recorded and fails the test at teardown. Defined before the other
+# autouse fixtures so it is set up first and torn down last, after background
+# work has drained.
+
+#: Marks a test that deliberately reaches LiteLLM's completion entry points.
+ALLOW_REAL_LLM_CALL = "allow_real_llm_call"
+
+
+class RealModelCallError(RuntimeError):
+    """A test reached LiteLLM's real completion client without opting in."""
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers",
+        f"{ALLOW_REAL_LLM_CALL}: the test deliberately reaches litellm.completion or litellm.acompletion",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _no_real_llm_calls(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
+    """Refuse and record every call to ``litellm.completion`` and ``litellm.acompletion``.
+
+    Yields the recorded attempts, so a test of the guard itself can inspect and
+    clear them. A test marked ``allow_real_llm_call`` keeps the real client.
+    """
+    attempts: list[str] = []
+    if request.node.get_closest_marker(ALLOW_REAL_LLM_CALL) is not None:
+        yield attempts
+        return
+
+    import litellm
+
+    def refusal(entry_point: str, model: object) -> RealModelCallError:
+        # The thread names a probe or pool worker that an earlier test started and
+        # left running: its call lands in whichever test is running by then.
+        attempts.append(f"{entry_point}(model={model!r}) on thread {threading.current_thread().name!r}")
+        return RealModelCallError(
+            f"{entry_point} was called for real in a test. Stub the model call, or mark the test "
+            f"@pytest.mark.{ALLOW_REAL_LLM_CALL} if reaching the provider client is the point of it."
+        )
+
+    def completion(*_args: object, **kwargs: object) -> NoReturn:
+        raise refusal("litellm.completion", kwargs.get("model"))
+
+    async def acompletion(*_args: object, **kwargs: object) -> NoReturn:
+        raise refusal("litellm.acompletion", kwargs.get("model"))
+
+    monkeypatch.setattr(litellm, "completion", completion)
+    monkeypatch.setattr(litellm, "acompletion", acompletion)
+    yield attempts
+    if attempts:
+        pytest.fail(
+            f"real model call attempted: {', '.join(attempts)}. Stub it, or mark the test "
+            f"@pytest.mark.{ALLOW_REAL_LLM_CALL}.",
+            pytrace=False,
+        )
+
 
 # ── Real-Postgres throwaway DB (for DB-layer tests: locks, ledger, clawback) ──
 #

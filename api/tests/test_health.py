@@ -47,10 +47,17 @@ def _dependency_probes_healthy():
     """The gate-model and embedding probes make real provider calls. Default
     them to healthy so every DB/Redis/worker/LLM scenario below stays about
     what it tests; ``TestDependencyProbes`` overrides this to reach the real
-    probes, and ``TestDegradedSignal`` patches over it per test."""
+    probes, and ``TestDegradedSignal`` patches over it per test.
+
+    ``_gather_health`` also primes both probe states before it reads them, and
+    priming starts the real probe on a background thread whatever ``_gate_probe``
+    returns. From the first health check after a reset, that thread called the
+    real gate model and the embedding API, so priming is a no-op here too."""
     with (
         patch("app.main._gate_probe", return_value=dict(GATE_PROBE_OK)),
         patch("app.main._embedding_probe", return_value=dict(EMBED_PROBE_OK)),
+        patch("app.main._gate_probe_state.prime"),
+        patch("app.main._embedding_probe_state.prime"),
     ):
         yield
 
