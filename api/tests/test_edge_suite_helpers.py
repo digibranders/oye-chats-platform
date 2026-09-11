@@ -63,3 +63,18 @@ def test_judge_stops_before_any_call_without_a_provider_key(monkeypatch):
     monkeypatch.setattr(config, "GOOGLE_API_KEY", None)
     with pytest.raises(SystemExit):
         e.cmd_judge()
+
+
+def test_a_bare_only_flag_is_rejected_instead_of_running_every_bot():
+    with pytest.raises(SystemExit):
+        e.build_parser().parse_args(["run", "--only"])
+
+
+def test_only_with_ids_parses_to_a_list():
+    args = e.build_parser().parse_args(["run", "--only", "8"])
+    assert args.only == [8]
+
+
+def test_no_only_flag_means_every_bot():
+    args = e.build_parser().parse_args(["run"])
+    assert args.only is None

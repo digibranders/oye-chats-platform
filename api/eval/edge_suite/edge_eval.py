@@ -8,6 +8,7 @@ count  : print the case and bot count only, no network call
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import random
@@ -1304,20 +1305,29 @@ def cmd_sheet(out_path: str) -> None:
     print("SHEET", out_path, len(data), "rows")
 
 
-if __name__ == "__main__":
-    import argparse
+def build_parser() -> argparse.ArgumentParser:
+    """Build the CLI parser.
 
+    A bare ``--only`` (no ids) is a usage error, not "run every bot":
+    ``nargs="+"`` requires at least one id, so a typo or a quoting slip that
+    drops the ids fails fast instead of silently running every bot (and
+    spending credits on each).
+    """
     parser = argparse.ArgumentParser(description="Edge-case evaluation of deployed bots")
     parser.add_argument("command", choices=["run", "judge", "sheet", "count"])
     parser.add_argument("--bots", type=Path, default=HERE / "bots.local.json")
-    parser.add_argument("--only", type=int, nargs="*", help="bot ids to run")
+    parser.add_argument("--only", type=int, nargs="+", help="bot ids to run")
     parser.add_argument("--sheet-path", type=Path, default=OUT / "edge-case-evaluation.xlsx")
-    args = parser.parse_args()
+    return parser
+
+
+if __name__ == "__main__":
+    args = build_parser().parse_args()
     BOTS[:] = load_bots(args.bots)
     if args.command in ("run", "judge", "sheet"):
         OUT.mkdir(parents=True, exist_ok=True)
     if args.command == "run":
-        cmd_run(args.only or None)
+        cmd_run(args.only)
     elif args.command == "judge":
         cmd_judge()
     elif args.command == "sheet":
