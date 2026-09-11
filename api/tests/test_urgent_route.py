@@ -824,6 +824,21 @@ def test_a_yes_after_the_live_reply_is_a_handoff_and_after_the_no_human_reply_is
     assert bot_offers_handoff(_reply(support_enabled=False).text) is False
 
 
+@pytest.mark.parametrize("repeat", [False, True])
+@pytest.mark.parametrize(
+    ("live_chat_enabled", "team_available"), [(True, True), (True, False), (False, True), (False, False)]
+)
+@pytest.mark.parametrize("emergency_url", [None, "https://acme.com/incident"])
+def test_every_reply_that_opens_a_form_closes_on_an_offer(live_chat_enabled, team_available, repeat, emergency_url):
+    """An "ok" after any of them opens the form or the message card. The team-offline
+    and message-card replies once closed on "so they can reach you", which the offer
+    pattern does not read, so "ok" got the router's "Glad that helped"."""
+    reply = _reply(
+        live_chat_enabled=live_chat_enabled, team_available=team_available, repeat=repeat, emergency_url=emergency_url
+    )
+    assert bot_offers_handoff(reply.text) is True, reply.text
+
+
 def test_a_repeat_on_live_chat_points_at_the_form_again():
     first = _reply()
     repeat = _reply(repeat=True)
@@ -839,7 +854,7 @@ def test_a_repeat_with_the_team_offline_says_they_will_reach_out():
     repeat = _reply(team_available=False, repeat=True)
     assert repeat.text == (
         "I've already flagged this to **Acme** as a priority. The form is just below: "
-        "share your details there so they can reach you as soon as possible."
+        "share your details there so the team can contact you as soon as possible."
     )
     assert repeat.suggest_handoff is True
 
@@ -849,7 +864,7 @@ def test_a_repeat_without_live_chat_points_at_the_message_form():
     repeat = _reply(live_chat_enabled=False, repeat=True)
     assert repeat.text == (
         "I've already flagged this to **Acme** as a priority. Leave your details in the message form "
-        "so they can reach you as soon as possible."
+        "so the team can contact you as soon as possible."
     )
     assert (repeat.suggest_handoff, repeat.needs_message_card) == (first.suggest_handoff, first.needs_message_card)
 

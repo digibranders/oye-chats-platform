@@ -873,13 +873,16 @@ def urgent_reply(
             needs_message_card=False,
         )
     already_flagged = f"I've already flagged this to {co} as a priority."
+    # Every reply that opens a form closes on words ``intent_service.HANDOFF_OFFER_RE``
+    # reads as an offer ("connect you with", "the team can contact you"), so an "ok"
+    # on the next turn opens the form instead of the router's "Glad that helped".
     if not live_chat_enabled:
         text = (
-            f"{already_flagged} Leave your details in the message form so they can reach you as soon as possible."
+            f"{already_flagged} Leave your details in the message form so the team can contact you as soon as possible."
             if repeat
             else (
                 f"This sounds urgent, so I've flagged it to {co} as a priority. I'll open a quick message form "
-                f"so they can reach you as soon as possible."
+                f"so the team can contact you as soon as possible."
             )
         )
         return HandoffOffer(text=text + urgent_link, suggest_handoff=False, needs_message_card=True)
@@ -895,11 +898,12 @@ def urgent_reply(
         )
         return HandoffOffer(text=text + urgent_link, suggest_handoff=True, needs_message_card=False)
     text = (
-        f"{already_flagged} The form is just below: share your details there so they can reach you as soon as possible."
+        f"{already_flagged} The form is just below: share your details there so the team can contact you as soon "
+        "as possible."
         if repeat
         else (
             "This sounds urgent. Our team is offline right now, but I've flagged it to them as a priority. "
-            "Share your details in the form below so they can reach you as soon as possible."
+            "Share your details in the form below so the team can contact you as soon as possible."
         )
     )
     return HandoffOffer(text=text + urgent_link, suggest_handoff=True, needs_message_card=False)

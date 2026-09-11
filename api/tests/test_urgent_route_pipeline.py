@@ -9,6 +9,8 @@ from app.db.models import ChatSession, LeadInfo
 from app.db.repository import get_lead_info_by_session
 from app.services import rag_service as rs
 from app.services import urgent_route
+from app.services.handoff_reply import handoff_reply
+from app.services.intent_router import route_intent as real_route_intent
 from tests.test_rag_pipeline_defects import (
     _answer_text,
     _doc,
@@ -118,7 +120,7 @@ async def test_urgent_turn_is_fixed_wording_with_the_form_and_one_alert(db, monk
 
     assert again_answer == (
         "I've already flagged this to **Acme** as a priority. The form is just below: "
-        "share your details there so they can reach you as soon as possible."
+        "share your details there so the team can contact you as soon as possible."
     )
     assert _final_meta(again)["suggest_handoff"] is True
     assert cap["prompts"] == [], "the urgent reply is not a model call"
@@ -192,7 +194,7 @@ async def test_a_bot_without_live_chat_opens_the_message_card(db, monkeypatch, a
 
     assert _answer_text(again) == (
         "I've already flagged this to **Acme** as a priority. Leave your details in the message form "
-        "so they can reach you as soon as possible."
+        "so the team can contact you as soon as possible."
     )
     assert _final_meta(again)["show_leave_message"] is True
     assert _final_meta(again)["suggest_handoff"] is False
@@ -477,3 +479,42 @@ async def test_the_bounded_check_takes_the_classifier_answer_in_time(monkeypatch
     classifier.answer = answer
 
     assert await rs._detect_urgent_bounded("hacked!! pls help") is answer
+
+
+@pytest.mark.asyncio
+async def test_ok_after_the_offline_urgent_reply_opens_the_form_not_the_ack(db, monkeypatch, alerts):
+    """"ok" answers the urgent reply's offer. The team-offline wording used to close
+    without one the offer pattern knows, so the router answered "Glad that helped"."""
+    client = _make_client(db)
+    bot = _make_bot(db, client, live_chat_enabled=True)
+    _make_session(db, bot, client, "urgent-ok")
+    _stub_pipeline(monkeypatch, retrieved=(_doc("Acme runs incident response."),), support=True)
+    monkeypatch.setattr(rs, "route_intent", real_route_intent)
+    monkeypatch.setattr(rs, "_live_team_reachable", lambda *_a, **_k: False)
+
+    await _drive_stream(bot, URGENT, "urgent-ok")
+    frames = await _drive_stream(bot, "ok", "urgent-ok")
+
+    answer = _answer_text(frames)
+    assert "Glad that helped" not in answer
+    assert answer.endswith(handoff_reply(team_available=False, repeat=True)), answer
+    assert _final_meta(frames)["suggest_handoff"] is True
+
+
+@pytest.mark.asyncio
+async def test_ok_after_the_message_card_urgent_reply_is_not_the_ack(db, monkeypatch, alerts):
+    """Without live chat the reply opened the message card, which the widget shows
+    once per conversation. "ok" answers that offer, so the router's "Glad that
+    helped" does not; the turn goes on to the answer pipeline instead."""
+    client = _make_client(db)
+    bot = _make_bot(db, client, live_chat_enabled=False)
+    _make_session(db, bot, client, "urgent-ok-card")
+    cap = _stub_pipeline(monkeypatch, retrieved=(_doc("Acme runs incident response."),), support=True)
+    monkeypatch.setattr(rs, "route_intent", real_route_intent)
+
+    await _drive_stream(bot, URGENT, "urgent-ok-card")
+    frames = await _drive_stream(bot, "ok", "urgent-ok-card")
+
+    assert "Glad that helped" not in _answer_text(frames)
+    assert len(cap["prompts"]) == 1
+    assert _cards_shown(db, "urgent-ok-card").get("leave_message") is True
