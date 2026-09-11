@@ -65,6 +65,11 @@ _MEETING_NOUN_SUFFIX = (
     r"cancellation|center|centre|link|page))"
 )
 
+# A first-person invitation: "let's", "lets" (either apostrophe), or "let us"
+# opening the message. The spaced "let us" is anchored because mid-sentence it
+# is usually a product question ("does it let us meet with clients online").
+_LETS = r"(?:^\s*let\s+us|\blet['’]?s)"
+
 # Scheduling VERB + meeting NOUN in tight co-occurrence. Requiring both keeps
 # "do you have meeting rooms?" (a product question about the customer's
 # offering) out of the gate while catching every ordinary way a visitor asks to
@@ -93,7 +98,30 @@ _MEETING_RE = re.compile(
     # the demo video") and a false positive here hijacks a legitimate
     # knowledge-base question into "I can't book that directly". Anchored
     # tightly to the article + noun instead.
-    r"|\bget\s+(?:a|an)\s+(?:meeting|demo|call|appointment|consultation|walkthrough|session)\b",
+    r"|\bget\s+(?:a|an)\s+(?:meeting|demo|call|appointment|consultation|walkthrough|session)\b"
+    # "lets connect a meeting", "let's connect on a call", "connect for a quick
+    # call". ``connect`` is NOT in the verb list above either: it is how a
+    # visitor asks for a person ("connect me with the team") and how they ask
+    # about an integration ("how many users can connect on a call", "does it
+    # connect to my meeting room system"). So it needs a first-person invitation
+    # in front, or to open the message, and an article plus a meeting noun
+    # after. The last lookahead drops "connect a call to my CRM", which is the
+    # integration shape even behind "I want to".
+    r"|(?:^\s*|(?:" + _LETS + r"|\b(?:can|could|shall)\s+we|\bwe\s+(?:can|could|should)"
+    r"|\b(?:like|want)\s+to|\bwanna)\s+)"
+    r"connect\s+(?:(?:on|over|for|via|in)\s+)?(?:a|an)\s+(?:(?:quick|short|brief|video|phone)\s+)?"
+    r"(?:meeting|call|demo|appointment|consultation|walkthrough|session)\b"
+    + _MEETING_NOUN_SUFFIX
+    + r"(?!\s+(?:to|into)\s+(?:my|our|your|the|a|an)\b)"
+    # "let's meet", "let us catch up": the invitation is the request, so these
+    # need no noun, like "can we meet" above. "have" and "do" still need an
+    # article and a meeting noun, since "let's have a look at pricing" is not.
+    + r"|"
+    + _LETS
+    + r"\s+(?:meet|catch\s+up)\b|"
+    + _LETS
+    + r"\s+(?:have|do)\s+(?:a|an)\s+(?:(?:quick|short|brief|video|phone)\s+)?"
+    r"(?:meeting|call|demo|appointment|consultation|walkthrough|session)\b" + _MEETING_NOUN_SUFFIX,
     re.IGNORECASE,
 )
 

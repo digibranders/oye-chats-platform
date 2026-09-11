@@ -79,6 +79,60 @@ class TestIsMeetingQuestion:
         and a false positive hijacks a legitimate knowledge-base question."""
         assert is_meeting_question("where do I get a copy of the demo video") is False
 
+    def test_connect_with_a_meeting_noun_fires(self):
+        """Production, 2026-09-11: on a bot with Calendly configured, "lets
+        connect a meeting" did not read as a scheduling request, the handoff
+        classifier said YES, and the visitor got the live-chat form instead of
+        the booking card. "book a meeting" worked."""
+        for q in (
+            "lets connect a meeting",
+            "let's connect on a call",
+            "let’s connect on a call",
+            "connect for a quick call",
+            "can we connect over a call",
+            "we can connect via a short call",
+            "I'd like to connect over a video call",
+        ):
+            assert is_meeting_question(q) is True, q
+
+    def test_lets_meet_shapes_fire(self):
+        for q in (
+            "let's meet",
+            "lets meet",
+            "let us meet",
+            "let’s meet next week",
+            "let's catch up",
+            "let's have a call",
+            "lets have a quick meeting",
+            "let's do a demo",
+            "let's hop on a call",
+        ):
+            assert is_meeting_question(q) is True, q
+
+    def test_connect_without_a_meeting_request_does_not_fire(self):
+        """``connect`` is also how a visitor asks for a person and how they ask
+        about an integration. Neither is a request for time on a calendar."""
+        for q in (
+            "connect me with the team",
+            "connect me to a human",
+            "connect with sales",
+            "let's connect with sales",
+            "how do I connect the SOAR call API",
+            "does it connect to my meeting room system",
+            "how many users can connect on a call",
+            "can my customers connect via a call",
+            "I want to connect a call to my CRM",
+            "does the dialer connect a call to the next agent",
+            "let's connect a demo video",
+            "let's have a look at pricing",
+            "let's do a call recording review",
+            # "let us" after "does it" is a product question, not an invitation.
+            "does it let us meet with clients online",
+            "will the app let us connect on a call",
+            "does it let us have a video call",
+        ):
+            assert is_meeting_question(q) is False, q
+
     def test_disqualifiers(self):
         assert is_meeting_question("cancel my meeting") is False
         assert is_meeting_question("reschedule my call") is False
