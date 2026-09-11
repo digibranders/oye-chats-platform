@@ -354,6 +354,35 @@ async def test_a_document_the_visitor_does_not_want_gets_the_model_answer(db, mo
 
 
 @pytest.mark.asyncio
+async def test_a_no_from_the_classifier_falls_through_even_with_an_exact_file(db, monkeypatch, classifier):
+    """The catalog matching the message exactly is never a reason to answer with it:
+    only the classifier decides whether the visitor asked for a file. The topical
+    attach may still offer the file under the model's answer; the route saves and
+    sends nothing of its own."""
+    bot = _bot(db, "docs-no-exact")
+    knowledge = "Our red teaming datasheet covers scope, cadence and reporting."
+    cap = _stub_pipeline(monkeypatch, retrieved=(_doc(knowledge),), chunks=(knowledge,))
+    _catalog(monkeypatch, CATALOG)
+    metrics = _record_metrics(monkeypatch)
+    classifier.answer = "no"
+    pick = document_request.pick_documents(DATASHEET_REQUEST, "Acme", CATALOG)
+    assert (pick.docs[0]["url"], pick.exact) == (RED, True)
+
+    frames = await _drive_stream(bot, DATASHEET_REQUEST, "docs-no-exact")
+
+    assert classifier.calls == [DATASHEET_REQUEST]
+    assert len(cap["prompts"]) == 1
+    answer = _answer_text(frames)
+    assert knowledge in answer
+    assert "Here you go" not in answer and "download below" not in answer
+    (bot_message,) = _messages(db, "docs-no-exact", role="bot")
+    assert bot_message.content.endswith(knowledge)
+    assert "document_request" not in _names(metrics)
+    fell_through = _tags(metrics, "document_request_fell_through")
+    assert (fell_through["exact"], fell_through["document_intent"]) == ("True", "no")
+
+
+@pytest.mark.asyncio
 async def test_a_question_with_no_exact_file_reaches_the_model(db, monkeypatch, classifier):
     """A question about documents is not the same as a request for one. On a
     bot whose case studies are web pages, not files, "I don't have a

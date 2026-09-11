@@ -3,6 +3,7 @@ import re
 
 from app.services import runtime_config
 from app.services.llm_service import generate_response
+from app.services.prompt_fence import neutralise_fence
 
 logger = logging.getLogger(__name__)
 
@@ -233,16 +234,13 @@ def _detect_handoff_intent_raw(question: str, last_bot_message: str | None = Non
     Only its last ``_HANDOFF_CONTEXT_CHARS`` characters are sent.
     """
 
-    def _fence(text: str | None) -> str:
-        return (text or "").replace("<<<", "<< <").replace(">>>", "> >>")
-
     # The fence delimiters are neutralised inside the data, so a message that
     # contains the closing marker cannot end its own fence and have the rest
-    # read as top-level instructions. Same technique as the reference-context
-    # fence in ``rag_service._neutralize_context_fence``.
+    # read as top-level instructions. The rule every gate-tier classifier shares:
+    # the single replace this used left "<<<" behind in a run of five or six "<".
     previous = (last_bot_message or "").strip()[-_HANDOFF_CONTEXT_CHARS:]
-    fenced_question = _fence(question)
-    fenced_previous = _fence(previous) or "(none)"
+    fenced_question = neutralise_fence(question)
+    fenced_previous = neutralise_fence(previous) or "(none)"
     prompt = f"""You are a handoff-intent classifier for a customer-facing chatbot.
 
 TASK: Determine whether the user wants to be connected to a live human operator or support team member.
