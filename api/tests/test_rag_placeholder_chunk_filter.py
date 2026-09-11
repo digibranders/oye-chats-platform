@@ -28,7 +28,9 @@ from tests.test_rag_pipeline_defects import (
 )
 
 DRAFT = "The enterprise phone number is +1 (555) 123-4567 for Enterprise tier customers only."
+#: A template field is some tenants' product ("Welcome, [Your Name]!"), so it never drops a chunk.
 TEMPLATE = "Our SOC 2 Type II audit is performed every year by [Big 4 Firm Name]."
+FILLER = "Lorem ipsum dolor sit amet, consectetur adipiscing elit."
 REAL = "Enterprise customers get a named success manager and a one hour P1 response."
 CODE = "Create a contact from the CLI:\n```bash\nacme contacts create --phone 555-123-4567\n```"
 QUESTION = "how do enterprise customers get support"
@@ -53,11 +55,11 @@ def _prompt_text(captured) -> str:
 
 
 def test_only_placeholder_chunks_are_dropped_and_order_is_kept(dropped):
-    docs = [_doc(REAL), _doc(DRAFT), _doc(CODE), _doc(TEMPLATE)]
+    docs = [_doc(REAL), _doc(DRAFT), _doc(CODE), _doc(TEMPLATE), _doc(FILLER)]
 
     kept = rs._drop_placeholder_chunks(docs, 7)
 
-    assert [doc.content for doc in kept] == [REAL, CODE]
+    assert [doc.content for doc in kept] == [REAL, CODE, TEMPLATE]
     assert dropped == [("kb_placeholder_chunk_dropped", 2, 7)]
 
 
@@ -109,13 +111,13 @@ async def test_the_zero_result_fallback_is_filtered_too(db, monkeypatch, dropped
     bot = _make_bot(db, client)
     _make_session(db, bot, client, "placeholder-fallback")
     captured = _stub_pipeline(monkeypatch, retrieved=())
-    monkeypatch.setattr(rs, "_zero_result_multi_query_fallback", lambda *a, **k: [_doc(TEMPLATE), _doc(REAL)])
+    monkeypatch.setattr(rs, "_zero_result_multi_query_fallback", lambda *a, **k: [_doc(FILLER), _doc(REAL)])
 
     await _drive_stream(bot, QUESTION, "placeholder-fallback")
 
     prompt = _prompt_text(captured)
     assert REAL in prompt
-    assert "[Big 4 Firm Name]" not in prompt
+    assert "Lorem ipsum" not in prompt
     assert ("kb_placeholder_chunk_dropped", 1, bot.id) in dropped
 
 
@@ -124,7 +126,7 @@ async def test_the_cag_lite_path_never_shows_the_model_a_placeholder_chunk(db, m
     client = _make_client(db)
     bot = _make_bot(db, client)
     _make_session(db, bot, client, "placeholder-cag")
-    for n, content in enumerate((DRAFT, REAL, TEMPLATE)):
+    for n, content in enumerate((DRAFT, REAL, FILLER, TEMPLATE)):
         db.add(
             Document(
                 client_id=client.id,
@@ -152,8 +154,9 @@ async def test_the_cag_lite_path_never_shows_the_model_a_placeholder_chunk(db, m
     assert fetched == [bot.id], "the turn must take the CAG-lite path"
     prompt = _prompt_text(captured)
     assert REAL in prompt
+    assert TEMPLATE in prompt
     assert "(555) 123-4567" not in prompt
-    assert "[Big 4 Firm Name]" not in prompt
+    assert "Lorem ipsum" not in prompt
     assert ("kb_placeholder_chunk_dropped", 2, bot.id) in dropped
 
 

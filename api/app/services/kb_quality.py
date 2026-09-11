@@ -811,6 +811,9 @@ def option_list_reason(match: OptionListMatch) -> str:
 # also records whether it sits inside that kind of example.
 PlaceholderKind = Literal["phone", "email", "address", "name", "filler"]
 
+#: Lorem-ipsum filler, the one filler pattern a visitor-facing chunk is dropped for.
+_LOREM_IPSUM_RE = re.compile(r"(?i)\blorem ipsum\b")
+
 _PLACEHOLDER_PATTERNS: tuple[tuple[re.Pattern[str], PlaceholderKind], ...] = (
     # "(555) 123-4567": 555 used as an area code. This is the exact shape
     # that CleanStart's own site gave out as its phone number.
@@ -846,7 +849,7 @@ _PLACEHOLDER_PATTERNS: tuple[tuple[re.Pattern[str], PlaceholderKind], ...] = (
     # ordinary advice prose ("monitor for your company name, domain,
     # executive names..." on an Eventus threat-intel page), so matching it
     # would flag real content, not a leaked placeholder.
-    (re.compile(r"(?i)\blorem ipsum\b"), "filler"),
+    (_LOREM_IPSUM_RE, "filler"),
     (re.compile(r"(?i)\byour\s+company\s+name\s+here\b"), "filler"),
     (re.compile(r"(?i)\bcompany\s+name\s+here\b"), "filler"),
 )
@@ -1147,72 +1150,36 @@ def placeholder_contacts(content: str) -> list[str]:
 #
 # ``placeholder_findings`` answers the report's question: should the owner
 # delete this? Retrieval asks a different one: may the model read this chunk
-# as fact? Three rules follow from the difference.
+# as fact? A dropped chunk takes every true sentence in it along, so three
+# rules follow from the difference.
 #
-# - Only kinds that are never real. Every phone shape above is a block
+# - Only values that are never real. Every phone shape above is a block
 #   reserved for fiction or a digit mask, and "lorem ipsum" is filler.
 #   Placeholder emails, addresses and names stay report-only: "email.com" and
 #   "company.com" are real domains, and a real "123 Main Street" or "Jane
 #   Smith" exists.
-# - A bracketed field is the finding, not evidence of documentation. The
-#   report reads "[CISO Name]" near a match as a template example and stays
-#   quiet; for a visitor an unfilled "[Big 4 Firm Name]" is exactly the draft
-#   text that must not be repeated. The report's bracket check also matches
-#   any "[Contact us](...)" link, which says nothing about the number beside
-#   it.
-# - A markdown table row is not an example either. The report exempts one;
-#   an SLA page lays out its escalation numbers in exactly that shape.
+# - Template fields stay report-only too. "Enter your [First Name]",
+#   "Welcome, [Your Name]!" and "Your Company Name Here" are the product of an
+#   email-marketing, legal-document or invoicing tenant, and dropping them hid
+#   that tenant's help content. The accepted cost: a draft page's unfilled
+#   "[Big 4 Firm Name]" reaches the model.
+# - A bracketed field or a markdown table row near a match is not evidence of
+#   documentation. The report reads "[CISO Name]" near a match as a template
+#   example and stays quiet, and its bracket check also matches any
+#   "[Contact us](...)" link, which says nothing about the number beside it;
+#   an SLA page lays out its escalation numbers in exactly a table row.
 #
 # Everything else that marks real documentation still exempts a match: a
 # fenced or backticked span, a JSON/YAML/CLI/assignment/shell/SQL line, a
 # "Copy code" block, an "e.g." cue, a link target.
 
-VisitorPlaceholderKind = PlaceholderKind | Literal["template_field"]
+VisitorPlaceholderKind = PlaceholderKind
 
-_VISITOR_PLACEHOLDER_KINDS: frozenset[PlaceholderKind] = frozenset({"phone", "filler"})
+#: Placeholder phone numbers and lorem-ipsum filler. The report's other filler
+#: patterns ("Company Name Here") are template labels.
 _VISITOR_PLACEHOLDER_PATTERNS = tuple(
-    entry for entry in _PLACEHOLDER_PATTERNS if entry[1] in _VISITOR_PLACEHOLDER_KINDS
+    entry for entry in _PLACEHOLDER_PATTERNS if entry[1] == "phone" or entry[0] is _LOREM_IPSUM_RE
 )
-
-# An unfilled template field: "[Company Name]", "[Big 4 Firm Name]",
-# "[start_date]". The lookarounds rule out a markdown link or image
-# ("[text](url)", "![alt](src)"), a reference link or definition ("[text][ref]",
-# "[ref]: url") and indexing ("row[first_name]") before any word is looked at.
-# The inner run is bounded, so a string of unclosed brackets costs one short
-# failed attempt per bracket.
-_TEMPLATE_FIELD_RE = re.compile(r"(?<![\w\])!])\[([A-Za-z][A-Za-z0-9 _'&/.-]{1,48})\](?![(\[:])")
-_TEMPLATE_FIELD_WORD_SPLIT_RE = re.compile(r"[\s_/-]+")
-#: The noun an unfilled field ends in. Deliberately short: a citation, a file
-#: tag or a button label ("[12]", "[PDF]", "[Download Now]", "[Terms of
-#: Service]") never ends in one of these.
-_TEMPLATE_FIELD_NOUNS = frozenset(
-    {"name", "date", "email", "phone", "number", "address", "title", "city", "amount", "url", "website", "logo"}
-)
-#: A leading word that makes any bracketed phrase an instruction to fill it in.
-_TEMPLATE_FIELD_LEADS = frozenset({"insert", "placeholder"})
-#: A single bracketed word ("[Date]", "[Enter]") is too often a key, a label or
-#: a tag to call a draft field on its own.
-_TEMPLATE_FIELD_MIN_WORDS = 2
-_TEMPLATE_FIELD_MAX_WORDS = 6
-# Prose about a field ("the [First Name] merge tag", "map the [Account Name]
-# field") documents a product feature, not an unfilled value.
-_FIELD_REFERENCE_AFTER_RE = re.compile(
-    r"[ \t]{0,3}(?:fields?|columns?|parameters?|params?|placeholders?|tags?|tokens?|variables?"
-    r"|merge[ \t]+(?:tags?|fields?))\b",
-    re.IGNORECASE,
-)
-
-
-def _is_template_field(inner: str) -> bool:
-    """True if the text between the brackets reads as an unfilled field name."""
-    words = [word.lower() for word in _TEMPLATE_FIELD_WORD_SPLIT_RE.split(inner.strip()) if word]
-    if not _TEMPLATE_FIELD_MIN_WORDS <= len(words) <= _TEMPLATE_FIELD_MAX_WORDS:
-        return False
-    if words[0] in _TEMPLATE_FIELD_LEADS:
-        return True
-    # "[Your Logo Here]" names its field one word before "Here"; "[Click Here]" names none.
-    noun = words[-2] if words[-1] == "here" else words[-1]
-    return noun in _TEMPLATE_FIELD_NOUNS
 
 
 @dataclass(frozen=True)
@@ -1226,11 +1193,11 @@ class VisitorPlaceholder:
 def first_visitor_placeholder(content: str) -> VisitorPlaceholder | None:
     """The first placeholder in ``content`` a visitor must never be told, or ``None``.
 
-    Placeholder phone numbers and filler text are checked first, then unfilled
-    template fields. The scan stops at the first one found outside an example:
-    one is enough to keep the chunk out of the prompt. The example context is
-    only built once a candidate turns up, so a clean chunk costs a few
-    single-pass regex scans.
+    Only a placeholder phone number or lorem-ipsum filler counts; a template
+    field such as "[First Name]" never does. The scan stops at the first one
+    found outside an example: one is enough to keep the chunk out of the
+    prompt. The example context is only built once a candidate turns up, so a
+    clean chunk costs a few single-pass regex scans.
 
     Linear in ``len(content)``: every pattern is bounded, the context is built
     at most once, and each candidate is checked against a fixed-size window
@@ -1244,11 +1211,4 @@ def first_visitor_placeholder(content: str) -> VisitorPlaceholder | None:
                 ctx = _build_example_context(text)
             if not _is_in_example(ctx, match.start(), match.end(), for_visitors=True):
                 return VisitorPlaceholder(kind=kind, value=match.group(0))
-    for match in _TEMPLATE_FIELD_RE.finditer(text):
-        if not _is_template_field(match.group(1)) or _FIELD_REFERENCE_AFTER_RE.match(text, match.end()):
-            continue
-        if ctx is None:
-            ctx = _build_example_context(text)
-        if not _is_in_example(ctx, match.start(), match.end(), for_visitors=True):
-            return VisitorPlaceholder(kind="template_field", value=match.group(0))
     return None

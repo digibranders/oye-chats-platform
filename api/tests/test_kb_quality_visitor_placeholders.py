@@ -12,8 +12,8 @@ delete this?", and deliberately calls a placeholder next to a markdown table
 row or a bracketed field "documentation". ``first_visitor_placeholder``
 answers retrieval's question, "may the model read this chunk?", where those
 two shapes are what a draft template looks like. Both directions are pinned
-here: the draft shapes are caught, and citations, links, real numbers and
-code samples are left alone.
+here: fake phone numbers and filler are caught, and template fields,
+citations, links, real numbers and code samples are left alone.
 """
 
 import time
@@ -40,15 +40,6 @@ from app.services.kb_quality import first_visitor_placeholder, placeholder_findi
         ),
         ("For after-hours incidents call 212-555-0143.", "phone", "212-555-0143"),
         ("Hotline: 555.123.4567", "phone", "555.123.4567"),
-        (
-            "Our SOC 2 Type II audit is performed every year by [Big 4 Firm Name], an independent assessor.",
-            "template_field",
-            "[Big 4 Firm Name]",
-        ),
-        ("[Company Name] has been trusted by teams since 2019.", "template_field", "[Company Name]"),
-        ("Vendor contact: [CISO Name], reachable at the address above.", "template_field", "[CISO Name]"),
-        ("The review starts on [start_date] and closes two weeks later.", "template_field", "[start_date]"),
-        ("Place [Your Logo Here] above the signature block.", "template_field", "[Your Logo Here]"),
         ("Lorem ipsum dolor sit amet, consectetur adipiscing elit.", "filler", "Lorem ipsum"),
     ],
     ids=[
@@ -56,11 +47,6 @@ from app.services.kb_quality import first_visitor_placeholder, placeholder_findi
         "masked-number-in-a-table-row",
         "555-01xx-fiction-range",
         "dotted-555",
-        "big-4-firm",
-        "company-name",
-        "ciso-name",
-        "snake-case-field",
-        "field-ending-in-here",
         "lorem-ipsum",
     ],
 )
@@ -153,6 +139,48 @@ def test_a_placeholder_number_in_a_table_row_is_caught_though_the_report_calls_i
     ],
 )
 def test_real_content_is_left_alone(content):
+    assert first_visitor_placeholder(content) is None
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        # What email-marketing, legal-document and invoicing tenants sell.
+        "Enter your [First Name] and [Last Name] to sign up.",
+        "Welcome, [Your Name]!",
+        "Sample invoice: [Invoice Number] dated [Invoice Date]",
+        "[Company Name] has been trusted by teams since 2019.",
+        "Vendor contact: [CISO Name], reachable at the address above.",
+        "The review starts on [start_date] and closes two weeks later.",
+        "Place [Your Logo Here] above the signature block.",
+        "Replace Your Company Name Here with your brand before sending.",
+        # Accepted trade-off: a draft's unfilled field looks the same as a template's.
+        "Our SOC 2 Type II audit is performed every year by [Big 4 Firm Name], an independent assessor.",
+    ],
+    ids=[
+        "sign-up-form-fields",
+        "greeting-field",
+        "sample-invoice-fields",
+        "company-name",
+        "ciso-name",
+        "snake-case-field",
+        "field-ending-in-here",
+        "company-name-here-label",
+        "big-4-firm-only",
+    ],
+)
+def test_a_template_field_never_drops_the_chunk(content):
+    """A template field is the product for some tenants; only fake numbers and filler drop a chunk."""
+    assert first_visitor_placeholder(content) is None
+
+
+def test_a_template_label_stays_in_the_owner_report():
+    content = "Replace Your Company Name Here with your brand before sending."
+
+    assert [(f.value, f.kind, f.in_example) for f in placeholder_findings(content)] == [
+        ("your company name here", "filler", False),
+        ("company name here", "filler", False),
+    ]
     assert first_visitor_placeholder(content) is None
 
 
