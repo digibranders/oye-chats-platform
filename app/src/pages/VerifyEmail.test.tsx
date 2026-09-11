@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { dataLayerEvents } from '../test/dataLayerEvents';
 import VerifyEmail from './VerifyEmail';
 
 const verifyEmail = vi.fn();
@@ -43,6 +44,51 @@ describe('VerifyEmail', () => {
     getCurrentUser.mockReset();
     localStorage.clear();
     sessionStorage.clear();
+    delete window.dataLayer;
+  });
+
+  it('reports a registration once the server accepts the code', async () => {
+    // Verification, not the signup form, is where an email account becomes one
+    // that can use the product: the same point a Google account starts at.
+    localStorage.setItem('admin_token', 'tok');
+    localStorage.setItem('admin_client_id', '21');
+    localStorage.setItem('admin_pending_email', 'new@acme.test');
+    getCurrentUser.mockResolvedValue({ email: 'new@acme.test', is_verified: false });
+    verifyEmail.mockResolvedValue({ message: 'ok' });
+
+    renderVerify();
+    typeCode('654321');
+
+    expect(await screen.findByText('HOME')).toBeInTheDocument();
+    expect(dataLayerEvents('registration_success')).toEqual([
+      { event: 'registration_success', method: 'email' },
+    ]);
+  });
+
+  it('does not report a registration for a session the server had already verified', async () => {
+    // `release()` also runs from `/auth/me`, for a second device or a stale
+    // flag. That account was registered long before this screen rendered.
+    localStorage.setItem('admin_token', 'tok');
+    localStorage.setItem('admin_is_verified', 'false');
+    getCurrentUser.mockResolvedValue({ email: 'gaurav@fynix.digital', is_verified: true });
+
+    renderVerify();
+
+    expect(await screen.findByText('HOME')).toBeInTheDocument();
+    expect(dataLayerEvents('registration_success')).toEqual([]);
+  });
+
+  it('does not report a registration for a rejected code', async () => {
+    localStorage.setItem('admin_token', 'tok');
+    localStorage.setItem('admin_pending_email', 'new@acme.test');
+    getCurrentUser.mockResolvedValue({ email: 'new@acme.test', is_verified: false });
+    verifyEmail.mockRejectedValue(new Error('Invalid code.'));
+
+    renderVerify();
+    typeCode('111111');
+
+    await screen.findByText(/invalid code/i);
+    expect(dataLayerEvents('registration_success')).toEqual([]);
   });
 
   it('resolves the address from /auth/me on a fresh device', async () => {

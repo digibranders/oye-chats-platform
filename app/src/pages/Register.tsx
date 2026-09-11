@@ -8,6 +8,8 @@ import { Eye, EyeOff } from 'lucide-react';
 import { Alert, Button, Combobox, Field, Input, buttonClass, validateEmail } from '../ui';
 import { detectCountry, registerClient } from '../services/api';
 import { COUNTRY_OPTIONS } from '../data/countries';
+import { trackRegistrationSuccess } from '../lib/analytics/registration';
+import { captureSignupIntent } from '../lib/analytics/signupIntent';
 import { getAuthItem, isSessionExpired, setAuthBundle } from '../utils/authStorage';
 import { GoogleAuthButton } from './auth/GoogleAuthButton';
 import { AuthDivider, AuthShell } from './auth/AuthShell';
@@ -154,6 +156,12 @@ export default function Register() {
     }
   }, [urlPromoCode]);
 
+  // The pricing page's `?plan=` and `?billing=`, kept for the registration
+  // event, which fires a screen later (or after a round trip to Google).
+  useEffect(() => {
+    captureSignupIntent(searchParams);
+  }, [searchParams]);
+
   useEffect(() => {
     if (!urlReferralCode) return;
     try {
@@ -246,6 +254,7 @@ export default function Register() {
       // at source. Any deep link rides through the OTP screen as `next`.
       const afterVerify = postAuthDestination({ next, affiliateToken, door: 'client' });
       if (data.is_verified) {
+        trackRegistrationSuccess({ clientId: data.client_id, method: 'email' });
         navigate(afterVerify, { replace: true });
       } else {
         navigate(`/verify-email?next=${encodeURIComponent(afterVerify)}`, { replace: true });
@@ -299,6 +308,7 @@ export default function Register() {
         label={t('auth.continueWithGoogle') || 'Continue with Google'}
         mode="register"
         promoCode={promoCode}
+        referralCode={referralCode}
         next={postAuthDestination({ next, affiliateToken, door: 'client' })}
       />
 
