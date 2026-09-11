@@ -344,9 +344,15 @@ def notify_handoff_request(
     bot_name: str | None = None,
     department_id: int | None = None,
     department_name: str | None = None,
+    urgent: bool = False,
 ) -> dict[str, Any]:
+    """The inbox notification for a visitor waiting on the team.
+
+    ``urgent`` marks a visitor who reported an active incident in chat, so the
+    title says so and the payload carries the flag for the dashboard.
+    """
     who = visitor_name or "A visitor"
-    title = f"{who} wants to talk to a human"
+    title = f"URGENT: {who} reported an active incident" if urgent else f"{who} wants to talk to a human"
     body = f"Live chat request via {bot_name}." if bot_name else "Live chat request waiting for an operator."
     return create_notification(
         session,
@@ -361,6 +367,7 @@ def notify_handoff_request(
             "bot_name": bot_name,
             "department_id": department_id,
             "department_name": department_name,
+            "urgent": urgent,
         },
     )
 

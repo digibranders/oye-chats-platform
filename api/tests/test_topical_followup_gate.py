@@ -32,12 +32,12 @@ class TestBrowsingGetsWarmAckNotRefusal:
 
     def test_browsing_message_gets_warm_ack(self):
         for q in ["just looking around really", "nah im good, just browsing", "just killing time tbh"]:
-            out = _refusal_or_browsing_ack(q, "CleanStart", [])
+            out = _refusal_or_browsing_ack(q, "Fabrikam", [])
             assert "No rush" in out, q
 
     def test_genuine_off_topic_still_refused(self):
         for q in ["what's the capital of france", "who won the world cup"]:
-            out = _refusal_or_browsing_ack(q, "CleanStart", [])
+            out = _refusal_or_browsing_ack(q, "Fabrikam", [])
             assert "No rush" not in out, q
 
 

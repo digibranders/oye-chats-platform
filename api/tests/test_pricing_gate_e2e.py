@@ -148,7 +148,7 @@ def _stub_outside_world(monkeypatch):
     monkeypatch.setattr(rs, "_embed_query_cached", lambda *_a, **_k: None)
     monkeypatch.setattr(rs, "_embed_query_cached_async", _no_embedding_async)
     monkeypatch.setattr(rs, "RERANK_ENABLED", False)
-    monkeypatch.setattr(rs, "detect_handoff_intent", lambda _q: False)
+    monkeypatch.setattr(rs, "detect_handoff_intent", lambda _q, **_kw: False)
     monkeypatch.setattr(rs, "resolve_name_flow", lambda *_a, **_k: (None, None, None, False))
     monkeypatch.setattr(rs, "_should_ask_visitor_name", lambda *_a, **_k: False)
     monkeypatch.setattr(rs.plan_entitlements_service, "is_live_chat_enabled_for_bot", lambda *_a, **_k: True)
@@ -1853,8 +1853,8 @@ async def test_the_repeat_flag_is_per_conversation(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# The escalation names what was asked. Every Eventus pricing escalation in two
-# weeks said "Pricing for Eventus Security", including "pricing of red teaming"
+# The escalation names what was asked. Every pricing escalation on one live bot in two
+# weeks said "Pricing for <company>", including "pricing of red teaming"
 # and "soc pricng". The one prose assertion in this file, because the prose is
 # the defect: the pivot's name for the thing priced has to reach the visitor.
 # ═══════════════════════════════════════════════════════════════════════════

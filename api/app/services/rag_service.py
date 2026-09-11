@@ -45,13 +45,34 @@ from app.security.injection_patterns import (
 )
 from app.services import currency_scoring as _currency_scoring
 from app.services import meeting_gate as _meeting_gate
-from app.services import plan_entitlements_service, runtime_config
+from app.services import plan_entitlements_service, runtime_config, urgent_route
 from app.services import pricing_gate as _pricing_gate
-from app.services.email_service import send_qualified_lead_email
+from app.services.document_request import (
+    TOPIC_MIN_OVERLAP,
+    DocumentIntentDecision,
+    decide_document_intent,
+    document_reply,
+    fallback_document_intent,
+    looks_like_a_document_request,
+    mentions_document,
+    pick_documents,
+)
+from app.services.email_service import (
+    get_notification_recipients,
+    send_handoff_request_email,
+    send_qualified_lead_email,
+)
 from app.services.groundedness_gate import check_groundedness, should_sample
-from app.services.handoff_reply import handoff_reply
+from app.services.handoff_reply import handoff_reply, unhelped_offer
 from app.services.intent_router import route_intent, strip_greeting_lead
-from app.services.intent_service import detect_handoff_intent, detect_handoff_intent_keywords
+from app.services.intent_service import (
+    GENERIC_INVITE_RE,
+    HANDOFF_OFFER_RE,
+    bot_offers_handoff,
+    detect_company_deal_intent,
+    detect_handoff_intent,
+    detect_handoff_intent_keywords,
+)
 from app.services.live_chat_availability_service import (
     LiveChatState,
     _within_business_hours,
@@ -62,6 +83,12 @@ from app.services.llm_service import (
     generate_response,
     generate_response_stream,
 )
+from app.services.notification_service import notify_handoff_request
+from app.services.price_guard import (
+    PriceStreamGuard,
+    answer_trips_price_guard,
+    price_guard_applies,
+)
 from app.services.qualification_service import (
     calculate_composite_score,
     get_framework_config,
@@ -71,6 +98,7 @@ from app.services.qualification_service import (
 )
 from app.services.relevance_gate import check_relevance
 from app.services.reranker import RERANK_ENABLED, rerank
+from app.services.urgent_route import emergency_url_from_answer_links, urgent_reply
 from app.worker.enqueue import WORKER_ENABLED, enqueue_sync
 
 logger = logging.getLogger(__name__)
@@ -663,34 +691,9 @@ def _enrich_media_card_from_context(card: dict | None, retrieved_chunks) -> None
 # AVAILABLE MEDIA catalog, drop into the whitelist for hallucination checks,
 # and confuse the secondary-chip picker. Applying the current strict regex
 # at read-time means the junk is inert without any DB migration or re-crawl.
-# See ``_FILE_URL_RE`` in ``app.ingestion.cleaner`` for the authoritative
-# extension list + boundary lookahead.
-from app.ingestion.cleaner import _FILE_URL_RE  # noqa: E402
-
-
-def _is_valid_file_url(url: object) -> bool:
-    """True when ``url`` is a well-formed downloadable-file URL.
-
-    Two checks combined:
-      1. It matches ``_FILE_URL_RE`` starting at position 0, the same
-         boundary-aware regex ingestion now uses, so pre-fix domain-label
-         false positives (``hub.docker.com`` → ``hub.doc``) are rejected
-         when the regex sees a following letter or ``.<letter>``.
-      2. The URL contains a ``/`` in its path portion (after ``://``).
-         This kicks the *terminally-clipped* junk cases like a bare
-         ``https://hub.doc``, which passes the regex on shape alone
-         (no letter follows) but has no path segment, so it can't be a
-         real file. Real files always live at ``host/path.ext``.
-    """
-    if not isinstance(url, str) or not url:
-        return False
-    if not _FILE_URL_RE.match(url):
-        return False
-    scheme_sep = url.find("://")
-    if scheme_sep == -1:
-        return False
-    return "/" in url[scheme_sep + 3 :]
-
+# See ``is_valid_file_url`` in ``app.ingestion.cleaner``, which the document
+# request route applies too, for the two checks.
+from app.ingestion.cleaner import is_valid_file_url as _is_valid_file_url  # noqa: E402
 
 # Words we ignore when comparing a primary card's title against candidate
 # secondary asset names to score topical overlap. Everything below reads to
@@ -750,8 +753,9 @@ _TITLE_STOPWORDS = frozenset(
 
 # Minimum token overlap (after stopwords) before a candidate qualifies as
 # "same topic" as the primary card. Two content-words in common is a strong
-# signal (e.g. "base" + "images"); one is often incidental.
-_SECONDARY_MIN_OVERLAP = 2
+# signal (e.g. "base" + "images"); one is often incidental. Defined next to the
+# document-request picker, which holds an exact file to the same bar.
+_SECONDARY_MIN_OVERLAP = TOPIC_MIN_OVERLAP
 
 
 def _title_tokens(title: str | None) -> set[str]:
@@ -1241,9 +1245,11 @@ def _card_already_shown(chat_session, card_key: str) -> bool:
     """Return True if `card_key` has already been surfaced for this session.
 
     Reads ChatSession.inline_cards_shown JSONB. `card_key` values in use:
-    'leave_message', 'meeting', 'team_connect', and 'pricing_escalated' (not a
+    'leave_message', 'meeting', 'team_connect', 'pricing_escalated' (not a
     card: set when the pricing gate has already escalated this session, so a
-    second ask is not answered with the same words and a second form).
+    second ask is not answered with the same words and a second form), and
+    'urgent_notified' (not a card: set once the team has been alerted to an
+    urgent incident in this conversation, so a second urgent turn alerts no one).
     """
     if chat_session is None:
         return False
@@ -1261,6 +1267,40 @@ def _mark_card_shown(chat_session, card_key: str) -> None:
         return
     shown = dict(getattr(chat_session, "inline_cards_shown", None) or {})
     shown[card_key] = True
+    chat_session.inline_cards_shown = shown
+
+
+#: Key inside ``ChatSession.inline_cards_shown`` for how many turns in a row the
+#: bot could not help. An int, not a flag, so it cannot collide with a card key.
+_UNHELPED_STREAK_KEY = "unhelped_streak"
+
+
+def _unhelped_streak(chat_session) -> int:
+    """Consecutive turns in this conversation the relevance check rejected."""
+    if chat_session is None:
+        return 0
+    value = (getattr(chat_session, "inline_cards_shown", None) or {}).get(_UNHELPED_STREAK_KEY, 0)
+    return value if isinstance(value, int) and value > 0 else 0
+
+
+#: The offer of the team fires on the second unhelped turn, so nothing reads a
+#: larger count. Capping it keeps a long run of misses from growing the value.
+_UNHELPED_STREAK_CAP = 2
+
+
+def _set_unhelped_streak(chat_session, value: int) -> None:
+    """Store the streak, capped at ``_UNHELPED_STREAK_CAP``, rebuilding the JSONB
+    dict so SQLAlchemy sees the change."""
+    if chat_session is None:
+        return
+    value = min(value, _UNHELPED_STREAK_CAP)
+    shown = dict(getattr(chat_session, "inline_cards_shown", None) or {})
+    if value > 0:
+        shown[_UNHELPED_STREAK_KEY] = value
+    elif _UNHELPED_STREAK_KEY in shown:
+        del shown[_UNHELPED_STREAK_KEY]
+    else:
+        return
     chat_session.inline_cards_shown = shown
 
 
@@ -3058,6 +3098,95 @@ def _live_team_reachable(bot_id: int, within_hours: bool) -> bool:
         return within_hours
 
 
+#: The push body for an urgent incident, shown under the handoff push's "New chat from" title.
+_URGENT_PUSH_REASON = "URGENT: active incident reported in chat"
+#: How much of the visitor's message the team email quotes.
+_URGENT_EMAIL_MESSAGE_LIMIT = 500
+#: The live-chat queue timeout a handoff push is enqueued with when the bot has none
+#: (the column default, and the fallback ``operator_routes`` uses).
+_DEFAULT_QUEUE_TIMEOUT_SECONDS = 20
+
+
+def _alert_team_of_urgent_incident(session, bot, client_id: int, session_id: str, visitor_message: str) -> None:
+    """Tell the team a visitor reported an active incident. Never breaks the turn.
+
+    Three channels, each failing on its own:
+
+    - The inbox notification, a DB write on the request session.
+      ``create_notification`` commits that session itself, so the caller commits
+      the turn's own writes first, and a failure is rolled back here so the
+      caller's closing commit does not raise on an aborted transaction.
+    - The email to the bot's ``handoff_request`` list, sent from here:
+      ``send_handoff_request_email`` builds the message and hands it to
+      ``send_email_async``, which enqueues it to the worker or submits it to the
+      email thread pool, so no provider call runs inside the turn.
+    - The operator push, through ``task_dispatch_handoff_push`` like a handoff
+      request. That task reads no queue state, so it reaches the team for a
+      visitor who has not joined the queue, and a tap opens the conversation.
+
+    The visitor's name and contact come from the stored lead, never from the
+    message, which is quoted in the email as it was written.
+    """
+    bot_id = getattr(bot, "id", None)
+    bot_name = getattr(bot, "name", None)
+    reply_to = getattr(bot, "reply_to_email", None)
+    queue_timeout = getattr(bot, "live_chat_queue_timeout_seconds", None) or _DEFAULT_QUEUE_TIMEOUT_SECONDS
+    wants_email = bot is not None and bool(getattr(bot, "email_on_handoff", True))
+    recipients = get_notification_recipients(bot, "handoff_request") if wants_email else []
+    try:
+        lead = get_lead_info_by_session(session, session_id, bot_id=bot_id)
+    except Exception:  # noqa: BLE001 - a failed lookup leaves the alert anonymous, not unsent
+        logger.warning("urgent_incident_lead_lookup_failed | bot=%s session=%s", bot_id, session_id, exc_info=True)
+        session.rollback()
+        lead = None
+    # Plain values, read before the notification: its rollback on failure expires the row.
+    visitor_name = lead.name if lead is not None and lead.name else None
+    contact = {"name": lead.name, "email": lead.email, "phone": lead.phone} if lead is not None else None
+
+    try:
+        notify_handoff_request(
+            session,
+            client_id=client_id,
+            session_id=session_id,
+            visitor_name=visitor_name,
+            bot_name=bot_name,
+            urgent=True,
+        )
+    except Exception:  # noqa: BLE001 - an alert failure must not lose the visitor's reply
+        logger.warning("urgent_incident_notification_failed | bot=%s session=%s", bot_id, session_id, exc_info=True)
+        session.rollback()
+
+    reason = (visitor_message or "").strip()[:_URGENT_EMAIL_MESSAGE_LIMIT]
+    for recipient in recipients:
+        try:
+            send_handoff_request_email(
+                recipient,
+                bot_name,
+                reason,
+                contact,
+                reply_to=reply_to,
+                urgent=True,
+                session_id=session_id,
+            )
+        except Exception:  # noqa: BLE001 - one bad address must not cost the rest of the team the alert
+            logger.warning("urgent_incident_email_failed | bot=%s session=%s", bot_id, session_id, exc_info=True)
+
+    if bot_id is None:
+        return
+    try:
+        enqueue_sync(
+            "task_dispatch_handoff_push",
+            session_id,
+            bot_id,
+            None,
+            visitor_name,
+            _URGENT_PUSH_REASON,
+            queue_timeout,
+        )
+    except Exception:  # noqa: BLE001 - a queue failure must not lose the visitor's reply
+        logger.warning("urgent_incident_push_enqueue_failed | bot=%s session=%s", bot_id, session_id, exc_info=True)
+
+
 def _has_prior_visitor_turns(history: list) -> bool:
     """True when the conversation holds a visitor message BEFORE the current
     one. ``history`` is read after the current question has been persisted, so
@@ -3077,6 +3206,43 @@ def _qa_cache_lookup(cache_key: str, bot_id: int | None):
     cached = cache_get(cache_key)
     increment_metric_counter("qa_cache_hit" if cached else "qa_cache_miss", bot_id=bot_id)
     return cached
+
+
+def _document_route_applies(question: str, company_name: str | None, judges_bypassed: bool) -> bool:
+    """True when the document route may run for this question: it names a document.
+
+    The classifier task started before retrieval and the route both depend on
+    this, and the QA-cache skip reads it together with the shape of a request
+    (``_document_request_skips_cache``). A request for a person, or a deal for the company, is left to the
+    handoff reply instead of the document route, and the route (like the
+    gates around it) is English only: a conversation the judges are bypassed
+    for keeps the model.
+
+    This is only the pure noun check (``mentions_document``). Whether the
+    visitor wants a file sent, is asking whether one exists, or neither, is the
+    classifier's call inside the block (``_detect_document_intent_bounded``),
+    so this stays permissive and costs no model call.
+    """
+    return (
+        not judges_bypassed
+        and mentions_document(question)
+        and not detect_handoff_intent_keywords(question)
+        and not detect_company_deal_intent(question, company_name)
+    )
+
+
+def _document_request_skips_cache(question: str, company_name: str | None, judges_bypassed: bool) -> bool:
+    """True when the QA cache is skipped for this question so the document route answers it.
+
+    A cached answer to "can you send me your brochure?" would be served ahead of
+    the route and the route would never run, so a message the route applies to
+    and that is shaped like a request (``looks_like_a_document_request``) skips
+    the cache. A message that only mentions a document ("what's on the menu
+    today", "does the brochure mention fees") reads it: those are common FAQs,
+    and turning the cache off for every mention cost each of them a cache miss
+    and a classifier call. On a cache miss the route still asks the classifier.
+    """
+    return _document_route_applies(question, company_name, judges_bypassed) and looks_like_a_document_request(question)
 
 
 def _expand_company_query(question: str, company_name: str | None) -> str:
@@ -4814,6 +4980,7 @@ def _maybe_append_name_ask(
     question: str,
     history: list | None = None,
     language=None,
+    opener: bool = True,
 ) -> str:
     """Give an EARLY-RETURN reply (the intent-router greeting/ack handler and the
     QA cache) the same first-reply name treatment the generation path gets.
@@ -4829,6 +4996,12 @@ def _maybe_append_name_ask(
       is invisible in testing precisely because it only shows up the SECOND time
       anyone asks a given question.
 
+    ``opener`` lets a caller whose ``text`` already states the visitor's name
+    (the ``name_recall`` intent's "You're {name}.") skip the welcome-back
+    prepend, so the reply doesn't say the name twice in adjacent sentences.
+    The name-unknown branch is unaffected: it still appends the name request
+    when appropriate, since that is a distinct, still-useful ask.
+
     Best-effort: any failure returns the text unchanged."""
     try:
         known = resolve_visitor_name(session, session_id, bot_id, client_id, question, history or [])
@@ -4838,15 +5011,17 @@ def _maybe_append_name_ask(
             else get_chat_history(session, session_id, client_id=client_id, limit=5, bot_id=bot_id)
         )
         if known:
+            if not opener:
+                return text
             # `resolve_visitor_name` resolves a name STORED before this turn (the
             # widget re-seeds it into each new session), so on a first reply this
             # is by definition a returning visitor rather than one who just
             # introduced themselves.
-            opener = _name_ack_prefix(known, False, language, returning=_is_first_bot_reply(hist))
+            prefix = _name_ack_prefix(known, False, language, returning=_is_first_bot_reply(hist))
             # The welcome-back opener IS the greeting, so drop the canned reply's
             # own greeting lead ("Hey. Happy to help.") to avoid doubling it.
             # No-op for non-greeting replies (e.g. QA-cache hits).
-            return opener + strip_greeting_lead(text) if opener and text else text
+            return prefix + strip_greeting_lead(text) if prefix and text else text
         if _should_ask_visitor_name(None, hist) and not _is_name_ask_message(text):
             return (text.rstrip() if text else "") + f"\n\n{_name_ask_text(language)}"
     except Exception:  # noqa: BLE001  Personalization is best-effort, never fatal
@@ -4915,31 +5090,23 @@ _PROBE_PHRASE_RE = re.compile(
     r")\b"
 )
 
-# Handoff / connect OFFERS the bot makes (B8/B9). These end with "?" but are NOT
-# information-gathering probes, so an answer to them must not relax the gate; and
-# an affirmative reply to one is a handoff request, not a KB query.
-_HANDOFF_OFFER_RE = re.compile(
-    r"(?i)(?:"
-    r"connect you (?:with|to)|put you in touch|"
-    r"talk to (?:a|the|our|someone) (?:human|team|agent|representative|member|expert)?|"
-    r"take (?:a|your) (?:written )?message|leave (?:a|your) (?:message|details|contact)|"
-    r"have (?:the|our) team (?:reach|follow up|get back|help)"
-    r")"
-)
+# Handoff / connect OFFERS the bot makes (B8/B9). Defined once in intent_service.
+# A bot message is tested with ``bot_offers_handoff``, which reads only its closing
+# paragraph; this alias is the raw wording the pricing pivot tests pin.
+_HANDOFF_OFFER_RE = HANDOFF_OFFER_RE
 
-# Generic invites the bot closes with (B8). End with "?" but expect no specific
-# answer, so a reply after one must not relax the gate.
-_GENERIC_INVITE_RE = re.compile(
-    r"(?i)(?:"
-    r"anything else|what would you like to know|what else would you like|"
-    r"how can i help|hear about our services|see (?:our )?recent work|"
-    r"what can i help you with"
-    r")"
-)
+# Generic invites the bot closes with (B8). Defined once in intent_service, which
+# also uses it to decide whether a bare "yes" needs the model.
+_GENERIC_INVITE_RE = GENERIC_INVITE_RE
 
-# Short affirmations to an offer (B9): "yes", "sure", "ok", "go ahead".
+# Short affirmations to an offer (B9): "yes", "sure", "ok", "go ahead". "y" is
+# its own alternative after "yes|yep|yeah|yup|ya" so it never shadows them: the
+# engine tries the longer alternatives first and only falls back to "y" when
+# they don't match, and the trailing "\s*[.!]*\s*$" anchor still requires the
+# whole message, so "yes" keeps matching "yes" in full, not "y" plus leftover
+# text.
 _AFFIRMATIVE_RE = re.compile(
-    r"(?i)^\s*(?:yes|yep|yeah|yup|ya|sure|ok|okay|k|please|go ahead|"
+    r"(?i)^\s*(?:yes|yep|yeah|yup|ya|y|sure|ok|okay|k|please|go ahead|"
     r"sounds good|that works|connect me|do it|let'?s do it|please do|"
     r"yes please|absolutely|definitely|i(?:'d| would) like that)"
     r"\s*[.!]*\s*$"
@@ -4957,8 +5124,10 @@ def _text_is_question(text: str) -> bool:
 
 def _is_real_probe(text: str) -> bool:
     """A genuine information-gathering probe: a question that is NOT a handoff
-    offer or a generic 'anything else?' invite (B8)."""
-    return _text_is_question(text) and not _HANDOFF_OFFER_RE.search(text) and not _GENERIC_INVITE_RE.search(text)
+    offer or a generic 'anything else?' invite (B8). The offer is looked for in
+    the closing paragraph only, so a callback sentence in the answer body does not
+    stop the follow-up question from counting as a probe."""
+    return _text_is_question(text) and not bot_offers_handoff(text) and not _GENERIC_INVITE_RE.search(text)
 
 
 def _recent_bot_question(history: list, lookback: int = 2) -> str | None:
@@ -5104,17 +5273,17 @@ def _is_affirmative_reply(question: str) -> bool:
 
 
 def _last_bot_offered_handoff(history: list) -> bool:
-    """True if the most recent bot turn offered to connect the visitor to a human
-    / take a message (B9)."""
+    """True if the most recent bot turn closed with an offer to connect the visitor
+    to a human / take a message (B9)."""
     for message in reversed(history or []):
         if _msg_role(message) in ("bot", "assistant", "operator"):
-            return bool(_HANDOFF_OFFER_RE.search(_msg_content(message)))
+            return bot_offers_handoff(_msg_content(message))
     return False
 
 
 #: Intents whose "answer" is pure social reflex, so replaying them after the
 #: name gate would just greet the visitor twice.
-_SOCIAL_INTENTS = frozenset({"greeting", "ack", "neg_ack"})
+_SOCIAL_INTENTS = frozenset({"greeting", "ack", "neg_ack", "how_are_you", "compliment", "abuse", "unclear"})
 
 
 def _deferred_is_worth_replaying(deferred: str, company_name: str | None) -> bool:
@@ -5125,14 +5294,15 @@ def _deferred_is_worth_replaying(deferred: str, company_name: str | None) -> boo
     a deferred GREETING, and for a greeting that is right: replaying "hi" after
     "Nice to meet you, Eva!" greets them twice.
 
-    But the router answers eight intents, not three. The other five are real
-    questions: "are you a human", "who made you", "what's your name", "is this
-    conversation recorded", "do you remember me". Treating those as nothing to
-    replay meant the visitor asked one, was asked for their name, gave it, and
-    got "Nice to meet you, Eva! What would you like to know?" while their
-    actual question was dropped on the floor. Caught by the eval on 2026-09-10,
-    where three trust cases had been passing on a grader lenient enough to call
-    that a correct answer.
+    But the router answers a lot more than a greeting, ack and neg-ack. Most of
+    the rest are real questions: "are you a human", "who made you", "what's my
+    name", "is this conversation recorded", "do you remember me", "you are
+    useless" (frustration, which still wants a real answer once the name is
+    known). Treating those as nothing to replay meant the visitor asked one,
+    was asked for their name, gave it, and got "Nice to meet you, Eva! What
+    would you like to know?" while their actual question was dropped on the
+    floor. Caught by the eval on 2026-09-10, where three trust cases had been
+    passing on a grader lenient enough to call that a correct answer.
 
     A replayed question flows through the pipeline normally, so a router intent
     still gets its canned reply; it just gets one.
@@ -6461,10 +6631,10 @@ async def _rewrite_query_bounded(session_id: str, question: str, history: list) 
     return await _await_rewrite(task, question)
 
 
-async def _detect_handoff_bounded(question: str) -> bool:
+async def _detect_handoff_bounded(question: str, last_bot_message: str | None = None) -> bool:
     """``detect_handoff_intent`` off the event loop with a hard deadline,
     degrading to the keyword-only signal when the classifier stalls."""
-    task = asyncio.create_task(asyncio.to_thread(detect_handoff_intent, question))
+    task = asyncio.create_task(asyncio.to_thread(detect_handoff_intent, question, last_bot_message=last_bot_message))
     try:
         return await asyncio.wait_for(task, timeout=_HANDOFF_INTENT_TIMEOUT_S)
     except TimeoutError:
@@ -6473,6 +6643,62 @@ async def _detect_handoff_bounded(question: str) -> bool:
     except Exception as exc:  # noqa: BLE001 - never let the classifier break the turn
         logger.warning("Handoff intent classifier failed (%s). Using keyword fallback", type(exc).__name__)
         return detect_handoff_intent_keywords(question)
+
+
+# The urgent-incident classifier has the same shape (a gate-tier YES/NO call) and
+# is awaited before the first frame of the turn, so it gets the same ceiling.
+_URGENT_INTENT_TIMEOUT_S = _HANDOFF_INTENT_TIMEOUT_S
+
+
+async def _detect_urgent_bounded(question: str) -> bool:
+    """Whether a message that passed the vocabulary check reports an active incident,
+    without blocking the event loop.
+
+    The caller runs ``urgent_route.might_be_urgent_incident`` first, so a message
+    without security-incident words costs no thread and no model call, and the
+    check runs once per turn. This runs ``urgent_route.classify_urgent_incident``
+    (which falls back to its rules on a model error) on a worker thread under
+    ``_URGENT_INTENT_TIMEOUT_S``. A stall uses the fallback rules; the worker
+    thread cannot be interrupted, so its late answer is discarded.
+    """
+    task = asyncio.create_task(asyncio.to_thread(urgent_route.classify_urgent_incident, question))
+    try:
+        return await asyncio.wait_for(task, timeout=_URGENT_INTENT_TIMEOUT_S)
+    except TimeoutError:
+        logger.warning("Urgent incident classifier exceeded %.1fs. Using the fallback rules", _URGENT_INTENT_TIMEOUT_S)
+        return urgent_route._fallback_is_urgent(question)
+    except Exception as exc:  # noqa: BLE001 - never let the classifier break the turn
+        logger.warning("Urgent incident classifier failed (%s). Using the fallback rules", type(exc).__name__)
+        return urgent_route._fallback_is_urgent(question)
+
+
+# The document-request classifier has the same shape (a gate-tier one-word call)
+# and is awaited before the first frame of the turn, so it gets the same ceiling.
+_DOCUMENT_INTENT_TIMEOUT_S = _URGENT_INTENT_TIMEOUT_S
+
+
+async def _detect_document_intent_bounded(question: str) -> DocumentIntentDecision:
+    """What a message that names a document asks for, without blocking the event loop.
+
+    The caller runs ``_document_route_applies`` first, so a message that names no
+    document costs no thread and no model call, and this runs at most once per
+    turn. It runs ``document_request.decide_document_intent`` (which falls back
+    to its rules on a model error) on a worker thread under
+    ``_DOCUMENT_INTENT_TIMEOUT_S``. A stall uses the fallback rules; the worker
+    thread cannot be interrupted, so its late answer is discarded. The result
+    says whether the fallback decided, for the route's metrics.
+    """
+    task = asyncio.create_task(asyncio.to_thread(decide_document_intent, question))
+    try:
+        return await asyncio.wait_for(task, timeout=_DOCUMENT_INTENT_TIMEOUT_S)
+    except TimeoutError:
+        logger.warning(
+            "Document request classifier exceeded %.1fs. Using the fallback rules", _DOCUMENT_INTENT_TIMEOUT_S
+        )
+        return DocumentIntentDecision(fallback_document_intent(question), by_fallback=True)
+    except Exception as exc:  # noqa: BLE001 - never let the classifier break the turn
+        logger.warning("Document request classifier failed (%s). Using the fallback rules", type(exc).__name__)
+        return DocumentIntentDecision(fallback_document_intent(question), by_fallback=True)
 
 
 def rewrite_query(session_id: str, question: str, history: list) -> str:
@@ -6824,7 +7050,9 @@ def _strip_trailing_question(text: str) -> str:
 
 
 def _last_bot_message(history) -> str:
-    """Text of the most recent bot/assistant/operator turn (or "")."""
+    """Text of the most recent bot/assistant/operator turn (or "").
+
+    Also the context the handoff classifier reads."""
     for message in reversed(history or []):
         if _msg_role(message) in ("bot", "assistant", "operator"):
             return _msg_content(message)
@@ -7176,7 +7404,7 @@ async def collect_rag_pipeline(client, question: str, **kwargs) -> dict:
             answer_parts.append(frame)
 
     # A guard that fired after text had already streamed (prompt leak, output
-    # moderation) could only rewrite the persisted message. The final frame
+    # moderation, price guard) could only rewrite the persisted message. The final frame
     # carries that rewrite, and it wins over the frames the guard could not
     # recall, so this caller gets what the transcript holds.
     override = payload.pop("answer_override", None)
@@ -7190,6 +7418,58 @@ async def collect_rag_pipeline(client, question: str, **kwargs) -> dict:
     payload.setdefault("session_id", kwargs.get("session_id", "default_session"))
     payload.setdefault("sources", [])
     return payload
+
+
+def _price_guard_signal(question: str, chat_session) -> bool:
+    """The price guard's turn signal: every figure trips when this holds.
+
+    The question reads like a pricing question, typos included, or the session was
+    already escalated on pricing. See ``price_guard``.
+    """
+    return _pricing_gate.question_has_fuzzy_price_word(question) or _card_already_shown(
+        chat_session, "pricing_escalated"
+    )
+
+
+def _cached_answer_trips_price_guard(
+    answer: object,
+    question: str,
+    session,
+    *,
+    session_id: str,
+    bid: int | None,
+    cid: int | None,
+) -> bool:
+    """Whether a cached answer would trip this turn's price guard.
+
+    The cache is read before the stream loads the chat session, so the session the
+    signal needs is looked up here, tenant-scoped, and only for an answer that
+    holds a figure at all.
+    """
+    if not answer_trips_price_guard(answer, signal=True):
+        return False
+    filters = [ChatSession.id == session_id]
+    if bid:
+        filters.append(ChatSession.bot_id == bid)
+    elif cid:
+        filters.append(ChatSession.client_id == cid)
+    chat_session = session.query(ChatSession).filter(*filters).first()
+    return answer_trips_price_guard(answer, signal=_price_guard_signal(question, chat_session))
+
+
+def _without_held_price_text(answer: str, guard: PriceStreamGuard | None) -> str:
+    """``answer`` without the text the price guard is still holding back.
+
+    The guard holds a possible figure, or an unpriced figure's sentence, until it
+    knows whether that may stream. A turn cut short before then (the visitor left,
+    or the stream failed) must not save what the visitor never saw. The held text
+    is always the end of what the model streamed, which ends ``answer`` until the
+    answer is replaced.
+    """
+    held = guard.held if guard is not None else ""
+    if held and answer.endswith(held):
+        return answer[: -len(held)]
+    return answer
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -7280,6 +7560,10 @@ async def rag_pipeline_stream(
         _lf_trace = _lf_obs_mgr.__enter__()
 
     full_answer = ""
+    # The document classifier's task, when this turn starts one (see "Document
+    # classifier, alongside retrieval"). Declared before the try so its
+    # finally can cancel a task that no route awaited.
+    _doc_intent_task: asyncio.Task[DocumentIntentDecision] | None = None
     try:
         with get_session() as session:
             bot = (
@@ -7418,6 +7702,105 @@ async def rag_pipeline_stream(
                 except Exception:  # noqa: BLE001  Preview personalization is best-effort
                     logger.warning("preview name seed failed for session %s", session_id, exc_info=True)
 
+            # ── Urgent incident ──────────────────────────────────────────────
+            # A visitor reporting an attack in progress gets the fastest human
+            # route and a priority alert. On 2026-09-10 "we are under a
+            # ransomware attack right now, please help!" got the generic
+            # offline form on two security companies' bots.
+            #
+            # Before the name question and on the visitor's own words: an
+            # incident typed as the first message used to get "may I know your
+            # name?" and no alert until the visitor answered. The urgent reply
+            # is the bot's first reply, so the name question does not come on
+            # the next turn either (``resolve_name_flow`` asks only while no bot
+            # message exists). No by-name opener: "Thanks, Eva!" does not belong
+            # above an incident.
+            #
+            # English only, like the other deterministic replies. The vocabulary
+            # check runs first, once, and is pure, so an ordinary turn pays for
+            # neither a language check here nor a model call. Only a message
+            # that names an incident or describes a symptom reaches the
+            # classifier, on a worker thread under a deadline, and not one that
+            # only asks about the business's services ("do you offer phishing
+            # simulation training?" on a security vendor's bot).
+            if (
+                urgent_route.might_be_urgent_incident(question)
+                and not urgent_route.asks_only_about_services(question)
+                and not _english_judges_bypassed(language, question)
+                and await _detect_urgent_bounded(question)
+            ):
+                # ``chat_session`` is loaded further down the pipeline, so this
+                # block does its own tenant-scoped lookup (only on an urgent turn).
+                _urgent_filters = [ChatSession.id == session_id]
+                if bid:
+                    _urgent_filters.append(ChatSession.bot_id == bid)
+                elif cid:
+                    _urgent_filters.append(ChatSession.client_id == cid)
+                _urgent_session = session.query(ChatSession).filter(*_urgent_filters).first()
+                # Set once the team was alerted: a second urgent message gets its
+                # own words and alerts no one again.
+                _urgent_repeat = _card_already_shown(_urgent_session, "urgent_notified")
+                _urgent = urgent_reply(
+                    company_name=_company_name,
+                    support_enabled=_plan_support_allowed,
+                    live_chat_enabled=live_chat_on,
+                    team_available=bool(_team_online),
+                    emergency_url=emergency_url_from_answer_links(getattr(bot, "answer_links", None)),
+                    contact_url=_contact_url,
+                    repeat=_urgent_repeat,
+                )
+                _safety_net_metric(
+                    "urgent_incident",
+                    path="stream",
+                    repeat=str(_urgent_repeat),
+                    session=session_id,
+                    bot_id=bid,
+                )
+                # The reply is fixed text, so it is saved and the team alerted
+                # BEFORE the first frame: a visitor who closes the tab mid-stream
+                # still leaves the reply and the alert behind.
+                _bot_msg = add_chat_message(
+                    session,
+                    session_id,
+                    client_id=cid,
+                    role="bot",
+                    content=_urgent.text,
+                    bot_id=bid,
+                    source_language=_lang_base(language),
+                )
+                session.flush()
+                # Same flags and card bookkeeping as the unhelped offer below, so a
+                # later turn sees the team as already offered: the handoff reply
+                # uses its repeat wording and the unhelped offer stays quiet.
+                _urgent_meta = {
+                    "message_id": _bot_msg.id,
+                    "suggest_handoff": _urgent.suggest_handoff,
+                    "qualification_pending": False,
+                }
+                if _urgent.needs_message_card:
+                    _urgent_meta["show_leave_message"] = True
+                    _mark_card_shown(_urgent_session, "leave_message")
+                if _urgent.suggest_handoff:
+                    _mark_card_shown(_urgent_session, "handoff_offered")
+                # The visitor was offered a person (or a page to reach one): not unhelped.
+                _set_unhelped_streak(_urgent_session, 0)
+                if _plan_support_allowed and not _urgent_repeat:
+                    _mark_card_shown(_urgent_session, "urgent_notified")
+                    # The reply and its flags are committed before the alert,
+                    # which commits on its own and rolls back on failure.
+                    session.commit()
+                    if _is_preview:
+                        # The owner testing the bot in the dashboard Preview sees
+                        # the reply, but the real team is not paged for it.
+                        logger.info("urgent_incident_alert_skipped_for_preview | bot=%s session=%s", bid, session_id)
+                    else:
+                        _alert_team_of_urgent_incident(session, bot, cid, session_id, question)
+                session.commit()
+                yield _stream_metadata(session_id, [], language)
+                yield _urgent.text
+                yield f"\nFINAL_METADATA:{json.dumps(_urgent_meta)}\n"
+                return
+
             # ── Two-step name capture (ask first, answer next turn) ──────────
             # First message → reply ONLY with a name request and defer the real
             # answer; the following turn (their name) answers the original
@@ -7468,6 +7851,7 @@ async def rag_pipeline_stream(
             # off; see ``_english_judges_bypassed``. Resolved once per turn so the
             # sites below can never disagree with each other.
             _judges_bypassed = _english_judges_bypassed(language, question)
+
             _intent = (
                 None
                 if (_affirmed_handoff or _judges_bypassed)
@@ -7476,6 +7860,7 @@ async def rag_pipeline_stream(
                     _company_name,
                     support_enabled=_plan_support_allowed,
                     platform_branded=not _branding_removable,
+                    visitor_name=_flow_name,
                 )
             )
             if _intent is not None:
@@ -7487,7 +7872,17 @@ async def rag_pipeline_stream(
                     bot_id=bid,
                 )
                 _intent_answer = _maybe_append_name_ask(
-                    _intent.answer, session, session_id, bid, cid, question, language=language
+                    _intent.answer,
+                    session,
+                    session_id,
+                    bid,
+                    cid,
+                    question,
+                    language=language,
+                    # ``name_recall``'s own answer already states the visitor's
+                    # name ("You're {name}."), so the welcome-back opener would
+                    # say it again in the very next sentence.
+                    opener=_intent.intent != "name_recall",
                 )
                 yield _stream_metadata(session_id, [], language)
                 yield _intent_answer
@@ -7669,20 +8064,61 @@ async def rag_pipeline_stream(
             # keeps the write side consistent. The Redis round-trips, hit counter
             # included, run on a worker thread so a slow Redis cannot stall every
             # other stream on this event loop.
+            #
+            # A document request is answered from the file catalog further down
+            # (see "Document requests"). A cached answer to "can you send me your
+            # brochure?" would be served ahead of it and the route would never run,
+            # so a message shaped like a request skips the cache
+            # (``_document_request_skips_cache``). A message that only mentions a
+            # document ("what's on the menu today") reads it: those are common
+            # FAQs, and turning the cache off for every mention cost each of them a
+            # cache miss and a classifier call. Whether the visitor wants a file is
+            # still the classifier's call, at the route, on every cache miss.
             if (
                 _cache_key
                 and not _affirmed_handoff
                 and not _gate_may_intercept
                 and not (_prior_turns and _looks_like_follow_up(question))
+                and not _document_request_skips_cache(question, _company_name, _judges_bypassed)
             ):
                 cached_qa = await asyncio.to_thread(_qa_cache_lookup, _cache_key, bid)
+                if (
+                    cached_qa
+                    and price_guard_applies(
+                        # A pricing question never reads the cache (see
+                        # ``_gate_may_intercept``), so a turn that got here is one
+                        # the gate reads as not pricing.
+                        gate_outcome="not_pricing",
+                        pricing_url=getattr(bot, "pricing_url", None) if bot else None,
+                        answer_from_knowledge_base=_pricing_from_kb,
+                        support_enabled=_plan_support_allowed,
+                        judges_bypassed=_judges_bypassed,
+                    )
+                    and _cached_answer_trips_price_guard(
+                        cached_qa.get("answer"),
+                        question,
+                        session,
+                        session_id=session_id,
+                        bid=bid,
+                        cid=cid,
+                    )
+                ):
+                    # A figure the guard would trip on, cached before the guard
+                    # existed or before the owner turned knowledge-base pricing off,
+                    # must not be replayed past it. Dropped, so the regenerated turn
+                    # is guarded instead.
+                    await asyncio.to_thread(cache_delete, _cache_key)
+                    logger.info(f"QA cache entry dropped (price figure on a guarded bot) | bot_id={bid}")
+                    cached_qa = None
                 if cached_qa:
                     # Run handoff detection even on cache hit so the widget can
                     # trigger the handoff form when appropriate. ``live_chat_on``
                     # is the plan-aware value resolved once at the top of this
                     # turn, so a Free-plan bot never invalidates its cache to
                     # generate a handoff it isn't entitled to offer.
-                    _cached_handoff = await _detect_handoff_bounded(question)
+                    _cached_handoff = detect_company_deal_intent(
+                        question, _company_name
+                    ) or await _detect_handoff_bounded(question, _last_bot_message(history))
 
                     if _cached_handoff and live_chat_on:
                         # Handoff requested. Invalidate cache and fall through to
@@ -7718,20 +8154,23 @@ async def rag_pipeline_stream(
                         # The attach is a pure function of the question and the
                         # catalog, so recomputing it here gives the card the
                         # generated turn would have had.
-                        if bid is not None and not _is_known_refusal(
-                            cached_qa["answer"], _company_name or "our company"
-                        ):
+                        _cached_is_refusal = _is_known_refusal(cached_qa["answer"], _company_name or "our company")
+                        # One tenant-scoped session lookup serves both the media
+                        # card dedupe and the unhelped-count reset below.
+                        _cached_session = None
+                        if not _cached_is_refusal:
+                            _cached_filters = [ChatSession.id == session_id]
+                            if bid:
+                                _cached_filters.append(ChatSession.bot_id == bid)
+                            elif cid:
+                                _cached_filters.append(ChatSession.client_id == cid)
+                            _cached_session = session.query(ChatSession).filter(*_cached_filters).first()
+                        if bid is not None and not _cached_is_refusal:
                             _cached_card = _topical_media_card(
                                 question, _company_name, [], get_bot_media_urls(session, bot_id=bid)
                             )
                             _cached_key = _media_card_key(_cached_card)
                             if _cached_key:
-                                _cached_filters = [ChatSession.id == session_id]
-                                if bid:
-                                    _cached_filters.append(ChatSession.bot_id == bid)
-                                elif cid:
-                                    _cached_filters.append(ChatSession.client_id == cid)
-                                _cached_session = session.query(ChatSession).filter(*_cached_filters).first()
                                 if not _is_explicit_media_request(question) and _card_already_shown(
                                     _cached_session, _cached_key
                                 ):
@@ -7743,6 +8182,10 @@ async def rag_pipeline_stream(
                                 logger.info(
                                     "Media card topical attach (cache hit) | session=%s key=%s", session_id, _cached_key
                                 )
+                        # A cached answer is a helped turn, so the unhelped count
+                        # starts again. A cached refusal is not one and leaves it.
+                        if not _cached_is_refusal:
+                            _set_unhelped_streak(_cached_session, 0)
                         session.commit()
                         yield f"\nFINAL_METADATA:{json.dumps(_cached_meta)}\n"
                         return
@@ -7844,22 +8287,45 @@ async def rag_pipeline_stream(
             _kb_version = f"{_total_chunks}:{_kb_max_id or 0}"
             _use_cag_lite = _cag_threshold > 0 and 0 < _total_chunks <= _cag_threshold
 
+            # ── Document classifier, alongside retrieval ─────────────────────
+            # A message that names a document starts its classifier call here, where
+            # the handoff classifier starts, so the call runs while the knowledge
+            # base is searched instead of after it. The document route below awaits
+            # the task; a turn that returns before the route (the pricing or meeting
+            # gate) or a visitor who leaves cancels it in this stream's ``finally``.
+            if _document_route_applies(question, _company_name, _judges_bypassed):
+                _doc_intent_task = asyncio.create_task(_detect_document_intent_bounded(question))
+
             if _use_cag_lite:
                 logger.info(f"CAG-lite stream mode: injecting all {_total_chunks} chunks (bot_id={bid})")
                 final_results = await asyncio.to_thread(_fetch_all_chunks_isolated, bid, cid)
                 search_query = question
-                suggest_handoff = await _detect_handoff_bounded(question) or _affirmed_handoff
+                suggest_handoff = (
+                    detect_company_deal_intent(question, _company_name)
+                    or await _detect_handoff_bounded(question, _last_bot_message(history))
+                    or _affirmed_handoff
+                )
             else:
-                handoff_task = asyncio.create_task(asyncio.to_thread(detect_handoff_intent, question))
+                handoff_task = asyncio.create_task(
+                    asyncio.to_thread(detect_handoff_intent, question, last_bot_message=_last_bot_message(history))
+                )
                 search_query, query_embedding = await _resolve_search_query_and_embedding(
                     session_id, question, history, bid, cid, _company_name, embedding_profile=_embedding_profile
                 )
 
                 try:
-                    suggest_handoff = await asyncio.wait_for(handoff_task, timeout=4.0) or _affirmed_handoff
+                    suggest_handoff = (
+                        await asyncio.wait_for(handoff_task, timeout=4.0)
+                        or _affirmed_handoff
+                        or detect_company_deal_intent(question, _company_name)
+                    )
                 except TimeoutError:
                     # LLM timed out. Fall back to keyword signal.
-                    suggest_handoff = detect_handoff_intent_keywords(question) or _affirmed_handoff
+                    suggest_handoff = (
+                        detect_handoff_intent_keywords(question)
+                        or _affirmed_handoff
+                        or detect_company_deal_intent(question, _company_name)
+                    )
                     logger.warning(
                         "Handoff LLM timed out for session %s, keyword fallback=%s",
                         session_id,
@@ -8156,6 +8622,8 @@ async def rag_pipeline_stream(
                     _pivot_meta["show_leave_message"] = True
                     _mark_card_shown(chat_session, "leave_message")
                 _mark_card_shown(chat_session, "pricing_escalated")
+                # The visitor was pointed at pricing or a person: not unhelped.
+                _set_unhelped_streak(chat_session, 0)
                 session.commit()
                 yield f"\nFINAL_METADATA:{json.dumps(_pivot_meta)}\n"
                 return
@@ -8218,8 +8686,139 @@ async def rag_pipeline_stream(
                 if _mtg.needs_message_card:
                     _mtg_meta["show_leave_message"] = True
                     _mark_card_shown(chat_session, "leave_message")
+                # The visitor was given a way to reach the team: not unhelped.
+                _set_unhelped_streak(chat_session, 0)
                 session.commit()
                 yield f"\nFINAL_METADATA:{json.dumps(_mtg_meta)}\n"
+                return
+
+            # ── Document requests ────────────────────────────────────────────
+            # "Send me your brochure" is answered from the bot's own file catalog
+            # as download cards, never with a promise to email: on 2026-09-10 all
+            # four production bots answered "That specific detail sits with the
+            # team" or opened a message form, 0 of 8 requests passed, one of them
+            # on a bot holding a catalog of datasheet PDFs.
+            #
+            # After the pricing and meeting gates ("send me your pricing brochure"
+            # is a pricing question) and before the relevance gate, which scores a
+            # request for a file off-topic. An explicit request for a person, or a
+            # deal for the company, still goes to the handoff reply below. English
+            # only, like the gates: the classifier prompt and the reply are English.
+            #
+            # Naming a document is not always asking for one. Rules tuned on
+            # labelled messages answered "we don't want the exhibitor brochure" with
+            # a card and missed "whatsapp me the brochure", so a document noun only
+            # decides whether to ask, and the gate-tier classifier decides, once per
+            # turn, what the visitor wants (the old rules decide when it fails or
+            # misses its deadline):
+            # - "send": answered here with the best file, exact or not, or with the
+            #   no-file offer when the catalog has none.
+            # - "exists" ("do you have a case study on banks?"): answered here only
+            #   with an exact file. Otherwise the model answers: on a bot whose case
+            #   studies are web pages it reads those pages instead of saying "I
+            #   don't have a downloadable document", and the topical media-card
+            #   attach further down can still offer a file.
+            # - "no": the model answers.
+            # Which file to offer is still decided by ``pick_documents``, never by
+            # the model.
+            #
+            # The catalog fetched here is reused by the media catalog and the card
+            # checks further down, so a turn reads it from the database once.
+            _bot_catalog: list[dict] | None = None
+            _pick = None
+            _doc_intent_tags: dict[str, str] = {}
+            if _doc_intent_task is not None:
+                if bid is not None:
+                    _bot_catalog = get_bot_media_urls(session, bot_id=bid)
+                _pick = pick_documents(question, _company_name, _bot_catalog or [])
+                # A pricing question belongs to the pricing gate, whichever way the
+                # gate went. "can you send me your pricing pdf?" on a bot with a
+                # pricing page is answered from that page (the gate narrowed the
+                # context above), and on a bot that answers pricing from its
+                # knowledge base, from the knowledge base. Replacing either with the
+                # no-file offer loses a grounded answer, so only an exact file (a
+                # real "Pricing-Brochure.pdf") is still offered as a card.
+                if (_pricing_decision.fired or _pricing_gate.is_pricing_question(_gate_question)) and not (
+                    _pick.docs and _pick.exact
+                ):
+                    _safety_net_metric(
+                        "document_request_fell_through",
+                        path="stream",
+                        reason="pricing",
+                        found=str(len(_pick.docs)),
+                        exact=str(_pick.exact),
+                        session=session_id,
+                        bot_id=bid,
+                    )
+                    # The classifier's answer is not needed: stop waiting on it.
+                    _doc_intent_task.cancel()
+                    _pick = None
+                else:
+                    _doc_intent = await _doc_intent_task
+                    _doc_intent_tags = {
+                        "document_intent": _doc_intent.intent,
+                        "document_intent_fallback": str(_doc_intent.by_fallback),
+                    }
+                    if not (
+                        _doc_intent.intent == "send"
+                        or (_doc_intent.intent == "exists" and bool(_pick.docs) and _pick.exact)
+                    ):
+                        # Counted with the label and whether the fallback decided, so a
+                        # classifier that sends real requests to the model, or lets other
+                        # questions through, shows up in the metrics.
+                        _safety_net_metric(
+                            "document_request_fell_through",
+                            path="stream",
+                            reason="intent",
+                            found=str(len(_pick.docs)),
+                            exact=str(_pick.exact),
+                            **_doc_intent_tags,
+                            session=session_id,
+                            bot_id=bid,
+                        )
+                        _pick = None
+            if _pick is not None:
+                _safety_net_metric(
+                    "document_request",
+                    path="stream",
+                    found=str(len(_pick.docs)),
+                    exact=str(_pick.exact),
+                    **_doc_intent_tags,
+                    session=session_id,
+                    bot_id=bid,
+                )
+                _doc_text = _name_ack_prefix(
+                    _flow_name, _just_named, language, returning=_returning_by_name
+                ) + document_reply(_pick, company_name=_company_name, support_enabled=_plan_support_allowed)
+                # The reply is fixed text, so it is saved BEFORE the first frame:
+                # a visitor who closes the tab mid-stream still leaves it behind.
+                _bot_msg = add_chat_message(
+                    session,
+                    session_id,
+                    client_id=cid,
+                    role="bot",
+                    content=_doc_text,
+                    bot_id=bid,
+                    is_unanswered=not _pick.docs,
+                    source_language=_lang_base(language),
+                )
+                session.flush()
+                _doc_meta: dict = {"message_id": _bot_msg.id, "qualification_pending": False}
+                if _pick.docs:
+                    # The first file is the card and the second the "Also
+                    # available" chip, the shape the generated path sends.
+                    _doc_meta["media_card"] = _pick.docs[0]
+                    if len(_pick.docs) > 1:
+                        _doc_meta["media_secondary"] = _pick.docs[1:]
+                    _mark_card_shown(chat_session, _media_card_key(_pick.docs[0]))
+                    # Documents were offered, so the unhelped run ends.
+                    _set_unhelped_streak(chat_session, 0)
+                # With no file the team is offered in words only: no form opens, so
+                # no card flag is set and the unhelped count is left as it was.
+                session.commit()
+                yield _stream_metadata(session_id, [], language)
+                yield _doc_text
+                yield f"\nFINAL_METADATA:{json.dumps(_doc_meta)}\n"
                 return
 
             # ── Handoff reply ────────────────────────────────────────────
@@ -8271,6 +8870,8 @@ async def rag_pipeline_stream(
                 # extraction to wait out before it opens the form.
                 _handoff_meta = {"message_id": _bot_msg.id, "suggest_handoff": True, "qualification_pending": False}
                 _mark_card_shown(chat_session, "handoff_offered")
+                # The visitor asked for a person and is getting one: not unhelped.
+                _set_unhelped_streak(chat_session, 0)
                 session.commit()
                 yield f"\nFINAL_METADATA:{json.dumps(_handoff_meta)}\n"
                 return
@@ -8402,6 +9003,94 @@ async def rag_pipeline_stream(
                     session=session_id,
                     bot_id=bid,
                 )
+            # ── Unhelped turns ───────────────────────────────────────────────
+            # A turn about to be refused or pivoted is a turn the bot could not
+            # help with. Counting by that decision rather than by the reply's
+            # wording is the point: on 2026-09-10 a visitor asked a live bot four
+            # times to buy the company, and the refusal escalation (which only
+            # recognises its own fixed sentences) never saw a second miss.
+            #
+            # The second unhelped turn in a row, on a plan with a human, is
+            # answered with an offer of the team instead of another brush-off,
+            # once per conversation: after the team has been offered (here, by a
+            # handoff reply or by a message card) a miss gets the normal refusal.
+            #
+            # A turn the gate relaxed (topical follow-up, clearly on scope) goes
+            # to the model, which often answers it well even though the judge
+            # rejected it, so it is neutral: it neither adds to the count nor
+            # resets it, and it is never replaced by the offer. A relevant turn,
+            # an answer to our own question and a "yes" to a handoff reset the
+            # count, as do the helpful early returns above (cache hit, pricing
+            # and meeting pivots, handoff reply). A non-English turn never
+            # reaches here unhelped (the judges are bypassed and the turn counts
+            # as relevant). ``check_relevance`` also returns relevant when there
+            # are no chunks to judge or the gate is disabled, so those turns
+            # reset the count rather than add to it.
+            _relaxed_turn = _relax_topical or _relax_on_scope
+            _unhelped_turn = (
+                not _is_relevant
+                and not _trusted_cta
+                and not _answering_probe
+                and not _affirmed_handoff
+                and not _relaxed_turn
+            )
+            _team_already_offered = _card_already_shown(chat_session, "handoff_offered") or _card_already_shown(
+                chat_session, "leave_message"
+            )
+            if (
+                _unhelped_turn
+                and _plan_support_allowed
+                and not _team_already_offered
+                and _unhelped_streak(chat_session) >= 1
+            ):
+                _offer = unhelped_offer(live_chat_enabled=live_chat_on, team_available=bool(_team_online))
+                _safety_net_metric(
+                    "unhelped_offer",
+                    path="stream",
+                    gate_score=f"{_gate_score:.2f}",
+                    live_chat=str(live_chat_on),
+                    session=session_id,
+                    bot_id=bid,
+                )
+                _offer_text = (
+                    _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + _offer.text
+                )
+                # The offer is fixed text, so it and its flags are saved BEFORE the
+                # first frame, like the urgent and document replies: a visitor who
+                # closes the tab mid-stream still leaves the offer behind, and the
+                # next turn does not offer the team a second time.
+                _bot_msg = add_chat_message(
+                    session,
+                    session_id,
+                    client_id=cid,
+                    role="bot",
+                    content=_offer_text,
+                    bot_id=bid,
+                    is_unanswered=True,
+                    source_language=_lang_base(language),
+                )
+                session.flush()
+                _offer_meta = {
+                    "message_id": _bot_msg.id,
+                    "suggest_handoff": _offer.suggest_handoff,
+                    "qualification_pending": False,
+                }
+                if _offer.needs_message_card:
+                    _offer_meta["show_leave_message"] = True
+                    _mark_card_shown(chat_session, "leave_message")
+                if _offer.suggest_handoff:
+                    _mark_card_shown(chat_session, "handoff_offered")
+                _set_unhelped_streak(chat_session, 0)
+                session.commit()
+                yield _stream_metadata(session_id, [], language)
+                yield _offer_text
+                yield f"\nFINAL_METADATA:{json.dumps(_offer_meta)}\n"
+                return
+            if _unhelped_turn:
+                _set_unhelped_streak(chat_session, _unhelped_streak(chat_session) + 1)
+            elif not _relaxed_turn:
+                _set_unhelped_streak(chat_session, 0)
+
             # ``_affirmed_handoff`` also bypasses the refusal so a "yes" to the
             # connect offer reaches generation, where ``suggest_handoff`` renders
             # the handoff (B9).
@@ -8597,7 +9286,9 @@ async def rag_pipeline_stream(
             # video/file in the KB and can pick by topic match.
             media_sources = _iter_media_urls_from_chunks(final_results)
             if bid is not None:
-                media_sources.extend(get_bot_media_urls(session, bot_id=bid))
+                if _bot_catalog is None:
+                    _bot_catalog = get_bot_media_urls(session, bot_id=bid)
+                media_sources.extend(_bot_catalog)
             context_text += _build_media_catalog(media_sources)
             context_text += _maybe_events_block(session, bot_id=bid, question=question)
             context_text += _build_date_hints(context_text, date.today())
@@ -8698,8 +9389,36 @@ async def rag_pipeline_stream(
             )
             logger.info(f"Hybrid RAG stream prompt built | Context chunks: {len(final_results)}")
 
+            # Price figures must not stream on a bot whose pricing goes to the
+            # team: a typo ("picin") carries a pricing question past the gate, and
+            # the model then quotes the knowledge base. See ``price_guard``.
+            _price_guard_pricing_url = getattr(bot, "pricing_url", None) if bot else None
+            # The turn's price signal and the repeat flag are read here, before the
+            # connection is released below, so neither the stream loop nor the
+            # replacement after it does database work. With the signal every figure
+            # trips; without it only a figure whose sentence or paragraph names the
+            # company's own price in the first person does.
+            _price_guard = (
+                PriceStreamGuard(signal=_price_guard_signal(question, chat_session))
+                if price_guard_applies(
+                    gate_outcome=_pricing_decision.outcome,
+                    pricing_url=_price_guard_pricing_url,
+                    answer_from_knowledge_base=_pricing_from_kb,
+                    support_enabled=_plan_support_allowed,
+                    judges_bypassed=_judges_bypassed,
+                )
+                else None
+            )
+            _price_guard_repeat = _price_guard is not None and _card_already_shown(chat_session, "pricing_escalated")
+            # The pricing escalation that replaced the answer, once the guard trips.
+            _price_guard_pivot: _pricing_gate.PricingPivot | None = None
+            # Whether any of the model's own text reached the visitor, so a
+            # replacement knows whether it follows streamed text.
+            _answer_text_streamed = False
             _stream_error = False
             _leak_aborted = False
+            # The price guard tripped and the pricing escalation replaced the answer.
+            _answer_replaced = False
             # Set by the output moderation guard below; True until it says
             # otherwise, and it is skipped on a leak-abort or a stream error.
             _answer_safe = True
@@ -8772,6 +9491,14 @@ async def rag_pipeline_stream(
                     if chunk:
                         chunk_count += 1
                         full_answer += chunk
+                        # The price guard holds back any tail that could be the
+                        # start of a figure and stops the stream on a whole one;
+                        # the escalation replaces the answer after the loop.
+                        visible_chunk = chunk
+                        if _price_guard is not None:
+                            visible_chunk = _price_guard.feed(chunk)
+                            if _price_guard.tripped:
+                                break
                         # Suppressed-probe turns (the qualified-lead card is
                         # showing) buffer the WHOLE answer instead of streaming
                         # it. See the post-loop strip. Streaming can't un-send a
@@ -8779,8 +9506,9 @@ async def rag_pipeline_stream(
                         # we hold the answer, strip any trailing question, then
                         # emit it at once. These turns are rare (once per session).
                         if not _show_qualified_popup:
-                            safe_chunk = cta_sanitizer.feed(chunk)
+                            safe_chunk = cta_sanitizer.feed(visible_chunk)
                             if safe_chunk:
+                                _answer_text_streamed = True
                                 yield safe_chunk
                         # Output-side leakage guard: if the accumulated answer
                         # contains a system-prompt sentinel, stop streaming and
@@ -8801,10 +9529,59 @@ async def rag_pipeline_stream(
                             suggest_handoff = False
                             break
 
+                # An answer that ENDS on a figure ("... about 50 lakh") is only
+                # known to be one when the stream is over.
+                if _price_guard is not None and not _leak_aborted and not _price_guard.tripped:
+                    held_text = _price_guard.flush()
+                    if held_text and not _show_qualified_popup:
+                        safe_chunk = cta_sanitizer.feed(held_text)
+                        if safe_chunk:
+                            _answer_text_streamed = True
+                            yield safe_chunk
+                if _price_guard is not None and _price_guard.tripped:
+                    # The reply the pricing gate gives this bot, so a typo changes
+                    # nothing the visitor sees. ``_answer_replaced`` skips the drain
+                    # (the held tail may be half a figure), output moderation (the
+                    # reply is a template) and the topical media card, carries the
+                    # reply to the widget and ``collect_rag_pipeline`` as
+                    # ``answer_override`` and drops the sources. Bookkeeping follows
+                    # ``_price_guard_pivot`` below: the card, the cache skip and the
+                    # pricing_escalated mark.
+                    _price_guard_pivot = _pricing_gate.pricing_pivot(
+                        company_name=_company_name,
+                        pricing_url=_price_guard_pricing_url,
+                        support_enabled=_plan_support_allowed,
+                        live_chat_enabled=live_chat_on,
+                        contact_url=_contact_url,
+                        repeat=_price_guard_repeat,
+                        subject=_pricing_gate.pricing_subject(_gate_question, _company_name, final_results),
+                    )
+                    _safety_net_metric("price_guard_tripped", path="stream", session=session_id, bot_id=bid)
+                    # Also counted as one of the gate's escalations, so a view of
+                    # those includes the pricing questions the guard caught.
+                    _safety_net_metric(
+                        "pricing_gate_escalation",
+                        reason="price_guard",
+                        path="stream",
+                        session=session_id,
+                        bot_id=bid,
+                    )
+                    _answer_replaced = True
+                    suggest_handoff = _price_guard_pivot.suggest_handoff
+                    full_answer = _opener + _price_guard_pivot.text
+                    if _show_qualified_popup:
+                        # The buffered turn has emitted nothing yet, not even the opener.
+                        yield full_answer
+                    elif _answer_text_streamed:
+                        yield f"\n\n{_price_guard_pivot.text}"
+                    else:
+                        yield _price_guard_pivot.text
+
                 # Drain any text the sanitiser was still holding (e.g. trailing
                 # "[" that turned out not to be a sentinel). Skip on leak-abort,
                 # the buffer at that point may be partial sentinel and is unsafe.
-                if not _leak_aborted:
+                # Skipped on a price-guard replacement for the same reason.
+                if not _leak_aborted and not _answer_replaced:
                     if _show_qualified_popup:
                         # Buffered answer-only turn: scrub CTA sentinels, strip any
                         # trailing question the model appended despite the rule,
@@ -8838,7 +9615,9 @@ async def rag_pipeline_stream(
                 # Persist what we have, then let the cancellation continue. Never
                 # swallow it, and never ``yield`` from here, an async generator
                 # being closed must not resume.
-                _partial = _scrub_cta_sentinels(full_answer).strip()
+                # Text the price guard was still holding never reached the
+                # visitor, and must not reach the transcript either.
+                _partial = _scrub_cta_sentinels(_without_held_price_text(full_answer, _price_guard)).strip()
                 if _partial:
                     try:
                         add_chat_message(
@@ -8865,6 +9644,9 @@ async def rag_pipeline_stream(
                 raise
             except Exception as e:
                 logger.error(f"Streaming prompt error ({type(e).__name__}): {e}", exc_info=True)
+                # Saved below as the partial answer: without the text the price
+                # guard was still holding, which the visitor never saw.
+                full_answer = _without_held_price_text(full_answer, _price_guard)
                 yield " [I encountered an error. Please try again.]"
                 _stream_error = True
                 suggest_handoff = False  # Don't suggest handoff on errored/partial responses
@@ -8876,8 +9658,9 @@ async def rag_pipeline_stream(
             # keeps the DB/cache from persisting flagged text for reuse on
             # future turns, and makes a real occurrence observable via the
             # safety-net metric. Skipped when the leak-guard already fired
-            # (full_answer is already the refusal) or the stream errored.
-            if not _leak_aborted and not _stream_error:
+            # (full_answer is already the refusal), the price guard replaced the
+            # answer (a template), or the stream errored.
+            if not _leak_aborted and not _answer_replaced and not _stream_error:
                 # Sync HTTP call (up to 10s). Off the event loop, or every other
                 # in-flight stream on this worker stalls behind it.
                 _answer_safe, _answer_flag_category = await asyncio.to_thread(
@@ -8902,7 +9685,10 @@ async def rag_pipeline_stream(
             # previous list item (e.g. "- 24x7 supportWhich of these…"). Splice
             # in the missing paragraph break before persisting so the saved
             # history view is always clean.
-            full_answer = _ensure_followup_spacing(full_answer)
+            # Not on the pricing escalation, which is persisted exactly as the
+            # gate's own pivot is.
+            if _price_guard_pivot is None:
+                full_answer = _ensure_followup_spacing(full_answer)
 
             # Drift detection: the system prompt forbids asking a question in the
             # body when [CTA_Q:…] is emitted (avoids two prompts in one bubble).
@@ -8920,7 +9706,7 @@ async def rag_pipeline_stream(
             # Safety net: if the LLM asked a qualifying question but forgot the
             # [CTA:dim] marker, infer the CTA from the answer text so the
             # quick-reply chips still render.
-            if cta_data is None and is_bant_enabled and not _show_qualified_popup:
+            if cta_data is None and is_bant_enabled and not _show_qualified_popup and _price_guard_pivot is None:
                 cta_data = _infer_cta_fallback(full_answer, current_bant, bant_config, contextual_q=_cta_q)
 
             # Always yield FINAL_METADATA so the frontend never hangs waiting for it.
@@ -8942,6 +9728,10 @@ async def rag_pipeline_stream(
             if _leave_msg_card_detected:
                 full_answer = _leave_message_card_re.sub("", full_answer).rstrip()
                 logger.info("Leave-message card token detected | session=%s", session_id)
+            # A tripped price guard asks for the card exactly where the pricing
+            # pivot does; it is rendered below, on the model's own card path.
+            if _price_guard_pivot is not None and _price_guard_pivot.needs_message_card:
+                _leave_msg_card_detected = True
 
             # Detect + strip media card sentinels ([YOUTUBE_CARD:id] /
             # [DOWNLOAD_CARD:url|name]). At most one per response, the helper
@@ -8961,7 +9751,9 @@ async def rag_pipeline_stream(
             _allowed_yt, _allowed_files = _collect_available_media(final_results)
             _bot_media_for_validate: list[dict] = []
             if bid is not None:
-                _bot_media_for_validate = get_bot_media_urls(session, bot_id=bid)
+                if _bot_catalog is None:
+                    _bot_catalog = get_bot_media_urls(session, bot_id=bid)
+                _bot_media_for_validate = _bot_catalog
                 for _bm in _bot_media_for_validate:
                     for _yt in _bm.get("youtube") or []:
                         if isinstance(_yt, dict) and isinstance(_yt.get("video_id"), str):
@@ -8986,6 +9778,7 @@ async def rag_pipeline_stream(
                 _media_card is None
                 and not _stream_error
                 and not _leak_aborted
+                and not _answer_replaced
                 and not _meeting_card_detected
                 and not _leave_msg_card_detected
                 and not _is_known_refusal(full_answer, _company_name or "our company")
@@ -9038,7 +9831,15 @@ async def rag_pipeline_stream(
 
             # Safety net: if the intent classifier missed handoff but the LLM
             # still produced a handoff-style response, override suggest_handoff.
-            if not suggest_handoff and not _stream_error and live_chat_on and _response_suggests_handoff(full_answer):
+            if (
+                not suggest_handoff
+                and not _stream_error
+                # The escalation already decided the handoff; its repeat wording
+                # ("I'll connect you") must not re-open the form.
+                and _price_guard_pivot is None
+                and live_chat_on
+                and _response_suggests_handoff(full_answer)
+            ):
                 suggest_handoff = True
                 _safety_net_metric(
                     "handoff_safety_net_triggered",
@@ -9055,6 +9856,7 @@ async def rag_pipeline_stream(
                 and not _meeting_card_detected
                 and not suggest_handoff
                 and not _stream_error
+                and _price_guard_pivot is None
                 and _question_suggests_leave_message(question)
                 and _response_suggests_leave_message(full_answer)
             ):
@@ -9108,7 +9910,11 @@ async def rag_pipeline_stream(
             # (the LLM's own "answer only what's asked" rules otherwise drop it).
             # Streamed live AND folded into full_answer so the saved transcript
             # matches what the visitor saw.
-            if _should_ask_visitor_name(visitor_name, history) and not _is_name_ask_message(full_answer):
+            if (
+                _price_guard_pivot is None
+                and _should_ask_visitor_name(visitor_name, history)
+                and not _is_name_ask_message(full_answer)
+            ):
                 _name_ask_chunk = f"\n\n{_name_ask_text(language)}"
                 full_answer = full_answer.rstrip() + _name_ask_chunk
                 yield _name_ask_chunk
@@ -9143,6 +9949,9 @@ async def rag_pipeline_stream(
                         source_language=_lang_base(language),
                         media_card=_media_card,
                         media_secondary=_media_secondary,
+                        # The pricing escalation is recorded as unanswered, as the
+                        # gate's own pivot is.
+                        is_unanswered=_price_guard_pivot is not None,
                     )
 
                     if _lf and hasattr(bot_msg, "trace_id"):
@@ -9152,7 +9961,7 @@ async def rag_pipeline_stream(
                     # Remember which dimension we probed this turn (skip on
                     # handoff/popup turns) so the next turn won't re-ask it and
                     # can bind the visitor's reply to it. Mirrors non-streaming.
-                    if is_bant_enabled and chat_session is not None:
+                    if is_bant_enabled and chat_session is not None and _price_guard_pivot is None:
                         chat_session.last_probed_dimension = (
                             None if (_show_qualified_popup or _team_connect_offer) else _next_probe
                         )
@@ -9166,6 +9975,11 @@ async def rag_pipeline_stream(
                     # Captured with the id, for the same reason: the commit
                     # expires the row and reading it afterwards costs a SELECT.
                     _bot_msg_trace_id = getattr(bot_msg, "trace_id", None)
+                    if _price_guard_pivot is not None:
+                        # The pricing pivot's bookkeeping: a second ask gets the
+                        # repeat wording, and the visitor was pointed at the team.
+                        _mark_card_shown(chat_session, "pricing_escalated")
+                        _set_unhelped_streak(chat_session, 0)
                     session.commit()
 
                     # Only cache a real LLM answer, never cache the zero-chunk
@@ -9176,6 +9990,9 @@ async def rag_pipeline_stream(
                     # on future hits, making a cached response miss its CTA.
                     _skip_cache_for_turn = (
                         suggest_handoff
+                        # A tripped price guard's escalation: served from the cache
+                        # it would lose its card and its repeat wording.
+                        or _price_guard_pivot is not None
                         or _meeting_card_detected
                         or _leave_msg_card_detected
                         or bool(cta_data)
@@ -9219,14 +10036,18 @@ async def rag_pipeline_stream(
                         )
 
                     _cta_signal = _score_cta_answer(_trusted_cta, question, bant_config)
-                    if is_bant_enabled and (
-                        _cta_signal is not None
-                        or not _should_skip_bant_extraction(
-                            question,
-                            current_bant,
-                            bant_config,
-                            is_probe_reply=_answers_last_probe,
-                            handoff_offered=_visitor_asked_for_human,
+                    if (
+                        is_bant_enabled
+                        and _price_guard_pivot is None
+                        and (
+                            _cta_signal is not None
+                            or not _should_skip_bant_extraction(
+                                question,
+                                current_bant,
+                                bant_config,
+                                is_probe_reply=_answers_last_probe,
+                                handoff_offered=_visitor_asked_for_human,
+                            )
                         )
                     ):
                         # Pass bid (id), not the bot ORM object. See the
@@ -9247,7 +10068,7 @@ async def rag_pipeline_stream(
                         )
                         _qualification_enqueued = True
 
-                    if should_sample():
+                    if should_sample() and _price_guard_pivot is None:
                         submit_background(
                             _background_groundedness_check,
                             question,
@@ -9262,13 +10083,17 @@ async def rag_pipeline_stream(
 
                     if bot_msg_id:
                         final_meta["message_id"] = bot_msg_id
-                    if _leak_aborted or not _answer_safe:
+                    if _leak_aborted or _answer_replaced or not _answer_safe:
                         # The stream cannot recall bytes it already sent, so
-                        # a leak or moderation hit rewrote only the persisted
-                        # text. Carry that text so ``collect_rag_pipeline``
-                        # (``POST /chat``) returns what the transcript holds,
-                        # not the leaked or unsafe frames.
+                        # a leak, a moderation hit or the price guard rewrote
+                        # only the persisted text. Carry that text so the widget
+                        # and ``collect_rag_pipeline`` (``POST /chat``) show what
+                        # the transcript holds, not the frames already sent.
                         final_meta["answer_override"] = full_answer
+                    if _answer_replaced:
+                        # The escalation is not drawn from the knowledge base, and
+                        # the gate's own pivot returns no sources either.
+                        final_meta["sources"] = []
                     if _stream_error or (_llm_status.get("error") and not _llm_status.get("failed")):
                         # Distinct from ``generation_failed``: the SSE visitor
                         # read the partial, so no refund there. A collector
@@ -9319,6 +10144,7 @@ async def rag_pipeline_stream(
                     # already firing this turn so two CTAs never compete.
                     if (
                         _show_qualified_popup
+                        and _price_guard_pivot is None
                         and not final_meta.get("suggest_handoff")
                         and not final_meta.get("show_booking")
                         and not final_meta.get("show_leave_message")
@@ -9341,7 +10167,8 @@ async def rag_pipeline_stream(
                     # Also yields to the qualified-lead popup, which already carries
                     # a book-a-meeting CTA of its own.
                     if (
-                        not final_meta.get("team_connect_popup")
+                        _price_guard_pivot is None
+                        and not final_meta.get("team_connect_popup")
                         and not final_meta.get("show_booking")
                         and not final_meta.get("suggest_handoff")
                         and not _card_already_shown(chat_session, "meeting")
@@ -9358,7 +10185,7 @@ async def rag_pipeline_stream(
                     # regardless of the LLM's paraphrase fidelity. When the popup
                     # was eligible it owns the dedupe mark above (or retries later
                     # if a competing CTA suppressed it this turn).
-                    if _team_connect_offer and not _show_qualified_popup:
+                    if _team_connect_offer and not _show_qualified_popup and _price_guard_pivot is None:
                         _mark_card_shown(chat_session, "team_connect")
 
                     # Persist any mutation made to chat_session.inline_cards_shown
@@ -9386,6 +10213,11 @@ async def rag_pipeline_stream(
 
             logger.info(f"Hybrid RAG stream finished for session: {session_id}")
     finally:
+        # A document classifier started alongside retrieval that no route awaited
+        # (the turn returned before the route, or the visitor left) is cancelled
+        # rather than left pending on the loop.
+        if _doc_intent_task is not None and not _doc_intent_task.done():
+            _doc_intent_task.cancel()
         if _lf_trace is not None:
             with contextlib.suppress(Exception):
                 _lf_trace.update(output=redact_pii(full_answer))

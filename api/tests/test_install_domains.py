@@ -269,7 +269,7 @@ class TestOwnDomainsAreNotCustomerInstalls:
     def test_a_subdomain_of_ours_that_we_do_not_own_still_counts(self):
         # Customer chatbots run on `*.oyechats.com` subdomains we hand out.
         # Those are real installs and two of them are stamped in production.
-        assert bot_routes._is_internal_widget_host("cleanstart.oyechats.com", self._request()) is False
+        assert bot_routes._is_internal_widget_host("fabrikam.oyechats.com", self._request()) is False
 
     def test_the_heartbeat_and_the_payload_agree(self):
         # Both sides of the rule, driven through their real entry points. If

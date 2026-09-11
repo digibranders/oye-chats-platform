@@ -1,0 +1,12 @@
+[
+  {
+    "id": 8,
+    "key": "bot-7b18925d18a7",
+    "name": "Acme Analytics (eval bot)",
+    "origin": "https://www.oyechats.com",
+    "company": "Acme Analytics",
+    "short": "acme",
+    "product": "data analytics consulting",
+    "config": "Synthetic evaluation bot with a small fixture knowledge base. Live chat on; pricing from the knowledge base is switched ON; multilingual off (English only)."
+  }
+]

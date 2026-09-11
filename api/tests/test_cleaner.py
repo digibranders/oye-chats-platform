@@ -277,8 +277,8 @@ class TestExtractYouTubeChannels:
     video on that channel."""
 
     def test_at_handle_channel(self):
-        result = extract_media_urls("Follow us on YouTube: https://youtube.com/@CleanStart")
-        assert result["youtube_channels"] == ["https://youtube.com/@CleanStart"]
+        result = extract_media_urls("Follow us on YouTube: https://youtube.com/@Fabrikam")
+        assert result["youtube_channels"] == ["https://youtube.com/@Fabrikam"]
 
     def test_c_prefix_channel(self):
         result = extract_media_urls("See https://www.youtube.com/c/AcmeCorp for more.")
@@ -319,11 +319,11 @@ class TestExtractYouTubeChannels:
         # ``clean_text`` would strip ``[Follow us](url)`` (the whole
         # point of extract_media_urls running FIRST) so the channel URL
         # inside the wrapper must be captured before cleaning erases it.
-        raw = "[Follow us on YouTube](https://youtube.com/@cleanstart)"
-        assert extract_media_urls(raw)["youtube_channels"][0].endswith("@cleanstart")
+        raw = "[Follow us on YouTube](https://youtube.com/@fabrikam)"
+        assert extract_media_urls(raw)["youtube_channels"][0].endswith("@fabrikam")
 
     def test_channel_url_at_word_boundary(self):
-        # Rejects prefix-of-longer-token cases so ``@cleanstart`` doesn't
-        # false-positive on ``@cleanstart2``.
-        result = extract_media_urls("Check https://youtube.com/@cleanstart2 first.")
-        assert result["youtube_channels"] == ["https://youtube.com/@cleanstart2"]
+        # Rejects prefix-of-longer-token cases so ``@fabrikam`` doesn't
+        # false-positive on ``@fabrikam2``.
+        result = extract_media_urls("Check https://youtube.com/@fabrikam2 first.")
+        assert result["youtube_channels"] == ["https://youtube.com/@fabrikam2"]

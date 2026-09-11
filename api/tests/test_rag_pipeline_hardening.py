@@ -242,14 +242,14 @@ class TestBoundedHelpers:
         import time
 
         monkeypatch.setattr(rs, "_HANDOFF_INTENT_TIMEOUT_S", 0.05)
-        monkeypatch.setattr(rs, "detect_handoff_intent", lambda q: (time.sleep(0.5), False)[1])
+        monkeypatch.setattr(rs, "detect_handoff_intent", lambda q, **_kw: (time.sleep(0.5), False)[1])
         monkeypatch.setattr(rs, "detect_handoff_intent_keywords", lambda q: True)
         assert await rs._detect_handoff_bounded("connect me with your team") is True
 
     @pytest.mark.asyncio
     async def test_handoff_classifier_result_is_used_when_in_time(self, monkeypatch):
         monkeypatch.setattr(rs, "_HANDOFF_INTENT_TIMEOUT_S", 1.0)
-        monkeypatch.setattr(rs, "detect_handoff_intent", lambda q: True)
+        monkeypatch.setattr(rs, "detect_handoff_intent", lambda q, **_kw: True)
         monkeypatch.setattr(rs, "detect_handoff_intent_keywords", lambda q: False)
         assert await rs._detect_handoff_bounded("I want a human") is True
 

@@ -1633,9 +1633,22 @@ _SAFETY_NET_METRIC_NAMES = [
     "off_topic_refusal",
     "output_moderation_block",
     "pricing_gate_escalation",
+    # A figure the price guard stopped mid-stream (price_guard.py via
+    # rag_service.py); also counted above with reason=price_guard.
+    "price_guard_tripped",
     # Scheduling request answered deterministically because the bot has no
     # scheduler configured (meeting_gate.py via rag_service.py).
     "meeting_gate_pivot",
+    # Edge-case routes in rag_service.py: a reported incident answered with the
+    # urgent reply (urgent_route.py), a file request answered from the catalog or
+    # left to the model (document_request.py), the offer of a person after two
+    # unhelped turns, and the fixed reply to a request for a person
+    # (handoff_reply.py).
+    "urgent_incident",
+    "document_request",
+    "document_request_fell_through",
+    "unhelped_offer",
+    "handoff_reply",
     "system_prompt_leak",
     # AR-15/AR-16: LLM call-outcome metrics (llm_service.py), included here
     # for a single unified reporting endpoint even though they're not

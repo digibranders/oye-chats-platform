@@ -601,7 +601,7 @@ class TestPromoteLooseUrlToMediaCard:
     renders. Promotion stays bounded by that whitelist so a URL the bot does
     not own is never turned into a card."""
 
-    _PDF = "https://cdn.oyechats.com/bot-x/dependency-management-attack-surface-reduction-fcd0df53.pdf"
+    _PDF = "https://cdn.oyechats.com/bot-x/supply-chain-risk-review-3b7e91a2.pdf"
 
     def test_promotes_bare_url_from_bot_wide_whitelist_when_not_retrieved(self):
         from app.services.rag_service import _promote_loose_url_to_media_card
@@ -613,7 +613,7 @@ class TestPromoteLooseUrlToMediaCard:
         assert card == {
             "type": "download",
             "url": self._PDF,
-            "name": "dependency-management-attack-surface-reduction-fcd0df53.pdf",
+            "name": "supply-chain-risk-review-3b7e91a2.pdf",
         }
         assert self._PDF not in cleaned
 
@@ -677,7 +677,7 @@ class TestHandleTrailingMediaAsk:
     preserve-when-named branch.
     """
 
-    _TITLES = {"base images walkthrough", "clean libraries deep dive"}
+    _TITLES = {"build pipelines walkthrough", "secure libraries deep dive"}
     _NAMES = {"cve-triage-playbook.pdf", "cve-triage-playbook"}
 
     def test_strips_named_video_offer(self):
@@ -686,8 +686,8 @@ class TestHandleTrailingMediaAsk:
         from app.services.rag_service import _handle_trailing_media_ask
 
         text = (
-            "Yes, we work with base images. Hardened containers, near-zero-CVE "
-            "alternatives. Want the Base Images walkthrough video?"
+            "Yes, we work with build pipelines. Signed artifacts, reproducible "
+            "builds. Want the Build Pipelines walkthrough video?"
         )
         out_text, card = _handle_trailing_media_ask(
             text,
@@ -696,8 +696,8 @@ class TestHandleTrailingMediaAsk:
             allowed_video_titles=self._TITLES,
             allowed_file_names=self._NAMES,
         )
-        assert "Want the Base Images walkthrough video" not in out_text
-        assert "Yes, we work with base images" in out_text
+        assert "Want the Build Pipelines walkthrough video" not in out_text
+        assert "Yes, we work with build pipelines" in out_text
         assert card is None
 
     def test_strips_named_file_offer(self):
@@ -751,7 +751,7 @@ class TestHandleTrailingMediaAsk:
         # No trailing question mark → not an ask at all, leave alone.
         from app.services.rag_service import _handle_trailing_media_ask
 
-        text = "We work with base images across the stack."
+        text = "We work with build pipelines across the stack."
         out_text, card = _handle_trailing_media_ask(
             text,
             retrieved_chunks=[],
@@ -767,9 +767,9 @@ class TestHandleTrailingMediaAsk:
         # kwargs must still work. The strip-all contract applies either way.
         from app.services.rag_service import _handle_trailing_media_ask
 
-        text = "Yes. Want the Base Images Walkthrough video?"
+        text = "Yes. Want the Build Pipelines Walkthrough video?"
         out_text, card = _handle_trailing_media_ask(text, retrieved_chunks=[])
-        assert "Want the Base Images Walkthrough" not in out_text
+        assert "Want the Build Pipelines Walkthrough" not in out_text
         assert card is None
 
 
@@ -792,19 +792,19 @@ class TestPickSecondaryMedia:
         primary = {
             "type": "youtube",
             "video_id": "abc123",
-            "title": "Base Images Walkthrough with CleanStart",
+            "title": "Build Pipelines Walkthrough with Fabrikam",
         }
         payload = {
-            "youtube": [{"video_id": "abc123", "title": "Base Images Walkthrough with CleanStart"}],
+            "youtube": [{"video_id": "abc123", "title": "Build Pipelines Walkthrough with Fabrikam"}],
             "files": [
-                {"url": "https://x.com/base-images-datasheet.pdf", "name": "base-images-datasheet.pdf"},
+                {"url": "https://x.com/build-pipelines-datasheet.pdf", "name": "build-pipelines-datasheet.pdf"},
                 {"url": "https://x.com/pricing.pdf", "name": "pricing.pdf"},
             ],
         }
         secondary = _pick_secondary_media(primary, retrieved_chunks=[], extra_payloads=[payload])
         assert len(secondary) == 1
         assert secondary[0]["type"] == "download"
-        assert secondary[0]["name"] == "base-images-datasheet.pdf"
+        assert secondary[0]["name"] == "build-pipelines-datasheet.pdf"
 
     def test_picks_related_video_for_pdf_primary(self):
         from app.services.rag_service import _pick_secondary_media
@@ -827,13 +827,13 @@ class TestPickSecondaryMedia:
         assert secondary[0]["video_id"] == "vid1"
 
     def test_returns_empty_when_no_topical_match(self):
-        # Primary is Base Images; only unrelated files exist → no chip.
+        # Primary is Build Pipelines; only unrelated files exist → no chip.
         # A weak chip would be worse than no chip.
         from app.services.rag_service import _pick_secondary_media
 
-        primary = {"type": "youtube", "video_id": "abc", "title": "Base Images Walkthrough"}
+        primary = {"type": "youtube", "video_id": "abc", "title": "Build Pipelines Walkthrough"}
         payload = {
-            "youtube": [{"video_id": "abc", "title": "Base Images Walkthrough"}],
+            "youtube": [{"video_id": "abc", "title": "Build Pipelines Walkthrough"}],
             "files": [
                 {"url": "https://x.com/pricing.pdf", "name": "pricing.pdf"},
                 {"url": "https://x.com/team.pdf", "name": "team-bios.pdf"},
@@ -845,10 +845,10 @@ class TestPickSecondaryMedia:
         # Same asset appearing under both keys shouldn't ever be picked.
         from app.services.rag_service import _pick_secondary_media
 
-        primary = {"type": "download", "url": "https://x.com/base-images.pdf", "name": "base-images.pdf"}
+        primary = {"type": "download", "url": "https://x.com/build-pipelines.pdf", "name": "build-pipelines.pdf"}
         payload = {
-            "youtube": [{"video_id": "vid1", "title": "Base Images Walkthrough"}],
-            "files": [{"url": "https://x.com/base-images.pdf", "name": "base-images.pdf"}],
+            "youtube": [{"video_id": "vid1", "title": "Build Pipelines Walkthrough"}],
+            "files": [{"url": "https://x.com/build-pipelines.pdf", "name": "build-pipelines.pdf"}],
         }
         secondary = _pick_secondary_media(primary, retrieved_chunks=[], extra_payloads=[payload])
         assert len(secondary) == 1
@@ -912,6 +912,39 @@ class TestReadTimeJunkFilter:
         ):
             assert _is_valid_file_url(url) is True, f"real file rejected: {url}"
 
+    @pytest.mark.parametrize(
+        ("url", "kept"),
+        [
+            ("https://cdn.x.com/files/Red-Teaming.pdf", True),
+            ("https://hub.doc", False),
+            ("javascript:alert(1)", False),
+        ],
+    )
+    def test_every_reader_that_checks_keeps_a_real_file_and_drops_junk(self, url, kept):
+        from app.services.document_request import pick_documents
+        from app.services.rag_service import (
+            _build_media_catalog,
+            _collect_available_media,
+            _collect_available_media_names,
+            _pick_secondary_media,
+            _topical_media_card,
+        )
+
+        payload = {"files": [{"url": url, "name": "Red-Teaming.pdf"}]}
+        chunk = SimpleNamespace(metadata_info={"media_urls": payload})
+        video = {"video_id": "abc", "title": "Red Teaming Explained"}
+
+        assert (url in _collect_available_media([chunk])[1]) is kept
+        assert ("red-teaming.pdf" in _collect_available_media_names([chunk])[1]) is kept
+        assert (url in _build_media_catalog([payload])) is kept
+        assert (_topical_media_card("what is red teaming", "Acme", [], [payload]) is not None) is kept
+        secondary = _pick_secondary_media(
+            {"type": "youtube", **video}, retrieved_chunks=[], extra_payloads=[{"youtube": [video], **payload}]
+        )
+        assert any(item.get("url") == url for item in secondary) is kept
+        pick = pick_documents("send me the red teaming datasheet", "Acme", [payload])
+        assert any(doc["url"] == url for doc in pick.docs) is kept
+
     def test_collect_available_media_drops_junk(self):
         # Whitelist used by the hallucination guard + safety-net promoter
         # must not include the pre-fix junk URLs, so no card can ever bind
@@ -942,9 +975,9 @@ class TestReadTimeJunkFilter:
         # on some token, the secondary picker must reject invalid URLs.
         from app.services.rag_service import _pick_secondary_media
 
-        primary = {"type": "youtube", "video_id": "abc", "title": "Docker Base Images Deep Dive"}
+        primary = {"type": "youtube", "video_id": "abc", "title": "Docker Build Pipelines Deep Dive"}
         payload = {
-            "youtube": [{"video_id": "abc", "title": "Docker Base Images Deep Dive"}],
+            "youtube": [{"video_id": "abc", "title": "Docker Build Pipelines Deep Dive"}],
             "files": [
                 # Junk entry whose "name" incidentally shares tokens with the primary.
                 {"url": "https://hub.doc", "name": "docker hub base"},
@@ -2304,7 +2337,7 @@ class TestMaybeAppendNameAsk:
         from app.services import rag_service
         from app.services.intent_router import route_intent
 
-        greeting = route_intent("hi", "CleanStart").answer
+        greeting = route_intent("hi", "Fabrikam").answer
         lead = SimpleNamespace(name="Steve")
         with patch.object(rag_service, "get_lead_info_by_session", return_value=lead):
             out = rag_service._maybe_append_name_ask(greeting, MagicMock(), "s1", 3, 9, "hi", history=[])
@@ -2431,7 +2464,7 @@ class TestResolveNameFlow:
             patch.object(rag_service, "route_intent", return_value=SimpleNamespace(intent="greeting")),
         ):
             ask, deferred, name, just = rag_service.resolve_name_flow(
-                MagicMock(), "s1", 3, 9, "steve", company_name="CleanStart"
+                MagicMock(), "s1", 3, 9, "steve", company_name="Fabrikam"
             )
         assert ask is not None and "Steve" in ask
         assert deferred is None
@@ -2506,7 +2539,7 @@ class TestNameAskMessageMatcher:
             patch.object(rag_service, "route_intent", return_value=None),
         ):
             ask, deferred, name, _just = rag_service.resolve_name_flow(
-                MagicMock(), "s1", 3, 9, "steve", company_name="CleanStart"
+                MagicMock(), "s1", 3, 9, "steve", company_name="Fabrikam"
             )
         assert ask is None
         assert deferred == "Our Services"

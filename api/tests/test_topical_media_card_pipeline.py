@@ -13,6 +13,7 @@ import itertools
 
 import pytest
 
+from app.services import document_request
 from app.services import rag_service as rs
 from tests.test_rag_pipeline_defects import (
     _anonymous_visitor,
@@ -184,6 +185,11 @@ class TestWhichCardedTurnsTheCacheMayHold:
             cache=cache,
         )
         _anonymous_visitor(monkeypatch)
+        # The question names a document, so the document classifier runs; no test
+        # reaches a real model. NO keeps the turn on the generated path this test
+        # is about: asked whether a document exists, with the exact file in the
+        # catalog, the document route would answer with the card before generation.
+        monkeypatch.setattr(document_request, "_classify_document_request_raw", lambda _question: "no")
 
         frames = await _drive_stream(bot, "do you have the penetration testing datasheet", "topical-model-card")
 

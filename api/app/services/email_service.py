@@ -21,6 +21,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 import boto3
@@ -803,8 +804,21 @@ def send_handoff_request_email(
     contact: dict | None = None,
     *,
     reply_to: str | None = None,
+    urgent: bool = False,
+    session_id: str | None = None,
 ):
-    """Send email when a visitor requests live agent support."""
+    """Send email when a visitor requests live agent support.
+
+    ``urgent`` marks a visitor who reported an active incident in chat. They are
+    not in the queue, so that email drops the queue wording, says URGENT in the
+    subject, shows the phone number when the lead has one, and links straight to
+    the conversation (``session_id``). ``reason`` is then the visitor's message.
+    """
+    if urgent:
+        _send_urgent_incident_email(
+            notification_email, bot_name, reason, contact or {}, reply_to=reply_to, session_id=session_id
+        )
+        return
     safe_bot = esc(bot_name)
     contact = contact or {}
     inner = (
@@ -836,6 +850,51 @@ def send_handoff_request_email(
     send_email_async(
         notification_email,
         f"{contact.get('name') or 'A visitor'} is waiting to chat on {bot_name}",
+        html_body,
+        reply_to=reply_to,
+        sender_name=_branded_sender_name(bot_name),
+    )
+
+
+def _send_urgent_incident_email(
+    notification_email: str,
+    bot_name: str,
+    message: str | None,
+    contact: dict,
+    *,
+    reply_to: str | None,
+    session_id: str | None,
+) -> None:
+    """The ``urgent`` variant of :func:`send_handoff_request_email`."""
+    who = contact.get("name") or "A visitor"
+    subject = f"URGENT: {who} reported an active incident on {bot_name}"
+    rows = [
+        ("Name", esc(contact.get("name")) if contact.get("name") else "Unknown"),
+        ("Email", _mailto(contact.get("email"))),
+    ]
+    if contact.get("phone"):
+        rows.append(("Phone", esc(contact.get("phone"))))
+    rows.append(("Message", esc(message) if message else "No message provided"))
+    conversation_url = f"{APP_URL}/support?session={quote(session_id, safe='')}" if session_id else f"{APP_URL}/support"
+    inner = (
+        h1(f"URGENT: {esc(who)} reported an active incident")
+        + p(
+            f"A visitor on {strong(esc(bot_name))} reported an incident happening right now and was "
+            f"offered the fastest way to reach your team."
+        )
+        + ed.section_label("Visitor")
+        + info_table(rows)
+        + ed.alert("Reach out as soon as you can. Their details may still be on the way from the chat form.", "danger")
+        + button("Open conversation", conversation_url)
+    )
+    html_body = shell(
+        subject=subject,
+        preheader=f"A visitor reported an active incident on {bot_name}.",
+        inner=inner,
+    )
+    send_email_async(
+        notification_email,
+        subject,
         html_body,
         reply_to=reply_to,
         sender_name=_branded_sender_name(bot_name),

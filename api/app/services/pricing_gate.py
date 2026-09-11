@@ -334,6 +334,168 @@ def _has_near_miss_price_word(question: str) -> bool:
     return False
 
 
+#: The price guard's question signal (see ``price_guard``): each long word with
+#: the number of edits it tolerates. Wider than ``_NEAR_MISS_PRICE_WORDS`` on
+#: purpose. The gate acts on the question alone, so a near miss there escalates a
+#: question the knowledge base could answer; the guard also needs a figure in the
+#: answer, so a question that only looks like a pricing question changes nothing
+#: on an answer without one. ``is_pricing_question`` does not use it.
+_FUZZY_PRICE_WORDS: tuple[tuple[str, int], ...] = (
+    ("pricing", 2),
+    ("prices", 1),
+    ("quotation", 1),
+    ("costing", 1),
+)
+#: Words of five letters or more are tried against ``_FUZZY_PRICE_WORDS``.
+_FUZZY_MIN_LEN = 5
+#: Short price words read through one typo, a swap of two letters included ("cots",
+#: "qoute", "prcie"), in words of four or five letters.
+_SHORT_PRICE_WORDS = ("cost", "costs", "quote", "price", "rates", "fees")
+_SHORT_WORD_LENGTHS = range(4, 6)
+#: Price words read through one typo, a swap of two letters included, only in words
+#: of these lengths: "rtae", "chrage", "budjet", "subscripton". The lengths keep
+#: "rated", "charging" and "budge" out.
+_TYPO_PRICE_WORDS: tuple[tuple[str, range], ...] = (
+    ("rate", range(4, 5)),
+    ("charge", range(6, 8)),
+    ("charges", range(6, 8)),
+    ("budget", range(6, 8)),
+    ("subscription", range(11, 14)),
+)
+#: Ordinary words within the tolerated edits of a price word. "most" is one edit
+#: from "cost", "quite" from "quote", "writing" two from "pricing"; none of them
+#: is a pricing question.
+_NOT_A_PRICE_TYPO = frozenset(
+    {
+        # cost, costs
+        "cast", "casts", "coast", "coat", "coats", "colt", "colts", "coot", "cosh", "cosy", "cyst", "cysts",
+        "host", "hosts", "lost", "most", "post", "posts",
+        # quote
+        "quite", "quota", "quoth",
+        # price, prices
+        "pride", "prides", "prime", "primes", "prize", "prizes", "prick", "pricks", "rice", "trice",
+        # rates
+        "rated", "rater", "dates", "gates", "hates", "mates", "fates", "races", "rakes", "raves", "rites", "rats",
+        "rotes", "pates",
+        # fees
+        "bees", "feed", "feeds", "feel", "feels", "feet", "fess", "foes", "feds", "fens", "sees", "tees", "lees",
+        "frees", "flees",
+        # pricing
+        "arcing", "bracing", "bricking", "dicing", "driving", "griping", "icing", "paining", "piecing", "piking",
+        "piling", "pining", "piping", "praising", "prancing", "prating", "praying", "pricking", "prickling",
+        "priding", "priming", "printing", "prosing", "proving", "pruning", "prying", "racing", "riding", "rising",
+        "riving", "slicing", "spicing", "splicing", "tracing", "tricking", "uprising", "voicing", "writing",
+        # charges, costing
+        "charger", "chargers", "charles", "casting", "coasting", "coating", "hosting", "posting",
+        # rate
+        "date", "fate", "gate", "hate", "kate", "late", "mate", "nate", "pate", "race", "rage", "rake", "rape",
+        "rare", "rath", "rave", "raze", "rite", "rote", "sate", "tate",
+        # charge, charges, budget
+        "change", "changes", "chargee", "budged", "budger", "budges",
+    }
+)  # fmt: skip
+#: Price words the guard's signal takes only as spelled: one edit from "fee" is
+#: "fed", one from "rate" is "date".
+_EXACT_PRICE_WORDS = frozenset({"fee", "rate", "budget", "tariff", "tarrif", "tarif", "pricelist", "ratecard"})
+#: "how much", typos included, and the other ways of asking what something costs.
+_HOW_MUCH_RE = re.compile(
+    r"\b(?:(?:how|hw|hoe|hwo|hows)\s+(?:much|muc|mch|mcuh|muhc|mich|mutch)|how\s+(?:expensive|pricey)"
+    r"|price\s+list|rate\s+card)\b",
+    re.IGNORECASE,
+)
+#: Plan words in a question: "what plans do you offer?", "your SOC packages".
+_PLAN_QUESTION_RE = re.compile(r"\b(?:plans?|packages?|subscriptions?|tiers?|editions?)\b", re.IGNORECASE)
+#: A word up to two words before "plan" or "plans" that makes it a plan the visitor
+#: or a third party has, not one the company sells: "health insurance plan",
+#: "treatment plan", "business continuity plan". Question-side only: a visitor who
+#: asks about one of these is not asking what the company charges.
+#:
+#: ``price_guard`` reads answers with ``_NOT_OWN_PLAN_WORDS_ANSWER`` below, a
+#: shorter list, because a word that is a safe question-side exclusion can still be
+#: a common plan TIER name in an answer: "The Business plan costs $99 a month."
+#: (production review, 2026-09-11) must trip even though "what's your business
+#: plan?" must not signal. "Care" and "Recovery" are dropped for the same reason
+#: (a healthcare or DR vendor's own tier), leaving both only on the question side.
+_NOT_OWN_PLAN_WORDS = (
+    "insurance", "health", "medical", "dental", "vision", "treatment", "payment", "instalment", "installment",
+    "meal", "study", "lesson", "business", "continuity", "action", "floor", "project", "response", "retirement",
+    "pension", "savings", "investment", "care", "recovery", "evacuation",
+)  # fmt: skip
+#: The answer-side list: ``_NOT_OWN_PLAN_WORDS`` minus the words that are commonly
+#: a plan TIER name a company sells under ("business", "care", "recovery"). See the
+#: note above; ``price_guard`` builds its exclusion phrase from this list.
+_NOT_OWN_PLAN_WORDS_ANSWER = tuple(word for word in _NOT_OWN_PLAN_WORDS if word not in {"business", "care", "recovery"})
+#: The same for "package" or "packages": "salary package", "relief package", and a
+#: placement report's "average annual package".
+_NOT_OWN_PACKAGE_WORDS = (
+    "salary", "compensation", "pay", "ctc", "relocation", "benefit", "benefits", "severance", "stimulus", "relief",
+    "aid", "average", "median",
+)  # fmt: skip
+#: Phrases whose price or plan word is not a pricing question: a plan or package in
+#: another sense, "tier 2 cities", "in charge" and "charge my phone".
+_NOT_A_PRICE_PHRASE_RE = re.compile(
+    rf"\b(?:{'|'.join(_NOT_OWN_PLAN_WORDS)})\s+(?:[a-z]+\s+)?plans?\b"
+    rf"|\b(?:{'|'.join(_NOT_OWN_PACKAGE_WORDS)})\s+(?:[a-z]+\s+)?packages?\b"
+    r"|\btiers?[\s-]*(?:[1-3]|i{1,3}|one|two|three)\s+(?:cit(?:y|ies)|towns?)\b"
+    r"|\b(?:in|take|takes|took|taking)\s+charge\b"
+    r"|\bcharge\s+(?:(?:my|your|the|a|an|his|her|their|our)\s+)?"
+    r"(?:phones?|mobiles?|laptops?|batter(?:y|ies)|devices?|cars?|evs?|tablets?|watch(?:es)?|scooters?|vehicles?)\b",
+    re.IGNORECASE,
+)
+
+
+def _within_edits(a: str, b: str, limit: int) -> bool:
+    """True when ``a`` becomes ``b`` in at most ``limit`` insertions, deletions,
+    substitutions or swaps of two adjacent letters."""
+    if abs(len(a) - len(b)) > limit:
+        return False
+    before_previous: list[int] = []
+    previous = list(range(len(b) + 1))
+    for i in range(1, len(a) + 1):
+        row = [i] + [0] * len(b)
+        for j in range(1, len(b) + 1):
+            row[j] = min(previous[j] + 1, row[j - 1] + 1, previous[j - 1] + (a[i - 1] != b[j - 1]))
+            if i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]:
+                row[j] = min(row[j], before_previous[j - 2] + 1)
+        if min(row) > limit:
+            return False
+        before_previous, previous = previous, row
+    return previous[-1] <= limit
+
+
+def question_has_fuzzy_price_word(question: object) -> bool:
+    """True when the visitor's question carries a price or plan word, typos included.
+
+    "what is th picin for SOC" is two edits from "pricing", "hw much" and "qoute
+    for 3 sites" are typos, and "what plans do you offer?" asks for plans. The
+    gate reads none of them as a pricing question; the price guard still treats a
+    figure in the answer as the company's price. A plan or package in another sense
+    ("business continuity plan", "salary package"), "tier 2 cities" and "in charge"
+    do not count. Pure, and not part of the gate's own decision.
+    """
+    if not isinstance(question, str) or not question.strip():
+        return False
+    if _HOW_MUCH_RE.search(question):
+        return True
+    question = _NOT_A_PRICE_PHRASE_RE.sub(" ", question)
+    if _PLAN_QUESTION_RE.search(question):
+        return True
+    for word in _WORD_RE.findall(question.lower()):
+        if word in _EXACT_PRICE_WORDS:
+            return True
+        if word in _NOT_A_PRICE_TYPO:
+            continue
+        if len(word) in _SHORT_WORD_LENGTHS and any(_within_edits(word, target, 1) for target in _SHORT_PRICE_WORDS):
+            return True
+        if len(word) >= _FUZZY_MIN_LEN and any(
+            _within_edits(word, target, limit) for target, limit in _FUZZY_PRICE_WORDS
+        ):
+            return True
+        if any(len(word) in lengths and _within_edits(word, target, 1) for target, lengths in _TYPO_PRICE_WORDS):
+            return True
+    return False
+
+
 def is_pricing_question(question: object) -> bool:
     """True when the visitor is asking what we charge.
 
@@ -626,7 +788,7 @@ def pricing_pivot(
     A repeat gets different words that acknowledge the answer has not changed,
     and it does NOT re-open the form or the message card, because the visitor
     has already been offered one. The paid repeats keep an offer the pipeline's
-    ``_HANDOFF_OFFER_RE`` recognises, so a plain "yes" still routes straight into
+    ``bot_offers_handoff`` recognises, so a plain "yes" still routes straight into
     the handoff. The first-time copy is unchanged.
 
     ``support_enabled`` is the PLAN half of the human-support gate (does this

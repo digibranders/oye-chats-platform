@@ -32,7 +32,7 @@ def _handoff_bot(db, monkeypatch, session_id, *, team_online=True, support=True)
     bot = _make_bot(db, client, live_chat_enabled=True)
     _make_session(db, bot, client, session_id)
     cap = _stub_pipeline(monkeypatch, retrieved=(_doc("Acme sells widgets."),), support=support)
-    monkeypatch.setattr(rs, "detect_handoff_intent", lambda _q: True)
+    monkeypatch.setattr(rs, "detect_handoff_intent", lambda _q, **_kw: True)
     monkeypatch.setattr(rs, "_live_team_reachable", lambda *_a, **_k: team_online)
     return bot, cap
 
@@ -101,7 +101,7 @@ class TestTheModelStillAnswersWhereTheFixedWordsDoNotFit:
 class TestQualificationPendingTellsTheWidgetWhetherToWait:
     """The widget polls for a quote card for up to 4.5s after a reply, because
     lead scoring runs after the stream closes. A turn that queued no scoring has
-    nothing to wait for, and on Eventus that wait sat between "connect me" and
+    nothing to wait for, and on a live bot that wait sat between "connect me" and
     the form."""
 
     @pytest.mark.asyncio
