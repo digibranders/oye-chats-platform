@@ -58,6 +58,10 @@ class TestWaitingForAPerson:
             "any update?",
             "waiting for someone to reply",
             "this is taking forever",
+            "hello?? are you there",
+            "nobody is replying",
+            "is anyone there",
+            "how long until someone replies",
         ],
     )
     def test_a_visitor_waiting_on_the_team(self, message):
@@ -85,6 +89,26 @@ class TestWaitingForAPerson:
         ],
     )
     def test_everything_else(self, message):
+        assert vr.is_waiting_for_a_person(message) is False
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "where is your team located",
+            "are you there on sundays?",
+            "is anyone available on weekends",
+            "how long do i have to wait for test results",
+            "when will you call me for the site visit",
+            "how long until they deliver",
+            "not getting a response from my insurer",
+            "anyone there on weekends?",
+            "when will someone get back to me about the quote",
+        ],
+    )
+    def test_a_real_question_that_contains_a_chase_phrase(self, message):
+        """The handoff form is offered on many routes, so a question asked after
+        it must reach the pipeline: a day, a place, another party or a service
+        around the phrase makes it a question, not a chase."""
         assert vr.is_waiting_for_a_person(message) is False
 
     def test_non_text_is_not_waiting(self):

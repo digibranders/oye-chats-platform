@@ -73,11 +73,12 @@ _WAITING_WHOLE_MESSAGE_RE = re.compile(
     r")"
 )
 
-#: Phrases that chase a reply wherever they sit in a short message.
+#: Phrases that chase a reply. Each counts only when the rest of the message is
+#: ``_CHASE_FILLER``: "are you there?" chases, "are you there on sundays?" asks.
 _WAITING_PHRASE_RE = re.compile(
     r"\b(?:"
     # "is anyone there", "anybody here?", "someone around"
-    rf"{_ANYONE}\s+(?:still\s+)?(?:there|here|around|available|online)"
+    rf"{_ANYONE}\s+(?:still\s+)?(?:there|here|around|online)"
     # "nobody is replying", "no one has replied yet", "is anyone going to reply"
     rf"|{_ANYONE}\s+(?:is\s+|are\s+|has\s+|have\s+|will\s+|going\s+to\s+|gonna\s+)?(?:been\s+)?(?:still\s+)?"
     r"(?:reply|replying|replied|respond|responding|responded|answer|answering|answered|came|coming|joined|joining|contacted)"
@@ -95,7 +96,7 @@ _WAITING_PHRASE_RE = re.compile(
     rf"|how\s+long\s+(?:until|till|before)\s+(?:{_SOMEONE_ON_THE_TEAM}|they)"
     # "where is the agent", "where's everyone"
     r"|where(?:\s+is|\s+are|'s|s)\s+(?:the\s+|my\s+|your\s+|an?\s+)?"
-    r"(?:agent|human|person|team|rep|representative|someone|somebody|everyone|everybody)"
+    r"(?:agent|human|person|rep|representative|someone|somebody|everyone|everybody)"
     # "waiting for someone to reply"
     rf"|waiting\s+(?:for|on)\s+(?:{_SOMEONE_ON_THE_TEAM}|a\s+(?:reply|response)|your\s+(?:reply|response)|you|u)"
     r"|hurry\s+up"
@@ -104,20 +105,51 @@ _WAITING_PHRASE_RE = re.compile(
     r")\b"
 )
 
+#: Words that may surround a chase phrase and leave it a chase: who is waited
+#: on, for how long, and the visitor's own impatience. Anything else (a day, a
+#: place, another party, a service) makes the message a question the pipeline
+#: answers: "how long until they deliver", "not getting a response from my
+#: insurer", "when will you call me for the site visit".
+_CHASE_FILLER = frozenset(
+    {
+        "a", "an", "the", "any", "is", "are", "am", "was", "has", "have", "had", "been",
+        "do", "does", "did", "will", "can", "could", "would", "going", "gonna",
+        "i", "i'm", "im", "me", "my", "we", "we're", "us", "you", "u", "ur", "your", "it", "this",
+        "anyone", "anybody", "someone", "somebody", "nobody", "no", "one", "not", "team", "agent", "human", "person",
+        "still", "yet", "already", "now", "right", "just", "even", "again", "here", "there", "around", "online",
+        "reply", "replies", "replied", "replying", "respond", "response", "answer", "answered",
+        "get", "back", "help", "update", "updates", "wait", "waiting", "long", "forever", "ages", "taking",
+        "to", "for", "from", "and", "so", "why", "what", "ok", "okay", "please", "pls", "plz",
+        "guys", "sir", "maam", "bro", "seriously", "really", "hurry", "up",
+        "message", "messages", "msg", "query", "question", "request",
+        "sec", "secs", "min", "mins", "minute", "minutes", "hr", "hrs", "hour", "hours",
+    }
+)  # fmt: skip
+_CHASE_WORD_RE = re.compile(r"[a-z0-9]+(?:'[a-z]+)?")
+
+
+def _is_chase_filler(word: str) -> bool:
+    return word in _CHASE_FILLER or word.isdigit() or re.fullmatch(_GREETING, word) is not None
+
 
 def is_waiting_for_a_person(message: object) -> bool:
     """Whether a short message is the visitor chasing a person who has not replied.
 
     Pure and linear. Only meaningful after the handoff form was offered, which
     the caller checks: before that, "anyone there?" is a greeting to answer.
-    A bare "hello" is never waiting; "hello?" and "hellooo??" are.
+    A bare "hello" is never waiting; "hello?" and "hellooo??" are. A chase
+    phrase with a subject around it ("are you there on sundays?") is a question,
+    and the form is offered on routes common enough that answering it matters.
     """
     if not isinstance(message, str):
         return False
     text = _normalise(message)
     if not text or len(text) > _WAITING_MAX_CHARS or len(text.split()) > _WAITING_MAX_WORDS:
         return False
-    return _WAITING_WHOLE_MESSAGE_RE.fullmatch(text) is not None or _WAITING_PHRASE_RE.search(text) is not None
+    if _WAITING_WHOLE_MESSAGE_RE.fullmatch(text) is not None:
+        return True
+    rest, chases = _WAITING_PHRASE_RE.subn(" ", text)
+    return chases > 0 and all(_is_chase_filler(word) for word in _CHASE_WORD_RE.findall(rest))
 
 
 # ── Dissatisfied with the last reply ──────────────────────────────────────────
