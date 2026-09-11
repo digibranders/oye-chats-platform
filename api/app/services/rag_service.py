@@ -5419,7 +5419,13 @@ def _maybe_append_name_ask(
             # own greeting lead ("Hey. Happy to help.") to avoid doubling it.
             # No-op for non-greeting replies (e.g. QA-cache hits).
             return prefix + strip_greeting_lead(text) if prefix and text else text
-        if _should_ask_visitor_name(None, hist) and not _is_name_ask_message(text):
+        # An identity question on the first reply is answered without the name
+        # question; the next turn asks it (see ``resolve_name_flow``).
+        if (
+            _should_ask_visitor_name(None, hist)
+            and not _is_name_ask_message(text)
+            and not _is_identity_question(question, None, language)
+        ):
             return (text.rstrip() if text else "") + f"\n\n{_name_ask_text(language)}"
     except Exception:  # noqa: BLE001  Personalization is best-effort, never fatal
         logger.warning("name treatment failed for session %s", session_id, exc_info=True)
@@ -5724,6 +5730,47 @@ def _recover_deferred_question(history: list) -> str | None:
     return None
 
 
+#: Router intents that answer a question about the bot or the chat itself. On a
+#: fresh conversation they are answered before the name request instead of being
+#: deferred behind it. ``name_recall`` is not one of them: asked before any name
+#: is known, it is answered once the visitor gives one.
+_IDENTITY_INTENTS = frozenset({"is_ai", "bot_name", "who_made_you", "recorded", "remember"})
+
+
+def _is_identity_question(question: str, company_name: str | None, language=None) -> bool:
+    """True when the intent router answers ``question`` as a question about the bot.
+
+    Mirrors the pipeline's router gate: a turn that skips the English-tuned
+    router (a non-English conversation or script) is never one, because nothing
+    would answer it before the name request.
+    """
+    if _english_judges_bypassed(language, question):
+        return False
+    routed = route_intent(question, company_name)
+    return routed is not None and routed.intent in _IDENTITY_INTENTS
+
+
+def _no_reply_but_identity_answers(history: list) -> bool:
+    """True while no bot or operator turn in ``history`` did more than answer an
+    identity question, so the bot's first real reply is still to come.
+
+    Each bot turn is judged by the visitor message just before it. An operator
+    turn, or a bot turn with no visitor message before it in the window, ends
+    the first reply, exactly as any bot turn used to.
+    """
+    last_user: str | None = None
+    for message in history or []:
+        role = _msg_role(message)
+        if role == "user":
+            last_user = _msg_content(message)
+            continue
+        if role == "operator":
+            return False
+        if role in ("bot", "assistant") and (last_user is None or not _is_identity_question(last_user, None)):
+            return False
+    return True
+
+
 def resolve_name_flow(session, session_id, bot_id, client_id, question, company_name=None, language=None):
     """Two-step name capture gate. Returns ``(ask_message, effective_question, visitor_name, just_named)``:
 
@@ -5770,12 +5817,21 @@ def resolve_name_flow(session, session_id, bot_id, client_id, question, company_
             _msg_role(m) in ("bot", "assistant") and _is_name_ask_message(_msg_content(m)) for m in history
         )
         if not asked_before:
-            # First bot reply of the session (no prior bot/operator turn): ask the
-            # name and defer. Requires a real bot so anonymous/preview paths skip.
-            first_reply = not any(_msg_role(m) in ("bot", "assistant", "operator") for m in history)
-            if first_reply and bot_id is not None:
-                return (_name_request_message(language), None, None, False)
-            return (None, None, None, False)
+            # First bot reply of the session: ask the name and defer. Requires a
+            # real bot so anonymous/preview paths skip.
+            #
+            # An identity question ("r u a bot or real", "is this chatgpt?", "is
+            # this chat recorded") is answered first instead: on 2026-09-11 "r u
+            # a bot or real" got only the name request. A visitor asking whether
+            # anyone is there is deciding whether to share anything at all. The
+            # router answers it, and a bot turn that only answered an identity
+            # question does not count as the first reply, so the name request
+            # comes on the next turn.
+            if bot_id is None or not _no_reply_but_identity_answers(history):
+                return (None, None, None, False)
+            if _is_identity_question(question, company_name, language):
+                return (None, None, None, False)
+            return (_name_request_message(language), None, None, False)
 
         # We asked previously and still have no stored name → this turn may BE it.
         name = _extract_visitor_name(question, history)
