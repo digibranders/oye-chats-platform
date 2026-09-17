@@ -1072,7 +1072,8 @@ def price_guard_applies(
 
     ``escalate_deferred`` is a turn the gate would have escalated, deferred
     because the visitor also asked something besides the price. Its answer is
-    generated from the whole knowledge base, so the guard watches it on every bot
+    generated from the whole knowledge base, so the guard (for a MIXED decision,
+    ``PriceSentenceRedactor``) watches it on every bot
     the gate escalates on, a bot whose pricing page carries no prices and a Free
     bot that hands over its contact page included.
     """

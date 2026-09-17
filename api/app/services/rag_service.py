@@ -9717,8 +9717,8 @@ async def rag_pipeline_stream(
             elif _pricing_decision.outcome == "escalate_deferred":
                 # The visitor asked the price and something else. The escalation
                 # would be the whole reply, so generation answers the turn instead,
-                # and the price guard below, told the turn asks the price, replaces
-                # the answer with this bot's escalation on any figure.
+                # and the price guard below drops every sentence that states a
+                # figure and adds this bot's escalation after the rest.
                 _safety_net_metric("pricing_gate_deferred", path="stream", session=session_id, bot_id=bid)
             elif _pricing_decision.fired:
                 _safety_net_metric(
