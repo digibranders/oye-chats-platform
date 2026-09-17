@@ -49,7 +49,13 @@ QA_RESPONSE_TTL = 3600  # 1 hour
 #: and competitor comparisons instead of the gap line or the scope refusal, and a
 #: bot with multilingual off is told to reply in English, after one answered Arabic
 #: and Hindi questions in kind (production, 2026-09-11).
-QA_PROMPT_VERSION = 5
+#: 6: the answer prompt was restructured around one PRIORITY ORDER (8,027 and
+#: 8,514 tokens down to about 4,000 on two live bots): FEATURED SERVICES is no
+#: longer an exhaustive list, one LENGTH AND DEPTH rule gives follow-ups real
+#: depth, the gap path is only for an absent fact, team offers are questions,
+#: frustration gets a next step, and a mixed pricing turn is told to leave the
+#: figure out (production review, 2026-09-17).
+QA_PROMPT_VERSION = 6
 TRANSLATION_TTL = 86400  # 24 hours (Phase 4 operator translation)
 
 

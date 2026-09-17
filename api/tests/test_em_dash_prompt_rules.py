@@ -37,15 +37,23 @@ def test_response_style_shows_a_bad_example_containing_an_em_dash() -> None:
     assert any(EM_DASH in line for line in bad_examples)
 
 
-def test_system_prompt_punctuation_rule_names_the_character() -> None:
+def test_the_assembled_system_prompt_carries_the_rule_once() -> None:
+    """RULE 11 in ``rag_service`` repeated the style block's rule. The copy was
+    removed on 2026-09-17 (one owner per rule), so the check moved from the
+    builder's source to the prompt the model actually reads."""
+    from types import SimpleNamespace
+
     from app.services import rag_service
 
+    system, _user = rag_service.build_hybrid_prompt(SimpleNamespace(name="Acme"), "hi", "ctx", "")
+    assert system.count(f"em-dash character ({EM_DASH})") == 1
+
     source = Path(rag_service.__file__).read_text(encoding="utf-8")
-    assert f"Do NOT use the em-dash character ({EM_DASH})" in source
+    assert "Do NOT use the em-dash character" not in source
 
 
 def test_no_prompt_tells_the_model_to_use_em_dash_separators() -> None:
-    """Rule 11 bans the character, so no other instruction may ask for it.
+    """The style block bans the character, so no other instruction may ask for it.
 
     A formatting rule used to ask for "a short em-dash-separated inline",
     directly contradicting the ban a few rules later.

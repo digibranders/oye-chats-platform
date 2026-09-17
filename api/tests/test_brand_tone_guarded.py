@@ -45,7 +45,7 @@ class TestBrandToneIsGuarded:
     def test_it_sits_above_the_scope_rules_it_must_not_override(self):
         prompt = _prompt(brand_tone="Confident and bold.")
 
-        assert prompt.index("BRAND TONE") < prompt.index("SCOPE (HIGHEST PRIORITY")
+        assert prompt.index("BRAND TONE") < prompt.index("\nSCOPE:\n")
 
     def test_a_bot_without_a_tone_is_unchanged(self):
         assert "BRAND TONE" not in _prompt()

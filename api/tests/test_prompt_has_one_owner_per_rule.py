@@ -43,7 +43,9 @@ class TestOneOwnerPerConcern:
     def test_length_is_stated_once(self):
         prompt = _prompt()
 
-        assert "1-3 sentences" in prompt
+        assert prompt.count("1 to 3 sentences") == 1
+        assert "1-3 sentences" not in prompt
+        assert "fewest words possible" not in prompt, "the style block is restating the length rule RULE 1 owns"
         assert "40-80 words" not in prompt, "the style block is restating the length rule RULE 1 owns"
         assert "100-200 words" not in prompt
 

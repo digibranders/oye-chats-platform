@@ -4,6 +4,10 @@ Nothing in the suite failed when the prompt grew. Measured on 2026-09-09 before
 any consolidation: 7,192 tokens for the simplest possible bot, and 15,233 once
 the bot owned any media, because the media rulebook alone was ~32,000
 characters. Shrinking that rulebook to its rules took the media case to 8,120.
+On 2026-09-17 the prompt was restructured around one priority order and every
+rule said once: the four configurations below measured 2,758, 3,105, 3,499 and
+3,768 tokens, and two live bots went from 8,027 and 8,514 to about 3,700 and
+4,000.
 
 The ceilings below are a ratchet. Lower them when a change makes the prompt
 smaller; raising one is a decision that needs saying out loud in review, because
@@ -46,7 +50,7 @@ _CONFIGURATIONS = (
     (
         "minimal: no qualification, no human path, no media",
         {"bant_enabled": False, "live_chat_enabled": False, "support_enabled": False},
-        7300,
+        3000,
     ),
     (
         "qualification and live chat on",
@@ -57,7 +61,7 @@ _CONFIGURATIONS = (
             "support_enabled": True,
             "company_name": "Acme",
         },
-        7900,
+        3350,
     ),
     (
         "media catalog present",
@@ -69,7 +73,7 @@ _CONFIGURATIONS = (
             "company_name": "Acme",
             "context": _MEDIA_CONTEXT,
         },
-        8300,
+        3750,
     ),
     (
         "everything on",
@@ -84,7 +88,7 @@ _CONFIGURATIONS = (
             "answer_links": [{"keyword": "pricing", "url": "https://acme.com/pricing"}],
             "context": _MEDIA_CONTEXT,
         },
-        8800,
+        4050,
     ),
 )
 
@@ -110,4 +114,4 @@ def test_media_is_what_doubles_the_prompt():
     with_media = _tokens(_system_prompt(**base, context=_MEDIA_CONTEXT))
 
     assert with_media > without
-    assert with_media - without <= 900, "the media rulebook grew back; it was 8,000 tokens once"
+    assert with_media - without <= 500, "the media rulebook grew back; it was 8,000 tokens once"
