@@ -341,8 +341,16 @@ _VERDICT_NOUN = (
     r"(?:(?:an?\s+)?(?:piece\s+of\s+)?(?:trash|garbage|rubbish|junk|crap)|an?\s+joke"
     r"|a\s+waste\s+of\s+(?:my\s+)?time|no\s+help|not\s+helpful)"
 )
+# "you never answer anything", on its own or after a verdict ("this is useless,
+# you never answer anything", production smoke test 2026-09-17, which the
+# support route took for an unanswered customer). Whole message only, so "you
+# don't answer calls on weekends?" still reaches retrieval.
+_NO_ANSWER_CLAUSE = (
+    r"(?:you|u|it)\s+(?:never|don'?t|do\s+not|doesn'?t|does\s+not|can'?t|cannot|won'?t)\s+(?:even\s+|really\s+)?"
+    r"(?:answer|help)(?:\s+(?:anything|me|properly|my\s+questions?))?"
+)
 _BOT_VERDICT_RE = re.compile(
-    rf"^(?:{_REACTION_FILLER}[\s,.!?]+){{0,2}}(?:"
+    rf"^(?:{_REACTION_FILLER}[\s,.!?]+){{0,2}}(?:{_NO_ANSWER_CLAUSE}|(?:"
     # "this bot is absolute trash", "your chatbot is useless"
     rf"(?:(?:this|that|the|your|ur)\s+)?{_VERDICT_BOT}\s+(?:is|was|'s|s|seems)\s+{_VERDICT_INTENSIFIER}"
     rf"(?:{_VERDICT_ADJECTIVE}|{_VERDICT_NOUN})"
@@ -359,7 +367,7 @@ _BOT_VERDICT_RE = re.compile(
     # "this bot sucks", "you suck"
     rf"|(?:(?:this|that|the|your)\s+)?{_VERDICT_BOT}\s+sucks|(?:you|u)\s+suck|(?:this|it)\s+sucks"
     r"|no\s+help(?:\s+at\s+all)?"
-    rf")(?:[\s,.!?]+{_REACTION_TAIL}){{0,2}}$"
+    rf")(?:[\s,.!?]+(?:and\s+)?{_NO_ANSWER_CLAUSE})?)(?:[\s,.!?]+{_REACTION_TAIL}){{0,2}}$"
 )
 
 #: Faces a visitor sends at a reply that did not help. ``visitor_reaction``
@@ -878,6 +886,16 @@ def route_intent(
             return _abuse(company_name, support_enabled)
 
     return None
+
+
+def is_verdict_on_the_chat(question: str) -> bool:
+    """Whether the message is frustration or abuse aimed at this chat, which the router answers.
+
+    The support route reads "you never answer anything" as a customer the team
+    left unanswered; this lets it stand down for the reaction reply instead.
+    """
+    routed = route_intent(question, None)
+    return routed is not None and routed.intent in {"frustration", "abuse"}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

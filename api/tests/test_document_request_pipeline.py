@@ -922,6 +922,33 @@ async def test_a_datasheet_and_a_demo_in_one_message_get_both_cards(db, monkeypa
 
 
 @pytest.mark.asyncio
+async def test_a_search_rewrite_without_the_booking_words_still_gets_the_booking_card(db, monkeypatch, classifier):
+    """Production smoke test, 2026-09-17: with history the meeting check read the search
+    rewrite ("datasheet and demo booking"), which names no request, and the card was dropped."""
+    bot = _scheduler(monkeypatch, db, "docs-and-demo-rewritten")
+    _stub_pipeline(monkeypatch, retrieved=(_doc("Acme does red teaming."),), support=True)
+    rewritten = "Acme red teaming datasheet and demo booking next week"
+    assert not rs._meeting_gate.is_meeting_question(rewritten), "precondition: the rewrite names no request"
+
+    async def rewrite(*_a, **_k):
+        return rewritten, None
+
+    async def rewrite_bounded(*_a, **_k):
+        return rewritten
+
+    monkeypatch.setattr(rs, "_resolve_search_query_and_embedding", rewrite)
+    monkeypatch.setattr(rs, "_rewrite_query_bounded", rewrite_bounded)
+    _catalog(monkeypatch, CATALOG)
+    classifier.answer = "send"
+
+    frames = await _drive_stream(bot, DATASHEET_AND_DEMO, "docs-and-demo-rewritten")
+
+    meta = _final_meta(frames)
+    assert meta["media_card"]["url"] == RED
+    assert meta["show_booking"] is True
+
+
+@pytest.mark.asyncio
 async def test_a_booking_already_shown_is_not_offered_again_with_the_files(db, monkeypatch, classifier):
     bot = _scheduler(monkeypatch, db, "docs-and-demo-again")
     db.query(ChatSession).filter(ChatSession.id == "docs-and-demo-again").update(

@@ -372,6 +372,29 @@ async def test_a_policy_question_never_asks_the_classifier(db, monkeypatch, aler
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("question", ["this is useless, you never answer anything", "you never answer anything"])
+async def test_a_verdict_on_the_chat_never_asks_the_classifier_or_alerts_the_team(
+    db, monkeypatch, alerts, classifier, question
+):
+    """Production smoke test, 2026-09-17: "this is useless, you never answer anything"
+    passed the unanswered-customer vocabulary, the classifier said yes and the team was alerted."""
+    client = _make_client(db)
+    bot = _make_bot(db, client, live_chat_enabled=True, notification_emails=TEAM_EMAILS)
+    _make_session(db, bot, client, "support-verdict")
+    monkeypatch.setattr(rs, "_live_team_reachable", lambda *_a, **_k: False)
+    _stub_pipeline(monkeypatch, chunks=(KNOWLEDGE,), retrieved=(_doc(KNOWLEDGE),), support=True)
+    monkeypatch.setattr(rs, "route_intent", real_route_intent)
+
+    frames = await _drive_stream(bot, question, "support-verdict")
+
+    assert support_route.might_be_support_request(question), "precondition: the vocabulary check passes it"
+    assert classifier.calls == []
+    assert alerts["notify"] == [] and alerts["emails"] == []
+    assert ACKNOWLEDGEMENT not in _answer_text(frames)
+    assert "Sorry that wasn't helpful." in _answer_text(frames)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(("question", "classified"), [("what services do you offer?", False), (PORTAL_DOWN, True)])
 async def test_a_turn_runs_the_vocabulary_check_once_and_classifies_only_a_hit(
     db, monkeypatch, alerts, classifier, question, classified

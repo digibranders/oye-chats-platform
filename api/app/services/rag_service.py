@@ -73,6 +73,7 @@ from app.services.handoff_reply import handoff_reply, unhelped_offer
 from app.services.intent_router import (
     care_note,
     crisis_reply,
+    is_verdict_on_the_chat,
     offered_option_question,
     route_intent,
     strip_greeting_lead,
@@ -6564,7 +6565,7 @@ UNIVERSAL RULES:
 - At most ONE qualifying question per reply, after the answer, never before it, and never framed as a survey or checklist.
 - Never ask about something the visitor already told you.
 - The closure rule above always wins: after a closure message, ask nothing.
-- ROLE ACKNOWLEDGMENT: when the visitor states their role or that they make the decision, acknowledge it in one short clause before the answer, once per conversation, for example "Good to know you're the one signing off." Do not invent team roles, programmes or processes to go with it.
+- ROLE ACKNOWLEDGMENT: only when the visitor states their own job title or says they make the buying decision, acknowledge exactly what they said in one short clause before the answer, once per conversation, in your own words. Never say they approve or sign off unless they said so, and never read a role into a company type, a task or a form. Do not invent team roles, programmes or processes to go with it.
 - Order to ask in: {", ".join(d.upper() for d in conversation_order)}
 
 CURRENT QUALIFICATION STATE:
@@ -8795,6 +8796,7 @@ async def rag_pipeline_stream(
             _support_candidate = (
                 not _waiting_on_offered_form
                 and support_route.might_be_support_request(question)
+                and not is_verdict_on_the_chat(question)
                 and not support_route.asks_only_about_policies(question)
                 and not _english_judges_bypassed(language, question)
             )
@@ -9968,7 +9970,14 @@ async def rag_pipeline_stream(
             # A request for time with the team, read once for the meeting gate,
             # the document reply, the handoff reply and the booking card. The
             # Hinglish shapes are read only in an English conversation.
-            _meeting_request = _meeting_gate.is_meeting_question(_gate_question, hinglish=not _judges_bypassed)
+            # The visitor's own words count as well as the rewrite: the search
+            # rewrite of "send me your datasheet and also book a demo" can come
+            # back as "datasheet and demo booking", which names no request
+            # (production smoke test, 2026-09-17).
+            _meeting_request = _meeting_gate.is_meeting_question(question, hinglish=not _judges_bypassed) or (
+                _gate_question != question
+                and _meeting_gate.is_meeting_question(_gate_question, hinglish=not _judges_bypassed)
+            )
 
             # ── Meeting gate ─────────────────────────────────────────────
             # A scheduling request on a bot with NO usable online scheduler is

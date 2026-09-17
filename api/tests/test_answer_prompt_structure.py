@@ -429,3 +429,17 @@ class TestNoInventedRoles:
         for invented in ("solutions engineer", "enterprise csm", "ciso", "primary buyer"):
             assert invented not in prompt, invented
         assert "do not invent team roles, programmes or processes" in prompt
+
+
+class TestRoleAcknowledgment:
+    """Post-deploy evaluation, 2026-09-17: the rule's example sentence, "Good to know
+    you're the one signing off", was copied onto an MSP, a head of IT and a visitor
+    filling in a form, none of whom said they approve the purchase."""
+
+    def test_the_rule_has_no_quotable_example_and_does_not_assume_a_decision_maker(self):
+        system, user = _build(history="USER: hi\nBOT: hello", **_PAID)
+        prompt = _flat(system + "\n" + user)
+        rule = prompt[prompt.index("ROLE ACKNOWLEDGMENT:") :].split(" - ", 1)[0]
+        assert '"' not in rule
+        assert "signing off" not in prompt.lower()
+        assert "Never say they approve or sign off unless they said so" in rule
