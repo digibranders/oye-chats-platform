@@ -2,11 +2,16 @@ import { test, expect } from '@playwright/test'
 
 // The Content-Security-Policy the dashboard tells customers to set:
 // script-src and style-src for the widget's origin, connect-src for the API.
-// Under `vite preview` the widget's origin is this page's origin, so 'self'.
 // The widget must work with exactly that and nothing looser: no inline
 // styles, no inline scripts, no other hosts.
+//
+// Two widget origins are in play here. `vite preview` serves the loader and
+// chunks from this page's origin ('self'). CI builds with
+// VITE_WIDGET_BASE=https://cdn.oyechats.com/, so the app's preload hints for
+// lazy chunks point at the production CDN.
 
 const API = 'http://oyechats-csp.test'
+const WIDGET_ORIGINS = "'self' https://cdn.oyechats.com"
 const HOST_PATH = '/csp-host.html'
 const HOST_HTML = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>CSP host</title></head>
@@ -15,7 +20,7 @@ const HOST_HTML = `<!doctype html>
 </body></html>`
 
 const policy = ({ styleSrc }) =>
-  `default-src 'none'; script-src 'self'; style-src ${styleSrc}; connect-src ${API}`
+  `default-src 'none'; script-src ${WIDGET_ORIGINS}; style-src ${styleSrc}; connect-src ${API}`
 
 async function boot(page, csp) {
   await page.addInitScript(({ api }) => {
@@ -46,7 +51,7 @@ async function boot(page, csp) {
 }
 
 test('the documented policy is enough: the widget renders, opens and shows its lead form', async ({ page }) => {
-  await boot(page, policy({ styleSrc: "'self'" }))
+  await boot(page, policy({ styleSrc: WIDGET_ORIGINS }))
   const root = page.locator('#oyechats-widget-root')
   const launcher = root.getByRole('button', { name: 'Ask Acme', exact: true })
   await expect(launcher).toBeVisible()
