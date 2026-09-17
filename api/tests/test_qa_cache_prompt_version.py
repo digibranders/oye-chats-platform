@@ -80,7 +80,7 @@ class TestAPromptChangeCannotShipWithoutAVersionBump:
         6: "f2ebfda2186cf1fea01fdca76bc9af5ea1049b1dba2d42d7b3575cf510f46815",
         # 7: general-article page tag, exact-capability yes, a gap path that reads the
         # conversation, and essays out of scope (2026-09-17).
-        7: "PENDING",
+        7: "57e4a23f22a382d0481013b1ad669655f2bb51c03d39bccdf1bd715cfcb06ff5",
     }
 
     @staticmethod
