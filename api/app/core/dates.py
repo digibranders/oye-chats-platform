@@ -8,6 +8,13 @@ same helper up without dragging in FastAPI dependencies.
 
 import math
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
+
+# The zone customer-facing billing dates are printed in. Invoices already
+# render the billing period in IST (``invoice_pdf``), so a "renews on" date in
+# any other zone contradicts the invoice for a period that ends between 00:00
+# and 05:30 IST.
+BILLING_TZ = ZoneInfo("Asia/Kolkata")
 
 
 def as_utc(value: datetime | None) -> datetime | None:
@@ -22,6 +29,23 @@ def as_utc(value: datetime | None) -> datetime | None:
     if value is None:
         return None
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def billing_date_iso(value: datetime | None) -> str | None:
+    """The IST calendar date of a billing instant, as ``YYYY-MM-DD``. ``None`` passes through.
+
+    ``.date()`` on a ``timestamptz`` read back from Postgres picks no zone of
+    its own: the driver returns the value in the connection's session
+    ``TimeZone``, which is Asia/Kolkata on a developer database configured that
+    way and UTC in the CI service container. The same subscription read
+    2026-10-01 on one and 2026-09-30 on the other. Converting here makes the
+    answer independent of the server. Naive datetimes are assumed UTC, as in
+    :func:`as_utc`.
+    """
+    aware = as_utc(value)
+    if aware is None:
+        return None
+    return aware.astimezone(BILLING_TZ).date().isoformat()
 
 
 def trial_days_remaining(trial_end: datetime | None, now: datetime | None = None) -> int | None:

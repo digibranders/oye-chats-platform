@@ -15,6 +15,11 @@ Two defects, both reachable from a public bot key:
   bell notification. One visitor with a tab open produced roughly four of each
   per minute, indefinitely.
 
+A third defect sat in the same fan-out: the team email looked up recipients
+under ``"handoff_requested"`` (the webhook name) instead of the
+``handoff_request`` bucket the customer saves, so it always went to the default
+list.
+
 Driven by a MagicMock session (the same harness as
 ``test_handoff_tenant_isolation``), so no Postgres is required.
 """
@@ -31,7 +36,9 @@ from fastapi.testclient import TestClient
 
 from app.api.auth import get_current_bot
 from app.api.operator_routes import router
+from app.services import email_service
 from app.services import live_chat_availability_service as availsvc
+from app.services.email_service import get_notification_recipients
 
 
 class _ScalarOneResult:
@@ -217,3 +224,26 @@ def test_a_different_session_is_notified_normally(harness, monkeypatch):
 
     assert len(harness.webhooks) == 2
     assert harness.emails == ["ops@example.com", "ops@example.com"]
+
+
+# ── Recipients: the team email uses the handoff bucket the customer saved ────
+
+
+@pytest.mark.parametrize(
+    ("notification_emails", "expected"),
+    [
+        ({"default": ["a@x.test"], "handoff_request": ["b@x.test"]}, ["b@x.test"]),
+        ({"default": ["a@x.test"]}, ["a@x.test"]),
+    ],
+    ids=["per-event list wins", "default list is the fallback"],
+)
+def test_the_handoff_email_uses_the_handoff_request_list(harness, monkeypatch, notification_emails, expected):
+    # The real resolver, not the harness stub: the event type the route passes
+    # it is exactly what is under test.
+    monkeypatch.setattr(email_service, "get_notification_recipients", get_notification_recipients)
+    harness.db_bot.notification_emails = notification_emails
+    harness.db_bot.notification_email = None
+
+    _post(harness, monkeypatch, _verdict(availsvc.LiveChatState.AVAILABLE, availsvc.SuggestedAction.ROUTE))
+
+    assert harness.emails == expected

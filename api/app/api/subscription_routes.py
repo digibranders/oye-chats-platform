@@ -27,7 +27,7 @@ from app.config import (
     INTL_PAYMENTS_ENABLED,
     RAZORPAY_ENABLED,
 )
-from app.core.dates import add_months
+from app.core.dates import add_months, billing_date_iso
 from app.core.geo import resolve_country
 from app.core.gstin import VALID_STATE_CODES, is_valid_gstin, normalize_gstin
 from app.core.pricing import (
@@ -3078,7 +3078,7 @@ def resume_subscription(
                     sub.id,
                     sub.razorpay_subscription_id,
                 )
-                renews_on = sub.current_period_end.date().isoformat() if sub.current_period_end else None
+                renews_on = billing_date_iso(sub.current_period_end)
                 return {
                     "status": "resumed",
                     "mandate_action": "none",
@@ -3141,7 +3141,7 @@ def resume_subscription(
         # in the flow to give it back.
         start_at = int(sub.current_period_end.timestamp()) if sub.current_period_end else None
         deferred_start = sub.current_period_end is not None and sub.current_period_end > datetime.now(UTC)
-        first_charge_at = sub.current_period_end.date().isoformat() if deferred_start else None
+        first_charge_at = billing_date_iso(sub.current_period_end) if deferred_start else None
         if deferred_start:
             _reauth_message = (
                 "The previous mandate was cancelled at the payment provider and cannot be "

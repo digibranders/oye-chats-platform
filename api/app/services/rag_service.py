@@ -8112,13 +8112,16 @@ async def collect_rag_pipeline(client, question: str, **kwargs) -> dict:
     answer_parts: list[str] = []
     payload: dict = {}
 
-    async for frame in rag_pipeline_stream(client, question, **kwargs):
-        if frame.startswith(_METADATA_PREFIX):
-            payload.update(json.loads(frame[len(_METADATA_PREFIX) :].strip() or "{}"))
-        elif frame.lstrip().startswith(_FINAL_METADATA_PREFIX):
-            payload.update(json.loads(frame.split(_FINAL_METADATA_PREFIX, 1)[1].strip() or "{}"))
-        else:
-            answer_parts.append(frame)
+    # Closed in this task if reading a frame raises, so the turn unwinds here and
+    # not in a finalizer task (see ``ClosingStreamingResponse``).
+    async with contextlib.aclosing(rag_pipeline_stream(client, question, **kwargs)) as frames:
+        async for frame in frames:
+            if frame.startswith(_METADATA_PREFIX):
+                payload.update(json.loads(frame[len(_METADATA_PREFIX) :].strip() or "{}"))
+            elif frame.lstrip().startswith(_FINAL_METADATA_PREFIX):
+                payload.update(json.loads(frame.split(_FINAL_METADATA_PREFIX, 1)[1].strip() or "{}"))
+            else:
+                answer_parts.append(frame)
 
     # A guard that fired after text had already streamed (prompt leak, output
     # moderation, price guard) could only rewrite the persisted message. The final frame
@@ -10493,58 +10496,67 @@ async def rag_pipeline_stream(
                     yield _opener
 
             try:
-                async for chunk in generate_response_stream(
-                    prompt,
-                    system_prompt=system_prompt,
-                    temperature=0.3,
-                    max_tokens=1500,
-                    metadata={
-                        "generation_name": "rag-stream-generation",
-                        "context_chunks": len(final_results),
-                        "bot_id": bid,
-                    },
-                    status=_llm_status,
-                ):
-                    if chunk:
-                        chunk_count += 1
-                        full_answer += chunk
-                        # The price guard holds back any tail that could be the
-                        # start of a figure and stops the stream on a whole one;
-                        # the escalation replaces the answer after the loop.
-                        visible_chunk = chunk
-                        if _price_guard is not None:
-                            visible_chunk = _price_guard.feed(chunk)
-                            if _price_guard.tripped:
+                # Closed wherever this loop stops before the model is done (the
+                # price guard, the prompt-leak guard, the visitor leaving), so the
+                # token stream finishes in this task. Left to the async generator
+                # finalizer it was closed later, in a task of its own: the
+                # generation span could not be detached there ("Failed to detach
+                # context") and stayed the current span for the rest of this turn.
+                async with contextlib.aclosing(
+                    generate_response_stream(
+                        prompt,
+                        system_prompt=system_prompt,
+                        temperature=0.3,
+                        max_tokens=1500,
+                        metadata={
+                            "generation_name": "rag-stream-generation",
+                            "context_chunks": len(final_results),
+                            "bot_id": bid,
+                        },
+                        status=_llm_status,
+                    )
+                ) as llm_stream:
+                    async for chunk in llm_stream:
+                        if chunk:
+                            chunk_count += 1
+                            full_answer += chunk
+                            # The price guard holds back any tail that could be the
+                            # start of a figure and stops the stream on a whole one;
+                            # the escalation replaces the answer after the loop.
+                            visible_chunk = chunk
+                            if _price_guard is not None:
+                                visible_chunk = _price_guard.feed(chunk)
+                                if _price_guard.tripped:
+                                    break
+                            # Suppressed-probe turns (the qualified-lead card is
+                            # showing) buffer the WHOLE answer instead of streaming
+                            # it. See the post-loop strip. Streaming can't un-send a
+                            # probe the model appends despite the answer-only rule, so
+                            # we hold the answer, strip any trailing question, then
+                            # emit it at once. These turns are rare (once per session).
+                            if not _show_qualified_popup:
+                                safe_chunk = cta_sanitizer.feed(visible_chunk)
+                                if safe_chunk:
+                                    _answer_text_streamed = True
+                                    yield safe_chunk
+                            # Output-side leakage guard: if the accumulated answer
+                            # contains a system-prompt sentinel, stop streaming and
+                            # replace the persisted message with the refusal. We
+                            # cannot un-yield the bytes already sent, but we can stop
+                            # any further leakage and avoid storing the leaked text.
+                            if contains_system_prompt_leak(full_answer):
+                                _safety_net_metric(
+                                    "system_prompt_leak",
+                                    path="stream",
+                                    session=session_id,
+                                    bot_id=bid,
+                                    crawled_content=_retrieval_included_crawled_content(final_results),
+                                )
+                                _leak_aborted = True
+                                full_answer = _off_topic_refusal(_company_name, support_enabled=_plan_support_allowed)
+                                yield f"\n\n{full_answer}"
+                                suggest_handoff = False
                                 break
-                        # Suppressed-probe turns (the qualified-lead card is
-                        # showing) buffer the WHOLE answer instead of streaming
-                        # it. See the post-loop strip. Streaming can't un-send a
-                        # probe the model appends despite the answer-only rule, so
-                        # we hold the answer, strip any trailing question, then
-                        # emit it at once. These turns are rare (once per session).
-                        if not _show_qualified_popup:
-                            safe_chunk = cta_sanitizer.feed(visible_chunk)
-                            if safe_chunk:
-                                _answer_text_streamed = True
-                                yield safe_chunk
-                        # Output-side leakage guard: if the accumulated answer
-                        # contains a system-prompt sentinel, stop streaming and
-                        # replace the persisted message with the refusal. We
-                        # cannot un-yield the bytes already sent, but we can stop
-                        # any further leakage and avoid storing the leaked text.
-                        if contains_system_prompt_leak(full_answer):
-                            _safety_net_metric(
-                                "system_prompt_leak",
-                                path="stream",
-                                session=session_id,
-                                bot_id=bid,
-                                crawled_content=_retrieval_included_crawled_content(final_results),
-                            )
-                            _leak_aborted = True
-                            full_answer = _off_topic_refusal(_company_name, support_enabled=_plan_support_allowed)
-                            yield f"\n\n{full_answer}"
-                            suggest_handoff = False
-                            break
 
                 # An answer that ENDS on a figure ("... about 50 lakh") is only
                 # known to be one when the stream is over.
