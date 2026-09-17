@@ -806,14 +806,13 @@ async def test_the_classifier_task_is_started_once_and_finished_by_the_route(db,
     ("question", "early_reply"),
     [
         ("what does the red teaming datasheet cost?", "pricing_gate_escalation"),
-        ("can I book a call to go through the red teaming datasheet?", "meeting_gate_pivot"),
     ],
 )
 async def test_a_turn_that_returns_before_the_route_leaves_no_classifier_task_running(
     db, monkeypatch, classifier, question, early_reply
 ):
-    """The pricing and meeting gates return after retrieval, once the classifier
-    task has started. It is cancelled on the way out rather than left pending."""
+    """The pricing gate returns after retrieval, once the classifier task has
+    started. It is cancelled on the way out rather than left pending."""
     bot = _bot(db, f"docs-early-{early_reply}")
     _stub_pipeline(monkeypatch, retrieved=(_doc("Acme does red teaming."),), support=True)
     _catalog(monkeypatch, CATALOG)
@@ -884,3 +883,160 @@ async def test_frustration_after_the_no_file_offer_gets_an_offer_of_the_team_and
     assert "downloadable document" not in _answer_text(frustrated)
     assert _final_meta(yes)["suggest_handoff"] is True
     assert _cards(db, "docs-frustrated").get("handoff_offered") is True
+
+
+def _scheduler(monkeypatch, db, session_id, **bot_kwargs):
+    """A bot with a Calendly link on a plan that includes booking."""
+    monkeypatch.setattr(rs.plan_entitlements_service, "is_meeting_booking_enabled_for_bot", lambda *_a, **_k: True)
+    client = _make_client(db)
+    bot = _make_bot(
+        db, client, meeting_booking_enabled=True, calendly_url="https://calendly.com/acme/intro", **bot_kwargs
+    )
+    _make_session(db, bot, client, session_id)
+    return bot
+
+
+DATASHEET_AND_DEMO = "send the red teaming datasheet and also book a demo for next week"
+
+
+@pytest.mark.asyncio
+async def test_a_datasheet_and_a_demo_in_one_message_get_both_cards(db, monkeypatch, classifier):
+    """Evaluation, 2026-09-17: the download card rendered and the demo was dropped."""
+    bot = _scheduler(monkeypatch, db, "docs-and-demo", live_chat_enabled=True)
+    cap = _stub_pipeline(monkeypatch, retrieved=(_doc("Acme does red teaming."),), support=True)
+    _catalog(monkeypatch, CATALOG)
+    classifier.answer = "send"
+
+    frames = await _drive_stream(bot, DATASHEET_AND_DEMO, "docs-and-demo")
+
+    meta = _final_meta(frames)
+    assert meta["media_card"]["url"] == RED
+    assert meta["show_booking"] is True
+    assert meta["calendly_url"] == "https://calendly.com/acme/intro"
+    assert not meta.get("suggest_handoff")
+    assert _answer_text(frames).endswith(
+        "**Red Teaming** is ready to download below. You can also pick a time with the team below."
+    )
+    assert cap["prompts"] == []
+    assert _cards(db, "docs-and-demo").get("meeting") is True
+
+
+@pytest.mark.asyncio
+async def test_a_booking_already_shown_is_not_offered_again_with_the_files(db, monkeypatch, classifier):
+    bot = _scheduler(monkeypatch, db, "docs-and-demo-again")
+    db.query(ChatSession).filter(ChatSession.id == "docs-and-demo-again").update(
+        {"inline_cards_shown": {"meeting": True}}
+    )
+    db.commit()
+    _stub_pipeline(monkeypatch, retrieved=(_doc("Acme does red teaming."),), support=True)
+    _catalog(monkeypatch, CATALOG)
+    classifier.answer = "send"
+
+    frames = await _drive_stream(bot, DATASHEET_AND_DEMO, "docs-and-demo-again")
+
+    meta = _final_meta(frames)
+    assert meta["media_card"]["url"] == RED
+    assert "show_booking" not in meta
+    assert "pick a time" not in _answer_text(frames)
+
+
+@pytest.mark.asyncio
+async def test_a_request_for_a_missing_file_and_a_demo_gets_the_booking_card(db, monkeypatch, classifier):
+    bot = _scheduler(monkeypatch, db, "docs-none-and-demo")
+    _stub_pipeline(monkeypatch, retrieved=(_doc("Acme does red teaming."),), support=True)
+    _catalog(monkeypatch, [])
+    classifier.answer = "send"
+
+    frames = await _drive_stream(bot, DATASHEET_AND_DEMO, "docs-none-and-demo")
+
+    meta = _final_meta(frames)
+    assert "media_card" not in meta
+    assert meta["show_booking"] is True
+    assert "book a time with the team below" in _answer_text(frames)
+
+
+@pytest.mark.parametrize("live_chat", [True, False])
+@pytest.mark.asyncio
+async def test_without_a_scheduler_the_files_come_with_the_meeting_pivot(db, monkeypatch, classifier, live_chat):
+    session_id = f"docs-and-pivot-{live_chat}"
+    client = _make_client(db)
+    bot = _make_bot(db, client, live_chat_enabled=live_chat)
+    _make_session(db, bot, client, session_id)
+    cap = _stub_pipeline(monkeypatch, retrieved=(_doc("Acme does red teaming."),), support=True)
+    _catalog(monkeypatch, CATALOG)
+    metrics = _record_metrics(monkeypatch)
+    classifier.answer = "send"
+
+    frames = await _drive_stream(bot, DATASHEET_AND_DEMO, session_id)
+
+    meta = _final_meta(frames)
+    answer = _answer_text(frames)
+    assert meta["media_card"]["url"] == RED
+    assert "**Red Teaming** is ready to download below. I can't book a meeting directly" in answer
+    assert bool(meta.get("suggest_handoff")) is live_chat
+    assert bool(meta.get("show_leave_message")) is (not live_chat)
+    assert "show_booking" not in meta
+    assert cap["prompts"] == []
+    assert "document_request" in _names(metrics)
+    assert "meeting_gate_pivot" in _names(metrics)
+    assert _messages(db, session_id, role="bot")[-1].is_unanswered is False
+
+
+@pytest.mark.asyncio
+async def test_a_meeting_request_that_wants_no_file_gets_the_meeting_pivot(db, monkeypatch, classifier):
+    """The message names a document, so the meeting gate waits for the classifier, which says no."""
+    client = _make_client(db)
+    bot = _make_bot(db, client, live_chat_enabled=True)
+    _make_session(db, bot, client, "docs-meeting-only")
+    _stub_pipeline(monkeypatch, retrieved=(_doc("Acme does red teaming."),), support=True)
+    _catalog(monkeypatch, CATALOG)
+    metrics = _record_metrics(monkeypatch)
+    tasks = _spy_document_tasks(monkeypatch)
+    classifier.answer = "no"
+
+    frames = await _drive_stream(bot, "can I book a call to go through the red teaming datasheet?", "docs-meeting-only")
+
+    assert "meeting_gate_pivot" in _names(metrics)
+    assert "document_request" not in _names(metrics)
+    assert "media_card" not in _final_meta(frames)
+    assert _final_meta(frames)["suggest_handoff"] is True
+    assert len(tasks) == 1
+    assert tasks[0].done() and not tasks[0].cancelled()
+
+
+@pytest.mark.parametrize(
+    "question",
+    ["kal team se call pe baat ho sakti hai kya", "mujhe demo chahiye", "meeting set karo"],
+)
+@pytest.mark.asyncio
+async def test_a_hinglish_request_for_time_gets_the_booking_card_not_the_form(db, monkeypatch, question):
+    """Evaluation, 2026-09-17: the handoff classifier said yes, the handoff reply
+    answered, and the visitor got the form on a bot with a scheduler."""
+    session_id = f"hinglish-booking-{question[:12]}"
+    bot = _scheduler(monkeypatch, db, session_id, live_chat_enabled=True)
+    cap = _stub_pipeline(
+        monkeypatch, retrieved=(_doc("Acme runs demos."),), support=True, chunks=("Sure, ", "let's set that up.")
+    )
+    monkeypatch.setattr(rs, "detect_handoff_intent", lambda q, **_kw: True)
+    metrics = _record_metrics(monkeypatch)
+
+    frames = await _drive_stream(bot, question, session_id)
+
+    meta = _final_meta(frames)
+    assert _answer_text(frames).endswith("Sure, let's set that up.")
+    assert meta["show_booking"] is True
+    assert not meta.get("suggest_handoff")
+    assert len(cap["prompts"]) == 1
+    assert "handoff_reply" not in _names(metrics)
+    assert "meeting_card_safety_net" in _names(metrics)
+    assert _cards(db, session_id).get("meeting") is True
+
+
+@pytest.mark.asyncio
+async def test_a_turn_that_asks_for_no_time_gets_no_booking_card_from_the_safety_net(db, monkeypatch):
+    bot = _scheduler(monkeypatch, db, "hinglish-no-booking")
+    _stub_pipeline(monkeypatch, retrieved=(_doc("Acme runs a call center."),), chunks=("We run a call center.",))
+
+    frames = await _drive_stream(bot, "call center services chahiye", "hinglish-no-booking")
+
+    assert "show_booking" not in _final_meta(frames)

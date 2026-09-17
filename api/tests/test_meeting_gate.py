@@ -208,6 +208,83 @@ class TestIsMeetingQuestion:
         is_meeting_question(text)
         assert time.perf_counter() - started < 1.0
 
+    @pytest.mark.parametrize(
+        "q",
+        [
+            # Evaluation, 2026-09-17: both bots opened the handoff form for this one.
+            "kal team se call pe baat ho sakti hai kya",
+            "mujhe call chahiye",
+            "ek call chahiye please",
+            "mujhe demo chahiye",
+            "demo chahie",
+            "product ka demo chahiye",
+            "call karo",
+            "mujhe call kar do",
+            "please call kijiye",
+            "kal call back karo",
+            "meeting set karo",
+            "meeting fix kar do",
+            "ek meeting schedule karni hai",
+            "demo book karna hai",
+            "meeting karni hai",
+            "baat karni hai team se",
+            "team se baat karni hai",
+            "aapki team se baat karna hai",
+            "sales team se call pe baat karni hai",
+            "call pe baat ho sakti hai?",
+            "kya demo mil sakta hai",
+            "aapse milna hai",
+            "kya hum kal mil sakte hain",
+        ],
+    )
+    def test_a_hinglish_request_for_time_fires(self, q):
+        assert is_meeting_question(q) is True, q
+
+    @pytest.mark.parametrize(
+        "q",
+        [
+            # Refusals.
+            "call nahi chahiye",
+            "mujhe call nahin chahiye, bas details bhejo",
+            "demo ki zaroorat nahi hai",
+            "call mat karo",
+            "meeting nahi karni hai",
+            "baat nahi karni",
+            "abhi demo nahi chahiye",
+            "demo chahiye nahi",
+            # Things, not requests for time.
+            "call center services chahiye",
+            "call recording chahiye",
+            "demo video chahiye",
+            "meeting room chahiye",
+            "call karne ka feature hai kya",
+            "kya aapke tool se call kar sakte hain",
+            "mujhe call karna hai, number kya hai",
+            "call center ke liye kya services hain",
+            "team kitni badi hai",
+            "baat ye hai ki pricing kya hai",
+        ],
+    )
+    def test_a_hinglish_message_that_asks_for_no_time_does_not_fire(self, q):
+        assert is_meeting_question(q) is False, q
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "call " * 5000,
+            "team se " * 3000 + "x",
+            "call pe baat " * 2000,
+            "meeting set " * 2000,
+            "demo " + " " * 20_000 + "chahiye nahi",
+        ],
+        ids=["call", "team-se", "call-pe-baat", "meeting-set", "spaces"],
+    )
+    def test_a_long_hinglish_message_is_fast(self, text):
+        assert len(text) >= 20_000
+        started = time.perf_counter()
+        is_meeting_question(text)
+        assert time.perf_counter() - started < 1.0
+
     def test_disqualifiers(self):
         assert is_meeting_question("cancel my meeting") is False
         assert is_meeting_question("reschedule my call") is False
@@ -259,6 +336,17 @@ class TestMeetingPivotPaid:
         for live in (True, False):
             p = meeting_pivot(company_name="Acme", support_enabled=True, live_chat_enabled=live)
             assert not (p.suggest_handoff and p.needs_message_card)
+
+    @pytest.mark.parametrize("live", [True, False])
+    def test_after_another_reply_the_paid_copy_names_the_meeting(self, live):
+        """After the files in the same reply, "that" would point at the files."""
+        plain = meeting_pivot(company_name="Acme", support_enabled=True, live_chat_enabled=live)
+        after = meeting_pivot(
+            company_name="Acme", support_enabled=True, live_chat_enabled=live, after_another_reply=True
+        )
+        assert "can't book that directly" in plain.text
+        assert "can't book a meeting directly" in after.text
+        assert (after.suggest_handoff, after.needs_message_card) == (plain.suggest_handoff, plain.needs_message_card)
 
     def test_a_contact_url_is_ignored_on_paid(self):
         """Paid has a real in-chat channel; the public page is the Free

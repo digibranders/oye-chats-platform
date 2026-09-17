@@ -1326,8 +1326,19 @@ def _listing(docs: list[dict[str, str]]) -> str:
     return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
 
 
-def document_reply(pick: DocumentPick, *, company_name: str | None, support_enabled: bool) -> str:
-    """The words above the download cards. The cards carry the links, so the text names the files only."""
+def document_reply(
+    pick: DocumentPick, *, company_name: str | None, support_enabled: bool, booking: bool = False
+) -> str:
+    """The words above the download cards. The cards carry the links, so the text names the files only.
+
+    ``booking`` says a booking card rides with the reply, because the same
+    message asked for time with the team: the text points at it too.
+    """
+    if not pick.docs and booking:
+        return (
+            "I don't have a downloadable document for that here, "
+            "but you can book a time with the team below and ask them for it."
+        )
     if not pick.docs:
         if support_enabled:
             return (
@@ -1338,5 +1349,7 @@ def document_reply(pick: DocumentPick, *, company_name: str | None, support_enab
         return f"I don't have a downloadable document for that here, but you'll find more {about}on our website."
     verb = "is" if len(pick.docs) == 1 else "are"
     if pick.exact:
-        return f"Here you go: {_listing(pick.docs)} {verb} ready to download below."
-    return f"I don't have that exact document, but {_listing(pick.docs)} {verb} available to download below."
+        text = f"Here you go: {_listing(pick.docs)} {verb} ready to download below."
+    else:
+        text = f"I don't have that exact document, but {_listing(pick.docs)} {verb} available to download below."
+    return f"{text} You can also pick a time with the team below." if booking else text

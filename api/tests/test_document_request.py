@@ -1005,6 +1005,26 @@ def test_an_inexact_pick_says_so():
     assert "don't have that exact document" in document_reply(pick, company_name="Acme", support_enabled=True)
 
 
+@pytest.mark.parametrize("support", [True, False])
+def test_a_reply_with_a_booking_card_points_at_it(support):
+    """ "send the datasheet and book a demo": the booking card rides with the files."""
+    doc = {"type": "download", "url": RED, "name": "Red-Teaming.pdf"}
+    exact = document_reply(DocumentPick(docs=[doc], exact=True), company_name="Acme", support_enabled=support)
+    booked = document_reply(
+        DocumentPick(docs=[doc], exact=True), company_name="Acme", support_enabled=support, booking=True
+    )
+    assert booked == f"{exact} You can also pick a time with the team below."
+    inexact = document_reply(
+        DocumentPick(docs=[doc], exact=False), company_name="Acme", support_enabled=support, booking=True
+    )
+    assert inexact.endswith("available to download below. You can also pick a time with the team below.")
+    none = document_reply(
+        DocumentPick(docs=[], exact=False), company_name="Acme", support_enabled=support, booking=True
+    )
+    assert "book a time with the team below" in none
+    assert "connect you" not in none
+
+
 def test_an_exact_reply_names_every_file_once_without_links():
     docs = [{"type": "download", "url": f["url"], "name": f["name"]} for f in CATALOG[0]["files"] if f["url"] != RED]
     pick = DocumentPick(docs=docs[:2], exact=True)

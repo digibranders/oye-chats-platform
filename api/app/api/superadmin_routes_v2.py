@@ -1638,9 +1638,16 @@ _SAFETY_NET_METRIC_NAMES = [
     # A figure the price guard stopped mid-stream (price_guard.py via
     # rag_service.py); also counted above with reason=price_guard.
     "price_guard_tripped",
+    # A turn asking the price and more, whose figure sentences were dropped with
+    # the escalation after the rest; also counted above with
+    # reason=price_guard_redacted.
+    "price_guard_redacted",
     # Scheduling request answered deterministically because the bot has no
     # scheduler configured (meeting_gate.py via rag_service.py).
     "meeting_gate_pivot",
+    # A request for time on a bot with a scheduler, where the model left the
+    # booking card out and the server attached it.
+    "meeting_card_safety_net",
     # Edge-case routes in rag_service.py: a reported incident answered with the
     # urgent reply (urgent_route.py), an existing customer's problem handed to the
     # team (support_route.py), a file request answered from the catalog or left to

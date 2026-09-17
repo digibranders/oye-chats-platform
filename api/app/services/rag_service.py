@@ -9691,68 +9691,6 @@ async def rag_pipeline_stream(
 
             sources = [doc.document_name for doc in final_results]
 
-            # ── Meeting gate ─────────────────────────────────────────────
-            # A scheduling request on a bot with NO usable online scheduler is
-            # answered HERE, deterministically, instead of by an instruction in
-            # the system prompt.
-            #
-            # Placement is the whole point. It sits AFTER the pricing gate, which
-            # returns first when it fires, so a priced question is never re-read
-            # as a scheduling one; and BEFORE the CRAG relevance gate, because a
-            # scheduling request is never IN the knowledge base, so the judge
-            # scores it off-topic and its refusal returns before generation is
-            # ever reached. That ordering is why the previous prompt-only
-            # handling could not work: measured end to end, the model promised a
-            # form on both paid and Free and rendered one on neither, and the
-            # leave-message safety net cannot rescue it because scheduling
-            # phrasing matches neither of its predicates.
-            #
-            # A bot WITH a scheduler configured falls through untouched to the
-            # existing booking-card flow, which is the better answer.
-            if not _scheduler_ready and _meeting_gate.is_meeting_question(_gate_question):
-                _safety_net_metric(
-                    "meeting_gate_pivot",
-                    path="stream",
-                    support_enabled=str(_plan_support_allowed),
-                    session=session_id,
-                    bot_id=bid,
-                )
-                _mtg = _meeting_gate.meeting_pivot(
-                    company_name=_company_name,
-                    support_enabled=_plan_support_allowed,
-                    live_chat_enabled=live_chat_on,
-                    contact_url=_contact_url,
-                )
-                _mtg_text = (
-                    _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + _mtg.text
-                )
-                yield _stream_metadata(session_id, [], language)
-                yield _mtg_text
-                _bot_msg = add_chat_message(
-                    session,
-                    session_id,
-                    client_id=cid,
-                    role="bot",
-                    content=_mtg_text,
-                    bot_id=bid,
-                    is_unanswered=True,
-                    source_language=_lang_base(language),
-                )
-                session.flush()
-                _mtg_meta = {
-                    "message_id": _bot_msg.id,
-                    "suggest_handoff": _mtg.suggest_handoff,
-                    "qualification_pending": False,
-                }
-                if _mtg.needs_message_card:
-                    _mtg_meta["show_leave_message"] = True
-                    _mark_card_shown(chat_session, "leave_message")
-                # The visitor was given a way to reach the team: not unhelped.
-                _set_unhelped_streak(chat_session, 0)
-                session.commit()
-                yield f"\nFINAL_METADATA:{json.dumps(_mtg_meta)}\n"
-                return
-
             # ── Document requests ────────────────────────────────────────────
             # "Send me your brochure" is answered from the bot's own file catalog
             # as download cards, never with a promise to email: on 2026-09-10 all
@@ -9760,11 +9698,13 @@ async def rag_pipeline_stream(
             # team" or opened a message form, 0 of 8 requests passed, one of them
             # on a bot holding a catalog of datasheet PDFs.
             #
-            # After the pricing and meeting gates ("send me your pricing brochure"
-            # is a pricing question) and before the relevance gate, which scores a
-            # request for a file off-topic. An explicit request for a person, or a
-            # deal for the company, still goes to the handoff reply below. English
-            # only, like the gates: the classifier prompt and the reply are English.
+            # After the pricing gate ("send me your pricing brochure" is a pricing
+            # question) and before the relevance gate, which scores a request for a
+            # file off-topic. The files are picked before the meeting gate, which
+            # leaves a turn asking for both to the document reply. An explicit
+            # request for a person, or a deal for the company, still goes to the
+            # handoff reply below. English only, like the gates: the classifier
+            # prompt and the reply are English.
             #
             # Naming a document is not always asking for one. Rules tuned on
             # labelled messages answered "we don't want the exhibitor brochure" with
@@ -9836,6 +9776,77 @@ async def rag_pipeline_stream(
                             bot_id=bid,
                         )
                         _pick = None
+            # A request for time with the team, read once for the meeting gate,
+            # the document reply and the handoff reply.
+            _meeting_request = _meeting_gate.is_meeting_question(_gate_question)
+
+            # ── Meeting gate ─────────────────────────────────────────────
+            # A scheduling request on a bot with NO usable online scheduler is
+            # answered HERE, deterministically, instead of by an instruction in
+            # the system prompt.
+            #
+            # Placement is the whole point. It sits AFTER the pricing gate, which
+            # returns first when it fires, so a priced question is never re-read
+            # as a scheduling one; and BEFORE the CRAG relevance gate, because a
+            # scheduling request is never IN the knowledge base, so the judge
+            # scores it off-topic and its refusal returns before generation is
+            # ever reached. That ordering is why the previous prompt-only
+            # handling could not work: measured end to end, the model promised a
+            # form on both paid and Free and rendered one on neither, and the
+            # leave-message safety net cannot rescue it because scheduling
+            # phrasing matches neither of its predicates.
+            #
+            # A bot WITH a scheduler configured falls through untouched to the
+            # existing booking-card flow, which is the better answer.
+            #
+            # A message that also asks for a file the catalog holds ("send the
+            # datasheet and book a demo") is answered by the document route
+            # below, which carries this pivot after the files: answering either
+            # alone dropped the other request (evaluation, 2026-09-17).
+            if not _scheduler_ready and _meeting_request and not (_pick is not None and _pick.docs):
+                _safety_net_metric(
+                    "meeting_gate_pivot",
+                    path="stream",
+                    support_enabled=str(_plan_support_allowed),
+                    session=session_id,
+                    bot_id=bid,
+                )
+                _mtg = _meeting_gate.meeting_pivot(
+                    company_name=_company_name,
+                    support_enabled=_plan_support_allowed,
+                    live_chat_enabled=live_chat_on,
+                    contact_url=_contact_url,
+                )
+                _mtg_text = (
+                    _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + _mtg.text
+                )
+                yield _stream_metadata(session_id, [], language)
+                yield _mtg_text
+                _bot_msg = add_chat_message(
+                    session,
+                    session_id,
+                    client_id=cid,
+                    role="bot",
+                    content=_mtg_text,
+                    bot_id=bid,
+                    is_unanswered=True,
+                    source_language=_lang_base(language),
+                )
+                session.flush()
+                _mtg_meta = {
+                    "message_id": _bot_msg.id,
+                    "suggest_handoff": _mtg.suggest_handoff,
+                    "qualification_pending": False,
+                }
+                if _mtg.needs_message_card:
+                    _mtg_meta["show_leave_message"] = True
+                    _mark_card_shown(chat_session, "leave_message")
+                # The visitor was given a way to reach the team: not unhelped.
+                _set_unhelped_streak(chat_session, 0)
+                session.commit()
+                yield f"\nFINAL_METADATA:{json.dumps(_mtg_meta)}\n"
+                return
+
             if _pick is not None:
                 _safety_net_metric(
                     "document_request",
@@ -9846,9 +9857,38 @@ async def rag_pipeline_stream(
                     session=session_id,
                     bot_id=bid,
                 )
+                # The same message may ask for time with the team: the booking card
+                # rides with the files, or, with no scheduler, the meeting pivot
+                # follows them (the meeting gate above left this turn here).
+                _doc_booking: dict = {}
+                _doc_meeting_pivot = None
+                if _meeting_request and _scheduler_ready and not _card_already_shown(chat_session, "meeting"):
+                    _doc_booking = _resolve_meeting_booking(bot, session, session_id, bid)
+                elif _meeting_request and not _scheduler_ready and _pick.docs:
+                    _safety_net_metric(
+                        "meeting_gate_pivot",
+                        path="stream",
+                        support_enabled=str(_plan_support_allowed),
+                        session=session_id,
+                        bot_id=bid,
+                    )
+                    _doc_meeting_pivot = _meeting_gate.meeting_pivot(
+                        company_name=_company_name,
+                        support_enabled=_plan_support_allowed,
+                        live_chat_enabled=live_chat_on,
+                        contact_url=_contact_url,
+                        after_another_reply=True,
+                    )
                 _doc_text = _name_ack_prefix(
                     _flow_name, _just_named, language, returning=_returning_by_name
-                ) + document_reply(_pick, company_name=_company_name, support_enabled=_plan_support_allowed)
+                ) + document_reply(
+                    _pick,
+                    company_name=_company_name,
+                    support_enabled=_plan_support_allowed,
+                    booking=bool(_doc_booking),
+                )
+                if _doc_meeting_pivot is not None:
+                    _doc_text = f"{_doc_text} {_doc_meeting_pivot.text}"
                 # The reply is fixed text, so it is saved BEFORE the first frame:
                 # a visitor who closes the tab mid-stream still leaves it behind.
                 _bot_msg = add_chat_message(
@@ -9874,6 +9914,15 @@ async def rag_pipeline_stream(
                     _set_unhelped_streak(chat_session, 0)
                 # With no file the team is offered in words only: no form opens, so
                 # no card flag is set and the unhelped count is left as it was.
+                if _doc_booking:
+                    _doc_meta.update(_doc_booking)
+                    _mark_card_shown(chat_session, "meeting")
+                if _doc_meeting_pivot is not None:
+                    if _doc_meeting_pivot.suggest_handoff:
+                        _doc_meta["suggest_handoff"] = True
+                    if _doc_meeting_pivot.needs_message_card:
+                        _doc_meta["show_leave_message"] = True
+                        _mark_card_shown(chat_session, "leave_message")
                 session.commit()
                 yield _stream_metadata(session_id, [], language)
                 yield _doc_text
@@ -9895,12 +9944,7 @@ async def rag_pipeline_stream(
             # booking-card flow, which wins over a handoff (see the meeting-card
             # precedence further down). English only, like both gates: the reply
             # is an English sentence, so a non-English conversation keeps the model.
-            if (
-                suggest_handoff
-                and live_chat_on
-                and not _judges_bypassed
-                and not _meeting_gate.is_meeting_question(_gate_question)
-            ):
+            if suggest_handoff and live_chat_on and not _judges_bypassed and not _meeting_request:
                 _handoff_repeat = _card_already_shown(chat_session, "handoff_offered")
                 _safety_net_metric(
                     "handoff_reply",
@@ -10983,6 +11027,21 @@ async def rag_pipeline_stream(
             if _meeting_card_detected:
                 full_answer = _meeting_card_re.sub("", full_answer).rstrip()
                 logger.info("Meeting card token detected | session=%s", session_id)
+            elif (
+                _scheduler_ready
+                and _meeting_request
+                and _price_guard_pivot is None
+                and not _stream_error
+                and not _leak_aborted
+                and _answer_safe
+            ):
+                # The visitor asked for time with the team on a bot that can book
+                # it, and the model left the card out. A Hinglish request ("kal
+                # team se call pe baat ho sakti hai kya") got the handoff form
+                # instead of the booking card (evaluation, 2026-09-17). Precedence
+                # and the per-session dedupe below still apply.
+                _meeting_card_detected = True
+                _safety_net_metric("meeting_card_safety_net", path="stream", session=session_id, bot_id=bid)
 
             # Detect + strip [LEAVE_MESSAGE_CARD] token from the LLM response.
             _leave_msg_card_detected = bool(_leave_message_card_re.search(full_answer))
