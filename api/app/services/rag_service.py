@@ -6011,7 +6011,17 @@ def _is_real_probe(text: str) -> bool:
     offer or a generic 'anything else?' invite (B8). The offer is looked for in
     the closing paragraph only, so a callback sentence in the answer body does not
     stop the follow-up question from counting as a probe."""
-    return _text_is_question(text) and not bot_offers_handoff(text) and not _GENERIC_INVITE_RE.search(text)
+    return (
+        _text_is_question(text)
+        and not bot_offers_handoff(text)
+        and not _GENERIC_INVITE_RE.search(text)
+        # The name question is answered by the name step, never by a later
+        # message. Counted as a probe, it let the request after "Nice to meet
+        # you" skip the relevance judge: "write a 300 word essay on cyber
+        # security for my class 9 assignment" reached generation on CleanStart
+        # as an "answer" (production, 2026-09-17).
+        and _NAME_REQUEST_MESSAGE not in text
+    )
 
 
 def _recent_bot_question(history: list, lookback: int = 2) -> str | None:
