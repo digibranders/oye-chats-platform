@@ -19,18 +19,29 @@ the React app only downloads when it is actually needed.
    `OyeChats.on('ready', cb)`, `.open()`, `.identify()` before the app exists; queued calls
    replay once the app registers
 4. Honors `window.OYECHATS_ASYNC_INIT` for consent-gated (GDPR) installs
-5. Fetches `<base>/app/manifest.json`, resolves the hashed entry chunk and stylesheet, and
-   validates both filenames against a strict pattern, so a tampered manifest cannot point
-   the widget at anything outside `cdn.oyechats.com`
-6. Dynamic-imports the entry chunk and calls its `init()`
+5. Carries the hashed chunk and stylesheet names, baked in by `vite.loader.config.js` from
+   the app build's manifest, so there is no manifest request on page view (it cost about
+   0.5 s per visit, uncached at the edge). Names are validated against a strict pattern,
+   so they cannot point the widget outside `cdn.oyechats.com`. A loader built without the
+   app falls back to fetching `<base>/app/manifest.json`, which the deploy still uploads
+   for loaders cached in browsers from an earlier release
+6. Creates the pinned shadow host (`src/lib/widgetHost.js`) and starts the stylesheet, then
+   requests the entry chunk and its imports together, and calls the entry's `init()`
 
 **Stage 2, the app** (`widget/src/app-entry.jsx`, built by `vite.app.config.js`):
 
-1. Creates `<div id="oyechats-widget-root">` and attaches an **open shadow root**, isolating
-   widget styles from the host page in both directions
-2. Injects the hashed stylesheet the loader resolved
+1. Reuses (or creates) `<div id="oyechats-widget-root">` and its **open shadow root**,
+   isolating widget styles from the host page in both directions. The host carries inline
+   `position: fixed` and zero size, so it never enters the customer's layout
+2. Waits for the stylesheet before rendering. Rendering earlier drew the launcher as an
+   unstyled button inside the page that then jumped into its corner (CLS 0.07). If the
+   stylesheet fails, nothing renders and an `error` event fires
 3. Renders React (its own bundled copy) inside the shadow root
 4. Communicates with the backend via the `X-Bot-Key` header
+
+`tests/e2e/launcher-load.spec.js` pins all of this. The customer snippet carries `async`,
+so the loader never blocks the host page; the consent-gated Cookiebot install is the one
+documented exception.
 
 Chunks are split so a visitor who never opens the widget pays only for the launcher. Chat,
 live chat, markdown rendering, the lead/handoff/quotation forms, Sentry, and each non-English
@@ -54,7 +65,7 @@ delaying the bubble's first paint to save ~200 bytes.
 
 ### Production Embed
 ```html
-<script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>
+<script async src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>
 ```
 
 > One tag, and nothing else. We do not write markup of our own into a customer's page: OyeChats branding is
@@ -74,7 +85,7 @@ npx vite preview --port 4173     # Serve built files
 ```
 Then embed:
 ```html
-<script src="http://localhost:4173/oyechats-widget.js" data-bot-key="bot-xxx"></script>
+<script async src="http://localhost:4173/oyechats-widget.js" data-bot-key="bot-xxx"></script>
 ```
 
 ## How the Hosted Demo Page Works

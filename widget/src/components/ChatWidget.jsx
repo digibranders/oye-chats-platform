@@ -446,6 +446,7 @@ const ChatWidget = () => {
           isOpen={isVisible}
           toggleChat={toggleChat}
           settings={settings}
+          settingsLoaded={settingsLoaded}
           onBubbleSend={handleBubbleSend}
         />
       </div>

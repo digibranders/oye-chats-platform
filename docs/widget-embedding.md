@@ -12,24 +12,25 @@ The embed is a **two-stage load**: a tiny loader IIFE the customer script-tags, 
 2. Sets `window.OYECHATS_BOT_KEY` (or `OYECHATS_API_KEY`) globally
 3. Exposes `window.OyeChats` as a **stub-and-queue** API, so host-page code can call `OyeChats.on('ready', cb)`, `.open()`, `.identify()` before the app exists; queued calls replay once the app registers
 4. Honors `window.OYECHATS_ASYNC_INIT` for consent-gated (GDPR) installs — see [`../widget/docs/integrations/cookiebot.md`](../widget/docs/integrations/cookiebot.md)
-5. Fetches `<base>/app/manifest.json`, resolves the hashed entry chunk and stylesheet, and **validates both filenames against a strict pattern**, so a tampered manifest cannot point the widget at anything outside the CDN base
-6. Dynamic-imports the entry chunk and calls its `init()`
+5. Knows the hashed chunk and stylesheet names already: `vite.loader.config.js` bakes them in from the app build's manifest, so no manifest request is made. Every name is **validated against a strict pattern**, so it cannot point the widget at anything outside the CDN base. A loader built without the app falls back to fetching `<base>/app/manifest.json`.
+6. Creates the pinned shadow host and starts the stylesheet, then requests the entry chunk and the chunks it imports at the same time, and calls the entry's `init()`
 
-> If the boot fails (CORS, CDN blip, a manifest 404 mid-deploy) the loader clears its cached promise, so a later `OyeChats.init()` can retry without a full page reload.
+> If the boot fails (CORS, CDN blip, a missing chunk mid-deploy) the loader clears its cached promise, so a later `OyeChats.init()` can retry without a full page reload.
 
 ### Stage 2 — the app (`widget/src/app-entry.jsx` → `dist/app/oyechats-*.js`)
 
-1. Creates a `<div id="oyechats-widget-root">` and attaches an **open shadow root**, isolating widget styles from the host page in both directions
-2. Injects the hashed stylesheet the loader resolved
-3. Renders React (its own bundled copy) inside the shadow root
-4. Communicates with the backend API via the `X-Bot-Key` header
+1. Reuses (or creates) `<div id="oyechats-widget-root">` with its **open shadow root**, which isolates widget styles from the host page in both directions. The host is pinned with inline `position: fixed` and zero size, so it never takes space in the customer's layout, even before the stylesheet arrives
+2. Waits for the stylesheet, then renders React (its own bundled copy) inside the shadow root. Rendering earlier drew the launcher as an unstyled button inside the page, which then jumped into its corner (a layout shift). If the stylesheet fails, nothing renders and an `error` event fires
+3. Communicates with the backend API via the `X-Bot-Key` header
+
+The stylesheet link inside the shadow root counts toward the host page's `load` event, so that event can now wait for it (typically 0.1 to 0.35 s). Core Web Vitals do not use the `load` event.
 
 ## Production Embed
 
 Add this before the closing `</body>` tag:
 
 ```html
-<script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>
+<script async src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>
 ```
 
 Replace `bot-xxx` with the bot key from the admin dashboard. That's it — the widget handles everything else automatically.
@@ -147,7 +148,7 @@ npx vite preview --port 4173     # Serve built files
 
 Then embed on your test page:
 ```html
-<script src="http://localhost:4173/oyechats-widget.js" data-bot-key="bot-xxx"></script>
+<script async src="http://localhost:4173/oyechats-widget.js" data-bot-key="bot-xxx"></script>
 ```
 
 ### Production Deployment

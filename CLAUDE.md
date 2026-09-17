@@ -92,7 +92,7 @@ informational, blocks nothing). See [`docs/eval/README.md`](docs/eval/README.md)
 4. **Copies the embed script** from the admin dashboard
 5. **Pastes the script** into their website's `<body>` tag:
    ```html
-   <script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>
+   <script async src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>
    ```
 6. **Visitors see a chat widget** (floating button, bottom-right) → click to open → ask questions
 7. **Widget sends question** to backend API with `X-Bot-Key` header

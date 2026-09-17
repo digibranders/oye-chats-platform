@@ -13,7 +13,9 @@ from app.services.install_detection import scan_html
 BOT = "bot-6a427d4529b9"
 OTHER = "bot-000000000000"
 
-CANONICAL = f'<script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="{BOT}"></script>'
+CANONICAL = f'<script async src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="{BOT}"></script>'
+# What the dashboard gave customers before 2026-09-17. Their pages still carry it.
+LEGACY = f'<script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="{BOT}"></script>'
 
 
 def _verdict(html: str, bot_key: str = BOT) -> str:
@@ -23,6 +25,9 @@ def _verdict(html: str, bot_key: str = BOT) -> str:
 class TestFindsARealInstall:
     def test_the_canonical_snippet(self):
         assert _verdict(f"<body>{CANONICAL}</body>") == "installed"
+
+    def test_the_legacy_snippet_without_async(self):
+        assert _verdict(f"<body>{LEGACY}</body>") == "installed"
 
     def test_attributes_in_the_other_order(self):
         html = f'<script data-bot-key="{BOT}" src="https://cdn.oyechats.com/oyechats-widget.js"></script>'

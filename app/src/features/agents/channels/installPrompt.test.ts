@@ -43,7 +43,7 @@ describe('buildInstallPrompt', () => {
   it('asks the agent to detect the stack when no platform is selected', () => {
     const text = prompt();
     expect(text).toContain('detect the stack yourself');
-    expect(text).toContain(`<script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="${BOT_KEY}"></script>`);
+    expect(text).toContain(`<script async src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="${BOT_KEY}"></script>`);
   });
 
   it('points at the local widget preview and local API in a development dashboard', () => {

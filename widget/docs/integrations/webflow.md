@@ -6,7 +6,7 @@
 2. In the **Footer Code** box, paste:
 
 ```html
-<script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>
+<script async src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>
 ```
 
 3. Click **Save Changes** → **Publish** the site.

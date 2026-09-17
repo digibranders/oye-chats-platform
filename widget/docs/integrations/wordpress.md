@@ -5,7 +5,7 @@
 In your theme's `footer.php`, just before `</body>`:
 
 ```html
-<script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>
+<script async src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>
 ```
 
 Save. Reload any page. Done.
@@ -29,7 +29,7 @@ Drop this into `wp-content/plugins/oyechats/oyechats.php`:
 Plugin Name: OyeChats Widget
 */
 add_action('wp_footer', function () {
-  echo '<script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>';
+  echo '<script async src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>';
 });
 ```
 

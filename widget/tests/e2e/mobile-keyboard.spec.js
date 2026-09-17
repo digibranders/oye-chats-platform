@@ -70,6 +70,12 @@ test.describe('phone keyboard guards', () => {
     const backdrop = root.locator('.oyechats-mobile-backdrop')
     await expect(backdrop).toHaveCount(1)
 
+    // The panel scales in when it opens, and a fixed element inside a
+    // transformed ancestor is placed against that ancestor, not the viewport.
+    // Measure once the open animation has finished.
+    if (isPhone()) {
+      await expect.poll(() => backdrop.evaluate((el) => el.getBoundingClientRect().top)).toBe(0)
+    }
     const box = await backdrop.evaluate((el) => {
       const rect = el.getBoundingClientRect()
       const style = getComputedStyle(el)

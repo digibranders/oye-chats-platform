@@ -191,6 +191,9 @@ def test_the_snippet_is_the_script_tag_and_nothing_else(db):
     assert "Powered by OyeChats" not in snippet
     assert "<a " not in snippet
     assert f'data-bot-key="{bot.bot_key}"' in snippet
+    # Same tag the dashboard shows (deployModel.ts), which loads without
+    # blocking the customer's page.
+    assert snippet.startswith("<script async src=")
 
 
 def test_the_snippet_is_never_taken_from_the_caller(db):
