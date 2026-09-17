@@ -18,7 +18,7 @@ import itertools
 import pytest
 
 from app.db.models import ChatSession
-from app.services import document_request
+from app.services import document_request, media_cards
 from app.services import rag_service as rs
 from tests.test_rag_pipeline_defects import (
     _answer_text,
@@ -140,10 +140,13 @@ async def test_a_file_already_shown_under_another_url_is_not_attached_again(db, 
     assert _cards(db, "cards-copy").get("media:download:title:red teaming guide") is True
 
 
+@pytest.mark.parametrize("enforce", [True, False])
 @pytest.mark.parametrize("website", ["https://acme.com", None])
 @pytest.mark.asyncio
-async def test_a_third_party_file_is_offered_only_by_a_bot_that_names_no_website(db, monkeypatch, website):
-    session_id = f"cards-owned-{bool(website)}"
+async def test_a_third_party_file_is_offered_only_by_a_bot_that_names_no_website(db, monkeypatch, website, enforce):
+    """Enforced, a bot with a website never offers a foreign file. Log-only (the shipped mode) it still does."""
+    monkeypatch.setattr(media_cards, "ENFORCE_OWNED_FILES", enforce)
+    session_id = f"cards-owned-{bool(website)}-{enforce}"
     bot = _bot(db, session_id, website=website)
     cap = _stub_pipeline(
         monkeypatch,
@@ -161,7 +164,7 @@ async def test_a_third_party_file_is_offered_only_by_a_bot_that_names_no_website
     requested = await _drive_stream(bot, "can you send me the threat intelligence index pdf", session_id)
 
     system_prompt, prompt = cap["prompts"][0]
-    if website:
+    if website and enforce:
         assert "media_card" not in _final_meta(generated)
         assert IBM not in f"{system_prompt}{prompt}"
         assert "media_card" not in _final_meta(requested)

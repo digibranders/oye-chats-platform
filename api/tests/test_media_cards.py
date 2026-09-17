@@ -9,9 +9,11 @@ import time
 
 import pytest
 
+from app.services import media_cards
 from app.services.media_cards import (
     card_identity,
     dedupe_cards,
+    is_own_file_host,
     is_owned_file_url,
     media_owned_domains,
     owned_media_payloads,
@@ -92,6 +94,26 @@ class TestOwnedDomains:
         assert media_owned_domains("eventussecurity.com", []) == frozenset({"eventussecurity.com"})
 
 
+@pytest.fixture
+def enforce(monkeypatch):
+    """The ownership rule drops files, as it will once ``media_file_offsite`` has been measured."""
+    monkeypatch.setattr(media_cards, "ENFORCE_OWNED_FILES", True)
+
+
+@pytest.fixture
+def offsite_reports(monkeypatch):
+    """The ``media_file_offsite`` increments, with the per-process memory of reported URLs cleared."""
+    reported: list[str] = []
+    monkeypatch.setattr(media_cards, "_reported_offsite", set())
+    monkeypatch.setattr(media_cards, "increment_metric_counter", reported.append)
+    return reported
+
+
+def test_the_rule_ships_log_only():
+    assert media_cards.ENFORCE_OWNED_FILES is False
+
+
+@pytest.mark.usefixtures("enforce")
 class TestIsOwnedFileUrl:
     OWNED = frozenset({"cleanstart.com", "eventussecurity.com"})
 
@@ -105,6 +127,18 @@ class TestIsOwnedFileUrl:
             "https://f.hubspotusercontent10.net/hubfs/123/Case-Study.pdf",
             "https://acme-assets.s3.amazonaws.com/Datasheet.pdf",
             "https://d111111abcdef8.cloudfront.net/whitepaper.pdf",
+            # Small-business website builders and storage.
+            "https://1a2b3c_4d5e.filesusr.com/ugd/1a2b3c_brochure.pdf",
+            "https://img1.wsimg.com/blobby/go/abc/downloads/Menu.pdf",
+            "https://acmecleaning.files.wordpress.com/2024/01/price-list.pdf",
+            "https://www.dropbox.com/s/abc123/Brochure.pdf?dl=1",
+            "https://dl.dropboxusercontent.com/s/abc123/Brochure.pdf",
+            "https://acme.nyc3.digitaloceanspaces.com/Catalogue.pdf",
+            "https://firebasestorage.googleapis.com/v0/b/acme.appspot.com/o/menu.pdf",
+            "https://acme.firebasestorage.app/menu.pdf",
+            # The same name on another TLD is the company's sister domain.
+            "https://www.cleanstart.in/files/Brochure.pdf",
+            "https://docs.eventussecurity.co.uk/Datasheet.pdf",
         ],
     )
     def test_a_file_on_the_company_or_its_asset_host_is_owned(self, url):
@@ -120,6 +154,9 @@ class TestIsOwnedFileUrl:
             "https://notcleanstart.com/file.pdf",
             "https://website-files.com.evil.example/file.pdf",
             "https://evilwebsite-files.com/file.pdf",
+            "https://evilfilesusr.com/file.pdf",
+            "https://wordpress.com/file.pdf",
+            "https://cleanstart-rival.in/file.pdf",
             "ftp://cleanstart.com/file.pdf",
             "not a url",
             None,
@@ -133,6 +170,42 @@ class TestIsOwnedFileUrl:
         assert is_owned_file_url(None, frozenset()) is False
 
 
+class TestLogOnly:
+    OWNED = frozenset({"cleanstart.com"})
+    IBM = "https://www.ibm.com/downloads/report.pdf"
+
+    def test_a_foreign_file_is_admitted_and_reported_once(self, offsite_reports, caplog):
+        caplog.set_level("INFO", logger=media_cards.__name__)
+        assert is_own_file_host(self.IBM, self.OWNED) is False
+        assert is_owned_file_url(self.IBM, self.OWNED) is True
+        assert is_owned_file_url(self.IBM, self.OWNED) is True
+        assert offsite_reports == ["media_file_offsite"]
+        assert "host=www.ibm.com" in caplog.text
+
+    def test_an_owned_file_or_a_malformed_url_is_not_reported(self, offsite_reports):
+        assert is_owned_file_url("https://www.cleanstart.com/a.pdf", self.OWNED) is True
+        assert is_owned_file_url("not a url", self.OWNED) is False
+        assert is_owned_file_url("ftp://www.ibm.com/a.pdf", self.OWNED) is False
+        assert offsite_reports == []
+
+    def test_payloads_keep_foreign_files(self, offsite_reports):
+        payloads = [{"files": [{"url": self.IBM}]}]
+        assert owned_media_payloads(payloads, self.OWNED) == payloads
+        assert offsite_reports == ["media_file_offsite"]
+
+    def test_enforced_the_foreign_file_is_dropped_and_still_reported(self, offsite_reports, enforce):
+        assert is_owned_file_url(self.IBM, self.OWNED) is False
+        assert offsite_reports == ["media_file_offsite"]
+
+    def test_the_memory_of_reported_urls_is_bounded(self, offsite_reports, monkeypatch):
+        monkeypatch.setattr(media_cards, "_MAX_REPORTED_OFFSITE", 3)
+        for n in range(10):
+            is_owned_file_url(f"https://www.ibm.com/{n}.pdf", self.OWNED)
+        assert len(media_cards._reported_offsite) <= 3
+        assert len(offsite_reports) == 10
+
+
+@pytest.mark.usefixtures("enforce")
 class TestOwnedMediaPayloads:
     def test_drops_foreign_files_and_keeps_videos(self):
         payloads = [
