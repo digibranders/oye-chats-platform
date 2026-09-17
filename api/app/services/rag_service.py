@@ -728,6 +728,7 @@ def _enrich_media_card_from_context(card: dict | None, retrieved_chunks) -> None
 # See ``is_valid_file_url`` in ``app.ingestion.cleaner``, which the document
 # request route applies too, for the two checks.
 from app.ingestion.cleaner import is_valid_file_url as _is_valid_file_url  # noqa: E402
+from app.ingestion.cleaner import tidy_reference_text  # noqa: E402
 
 # Words we ignore when comparing a primary card's title against candidate
 # secondary asset names to score topical overlap. Everything below reads to
@@ -2990,8 +2991,13 @@ def _build_reference_context(final_results: list, company_name: str | None) -> s
         context_parts.append(header)
     budget_remaining = _MAX_CONTEXT_TOKENS - _count_tokens(header)
     for i, doc in enumerate(final_results, 1):
+        # Page furniture the model read as facts goes first, before the length
+        # cap: a phone country-code picker became "We serve France." and a link
+        # labelled "careers@" hid the careers address (production, 2026-09-17).
+        chunk_content = tidy_reference_text(doc.content)
         # Truncate per-chunk to prevent prompt token overflow on large documents.
-        chunk_content = doc.content[:5000] + " [truncated]" if len(doc.content) > 5000 else doc.content
+        if len(chunk_content) > 5000:
+            chunk_content = chunk_content[:5000] + " [truncated]"
         # Neutralise the fence delimiters INSIDE the data. Without this a crawled
         # page or uploaded document containing "<<<END DOCUMENT 1>>>" closes its
         # own fence, and everything after it reads to the model as top-level

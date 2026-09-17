@@ -1,4 +1,5 @@
 import re
+from urllib.parse import unquote
 
 from app.security.injection_patterns import compile_line_anchored_strip_pattern
 
@@ -328,3 +329,118 @@ def clean_text(text: str) -> str:
     text = "\n".join(cleaned_lines)
 
     return text
+
+
+# ---------------------------------------------------------------------------
+# Reference-context hygiene (applied when the answer prompt is built)
+# ---------------------------------------------------------------------------
+# Crawled page furniture that the answer model reads as company facts. Both are
+# applied to chunk text in ``rag_service._build_reference_context``, so stored
+# chunks need no re-crawl; ``clean_text`` could call them at ingest too.
+
+# One option of a phone country-code picker: "*    France+33", "United States +1".
+# A contact form lists about 250 of them, and read as prose they say the company
+# serves every country listed (production, 2026-09-17: "We serve France." from
+# the Eventus Security contact form). The optional ``[Document: ...] [Page: n]``
+# prefix is the header a chunk that opens inside the picker carries. Every
+# quantifier is bounded or separated from its neighbour by a required character,
+# so a hostile line costs linear time.
+_PHONE_CODE_LINE_RE = re.compile(
+    r"(?P<prefix>\[Document: [^\]\n]*\](?:[ \t]*\[Page: \d+\])?)?"
+    r"[ \t]*(?:[*\-•][ \t]+)?"
+    r"[^\W\d_](?:[^\W\d_]|[ .'’()&,\-]){0,59}"
+    r"\+\d{1,4}[ \t]*"
+)
+
+# Fewer lines than this are an address or a short list of offices, not a picker.
+_PHONE_CODE_MIN_RUN = 3
+
+
+def _phone_code_line(line: str) -> re.Match[str] | None:
+    if "+" not in line:
+        return None
+    return _PHONE_CODE_LINE_RE.fullmatch(line)
+
+
+def strip_phone_code_runs(text: str) -> str:
+    """Drop runs of three or more consecutive country-code picker lines.
+
+    A lone "India +91" in an address block and a full number such as
+    "France +33 1 23 45 67 89" are kept. When a dropped line carries a chunk's
+    document header, the header is kept on its own line.
+    """
+    if "+" not in text:
+        return text
+    lines = text.split("\n")
+    matches = [_phone_code_line(line) for line in lines]
+    kept: list[str] = []
+    start = 0
+    while start < len(lines):
+        if matches[start] is None:
+            kept.append(lines[start])
+            start += 1
+            continue
+        end = start
+        while end < len(lines) and matches[end] is not None:
+            end += 1
+        if end - start < _PHONE_CODE_MIN_RUN:
+            kept.extend(lines[start:end])
+        else:
+            for match in matches[start:end]:
+                prefix = match.group("prefix") if match else None
+                if prefix:
+                    kept.append(prefix)
+        start = end
+    return "\n".join(kept)
+
+
+# ``[label](mailto:address)`` and ``[label](tel:number)``. The label may not be
+# the address: CleanStart's pages link "careers@" to careers@cleanstart.com, so
+# the model saw no careers address and opened the message form instead
+# (production, 2026-09-17). Label and target exclude the characters that end
+# them, and both are bounded, so the scan is linear.
+_CONTACT_LINK_RE = re.compile(
+    r"\[(?P<label>[^\[\]\n]{0,200})\]\((?P<scheme>mailto|tel):(?P<target>[^()\s]{1,320})\)",
+    re.IGNORECASE,
+)
+_EMAIL_ADDRESS_RE = re.compile(r"[A-Za-z0-9._%+'\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+")
+_PHONE_NUMBER_RE = re.compile(r"\+?[\d().\- ]{5,40}")
+_NON_DIGIT_RE = re.compile(r"\D")
+
+
+def _contact_link_text(match: re.Match[str]) -> str:
+    """The visible text for one contact link, or the link unchanged when its
+    target is not a usable address or number."""
+    label = match.group("label").strip().strip("*_").strip()
+    target = unquote(match.group("target").split("?", 1)[0]).strip()
+    if match.group("scheme").lower() == "mailto":
+        if not _EMAIL_ADDRESS_RE.fullmatch(target):
+            return match.group(0)
+        # A label with an "@" or one that is part of the address ("careers@",
+        # "careers") is the address itself, possibly cut short.
+        if not label or "@" in label or label.lower() in target.lower():
+            return target
+        return f"{label} ({target})"
+    digits = _NON_DIGIT_RE.sub("", target)
+    if len(digits) < 5 or not _PHONE_NUMBER_RE.fullmatch(target):
+        return match.group(0)
+    if not label:
+        return target
+    label_digits = _NON_DIGIT_RE.sub("", label)
+    if label_digits == digits:
+        return label
+    if label_digits:
+        return target
+    return f"{label} ({target})"
+
+
+def expand_contact_links(text: str) -> str:
+    """Rewrite mailto and tel links so the full address or number is visible."""
+    if "mailto:" not in text.lower() and "tel:" not in text.lower():
+        return text
+    return _CONTACT_LINK_RE.sub(_contact_link_text, text)
+
+
+def tidy_reference_text(text: str) -> str:
+    """Chunk text as the answer model should read it."""
+    return expand_contact_links(strip_phone_code_runs(text))
