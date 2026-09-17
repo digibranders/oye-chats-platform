@@ -45,6 +45,7 @@ from app.security.injection_patterns import (
     compile_detection_pattern,
     compile_operator_field_pattern,
 )
+from app.services import credential_facts as _credential_facts
 from app.services import currency_scoring as _currency_scoring
 from app.services import meeting_gate as _meeting_gate
 from app.services import plan_entitlements_service, runtime_config, support_route, urgent_route, visitor_reaction
@@ -6202,6 +6203,10 @@ def build_hybrid_prompt(
     # Phase 3: resolved conversation language (LanguageContext) or None when
     # multilingual is disabled for the bot. None keeps the prompt byte-identical.
     language=None,
+    # The per-turn CREDENTIAL FACTS block (``credential_facts.credential_facts_block``),
+    # placed right after the reference information. Empty keeps the prompt
+    # byte-identical.
+    credential_block: str = "",
 ) -> tuple[str, str]:
     """Construct the Hybrid RAG prompt with BANT qualification support.
 
@@ -7146,7 +7151,7 @@ RULES:
 ═══════════════════════════════════════════════════════
 REFERENCE INFORMATION
 ═══════════════════════════════════════════════════════
-{context_text}
+{context_text}{credential_block}
 
 ═══════════════════════════════════════════════════════
 CONVERSATION HISTORY
@@ -8553,6 +8558,9 @@ async def rag_pipeline_stream(
     # The price classifier's task, when this turn starts one (see "Price
     # classifier, alongside retrieval"), cancelled by the same finally.
     _price_intent_task: asyncio.Task[PriceIntentDecision] | None = None
+    # The credential check's task, when this turn starts one (see "Credential
+    # facts, alongside the relevance gate"), cancelled by the same finally.
+    _credential_task: asyncio.Task[_credential_facts.CredentialFacts] | None = None
     try:
         with get_session() as session:
             bot = (
@@ -9246,10 +9254,21 @@ async def rag_pipeline_stream(
             # FAQs, and turning the cache off for every mention cost each of them a
             # cache miss and a classifier call. Whether the visitor wants a file is
             # still the classifier's call, at the route, on every cache miss.
+            #
+            # A question about the company's own certifications is answered with
+            # a CREDENTIAL FACTS block checked against this turn's retrieval (see
+            # "Credential facts, alongside the relevance gate"), so it neither
+            # reads nor writes the cache. A cached answer from before the check,
+            # "Yes, we are ISO 27001 certified" among them, would otherwise be
+            # replayed past it until its TTL ran out, whatever the prompt version.
+            _credential_question = not _judges_bypassed and _credential_facts.asks_about_credentials(
+                question, _company_name
+            )
             if (
                 _cache_key
                 and not _affirmed_handoff
                 and not _gate_may_intercept
+                and not _credential_question
                 and not (_prior_turns and _leans_on_the_last_reply(question))
                 and not _document_request_skips_cache(question, _company_name, _judges_bypassed)
             ):
@@ -10130,6 +10149,31 @@ async def rag_pipeline_stream(
                 )
                 final_results = []
 
+            # ── Credential facts, alongside the relevance gate ───────────────
+            # A question about the company's own certifications, audit reports or
+            # compliance status is checked against the chunks the answer will be
+            # written from, so the model is told which credentials the company
+            # holds and which it only offers (``credential_facts``). The check
+            # starts here, once the chunks are final, and runs while the relevance
+            # gate judges them; generation awaits it. A follow-up is read on its
+            # rewrite, as the pricing gate reads it. A non-English turn is left to
+            # the knowledge base like the other English-tuned judges.
+            _credential_question_text: str | None = None
+            if _credential_question:
+                _credential_question_text = question
+            elif (
+                not _judges_bypassed
+                and _gate_search_query != question
+                and _credential_facts.asks_about_credentials(_gate_search_query, _company_name)
+            ):
+                _credential_question_text = _gate_search_query
+            if _credential_question_text is not None and final_results:
+                _credential_task = asyncio.create_task(
+                    _credential_facts.check_credentials_bounded(
+                        _credential_question_text, list(final_results), _company_name
+                    )
+                )
+
             # ── Phase 4A: CRAG relevance gate (streaming path) ───────────────
             # BYPASSED for a non-English conversation, for the same reason
             # ``route_intent`` and the FlashRank reranker above are: it is an
@@ -10707,6 +10751,21 @@ async def rag_pipeline_stream(
             _qualified_popup = _resolve_meeting_booking(bot, session, session_id, bid) if _team_connect_offer else {}
             _show_qualified_popup = bool(_qualified_popup)
 
+            _credential_block = ""
+            if _credential_task is not None:
+                _credentials = await _credential_task
+                _safety_net_metric(
+                    "credential_facts_checked",
+                    path="stream",
+                    by_fallback=_credentials.by_fallback,
+                    **_credentials.verdict_counts(),
+                    session=session_id,
+                    bot_id=bid,
+                )
+                _credential_block = _credential_facts.credential_facts_block(
+                    _credentials, _company_name, team_offer=_plan_support_allowed
+                )
+
             system_prompt, prompt = build_hybrid_prompt(
                 client,
                 question,
@@ -10745,6 +10804,7 @@ async def rag_pipeline_stream(
                 visitor_returning=_returning_by_name,
                 visitor_country=visitor_country,
                 language=language,
+                credential_block=_credential_block,
             )
             logger.info(f"Hybrid RAG stream prompt built | Context chunks: {len(final_results)}")
 
@@ -11375,6 +11435,10 @@ async def rag_pipeline_stream(
                         or _meeting_card_detected
                         or _leave_msg_card_detected
                         or bool(cta_data)
+                        # Checked against this turn's retrieval; the read side
+                        # skips these too (see ``_credential_question``).
+                        or _credential_question
+                        or _credential_task is not None
                         # Only the turn that actually produced a card is skipped, and
                         # only when the model chose that card: nothing on a cache hit
                         # can know which asset the model would have picked. A card the
@@ -11592,13 +11656,16 @@ async def rag_pipeline_stream(
 
             logger.info(f"Hybrid RAG stream finished for session: {session_id}")
     finally:
-        # A document or price classifier started alongside retrieval that nothing
+        # A document or price classifier started alongside retrieval, or a
+        # credential check started alongside the relevance gate, that nothing
         # awaited (the turn returned first, or the visitor left) is cancelled
         # rather than left pending on the loop.
         if _doc_intent_task is not None and not _doc_intent_task.done():
             _doc_intent_task.cancel()
         if _price_intent_task is not None and not _price_intent_task.done():
             _price_intent_task.cancel()
+        if _credential_task is not None and not _credential_task.done():
+            _credential_task.cancel()
         if _lf_trace is not None:
             with contextlib.suppress(Exception):
                 _lf_trace.update(output=redact_pii(full_answer))
