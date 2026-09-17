@@ -6565,7 +6565,7 @@ UNIVERSAL RULES:
 - At most ONE qualifying question per reply, after the answer, never before it, and never framed as a survey or checklist.
 - Never ask about something the visitor already told you.
 - The closure rule above always wins: after a closure message, ask nothing.
-- ROLE ACKNOWLEDGMENT: when the visitor states their role or that they make the decision, acknowledge it in one short clause before the answer, once per conversation, for example "Good to know you're the one signing off." Do not invent team roles, programmes or processes to go with it.
+- ROLE ACKNOWLEDGMENT: only when the visitor states their own job title or says they make the buying decision, acknowledge exactly what they said in one short clause before the answer, once per conversation, in your own words. Never say they approve or sign off unless they said so, and never read a role into a company type, a task or a form. Do not invent team roles, programmes or processes to go with it.
 - Order to ask in: {", ".join(d.upper() for d in conversation_order)}
 
 CURRENT QUALIFICATION STATE:
