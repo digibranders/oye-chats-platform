@@ -221,6 +221,50 @@ def test_hinglish_questions_that_use_those_words_are_not_frustration(msg):
 @pytest.mark.parametrize(
     "msg",
     [
+        "do u remember me?",
+        "do you remember me",
+        "remember me?",
+        "u remember me from last time",
+        "do you rember me",
+        "do ya remember me",
+        "hey do you remember me from yesterday",
+        "you still remember me?",
+        "did you remember me",
+        "can u remember our last chat",
+        "do u remember our previous conversation",
+    ],
+)
+def test_shorthand_memory_questions_route_to_remember(msg):
+    """Production: "do u remember me?" missed the route, reached the gate twice
+    and opened the unhelped handoff form."""
+    routed = route_intent(msg, COMPANY)
+    assert routed is not None, msg
+    assert routed.intent == "remember", msg
+
+
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "remember me to reset my password",
+        "remember my preferences",
+        "does the login remember me on this device",
+        "how does remember me work",
+        "can the app remember my card",
+        "remember my name?",
+        "will you remember me next time i log in to the portal",
+    ],
+)
+def test_product_questions_about_remembering_are_not_the_memory_route(msg):
+    routed = route_intent(msg, COMPANY, visitor_name="Priya")
+    assert routed is None or routed.intent != "remember", msg
+
+
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "do u remember me " * 2000,
+        "remember " * 5000 + "me",
+        "hey " * 5000 + "remember me",
         "actually" + " " * 20000 + "x",
         "fix" + "!" * 20000 + "x",
         "r u " * 5000,

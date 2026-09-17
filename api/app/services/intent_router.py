@@ -240,11 +240,23 @@ _RECORDED_RE = re.compile(
     r")\b"
 )
 
+_REMEMBER_VERB = r"(?:remember|remeber|rember|rememeber|remembr|recall|recogni[sz]e)"
 _REMEMBER_RE = re.compile(
     r"(?ix)\b(?:"
-    r"(?:can|do)\s+you\s+remember\s+(?:our|my|the)\s+(?:last|previous|earlier)\s+(?:conversation|chat|messages?)"
+    rf"(?:can|do)\s+(?:you|u|ya|yu)\s+{_REMEMBER_VERB}\s+(?:our|my|the)\s+(?:last|previous|earlier)\s+"
+    r"(?:conversation|chat|messages?)"
     r"|do\s+you\s+(?:keep|have)\s+(?:any\s+)?memory"
     r")\b"
+)
+# "Do you remember me?" in chat shorthand, whole message only: "do u remember
+# me?" missed the route in production, reached the gate and opened the unhelped
+# handoff form. Anchored at both ends, so a product question about a "remember
+# me" login ("remember me to reset my password", "does the login remember me on
+# this device") still reaches retrieval.
+_REMEMBER_ME_RE = re.compile(
+    r"^(?:(?:hi|hey|hello|so|ok|okay|and|wait|hmm)\s+){0,2}"
+    rf"(?:(?:(?:do|did|can|will|would)\s+)?(?:you|u|ya|yu)\s+(?:still\s+)?)?{_REMEMBER_VERB}\s+me"
+    r"(?:\s+(?:from|since)\s+(?:last\s+(?:time|week|chat)|before|yesterday|earlier|our\s+last\s+chat))?$"
 )
 
 # Small talk / social reflexes the knowledge base can never answer. Whole-message
@@ -714,7 +726,7 @@ def route_intent(
     # platform can answer, and gets a pivot.
     if _RECORDED_RE.search(norm):
         return _recorded(company_name, support_enabled)
-    if _REMEMBER_RE.search(norm):
+    if _REMEMBER_RE.search(norm) or _REMEMBER_ME_RE.match(norm):
         return _remember(company_name)
 
     # The rest of the identity family stands down when the message also asks
