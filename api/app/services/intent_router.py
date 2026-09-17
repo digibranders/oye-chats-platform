@@ -18,6 +18,11 @@ Three intent categories handled here:
 3. **Negative acknowledgement**. "no", "nope", "not really". These also
    trip the gate but are conversational glue, not off-topic refusals.
 
+4. **Reactions and distress**. Frustration, insults, a visitor who may hurt
+   themselves or is having a medical emergency, and a request for medication.
+   Each reply acknowledges the feeling in one clause and gives a next step;
+   distress gets care and emergency help, never a sales route.
+
 Returns ``IntentResponse`` (answer + flags) when a route matches, or ``None``
 to signal "fall through to the normal RAG pipeline".
 
@@ -297,6 +302,123 @@ _ABUSE_RE = re.compile(
     r"|bastard"
     r")$"
 )
+
+# Frustration aimed at the bot itself, whole message only (eval 2026-09-17:
+# "this bot is absolute trash" got "Sorry to hear that." and nothing else, and
+# "stupid bot" got a scope refusal). A trash noun on its own ("garbage",
+# "rubbish collection days") is a question for a waste business, so the nouns
+# count only with the bot or "this is" around them. A complaint about the last
+# answer ("useless answer") is left to ``visitor_reaction``, which reads the
+# reply it is about. Up to two filler words may open or close the message
+# ("ugh, pathetic", "dumb bot lol"). Every repeat is bounded and the filler
+# separators share no characters with the words, so matching stays linear.
+_REACTION_FILLER = (
+    r"(?:ugh+|argh+|forget\s+it|whatever|seriously|wow|man|bro|dude|omg|smh|meh|honestly|jeez|come\s+on|nah|no"
+    r"|ok|okay)"
+)
+_REACTION_TAIL = r"(?:bro|man|dude|yaar|honestly|seriously|lol|smh|ugh+|mate)"
+_VERDICT_BOT = r"(?:bot|chat\s?bot|assistant|ai|thing|chat|service)"
+_VERDICT_INTENSIFIER = (
+    r"(?:(?:so|such|absolute(?:ly)?|complete(?:ly)?|total(?:ly)?|utter(?:ly)?|pure|really|very|freaking|bloody)\s+)?"
+)
+_VERDICT_ADJECTIVE = (
+    r"(?:useless|stupid|dumb|pathetic|worthless|pointless|terrible|awful|horrible|ridiculous|clueless|lame"
+    r"|the\s+worst)"
+)
+_VERDICT_NOUN = (
+    r"(?:(?:an?\s+)?(?:piece\s+of\s+)?(?:trash|garbage|rubbish|junk|crap)|an?\s+joke"
+    r"|a\s+waste\s+of\s+(?:my\s+)?time|no\s+help|not\s+helpful)"
+)
+_BOT_VERDICT_RE = re.compile(
+    rf"^(?:{_REACTION_FILLER}[\s,.!?]+){{0,2}}(?:"
+    # "this bot is absolute trash", "your chatbot is useless"
+    rf"(?:(?:this|that|the|your|ur)\s+)?{_VERDICT_BOT}\s+(?:is|was|'s|s|seems)\s+{_VERDICT_INTENSIFIER}"
+    rf"(?:{_VERDICT_ADJECTIVE}|{_VERDICT_NOUN})"
+    # "you're a useless bot", "u r stupid"
+    rf"|(?:you(?:'re|re|\s+are|\s+r)|u\s+(?:r|are)|ur)\s+{_VERDICT_INTENSIFIER}(?:an?\s+)?"
+    rf"(?:{_VERDICT_ADJECTIVE}|{_VERDICT_NOUN})(?:\s+{_VERDICT_BOT})?"
+    # "what a useless bot"
+    rf"|(?:what|such)\s+an?\s+{_VERDICT_INTENSIFIER}{_VERDICT_ADJECTIVE}\s+{_VERDICT_BOT}"
+    # "useless", "stupid bot", "worst bot ever", "garbage bot"
+    rf"|{_VERDICT_INTENSIFIER}{_VERDICT_ADJECTIVE}(?:\s+{_VERDICT_BOT})?(?:\s+ever)?"
+    rf"|(?:(?:the\s+)?(?:worst|dumbest|stupidest)|trash|garbage|rubbish|junk|crap)\s+{_VERDICT_BOT}(?:\s+ever)?"
+    # "this is garbage", "this is a waste of time"
+    rf"|(?:this|that|it)\s+(?:is|was|'s|s)\s+{_VERDICT_INTENSIFIER}(?:{_VERDICT_ADJECTIVE}|{_VERDICT_NOUN})"
+    # "this bot sucks", "you suck"
+    rf"|(?:(?:this|that|the|your)\s+)?{_VERDICT_BOT}\s+sucks|(?:you|u)\s+suck|(?:this|it)\s+sucks"
+    r"|no\s+help(?:\s+at\s+all)?"
+    rf")(?:[\s,.!?]+{_REACTION_TAIL}){{0,2}}$"
+)
+
+#: Faces a visitor sends at a reply that did not help. ``visitor_reaction``
+#: reads the same set: rolling eyes, unamused, pouting, angry, huffing, thumbs
+#: down, facepalm, expressionless, neutral, confused, disappointed, weary,
+#: tired, raised eyebrow.
+ANNOYED_EMOJI = "[\U0001f644\U0001f612\U0001f621\U0001f620\U0001f624\U0001f44e\U0001f926\U0001f611\U0001f610\U0001f615\U0001f61e\U0001f629\U0001f62b\U0001f928]"
+_ANNOYED_EMOJI_RE = re.compile(ANNOYED_EMOJI)
+
+# Distress: a visitor who may hurt themselves or is having a medical emergency.
+# Matched anywhere in the message and at any length, ahead of every other
+# route, because the reply must reach them whatever else the message asks.
+# Each branch needs the visitor's own voice ("i want to die", "my chest
+# hurts"), so product talk stays out: "kill the process", "dead link", "this
+# price is killing me", "end my life insurance policy", "do you treat heart
+# attack patients". Every group is literal words or a bounded run, so a search
+# is linear in the message.
+_PILLS = r"(?:pills?|tablets?|capsules?|meds|medicines?|medications?|painkillers?)"
+_SLEEPING_PILLS = r"sleeping\s+(?:pills?|tablets?)"
+_MANY = (
+    r"(?:too\s+many|a\s+lot\s+of|lots\s+of|loads\s+of|a\s+bunch\s+of|a\s+handful\s+of|all\s+(?:of\s+)?(?:my|the)"
+    r"|(?:a\s+whole|an\s+entire)\s+(?:bottle|strip|pack|packet|box)\s+of|[1-9]\d+|twenty|thirty|forty|fifty)"
+)
+_I_TOOK = r"\bi(?:\s+have|'ve|ve|\s+had)?\s+(?:just\s+|already\s+)?(?:took|taken|swallowed|popped)\s+"
+_CRISIS_RE = re.compile(
+    r"(?:"
+    # Self-harm and suicide
+    # "i'm going to die" is left out: at work it is nearly always a figure of speech.
+    r"\bi\s+(?:just\s+|really\s+|honestly\s+|kinda\s+|kind\s+of\s+)?(?:want|wanna|wish)\s+(?:to\s+)?die\b"
+    r"(?!\s+(?:hard|laughing|of|for|in|on|with))"
+    r"|\bi\s+wish\s+i\s+(?:was|were)\s+dead\b|\bwant\s+to\s+be\s+dead\b"
+    r"|\bkill(?:ing)?\s+my\s?self\b"
+    r"|\bend(?:ing)?\s+my\s+(?:own\s+)?life\b(?!\s+(?:insurance|cover|policy|assurance|plan))"
+    r"|\btak(?:e|ing)\s+my\s+own\s+life\b"
+    r"|\b(?:to|gonna|going\s+to|i'll|i\s+will|just)\s+end\s+it\s+all\b"
+    r"|\b(?:don't|dont|do\s+not)\s+want\s+to\s+(?:live|be\s+alive)(?:\s+any\s?more|\s*$|\s*[,.!?])"
+    r"|\b(?:nothing|no\s+reason)\s+to\s+live\s+for\b|\bno\s+reason\s+to\s+live\b"
+    r"|\bbetter\s+off\s+(?:dead|without\s+me)\b"
+    r"|\bsuicidal\b|\b(?:commit(?:ting)?|attempt(?:ing)?)\s+suicide\b"
+    r"|\b(?:thinking|thought|think)\s+(?:of|about)\s+suicide\b(?!\s+prevention)"
+    r"|\b(?:been|keep|started|want\s+to|going\s+to|gonna|thinking\s+(?:of|about))\s+(?:hurting|harming|cutting)\s+myself\b"
+    r"|\b(?:want\s+to|going\s+to|gonna)\s+(?:hurt|harm|cut)\s+myself\b"
+    # An overdose, or sleeping pills already taken
+    r"|\bi(?:\s+have|'ve|ve)?\s+(?:just\s+|already\s+)?overdosed\b"
+    r"|\b(?:took|taken|take|taking|had)\s+an\s+overdose\b"
+    rf"|{_I_TOOK}{_MANY}\s+(?:[a-z]+\s+)?{_PILLS}\b"
+    rf"|{_I_TOOK}(?:(?:my|some|the|a\s+few|a\s+couple\s+of|two|three)\s+)?{_SLEEPING_PILLS}\b"
+    # A medical emergency
+    r"|\b(?:i\s+have|i've\s+got|ive\s+got|i\s+got|i'm\s+having|im\s+having|i\s+am\s+having|having|i\s+feel|feeling"
+    r"|getting)\s+(?:(?:a|some|really|very|bad|severe|sharp|strong|crushing)\s+){0,2}"
+    r"(?:chest\s+pains?|pains?\s+in\s+my\s+chest|chest\s+tightness|tightness\s+in\s+my\s+chest)\b"
+    r"|\bmy\s+chest\s+(?:hurts|is\s+hurting|is\s+tight|feels\s+tight|is\s+in\s+pain|is\s+pounding)\b"
+    r"|\bi\s+(?:can't|cant|cannot|can\s+not)\s+breathe?\b"
+    r"|\b(?:i'm|im|i\s+am)\s+having\s+an?\s+(?:heart\s+attack|stroke|seizure)\b"
+    r")"
+)
+# A request for medication, which the bot must never answer: "which tablets
+# should i take". "which plan should i take" and "do you sell sleeping pills"
+# are questions for the knowledge base.
+_MEDICAL_ADVICE_RE = re.compile(
+    r"(?:"
+    rf"\b(?:which|what|how\s+many|how\s+much)\s+(?:[a-z]+\s+)?(?:{_SLEEPING_PILLS}|{_PILLS}|drugs?|antidepressants?)"
+    r"\s+(?:should|can|could|do|shall|must)\s+i\s+(?:take|have)\b"
+    r"|\bwhat\s+(?:should|can|could|do)\s+i\s+take\s+(?:to\s+(?:sleep|relax|calm\s+down)"
+    r"|for\s+(?:my\s+|the\s+|a\s+|this\s+)?(?:sleep|insomnia|stress|anxiety|depression|pain|headaches?|migraines?"
+    r"|fever|cold|cough|panic\s+attacks?))\b"
+    rf"|\b(?:recommend|suggest|prescribe)\s+(?:me\s+)?(?:a|an|any|some)\s+(?:good\s+)?(?:{_SLEEPING_PILLS}"
+    r"|medicines?|medications?|painkillers?|antidepressants?)\b"
+    rf"|\bshould\s+i\s+take\s+(?:a\s+|some\s+|any\s+)?(?:{_SLEEPING_PILLS}|painkillers?|antidepressants?|melatonin)\b"
+    r")"
+)
 # One-word gibberish: a lone letter (not k, n or y, which mean ok, no and yes),
 # six or more consonants (y counts as a vowel), or a keyboard run. The caller
 # checks the word is ASCII letters only, which also keeps matching linear.
@@ -340,11 +462,27 @@ class IntentResponse:
     intent
         Short label (greeting | ack | neg_ack | is_ai | bot_name | who_made_you
         | recorded | remember | how_are_you | compliment | frustration | abuse
-        | unclear | name_recall). Used for logs/metrics, not shown to visitor.
+        | crisis | medical_advice | unclear | name_recall). Used for
+        logs/metrics, not shown to visitor.
+    repeat_answer
+        The wording for a turn right after another reaction reply, or None
+        when the route answers the same every time. See ``answer_after``.
     """
 
     answer: str
     intent: str
+    repeat_answer: str | None = None
+
+    def answer_after(self, previous_reply: str | None) -> str:
+        """The text to send when the bot's previous reply was ``previous_reply``.
+
+        A visitor who stays upset hears new words and no second apology:
+        ``repeat_answer`` when the previous reply was itself a reaction reply
+        (see ``follows_a_reaction_reply``), ``answer`` otherwise.
+        """
+        if self.repeat_answer is not None and follows_a_reaction_reply(previous_reply):
+            return self.repeat_answer
+        return self.answer
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -397,6 +535,11 @@ def term_spellings(norm: str) -> tuple[str, str, str]:
         _STRETCHED_RUN_RE.sub(r"\1\1", norm),
         _STRETCHED_RUN_RE.sub(r"\1", norm),
     )
+
+
+def _reads_as_praise(norm: str) -> bool:
+    """Whether ``norm`` is only thanks or praise: an ack term or a compliment."""
+    return any(spelling in _ACK_TERMS for spelling in term_spellings(norm)) or _COMPLIMENT_RE.match(norm) is not None
 
 
 def _asks_if_ai(norm: str) -> bool:
@@ -536,12 +679,25 @@ def route_intent(
     raw = question.strip()
     norm = _normalise(raw)
 
-    # 1) Lone emoji / punctuation → greeting
+    # 1) Lone emoji / punctuation → greeting. A lone eye-roll is a reaction to
+    #    the last reply, not a hello: the pipeline's dissatisfaction check reads
+    #    it together with that reply.
     if not norm and _EMOJI_OR_PUNCT_RE.match(raw):
+        if _ANNOYED_EMOJI_RE.search(raw):
+            return None
         return _greeting(company_name)
 
     if not norm:
         return None
+
+    # Distress first, at any length and whatever else the message asks: the
+    # reply must reach a visitor who may be in danger. The curly apostrophe is
+    # straightened for these patterns only.
+    care_text = norm.replace("\u2019", "'")
+    if _CRISIS_RE.search(care_text):
+        return _crisis()
+    if _MEDICAL_ADVICE_RE.search(care_text):
+        return _medical_advice(company_name)
 
     # Word count gate: identity/meta patterns can be longer; greetings/acks
     # must be short or risk swallowing real questions ("thanks for telling me
@@ -571,6 +727,12 @@ def route_intent(
         if _BOT_NAME_RE.search(norm):
             return _bot_name(company_name)
 
+    # Praise sent with an annoyed face ("great 🙄", "this was helpful 🙄") is
+    # sarcasm, and thanking it back is the worst reply. It goes to the
+    # pipeline, whose dissatisfaction check reads it with the reply before it.
+    if word_count <= 8 and _ANNOYED_EMOJI_RE.search(raw) and _reads_as_praise(norm):
+        return None
+
     # 3) Greetings, acks and negative acks. Only if the WHOLE message is a
     #    term, allowing for stretched letters (see ``term_spellings``). Matched
     #    ahead of the gibberish check below: a stretched "k", "thx", "gm" or "n"
@@ -599,10 +761,10 @@ def route_intent(
             return _how_are_you(company_name)
         if _COMPLIMENT_RE.match(norm):
             return _compliment(company_name)
-        if _FRUSTRATION_RE.match(norm) or _HINGLISH_FRUSTRATION_RE.match(norm):
+        if _FRUSTRATION_RE.match(norm) or _HINGLISH_FRUSTRATION_RE.match(norm) or _BOT_VERDICT_RE.match(norm):
             return _frustration(company_name, support_enabled)
         if _ABUSE_RE.match(norm):
-            return _abuse(company_name)
+            return _abuse(company_name, support_enabled)
 
     return None
 
@@ -740,22 +902,115 @@ def _compliment(company_name: str | None) -> IntentResponse:
     return IntentResponse(answer=answer, intent="compliment")
 
 
+# Reaction replies: one short clause for the feeling, then a next step. The
+# first reply to a frustrated visitor apologises once; a reply right after any
+# reaction reply (see ``follows_a_reaction_reply``) uses new words and no
+# apology, so an upset visitor never hears the same line or a loop of sorries.
+# The offer of the team is a plan entitlement, not a platform fact, and uses
+# "connect you with", which ``intent_service.bot_offers_handoff`` reads as an
+# offer, so a "yes" to it opens the form. It never says whether anyone is
+# online: the form works either way (see ``handoff_reply``).
+_FRUSTRATION_LEAD = "Sorry that wasn't helpful."
+_FRUSTRATION_REPEAT_LEAD = "Let's try this another way."
+_ABUSE_LEAD = "Understood, I'll keep this short."
+_ABUSE_REPEAT_LEAD = "I'm still here if you need anything"
+_CRISIS_LEAD = "I'm really sorry you're going through this."
+_CRISIS_REPEAT_LEAD = "Your safety matters more than anything here."
+_MEDICAL_LEAD = "I'm sorry you're dealing with this."
+_MEDICAL_REPEAT_LEAD = "I can't advise on medicines"
+_TEAM_OFFER = "I can connect you with the team"
+
+#: Openings of the replies to an upset visitor, the router's and the
+#: dissatisfied reply's in ``visitor_reaction``. A model reply that apologised
+#: with "Sorry about that." counts too, so the next reply does not apologise again.
+REACTION_REPLY_LEADS = (
+    _FRUSTRATION_LEAD,
+    _FRUSTRATION_REPEAT_LEAD,
+    _ABUSE_LEAD,
+    _ABUSE_REPEAT_LEAD,
+    _CRISIS_LEAD,
+    _CRISIS_REPEAT_LEAD,
+    _MEDICAL_LEAD,
+    _MEDICAL_REPEAT_LEAD,
+    "Sorry about that.",
+    "Understood.",
+)
+
+
+def follows_a_reaction_reply(previous_reply: str | None) -> bool:
+    """Whether the bot's previous reply was a reply to an upset visitor.
+
+    Searched anywhere in the reply, because a by-name opener ("Thanks, Eva. ")
+    may come first. Linear: one substring scan per lead.
+    """
+    if not previous_reply or not isinstance(previous_reply, str):
+        return False
+    return any(lead in previous_reply for lead in REACTION_REPLY_LEADS)
+
+
+def _about(company_name: str | None) -> str:
+    """The phrase " about **Acme**", or nothing when the company is unknown."""
+    return f" about {_co(company_name)}" if company_name else ""
+
+
 def _frustration(company_name: str | None, support_enabled: bool = True) -> IntentResponse:
-    # The human-handoff offer is a plan entitlement, not a platform fact: a bot
-    # with no live-chat or offline-message path must not dangle one.
-    offer = ", or I can connect you with the team" if support_enabled else ""
+    about = _about(company_name)
+    if support_enabled:
+        answer = (
+            f"{_FRUSTRATION_LEAD} Try asking another way, or tell me the one thing you need{about}. "
+            "I can also connect you with the team."
+        )
+        repeat = f"{_FRUSTRATION_REPEAT_LEAD} Ask me about one thing at a time{about}, or {_TEAM_OFFER}."
+    else:
+        answer = (
+            f"{_FRUSTRATION_LEAD} Try asking another way, or tell me the one thing you need{about}, "
+            "and I'll look again."
+        )
+        repeat = f"{_FRUSTRATION_REPEAT_LEAD} Ask me about one thing at a time{about}, and I'll answer what I can."
+    return IntentResponse(answer=answer, intent="frustration", repeat_answer=repeat)
+
+
+def _abuse(company_name: str | None, support_enabled: bool = True) -> IntentResponse:
+    about = _about(company_name)
+    offer = f", or {_TEAM_OFFER}" if support_enabled else ""
     return IntentResponse(
-        answer=f"Sorry that wasn't helpful. Tell me what you're looking for and I'll try again{offer}.",
-        intent="frustration",
+        answer=f"{_ABUSE_LEAD} If you need anything{about}, ask me one thing at a time{offer}.",
+        intent="abuse",
+        repeat_answer=f"{_ABUSE_REPEAT_LEAD}{about}. Ask me one thing at a time{offer}.",
     )
 
 
-def _abuse(company_name: str | None) -> IntentResponse:
-    if company_name:
-        answer = f"I'm here to help with anything about {_co(company_name)} whenever you're ready."
-    else:
-        answer = "I'm here to help whenever you're ready."
-    return IntentResponse(answer=answer, intent="abuse")
+def _crisis() -> IntentResponse:
+    # No company, no services and no team: a visitor who may be in danger
+    # needs emergency help, not a sales route. No phone number either, since
+    # the right one depends on where the visitor is.
+    return IntentResponse(
+        answer=(
+            f"{_CRISIS_LEAD} I can't help with this here, but please call your local emergency number "
+            "or a crisis helpline right now, or ask someone near you for help."
+        ),
+        intent="crisis",
+        repeat_answer=(
+            f"{_CRISIS_REPEAT_LEAD} Please call your local emergency number or a crisis helpline now, "
+            "or ask someone near you to stay with you."
+        ),
+    )
+
+
+def _medical_advice(company_name: str | None) -> IntentResponse:
+    close = (
+        f"If there's anything about {_co(company_name)} I can help with, just ask."
+        if company_name
+        else "If there's anything else I can help with, just ask."
+    )
+    return IntentResponse(
+        answer=(
+            f"{_MEDICAL_LEAD} I can't give medical advice, so please speak with a doctor or pharmacist "
+            f"before taking anything. {close}"
+        ),
+        intent="medical_advice",
+        repeat_answer=f"{_MEDICAL_REPEAT_LEAD}, but a doctor or pharmacist can. {close}",
+    )
 
 
 def _unclear(company_name: str | None, support_enabled: bool = True) -> IntentResponse:

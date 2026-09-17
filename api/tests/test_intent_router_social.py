@@ -123,10 +123,15 @@ def test_unclear_asks_for_more_and_offers_no_person():
 
 
 @pytest.mark.parametrize("msg", ["f*** off", "fuck off"])
-def test_abuse_stays_calm_and_offers_no_person(msg):
-    reply = route_intent(msg, COMPANY).answer
-    assert "connect" not in reply.lower()
-    assert "**Acme**" in reply
+def test_abuse_stays_calm_and_offers_the_team_only_on_a_plan_with_one(msg):
+    """Eval 2026-09-17: a calm reply with no next step left an upset visitor
+    nowhere to go, so the reply offers the team when the plan has one."""
+    with_team = route_intent(msg, COMPANY, support_enabled=True).answer
+    without = route_intent(msg, COMPANY, support_enabled=False).answer
+    assert "**Acme**" in with_team and "**Acme**" in without
+    assert bot_offers_handoff(with_team), with_team
+    assert "connect" not in without.lower()
+    assert not bot_offers_handoff(without), without
 
 
 # ─────────────────────────────────────────────────────────────────────────────

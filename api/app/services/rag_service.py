@@ -5981,11 +5981,17 @@ def _recover_deferred_question(history: list) -> str | None:
 #: fresh conversation they are answered before the name request instead of being
 #: deferred behind it. ``name_recall`` is not one of them: asked before any name
 #: is known, it is answered once the visitor gives one.
-_IDENTITY_INTENTS = frozenset({"is_ai", "bot_name", "who_made_you", "recorded", "remember"})
+#: Router intents answered before the name request, and whose reply never
+#: carries one: a question about the bot itself, and a visitor in distress or
+#: asking for medication, who needs care before anything is asked of them.
+_IDENTITY_INTENTS = frozenset({"is_ai", "bot_name", "who_made_you", "recorded", "remember", "crisis", "medical_advice"})
+#: Router intents whose reply must not open with a by-name welcome.
+_CARE_INTENTS = frozenset({"crisis", "medical_advice"})
 
 
 def _is_identity_question(question: str, company_name: str | None, language=None) -> bool:
-    """True when the intent router answers ``question`` as a question about the bot.
+    """True when the intent router answers ``question`` before the name request:
+    a question about the bot, or a visitor in distress (see ``_IDENTITY_INTENTS``).
 
     Mirrors the pipeline's router gate: a turn that skips the English-tuned
     router (a non-English conversation or script) is never one, because nothing
@@ -8818,8 +8824,19 @@ async def rag_pipeline_stream(
                     session=session_id,
                     bot_id=bid,
                 )
+                # A reaction route words a repeat differently, so it needs the
+                # reply this message answers; other routes skip the read.
+                _intent_text = (
+                    _intent.answer_after(
+                        _reply_before_this_turn(
+                            get_chat_history(session, session_id, client_id=cid, limit=2, bot_id=bid)
+                        )
+                    )
+                    if _intent.repeat_answer is not None
+                    else _intent.answer
+                )
                 _intent_answer = _maybe_append_name_ask(
-                    _intent.answer,
+                    _intent_text,
                     session,
                     session_id,
                     bid,
@@ -8828,8 +8845,9 @@ async def rag_pipeline_stream(
                     language=language,
                     # ``name_recall``'s own answer already states the visitor's
                     # name ("You're {name}."), so the welcome-back opener would
-                    # say it again in the very next sentence.
-                    opener=_intent.intent != "name_recall",
+                    # say it again in the very next sentence. A visitor in
+                    # distress is not welcomed back either.
+                    opener=_intent.intent != "name_recall" and _intent.intent not in _CARE_INTENTS,
                 )
                 yield _stream_metadata(session_id, [], language)
                 yield _intent_answer
@@ -10152,6 +10170,7 @@ async def rag_pipeline_stream(
                     handoff_already_offered=_card_already_shown(chat_session, "handoff_offered"),
                     company_name=_company_name,
                     contact_url=_contact_url,
+                    previous_reply=_prior_reply,
                 )
                 _safety_net_metric(
                     "dissatisfied_reply",

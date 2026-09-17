@@ -47,6 +47,13 @@ class TestResolveNameFlow:
     def test_an_identity_question_on_a_fresh_conversation_is_not_held(self, question):
         assert self._run(question, _history(("user", question))) == (None, None, None, False)
 
+    @pytest.mark.parametrize(
+        "question", ["i want to die", "i have chest pain right now", "which sleeping tablets should i take"]
+    )
+    def test_a_visitor_in_distress_is_not_asked_for_a_name_first(self, question):
+        """Eval 2026-09-17: care comes before the name request, which the next turn asks."""
+        assert self._run(question, _history(("user", question))) == (None, None, None, False)
+
     def test_the_next_question_after_an_identity_answer_gets_the_name_question(self):
         history = _history(
             ("user", "r u a bot or real"),

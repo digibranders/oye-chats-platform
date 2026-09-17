@@ -29,6 +29,7 @@ import re
 
 from app.services import runtime_config
 from app.services.handoff_reply import HandoffOffer, handoff_reply, unhelped_offer
+from app.services.intent_router import ANNOYED_EMOJI, follows_a_reaction_reply
 from app.services.llm_service import generate_response_checked
 from app.services.pricing_gate import normalize_url
 from app.services.prompt_fence import neutralise_fence, tail_for_prompt
@@ -157,10 +158,9 @@ def is_waiting_for_a_person(message: object) -> bool:
 #: A reaction is short. A long message with "useless" in it is about something.
 _DISSATISFIED_MAX_WORDS = 20
 
-#: Faces a visitor sends at a reply that did not help: rolling eyes, unamused,
-#: pouting, angry, huffing, thumbs down, facepalm, expressionless, neutral,
-#: confused, disappointed, weary, tired, raised eyebrow.
-_ANNOYED_EMOJI = "[\U0001f644\U0001f612\U0001f621\U0001f620\U0001f624\U0001f44e\U0001f926\U0001f611\U0001f610\U0001f615\U0001f61e\U0001f629\U0001f62b\U0001f928]"
+#: Faces a visitor sends at a reply that did not help, shared with the router,
+#: which leaves praise sent with one of them to this check.
+_ANNOYED_EMOJI = ANNOYED_EMOJI
 
 #: Words that make a message worth asking the model about. Recall over precision:
 #: "great" and "cool" are praise as often as sarcasm, and the model tells them apart.
@@ -305,8 +305,11 @@ def classify_dissatisfaction(message: str, previous_reply: str) -> bool:
         return fallback_is_dissatisfied(message)
 
 
-#: The apology that opens every reply to a dissatisfied visitor.
+#: The apology that opens a reply to a dissatisfied visitor.
 DISSATISFIED_ACK = "Sorry about that."
+#: The opening instead when the bot's previous reply already answered an upset
+#: visitor, so the conversation never becomes a loop of apologies.
+DISSATISFIED_REPEAT_ACK = "Understood."
 
 
 def dissatisfied_offer(
@@ -317,6 +320,7 @@ def dissatisfied_offer(
     handoff_already_offered: bool,
     company_name: str | None,
     contact_url: str | None,
+    previous_reply: str | None = None,
 ) -> HandoffOffer:
     """The reply to a visitor who is unhappy with the bot's last reply.
 
@@ -326,9 +330,16 @@ def dissatisfied_offer(
     message card when live chat is off. A plan with no human support gets no
     offer of a person: the contact page on the customer's own site when one is
     mapped (a page, not a channel, for the reason ``rag_service._no_info_pivot``
-    gives), and otherwise a request for more detail.
+    gives), and otherwise a way to ask again.
+
+    ``previous_reply`` is the bot's reply the visitor is reacting to. When that
+    reply was itself a reply to an upset visitor (see
+    ``intent_router.follows_a_reaction_reply``), the opening is
+    ``DISSATISFIED_REPEAT_ACK`` and the apology is not repeated.
     """
+    ack = DISSATISFIED_REPEAT_ACK if follows_a_reaction_reply(previous_reply) else DISSATISFIED_ACK
     if not support_enabled:
+        about = f" about **{company_name}**" if company_name else ""
         usable_url = (
             contact_url.strip()
             if isinstance(contact_url, str) and contact_url.strip() and normalize_url(contact_url)
@@ -337,24 +348,26 @@ def dissatisfied_offer(
         if usable_url:
             team = f"the **{company_name}** team" if company_name else "our team"
             return HandoffOffer(
-                text=f"{DISSATISFIED_ACK} You can reach {team} here: {usable_url}",
+                text=f"{ack} You can reach {team} here: {usable_url}",
                 suggest_handoff=False,
                 needs_message_card=False,
             )
         return HandoffOffer(
-            text=f"{DISSATISFIED_ACK} Tell me a little more about what you're looking for, and I'll do my best to help.",
+            text=(
+                f"{ack} Try asking another way, or tell me the one thing you need{about}, and I'll do my best to help."
+            ),
             suggest_handoff=False,
             needs_message_card=False,
         )
     if live_chat_enabled and handoff_already_offered:
         return HandoffOffer(
-            text=f"{DISSATISFIED_ACK} {handoff_reply(team_available=team_available, repeat=True)}",
+            text=f"{ack} {handoff_reply(team_available=team_available, repeat=True)}",
             suggest_handoff=True,
             needs_message_card=False,
         )
     offer = unhelped_offer(live_chat_enabled=live_chat_enabled, team_available=team_available)
     return HandoffOffer(
-        text=f"{DISSATISFIED_ACK} {offer.text}",
+        text=f"{ack} {offer.text}",
         suggest_handoff=offer.suggest_handoff,
         needs_message_card=offer.needs_message_card,
     )
