@@ -2511,7 +2511,7 @@ def _embed_snippet(bot_key: str) -> str:
     """
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", bot_key or ""):
         raise HTTPException(status_code=422, detail="This chatbot's embed key is malformed.")
-    return f'<script src="{WIDGET_SCRIPT_URL}" data-bot-key="{bot_key}"></script>'
+    return f'<script async src="{WIDGET_SCRIPT_URL}" data-bot-key="{bot_key}"></script>'
 
 
 @router.post("/{bot_id}/install-invite")

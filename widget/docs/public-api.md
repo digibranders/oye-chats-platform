@@ -29,7 +29,7 @@ Once the loader script (`oyechats-widget.js`) runs, `window.OyeChats` is availab
 
 | Event | Payload | Fires when |
 |---|---|---|
-| `ready` | `{ version }` | The widget has mounted and is ready to receive commands |
+| `ready` | `{ version }` | The widget has mounted and is ready to receive commands. A handler registered after that is still called once, on the next tick |
 | `open` | — | The chat panel opened |
 | `close` | — | The chat panel closed |
 | `message:user` | `{ text, sessionId }` | Visitor sent a message |
@@ -41,10 +41,12 @@ Once the loader script (`oyechats-widget.js`) runs, `window.OyeChats` is availab
 | `error` | `{ message, source }` | An error occurred (network, validation, etc.) |
 | `localeChanged` | `{ locale, language, direction }` | The widget's locale changed (via `setLocale`, `update({locale})`, or the in-widget picker) |
 
-> **Only `ready`, `open`, `close` and `localeChanged` currently fire.** The other events in
-> this table are registered as valid and accepted by `on()` / `once()` without warning, but
-> no code emits them — subscribing to `message:bot`, `lead:captured`, `handoff:requested`,
-> `handoff:accepted`, `rating:submitted`, `message:user` or `error` gives you a handler that
+> **Only `ready`, `open`, `close`, `localeChanged` and `error` currently fire.** `error`
+> fires in one case only: the widget stylesheet failed to load (`source: 'stylesheet'`), in
+> which case the widget does not render. The other events in this table are registered as
+> valid and accepted by `on()` / `once()` without warning, but no code emits them.
+> Subscribing to `message:bot`, `lead:captured`, `handoff:requested`,
+> `handoff:accepted`, `rating:submitted` or `message:user` gives you a handler that
 > is never called. They are specified here and in `widget/types/oyechats.d.ts` because they
 > are the intended contract; the emit sites have not been written. **Do not build an
 > integration on them yet** — verified against `widget/src/widget-controller.js` and every
@@ -53,21 +55,31 @@ Once the loader script (`oyechats-widget.js`) runs, `window.OyeChats` is availab
 ## Examples
 
 ```html
-<script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>
+<script async src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>
 
 <script>
-  // Pre-register handlers — the queue absorbs these until the widget loads.
-  // Only the events marked as firing above will call back today.
-  OyeChats.on('ready', () => console.log('OyeChats ready'));
-  OyeChats.on('open', () => analytics.track('chat_opened'));
-  OyeChats.on('localeChanged', ({ locale }) => analytics.track('chat_locale', { locale }));
+  // The loader is async, so `window.OyeChats` may not exist yet when this runs.
+  // The page's load event waits for it. Once it exists, calls made before the
+  // widget finishes loading are queued and replayed.
+  window.addEventListener('load', function () {
+    // Missing when an ad blocker or a Content-Security-Policy stopped the loader.
+    if (!window.OyeChats) return;
 
-  // Sync with logged-in user state (idempotent)
-  if (window.currentUser) {
-    OyeChats.identify(currentUser);
-  }
+    // `ready` also reaches a handler registered after the widget has mounted.
+    // Only the events marked as firing above will call back today.
+    OyeChats.on('ready', () => console.log('OyeChats ready'));
+    OyeChats.on('open', () => analytics.track('chat_opened'));
+    OyeChats.on('localeChanged', ({ locale }) => analytics.track('chat_locale', { locale }));
+
+    // Sync with logged-in user state (idempotent)
+    if (window.currentUser) {
+      OyeChats.identify(currentUser);
+    }
+  });
 </script>
 ```
+
+Pages that still use the older tag without `async` can call `OyeChats` directly after it: that tag runs the loader before the next script.
 
 ## TypeScript
 

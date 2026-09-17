@@ -15,6 +15,8 @@ OyeChats supports deferred init so the widget only mounts after the visitor acce
 
 When `OYECHATS_ASYNC_INIT === true`, the loader registers `window.OyeChats` but does NOT mount the widget yet.
 
+Keep this tag without `async`, unlike the standard snippet. A consent tool can fire its accept event as soon as the page starts, for a returning visitor who already agreed, and the handlers below call `window.OyeChats.init()`, which only exists once the loader has run.
+
 ## 2. Mount on consent
 
 ### Cookiebot

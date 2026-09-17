@@ -76,7 +76,7 @@ const html: Platform = {
         {
             title: 'Add the script tag to your HTML',
             description: 'Paste this snippet just before the closing </body> tag in your HTML file.',
-            code: `<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
+            code: `<script async src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
             language: 'html',
         },
         {
@@ -135,7 +135,7 @@ const react: Platform = {
             title: 'Add the script tag to index.html',
             description:
                 'Open public/index.html (Create React App) or index.html (Vite) and paste this just before </body>. This is the simplest place for it: the widget loads on every route without a component having to mount, and it stays in your served HTML, so anything that reads your page without running JavaScript can still see it.',
-            code: `<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
+            code: `<script async src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
             language: 'html',
         },
         {
@@ -189,7 +189,7 @@ const vue: Platform = {
                 'The simplest approach is to add the script tag directly in your index.html. For Nuxt, use the useHead composable instead.',
             code: `<!-- Option 1: In index.html (Vue CLI / Vite) -->
 <!-- Add before </body> in index.html -->
-<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
+<script async src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
             language: 'html',
         },
         {
@@ -241,7 +241,7 @@ const angular: Platform = {
 <body>
   <app-root></app-root>
 
-  <script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>
+  <script async src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>
 </body>
 </html>`,
             language: 'html',
@@ -275,7 +275,7 @@ const svelte: Platform = {
 <body data-sveltekit-preload-data="hover">
   <div style="display: contents">%sveltekit.body%</div>
 
-  <script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>
+  <script async src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>
 </body>
 </html>`,
             language: 'html',
@@ -329,7 +329,7 @@ const astro: Platform = {
   <body>
     <slot />
 
-    <script is:inline src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>
+    <script is:inline async src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>
   </body>
 </html>`,
             language: 'astro',
@@ -356,7 +356,7 @@ const wordpress: Platform = {
             title: 'Option A: Use a plugin (easiest)',
             description:
                 'Install the "Insert Headers and Footers" plugin (by WPCode). Go to Code Snippets → Header & Footer, paste the script in the "Footer" section, and click Save.',
-            code: `<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
+            code: `<script async src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
             language: 'html',
         },
         {
@@ -414,7 +414,7 @@ const shopify: Platform = {
             description:
                 'In the Layout section, open theme.liquid. Paste the script just before the closing </body> tag.',
             code: `<!-- OyeChats Widget -->
-<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>
+<script async src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>
 </body>`,
             language: 'html',
         },
@@ -445,7 +445,7 @@ const squarespace: Platform = {
         {
             title: 'Paste in the Footer section',
             description: 'In the "Footer" field, paste the following script and click Save.',
-            code: `<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
+            code: `<script async src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
             language: 'html',
         },
         {
@@ -476,7 +476,7 @@ const webflow: Platform = {
             title: 'Paste in the Footer Code section',
             description:
                 'In the "Footer Code" field (Before </body> tag), paste the following and click Save Changes.',
-            code: `<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
+            code: `<script async src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
             language: 'html',
         },
         {
@@ -507,7 +507,7 @@ const wix: Platform = {
             title: 'Add custom code snippet',
             description:
                 'Click "+ Add Custom Code", paste the script below, set placement to "Body - end", apply to "All pages", and click Apply.',
-            code: `<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
+            code: `<script async src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
             language: 'html',
         },
         {
@@ -538,7 +538,7 @@ const framer: Platform = {
             title: 'Add to the End of <body> section',
             description:
                 'Paste the following in the "End of <body> tag" section and click Save.',
-            code: `<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
+            code: `<script async src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
             language: 'html',
         },
         {
@@ -569,7 +569,7 @@ const bubble: Platform = {
             title: 'Add the script to the page header or body',
             description:
                 'In the "Script/meta tags in body" section, paste the following code and click Save.',
-            code: `<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
+            code: `<script async src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
             language: 'html',
         },
         {
@@ -600,7 +600,7 @@ const gtm: Platform = {
             title: 'Paste the widget script',
             description:
                 'In the HTML field, paste the following code.',
-            code: `<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
+            code: `<script async src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
             language: 'html',
         },
         {

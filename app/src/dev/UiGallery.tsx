@@ -2323,7 +2323,7 @@ function DataPanel() {
             <CardBody className="space-y-3">
               <CodeBlock
                 caption="Paste before </body>"
-                code={'<script src="https://cdn.oyechats.com/oyechats-widget.js"\n        data-bot-key="bot-6a427d4529b9"></script>'}
+                code={'<script async src="https://cdn.oyechats.com/oyechats-widget.js"\n        data-bot-key="bot-6a427d4529b9"></script>'}
               />
               <CodeBlock label="curl" code={'curl -H "X-API-Key: $KEY" https://api.oyechats.com/bots'} />
             </CardBody>

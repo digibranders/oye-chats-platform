@@ -448,7 +448,7 @@ export interface SnippetInput {
 export function embedSnippet({ botKey, env }: SnippetInput): string {
   // @i18n-exempt: the HTML the customer pastes into their own site. A
   // translated <script> tag is a broken install.
-  return `<script src="${widgetScriptUrl(env)}" data-bot-key="${botKey}"></script>`;
+  return `<script async src="${widgetScriptUrl(env)}" data-bot-key="${botKey}"></script>`;
 }
 
 /** The origin a Content-Security-Policy has to allow for the bundle to load. */

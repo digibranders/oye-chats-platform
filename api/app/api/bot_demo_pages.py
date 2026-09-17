@@ -122,7 +122,7 @@ def _widget_script_tag(bot_key: str) -> str:
     whose whole job is showing what the customer will get was the one surface
     that could not show a change before it shipped.
     """
-    return f'<script src="{html.escape(CONFIGURED_WIDGET_SCRIPT_URL)}" data-bot-key="{html.escape(bot_key)}"></script>'
+    return f'<script async src="{html.escape(CONFIGURED_WIDGET_SCRIPT_URL)}" data-bot-key="{html.escape(bot_key)}"></script>'
 
 
 def _build_screenshot_demo_page_html(bot: Bot, edit: bool = False) -> str:

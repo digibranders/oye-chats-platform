@@ -62,7 +62,7 @@ function genericSteps(botKey: string, scriptUrl: string): string {
     'Whichever path applies, the tag that must end up on the page is:',
     '',
     '```html',
-    `<script src="${scriptUrl}" data-bot-key="${botKey}"></script>`,
+    `<script async src="${scriptUrl}" data-bot-key="${botKey}"></script>`,
     '```',
   ].join('\n');
 }
@@ -91,7 +91,7 @@ Install the OyeChats chat widget so it loads on every page of the website.
 
 ## Widget Snippet
 \`\`\`html
-<script src="${scriptUrl}" data-bot-key="${botKey}"></script>
+<script async src="${scriptUrl}" data-bot-key="${botKey}"></script>
 \`\`\`
 
 - **Bot Key:** \`${botKey}\` (Public identifier - safe to commit)

@@ -232,6 +232,13 @@ describe('embedSnippet', () => {
     expect(snippet.split('\n')).toHaveLength(1);
   });
 
+  it('loads without blocking the customer page', () => {
+    // A plain <script src> stops the page parsing until the loader arrives
+    // (about 0.7 s on a first visit, measured 2026-09-17).
+    const snippet = embedSnippet({ botKey: BOT_KEY, env: 'production' });
+    expect(snippet).toMatch(/^<script async src="/);
+  });
+
   it('writes no markup of our own into the customer page', () => {
     const snippet = embedSnippet({ botKey: BOT_KEY, env: 'production' });
     expect(snippet).not.toContain('<a ');

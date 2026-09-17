@@ -3,14 +3,14 @@
 The embeddable chat widget. Customers paste one `<script>` tag into their site and a chatbot appears.
 
 ```html
-<script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>
+<script async src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>
 ```
 
 ## Architecture (post-bundle-split)
 
 The build emits two layers:
 
-- **`oyechats-widget.js`** (~1.3 KB gzipped) — the loader IIFE customers embed. Bootstraps the shadow DOM, exposes `window.OyeChats`, fetches the manifest, dynamically imports the app entry chunk.
+- **`oyechats-widget.js`** (~2.1 KB gzipped): the loader IIFE customers embed. Bootstraps the shadow DOM, exposes `window.OyeChats`, starts the stylesheet and imports the app chunks in parallel. The chunk names are baked in at build time, so there is no manifest request.
 - **`app/`** — the React app, ESM-only with code-splitting. The browser only downloads chunks as features are used.
 
 Initial payload on a host page:
