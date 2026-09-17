@@ -1759,6 +1759,38 @@ class TestResponseSuggestsLeaveMessage:
         # Informational mention of a form on the site should not fire.
         assert not self._match("We form lasting partnerships with all our clients.")
 
+    # A reply that gives an address or a number answered the visitor: forcing
+    # the form on top of it contradicts the reply (review, 2026-09-17).
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Write to us at hello@eventussecurity.com.",
+            "You can leave a message for support at support@acme.com",
+            "You can send us a note on +91 22 4000 1234 any time.",
+            "Leave a message for the team on (415) 555-0100.",
+        ],
+    )
+    def test_a_reply_with_a_contact_address_or_number_does_not_force_the_form(self, text):
+        assert not self._match(text)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "You can leave a message for our team here.",
+            "I'll open a quick message form for you. We answer within 24 hours.",
+            "Leave a message and our team replies by 2026.",
+        ],
+    )
+    def test_a_form_promise_without_a_contact_still_forces_the_form(self, text):
+        assert self._match(text)
+
+    def test_a_long_digit_run_is_read_quickly(self):
+        import time
+
+        started = time.perf_counter()
+        self._match("leave a message " + "1 " * 50_000 + "@" * 50_000)
+        assert time.perf_counter() - started < 1.0
+
 
 class TestLeaveMessageDisqualifiers:
     """User turns that MUST block the safety net even when intent verb matches."""

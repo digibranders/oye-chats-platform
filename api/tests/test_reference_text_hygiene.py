@@ -65,6 +65,8 @@ class TestPhoneCodeRuns:
             "[Document: https://eventussecurity.com/talk-to-sales/] [Page: 1] *    Sweden+46\n"
             "*    Switzerland+41\n"
             "*    Syria+963\n"
+            "*    Taiwan+886\n"
+            "*    Tajikistan+992\n"
             "Title\n"
             "Company"
         )
@@ -74,7 +76,7 @@ class TestPhoneCodeRuns:
         )
 
     def test_a_dash_bullet_and_a_spaced_code_are_one_run(self):
-        text = "Intro\n- Germany +49\n- India +91\n- Japan +81\nOutro"
+        text = "Intro\n- Germany +49\n- India +91\n- Japan +81\n- Kenya +254\n- Mexico +52\nOutro"
 
         assert strip_phone_code_runs(text) == "Intro\nOutro"
 
@@ -89,15 +91,32 @@ class TestPhoneCodeRuns:
             "Call us\nIndia +91\nUnited States +1\nWe answer within a day.",
             "Phone: +91 22 1234 5678\nFax: +91 22 1234 5679\nToll free: +1 800 555 0100",
             "We serve France, Germany and Spain.",
+            # Not countries: a results list keeps its figures, however long.
+            "Results\nRevenue +40\nCustomers +120\nNPS +72",
+            "Results\n*   Revenue +40\n*   Customers +120\n*   NPS +72\n*   Seats +500\n*   Margin +12\n*   Uptime +3",
+            # A short list of offices is not a picker, even with bare codes.
+            "Offices:\nIndia +91\nUSA +1\nUK +44",
+            "Offices:\nIndia +91\nFrance +33\nGermany +49\nJapan +81",
         ],
     )
     def test_real_address_and_phone_lines_are_kept(self, text):
         assert strip_phone_code_runs(text) == text
 
     def test_a_run_broken_by_a_real_line_is_judged_per_side(self):
-        text = "France+33\nGermany+49\nOur Paris office\nSpain+34\nItaly+39\nMalta+356"
+        text = (
+            "France+33\nGermany+49\nOur Paris office\nSpain+34\nItaly+39\nMalta+356\nNorway+47\nPoland+48\nRevenue +40"
+        )
 
-        assert strip_phone_code_runs(text) == "France+33\nGermany+49\nOur Paris office"
+        assert strip_phone_code_runs(text) == "France+33\nGermany+49\nOur Paris office\nRevenue +40"
+
+    def test_picker_spellings_of_country_names_are_countries(self):
+        text = (
+            "Intro\n*    Åland Islands+358\n*    Antigua & Barbuda+1\n*    Congo - Brazzaville+242\n"
+            "*    Hong Kong SAR China+852\n*    Myanmar (Burma)+95\n*    Palestinian Territories+970\n"
+            "*    St. Vincent & Grenadines+1\n*    São Tomé & Príncipe+239\nOutro"
+        )
+
+        assert strip_phone_code_runs(text) == "Intro\nOutro"
 
     def test_long_adversarial_lines_stay_linear(self):
         hostile = "\n".join(
@@ -196,7 +215,8 @@ class TestTheReferenceContextIsTidied:
         assert "mailto:" not in context
 
     def test_the_picker_does_not_use_up_the_truncation_budget(self):
-        picker = "\n".join(f"*    Country{chr(65 + i % 26)}+{i}" for i in range(400))
+        countries = ("Finland", "France", "Germany", "India", "Japan", "Kenya", "Mexico", "Norway")
+        picker = "\n".join(f"*    {countries[i % len(countries)]}+{i}" for i in range(400))
         doc = SimpleNamespace(content=f"{picker}\nEmail: hello@acme.com", document_name="contact")
 
         context = rs._build_reference_context([doc], None)
@@ -205,7 +225,7 @@ class TestTheReferenceContextIsTidied:
         assert "[truncated]" not in context
 
     def test_tidy_is_both_cleaners(self):
-        text = "Mail [hr@](mailto:hr@acme.com)\nA+1\nB+2\nC+3"
+        text = "Mail [hr@](mailto:hr@acme.com)\nChad+235\nChile+56\nChina+86\nCuba+53\nCyprus+357"
 
         assert tidy_reference_text(text) == "Mail hr@acme.com"
 

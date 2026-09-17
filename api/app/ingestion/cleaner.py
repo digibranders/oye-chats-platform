@@ -2,6 +2,7 @@ import re
 from urllib.parse import unquote
 
 from app.security.injection_patterns import compile_line_anchored_strip_pattern
+from app.services.kb_quality import starts_with_country_name
 
 # A "cell" that is nothing but a single markdown link. I.e. a nav-bar entry.
 # Used to distinguish pipe-separated nav rows from real markdown data tables.
@@ -344,30 +345,39 @@ def clean_text(text: str) -> str:
 # the Eventus Security contact form). The optional ``[Document: ...] [Page: n]``
 # prefix is the header a chunk that opens inside the picker carries. Every
 # quantifier is bounded or separated from its neighbour by a required character,
-# so a hostile line costs linear time.
+# so a hostile line costs linear time. The name must be a country or territory
+# (``kb_quality.starts_with_country_name``), so "Revenue +40" is never one.
 _PHONE_CODE_LINE_RE = re.compile(
     r"(?P<prefix>\[Document: [^\]\n]*\](?:[ \t]*\[Page: \d+\])?)?"
     r"[ \t]*(?:[*\-•][ \t]+)?"
-    r"[^\W\d_](?:[^\W\d_]|[ .'’()&,\-]){0,59}"
+    r"(?P<name>[^\W\d_](?:[^\W\d_]|[ .'’()&,\-]){0,59})"
     r"\+\d{1,4}[ \t]*"
 )
 
-# Fewer lines than this are an address or a short list of offices, not a picker.
-_PHONE_CODE_MIN_RUN = 3
+# Fewer lines than this are an address or a list of offices, not a picker. A
+# crawled picker runs to hundreds of lines; the shortest run in the Eventus
+# Security knowledge base, cut by a chunk edge, is six. A chunk edge that
+# leaves a shorter tail keeps those few lines.
+_PHONE_CODE_MIN_RUN = 5
 
 
 def _phone_code_line(line: str) -> re.Match[str] | None:
     if "+" not in line:
         return None
-    return _PHONE_CODE_LINE_RE.fullmatch(line)
+    match = _PHONE_CODE_LINE_RE.fullmatch(line)
+    if match is None or not starts_with_country_name(match.group("name")):
+        return None
+    return match
 
 
 def strip_phone_code_runs(text: str) -> str:
-    """Drop runs of three or more consecutive country-code picker lines.
+    """Drop runs of five or more consecutive country-code picker lines.
 
-    A lone "India +91" in an address block and a full number such as
-    "France +33 1 23 45 67 89" are kept. When a dropped line carries a chunk's
-    document header, the header is kept on its own line.
+    Every line of a run names a country or territory before its code. A lone
+    "India +91" in an address block, a short office list, a results list such
+    as "Revenue +40" and a full number such as "France +33 1 23 45 67 89" are
+    kept. When a dropped line carries a chunk's document header, the header is
+    kept on its own line.
     """
     if "+" not in text:
         return text

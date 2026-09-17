@@ -1272,16 +1272,37 @@ def _question_suggests_leave_message(text: str) -> bool:
     return bool(_LEAVE_MESSAGE_QUESTION_RE.search(text))
 
 
+# A contact the reply itself gives: an email address, or a phone number of
+# seven or more digits. Both repeats are bounded, so the scan is linear.
+_REPLY_EMAIL_RE = re.compile(r"[\w.+'-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63}){1,4}")
+_REPLY_PHONE_RE = re.compile(r"(?<![\w.])\+?\(?\d[\d ().-]{5,18}\d(?!\w|\.\d)")
+_ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_PHONE_MIN_DIGITS = 7
+
+
+def _reply_gives_contact(text: str) -> bool:
+    """Whether the reply names an email address or a phone number."""
+    if "@" in text and _REPLY_EMAIL_RE.search(text):
+        return True
+    return any(
+        sum(char.isdigit() for char in match.group(0)) >= _PHONE_MIN_DIGITS
+        and _ISO_DATE_RE.fullmatch(match.group(0)) is None
+        for match in _REPLY_PHONE_RE.finditer(text)
+    )
+
+
 def _response_suggests_leave_message(text: str) -> bool:
     """Safety net: detect async contact-the-team affordance in the bot response.
 
     Requires tight co-occurrence of a leave/send/write verb with a
     message/note/email noun. Informational "our team will follow up with
-    the details" no longer matches.
+    the details" no longer matches. A reply that gives an email address or a
+    phone number ("Write to us at hello@eventussecurity.com.") answered the
+    visitor, so it does not force the form either (review, 2026-09-17).
     """
     if not text:
         return False
-    return bool(_LEAVE_MESSAGE_RESPONSE_RE.search(text))
+    return bool(_LEAVE_MESSAGE_RESPONSE_RE.search(text)) and not _reply_gives_contact(text)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

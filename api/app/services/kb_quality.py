@@ -301,6 +301,7 @@ _COUNTRY_NAMES = frozenset(
         "palau",
         "palestine",
         "palestinian territory",
+        "palestinian territories",
         "panama",
         "papua new guinea",
         "paraguay",
@@ -325,6 +326,7 @@ _COUNTRY_NAMES = frozenset(
         "saint martin",
         "saint pierre and miquelon",
         "saint vincent and the grenadines",
+        "saint vincent and grenadines",
         "samoa",
         "san marino",
         "sao tome and principe",
@@ -534,6 +536,26 @@ def _compile_raw_phrase_alternation(phrases: frozenset[str]) -> re.Pattern[str]:
 
 
 _COUNTRY_PATTERN_RAW = _compile_raw_phrase_alternation(_COUNTRY_NAMES)
+
+#: Picker spellings folded to the list's: "&" for "and", "St." for "Saint",
+#: dots dropped ("U.S. Virgin Islands"), a curly apostrophe straightened.
+_PICKER_SAINT_RE = re.compile(r"^st\b")
+_PICKER_SPACES_RE = re.compile(r"\s+")
+#: A country name is at most this long; the rest of a line is never read.
+_COUNTRY_NAME_MAX_CHARS = 80
+
+
+def starts_with_country_name(text: str) -> bool:
+    """Whether ``text`` opens with a country or territory name, as a phone-code picker prints it.
+
+    "Côte d’Ivoire", "St. Kitts & Nevis", "Congo - Brazzaville" and "Hong Kong
+    SAR China" all count; "USA" and "UK" do not, since a picker spells names out.
+    """
+    name = _fold(text[:_COUNTRY_NAME_MAX_CHARS]).replace("\u2019", "'").replace("&", " and ").replace(".", "")
+    name = _PICKER_SAINT_RE.sub("saint", _PICKER_SPACES_RE.sub(" ", name).strip())
+    return _COUNTRY_PATTERN.match(name) is not None
+
+
 _US_STATE_PATTERN_RAW = _compile_raw_phrase_alternation(_US_STATES)
 _INDIAN_STATE_PATTERN_RAW = _compile_raw_phrase_alternation(_INDIAN_STATES)
 _RAW_PATTERNS: dict[str, re.Pattern[str]] = {

@@ -60,7 +60,6 @@ def test_the_production_answer_loses_its_figure_and_keeps_the_team_offer():
         "Eventus Security patches critical CVEs in 48 hrs.",
         "Eventus patches critical CVEs within forty-eight hours.",
         "You'll get a response within 4 hours.",
-        "We have a documented P1 acknowledge target of ≤ 10 min, but I can't share the contract.",
         "Critical findings are fixed by our analysts within 2 business days.",
         "Within 7 days of signing we start onboarding.",
         "We offer a 4-hour response for P2 incidents.",
@@ -112,6 +111,15 @@ def test_a_supported_commitment_is_kept(answer, chunk):
 
     assert result.redacted is False
     assert result.text == answer
+
+
+def test_the_listicle_figure_goes_and_the_clause_after_it_stays():
+    answer = "We have a documented P1 acknowledge target of ≤ 10 min, but I can't share the contract. Anything else?"
+
+    result = _redact(answer, [_chunk(EVENTUS_CHUNK, EVENTUS_PAGE)], company=EVENTUS)
+
+    assert result.text == f"I can't share the contract. {COMMITMENT_GAP_SENTENCE} Anything else?"
+    assert result.figures == ("10 min",)
 
 
 def test_text_the_owner_wrote_supports_a_figure():
@@ -202,7 +210,7 @@ def test_figure_spellings_share_one_key():
 
     keys = [supported_figures([chunk], company_name="Acme") for chunk in chunks]
 
-    assert keys == [frozenset({(48.0, "hour")})] * 4
+    assert keys == [frozenset({(2880.0, "minute")})] * 4
 
 
 def test_a_snapshot_keeps_only_name_and_bounded_text():
@@ -230,6 +238,274 @@ _ADVERSARIAL = [
 @pytest.mark.parametrize("text", _ADVERSARIAL)
 def test_long_adversarial_input_is_handled_quickly(text):
     chunks = [_chunk(text), _chunk(text, "https://acme.com/sla/"), _chunk(text, "notes.pdf")]
+    started = time.perf_counter()
+    _redact(text, chunks)
+    supported_figures(chunks, company_name="Acme")
+    elapsed = time.perf_counter() - started
+    assert elapsed < 1.0, elapsed
+
+
+# ── A company page states its own figures without a subject ──────────────────
+#
+# Review of 2026-09-17: the company's own pages state most service figures with
+# no "we" ("Critical vulnerabilities are patched within 24 hours"), so requiring
+# a first-person subject redacted true answers. On a crawled page that is not a
+# general article a figure now counts unless its sentence or bullet reads as
+# advice or an example.
+
+CLEANSTART = "CleanStart"
+ROADMAP_PAGE = "https://www.cleanstart.com/knowledge-hub/technology-roadmap"
+ROADMAP_CHUNK = (
+    f"[Document: {ROADMAP_PAGE}] [Page: 3] SBOMs are generated in both SPDX 3.0 and CycloneDX 1.4 formats. "
+    "CVE tracking and remediation follows strict SLAs where Critical vulnerabilities are patched within 24 hours "
+    "and High-severity issues within 7 days. The APK package manager enables flexible composition."
+)
+WHY_PAGE = "https://www.cleanstart.com/knowledge-hub/why-cleanstart"
+WHY_CHUNK = (
+    "The rebuilt image is subjected to the full test matrix (78 automated tests) to ensure the patch doesn't "
+    "introduce regressions. Only after all tests pass is the image released for deployment. This entire cycle "
+    'completes within 12-24 hours, enabling what might be called "continuous compliance".'
+)
+RELEASE_PAGE = "https://www.cleanstart.com/knowledge-hub/release-notes"
+RELEASE_CHUNK = (
+    "### Release Schedule\n"
+    "**Major releases** - Quarterly (Jan, Apr, Jul, Oct) **Minor releases** - Monthly (mid-month) "
+    "**Patch releases** - As needed (within 48h of discovery).\n"
+    "### Support Timeline\n"
+)
+RANSOMWARE_PAGE = "https://eventussecurity.com/ransomware-combat/"
+RANSOMWARE_CHUNK = (
+    f"[Document: {RANSOMWARE_PAGE}] [Page: 1] ## Why Eventus\n"
+    "10 min to respond to case;\n"
+    "Response from IR expert within 10 min around the clock\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("answer", "chunk", "company"),
+    [
+        ("CleanStart patches critical CVEs within 24 hours.", _chunk(ROADMAP_CHUNK, ROADMAP_PAGE), CLEANSTART),
+        (
+            "Our full rebuild and test cycle completes within 12 to 24 hours.",
+            _chunk(WHY_CHUNK, WHY_PAGE),
+            CLEANSTART,
+        ),
+        ("We ship patch releases within 48 hours of discovery.", _chunk(RELEASE_CHUNK, RELEASE_PAGE), CLEANSTART),
+        ("Our IR experts respond within 10 minutes.", _chunk(RANSOMWARE_CHUNK, RANSOMWARE_PAGE), EVENTUS),
+        (
+            "We typically onboard new clients in 2 weeks.",
+            _chunk("How it works\n* Onboarding in 2 weeks\n* Dedicated manager", "https://acme.com/how-it-works"),
+            "Acme",
+        ),
+        (
+            "Our P1 response time is 4 hours.",
+            _chunk("Support\nResponse time: 4 hours for P1 tickets.", "https://acme.com/support"),
+            "Acme",
+        ),
+        (
+            "Our refund policy allows cancellation within 30 days.",
+            _chunk(
+                "Refund Policy\nCancellation is allowed within 30 days of purchase.", "https://acme.com/refund-policy"
+            ),
+            "Acme",
+        ),
+        (
+            "Refunds are processed within 30 days by our team.",
+            _chunk("Refund requests must be made within 30 days.", "https://acme.com/refund-policy"),
+            "Acme",
+        ),
+        # A label before the colon is not an imperative.
+        (
+            "We ship patch releases within 48 hours.",
+            _chunk("**Patch releases**: As needed (within 48h of discovery).", RELEASE_PAGE),
+            CLEANSTART,
+        ),
+    ],
+)
+def test_a_figure_the_companys_own_page_states_without_a_subject_is_supported(answer, chunk, company):
+    result = _redact(answer, [chunk], company=company)
+
+    assert result.redacted is False, result.figures
+    assert result.text == answer
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "Remediate critical-severity findings within 48 hours",
+        "*   Address critical findings within 48 hours",
+        "**Ensure** critical findings are closed within 48 hours.",
+        "1. Patch critical findings within 48 hours.",
+        "Alert Triage SLAs: Remediate critical-severity findings within 48 hours",
+        "Critical findings should be closed within 48 hours.",
+        "Critical findings must be closed within 48 hours.",
+        "Look for a provider that closes critical findings within 48 hours.",
+        "Ask your provider to close critical findings within 48 hours.",
+        "Best practice is to close critical findings within 48 hours.",
+        "The recommended window for critical findings is 48 hours.",
+        "Critical findings are typically closed within 48 hours.",
+        "Aim for closing critical findings within 48 hours.",
+        "Demand a 48-hour window for critical findings.",
+        "Set targets, for example critical findings within 48 hours.",
+        "Set targets, e.g. critical findings within 48 hours.",
+        "Recovery time fell from 48 hours to 4 hours in 2025.",
+    ],
+)
+def test_advice_or_an_example_on_a_company_page_does_not_support_a_figure(sentence):
+    chunk = _chunk(f"Intro line.\n{sentence}\nOutro line.", "https://acme.com/services/vulnerability-management/")
+
+    assert _redact("We remediate critical findings within 48 hours.", [chunk]).redacted is True
+
+
+def test_the_production_best_practice_list_stays_redacted_with_the_rest_of_its_page():
+    page = [_chunk(EVENTUS_CHUNK, EVENTUS_PAGE), _chunk(RANSOMWARE_CHUNK, RANSOMWARE_PAGE)]
+
+    result = _redact(PRODUCTION_ANSWER, page, company=EVENTUS)
+
+    assert result.text == f"{COMMITMENT_GAP_SENTENCE} Want me to take a message for our team?"
+    assert _redact("We address medium-severity findings within 7 days.", page, company=EVENTUS).redacted is True
+
+
+def test_the_buyer_guide_example_on_a_tagged_listicle_stays_redacted():
+    guide = _chunk(
+        "What to look for\n* A documented P1 acknowledge target (e.g. P1 acknowledge ≤ 10 min)\n",
+        "https://eventussecurity.com/top-10-mdr-providers-2026/",
+    )
+    untagged = _chunk("SLA examples: e.g. P1 acknowledge ≤ 10 min.", "https://eventussecurity.com/soc/")
+
+    for chunk in (guide, untagged):
+        result = _redact("We acknowledge P1 alerts within 10 minutes.", [chunk], company=EVENTUS)
+        assert result.redacted is True, chunk.document_name
+
+
+# ── Commitments, not every duration or percentage ─────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "If you need it in 2 weeks, our team can discuss that with you.",
+        "We can plan around your timeline of 3 weeks.",
+        "If you want it done by your deadline in 10 days, our team can help.",
+        "Our webinar is in 3 days.",
+        "Our detection gives 85% fewer false positives and is available in 12 regions.",
+        "We cut alert volume by 40%, and our SLA covers every region.",
+        "If you need it within 2 weeks, we can deliver.",
+    ],
+)
+def test_a_visitor_timeline_an_event_or_a_plain_percentage_is_not_a_commitment(answer):
+    result = _redact(answer, [])
+
+    assert result.redacted is False, result.figures
+    assert result.text == answer
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "We respond to your tickets within 4 hours.",
+        "Your onboarding is done by our team in 2 weeks.",
+        "We deliver the report within 5 days.",
+        "Setup takes under 5 minutes with our installer.",
+        "We have a 99.9% uptime guarantee.",
+    ],
+)
+def test_a_commitment_near_a_visitor_word_is_still_one(answer):
+    assert _redact(answer, []).redacted is True
+
+
+def test_only_the_unsupported_clause_of_a_joined_sentence_is_replaced():
+    answer = "Our Starter plan is $49 per month, and setup takes under 5 minutes. Want a demo?"
+
+    result = _redact(answer, [])
+
+    assert result.text == f"Our Starter plan is $49 per month. {COMMITMENT_GAP_SENTENCE} Want a demo?"
+    assert result.figures == ("5 minutes",)
+
+
+def test_an_unsupported_first_clause_leaves_the_rest_capitalised():
+    answer = "Setup takes under 5 minutes; our Starter plan is $49 per month."
+
+    result = _redact(answer, [])
+
+    assert result.text == f"Our Starter plan is $49 per month. {COMMITMENT_GAP_SENTENCE}"
+
+
+def test_a_supported_clause_stays_beside_an_unsupported_one():
+    answer = "We respond within 4 hours, and we resolve within 2 days."
+
+    result = _redact(answer, [_chunk("We respond to every ticket within 4 hours.")])
+
+    assert result.text == f"We respond within 4 hours. {COMMITMENT_GAP_SENTENCE}"
+    assert result.figures == ("2 days",)
+
+
+@pytest.mark.parametrize(
+    ("answer", "reference"),
+    [
+        ("We onboard within 14 days.", "We onboard clients within 2 weeks."),
+        ("We respond within 2 hours.", "We respond within 120 minutes."),
+        ("We patch within 2 days.", "We patch critical CVEs within 48 hours."),
+        ("We patch within 48 hours.", "We patch critical CVEs within 2 days."),
+    ],
+)
+def test_units_are_compared_after_conversion(answer, reference):
+    assert _redact(answer, [_chunk(reference)]).redacted is False
+
+
+# ── Sentences ─────────────────────────────────────────────────────────────────
+
+
+def test_an_abbreviation_does_not_end_a_sentence():
+    answer = "We handle incidents quickly, e.g. we respond in 15 min. Anything else?"
+
+    result = _redact(answer, [])
+
+    assert result.text == f"{COMMITMENT_GAP_SENTENCE} Anything else?"
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "We cover SIEM, i.e. we respond in 15 min. Anything else?",
+        "We cover SIEM, SOAR etc. and we respond in 15 min. Anything else?",
+        "We respond in approx. 15 min. Anything else?",
+        "Our Dr. Rao responds in 15 min. Anything else?",
+        "Under clause No. 4 we respond in 15 min. Anything else?",
+    ],
+)
+def test_other_abbreviations_keep_their_sentence_whole(answer):
+    assert _redact(answer, []).text == f"{COMMITMENT_GAP_SENTENCE} Anything else?"
+
+
+def test_a_sentence_ending_in_etc_or_no_still_ends():
+    answer = "We cover SIEM, SOAR, etc. We respond in 15 min. No. We do not resell."
+
+    assert _redact(answer, []).text == f"We cover SIEM, SOAR, etc. {COMMITMENT_GAP_SENTENCE} No. We do not resell."
+
+
+def test_a_danda_ends_a_sentence():
+    answer = "हम 24 घंटे में जवाब देते हैं। Our team responds within 24 hours."
+
+    result = _redact(answer, [])
+
+    assert result.text == f"हम 24 घंटे में जवाब देते हैं। {COMMITMENT_GAP_SENTENCE}"
+
+
+_ADVERSARIAL_SENTENCES = [
+    "e.g. " * 4000,
+    "you need " * 2000 + "2 weeks respond",
+    "our " + ", and " * 3000 + "respond in 4 hours",
+    "Remediate: " * 1500 + "48 hours",
+    "from 1 " * 2500 + "to 2 hours",
+    "your timeline of " * 1000 + "3 weeks",
+    "। " * 8000,
+]
+
+
+@pytest.mark.parametrize("text", _ADVERSARIAL_SENTENCES)
+def test_long_adversarial_sentences_are_handled_quickly(text):
+    chunks = [_chunk(text), _chunk(text, "https://acme.com/how-it-works/")]
     started = time.perf_counter()
     _redact(text, chunks)
     supported_figures(chunks, company_name="Acme")
