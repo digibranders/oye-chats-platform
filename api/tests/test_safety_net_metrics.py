@@ -191,8 +191,9 @@ class TestSafetyNetMetricsEndpoint:
             assert name in body["series"], name
 
     def test_reports_the_edge_case_routes(self):
-        """The urgent, support, document, unhelped-offer and handoff-reply routes each
-        count their firings in rag_service.py; unlisted, they read as zero here."""
+        """The urgent, support, document, unhelped-offer and handoff-reply routes, and
+        the handoff consent decisions, each count their firings in rag_service.py;
+        unlisted, they read as zero here."""
         client = self._client()
         with patch("app.core.metrics.get_redis", return_value=None):
             body = client.get("/superadmin/safety-net-metrics").json()
@@ -204,6 +205,9 @@ class TestSafetyNetMetricsEndpoint:
             "document_request_fell_through",
             "unhelped_offer",
             "handoff_reply",
+            "handoff_offer_awaiting_consent",
+            "affirmed_offered_option",
+            "support_repeat_answered",
         ):
             assert name in body["totals"], name
             assert name in body["series"], name

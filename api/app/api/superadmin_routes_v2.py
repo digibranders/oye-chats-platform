@@ -1623,7 +1623,9 @@ def patch_model_config(
 _SAFETY_NET_METRIC_NAMES = [
     "bant_extraction_failed",
     "groundedness_check",
-    "handoff_safety_net_triggered",
+    # An answer that offers the team; it waits for the visitor's "yes" and no
+    # longer opens the form (it was "handoff_safety_net_triggered").
+    "handoff_offer_awaiting_consent",
     "injection_attempt",
     "intent_router_short_circuit",
     "leave_message_card_rendered",
@@ -1636,9 +1638,16 @@ _SAFETY_NET_METRIC_NAMES = [
     # A figure the price guard stopped mid-stream (price_guard.py via
     # rag_service.py); also counted above with reason=price_guard.
     "price_guard_tripped",
+    # A turn asking the price and more, whose figure sentences were dropped with
+    # the escalation after the rest; also counted above with
+    # reason=price_guard_redacted.
+    "price_guard_redacted",
     # Scheduling request answered deterministically because the bot has no
     # scheduler configured (meeting_gate.py via rag_service.py).
     "meeting_gate_pivot",
+    # A request for time on a bot with a scheduler, where the model left the
+    # booking card out and the server attached it.
+    "meeting_card_safety_net",
     # Edge-case routes in rag_service.py: a reported incident answered with the
     # urgent reply (urgent_route.py), an existing customer's problem handed to the
     # team (support_route.py), a file request answered from the catalog or left to
@@ -1650,6 +1659,10 @@ _SAFETY_NET_METRIC_NAMES = [
     "document_request_fell_through",
     "unhelped_offer",
     "handoff_reply",
+    # A bare "yes" to an offer with options, answered as its first option, and a
+    # new question after the support reply, answered instead of the repeat.
+    "affirmed_offered_option",
+    "support_repeat_answered",
     "system_prompt_leak",
     # AR-15/AR-16: LLM call-outcome metrics (llm_service.py), included here
     # for a single unified reporting endpoint even though they're not

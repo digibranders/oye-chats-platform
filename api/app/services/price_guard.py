@@ -66,6 +66,11 @@ tripped on. Only words within ``_HOLD_CAP_CHARS`` characters of the figure
 count. ``answer_trips_price_guard`` feeds a whole answer through the same
 guard, so the cache read decides exactly as the stream does.
 
+A turn that asks the price and something else (``price_intent`` decided MIXED)
+is not replaced whole: ``PriceSentenceRedactor`` drops each sentence that states
+a figure and keeps the rest, and ``redact_price_sentences`` reads a whole answer
+the same way.
+
 Pure module: no DB, no I/O, and no import from ``rag_service``.
 """
 
@@ -805,6 +810,244 @@ class PriceStreamGuard:
         self._held_figure_len = 0
 
 
+#: How far past the end of a unit a figure that starts inside it is read, so "50"
+#: at the end of a line and "lakh" on the next are still one figure.
+_FIGURE_LOOKAHEAD_CHARS = 64
+#: A unit with no sentence end is cut at its last space before this many
+#: characters, so a paragraph without a full stop is not held to its end.
+_UNIT_CAP_CHARS = 600
+#: Source text kept before the undecided text, for the look-behinds of
+#: ``_SENTENCE_END_RE`` and for ``\b``.
+_SOURCE_BEFORE_CHARS = _SENTENCE_END_LOOKBEHIND_CHARS + 1
+#: A line that introduces what follows it: a heading, a bold line, or a line ending in a colon.
+_LEAD_LINE_RE = re.compile(r"[^\S\n]{0,3}#{1,6}[^\S\n].*|(?:\*\*|__)[^*_\n]+(?:\*\*|__)[^\S\n]*:?|.*:[*_]{0,2}")
+
+
+class PriceSentenceRedactor:
+    """For a turn that asks the price and something else: drop each sentence that states a figure, keep the rest.
+
+    On such a turn (``price_intent`` decided MIXED) replacing the whole answer
+    with the pricing escalation loses the other half of the question, so the
+    stream is cut into units instead: a sentence with the whitespace after it and
+    at most one line break, or a line. A unit is held until it and
+    ``_FIGURE_LOOKAHEAD_CHARS`` after it have arrived, then dropped when a figure
+    (``_FIGURE_RE``, the figures a signalled ``PriceStreamGuard`` trips on) starts
+    inside it or runs into it, and emitted otherwise. The caller appends the
+    escalation when ``redacted`` is set.
+
+    Blocks are kept whole where a dropped unit would leave them dangling: a lead
+    line (a heading, a bold line, a line ending in a colon) goes when every item
+    under it went, and a table goes when any of its rows states a figure. After
+    a drop, a blank line that would double one already emitted is skipped. With
+    nothing dropped, the answer streams byte for byte.
+
+    Every decision reads a fixed extent of the source (the unit, its lookahead,
+    ``_UNIT_CAP_CHARS``), never what happens to have arrived, so a whole answer
+    (``redact_price_sentences``) and any chunking of it give the same text.
+    ``tripped`` is always False: nothing here stops the stream.
+    """
+
+    def __init__(self) -> None:
+        #: Text fed in and not yet cut into a unit, where it starts in the answer,
+        #: and the source text just before it.
+        self._pending = ""
+        self._offset = 0
+        self._before = ""
+        #: How much of ``_pending`` was searched for a sentence end without a result.
+        self._searched = 0
+        #: A unit starting before this position is the rest of a figure already dropped.
+        self._drop_until = 0
+        self._emitted: list[str] = []
+        self._tail = ""
+        self._redacted = False
+        #: A held lead line with the blank lines after it, whether an item followed
+        #: it, and whether one of its items was dropped.
+        self._lead: list[str] = []
+        self._lead_items = False
+        self._lead_dropped = False
+        #: A held table, and whether one of its rows states a figure.
+        self._table: list[str] = []
+        self._table_dropped = False
+
+    @property
+    def tripped(self) -> bool:
+        return False
+
+    @property
+    def redacted(self) -> bool:
+        """True once a unit stating a figure was dropped."""
+        return self._redacted
+
+    @property
+    def emitted(self) -> str:
+        """Everything emitted so far: the answer the visitor has seen."""
+        return "".join(self._emitted)
+
+    @property
+    def held(self) -> str:
+        """Text fed in and neither emitted nor dropped yet."""
+        return "".join(self._lead) + "".join(self._table) + self._pending
+
+    def feed(self, chunk: str) -> str:
+        if not chunk:
+            return ""
+        self._pending += chunk
+        return self._advance(final=False)
+
+    def flush(self) -> str:
+        """The held text, at the end of the stream: emitted, or dropped."""
+        out = self._advance(final=True)
+        emitted: list[str] = []
+        if self._table:
+            self._close_table(emitted)
+        if self._lead:
+            self._close_lead(emitted)
+        return out + "".join(emitted)
+
+    def _advance(self, *, final: bool) -> str:
+        emitted: list[str] = []
+        while self._pending:
+            length = self._next_unit(final=final)
+            if length is None:
+                break
+            dropped = self._states_figure(length)
+            unit = self._pending[:length]
+            self._before = (self._before + unit)[-_SOURCE_BEFORE_CHARS:]
+            self._pending = self._pending[length:]
+            self._offset += length
+            self._searched = 0
+            self._route(unit, dropped, emitted)
+        return "".join(emitted)
+
+    def _next_unit(self, *, final: bool) -> int | None:
+        """The length of the next unit, or None while it is not known yet."""
+        pending = self._pending
+        window = self._before + pending
+        base = len(self._before)
+        # A full stop read at the cap never sees the character after it, in a
+        # stream or in a whole answer, so the cap is part of the search.
+        endpos = base + min(len(pending), _UNIT_CAP_CHARS)
+        end = _SENTENCE_END_RE.search(window, base + max(0, self._searched - 1), endpos)
+        if end is None:
+            if len(pending) >= _UNIT_CAP_CHARS:
+                space = pending.rfind(" ", 1, _UNIT_CAP_CHARS)
+                return space + 1 if space > 0 else _UNIT_CAP_CHARS
+            if final:
+                return len(pending)
+            self._searched = len(pending)
+            return None
+        stop = end.end() - base
+        if end.group() != "\n":
+            while stop < len(pending) and pending[stop] in " \t":
+                stop += 1
+            if stop == len(pending) and not final:
+                # The whitespace may go on, and a line break may follow it.
+                self._searched = end.start() - base
+                return None
+            if pending[stop : stop + 1] == "\n":
+                stop += 1
+        if not final and len(pending) < stop + _FIGURE_LOOKAHEAD_CHARS:
+            self._searched = end.start() - base
+            return None
+        return stop
+
+    def _states_figure(self, length: int) -> bool:
+        """Whether a figure starts in the next ``length`` characters, or runs into them."""
+        dropped = self._offset < self._drop_until
+        window = self._before + self._pending
+        base = len(self._before)
+        endpos = min(len(window), base + length + _FIGURE_LOOKAHEAD_CHARS)
+        for match in _FIGURE_RE.finditer(window, base, endpos):
+            if match.start() >= base + length:
+                break
+            dropped = True
+            self._drop_until = max(self._drop_until, self._offset + match.end() - base)
+        return dropped
+
+    def _route(self, unit: str, dropped: bool, emitted: list[str]) -> None:
+        if dropped:
+            self._redacted = True
+        is_row = _TABLE_ROW_RE.match(unit) is not None
+        if self._table and not is_row:
+            self._close_table(emitted)
+        if is_row:
+            self._table.append(unit)
+            self._table_dropped = self._table_dropped or dropped
+            return
+        if not unit.strip():
+            self._route_blank(unit, emitted)
+            return
+        if not dropped and unit.endswith("\n") and _LEAD_LINE_RE.fullmatch(unit[:-1].rstrip()):
+            if self._lead:
+                self._close_lead(emitted)
+            self._lead = [unit]
+            self._lead_items = False
+            self._lead_dropped = False
+            return
+        self._route_item(unit, dropped, emitted)
+
+    def _route_blank(self, unit: str, emitted: list[str]) -> None:
+        if self._lead and not self._lead_items:
+            # A lead carries across the blank lines before its first item.
+            self._lead.append(unit)
+            return
+        if self._lead:
+            self._close_lead(emitted)
+        if self._redacted and (not self._tail or self._tail.endswith("\n\n")):
+            return
+        self._emit(unit, emitted)
+
+    def _route_item(self, text: str, dropped: bool, emitted: list[str]) -> None:
+        """A unit under a held lead, or on its own: a closed table counts as one."""
+        if self._lead:
+            self._lead_items = True
+            if dropped:
+                self._lead_dropped = True
+                return
+            if self._lead_dropped and _LIST_ITEM_RE.match(text) is None:
+                # Every item of the lead's list went; this line starts something else.
+                self._close_lead(emitted)
+            else:
+                self._emit("".join(self._lead), emitted)
+                self._lead = []
+        if dropped:
+            if text.endswith("\n") and self._tail and not self._tail.endswith("\n"):
+                # Keep the line break the dropped line ended with.
+                self._emit("\n", emitted)
+            return
+        self._emit(text, emitted)
+
+    def _close_lead(self, emitted: list[str]) -> None:
+        lead = "".join(self._lead)
+        self._lead = []
+        if not self._lead_dropped:
+            self._emit(lead, emitted)
+
+    def _close_table(self, emitted: list[str]) -> None:
+        table = "".join(self._table)
+        dropped = self._table_dropped
+        self._table = []
+        self._table_dropped = False
+        self._route_item(table, dropped, emitted)
+
+    def _emit(self, text: str, emitted: list[str]) -> None:
+        if not text:
+            return
+        emitted.append(text)
+        self._emitted.append(text)
+        self._tail = (self._tail + text)[-2:]
+
+
+def redact_price_sentences(text: object) -> tuple[str, bool]:
+    """A complete answer as ``PriceSentenceRedactor`` streams it, and whether anything was dropped."""
+    if not isinstance(text, str) or not text:
+        return "", False
+    redactor = PriceSentenceRedactor()
+    redactor.feed(text)
+    redactor.flush()
+    return redactor.emitted, redactor.redacted
+
+
 def answer_trips_price_guard(text: object, *, signal: bool) -> bool:
     """True when a complete answer would trip a guard with this turn's ``signal``."""
     if not isinstance(text, str) or not text:
@@ -834,7 +1077,8 @@ def price_guard_applies(
 
     ``escalate_deferred`` is a turn the gate would have escalated, deferred
     because the visitor also asked something besides the price. Its answer is
-    generated from the whole knowledge base, so the guard watches it on every bot
+    generated from the whole knowledge base, so the guard (for a MIXED decision,
+    ``PriceSentenceRedactor``) watches it on every bot
     the gate escalates on, a bot whose pricing page carries no prices and a Free
     bot that hands over its contact page included.
     """

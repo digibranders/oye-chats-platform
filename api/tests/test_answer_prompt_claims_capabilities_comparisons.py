@@ -64,7 +64,7 @@ def _rule_5d(prompt: str) -> str:
 
 
 def _scope(prompt: str) -> str:
-    return _section(prompt, "SCOPE (HIGHEST PRIORITY", "\nVOICE:")
+    return _section(prompt, "\nSCOPE:\n", "\nVOICE:")
 
 
 class TestACredentialOrTermIsTheCompanysOnlyWhenTheSourceSaysSo:
@@ -175,14 +175,23 @@ class TestACompetitorComparisonIsAnswered:
 
 class TestAServicesListDoesNotRefuseAnUnofferedService:
     """With a SERVICES list configured, "do you offer X?" for an unlisted X was
-    sent to the scope refusal, which contradicts RULE 5c on every such bot."""
+    sent to the scope refusal, which contradicts RULE 5c on every such bot.
+
+    The fix that replaced it told the model to "say plainly that we do not
+    offer it" for anything off the list, and on 2026-09-17 a bot denied services
+    its own website sells because the owner had featured only five. An unlisted
+    service now goes to RULE 5c, which reads the reference material first."""
 
     def test_an_unlisted_service_is_answered_under_rule_5c(self):
         prompt = _prompt(**_PAID, services=[{"name": "Analytics", "url": "https://acme.com/analytics"}])
-        services = _section(prompt, "SERVICES (HIGHEST PRIORITY", "\n\n")
+        services = " ".join(_section(prompt, "FEATURED SERVICES", "\n\n").split())
 
-        assert "treat it as\n  out-of-scope" not in services
-        assert "answer under RULE 5c and say plainly that we do not offer it" in services
+        assert "treat it as out-of-scope" not in services
+        assert "say plainly that we do not offer it" not in services
+        assert (
+            "Say we do not offer something only when neither this list nor the REFERENCE INFORMATION mentions it; "
+            "otherwise answer under RULE 5c." in services
+        )
         assert "A question unrelated to the company still gets the scope refusal." in services
 
 

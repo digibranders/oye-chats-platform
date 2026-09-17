@@ -107,9 +107,11 @@ _GATE_TTL = 300
 # any before/after measurement of a prompt change silently reads its own
 # baseline back.
 #
-# Not bumped for the conversation block (``ConversationContext``): a prompt
-# without context is byte-identical to version 3, and a prompt with one hashes
-# the context into its key, so no entry written before it existed can match.
+# Not bumped for the conversation block (``ConversationContext``), nor for the
+# follow-up scoring rule added to it on 2026-09-17: a prompt without context is
+# byte-identical to version 3, so its cached verdicts stay valid, and only a
+# passing verdict is ever cached, so an entry written under the older block can
+# only let a follow-up through for the rest of its five minutes.
 _GATE_PROMPT_VERSION = 3
 
 # How much of the retrieved context the judge sees. The preview covers a whole
@@ -259,6 +261,13 @@ is about that reply's subject even when the visitor's words name nothing, and
 the question above may already spell that subject out. A message that turns to
 an unrelated subject is judged on its own words: the previous reply being about
 the business does not make it relevant.
+
+The chunks may have been retrieved for the visitor's words alone, so they can
+miss the subject a follow-up leaves out. Such a follow-up about the business's own
+offering (whether its internships are paid, the margin its partner program
+pays, where a service it described is available) scores at least 0.5 when the
+previous reply or a chunk is about that subject, even if nothing states the
+detail asked for.
 """
 
 

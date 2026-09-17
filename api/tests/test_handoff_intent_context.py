@@ -172,6 +172,15 @@ def _the_bots_offers() -> list[str]:
         TEAM_CONNECT_OFFER,
         "Want me to loop in someone from our team?",
         "Happy to connect you with our team if that helps. Want me to?",
+        # Offers the model writes in its own words. A "sure" after one of these
+        # got "Glad that helped".
+        "Would you like to talk with our sales team?",
+        "Want to talk with the team about your setup?",
+        "Would you like to discuss this with our team?",
+        "Do you want to discuss your requirements with the Acme team?",
+        "Would you like me to arrange a call with our team?",
+        "Shall I set up a quick call with someone from our team?",
+        "Should I schedule a call with the sales team?",
     ]
     for subject in (None, "SOC"):
         offers.append(
@@ -266,6 +275,13 @@ ORDINARY_ANSWERS = [
     # The bot tells the visitor something, not the team.
     "I'll let you know when the team has shipped your order.",
     "I'll let our team know about the typo on the pricing page. Anything else?",
+    # A question about the visitor's own team, or a statement about ours.
+    "Does your team use Slack?",
+    "Would you like to discuss this with your team first?",
+    "Our team will discuss this with you on the call.",
+    "Our team will discuss this internally and arrange a call with the vendor.",
+    "Would you like to arrange a call with your accountant?",
+    "Do you want to talk with your manager before booking?",
     # A knowledge answer about our team is not an offer of it.
     "Our team reviews every application within two days and passes shortlisted ones to the hiring manager.",
 ]

@@ -42,11 +42,12 @@ and the copy deliberately matches so the bot has one voice for one action.
 Pure module by design: no DB, no I/O, and no import from ``rag_service`` (which
 imports this one). Everything here is a decision the callers act on.
 
-KNOWN LIMITATION, deliberate: ``is_meeting_question`` is an English regex, so a
-scheduling request in another language does not fire the gate and falls through
-to the prompt as before. That is the safe direction (nothing regresses for those
-visitors) and it matches the same constraint on ``pricing_gate`` and the CRAG
-judge. Fix them together, not separately.
+KNOWN LIMITATION, deliberate: ``is_meeting_question`` reads English and the
+common Hinglish request shapes ("mujhe call chahiye", "meeting set karo", "kal
+team se baat karni hai"), so a scheduling request in another language does not fire
+the gate and falls through to the prompt as before. That is the safe direction
+(nothing regresses for those visitors) and it matches the same constraint on
+``pricing_gate`` and the CRAG judge. Fix them together, not separately.
 """
 
 from __future__ import annotations
@@ -175,7 +176,104 @@ _MEETING_DISQUALIFIER_RE = re.compile(
 )
 
 
-def is_meeting_question(question: object) -> bool:
+# Hinglish requests for time (evaluation, 2026-09-17: "kal team se call pe baat ho
+# sakti hai kya" got the handoff form on bots with a scheduler). Each shape needs
+# the meeting noun, or "baat" (a talk), directly before the words that ask for
+# it, so a negation in between ("call nahi chahiye", "call mat karo") breaks the
+# shape and a negation right after it is refused. A noun that names a thing
+# ("call center", "demo video") is excluded by ``_MEETING_NOUN_SUFFIX``, and
+# "call" alone takes only the imperative ("call karo", "call kar do"): "mujhe
+# call karna hai" is a visitor who wants the phone number, and "call kar sakte
+# hain" asks about a feature.
+_HI_NEGATION = r"(?!\s+(?:nahi|nahin|nhi|nai|na|mat)\b)"
+_HI_NOUN = r"(?:meeting|call|demo|appointment|consultation|session|walkthrough)\b" + _MEETING_NOUN_SUFFIX
+_HI_WANT = r"(?:chahiye|chahie|chaiye|chahiyee|mil\s+(?:sakta|sakti|sakte)|milega|milegi)\b"
+_HI_DO = r"(?:karo|kardo|kar\s+do|kar\s+dijiye|kijiye|kijie|kariye|karein|karen|karwao|karwa\s+do|karwa\s+dijiye)\b"
+_HI_WANT_TO_DO = r"(?:karna|karni)\s+(?:hai|h|he|tha|thi)\b"
+_HI_CAN = r"(?:kar\s+(?:sakte|sakta|sakti)|ho\s+(?:sakti|sakta)|hogi|hoga|ho\s+jaye|karte\s+hain)\b"
+_HI_TALK = (
+    r"baat\s+(?:karni|karna|karvani|karwani|karwa\s+do|karwao|kara\s+do|karao|kar\s+(?:sakte|sakta|sakti)"
+    r"|ho\s+(?:sakti|sakta)|hogi|ho\s+jaye|karte\s+hain)\b"
+)
+_HI_PEOPLE = r"(?:team|aap|sales|experts?|founders?)\s+se|aapse"
+# "team se baat karni hai" alone asks for a person, which the handoff path
+# answers. It asks for time only with a medium ("call pe", "demo ke liye") or a
+# time to meet ("kal", "shaam 5 baje"). "abhi" and "aaj" say "now", not a slot.
+_HI_MEDIUM = (
+    r"(?:(?:call|phone|video\s+call|zoom|meet|meeting)\s+(?:pe|par)"
+    r"|(?:demo|meeting|call|appointment)\s+(?:ke\s+liye|ki|karne\s+ke\s+liye))\s+"
+)
+_HI_WHEN = (
+    r"(?:kal|parso|tomorrow|kab|subah|shaam|sham|dopahar|raat"
+    r"|agle\s+(?:hafte|week|din|mahine)|next\s+week|is\s+(?:hafte|week)|weekend"
+    r"|(?:mon|tues|wednes|thurs|fri|satur|sun)day|somvar|mangalvar|budhvar|guruvar|shukravar|shanivar|ravivar"
+    r"|\d{1,2}(?::\d{2})?\s*(?:baje|am|pm))\b"
+)
+
+_HINGLISH_MEETING_RE = re.compile(
+    # "mujhe demo chahiye", "ek call chahiye please", "kya demo mil sakta hai".
+    r"\b"
+    + _HI_NOUN
+    + r"(?:\s+(?:bhi|jaldi|abhi|please|pls))?\s+"
+    + _HI_WANT
+    + _HI_NEGATION
+    # "meeting set karo", "demo book karna hai", "ek meeting schedule karni hai".
+    + r"|\b"
+    + _HI_NOUN
+    + r"\s+(?:set|fix|book|schedule|arrange|plan|organi[sz]e)\s+"
+    r"(?:"
+    + _HI_DO
+    + r"|"
+    + _HI_WANT_TO_DO
+    + r"|"
+    + _HI_CAN
+    + r")"
+    # "meeting karni hai", "demo karte hain".
+    + r"|\b(?:meeting|demo|session|appointment)\b\s+(?:"
+    + _HI_DO
+    + r"|"
+    + _HI_WANT_TO_DO
+    + r"|karte\s+hain\b)"
+    # "call karo", "mujhe call kar do", "call back karo".
+    + r"|\bcall(?:\s+back)?\s+"
+    + _HI_DO
+    + _HI_NEGATION
+    # "sales team se call pe baat karni hai", "team se kal baat ho sakti hai".
+    + r"|\b(?:"
+    + _HI_PEOPLE
+    + r")\s+(?:"
+    + _HI_MEDIUM
+    + r"|"
+    + _HI_WHEN
+    + r"\s+(?:"
+    + _HI_MEDIUM
+    + r")?)"
+    + _HI_TALK
+    # "kal team se baat karni hai", "shaam 5 baje sales team se baat ho sakti hai".
+    + r"|\b"
+    + _HI_WHEN
+    + r"\s+(?:[\w-]+\s+){0,2}?(?:"
+    + _HI_PEOPLE
+    + r")\s+(?:"
+    + _HI_MEDIUM
+    + r")?"
+    + _HI_TALK
+    # "baat karni hai team se kal".
+    + r"|\bbaat\s+(?:karni|karna)\s+(?:hai|h|he|thi)\s+(?:(?:aapki|aapke|apki|your)\s+)?(?:"
+    + _HI_PEOPLE
+    + r")\s+"
+    + _HI_WHEN
+    # "call pe baat ho sakti hai?"
+    + r"|\b(?:call|phone)\s+(?:pe|par)\s+"
+    + _HI_TALK
+    # "aapse milna hai", "kya hum kal mil sakte hain".
+    + r"|\b(?:(?:aap|team)\s+se|aapse)\s+milna\s+(?:hai|h|tha)\b"
+    r"|\b(?:hum|ham)\s+(?:(?:kal|aaj|kab|parso)\s+)?mil\s+(?:sakte|skte)\b",
+    re.IGNORECASE,
+)
+
+
+def is_meeting_question(question: object, *, hinglish: bool = True) -> bool:
     """True when the visitor is asking to get time with the team.
 
     Deliberately narrower than "the message mentions a meeting": it needs a
@@ -183,12 +281,16 @@ def is_meeting_question(question: object) -> bool:
     shapes. A bot whose knowledge base is ABOUT meetings (a venue, an events
     company) must still be able to answer questions on that subject from its
     own content, so a bare noun never fires the gate.
+
+    ``hinglish`` also reads the Hinglish shapes. A caller in a conversation held
+    in another language turns it off: the replies these shapes lead to are
+    English, and that conversation's model answers in its own language.
     """
     if not isinstance(question, str) or not question.strip():
         return False
     if _MEETING_DISQUALIFIER_RE.search(question):
         return False
-    return bool(_MEETING_RE.search(question))
+    return bool(_MEETING_RE.search(question) or (hinglish and _HINGLISH_MEETING_RE.search(question)))
 
 
 def scheduler_is_configured(bot: object) -> bool:
@@ -234,6 +336,7 @@ def meeting_pivot(
     support_enabled: bool,
     live_chat_enabled: bool,
     contact_url: str | None = None,
+    after_another_reply: bool = False,
 ) -> MeetingPivot:
     """The reply for a scheduling request on a bot with no scheduler.
 
@@ -248,8 +351,13 @@ def meeting_pivot(
     caller: this string is pasted into a visitor's reply and persisted to
     ``chat_messages.content``, so a future caller reading it from somewhere else
     must not be able to render "You can get in touch here: javascript:alert(1)".
+
+    ``after_another_reply`` is set when the text follows the reply to another
+    request in the same message (the document route's files), where "that" would
+    point at the files: the paid copy then says "a meeting".
     """
     cn = f"**{company_name}**" if company_name else "us"
+    what = "a meeting" if after_another_reply else "that"
     usable_contact = contact_url.strip() if isinstance(contact_url, str) and normalize_url(contact_url) else None
 
     if not support_enabled:
@@ -273,13 +381,13 @@ def meeting_pivot(
 
     if live_chat_enabled:
         return MeetingPivot(
-            text=f"I can't book that directly, but I can connect you with the {cn} team. Want me to do that now?",
+            text=f"I can't book {what} directly, but I can connect you with the {cn} team. Want me to do that now?",
             suggest_handoff=True,
             needs_message_card=False,
         )
 
     return MeetingPivot(
-        text=(f"I can't book that directly. I'll open a quick message form so the {cn} team can get back to you."),
+        text=(f"I can't book {what} directly. I'll open a quick message form so the {cn} team can get back to you."),
         suggest_handoff=False,
         needs_message_card=True,
     )

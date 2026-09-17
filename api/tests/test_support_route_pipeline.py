@@ -117,7 +117,9 @@ async def test_a_support_turn_is_fixed_wording_with_the_form_and_one_alert(db, m
     assert [m.id for m in persisted] == [meta["message_id"]]
     assert persisted[0].content == answer
 
-    again = await _drive_stream(bot, ESCALATION, "support-1")
+    # A second problem report is a repeat. A new question (ESCALATION) is
+    # answered instead: see test_handoff_consent_pipeline.py.
+    again = await _drive_stream(bot, UNRESPONSIVE, "support-1")
 
     assert _answer_text(again) == (
         "Our team already knows about this. The form is just below: share your details there and "

@@ -158,6 +158,14 @@ HANDOFF_OFFER_RE = re.compile(
     # "talk to the onboarding guide" and "talk to our chatbot" are no offer.
     r"|talk to (?:a |an |the |our )?(?:human|person|someone|agent|representative|expert|specialist|"
     r"(?:[\w&'\u2019*-]+ )?team)\b"
+    # A question that offers time with our team: "Would you like to talk with
+    # our sales team?", "Want to discuss this with our team?", "Shall I arrange a
+    # call with the team?". The offer opening is required, so "our team will
+    # discuss this" is no offer, and the team must be ours, so "discuss this
+    # with your team" is none either.
+    r"|(?:(?:would you like|do you want|want)(?: me)? to|shall i|should i|can i) "
+    r"(?:talk|discuss (?:this|it|that|them|your [\w-]+)|(?:arrange|set up|schedule|book) a (?:quick |short )?call)"
+    r" with " + _OFFER_PERSON + r"\b"
     # "I can take a written message for the team"
     r"|take (?:a|your) (?:written )?message\b"
     # Pricing repeat: "Say yes and you can leave a message for them." The
@@ -208,6 +216,15 @@ _BARE_AFFIRMATION_RE = re.compile(
     r"do it|let'?s do it|please do|yes please|absolutely|definitely|i(?:'d| would) like that)\s*[.!]*\s*$"
 )
 _BARE_REFUSAL_RE = re.compile(r"(?i)^\s*(?:no|n|nope|nah|not really|no thanks|no thank you|not now)\s*[.!]*\s*$")
+
+
+def is_bare_affirmation(text: str | None) -> bool:
+    """True when the whole message only agrees ("yes", "sure", "ok", "yes please").
+
+    It carries no request of its own, so what it agrees to is whatever the bot's
+    previous message offered. "connect me" is not one: it names what it wants.
+    """
+    return bool(_BARE_AFFIRMATION_RE.match(text or ""))
 
 
 #: Characters a model wraps around the bare YES/NO it was asked for.

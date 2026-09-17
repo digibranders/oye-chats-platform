@@ -225,7 +225,7 @@ async def test_an_on_scope_question_with_no_chunks_still_takes_the_pivot(
     answer = await _drive(pipeline, bot, _ON_SCOPE, session_id)
 
     assert _stub_generation["prompts"] == [], "an empty context reached the model"
-    assert "sits with the" in answer
+    assert "I don't have that detail here" in answer
 
 
 @pytest.mark.asyncio
@@ -393,7 +393,7 @@ async def test_an_opted_out_bot_with_nothing_retrieved_does_not_invent_a_price(
 
 # ── The live-team promise reads operator presence, not just the clock ────────
 
-_LIVE_PROMISE = "will be with them shortly"
+_LIVE_PROMISE = "Would you like to speak with our team now?"
 _NOTIFY_COPY = "our team will be notified and will get back to them"
 _OFFLINE_CLAIM = "the team is offline right now"
 

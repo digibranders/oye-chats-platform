@@ -41,7 +41,7 @@ class TestCustomInstructionsPlacement:
         system_prompt, _ = _build("Always greet visitors in a playful tone.")
 
         assert "CUSTOM INSTRUCTIONS" in system_prompt
-        assert system_prompt.index("CUSTOM INSTRUCTIONS") < system_prompt.index("SCOPE (HIGHEST PRIORITY"), (
+        assert system_prompt.index("CUSTOM INSTRUCTIONS") < system_prompt.index("\nSCOPE:\n"), (
             "custom instructions must not sit after SCOPE, the position the model weights most"
         )
 
@@ -53,9 +53,7 @@ class TestCustomInstructionsPlacement:
         # ...but is explicitly denied authority over grounding, right after it.
         assert "NON-OVERRIDABLE" in system_prompt
         clause_start = system_prompt.index("NON-OVERRIDABLE")
-        assert (
-            system_prompt.index("CUSTOM INSTRUCTIONS") < clause_start < system_prompt.index("SCOPE (HIGHEST PRIORITY")
-        )
+        assert system_prompt.index("CUSTOM INSTRUCTIONS") < clause_start < system_prompt.index("\nSCOPE:\n")
         assert "REFERENCE INFORMATION supplied for this turn" in system_prompt
 
     def test_a_grounding_override_in_the_custom_prompt_is_cleared(self):
@@ -68,13 +66,18 @@ class TestCustomInstructionsPlacement:
         assert "answer from general knowledge" not in system_prompt
         assert "CUSTOM INSTRUCTIONS" not in system_prompt
 
-    def test_scope_block_claims_precedence_over_what_precedes_it(self):
-        """SCOPE used to say it overrode "everything else below". With the
-        custom section moved above it, that wording would have read as a
-        concession that the customer's prompt outranks SCOPE."""
+    def test_scope_outranks_the_custom_instructions_above_it(self):
+        """SCOPE used to claim it overrode everything "above" and "below" it, so
+        the customer's section, which sits above SCOPE, could not read as
+        outranking it. One PRIORITY ORDER now ranks every block (2026-09-17), and
+        it has to keep that guarantee: scope and grounding above anything the
+        business writes."""
         system_prompt, _ = _build("Be playful.")
-        scope_line = system_prompt[system_prompt.index("SCOPE (HIGHEST PRIORITY") :].splitlines()[0]
-        assert "above" in scope_line and "below" in scope_line
+        order = system_prompt[system_prompt.index("PRIORITY ORDER") : system_prompt.index("CUSTOM INSTRUCTIONS")]
+
+        assert order.index("Grounding:") < order.index("Scope:")
+        assert "Business instructions and brand tone change wording and emphasis only." in order
+        assert "Subordinate to the SCOPE rules below" in system_prompt
 
     def test_no_custom_prompt_emits_no_section(self):
         system_prompt, _ = _build(None)

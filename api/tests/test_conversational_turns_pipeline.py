@@ -371,7 +371,8 @@ class TestFrustrationGetsAnApologyAndThePerson:
 
         meta = _final_meta(frames) or {}
         assert _answer_text(frames) == (
-            "Sorry about that. Tell me a little more about what you're looking for, and I'll do my best to help."
+            "Sorry about that. Try asking another way, or tell me the one thing you need about **Acme**, "
+            "and I'll do my best to help."
         )
         assert not meta.get("suggest_handoff") and not meta.get("show_leave_message")
 
@@ -395,3 +396,73 @@ class TestFrustrationGetsAnApologyAndThePerson:
 
         assert classifier.calls == []
         assert len(cap["prompts"]) == 2
+
+
+class TestRepeatedReactionsAndDistress:
+    """Eval 2026-09-17 (defect 6): an upset visitor got a bare "Sorry to hear
+    that.", a scope refusal, or the same apology twice; a visitor asking which
+    sleeping tablets to take got the off-topic redirect."""
+
+    @pytest.mark.asyncio
+    async def test_a_second_insult_gets_new_words_and_no_second_apology(self, db, monkeypatch):
+        bot, cap, _judge, _classifier = _bot(db, monkeypatch, "re-1")
+        monkeypatch.setattr(rs, "route_intent", real_route_intent)
+        routed = real_route_intent("stupid bot", "Acme", support_enabled=True)
+
+        first = _answer_text(await _drive_stream(bot, "stupid bot", "re-1"))
+        again = _answer_text(await _drive_stream(bot, "stupid bot", "re-1"))
+
+        assert first.endswith(routed.answer), first
+        assert again.endswith(routed.repeat_answer), again
+        assert "sorry" not in again.lower()
+        assert cap["prompts"] == []
+
+    @pytest.mark.asyncio
+    async def test_a_yes_to_the_frustration_reply_opens_the_form(self, db, monkeypatch):
+        bot, _cap, _judge, _classifier = _bot(db, monkeypatch, "re-2")
+        monkeypatch.setattr(rs, "route_intent", real_route_intent)
+
+        await _drive_stream(bot, "this bot is absolute trash", "re-2")
+        yes = await _drive_stream(bot, "yes", "re-2")
+
+        assert _final_meta(yes)["suggest_handoff"] is True
+        assert "offline" not in _answer_text(yes).lower()
+
+    @pytest.mark.asyncio
+    async def test_the_dissatisfied_reply_after_the_frustration_reply_does_not_apologise_again(self, db, monkeypatch):
+        bot, _cap, judge, _classifier = _bot(db, monkeypatch, "re-3", verdict=True)
+        monkeypatch.setattr(rs, "route_intent", real_route_intent)
+        await _answered_first(db, bot, "re-3", judge)
+        await _drive_stream(bot, "stupid bot", "re-3")
+
+        frames = await _drive_stream(bot, "useless answer", "re-3")
+
+        offer = unhelped_offer(live_chat_enabled=True, team_available=True)
+        assert _answer_text(frames) == "Understood. " + offer.text
+        assert _final_meta(frames)["suggest_handoff"] is True
+
+    @pytest.mark.asyncio
+    async def test_distress_gets_care_before_moderation_and_no_sales_route(self, db, monkeypatch):
+        bot, cap, _judge, _classifier = _bot(db, monkeypatch, "re-4")
+        monkeypatch.setattr(rs, "route_intent", real_route_intent)
+        moderated: list[str] = []
+        monkeypatch.setattr(rs, "check_visitor_safety", lambda q: (moderated.append(q), (False, "self-harm"))[1])
+
+        frames = await _drive_stream(bot, "i just want to die", "re-4")
+
+        text = _answer_text(frames)
+        assert "local emergency number" in text, text
+        assert "Acme" not in text
+        assert not (_final_meta(frames) or {}).get("suggest_handoff")
+        assert moderated == []
+        assert cap["prompts"] == []
+
+    @pytest.mark.asyncio
+    async def test_a_returning_visitor_in_distress_is_not_welcomed_back(self, db, monkeypatch):
+        bot, _cap, _judge, _classifier = _bot(db, monkeypatch, "re-5")
+        monkeypatch.setattr(rs, "route_intent", real_route_intent)
+        routed = real_route_intent("which tablets should i take", "Acme")
+
+        frames = await _drive_stream(bot, "which tablets should i take", "re-5")
+
+        assert _answer_text(frames) == routed.answer

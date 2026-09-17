@@ -125,6 +125,23 @@ def _support_classifier_is_down(request: pytest.FixtureRequest, monkeypatch: pyt
     monkeypatch.setattr(support_route, "generate_response_checked", lambda *_args, **_kwargs: ("", True))
 
 
+@pytest.fixture(autouse=True)
+def _credential_check_is_down(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The credential check answers as if its model were down, so its fallback rules decide.
+
+    ``credential_facts`` asks the gate model before generation whenever a message
+    asks about the company's certifications and the reference mentions one, and a
+    pipeline test written for another route ("are you ISO certified and how much
+    is it") can reach LiteLLM that way. A test of the check stubs
+    ``credential_facts.generate_response_checked`` itself, which overrides this.
+    """
+    if request.node.get_closest_marker(ALLOW_REAL_LLM_CALL) is not None:
+        return
+    from app.services import credential_facts
+
+    monkeypatch.setattr(credential_facts, "generate_response_checked", lambda *_args, **_kwargs: ("", True))
+
+
 # ── Real-Postgres throwaway DB (for DB-layer tests: locks, ledger, clawback) ──
 #
 # Mirrors the throwaway-database pattern in test_affiliate_service.py. Requires a
