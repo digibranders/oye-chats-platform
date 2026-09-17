@@ -78,9 +78,9 @@ class TestAPromptChangeCannotShipWithoutAVersionBump:
         # request for a person answered with an offer rather than a promise (2026-09-17).
         # Re-recorded before its first deploy.
         6: "f2ebfda2186cf1fea01fdca76bc9af5ea1049b1dba2d42d7b3575cf510f46815",
-        # 7: RULE 5a reads the general-article page tag and RULE 5c matches a yes to the
-        # exact capability asked (2026-09-17).
-        7: "e35219ccd73efc23daf0a9633831c3f84ba0da1fa2a636b82813de1cb419f330",
+        # 7: general-article page tag, exact-capability yes, a gap path that reads the
+        # conversation, and essays out of scope (2026-09-17).
+        7: "PENDING",
     }
 
     @staticmethod

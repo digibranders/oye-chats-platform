@@ -172,7 +172,10 @@ class TestTheGapRule:
     def test_it_is_only_for_an_absent_fact(self):
         gap = self._gap(**_PAID)
 
-        assert "Use this only when the specific fact asked for is absent from the REFERENCE INFORMATION." in gap
+        assert (
+            "Use this only when the specific fact asked for is absent from both the REFERENCE INFORMATION "
+            "and the CONVERSATION HISTORY," in gap
+        )
         assert "When it is present, state it." in gap
 
     def test_the_team_phrase_is_retired(self):
