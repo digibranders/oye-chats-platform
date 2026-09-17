@@ -424,6 +424,47 @@ class TestMixedPricingTurn:
         assert 'pricing_mixed=_pricing_decision.outcome == "escalate_deferred"' in source
 
 
+class TestFieldQuestionTurn:
+    """Production, 2026-09-17 14:25 UTC, CleanStart: the field-question second
+    opinion let "whats the difference between BAS and red teaming" through, and
+    the answer model replied with the scope line anyway."""
+
+    _LINE = "THIS TURN, FIELD QUESTION:"
+
+    def test_the_line_appears_only_on_a_field_question_turn(self):
+        assert self._LINE not in _user(**_PAID)
+        assert self._LINE in _user(**_PAID, field_question=True)
+
+    def test_it_asks_for_a_short_explanation_and_whether_the_company_offers_it(self):
+        line = _flat(_section(_user(**_PAID, field_question=True), self._LINE, "\n\n"))
+
+        assert "the visitor asks about a concept in Acme's field, so it is in scope: do not use the scope line." in line
+        assert "Explain it briefly in general terms (two or three sentences)" in line
+        assert "then say plainly whether Acme offers it, from the REFERENCE INFORMATION" in line
+        assert "if it does not, name the closest thing it does offer." in line
+
+    def test_the_system_prompt_is_unchanged_by_it(self):
+        """The flag is per turn, so it must not break the cached system prefix or the fingerprint."""
+        assert _system(**_PAID) == _system(**_PAID, field_question=True)
+
+    def test_the_stream_pipeline_passes_the_relax_decision(self):
+        import inspect
+
+        from app.services import rag_service as rs
+
+        source = inspect.getsource(rs.rag_pipeline_stream)
+        assert "field_question=_relax_field_question" in source
+
+    def test_the_scope_refusal_detector_matches_the_prompts_scope_line(self):
+        from app.services import rag_service as rs
+
+        system = _system(**_PAID)
+        scope_line = system.split('Scope line, used exactly and answering no part of the request: "', 1)[1]
+        scope_line = scope_line.split('"', 1)[0]
+
+        assert rs._is_scope_refusal(scope_line, "Acme")
+
+
 class TestNoDashesOutsideThePinnedRule:
     """The prompt bans the em dash and used to model it. The style rule and its
     cross-marked example keep the literal character (test_em_dash_prompt_rules)."""

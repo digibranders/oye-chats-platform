@@ -8,10 +8,12 @@ pipeline tests are in ``test_field_question_pipeline``.
 import asyncio
 import logging
 import threading
+import time
 
 import pytest
 
 from app.services import field_question
+from app.services import rag_service as rs
 from app.services.field_question import (
     BusinessProfile,
     asks_about_the_field_bounded,
@@ -294,3 +296,39 @@ def test_the_autouse_fixture_makes_the_model_look_down(failures):
     """No test reaches a real model through this classifier (see conftest)."""
     assert classify_field_question(PRODUCTION_QUESTION, CLEANSTART) is False
     assert failures == [(field_question.FAILED_METRIC, None)]
+
+
+class TestScopeRefusalDetector:
+    """``rag_service._is_scope_refusal``: the reply the field-question safety net counts."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "I'm here to help with questions about CleanStart. Is there something about our services I can help with?",
+            "I’m here to help with questions about CleanStart.",
+            "Eva, I'm here to help with questions about CleanStart. Is there something about our services I can help with?",
+            "  i'm here to help with questions about cleanstart",
+            "Welcome back, Eva!\n\nI'm here to help with questions about CleanStart.",
+            "Let's keep this about CleanStart. Would it help to hear about our work and our services, "
+            "or should I connect you with the team?",
+        ],
+    )
+    def test_the_refusal_wordings_are_scope_refusals(self, text):
+        assert rs._is_scope_refusal(text, "CleanStart")
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "",
+            "Breach and attack simulation runs automated attacks; red teaming is human-led. CleanStart does not offer either.",
+            "Red teaming is a human-led exercise. I'm here to help with questions about CleanStart too.",
+        ],
+    )
+    def test_an_answer_is_not(self, text):
+        assert not rs._is_scope_refusal(text, "CleanStart")
+
+    def test_long_input_stays_linear(self):
+        started = time.perf_counter()
+        rs._is_scope_refusal("a," * 100_000 + " I'm here to help with questions about", "CleanStart")
+
+        assert time.perf_counter() - started < 1.0

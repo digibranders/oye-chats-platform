@@ -1646,6 +1646,14 @@ _SAFETY_NET_METRIC_NAMES = [
     # not state as the company's own, replaced after the stream
     # (commitment_guard.py via rag_service.py).
     "commitment_figure_redacted",
+    # A reply sentence saying the company serves a country the reference
+    # does not support (a form's country dropdown), replaced after the stream
+    # (commitment_guard.py via rag_service.py).
+    "country_claim_redacted",
+    # The field-question second opinion let a turn through and the answer
+    # model replied with the scope refusal anyway; counted, not retried
+    # (rag_service.py).
+    "field_question_answer_refused",
     # Scheduling request answered deterministically because the bot has no
     # scheduler configured (meeting_gate.py via rag_service.py).
     "meeting_gate_pivot",

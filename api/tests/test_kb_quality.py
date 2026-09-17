@@ -44,6 +44,7 @@ import sys
 import pytest
 
 from app.db.models import Bot, Client, Document
+from app.services import kb_quality
 from app.services.kb_quality import (
     is_option_list,
     option_list_kind,
@@ -1237,3 +1238,46 @@ class TestMainMissingBot:
         out = capsys.readouterr().out
         assert exit_code == 0
         assert f"0 suspicious of 2 active chunks for bot {bot.id}" in out
+
+
+class TestIsCountryName:
+    """A whole line that is one country or territory, as a form's dropdown prints it."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "France",
+            "Côte d’Ivoire",
+            "St. Kitts & Nevis",
+            "Cocos (Keeling) Islands",
+            "Democratic Republic of the Congo (Kinshasa)",
+            "Saint Martin (Dutch part)",
+            "United Kingdom (UK)",
+            "Macao S.A.R., China",
+            "Bonaire, Saint Eustatius and Saba",
+            "South Georgia/Sandwich Islands",
+            "Vatican",
+            "United States (US) Virgin Islands",
+            "  Germany  ",
+        ],
+    )
+    def test_dropdown_spellings_are_country_names(self, text):
+        assert kb_quality.is_country_name(text)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "",
+            "France office",
+            "India: Ahmedabad",
+            "We serve France",
+            "France, Paris",
+            "Hong Kong SAR China+852",
+            "USA",
+            "Select Country",
+            "Banking",
+            "France " * 20,
+        ],
+    )
+    def test_anything_more_than_a_name_is_not(self, text):
+        assert not kb_quality.is_country_name(text)

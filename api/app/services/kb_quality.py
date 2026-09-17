@@ -517,6 +517,9 @@ def _compile_phrase_alternation(phrases: frozenset[str]) -> re.Pattern[str]:
 
 
 _COUNTRY_PATTERN = _compile_phrase_alternation(_COUNTRY_NAMES)
+#: Every country or territory name on the list, word-bounded, longest first.
+#: It reads lowercase, accent-free text (``_fold``).
+COUNTRY_NAME_PATTERN: re.Pattern[str] = _COUNTRY_PATTERN
 _US_STATE_PATTERN = _compile_phrase_alternation(_US_STATES)
 _INDIAN_STATE_PATTERN = _compile_phrase_alternation(_INDIAN_STATES)
 
@@ -537,12 +540,39 @@ def _compile_raw_phrase_alternation(phrases: frozenset[str]) -> re.Pattern[str]:
 
 _COUNTRY_PATTERN_RAW = _compile_raw_phrase_alternation(_COUNTRY_NAMES)
 
-#: Picker spellings folded to the list's: "&" for "and", "St." for "Saint",
-#: dots dropped ("U.S. Virgin Islands"), a curly apostrophe straightened.
+#: "St." opening a picker name, read as "Saint".
 _PICKER_SAINT_RE = re.compile(r"^st\b")
 _PICKER_SPACES_RE = re.compile(r"\s+")
 #: A country name is at most this long; the rest of a line is never read.
 _COUNTRY_NAME_MAX_CHARS = 80
+
+#: A dropdown's qualifier after a name: "(Kinshasa)", "(Dutch part)", "(UK)".
+_PICKER_QUALIFIER_RE = re.compile(r"\([^()\n]{0,40}\)")
+#: Where a dropdown joins two names in one option: "Macao S.A.R., China",
+#: "South Georgia/Sandwich Islands", "Congo - Brazzaville".
+_PICKER_PART_SPLIT_RE = re.compile(r"\s{0,3}(?:[,/]|\s-\s)\s{0,3}")
+#: Dropdown option parts that are not names on the list above on their own.
+_PICKER_PART_ALIASES = frozenset(
+    {
+        "vatican",
+        "saint eustatius and saba",
+        "sint eustatius and saba",
+        "united states virgin islands",
+        "sandwich islands",
+        "macao sar",
+        "macau sar",
+        "hong kong sar",
+        "brazzaville",
+        "kinshasa",
+    }
+)
+
+
+def _picker_name(text: str) -> str:
+    """``text`` folded to the list's spelling: "&" for "and", "St." for "Saint",
+    dots dropped ("U.S. Virgin Islands"), a curly apostrophe straightened."""
+    name = _fold(text).replace("\u2019", "'").replace("&", " and ").replace(".", "")
+    return _PICKER_SAINT_RE.sub("saint", _PICKER_SPACES_RE.sub(" ", name).strip())
 
 
 def starts_with_country_name(text: str) -> bool:
@@ -551,9 +581,25 @@ def starts_with_country_name(text: str) -> bool:
     "Côte d’Ivoire", "St. Kitts & Nevis", "Congo - Brazzaville" and "Hong Kong
     SAR China" all count; "USA" and "UK" do not, since a picker spells names out.
     """
-    name = _fold(text[:_COUNTRY_NAME_MAX_CHARS]).replace("\u2019", "'").replace("&", " and ").replace(".", "")
-    name = _PICKER_SAINT_RE.sub("saint", _PICKER_SPACES_RE.sub(" ", name).strip())
-    return _COUNTRY_PATTERN.match(name) is not None
+    return _COUNTRY_PATTERN.match(_picker_name(text[:_COUNTRY_NAME_MAX_CHARS])) is not None
+
+
+def is_country_name(text: str) -> bool:
+    """Whether ``text`` is one country or territory name and nothing else, as a form's dropdown prints it.
+
+    Besides the picker spellings ``starts_with_country_name`` reads, a
+    qualifier in brackets ("Saint Martin (Dutch part)") is ignored and an
+    option that joins two names ("Macao S.A.R., China") counts when each part
+    is one. "France office", "India: Ahmedabad" and "USA" do not count.
+    """
+    if not text or len(text) > _COUNTRY_NAME_MAX_CHARS:
+        return False
+    name = _picker_name(text)
+    if _COUNTRY_PATTERN.fullmatch(name) is not None:
+        return True
+    bare = _PICKER_SPACES_RE.sub(" ", _PICKER_QUALIFIER_RE.sub(" ", name)).strip()
+    parts = _PICKER_PART_SPLIT_RE.split(bare)
+    return all(part in _PICKER_PART_ALIASES or _COUNTRY_PATTERN.fullmatch(part) is not None for part in parts)
 
 
 _US_STATE_PATTERN_RAW = _compile_raw_phrase_alternation(_US_STATES)

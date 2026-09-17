@@ -2171,6 +2171,16 @@ class TestAnswerToBotQuestion:
     STATEMENT = [{"role": "bot", "content": "We offer commercial cleaning services."}]
     HANDOFF_OFFER = [{"role": "bot", "content": "Want me to connect you with the team?"}]
     GENERIC_INVITE = [{"role": "bot", "content": "Glad that helped, anything else about us?"}]
+    NAME_STEP = [
+        {"role": "bot", "content": "Before I help you out, may I know your name so I can address you properly?"},
+        {"role": "user", "content": "Eva"},
+        {
+            "role": "bot",
+            "content": "Nice to meet you, Eva! What would you like to know? Our services, recent work, or how to "
+            "get started with **Acme**?",
+        },
+        {"role": "user", "content": "write a 300 word essay on cyber security for my class 9 assignment"},
+    ]
     # A5: probe two bot-turns back, intervening bot turn is a non-question ack.
     DELAYED = [
         {"role": "bot", "content": "What's your role there?"},
@@ -2200,6 +2210,8 @@ class TestAnswerToBotQuestion:
             ("i am the manager", STATEMENT, False),
             # no history → do not relax
             ("i am the manager", [], False),
+            # the name question and the name step's open invite are not probes
+            ("write a 300 word essay on cyber security for my class 9 assignment", NAME_STEP, False),
         ],
     )
     def test_is_answer_to_bot_question(self, question, history, expected):

@@ -100,3 +100,47 @@ async def test_the_non_streaming_reply_is_the_corrected_text(db, monkeypatch):
 
     assert payload["answer"] == CORRECTED
     assert [m.content for m in _messages(db, "commit-3", role="bot")] == [CORRECTED]
+
+
+FRANCE_QUESTION = "d'accord, et c'est disponible en France ?"
+FRANCE_CHUNKS = ("Yes, France is listed among the countries we serve. ", "Our SOC runs 24x7.")
+FRANCE_CORRECTED = "I don't have a statement about serving France here. Our SOC runs 24x7."
+DROPDOWN_KB = (
+    _doc(
+        "Select Country\nDjibouti\nDominica\nEcuador\nEgypt\nFinland\nFrance\nFrench Guiana\nGabon",
+        name="https://acme.com/cybersecurity/security-operations-market/",
+    ),
+)
+
+
+@pytest.mark.asyncio
+async def test_an_unsupported_country_claim_is_corrected_everywhere(db, monkeypatch, metrics):
+    """Production, 2026-09-17 14:25 UTC: the Eventus Security bot said it serves France."""
+    client = _make_client(db)
+    bot = _make_bot(db, client)
+    _make_session(db, bot, client, "country-1")
+    captured = _stub_pipeline(monkeypatch, retrieved=DROPDOWN_KB, chunks=FRANCE_CHUNKS)
+    _anonymous_visitor(monkeypatch)
+
+    frames = await _drive_stream(bot, FRANCE_QUESTION, "country-1")
+
+    assert _final_meta(frames)["answer_override"] == FRANCE_CORRECTED
+    assert [m.content for m in _messages(db, "country-1", role="bot")] == [FRANCE_CORRECTED]
+    assert [tags["countries"] for name, tags in metrics if name == "country_claim_redacted"] == ["France"]
+    for cached in captured["cache"].store.values():
+        assert "France is listed" not in cached["answer"]
+
+
+@pytest.mark.asyncio
+async def test_a_supported_country_claim_streams_unchanged(db, monkeypatch, metrics):
+    client = _make_client(db)
+    bot = _make_bot(db, client)
+    _make_session(db, bot, client, "country-2")
+    own = (_doc("Acme has offices in Paris, France and Pune, India.", name="https://acme.com/contact-us/"),)
+    _stub_pipeline(monkeypatch, retrieved=own, chunks=("Yes, we have an office in France.",))
+    _anonymous_visitor(monkeypatch)
+
+    frames = await _drive_stream(bot, FRANCE_QUESTION, "country-2")
+
+    assert "answer_override" not in _final_meta(frames)
+    assert [name for name, _ in metrics if name == "country_claim_redacted"] == []
