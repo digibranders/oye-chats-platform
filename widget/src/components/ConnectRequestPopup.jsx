@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { UserCheck, Loader2 } from 'lucide-react';
-import { sanitizeColor } from '../services/sanitize';
+import { DEFAULT_PRIMARY_COLOR, sanitizeColor } from '../services/sanitize';
 import { t } from '../i18n/i18n.js';
 
 /**
@@ -30,7 +30,7 @@ const ConnectRequestPopup = ({
     onExpire,
     primaryColor: rawPrimary,
 }) => {
-    const primaryColor = sanitizeColor(rawPrimary, '#3A0CA3');
+    const primaryColor = sanitizeColor(rawPrimary, DEFAULT_PRIMARY_COLOR);
     const displayName = operatorName || t('system.our_team') || 'Our team';
 
     // Countdown. Drives the small timer chip in the corner. We only render

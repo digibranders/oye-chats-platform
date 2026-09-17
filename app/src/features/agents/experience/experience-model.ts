@@ -441,6 +441,12 @@ export function isTimeOfDay(value: string): boolean {
   return TIME_PATTERN.test(value);
 }
 
+/**
+ * The zone the server runs a schedule in when none is saved
+ * (`live_chat_availability_service._now_in_timezone`).
+ */
+export const SERVER_DEFAULT_TIMEZONE = 'UTC';
+
 /** The viewer's own zone, which is the right default for a schedule they set. */
 export function localTimezone(): string {
   try {
@@ -485,7 +491,9 @@ function parseBusinessHours(value: unknown): BusinessHours | null {
     days[key] = isTimeOfDay(start) && isTimeOfDay(end) ? { start, end } : null;
     if (days[key]) anyDay = true;
   }
-  const timezone = asString(raw.timezone) || localTimezone();
+  // Not the viewer's zone: the server runs a schedule with no saved zone in
+  // UTC, and showing anything else would misstate when the team is reachable.
+  const timezone = asString(raw.timezone) || SERVER_DEFAULT_TIMEZONE;
   // A stored object with a timezone but no readable day is still a real
   // restriction — the server reads it as "closed every day" — so it is kept
   // rather than collapsed to "always open", which would misreport availability.

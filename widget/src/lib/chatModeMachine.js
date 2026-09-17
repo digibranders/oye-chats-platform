@@ -26,7 +26,7 @@
  * server.
  *
  * The gap that made this concrete: an operator accepting a chat AFTER the queue
- * timeout (`live_chat_queue_timeout_seconds`, 20s by default) had already
+ * timeout (`live_chat_queue_timeout_seconds`, then 20s by default) had already
  * pushed the visitor to `unavailable`. The visitor saw the "Leave a message"
  * offline form, then watched "<operator> joined the chat" render above it, and
  * had no composer to answer with, because `unavailable` only allowed `bot`. The

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowRight, ArrowLeft, SkipForward, Check } from 'lucide-react';
-import { sanitizeColor } from '../services/sanitize';
+import { DEFAULT_PRIMARY_COLOR, sanitizeColor } from '../services/sanitize';
 import {
     submitQuotationServices,
     submitQuotationRequirements,
@@ -30,7 +30,7 @@ const QuotationFlow = ({ sessionId, settings, initialState, onComplete }) => {
     const [error, setError] = useState('');
 
     const primaryColor = useMemo(
-        () => sanitizeColor(settings?.primary_color, '#3A0CA3'),
+        () => sanitizeColor(settings?.primary_color, DEFAULT_PRIMARY_COLOR),
         [settings?.primary_color],
     );
 

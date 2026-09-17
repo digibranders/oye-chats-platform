@@ -19,6 +19,7 @@ from app.services.language_service import resolve_live_chat_language
 from app.services.live_chat_service import is_client_gone, manager
 from app.services.operator_identity_service import resolve_account_operator
 from app.services.plan_service import get_client_subscription
+from app.services.push_service import muted_push_preferences
 from app.services.session_state_machine import InvalidTransitionError, transition_session
 from app.services.translation_service import is_translation_enabled, translate_outgoing
 
@@ -687,12 +688,13 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                     if ws_bot and getattr(ws_bot, "email_on_offline", True):
                         from app.services.email_service import (
                             get_notification_recipients,
+                            get_reply_to_address,
                             send_offline_message_email,
                             send_unavailable_callback_email,
                         )
 
                         recipients = get_notification_recipients(ws_bot, "offline_message")
-                        reply_to = getattr(ws_bot, "reply_to_email", None)
+                        reply_to = get_reply_to_address(ws_bot)
                         for recipient in recipients:
                             if phone:
                                 send_unavailable_callback_email(
@@ -893,6 +895,7 @@ def _resolve_operator_from_key(
                 is_online=True,
                 role="owner",
                 operator_api_key=_uuid.uuid4().hex,
+                notification_preferences=muted_push_preferences(),
             )
             session.add(operator)
             session.commit()

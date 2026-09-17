@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Users, Clock, MessageSquare } from 'lucide-react';
-import { sanitizeColor } from '../services/sanitize';
+import { DEFAULT_PRIMARY_COLOR, sanitizeColor } from '../services/sanitize';
 import { t } from '../i18n/i18n.js';
 
 /**
@@ -13,7 +13,7 @@ import { t } from '../i18n/i18n.js';
  * forcing a fallback. Visitors who really need live help keep waiting,
  * impatient visitors self-serve to the form.
  *
- * Visual states by elapsed time (against ``timeoutSeconds``, default 20s):
+ * Visual states by elapsed time (against ``timeoutSeconds``, default 60s like the column):
  *   0 to 25%  : "Connecting you with our team..." 🔍
  *   25 to 50% : "Our team is busy. You're in the queue" ⏳
  *   50 to 80% : "This is taking longer than usual..." ⌛
@@ -34,12 +34,12 @@ import { t } from '../i18n/i18n.js';
 const QueueWaitingScreen = ({
     position,
     etaSeconds,
-    timeoutSeconds = 20,
+    timeoutSeconds = 60,
     primaryColor: rawPrimary,
     onLeaveMessage,
     onKeepWaiting,
 }) => {
-    const primaryColor = sanitizeColor(rawPrimary, '#3A0CA3');
+    const primaryColor = sanitizeColor(rawPrimary, DEFAULT_PRIMARY_COLOR);
     const [elapsed, setElapsed] = useState(0);
     // Once the visitor explicitly chooses to keep waiting, we stop showing the
     // choice prompt so they're not nagged every few seconds.

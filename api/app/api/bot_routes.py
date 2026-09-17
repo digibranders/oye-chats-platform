@@ -55,7 +55,7 @@ from app.core.cache import (
 )
 from app.core.origin_check import extract_hostname, is_origin_allowed, normalize_domain_input
 from app.core.rate_limit import limiter
-from app.db.models import ActivationEvent, Bot, BotGrowthEvent
+from app.db.models import ActivationEvent, Bot, BotGrowthEvent, Client
 from app.db.repository import stamp_manual_avatar, stamp_manual_platform
 from app.db.session import get_session
 from app.schemas.validators import (
@@ -75,8 +75,13 @@ from app.schemas.validators import (
     bounded_list,
     validate_http_url,
 )
+from app.services.bot_defaults import owner_contact_defaults
 from app.services.brand_tone import BRAND_TONE_PRESETS, CUSTOM_PRESET, is_valid_preset_value, preset_text
-from app.services.email_service import send_install_invite_email, uses_owner_notification_fallback
+from app.services.email_service import (
+    send_install_invite_email,
+    uses_owner_notification_fallback,
+    workspace_owner_email,
+)
 from app.services.install_probe import probe_is_running
 from app.services.install_registry import list_domain_installs, record_observed_domain
 from app.services.knowledge_quota_service import release_kb_usage_for_bot
@@ -901,6 +906,10 @@ class BotResponse(BaseModel):
     # ``email_service.uses_owner_notification_fallback``). Lets the console say
     # where alerts go instead of implying they go nowhere.
     notifications_use_owner_fallback: bool = False
+    # The account email every owner fallback resolves to: notification
+    # recipients with no list saved and a Reply-To left empty. The viewer may
+    # be an invited member, so the console cannot use its own login address.
+    owner_email: str | None = None
     reply_to_email: str | None = None
     email_on_qualified: bool = True
     email_on_handoff: bool = True
@@ -1068,6 +1077,7 @@ def _bot_to_response(bot: Bot, request: Request, *, plan_slug: str = "free", pla
         notification_email=bot.notification_email,
         notification_emails=bot.notification_emails,
         notifications_use_owner_fallback=uses_owner_notification_fallback(bot),
+        owner_email=workspace_owner_email(bot),
         reply_to_email=bot.reply_to_email,
         email_on_qualified=bot.email_on_qualified,
         email_on_handoff=bot.email_on_handoff,
@@ -1617,6 +1627,10 @@ def list_bots(
             if self_op_bot_id is not None:
                 stmt = stmt.where(Bot.id == self_op_bot_id)
         bots = session.execute(stmt).scalars().all()
+        # One query for every owner address instead of one per bot.
+        owner_emails: dict[int, str] = dict(
+            session.execute(select(Client.id, Client.email).where(Client.id.in_({b.client_id for b in bots}))).all()
+        )
         bots_response = []
         for b in bots:
             _b_plan = bot_plan(b.id, session)
@@ -1670,6 +1684,7 @@ def list_bots(
                     notification_email=b.notification_email,
                     notification_emails=b.notification_emails,
                     notifications_use_owner_fallback=uses_owner_notification_fallback(b),
+                    owner_email=owner_emails.get(b.client_id),
                     reply_to_email=b.reply_to_email,
                     email_on_qualified=b.email_on_qualified,
                     email_on_handoff=b.email_on_handoff,
@@ -1896,6 +1911,7 @@ def create_bot(
             bant_enabled=request.bant_enabled,
             allowed_domains=resolved_domains,
             domain_check_enabled=resolved_check_enabled,
+            **owner_contact_defaults(session, auth["client_id"]),
         )
         session.add(new_bot)
         session.commit()
@@ -2606,6 +2622,40 @@ def get_bot(bot_id: int, request: Request, auth=Depends(get_current_client_or_op
         bot = _get_workspace_bot(session, bot_id, auth["client_id"])
         _plan = bot_plan(bot.id, session)
         return _bot_to_response(bot, request, plan_slug=_plan[0], plan_name=_plan[1])
+
+
+class ContactLinkResponse(BaseModel):
+    """Which contact page the chatbot hands a visitor, and where it came from.
+
+    ``effective_url`` is what ``rag_service.resolve_contact_url`` returns with
+    the crawl fallback on (the Free-plan path, the only one that uses it).
+    ``detected_url`` is the crawl's own finding even when a Smart Link wins,
+    so the console can offer it.
+    """
+
+    effective_url: str | None
+    source: Literal["smart_link", "crawl"] | None
+    detected_url: str | None
+
+
+@router.get("/{bot_id}/contact-link", response_model=ContactLinkResponse)
+def get_bot_contact_link(bot_id: int, auth=Depends(get_current_client_or_operator)) -> ContactLinkResponse:
+    """The contact page this bot links visitors to.
+
+    Separate from ``GET /bots/{id}`` because the crawl half scans the bot's
+    crawled pages, which only the settings screen that shows it should pay for.
+    """
+    from app.services.rag_service import contact_url_from_answer_links, crawled_contact_url
+
+    with get_session() as session:
+        bot = _get_workspace_bot(session, bot_id, auth["client_id"])
+        configured = contact_url_from_answer_links(bot.answer_links)
+        detected = crawled_contact_url(session, bot.id)
+    if configured:
+        return ContactLinkResponse(effective_url=configured, source="smart_link", detected_url=detected)
+    if detected:
+        return ContactLinkResponse(effective_url=detected, source="crawl", detected_url=detected)
+    return ContactLinkResponse(effective_url=None, source=None, detected_url=None)
 
 
 # Auto-fillable fields the website crawl may populate. Edits to these are

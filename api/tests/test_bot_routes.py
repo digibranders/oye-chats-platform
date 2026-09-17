@@ -82,6 +82,11 @@ class _ExecuteResult:
         run through ``.all()`` and must not trip over the ownership-lookup stub."""
         return []
 
+    def one_or_none(self):
+        """No row. The account read behind a new bot's contact defaults
+        (``bot_defaults.owner_contact_defaults``) then adds nothing."""
+        return None
+
 
 def _apply_flush_defaults(obj, bot_id=42):
     """Assign a primary key + materialize a Bot's scalar column defaults.

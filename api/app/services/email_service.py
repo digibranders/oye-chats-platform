@@ -706,7 +706,7 @@ def get_notification_recipients(bot, event_type: str) -> list[str]:
     saved = _saved_notification_recipients(bot, event_type)
     if saved:
         return saved
-    owner_email = _workspace_owner_email(bot)
+    owner_email = workspace_owner_email(bot)
     if owner_email is None:
         return []
     logger.info(
@@ -716,6 +716,24 @@ def get_notification_recipients(bot, event_type: str) -> list[str]:
         redact_email(owner_email),
     )
     return [owner_email]
+
+
+def get_reply_to_address(bot) -> str | None:
+    """The Reply-To for mail sent on behalf of ``bot``, or ``None``.
+
+    The saved ``reply_to_email`` wins; otherwise the workspace owner's account
+    email. Without a Reply-To a reply to a team alert or to a visitor's quote
+    or offline-message email goes to the no-reply sender address and is lost
+    (production audit, 2026-09-17: every bot had it unset). Nothing is saved
+    on the bot for the fallback, so it follows the owner's current address.
+    Never raises; ``None`` means no header is sent.
+    """
+    if bot is None:
+        return None
+    saved = _clean_address(getattr(bot, "reply_to_email", None))
+    if saved is not None:
+        return saved
+    return workspace_owner_email(bot)
 
 
 def uses_owner_notification_fallback(bot) -> bool:
@@ -761,7 +779,7 @@ def _loaded_bot_id(bot) -> object:
     return getattr(bot, "__dict__", {}).get("id")
 
 
-def _workspace_owner_email(bot) -> str | None:
+def workspace_owner_email(bot) -> str | None:
     """The account email of the workspace that owns ``bot``, or ``None``.
 
     The account row (``Client.email``), not an owner operator row.
@@ -800,7 +818,7 @@ def _workspace_owner_email(bot) -> str | None:
         with get_session() as session:
             return _clean_address(session.execute(query).scalar_one_or_none())
     except Exception:  # noqa: BLE001 - a lookup failure must not break the request that is notifying
-        logger.warning("Notification owner lookup failed | bot=%s", _loaded_bot_id(bot), exc_info=True)
+        logger.warning("Workspace owner lookup failed | bot=%s", _loaded_bot_id(bot), exc_info=True)
         return None
 
 

@@ -2330,6 +2330,7 @@ async def task_send_visitor_message_email(
     from app.db.session import SessionLocal
     from app.services.email_service import (
         get_notification_recipients,
+        get_reply_to_address,
         send_handoff_request_email,
     )
 
@@ -2350,7 +2351,7 @@ async def task_send_visitor_message_email(
             contact = None
             if lead is not None:
                 contact = {"name": lead.name, "email": lead.email, "phone": lead.phone}
-            reply_to = getattr(bot, "reply_to_email", None)
+            reply_to = get_reply_to_address(bot)
             # Reuse the existing handoff-request template but with the visitor's
             # *actual message* as the reason. That's the whole signal a real
             # human is waiting to talk, not a stalled queue entry.

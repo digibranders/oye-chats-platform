@@ -156,7 +156,11 @@ export function BusinessHoursField({
           </fieldset>
 
         </>
-      ) : null}
+      ) : (
+        <p className="text-sm text-text-secondary">
+          {t('agents.alwaysAvailable247') || 'Always available (24/7)'}
+        </p>
+      )}
     </div>
   );
 }

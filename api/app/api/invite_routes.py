@@ -38,6 +38,7 @@ from app.schemas.validators import EmailAddress, RowId
 from app.services import invite_service, plan_entitlements_service
 from app.services.email_service import send_operator_invite_email
 from app.services.invite_service import InviteError
+from app.services.push_service import muted_push_preferences
 
 logger = logging.getLogger(__name__)
 
@@ -597,6 +598,7 @@ def add_self_as_operator(
                 role="owner",
                 is_active=True,
                 is_accepting_chats=True,
+                notification_preferences=muted_push_preferences(),
             )
             session.add(op)
             session.flush()

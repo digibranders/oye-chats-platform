@@ -299,11 +299,7 @@ function QualificationContent({ agentId }: { agentId: number }) {
               {/* The receipt, beside the thresholds it grades. */}
               <FunnelSection agentId={agentId} />
 
-              <TierOutcomesSection
-                state={outcomes}
-                agentId={agentId}
-                webhooksAllowed={hasFeature('webhooks')}
-              />
+              <TierOutcomesSection state={outcomes} webhooksAllowed={hasFeature('webhooks')} />
             </Stack>
           }
         />

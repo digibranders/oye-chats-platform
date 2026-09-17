@@ -12,14 +12,15 @@ import {
   LoadingRows,
   buttonClass,
 } from '../../../ui';
-import { agentPath } from '../../../shell/nav';
 import { TIERS } from './qualification.config';
 import { TIER_EVENT } from './tierOutcomes';
 import type { TierOutcomesState } from './useTierOutcomes';
 
+/** Recipients and the qualified-lead switch are edited on the Email tab. */
+const EMAIL_ROUTING_PATH = '/settings/integrations?tab=email';
+
 export interface TierOutcomesSectionProps {
   state: TierOutcomesState;
-  agentId: number;
   /** True when the plan includes outbound webhooks. */
   webhooksAllowed: boolean;
 }
@@ -39,7 +40,7 @@ export interface TierOutcomesSectionProps {
  * tier that records and sends nothing is a `Recorded only` badge; the card is
  * about 180px tall now rather than 520.
  */
-function TierOutcomesSectionInner({ state, agentId, webhooksAllowed }: TierOutcomesSectionProps) {
+function TierOutcomesSectionInner({ state, webhooksAllowed }: TierOutcomesSectionProps) {
   const { facts, loading, error, retry } = state;
 
   return (
@@ -102,9 +103,13 @@ function TierOutcomesSectionInner({ state, agentId, webhooksAllowed }: TierOutco
                     // paragraphs: who is told, or why nobody is.
                     <span className="w-full text-xs text-text-secondary">
                       {emailWillFire ? (
-                        <span className="figure">{facts.recipients.join(', ')}</span>
+                        <span className="figure">
+                          {facts.recipientsAreOwner
+                            ? `${facts.recipients.join(', ')} (account owner)`
+                            : facts.recipients.join(', ')}
+                        </span>
                       ) : facts.emailEnabled ? (
-                        'The email is on but no recipient is set.'
+                        'The email is on but no address could be found.'
                       ) : (
                         'The email is switched off for this chatbot.'
                       )}
@@ -137,17 +142,15 @@ function TierOutcomesSectionInner({ state, agentId, webhooksAllowed }: TierOutco
             <CardSection>
               <Alert
                 tone="warning"
-                title="No recipient set"
+                title="No recipient found"
                 action={
-                  <Link
-                    to={agentPath(agentId, 'experience')}
-                    className={buttonClass('secondary', 'sm')}
-                  >
+                  <Link to={EMAIL_ROUTING_PATH} className={buttonClass('secondary', 'sm')}>
                     Email recipients
                   </Link>
                 }
               >
-                The qualified-lead email is switched on but has nowhere to go.
+                The qualified-lead email is switched on, but no address is saved and the account
+                owner&apos;s address could not be read.
               </Alert>
             </CardSection>
           ) : null}
@@ -163,7 +166,7 @@ function TierOutcomesSectionInner({ state, agentId, webhooksAllowed }: TierOutco
           ) : null}
 
           <CardSection tone="sunken" className="flex flex-wrap gap-2">
-            <Link to={agentPath(agentId, 'experience')} className={buttonClass('secondary', 'sm')}>
+            <Link to={EMAIL_ROUTING_PATH} className={buttonClass('secondary', 'sm')}>
               Email recipients
             </Link>
             {webhooksAllowed ? (

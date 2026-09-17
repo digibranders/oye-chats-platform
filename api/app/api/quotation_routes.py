@@ -713,7 +713,7 @@ def _send_quotation_visitor_email(db, bot: Bot, session: ChatSession) -> None:
 
         bot_name = getattr(bot, "name", None) or "AI Assistant"
         company_name = getattr(bot, "company_name", None) or bot_name
-        client_reply_to = getattr(bot, "reply_to_email", None)
+        client_reply_to = email_service.get_reply_to_address(bot)
         service_names = _unique_service_names(summary["line_items"])
         email_service.send_quotation_visitor_email(
             visitor_email,
@@ -752,7 +752,7 @@ def _send_quotation_document_email(db, bot: Bot, session: ChatSession) -> None:
 
         bot_name = getattr(bot, "name", None) or "AI Assistant"
         company_name = getattr(bot, "company_name", None) or bot_name
-        client_reply_to = getattr(bot, "reply_to_email", None)
+        client_reply_to = email_service.get_reply_to_address(bot)
         visitor_name = getattr(lead, "name", None)
         # The quotation is delivered inline in the email body — no PDF attachment.
         email_service.send_quotation_document_email(

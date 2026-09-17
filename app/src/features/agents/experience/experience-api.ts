@@ -11,6 +11,7 @@
 import {
   detectBrandTone,
   fetchSiteIcon as fetchSiteIconRequest,
+  getBotContactLink,
   getBrandTonePresets,
   getSeedQuestions,
   previewBrandTone,
@@ -43,6 +44,23 @@ export function errorMessage(cause: unknown, fallback: string): string {
  */
 export function isForbidden(cause: unknown): boolean {
   return asApiError(cause).status === 403;
+}
+
+// ── Contact link ─────────────────────────────────────────────────────────────
+
+export type ContactLinkSource = 'smart_link' | 'crawl';
+
+export interface ContactLink {
+  /** The page the chatbot hands a visitor, or null when there is none. */
+  effectiveUrl: string | null;
+  source: ContactLinkSource | null;
+}
+
+export async function fetchContactLink(botId: number): Promise<ContactLink> {
+  const raw = await getBotContactLink(botId);
+  const effectiveUrl = asString(raw.effective_url);
+  const source = raw.source === 'smart_link' || raw.source === 'crawl' ? raw.source : null;
+  return effectiveUrl && source ? { effectiveUrl, source } : { effectiveUrl: null, source: null };
 }
 
 // ── Brand tone ───────────────────────────────────────────────────────────────

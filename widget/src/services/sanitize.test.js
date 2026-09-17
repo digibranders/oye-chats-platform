@@ -11,7 +11,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sanitizeColor, sanitizeImageUrl, sanitizeFileUrl } from './sanitize.js';
+import { readdirSync, readFileSync } from 'node:fs';
+import { DEFAULT_PRIMARY_COLOR, sanitizeColor, sanitizeImageUrl, sanitizeFileUrl } from './sanitize.js';
 
 // ── sanitizeColor ────────────────────────────────────────────────────────────
 
@@ -103,4 +104,33 @@ test('sanitizeFileUrl blocks dangerous schemes and bad input', () => {
     for (const bad of ['javascript:alert(1)', 'ftp://x.example/a', 'file:///etc/passwd', '', null, undefined, 99]) {
         assert.equal(sanitizeFileUrl(bad), null);
     }
+});
+
+// ── The fallback brand colour ────────────────────────────────────────────────
+// Before settings load, or when a stored colour is not a hex value, the widget
+// paints with DEFAULT_PRIMARY_COLOR. It must be the colour a bot actually gets
+// by default (`Bot.primary_color` in api/app/db/models.py); a different literal
+// flashed an unrelated purple on every widget open.
+
+test('the fallback brand colour is the API default', () => {
+    const models = readFileSync(new URL('../../../api/app/db/models.py', import.meta.url), 'utf8');
+    const column = models.match(/^\s+primary_color = Column\(String, default="(#[0-9a-fA-F]{6})", server_default=/m);
+    assert.ok(column, 'Bot.primary_color default not found in models.py');
+    assert.equal(DEFAULT_PRIMARY_COLOR.toLowerCase(), column[1].toLowerCase());
+});
+
+test('no component paints with a colour literal instead of the fallback', () => {
+    const root = new URL('../', import.meta.url);
+    const offenders = [];
+    const walk = (dir) => {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+            const path = new URL(entry.name + (entry.isDirectory() ? '/' : ''), dir);
+            if (entry.isDirectory()) walk(path);
+            else if (/(?<!\.test)\.(jsx?|css)$/.test(entry.name) && /#3a0ca3/i.test(readFileSync(path, 'utf8'))) {
+                offenders.push(entry.name);
+            }
+        }
+    };
+    walk(root);
+    assert.deepEqual(offenders, []);
 });

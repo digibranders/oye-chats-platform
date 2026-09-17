@@ -41,13 +41,13 @@ _CONTACT = "https://acme.com/contact"
     ["contact", "Contact", "CONTACT", "contact us", "Contact Us", "CONTACT US", "contact-us", "Contact-Us"],
 )
 def test_contact_keyword_matches_case_insensitively(keyword):
-    assert rs._contact_url_from_answer_links([{"keyword": keyword, "url": _CONTACT}]) == _CONTACT
+    assert rs.contact_url_from_answer_links([{"keyword": keyword, "url": _CONTACT}]) == _CONTACT
 
 
 @pytest.mark.parametrize("keyword", ["  contact  ", "\tContact Us\n", " contact-us "])
 def test_contact_keyword_is_trimmed_before_comparing(keyword):
     """An admin's stray whitespace must not silently disable the handover."""
-    assert rs._contact_url_from_answer_links([{"keyword": keyword, "url": _CONTACT}]) == _CONTACT
+    assert rs.contact_url_from_answer_links([{"keyword": keyword, "url": _CONTACT}]) == _CONTACT
 
 
 @pytest.mark.parametrize("keyword", ["pricing", "careers", "contact sales", "contacts", "support", ""])
@@ -58,7 +58,7 @@ def test_unrelated_keywords_are_ignored(keyword):
     guessing wrong here puts the wrong URL in front of every Free visitor who
     asked something the bot could not answer.
     """
-    assert rs._contact_url_from_answer_links([{"keyword": keyword, "url": _CONTACT}]) is None
+    assert rs.contact_url_from_answer_links([{"keyword": keyword, "url": _CONTACT}]) is None
 
 
 @pytest.mark.parametrize(
@@ -83,12 +83,12 @@ def test_a_url_normalize_url_refuses_is_not_handed_to_a_visitor(url):
     that fails here would otherwise be pasted verbatim into the visitor's reply
     and persisted to ``chat_messages.content``.
     """
-    assert rs._contact_url_from_answer_links([{"keyword": "contact", "url": url}]) is None
+    assert rs.contact_url_from_answer_links([{"keyword": "contact", "url": url}]) is None
 
 
 @pytest.mark.parametrize("links", [None, [], {}, "contact", [None, 1, "x"], [{}], [{"keyword": "contact"}], [[]]])
 def test_missing_or_malformed_answer_links_return_none(links):
-    assert rs._contact_url_from_answer_links(links) is None
+    assert rs.contact_url_from_answer_links(links) is None
 
 
 def test_first_usable_contact_match_wins():
@@ -97,7 +97,7 @@ def test_first_usable_contact_match_wins():
         {"keyword": "Contact Us", "url": "https://acme.com/contact-us"},
         {"keyword": "contact", "url": _CONTACT},
     ]
-    assert rs._contact_url_from_answer_links(links) == "https://acme.com/contact-us"
+    assert rs.contact_url_from_answer_links(links) == "https://acme.com/contact-us"
 
 
 def test_an_unusable_first_match_does_not_shadow_a_usable_later_one():
@@ -107,7 +107,7 @@ def test_an_unusable_first_match_does_not_shadow_a_usable_later_one():
         {"keyword": "contact", "url": "javascript:alert(1)"},
         {"keyword": "contact us", "url": _CONTACT},
     ]
-    assert rs._contact_url_from_answer_links(links) == _CONTACT
+    assert rs.contact_url_from_answer_links(links) == _CONTACT
 
 
 # ═══════════════════════════════════════════════════════════════════════════

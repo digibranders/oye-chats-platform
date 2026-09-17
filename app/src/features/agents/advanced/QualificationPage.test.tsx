@@ -300,6 +300,19 @@ describe('what fires at each tier', () => {
     expect(await screen.findByText(/sales@example.test/)).toBeInTheDocument();
   });
 
+  it('names the account owner when no recipient is saved, instead of warning', async () => {
+    vi.mocked(getClientSettings).mockResolvedValue({
+      ...SETTINGS,
+      notification_emails: {},
+      owner_email: 'owner@example.test',
+    });
+    await renderSettled();
+
+    expect(await screen.findByText('owner@example.test (account owner)')).toBeInTheDocument();
+    expect(screen.queryByText('Nothing is listening')).not.toBeInTheDocument();
+    expect(screen.queryByText(/nowhere to go/i)).not.toBeInTheDocument();
+  });
+
   it('warns when nothing at all is listening', async () => {
     vi.mocked(getClientSettings).mockResolvedValue({ ...SETTINGS, notification_emails: {} });
     await renderSettled();

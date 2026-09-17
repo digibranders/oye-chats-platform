@@ -2636,7 +2636,7 @@ def send_chat_transcript(
     Rate limit: 3 per minute per bot key to prevent abuse.
     """
     from app.db.models import ChatMessage
-    from app.services.email_service import send_transcript_email
+    from app.services.email_service import get_reply_to_address, send_transcript_email
 
     with get_session() as session:
         # Verify session belongs to this bot
@@ -2689,7 +2689,7 @@ def send_chat_transcript(
         to_email=body.recipient_email,
         bot_name=bot.name,
         messages=message_dicts,
-        reply_to=bot.reply_to_email,
+        reply_to=get_reply_to_address(bot),
     )
 
     return {"success": True, "message": f"Transcript sent to {body.recipient_email}"}

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { UserCheck, X } from 'lucide-react';
-import { sanitizeColor } from '../services/sanitize';
+import { DEFAULT_PRIMARY_COLOR, sanitizeColor } from '../services/sanitize';
 import { t } from '../i18n/i18n.js';
 
 /**
@@ -28,7 +28,7 @@ const OperatorJoinedToast = ({
     primaryColor: rawPrimary,
     autoDismissMs = 10_000,
 }) => {
-    const primaryColor = sanitizeColor(rawPrimary, '#3A0CA3');
+    const primaryColor = sanitizeColor(rawPrimary, DEFAULT_PRIMARY_COLOR);
     const [exiting, setExiting] = useState(false);
 
     useEffect(() => {

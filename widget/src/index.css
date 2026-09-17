@@ -333,7 +333,7 @@
    jumps, and the name blinks out then cascades back in letter by letter. */
 .oyechats-bot-pill {
   /* Very light brand-tinted hairline at rest; strengthens a touch on hover. */
-  border-color: color-mix(in srgb, var(--oyechats-brand, #3a0ca3) 18%, transparent);
+  border-color: color-mix(in srgb, var(--oyechats-brand, #a21caf) 18%, transparent);
   transition:
     transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
     box-shadow 220ms ease,
@@ -342,8 +342,8 @@
 }
 .oyechats-bot-pill:hover {
   transform: translateY(-1px) scale(1.03);
-  border-color: color-mix(in srgb, var(--oyechats-brand, #3a0ca3) 40%, transparent);
-  box-shadow: 0 8px 22px -8px color-mix(in srgb, var(--oyechats-brand, #3a0ca3) 45%, transparent);
+  border-color: color-mix(in srgb, var(--oyechats-brand, #a21caf) 40%, transparent);
+  box-shadow: 0 8px 22px -8px color-mix(in srgb, var(--oyechats-brand, #a21caf) 45%, transparent);
 }
 
 /* Avatar "jump" while the pill is hovered. */

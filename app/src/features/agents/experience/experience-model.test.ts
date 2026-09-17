@@ -101,6 +101,12 @@ describe('draftFromBot', () => {
     expect(hours?.days.sat).toBeNull();
   });
 
+  it('reads a schedule saved without a time zone in UTC, as the server runs it', () => {
+    const hours = draftFromBot({ business_hours: { mon: { start: '09:00', end: '17:00' } } })
+      .businessHours;
+    expect(hours?.timezone).toBe('UTC');
+  });
+
   it('treats an absent schedule as always available', () => {
     expect(draftFromBot({}).businessHours).toBeNull();
     expect(draftFromBot({ business_hours: {} }).businessHours).toBeNull();

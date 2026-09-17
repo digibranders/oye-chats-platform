@@ -31,6 +31,7 @@ from app.db.models import (
 from app.db.session import get_session
 from app.schemas.validators import EmailAddress, OptionalName, Password, RequiredName
 from app.services.audit_service import record_audit
+from app.services.push_service import muted_push_preferences
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,7 @@ def create_client(request: CreateClientRequest, superadmin: Client = Depends(get
             api_key=str(uuid.uuid4().hex),
             website=request.website,
             is_superadmin=False,
+            notification_preferences=muted_push_preferences(),
         )
 
         # This provisions a real paying customer, not platform staff, the

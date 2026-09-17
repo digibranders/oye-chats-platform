@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getClientSettings, getWebhooks } from '../../../services/api';
 import type { Webhook } from '../../../types/domain';
-import { listeningWebhooks, qualifiedLeadRecipients } from './tierOutcomes';
+import { listeningWebhooks, qualifiedLeadRouting } from './tierOutcomes';
 
 export interface TierOutcomeFacts {
   /** `Bot.email_on_qualified` — the master switch on the SQL email. */
   emailEnabled: boolean;
   /** Who would receive it, resolved exactly as the server resolves it. */
   recipients: string[];
+  /** True when nothing is saved and the account owner receives it. */
+  recipientsAreOwner: boolean;
   /** Registered webhooks, active and subscribed to `tier_transition`. */
   webhooks: Webhook[];
   /** Registered webhooks that exist but would not hear a tier change. */
@@ -25,8 +27,8 @@ export interface TierOutcomesState {
  * Load the live outcome facts for a chatbot.
  *
  * It fetches independently of the page's own draft on purpose. Both halves are
- * configured on *other* surfaces — recipients on Experience, webhooks in
- * Settings ▸ Integrations — so a customer who fixes one in another tab must be
+ * configured on *another* surface (recipients and webhooks both live in
+ * Settings ▸ Integrations), so a customer who fixes one in another tab must be
  * able to refresh this panel alone, without discarding an unsaved rubric to do
  * it.
  */
@@ -56,9 +58,11 @@ export function useTierOutcomes(agentId: number | null): TierOutcomesState {
         ]);
         if (cancelled) return;
         const listening = listeningWebhooks(hooks);
+        const routing = qualifiedLeadRouting(settings);
         setFacts({
           emailEnabled: settings.email_on_qualified !== false,
-          recipients: qualifiedLeadRecipients(settings),
+          recipients: routing.recipients,
+          recipientsAreOwner: routing.ownerFallback,
           webhooks: listening,
           silentWebhooks: hooks.length - listening.length,
         });

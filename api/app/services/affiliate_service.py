@@ -25,6 +25,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.models import Affiliate, AffiliateInvite, Client, Plan, ReferralClick, ReferralCode, Subscription
+from app.services.push_service import muted_push_preferences
 
 logger = logging.getLogger(__name__)
 
@@ -1092,6 +1093,7 @@ def accept_invite(
         company_name=(company_name or "").strip() or None,
         website=(website or "").strip() or None,
         is_superadmin=False,
+        notification_preferences=muted_push_preferences(),
         # Already proven: the magic link was emailed to ``invite.email`` and the
         # account's address is forced to that same value below, the acceptor
         # never chooses it. Holding the link therefore demonstrates control of
