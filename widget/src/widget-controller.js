@@ -47,6 +47,10 @@ const createController = () => {
 
   let visitor = null
   let runtimeConfig = {}
+  // Payload of the last `ready`, or null while the widget is not mounted.
+  // `ready` is a state, not a moment: the loader can run with `async`, so the
+  // host page may subscribe after the widget has already mounted.
+  let readyPayload = null
 
   const now = () => Date.now()
   const pruneExpired = (queue) => {
@@ -62,6 +66,7 @@ const createController = () => {
         console.warn(`[OyeChats] Unknown event "${event}"`)
       }
     }
+    if (event === 'ready') readyPayload = payload ?? {}
     const subs = listeners.get(event)
     if (subs) {
       for (const cb of subs) {
@@ -75,6 +80,21 @@ const createController = () => {
       }
       onceListeners.delete(event)
     }
+  }
+
+  // Asynchronous, like a real emit from mount(), so a handler never runs
+  // inside the on()/once() call that registered it. Skipped if the widget
+  // unmounted before the timer fired. `isRegistered` is given for on()
+  // handlers: those are skipped once removed, or once a newer `ready` has
+  // already reached them through emit().
+  const replayReady = (cb, isRegistered) => {
+    if (!readyPayload) return
+    const payload = readyPayload
+    setTimeout(() => {
+      if (!readyPayload) return
+      if (isRegistered && (readyPayload !== payload || !isRegistered())) return
+      try { cb(readyPayload) } catch (e) { console.error('[OyeChats] event handler error:', e) }
+    }, 0)
   }
 
   const dispatch = (action) => {
@@ -131,6 +151,8 @@ const createController = () => {
       if (typeof cb !== 'function') return
       if (!listeners.has(event)) listeners.set(event, new Set())
       listeners.get(event).add(cb)
+      // Still registered, so a remount after destroy() calls it again.
+      if (event === 'ready') replayReady(cb, () => listeners.get('ready')?.has(cb))
     },
     off(event, cb) {
       const subs = listeners.get(event)
@@ -140,8 +162,16 @@ const createController = () => {
     },
     once(event, cb) {
       if (typeof cb !== 'function') return
+      if (event === 'ready' && readyPayload) {
+        replayReady(cb, null)
+        return
+      }
       if (!onceListeners.has(event)) onceListeners.set(event, new Set())
       onceListeners.get(event).add(cb)
+    },
+    // Called when the widget unmounts, so a later subscriber waits for the next mount.
+    resetReady() {
+      readyPayload = null
     },
     emit,
     dispatch,
