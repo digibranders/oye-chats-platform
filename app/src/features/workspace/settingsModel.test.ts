@@ -40,6 +40,8 @@ import {
 import {
   MEETING_PROVIDERS,
   readEmailRouting,
+  recipientsHint,
+  replyToHint,
   routingChanged,
   toBotPatch,
   validateMeetingUrl,
@@ -367,10 +369,38 @@ describe('emailModel', () => {
     expect(routing.recipients).toEqual([]);
   });
 
+  it('shows a legacy single-field recipient, which the server still sends to', () => {
+    const legacy = { ...bot, notification_email: ' a@b.com, ,c@b.com ' } as Bot;
+    expect(readEmailRouting(legacy).recipients).toEqual(['a@b.com', 'c@b.com']);
+
+    const both = {
+      ...bot,
+      notification_email: 'old@b.com',
+      notification_emails: { default: ['  ', 'new@b.com'] },
+    } as Bot;
+    expect(readEmailRouting(both).recipients).toEqual(['new@b.com']);
+  });
+
+  it('names the account owner an empty address falls back to', () => {
+    expect(replyToHint('owner@b.com')).toBe(
+      "Empty sends replies to the account owner's address, owner@b.com.",
+    );
+    expect(replyToHint(null)).toBe("Empty sends replies to the account owner's address.");
+    expect(recipientsHint('owner@b.com', [])).toBe(
+      'Empty sends every alert to the account owner, owner@b.com.',
+    );
+    expect(recipientsHint(' ', [])).toBe('Empty sends every alert to the account owner.');
+    expect(recipientsHint('owner@b.com', ['team@b.com'])).toBe(
+      'Every alert goes here unless an event has its own list.',
+    );
+  });
+
   it('omits an empty per-event override rather than saving "send to nobody"', () => {
     const routing = readEmailRouting(bot);
     const patch = toBotPatch({ ...routing, recipients: ['a@b.com'] });
     expect(patch.notification_emails).toEqual({ default: ['a@b.com'] });
+    // The legacy field was folded into the list above, so it is cleared.
+    expect(patch.notification_email).toBeNull();
 
     const withOverride = toBotPatch({
       ...routing,

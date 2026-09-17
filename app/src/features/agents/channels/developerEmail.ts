@@ -55,7 +55,8 @@ export function developerEmail({
     `Two things that catch people out:`,
     `- It must be in <body>, not <head>.`,
     `- If we send a Content-Security-Policy header, it needs`,
-    `  script-src ${scriptOrigin(env)} and connect-src ${apiOrigin(apiBaseUrl)}.`,
+    `  script-src ${scriptOrigin(env)}, style-src ${scriptOrigin(env)}`,
+    `  and connect-src ${apiOrigin(apiBaseUrl)}.`,
     ``,
     `Thanks!`,
   ].join('\n');

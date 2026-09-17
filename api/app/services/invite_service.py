@@ -39,6 +39,7 @@ from sqlalchemy.orm import Session
 from app.db.models import Bot, Client, Operator, OperatorInvite, Subscription
 from app.services import plan_entitlements_service
 from app.services.plan_entitlements_service import UNLIMITED, get_entitlements
+from app.services.push_service import muted_push_preferences
 
 # ``live_chat`` is the plan feature that gates operator creation. Both the
 # invite flow and the self-operator flow check this before doing anything else,
@@ -590,6 +591,7 @@ def accept_invite(
         department_id=invite.department_id,
         is_active=True,
         is_accepting_chats=True,
+        notification_preferences=muted_push_preferences(),
         # No hashed_password / operator_api_key. Linked operators authenticate
         # via their Client's X-API-Key plus X-Workspace-Id header. They cannot
         # log in through /auth/operator-login (which filters out rows with

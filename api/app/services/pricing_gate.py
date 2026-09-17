@@ -612,7 +612,7 @@ def no_support_path_standdown(*, support_enabled: bool, pricing_url: object, con
     did before this feature existed.
 
     ``contact_url`` is the bot's own public contact page, extracted from its
-    existing ``contact`` Smart Link by ``rag_service._contact_url_from_answer_links``.
+    existing ``contact`` Smart Link by ``rag_service.contact_url_from_answer_links``.
     Handing it over is information rather than a channel, so it does not leak the
     paid in-chat feature (see the module docstring), and it is strictly better
     than letting a stale rate card answer.
@@ -887,7 +887,7 @@ def pricing_pivot(
     # takes the no-link copy.
     usable_url = pricing_url.strip() if isinstance(pricing_url, str) and normalize_url(pricing_url) else None
     # Re-validated here for the same reason and with the same rule, rather than
-    # trusted from the caller. ``_contact_url_from_answer_links`` already filters
+    # trusted from the caller. ``contact_url_from_answer_links`` already filters
     # on ``normalize_url``, but this text goes straight to a visitor and into
     # ``chat_messages.content``, so a future caller reading the URL from
     # somewhere else must still not be able to render "You can get in touch here:

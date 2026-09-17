@@ -2181,6 +2181,20 @@ export const detectBrandTone = async (botId: number): Promise<Record<string, unk
 };
 
 /**
+ * The contact page a chatbot links visitors to (a `contact` Smart Link, else
+ * one found among its crawled pages). Only a Free chatbot hands it out.
+ */
+export const getBotContactLink = async (botId: number): Promise<Record<string, unknown>> => {
+    try {
+        const response = await api.get(`/bots/${botId}/contact-link`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching contact link:', error);
+        throw buildApiError(error, 'Failed to load the contact link');
+    }
+};
+
+/**
  * Generate a 1-2 sentence sample bot reply in the given (unsaved) tone.
  * @param {number} botId
  * @param {string} brandTone - the current draft tone text

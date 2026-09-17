@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 import SendIcon from './SendIcon';
 import { getChatHistory } from '../services/api';
-import { sanitizeColor } from '../services/sanitize';
+import { DEFAULT_PRIMARY_COLOR, sanitizeColor } from '../services/sanitize';
 import { displayTextFor } from '../lib/liveChatTranslation';
 import { mergeRestoredLiveMessages } from '../lib/liveHistoryMerge';
 import { getLocale, t } from '../i18n/i18n';
@@ -735,7 +735,7 @@ const LiveChatMode = ({
                             <div className="w-full h-1 bg-gray-100 rounded-full mb-3 overflow-hidden">
                                 <div
                                     className="h-full rounded-full transition-all duration-300"
-                                    style={{ width: `${uploadProgress}%`, backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}
+                                    style={{ width: `${uploadProgress}%`, backgroundColor: sanitizeColor(settings.primary_color, DEFAULT_PRIMARY_COLOR) }}
                                 />
                             </div>
                         )}
@@ -755,7 +755,7 @@ const LiveChatMode = ({
                                 disabled={uploadProgress !== null}
                                 aria-label={t('livechat.send_aria') || 'Send'}
                                 className="w-9 h-9 flex items-center justify-center rounded-xl transition-all disabled:opacity-40"
-                                style={{ backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}
+                                style={{ backgroundColor: sanitizeColor(settings.primary_color, DEFAULT_PRIMARY_COLOR) }}
                             >
                                 <SendIcon size={16} className="text-white" />
                             </button>

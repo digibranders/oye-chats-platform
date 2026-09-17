@@ -67,7 +67,7 @@ def detect_contact_url(source_urls: Iterable[object] | None) -> str | None:
     Returns the URL AS STORED (trimmed), not the normalized form: the visitor is
     handed this string as a clickable link, and ``normalize_url`` strips the
     scheme for comparison purposes only. Mirrors
-    ``rag_service._contact_url_from_answer_links``.
+    ``rag_service.contact_url_from_answer_links``.
 
     When several pages qualify the SHORTEST path wins, ties broken
     lexicographically. Determinism matters more than which one is "best": the

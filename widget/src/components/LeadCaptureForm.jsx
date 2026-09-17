@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { User, Mail, Phone, Building2, ArrowRight } from 'lucide-react';
 import BotAvatar from './BotAvatar';
-import { sanitizeColor } from '../services/sanitize';
+import { DEFAULT_PRIMARY_COLOR, sanitizeColor } from '../services/sanitize';
 import { validateEmail as checkEmailWithServer } from '../services/api';
 import { t } from '../i18n/i18n.js';
 
@@ -120,7 +120,7 @@ const LeadCaptureForm = ({ settings, onSubmit }) => {
         }
     };
 
-    const primary = sanitizeColor(settings?.primary_color, '#3A0CA3');
+    const primary = sanitizeColor(settings?.primary_color, DEFAULT_PRIMARY_COLOR);
     const background = sanitizeColor(settings?.background_color, '#ffffff');
 
     return (
@@ -210,13 +210,6 @@ const LeadCaptureForm = ({ settings, onSubmit }) => {
                     </button>
                 </form>
             </div>
-
-            <style>{`
-                @keyframes fadeUp {
-                    from { opacity: 0; transform: translateY(8px); }
-                    to { opacity: 1; transform: translateY(0); }
-                }
-            `}</style>
         </div>
     );
 };

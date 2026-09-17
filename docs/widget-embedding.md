@@ -35,6 +35,18 @@ Add this before the closing `</body>` tag:
 
 Replace `bot-xxx` with the bot key from the admin dashboard. That's it — the widget handles everything else automatically.
 
+### Content-Security-Policy
+
+A site that sends a CSP header needs three directives:
+
+```
+script-src https://cdn.oyechats.com;
+style-src https://cdn.oyechats.com;
+connect-src https://api.oyechats.com;
+```
+
+The stylesheet is served from the same origin as the script. Without `style-src` the widget loads and never renders: the app waits for its stylesheet and fires an `error` event (`source: 'stylesheet'`) when it is blocked. The widget uses no inline `<style>` or `<script>` elements, so `'unsafe-inline'` is not needed; `widget/tests/e2e/csp.spec.js` runs it under exactly this policy.
+
 > **One tag, and nothing else.** Attribution is the in-widget badge, governed by the `branding_removable` entitlement. Earlier snippets carried a second line, a crawlable "Powered by OyeChats" anchor, for backlinks; it was withdrawn because it put a stray line of our text into pages whose layout we do not control. Sites installed before that still have the anchor in their own templates, and removing it is theirs to do.
 
 ## What the Visitor Sees

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { User, Mail, ArrowRight, ArrowLeft } from 'lucide-react';
-import { sanitizeColor } from '../services/sanitize';
+import { DEFAULT_PRIMARY_COLOR, sanitizeColor } from '../services/sanitize';
 import { validateEmail as checkEmailWithServer } from '../services/api';
 import { t } from '../i18n/i18n.js';
 
@@ -24,7 +24,7 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
     }, [formData.email]);
 
     const isSubmitting = status === 'submitting';
-    const primaryColor = sanitizeColor(settings.primary_color, '#3A0CA3');
+    const primaryColor = sanitizeColor(settings.primary_color, DEFAULT_PRIMARY_COLOR);
 
     // Pre-fill from a late-arriving ``existingLeadInfo``. The parent refreshes
     // the visitor's saved contact when this form is triggered, and that fetch

@@ -27,6 +27,7 @@ from app.schemas.validators import (
     bounded_list,
     validate_http_url,
 )
+from app.services.bot_defaults import follow_owner_email_change
 from app.services.email_service import send_email_change_otp, send_email_change_requested_notice
 
 _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -541,6 +542,7 @@ def confirm_client_email_change(
             session.commit()
             raise HTTPException(status_code=400, detail="Invalid code. Please request a new one.")
 
+        follow_owner_email_change(session, row.id, row.email, row.pending_email)
         row.email = row.pending_email
         row.pending_email = None
         row.email_change_otp = None

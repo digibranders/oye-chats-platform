@@ -53,6 +53,7 @@ from app.services.oauth_service import (
     verify_id_token,
     verify_state_token,
 )
+from app.services.push_service import muted_push_preferences
 
 logger = logging.getLogger(__name__)
 
@@ -451,6 +452,7 @@ def _resolve_client_for_profile(profile: GoogleProfile, billing_country: str | N
             billing_country=billing_country,  # IP-detected at signup; editable in Billing details
             is_superadmin=False,
             is_verified=True,  # Google has already verified the email.
+            notification_preferences=muted_push_preferences(),
         )
         session.add(new_client)
         session.flush()

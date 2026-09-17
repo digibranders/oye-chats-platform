@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { DEFAULT_PRIMARY_COLOR } from '../services/sanitize';
 import { Paperclip } from 'lucide-react';
 import SendIcon from './SendIcon';
 import {
@@ -514,7 +515,11 @@ const ChatInput = ({
                                     active ? 'bg-[#F0F8FF]' : 'bg-white hover:bg-[#F7FBFF]'
                                 }`}
                             >
-                                <Icon size={14} className="text-[#3A0CA3] flex-shrink-0" />
+                                <Icon
+                                    size={14}
+                                    className="flex-shrink-0"
+                                    style={{ color: primaryColor || DEFAULT_PRIMARY_COLOR }}
+                                />
                                 <span className="flex-1 min-w-0">
                                     {/* `dir="ltr"`: this is a literal token the
                                         visitor types, not prose. Inside an RTL
@@ -560,7 +565,7 @@ const ChatInput = ({
                             <div className="w-full h-1 bg-gray-100 rounded-full mb-1.5 overflow-hidden">
                                 <div
                                     className="h-full rounded-full transition-all duration-300"
-                                    style={{ width: `${uploadProgress}%`, backgroundColor: primaryColor || '#3A0CA3' }}
+                                    style={{ width: `${uploadProgress}%`, backgroundColor: primaryColor || DEFAULT_PRIMARY_COLOR }}
                                 />
                             </div>
                         )}
@@ -696,7 +701,7 @@ const ChatInput = ({
                             onClick={confirmPending}
                             autoFocus
                             className="text-[12px] font-semibold text-white px-2.5 py-1 rounded-md"
-                            style={{ backgroundColor: primaryColor || '#3A0CA3' }}
+                            style={{ backgroundColor: primaryColor || DEFAULT_PRIMARY_COLOR }}
                         >
                             {t('input.yes') || 'Yes'}
                         </button>

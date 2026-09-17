@@ -29,6 +29,7 @@ from app.schemas.ws import MAX_TRANSCRIPT_TURNS, TranscriptTurn
 from app.services import plan_entitlements_service
 from app.services.email_service import (
     get_notification_recipients,
+    get_reply_to_address,
     redact_email,
     send_offline_message_email,
     send_unavailable_callback_email,
@@ -131,7 +132,7 @@ async def submit_offline_message(request: Request, body: SubmitOfflineMessageReq
         session.commit()
 
         # Send team notification emails (multi-recipient)
-        reply_to = bot.reply_to_email
+        reply_to = get_reply_to_address(bot)
         email_on_offline = getattr(bot, "email_on_offline", True)
         if not email_on_offline:
             logger.warning(

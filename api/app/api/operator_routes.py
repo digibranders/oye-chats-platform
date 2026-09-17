@@ -1327,14 +1327,18 @@ async def request_handoff(request: HandoffRequest, http_request: Request, bot: B
         # email_on_* / notification_emails machinery as the qualified-lead
         # notification. Never blocks the handoff response on send failure.
         if may_notify and getattr(db_bot, "email_on_handoff", True):
-            from app.services.email_service import get_notification_recipients, send_handoff_request_email
+            from app.services.email_service import (
+                get_notification_recipients,
+                get_reply_to_address,
+                send_handoff_request_email,
+            )
 
             # The ``notification_emails`` bucket name, not the webhook/audit
             # event name ``handoff_requested`` used above.
             recipients = get_notification_recipients(db_bot, "handoff_request")
             if recipients:
                 contact = {"name": lead_info.name, "email": lead_info.email} if lead_info else None
-                reply_to = getattr(db_bot, "reply_to_email", None)
+                reply_to = get_reply_to_address(db_bot)
                 for recipient in recipients:
                     try:
                         send_handoff_request_email(recipient, db_bot.name, request.reason, contact, reply_to=reply_to)

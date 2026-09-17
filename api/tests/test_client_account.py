@@ -61,6 +61,10 @@ class _ScalarResult:
     def first(self):
         return self._value
 
+    def all(self):
+        # No bots: the owner-address follow on email change has nothing to move.
+        return []
+
 
 class _ExecuteResult:
     def __init__(self, value):

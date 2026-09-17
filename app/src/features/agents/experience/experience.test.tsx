@@ -39,6 +39,13 @@ const api = vi.hoisted(() => ({
   getSeedQuestions: vi.fn(async (): Promise<string[]> => []),
   refreshSeedQuestions: vi.fn(async (): Promise<string[]> => []),
   uploadLogo: vi.fn(),
+  getBotContactLink: vi.fn(
+    async (): Promise<Record<string, unknown>> => ({
+      effective_url: null,
+      source: null,
+      detected_url: null,
+    }),
+  ),
 }));
 
 vi.mock('../../../services/api', () => api);
@@ -158,6 +165,7 @@ beforeEach(() => {
   api.getBot.mockResolvedValue({ ...BOT });
   api.updateBot.mockResolvedValue({ message: 'ok' });
   api.previewChatStream.mockResolvedValue(undefined);
+  api.getBotContactLink.mockResolvedValue({ effective_url: null, source: null, detected_url: null });
 });
 
 afterEach(() => {
@@ -189,9 +197,13 @@ describe('the chatbot in the URL is the chatbot on the page', () => {
     await ready();
     await openTab('Handoff');
 
+    // No schedule is the default, and it means the team is always reachable.
+    expect(screen.getByText('Always available (24/7)')).toBeInTheDocument();
+
     await userEvent.click(screen.getByRole('switch', { name: /Only available at set hours/i }));
     await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
 
+    expect(screen.queryByText('Always available (24/7)')).not.toBeInTheDocument();
     await waitFor(() => expect(api.updateBot).toHaveBeenCalled());
     const [botId, patch] = api.updateBot.mock.calls[0] as [number, Record<string, unknown>];
     // Not `bots[0]` — the workspace editor this replaces wrote to whichever
@@ -199,6 +211,9 @@ describe('the chatbot in the URL is the chatbot on the page', () => {
     expect(botId).toBe(7);
 
     const hours = patch.business_hours as Record<string, unknown>;
+    // A new schedule is saved in the owner's own zone, never left for the
+    // server to read as UTC.
+    expect(hours.timezone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
     expect(hours.mon).toEqual({ start: '09:00', end: '17:00' });
     expect(hours.sat).toBeNull();
     // `BusinessHours` in `bot_routes.py` sets `extra="forbid"`: the shape the
@@ -395,6 +410,45 @@ describe('the four states', () => {
     await ready();
     await openTab('Handoff');
     expect(screen.getByText('This chatbot is on the Free plan')).toBeInTheDocument();
+  });
+
+  it('tells a Free chatbot what pricing questions and its contact link actually do', async () => {
+    api.getBot.mockResolvedValue({ ...BOT, plan_slug: 'free', plan_name: 'Free' });
+    api.getBotContactLink.mockResolvedValue({
+      effective_url: 'https://acme.test/contact-us',
+      source: 'crawl',
+      detected_url: 'https://acme.test/contact-us',
+    });
+    renderPage();
+    await ready();
+    await openTab('Voice');
+
+    expect(
+      await screen.findByText(/links visitors to https:\/\/acme\.test\/contact-us/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/found on your website/)).toBeInTheDocument();
+    expect(api.getBotContactLink).toHaveBeenCalledWith(7);
+    expect(screen.getByText(/sends the visitor a link to it/)).toBeInTheDocument();
+    expect(screen.queryByText(/routes the visitor to your team/)).not.toBeInTheDocument();
+  });
+
+  it('tells a Free chatbot with no contact page how to add one', async () => {
+    api.getBot.mockResolvedValue({ ...BOT, plan_slug: 'free', plan_name: 'Free' });
+    renderPage();
+    await ready();
+    await openTab('Voice');
+
+    expect(await screen.findByText(/No contact page was found/)).toBeInTheDocument();
+  });
+
+  it('keeps the team-routing pricing copy on a plan with live chat', async () => {
+    renderPage();
+    await ready();
+    await openTab('Voice');
+
+    expect(screen.getByText(/routes the visitor to your team/)).toBeInTheDocument();
+    // Only a Free chatbot ever hands out the contact page, so nothing is fetched.
+    expect(api.getBotContactLink).not.toHaveBeenCalled();
   });
 
   it('plan-locked: a section the plan does not include names the plan, not the failure', async () => {

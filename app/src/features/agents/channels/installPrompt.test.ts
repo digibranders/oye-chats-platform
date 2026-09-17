@@ -72,6 +72,7 @@ describe('buildInstallPrompt', () => {
   it('derives CSP hosts from the same URLs it tells the agent to call', () => {
     const text = prompt({ platform: nextjs });
     expect(text).toContain('script-src https://cdn.oyechats.com');
+    expect(text).toContain('style-src https://cdn.oyechats.com');
     expect(text).toContain('connect-src https://api.oyechats.com');
   });
 });
@@ -106,6 +107,7 @@ describe('buildInstallPrompt. Known failure modes', () => {
   it('names the CSP directives rather than saying "check your CSP"', () => {
     const text = prompt();
     expect(text).toContain('script-src https://cdn.oyechats.com');
+    expect(text).toContain('style-src https://cdn.oyechats.com');
     expect(text).toContain('connect-src https://api.oyechats.com');
   });
 

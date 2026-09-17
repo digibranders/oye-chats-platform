@@ -1362,7 +1362,7 @@ const en = {
     howManySignalsMustLand: 'How many signals must land',
     howQualifiedAVisitorMust: 'How qualified a visitor must be before it quotes',
     iHaveAddedItCheck: 'I have added it, check now',
-    ifYourSiteSendsA: 'If your site sends a CSP header, the browser refuses the script with a console error and nothing else. Allow both of these:',
+    ifYourSiteSendsA: 'If your site sends a CSP header, the browser refuses the widget with a console error and nothing else. Allow all three of these:',
     inHeadTheScriptRuns: 'In <head> the script runs before there is a document to mount into, so the launcher never appears. Paste it immediately before the closing </body> tag.',
     includesThreeConceptsAndTwo: 'Includes three concepts and two revision rounds.',
     installHelp: 'Install help',
@@ -1558,6 +1558,7 @@ const en = {
     oneTagInYourSites: 'One tag, in your site’s shared layout.',
     onlyAnOwnerOrAdmin: 'Only an owner or admin can change the schedule.',
     onlyAvailableAtSetHours: 'Only available at set hours',
+    alwaysAvailable247: 'Always available (24/7)',
     onlyLanguagesTheChatWidget: 'Only languages the chat widget itself is translated into can be added: the interface and the answers have to match.',
     onlyPagesThatChangedAre: 'Only pages that changed are re-read, and only those are charged.',
     open: 'Open',
@@ -1606,6 +1607,14 @@ const en = {
     whenThisIsOnPricing:
       'The chatbot answers pricing questions only from this page. If it cannot answer from here, it routes the visitor to your team instead of guessing. Leave this empty and every pricing question goes straight to your team.',
     pricingPageLink: 'Pricing page link',
+    pricingPageFreeDescription:
+      'The chatbot answers pricing questions only from this page. If the page has no price for what was asked, it sends the visitor a link to it. Leave this empty and the chatbot sends your contact page instead, or answers from all of its knowledge when there is no contact page.',
+    contactLinkEffective:
+      'When it cannot help, the chatbot links visitors to {url} ({source}).',
+    contactLinkFromSmartLink: 'your "contact" link above',
+    contactLinkFromCrawl: 'found on your website',
+    contactLinkMissing:
+      'No contact page was found on your website. Add a link with the keyword "contact" so the chatbot can point visitors to you.',
     privacyPolicy: 'Privacy Policy',
     processingInTheBackground: 'Processing in the background',
     promptCopied: 'Prompt copied',

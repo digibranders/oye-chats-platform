@@ -133,7 +133,8 @@ async def test_a_support_turn_is_fixed_wording_with_the_form_and_one_alert(db, m
             "to": "cs@acme.test",
             "reason": PORTAL_DOWN,
             "contact": {"name": "Eva", "email": "eva@x.test", "phone": None},
-            "reply_to": None,
+            # No Reply-To saved, so a reply reaches the account owner.
+            "reply_to": client.email,
             "support": True,
             "session_id": "support-1",
         }

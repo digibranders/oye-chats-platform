@@ -68,7 +68,7 @@ from typing import TYPE_CHECKING
 
 from app.db.repository import get_lead_info_by_session
 from app.services import runtime_config
-from app.services.email_service import get_notification_recipients, send_handoff_request_email
+from app.services.email_service import get_notification_recipients, get_reply_to_address, send_handoff_request_email
 from app.services.handoff_reply import HandoffOffer
 from app.services.llm_service import generate_response_checked
 from app.services.notification_service import notify_handoff_request
@@ -836,10 +836,10 @@ def alert_team_of_support_request(
     """
     bot_id = getattr(bot, "id", None)
     bot_name = getattr(bot, "name", None)
-    reply_to = getattr(bot, "reply_to_email", None)
     queue_timeout = getattr(bot, "live_chat_queue_timeout_seconds", None) or _DEFAULT_QUEUE_TIMEOUT_SECONDS
     wants_email = bot is not None and bool(getattr(bot, "email_on_handoff", True))
     recipients = get_notification_recipients(bot, "handoff_request") if wants_email else []
+    reply_to = get_reply_to_address(bot) if recipients else None
     try:
         lead = get_lead_info_by_session(session, session_id, bot_id=bot_id)
     except Exception:  # noqa: BLE001 - a failed lookup leaves the alert anonymous, not unsent

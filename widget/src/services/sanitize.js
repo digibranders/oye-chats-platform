@@ -5,6 +5,13 @@
  * settings (colors, logo URLs) are interpolated into inline styles.
  */
 
+/**
+ * The brand colour to paint with until a bot's own colour is known, or when
+ * the stored one is not a hex value. Matches `Bot.primary_color`'s default in
+ * api/app/db/models.py, so the fallback is the colour a new bot really has.
+ */
+export const DEFAULT_PRIMARY_COLOR = '#a21caf';
+
 const HEX_COLOR_RE = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 
 /**

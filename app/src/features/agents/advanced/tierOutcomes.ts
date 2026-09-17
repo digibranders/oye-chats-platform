@@ -17,14 +17,29 @@ import type { Webhook } from '../../../types/domain';
 /** The event name a webhook must subscribe to in order to hear about tiers. */
 export const TIER_EVENT = 'tier_transition';
 
+/** Who the qualified-lead email goes to, and whether that is the owner by default. */
+export interface QualifiedLeadRouting {
+  recipients: string[];
+  /** True when nothing is saved and the account owner receives it. */
+  ownerFallback: boolean;
+}
+
 /**
  * Resolve the recipients of the qualified-lead email for a bot payload.
  *
  * A field-for-field port of `get_notification_recipients(bot, "qualified_lead")`
- * in api/app/services/email_service.py:328 — per-event list, then the default
- * list, then the legacy comma-separated single field, then nobody.
+ * in api/app/services/email_service.py: per-event list, then the default list,
+ * then the legacy comma-separated single field, then the account owner
+ * (`owner_email` on the bot payload). Nobody only when even that is unknown.
  */
-export function qualifiedLeadRecipients(raw: Record<string, unknown>): string[] {
+export function qualifiedLeadRouting(raw: Record<string, unknown>): QualifiedLeadRouting {
+  const saved = savedQualifiedLeadRecipients(raw);
+  if (saved.length > 0) return { recipients: saved, ownerFallback: false };
+  const owner = typeof raw.owner_email === 'string' ? raw.owner_email.trim() : '';
+  return owner ? { recipients: [owner], ownerFallback: true } : { recipients: [], ownerFallback: false };
+}
+
+function savedQualifiedLeadRecipients(raw: Record<string, unknown>): string[] {
   const routing = raw.notification_emails;
   if (typeof routing === 'object' && routing !== null && !Array.isArray(routing)) {
     const map = routing as Record<string, unknown>;

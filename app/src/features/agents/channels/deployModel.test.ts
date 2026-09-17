@@ -471,6 +471,7 @@ describe('troubleshootItems', () => {
     expect(items.find((item) => item.id === 'bot-key')?.code).toBe(BOT_KEY);
     const csp = items.find((item) => item.id === 'csp')?.code ?? '';
     expect(csp).toContain('script-src https://cdn.oyechats.com');
+    expect(csp).toContain('style-src https://cdn.oyechats.com');
     expect(csp).toContain('connect-src https://api.oyechats.com');
   });
 });
@@ -489,6 +490,7 @@ describe('developerEmail', () => {
     expect(mail.body).toContain(snippet);
     expect(mail.body).toContain('</body>');
     expect(mail.body).toContain('script-src https://cdn.oyechats.com');
+    expect(mail.body).toContain('style-src https://cdn.oyechats.com');
     expect(mail.body).toContain('connect-src https://api.oyechats.com');
     expect(mail.body).toContain('WordPress');
     expect(mail.href.startsWith('mailto:?subject=')).toBe(true);

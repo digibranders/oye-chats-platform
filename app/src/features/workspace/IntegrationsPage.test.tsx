@@ -246,6 +246,22 @@ describe('IntegrationsPage — email routing', () => {
     expect(patch.email_on_qualified).toBe(false);
   });
 
+  it('names the account owner as the effective recipient and reply-to', async () => {
+    bots.bots = [
+      { id: 1, name: 'Acme Support', plan_slug: 'professional', owner_email: 'owner@acme.test' },
+    ];
+    renderPage('/settings/integrations?tab=email');
+    await screen.findByText('Addresses');
+
+    expect(
+      screen.getByText("Empty sends replies to the account owner's address, owner@acme.test."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Empty sends every alert to the account owner, owner@acme.test.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Empty uses the owner's address.")).not.toBeInTheDocument();
+  });
+
   it('tells a restricted plan what it can and cannot route', async () => {
     entitlements.entitlements = { features: { integrations: 'reply_to_only' } };
     renderPage('/settings/integrations?tab=email');

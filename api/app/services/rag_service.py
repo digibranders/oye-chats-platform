@@ -59,6 +59,7 @@ from app.services.document_request import (
 )
 from app.services.email_service import (
     get_notification_recipients,
+    get_reply_to_address,
     send_handoff_request_email,
     send_qualified_lead_email,
 )
@@ -2132,7 +2133,7 @@ def _question_looks_on_scope(question: str, company_name: str | None) -> bool:
 _CONTACT_LINK_KEYWORDS = frozenset({"contact", "contact us", "contact-us"})
 
 
-def _contact_url_from_answer_links(answer_links: object) -> str | None:
+def contact_url_from_answer_links(answer_links: object) -> str | None:
     """Find the customer's own contact page in a bot's Smart Links.
 
     WHY Smart Links rather than a dedicated ``bots.contact_url`` column: the
@@ -2210,12 +2211,22 @@ def resolve_contact_url(bot: object, session: object = None, *, crawled_fallback
     rather than breaking the turn. ``session`` is optional so pure callers and
     tests can resolve the configured half without a database.
     """
-    configured = _contact_url_from_answer_links(getattr(bot, "answer_links", None))
+    configured = contact_url_from_answer_links(getattr(bot, "answer_links", None))
     if configured:
         return configured
     bot_id = getattr(bot, "id", None)
     if not crawled_fallback or session is None or not bot_id:
         return None
+    return crawled_contact_url(session, bot_id)
+
+
+def crawled_contact_url(session: object, bot_id: int) -> str | None:
+    """The contact page among ``bot_id``'s crawled pages, or ``None``.
+
+    The second source of :func:`resolve_contact_url`, also read by the console
+    (``GET /bots/{id}/contact-link``) to show which page a Free bot links to.
+    Never raises: a failed lookup reads as "no page found".
+    """
     try:
         from sqlalchemy import distinct, select
 
@@ -2249,7 +2260,7 @@ def _no_info_pivot(company_name: str | None, support_enabled: bool = True, *, co
     messages) it must NOT offer to connect the visitor with the team, since no
     such channel exists. It stays a warm bot-only pivot instead.
 
-    ``contact_url`` (Free branch only, from ``_contact_url_from_answer_links``)
+    ``contact_url`` (Free branch only, from ``contact_url_from_answer_links``)
     is what stops that Free branch being a dead end. Without it the bot could
     not answer, could not offer a human, and gave the visitor nothing to do
     next, on every unanswerable on-scope question.
@@ -3250,10 +3261,10 @@ def _alert_team_of_urgent_incident(session, bot, client_id: int, session_id: str
     """
     bot_id = getattr(bot, "id", None)
     bot_name = getattr(bot, "name", None)
-    reply_to = getattr(bot, "reply_to_email", None)
     queue_timeout = getattr(bot, "live_chat_queue_timeout_seconds", None) or _DEFAULT_QUEUE_TIMEOUT_SECONDS
     wants_email = bot is not None and bool(getattr(bot, "email_on_handoff", True))
     recipients = get_notification_recipients(bot, "handoff_request") if wants_email else []
+    reply_to = get_reply_to_address(bot) if recipients else None
     try:
         lead = get_lead_info_by_session(session, session_id, bot_id=bot_id)
     except Exception:  # noqa: BLE001 - a failed lookup leaves the alert anonymous, not unsent
@@ -4413,7 +4424,7 @@ def _background_bant_extraction(
                 tier_transition = {
                     "bot_id": bot.id,
                     "bot_name": bot.name,
-                    "reply_to": getattr(bot, "reply_to_email", None),
+                    "reply_to": get_reply_to_address(bot),
                     "recipients": recipients,
                     "contact": contact,
                     # Legacy BANT columns, kept because the outbound webhook
@@ -8373,7 +8384,7 @@ async def rag_pipeline_stream(
             # ``_no_info_pivot`` callsite below, because the callsites sit deep
             # inside two branches each and re-deriving it there would put four
             # copies of the same lookup in the hot path. See
-            # ``_contact_url_from_answer_links`` for why the bot's existing
+            # ``contact_url_from_answer_links`` for why the bot's existing
             # Smart Links are the source rather than a dedicated column, and
             # ``_no_info_pivot`` for why handing over a public page on the
             # customer's own website is not a paywall leak. ``getattr`` covers

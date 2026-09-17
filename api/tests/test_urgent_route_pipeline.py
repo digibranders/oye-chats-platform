@@ -139,7 +139,8 @@ async def test_urgent_turn_is_fixed_wording_with_the_form_and_one_alert(db, monk
             "to": "soc@acme.test",
             "reason": URGENT,
             "contact": {"name": "Eva", "email": "eva@x.test", "phone": None},
-            "reply_to": None,
+            # No Reply-To saved, so a reply reaches the account owner.
+            "reply_to": client.email,
             "urgent": True,
             "session_id": "urgent-1",
         }

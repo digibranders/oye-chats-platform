@@ -14,7 +14,15 @@ import {
   Tooltip,
   Well,
 } from '../../../ui';
-import { detectTone, errorMessage, fetchTonePresets, sampleTone, type TonePreset } from './experience-api';
+import {
+  detectTone,
+  errorMessage,
+  fetchContactLink,
+  fetchTonePresets,
+  sampleTone,
+  type ContactLink,
+  type TonePreset,
+} from './experience-api';
 import {
   LIMITS,
   type DraftErrors,
@@ -23,7 +31,7 @@ import {
   type ServiceEntry,
   type SmartLink,
 } from './experience-model';
-import { useTranslation } from '../../../i18n/useTranslation';
+import { useTranslation, type Translation } from '../../../i18n/useTranslation';
 
 /**
  * How the chatbot sounds, and what it is allowed to sound off about.
@@ -41,6 +49,24 @@ import { useTranslation } from '../../../i18n/useTranslation';
  * - The **preview panel's** conversation is a real answer from the saved
  *   chatbot, and says so when the draft has moved on.
  */
+
+/** Where a Free chatbot sends a visitor it cannot help, in one sentence. */
+function contactLinkNote(t: Translation['t'], link: ContactLink): string {
+  if (!link.effectiveUrl) {
+    return (
+      t('agents.contactLinkMissing') ||
+      'No contact page was found on your website. Add a link with the keyword "contact" so the chatbot can point visitors to you.'
+    );
+  }
+  const source =
+    link.source === 'smart_link'
+      ? t('agents.contactLinkFromSmartLink') || 'your "contact" link above'
+      : t('agents.contactLinkFromCrawl') || 'found on your website';
+  return (
+    t('agents.contactLinkEffective', { url: link.effectiveUrl, source }) ||
+    `When it cannot help, the chatbot links visitors to ${link.effectiveUrl} (${source}).`
+  );
+}
 
 /** The marker the tone field carries once its text matches no preset. */
 const CUSTOM_PRESET = 'custom';
@@ -91,6 +117,30 @@ export function VoiceSection({
       active = false;
     };
   }, []);
+
+  // Only a chatbot without a support path (the Free plan) hands visitors its
+  // contact page, so only that plan pays for the lookup. Keyed by chatbot, so
+  // a switch never shows the previous chatbot's page.
+  const linksToContactPage = meta.planSlug === 'free';
+  const [contactLink, setContactLink] = useState<{ agentId: number; link: ContactLink } | null>(
+    null,
+  );
+  useEffect(() => {
+    if (!linksToContactPage || agentId === null) return undefined;
+    let active = true;
+    fetchContactLink(agentId)
+      .then((link) => {
+        if (active) setContactLink({ agentId, link });
+      })
+      .catch(() => {
+        /* The note is informational; the links editor works without it. */
+      });
+    return () => {
+      active = false;
+    };
+  }, [agentId, linksToContactPage]);
+  const shownContactLink =
+    linksToContactPage && contactLink?.agentId === agentId ? contactLink.link : null;
 
   const onToneText = useCallback(
     (value: string): void => {
@@ -457,6 +507,9 @@ export function VoiceSection({
               {t('agents.addALink') || 'Add a link'}
             </Button>
           </div>
+          {shownContactLink ? (
+            <p className="text-sm text-text-secondary">{contactLinkNote(t, shownContactLink)}</p>
+          ) : null}
         </CardBody>
       </Card>
 
@@ -466,8 +519,11 @@ export function VoiceSection({
           titleAs="h2"
           title={t('agents.answerPricingFromOnePage') || 'Pricing page'}
           description={
-            t('agents.whenThisIsOnPricing') ||
-            'The chatbot answers pricing questions only from this page. If it cannot answer from here, it routes the visitor to your team instead of guessing. Leave this empty and every pricing question goes straight to your team.'
+            linksToContactPage
+              ? t('agents.pricingPageFreeDescription') ||
+                'The chatbot answers pricing questions only from this page. If the page has no price for what was asked, it sends the visitor a link to it. Leave this empty and the chatbot sends your contact page instead, or answers from all of its knowledge when there is no contact page.'
+              : t('agents.whenThisIsOnPricing') ||
+                'The chatbot answers pricing questions only from this page. If it cannot answer from here, it routes the visitor to your team instead of guessing. Leave this empty and every pricing question goes straight to your team.'
           }
         />
         <CardBody className="flex flex-col gap-4">

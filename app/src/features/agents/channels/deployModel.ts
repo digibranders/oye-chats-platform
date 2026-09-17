@@ -451,7 +451,10 @@ export function embedSnippet({ botKey, env }: SnippetInput): string {
   return `<script async src="${widgetScriptUrl(env)}" data-bot-key="${botKey}"></script>`;
 }
 
-/** The origin a Content-Security-Policy has to allow for the bundle to load. */
+/**
+ * The origin a Content-Security-Policy has to allow for the bundle to load:
+ * in `script-src` for the scripts and in `style-src` for the stylesheet.
+ */
 export function scriptOrigin(env: PlatformEnv): string {
   try {
     return new URL(widgetScriptUrl(env)).origin;
@@ -552,8 +555,10 @@ export function troubleshootItems(input: TroubleshootInput): TroubleshootItem[] 
     {
       id: 'csp',
       title: translateNow('agents.aContentSecurityPolicyWill') || 'A Content-Security-Policy will block the bundle silently',
-      body: translateNow('agents.ifYourSiteSendsA') || 'If your site sends a CSP header, the browser refuses the script with a console error and nothing else. Allow both of these:',
-      code: `script-src ${scriptOrigin(env)};\nconnect-src ${apiOrigin(apiBaseUrl)};`,
+      body: translateNow('agents.ifYourSiteSendsA') || 'If your site sends a CSP header, the browser refuses the widget with a console error and nothing else. Allow all three of these:',
+      // The stylesheet is served from the script's origin. Without style-src
+      // the widget loads and never renders.
+      code: `script-src ${scriptOrigin(env)};\nstyle-src ${scriptOrigin(env)};\nconnect-src ${apiOrigin(apiBaseUrl)};`,
     },
     {
       id: 'cache',

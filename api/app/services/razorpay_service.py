@@ -3134,6 +3134,7 @@ def _create_bot_from_subscription_notes(
     import uuid as _uuid
 
     from app.db.models import Bot
+    from app.services.bot_defaults import owner_contact_defaults
 
     bot_name = (notes.get("bot_name") or "AI Assistant").strip() or "AI Assistant"
     bot_website = notes.get("bot_website") or None
@@ -3160,6 +3161,7 @@ def _create_bot_from_subscription_notes(
         is_legacy_pooled=False,
         allowed_domains=allowed_domains,
         domain_check_enabled=domain_check_enabled,
+        **owner_contact_defaults(session, client_id),
     )
     session.add(bot)
     session.flush()

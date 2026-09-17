@@ -30,7 +30,7 @@ import {
 import BotAvatar from './BotAvatar';
 import MessageBubble from './MessageBubble';
 import MessageStatus from './MessageStatus';
-import { sanitizeColor, sanitizeImageUrl, sanitizeFileUrl } from '../services/sanitize';
+import { DEFAULT_PRIMARY_COLOR, sanitizeColor, sanitizeImageUrl, sanitizeFileUrl } from '../services/sanitize';
 import { readSessionId, writeSessionId, clearSessionId, resolveShareDomain, getLeadCapturedKey, isLeadCaptureFresh, markLeadCaptured, writeLocale } from '../services/storage-keys';
 import { readSessionIndex, recordSession, removeSessionFromIndex, readVisitorName, writeVisitorName } from '../services/session-history';
 import { setSmartLinkUrls, setSmartLinkSession } from '../services/smartLinks';
@@ -125,7 +125,7 @@ const SystemMessage = ({ text, textKey, textParams }) => {
 // Mirrors the bot-identity badge style so the live-chat handoff feels like a
 // natural identity swap rather than a silent system event.
 const OperatorJoinedNotice = ({ name, department, avatarUrl, timestamp, settings }) => {
-    const primaryColor = sanitizeColor(settings?.primary_color, '#3A0CA3');
+    const primaryColor = sanitizeColor(settings?.primary_color, DEFAULT_PRIMARY_COLOR);
     const [imgOk, setImgOk] = useState(!!avatarUrl);
     const timeLabel = (() => {
         if (!timestamp) return '';
@@ -210,8 +210,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
         bot_logo: null,
         launcher_name: 'Have Questions?',
         launcher_logo: null,
-        primary_color: '#3A0CA3',
-        header_color: '#3A0CA3',
+        primary_color: DEFAULT_PRIMARY_COLOR,
+        header_color: DEFAULT_PRIMARY_COLOR,
         background_color: '#ffffff'
     });
     // Effective cross-subdomain share domain: explicit `session_share_domain`
@@ -2867,7 +2867,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
     // never blanks in the gap.
     const renderOperatorBadge = () => {
         if (!operatorName) return renderAgentBadge();
-        const badgePrimary = sanitizeColor(settings.primary_color, '#3A0CA3');
+        const badgePrimary = sanitizeColor(settings.primary_color, DEFAULT_PRIMARY_COLOR);
         const avatarUrl = sanitizeImageUrl(operatorAvatar);
         const initials = operatorName
             .split(/\s+/)
@@ -2926,7 +2926,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
         // index.css (real :hover + @keyframes) so they work inside the widget's
         // Shadow DOM, where Tailwind's transform/shadow custom-property
         // composition does not resolve. ``--oyechats-brand`` feeds the hover glow.
-        const badgePrimary = sanitizeColor(settings.primary_color, '#3A0CA3');
+        const badgePrimary = sanitizeColor(settings.primary_color, DEFAULT_PRIMARY_COLOR);
         const botName = settings.bot_name || t('launcher.ai_assistant') || 'AI Assistant';
         return (
             <div
@@ -3004,7 +3004,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
     // same sender can be drawn tighter than the gap between speakers.
     const renderLiveMessage = (msg, idx) => {
         const userBubbleBg = sanitizeColor(settings.user_bubble_color, '#DBE9FF');
-        const primaryColor = sanitizeColor(settings.primary_color, '#3A0CA3');
+        const primaryColor = sanitizeColor(settings.primary_color, DEFAULT_PRIMARY_COLOR);
 
         if (msg.sender === 'user') {
             // Half the messages area's gap, negative, when this message continues
@@ -3217,7 +3217,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                                     {showProminentHandoff && showLiveChatOption && !showHeaderMenu && (
                                         <span
                                             className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full animate-pulse"
-                                            style={{ backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}
+                                            style={{ backgroundColor: sanitizeColor(settings.primary_color, DEFAULT_PRIMARY_COLOR) }}
                                         />
                                     )}
                                 </button>
@@ -3392,7 +3392,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                                         >
                                             <span className="shrink-0 text-gray-400">
                                                 {isActive
-                                                    ? <Check className="w-4 h-4" style={{ color: sanitizeColor(settings.primary_color, '#3A0CA3') }} />
+                                                    ? <Check className="w-4 h-4" style={{ color: sanitizeColor(settings.primary_color, DEFAULT_PRIMARY_COLOR) }} />
                                                     : <MessageSquare className="w-4 h-4" />}
                                             </span>
                                             <span className="flex-1 min-w-0">
@@ -3423,7 +3423,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                                     handleNewChat();
                                 }}
                                 className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-[13px] font-medium text-white transition-opacity hover:opacity-90"
-                                style={{ backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}
+                                style={{ backgroundColor: sanitizeColor(settings.primary_color, DEFAULT_PRIMARY_COLOR) }}
                             >
                                 <Plus className="w-4 h-4" />
                                 {t('header.start_new_chat') || 'Start New Chat'}
@@ -3621,7 +3621,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                                             onClick={() => handleQuotationConnectNow(msg.id)}
                                             style={{
                                                 width: '100%', padding: '10px 12px', borderRadius: '8px',
-                                                border: 'none', background: sanitizeColor(settings?.primary_color, '#3A0CA3'), color: '#ffffff',
+                                                border: 'none', background: sanitizeColor(settings?.primary_color, DEFAULT_PRIMARY_COLOR), color: '#ffffff',
                                                 fontSize: '14px', fontWeight: 500, cursor: 'pointer',
                                             }}
                                         >
@@ -3722,7 +3722,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                                     setChatMode('unavailable');
                                 }}
                                 className="flex-1 py-2 rounded-xl text-white text-[13px] font-medium transition-opacity hover:opacity-90"
-                                style={{ backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}
+                                style={{ backgroundColor: sanitizeColor(settings.primary_color, DEFAULT_PRIMARY_COLOR) }}
                             >
                                 {t('offline.leave_message_title') || 'Leave a message'}
                             </button>
@@ -3849,9 +3849,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                 {isOperatorTyping && (
                     <div className="flex justify-start px-5">
                         <div className="flex gap-1.5 px-1 py-2">
-                            <span className="w-2 h-2 rounded-full animate-bounce" style={{ animationDelay: '0ms', backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3'), opacity: 0.6 }} />
-                            <span className="w-2 h-2 rounded-full animate-bounce" style={{ animationDelay: '150ms', backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3'), opacity: 0.6 }} />
-                            <span className="w-2 h-2 rounded-full animate-bounce" style={{ animationDelay: '300ms', backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3'), opacity: 0.6 }} />
+                            <span className="w-2 h-2 rounded-full animate-bounce" style={{ animationDelay: '0ms', backgroundColor: sanitizeColor(settings.primary_color, DEFAULT_PRIMARY_COLOR), opacity: 0.6 }} />
+                            <span className="w-2 h-2 rounded-full animate-bounce" style={{ animationDelay: '150ms', backgroundColor: sanitizeColor(settings.primary_color, DEFAULT_PRIMARY_COLOR), opacity: 0.6 }} />
+                            <span className="w-2 h-2 rounded-full animate-bounce" style={{ animationDelay: '300ms', backgroundColor: sanitizeColor(settings.primary_color, DEFAULT_PRIMARY_COLOR), opacity: 0.6 }} />
                         </div>
                     </div>
                 )}
@@ -3861,7 +3861,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                     <div className="flex flex-col items-center py-4 px-4" style={{ animation: 'fadeUp 0.4s ease-out' }}>
                         <div
                             className="w-8 h-8 border-4 border-t-transparent rounded-full animate-spin mb-2"
-                            style={{ borderColor: `${sanitizeColor(settings.primary_color, '#3A0CA3')}40`, borderTopColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}
+                            style={{ borderColor: `${sanitizeColor(settings.primary_color, DEFAULT_PRIMARY_COLOR)}40`, borderTopColor: sanitizeColor(settings.primary_color, DEFAULT_PRIMARY_COLOR) }}
                         />
                         <p
                             className="text-[13px] text-gray-500 text-center"
@@ -3874,7 +3874,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                             <button
                                 onClick={() => setChatMode('unavailable')}
                                 className="mt-2 text-[12px] font-medium hover:underline transition-colors"
-                                style={{ color: sanitizeColor(settings.primary_color, '#3A0CA3') }}
+                                style={{ color: sanitizeColor(settings.primary_color, DEFAULT_PRIMARY_COLOR) }}
                             >
                                 {t('offline.leave_message_instead') || 'Leave a message instead'}
                             </button>
@@ -3914,7 +3914,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                             <div className="relative flex-shrink-0">
                                 <div
                                     className="w-9 h-9 rounded-full flex items-center justify-center"
-                                    style={{ backgroundColor: `${sanitizeColor(settings.primary_color, '#3A0CA3')}15` }}
+                                    style={{ backgroundColor: `${sanitizeColor(settings.primary_color, DEFAULT_PRIMARY_COLOR)}15` }}
                                 >
                                     <svg
                                         className="w-4 h-4"
@@ -3924,7 +3924,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                                         strokeWidth="2"
                                         strokeLinecap="round"
                                         strokeLinejoin="round"
-                                        style={{ color: sanitizeColor(settings.primary_color, '#3A0CA3') }}
+                                        style={{ color: sanitizeColor(settings.primary_color, DEFAULT_PRIMARY_COLOR) }}
                                     >
                                         <path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3" />
                                     </svg>
@@ -3932,7 +3932,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                                 <span
                                     className="absolute inset-0 rounded-full animate-ping"
                                     style={{
-                                        backgroundColor: `${sanitizeColor(settings.primary_color, '#3A0CA3')}30`,
+                                        backgroundColor: `${sanitizeColor(settings.primary_color, DEFAULT_PRIMARY_COLOR)}30`,
                                         animationDuration: '1.8s',
                                     }}
                                 />
@@ -3970,7 +3970,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                                 <button
                                     onClick={() => setOfflineError(false)}
                                     className="w-full py-2 rounded-xl text-white text-[13px] font-medium"
-                                    style={{ backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}
+                                    style={{ backgroundColor: sanitizeColor(settings.primary_color, DEFAULT_PRIMARY_COLOR) }}
                                 >
                                     {t('offline.try_again') || 'Try Again'}
                                 </button>
@@ -4001,7 +4001,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                                 <button
                                     onClick={handleReturnToBot}
                                     className="w-full py-2 rounded-xl text-white text-[13px] font-medium"
-                                    style={{ backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}
+                                    style={{ backgroundColor: sanitizeColor(settings.primary_color, DEFAULT_PRIMARY_COLOR) }}
                                 >
                                     {t('offline.continue_chatting_ai') || 'Continue chatting with AI'}
                                 </button>
@@ -4018,7 +4018,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                             const externalPhone = offlineExternalPhone;
                             const isCompact = isOfflineFormCompact;
 
-                            const primary = sanitizeColor(settings.primary_color, '#3A0CA3');
+                            const primary = sanitizeColor(settings.primary_color, DEFAULT_PRIMARY_COLOR);
 
                             if (isCompact) {
                                 // Backfill offlineForm so the post-submit
@@ -4179,7 +4179,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                         className="mx-3 my-2 rounded-2xl border border-gray-100 shadow-sm bg-white p-4 text-center"
                         style={{ animation: 'fadeUp 0.4s ease-out' }}
                     >
-                        <CheckCircle2 className="w-7 h-7 mx-auto mb-2" style={{ color: sanitizeColor(settings.primary_color, '#3A0CA3') }} />
+                        <CheckCircle2 className="w-7 h-7 mx-auto mb-2" style={{ color: sanitizeColor(settings.primary_color, DEFAULT_PRIMARY_COLOR) }} />
                         <p className="text-[13px] font-semibold text-[#16202C] mb-0.5">{t('survey.chat_ended') || 'Chat ended'}</p>
 
                         {/* Step 1: Was your issue resolved? */}
@@ -4567,9 +4567,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, settingsLoade
                     >
                         <div
                             className="w-12 h-12 rounded-full mx-auto mb-3 flex items-center justify-center"
-                            style={{ backgroundColor: `${sanitizeColor(settings.primary_color, '#3A0CA3')}15` }}
+                            style={{ backgroundColor: `${sanitizeColor(settings.primary_color, DEFAULT_PRIMARY_COLOR)}15` }}
                         >
-                            <LogOut className="w-5 h-5" style={{ color: sanitizeColor(settings.primary_color, '#3A0CA3') }} />
+                            <LogOut className="w-5 h-5" style={{ color: sanitizeColor(settings.primary_color, DEFAULT_PRIMARY_COLOR) }} />
                         </div>
                         <p id="end-chat-title" className="text-[14px] font-semibold text-[#16202C] mb-0.5">
                             {t('system.end_conversation_title') || 'End conversation?'}

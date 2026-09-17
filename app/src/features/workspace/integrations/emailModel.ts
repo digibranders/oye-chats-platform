@@ -18,6 +18,10 @@ export interface NotificationEmails {
 export interface BotEmailSettings {
   reply_to_email?: string | null;
   notification_emails?: NotificationEmails | null;
+  /** Legacy comma-separated recipients. Read after the default list, never written. */
+  notification_email?: string | null;
+  /** The account email an empty recipient list or reply-to falls back to. */
+  owner_email?: string | null;
   email_on_qualified?: boolean;
   email_on_handoff?: boolean;
   email_on_offline?: boolean;
@@ -58,7 +62,7 @@ export function readEmailRouting(bot: Bot): EmailRouting {
   const notify = settings.notification_emails ?? null;
   return {
     replyTo: settings.reply_to_email ?? '',
-    recipients: notify?.default ?? [],
+    recipients: defaultRecipients(settings),
     qualifiedLead: notify?.qualified_lead ?? [],
     handoff: notify?.handoff_request ?? [],
     offline: notify?.offline_message ?? [],
@@ -71,6 +75,48 @@ export function readEmailRouting(bot: Bot): EmailRouting {
     visitorConfirmation: settings.email_visitor_confirmation ?? true,
     transcript: settings.feature_flags?.email_transcript ?? false,
   };
+}
+
+/**
+ * The addresses the server sends to when an event has no list of its own.
+ *
+ * The same order as `get_notification_recipients` in email_service.py: the
+ * default list when it holds a real address, then the legacy comma-separated
+ * field. Saving writes them back as the default list, which the server reads
+ * first.
+ */
+function defaultRecipients(settings: BotWithIntegrations): string[] {
+  const listed = cleanAddresses(settings.notification_emails?.default ?? []);
+  if (listed.length > 0) return listed;
+  return cleanAddresses((settings.notification_email ?? '').split(','));
+}
+
+function cleanAddresses(values: readonly unknown[]): string[] {
+  return values
+    .filter((value): value is string => typeof value === 'string')
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+/** The account owner's address, when the payload carries one. */
+export function ownerAddress(bot: Bot): string | null {
+  return readIntegrations(bot).owner_email?.trim() || null;
+}
+
+/** What an empty reply-to does. The server falls back to the account owner. */
+export function replyToHint(owner: string | null): string {
+  return owner
+    ? `Empty sends replies to the account owner's address, ${owner}.`
+    : "Empty sends replies to the account owner's address.";
+}
+
+/** What the default recipient list does, including when it is empty. */
+export function recipientsHint(owner: string | null, recipients: readonly string[]): string {
+  if (recipients.length > 0) return 'Every alert goes here unless an event has its own list.';
+  const address = owner?.trim();
+  return address
+    ? `Empty sends every alert to the account owner, ${address}.`
+    : 'Empty sends every alert to the account owner.';
 }
 
 /**
@@ -89,6 +135,9 @@ export function toBotPatch(routing: EmailRouting): Record<string, unknown> {
   return {
     reply_to_email: routing.replyTo.trim() || null,
     notification_emails: notificationEmails,
+    // The legacy field is shown in the default list and saved there, so it
+    // is cleared here; otherwise emptying the list would bring it back.
+    notification_email: null,
     email_on_qualified: routing.onQualified,
     email_on_handoff: routing.onHandoff,
     email_on_offline: routing.onOffline,

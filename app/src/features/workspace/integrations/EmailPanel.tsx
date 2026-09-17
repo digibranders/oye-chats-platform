@@ -15,7 +15,15 @@ import {
 } from '../../../ui';
 import { updateBot } from '../../../services/api';
 import type { Bot } from '../../../types/domain';
-import { readEmailRouting, routingChanged, toBotPatch, type EmailRouting } from './emailModel';
+import {
+  ownerAddress,
+  readEmailRouting,
+  recipientsHint,
+  replyToHint,
+  routingChanged,
+  toBotPatch,
+  type EmailRouting,
+} from './emailModel';
 
 export interface EmailPanelProps {
   bot: Bot;
@@ -70,6 +78,7 @@ export function EmailPanel({ bot, access, onSaved }: EmailPanelProps) {
 
   const dirty = routingChanged(baseline, draft);
   const restricted = access !== 'all';
+  const owner = ownerAddress(bot);
 
   return (
     <Stack>
@@ -97,7 +106,7 @@ export function EmailPanel({ bot, access, onSaved }: EmailPanelProps) {
       ) : null}
 
       <SettingGroup title="Addresses" description="Sent from notifications@oyechats.com.">
-        <SettingRow label="Reply-to" description="Empty uses the owner's address." stacked>
+        <SettingRow label="Reply-to" description={replyToHint(owner)} stacked>
           <TagInput
             label="Reply-to address"
             values={draft.replyTo ? [draft.replyTo] : []}
@@ -109,7 +118,12 @@ export function EmailPanel({ bot, access, onSaved }: EmailPanelProps) {
           />
         </SettingRow>
 
-        <SettingRow label="Default recipients" stacked disabled={restricted}>
+        <SettingRow
+          label="Default recipients"
+          description={recipientsHint(owner, draft.recipients)}
+          stacked
+          disabled={restricted}
+        >
           <TagInput
             label="Default recipients"
             values={draft.recipients}
@@ -163,7 +177,11 @@ export function EmailPanel({ bot, access, onSaved }: EmailPanelProps) {
                     onValuesChange={(values) => set('qualifiedLead', values)}
                   />
                 </SettingRow>
-                <SettingRow label="Handoff requests go to" stacked>
+                <SettingRow
+                  label="Handoff requests go to"
+                  description="Leave empty to use the default recipients."
+                  stacked
+                >
                   <TagInput
                     label="Handoff request recipients"
                     values={draft.handoff}
@@ -173,7 +191,11 @@ export function EmailPanel({ bot, access, onSaved }: EmailPanelProps) {
                     onValuesChange={(values) => set('handoff', values)}
                   />
                 </SettingRow>
-                <SettingRow label="Offline messages go to" stacked>
+                <SettingRow
+                  label="Offline messages go to"
+                  description="Leave empty to use the default recipients."
+                  stacked
+                >
                   <TagInput
                     label="Offline message recipients"
                     values={draft.offline}
