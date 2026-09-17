@@ -2430,9 +2430,12 @@ def _no_info_pivot(company_name: str | None, support_enabled: bool = True, *, co
             contact_url.strip() if isinstance(contact_url, str) and _pricing_gate.normalize_url(contact_url) else None
         )
         if usable_url:
-            return f"That specific detail sits with {team}. You can get in touch here: {usable_url}"
-        return f"That specific detail sits with {team}. Is there something else about {cn} I can help you with?"
-    return f"That specific detail sits with {team}. Want me to connect you with the team so they can help directly?"
+            return f"I don't have that detail here. You can reach {team} here: {usable_url}"
+        return f"I don't have that detail here. Is there something else about {cn} I can help you with?"
+    # A question the visitor can accept: ``bot_offers_handoff`` reads it as an
+    # offer, so a following "yes" opens the form. "Sits with the team" was the
+    # evasive stock line the answer prompt now forbids (report F3, 2026-09-17).
+    return f"I don't have that detail here. Want me to loop in {team} on this?"
 
 
 def _browsing_ack(company_name: str | None) -> str:

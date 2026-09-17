@@ -225,7 +225,7 @@ async def test_an_on_scope_question_with_no_chunks_still_takes_the_pivot(
     answer = await _drive(pipeline, bot, _ON_SCOPE, session_id)
 
     assert _stub_generation["prompts"] == [], "an empty context reached the model"
-    assert "sits with the" in answer
+    assert "I don't have that detail here" in answer
 
 
 @pytest.mark.asyncio

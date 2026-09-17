@@ -114,15 +114,27 @@ def test_an_unusable_first_match_does_not_shadow_a_usable_later_one():
 # Unit: the pivot copy itself
 # ═══════════════════════════════════════════════════════════════════════════
 
-# Byte-for-byte what the paid branch produced before this feature existed. Any
-# change to this string is a change to what every paid bot says on every
-# unanswerable on-scope turn, so it is pinned rather than pattern-matched.
-_PAID_TEXT = (
-    "That specific detail sits with the **Acme** team. Want me to connect you with the team so they can help directly?"
-)
-_FREE_NO_LINK_TEXT = (
-    "That specific detail sits with the **Acme** team. Is there something else about **Acme** I can help you with?"
-)
+# Byte-for-byte what the paid branch says. Any change to this string is a change
+# to what every paid bot says on every unanswerable on-scope turn, so it is
+# pinned rather than pattern-matched. 2026-09-17: the evasive "That specific
+# detail sits with the team" became a plain gap plus an offer the visitor can
+# accept, matching the answer prompt's gap rule.
+_PAID_TEXT = "I don't have that detail here. Want me to loop in the **Acme** team on this?"
+_FREE_NO_LINK_TEXT = "I don't have that detail here. Is there something else about **Acme** I can help you with?"
+
+
+def test_paid_pivot_is_an_offer_a_yes_can_accept():
+    from app.services.intent_service import bot_offers_handoff
+
+    assert bot_offers_handoff(_PAID_TEXT)
+    assert "sits with" not in _PAID_TEXT
+
+
+def test_free_pivots_offer_no_team():
+    from app.services.intent_service import bot_offers_handoff
+
+    assert not bot_offers_handoff(_FREE_NO_LINK_TEXT)
+    assert not bot_offers_handoff(rs._no_info_pivot("Acme", support_enabled=False, contact_url=_CONTACT))
 
 
 def test_paid_pivot_is_unchanged_with_a_contact_url():
@@ -136,7 +148,7 @@ def test_paid_pivot_is_unchanged_without_a_contact_url():
 
 def test_free_pivot_hands_over_the_contact_url():
     assert rs._no_info_pivot("Acme", support_enabled=False, contact_url=_CONTACT) == (
-        f"That specific detail sits with the **Acme** team. You can get in touch here: {_CONTACT}"
+        f"I don't have that detail here. You can reach the **Acme** team here: {_CONTACT}"
     )
 
 
@@ -159,7 +171,7 @@ def test_free_pivot_refuses_an_unusable_contact_url(url):
 
 def test_free_pivot_with_no_company_name_still_links():
     assert rs._no_info_pivot(None, support_enabled=False, contact_url=_CONTACT) == (
-        f"That specific detail sits with our team. You can get in touch here: {_CONTACT}"
+        f"I don't have that detail here. You can reach our team here: {_CONTACT}"
     )
 
 
@@ -311,8 +323,8 @@ async def test_free_bot_with_a_contact_smart_link_hands_it_over(
 
     assert _stub_generation["prompts"] == [], "a canned pivot must never be an LLM call"
     assert _CONTACT in out["answer"]
-    assert "get in touch here" in out["answer"]
-    assert "connect you with the team" not in out["answer"], "a Free bot promised a channel its plan does not include"
+    assert "You can reach" in out["answer"]
+    assert "Want me to loop in" not in out["answer"], "a Free bot promised a channel its plan does not include"
     assert "Is there something else about" not in out["answer"], "the dead-end copy is still being used"
     assert out["meta"].get("suggest_handoff") is not True
     assert _CONTACT in _persisted_bot_reply(db, session_id)
@@ -335,7 +347,7 @@ async def test_free_bot_without_a_contact_smart_link_is_unchanged(
     assert _stub_generation["prompts"] == []
     assert "Is there something else about **Acme** I can help you with?" in out["answer"]
     assert "http" not in out["answer"], "a link appeared with no contact Smart Link configured"
-    assert "connect you with the team" not in out["answer"]
+    assert "Want me to loop in" not in out["answer"]
 
 
 @pytest.mark.asyncio
@@ -372,6 +384,6 @@ async def test_paid_bot_is_unaffected_by_a_contact_smart_link(
 
     out = await _drive(pipeline, bot, _QUESTION, session_id)
 
-    assert "connect you with the team" in out["answer"]
+    assert "Want me to loop in" in out["answer"]
     assert _CONTACT not in out["answer"], "the paid branch handed over the contact link instead of the team"
-    assert "get in touch here" not in out["answer"]
+    assert "You can reach" not in out["answer"]
