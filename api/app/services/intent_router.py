@@ -578,14 +578,17 @@ _PARAGRAPH_BREAK_RE = re.compile(r"\n\s*\n")
 #: The space after the end of a sentence.
 _SENTENCE_BREAK_RE = re.compile(r"(?<=[.?!])\s+")
 #: How an offer that lists what the visitor can pick opens: "Want to hear about
-#: ...", "Would you like to ...", "Are you exploring ...".
+#: ...", "Would you like to ...", "Are you exploring ...". The ``topic`` group
+#: holds an opening that already names a topic ("interested in", "exploring");
+#: after any other opening the first option is a topic only when it starts with
+#: one of ``_OPTION_VERB_RE``.
 _OPTION_LEAD_RE = re.compile(
     r"^(?:"
     r"(?:do\s+you\s+)?want\s+(?:me\s+)?to"
     r"|would\s+you\s+like(?:\s+me)?\s+to"
     r"|would\s+it\s+help\s+to"
-    r"|(?:are\s+you\s+)?(?:curious|interested)\s+(?:about|in)"
-    r"|are\s+you\s+(?:looking\s+(?:at|for|into)|exploring)"
+    r"|(?P<topic>(?:are\s+you\s+)?(?:curious|interested)\s+(?:about|in)"
+    r"|are\s+you\s+(?:looking\s+(?:at|for|into)|exploring))"
     r")\s+"
 )
 #: A question that asks what the visitor wants without naming anything. The
@@ -596,8 +599,12 @@ _OPEN_QUESTION_RE = re.compile(
     r"|what\s+can\s+i\s+help\s+(?:you\s+)?with"
     r"|what\s+brings\s+you\s+here(?:\s+today)?)\?$"
 )
-#: Where one option ends and the next starts: a comma, "or", or both.
-_OPTION_SPLIT_RE = re.compile(r",\s*(?:or\s+)?|\s+or\s+")
+#: Where one alternative ends and the next starts: "or", after a comma or not.
+_ALTERNATIVE_SPLIT_RE = re.compile(r",?\s+or\s+")
+#: The commas of a list: "our services, recent work".
+_LIST_COMMA_RE = re.compile(r",\s*")
+#: The last item of a list that joins its items with "and": "SOC 2 and GDPR".
+_LIST_AND_RE = re.compile(r"\s+and\s+")
 #: The words that open an option without naming its topic ("hear about", "see").
 _OPTION_VERB_RE = re.compile(
     r"^(?:(?:hear|know|learn|find\s+out|read)\s+(?:more\s+)?about|see|explore|check\s+out|look\s+at|discuss)\s+"
@@ -621,13 +628,17 @@ def offered_option_question(bot_message: str | None) -> str | None:
     lists two or more things the visitor can pick, after an offer ("Want to hear
     about our services, see recent work, or chat with the team?") or after an
     open question ("What would you like to know? Our services, recent work, or
-    how to get started?"). Agreeing to that picks the first option, so the turn
-    is answered as a standalone question about it: the services option is
-    ``SERVICES_QUESTION``, "how to X" is "how do i X", and any other topic is
-    "tell me about your X".
+    how to get started?"). A topic that lists things ("know more about our ISO
+    27001, SOC 2 and GDPR compliance?") offers them too, and is kept whole.
+    Agreeing to that picks the first option, so the turn is answered as a
+    standalone question about it: the services option is ``SERVICES_QUESTION``,
+    "how to X" is "how do i X", and any other topic is "tell me about your X".
 
-    None when the message offers no options, or when the first option is a
-    person ("connect you with our team, or ..."): a "yes" to that is a handoff.
+    None when the message offers no options, when the first option is a person
+    ("connect you with our team, or ..."), or when it is an action rather than a
+    topic ("book an appointment, or ..."): the handoff affirmation decides those.
+    The first option is a topic when it opens with a verb such as "hear about"
+    or "see", or when the question opens with one ("interested in", "exploring").
     Only the closing paragraph is read, like ``intent_service.bot_offers_handoff``,
     because an answer puts its follow-up question there. Pure and linear.
     """
@@ -645,10 +656,22 @@ def offered_option_question(bot_message: str | None) -> str | None:
         body = offer
     else:
         return None
-    options = [option.strip() for option in _OPTION_SPLIT_RE.split(body) if option.strip()]
-    if len(options) < 2 or _TEAM_OPTION_RE.search(options[0]):
+    alternatives = [part.strip() for part in _ALTERNATIVE_SPLIT_RE.split(body) if part.strip()]
+    if not alternatives:
         return None
-    topic = _OPTION_VERB_RE.sub("", options[0], count=1)
+    items = [item.strip() for item in _LIST_COMMA_RE.split(alternatives[0]) if item.strip()]
+    # "our ISO 27001, SOC 2 and GDPR compliance" is one topic that lists three
+    # things; split at its commas it was answered for ISO 27001 alone.
+    listed = len(items) >= 2 and _LIST_AND_RE.search(items[-1]) is not None
+    first = alternatives[0] if listed else items[0]
+    choices = (1 if listed else len(items)) + len(alternatives) - 1
+    if (choices < 2 and not listed) or _TEAM_OPTION_RE.search(first):
+        return None
+    topic, verbs = _OPTION_VERB_RE.subn("", first, count=1)
+    # "book an appointment" or "cancel your subscription" is something to do,
+    # not a topic to tell the visitor about; the handoff check decides that "yes".
+    if not verbs and lead is not None and lead.group("topic") is None:
+        return None
     if _SERVICES_OPTION_RE.search(topic):
         return SERVICES_QUESTION
     if topic.startswith("how to "):

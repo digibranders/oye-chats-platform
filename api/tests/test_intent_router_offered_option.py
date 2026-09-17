@@ -42,10 +42,26 @@ class TestModelWrittenOffers:
             ("Do you want to see our recent work, or hear about our process?", "tell me about your recent work"),
             ("Interested in how to get started or our pricing?", "how do i get started"),
             ("Are you looking at our services, pricing, or something else?", SERVICES),
+            ("Are you exploring our integrations, or our pricing?", "tell me about your integrations"),
+            (
+                "Want to learn about our onboarding and pricing, see a case study, or chat with the team?",
+                "tell me about your onboarding and pricing",
+            ),
         ],
     )
     def test_the_first_option_becomes_the_question(self, message, expected):
         assert offered_option_question(message) == expected
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "Would you like to know more about our ISO 27001, SOC 2 and GDPR compliance?",
+            "Would you like to know more about our ISO 27001, SOC 2 and GDPR compliance, or see our pricing?",
+        ],
+    )
+    def test_a_topic_that_lists_things_is_kept_whole(self, message):
+        """Split at its commas, the list was answered for ISO 27001 alone."""
+        assert offered_option_question(message) == "tell me about your iso 27001, soc 2 and gdpr compliance"
 
 
 class TestNoOptionToContinue:
@@ -55,9 +71,17 @@ class TestNoOptionToContinue:
             # The team first: the handoff affirmation decides.
             "Want me to connect you with our team, or send you the brochure?",
             "Want to chat with the team at **Acme**, or see recent work?",
+            # The first option is an action, not a topic: "tell me about your book
+            # an appointment" answered nothing, and a "yes" to a person never
+            # reached the handoff check.
+            "Would you like to book an appointment, or check our clinic timings?",
+            "Would you like to cancel your subscription, or pause it?",
+            "Would you like to speak to a lawyer or read our FAQ?",
+            "Want me to explain our pricing, or share a case study?",
             # One option only.
             "That detail sits with our sales team. Want me to connect you with them?",
             "Would you like to know more about Clean Images?",
+            "Would you like to know more about our terms and conditions?",
             # An ordinary answer, a statement, a plain question.
             "Acme offers managed SOC and incident response.",
             "Glad that helped. Anything else you want to know about **Acme**?",

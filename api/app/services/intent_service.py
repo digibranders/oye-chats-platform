@@ -158,6 +158,14 @@ HANDOFF_OFFER_RE = re.compile(
     # "talk to the onboarding guide" and "talk to our chatbot" are no offer.
     r"|talk to (?:a |an |the |our )?(?:human|person|someone|agent|representative|expert|specialist|"
     r"(?:[\w&'\u2019*-]+ )?team)\b"
+    # A question that offers time with our team: "Would you like to talk with
+    # our sales team?", "Want to discuss this with our team?", "Shall I arrange a
+    # call with the team?". The offer opening is required, so "our team will
+    # discuss this" is no offer, and the team must be ours, so "discuss this
+    # with your team" is none either.
+    r"|(?:(?:would you like|do you want|want)(?: me)? to|shall i|should i|can i) "
+    r"(?:talk|discuss (?:this|it|that|them|your [\w-]+)|(?:arrange|set up|schedule|book) a (?:quick |short )?call)"
+    r" with " + _OFFER_PERSON + r"\b"
     # "I can take a written message for the team"
     r"|take (?:a|your) (?:written )?message\b"
     # Pricing repeat: "Say yes and you can leave a message for them." The
