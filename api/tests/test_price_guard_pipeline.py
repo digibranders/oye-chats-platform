@@ -7,11 +7,15 @@ on the first figure, and the turn must end exactly as the gate's own escalation
 ends for the same bot.
 
 Since 2026-09-11 the gate acts on the turn's price decision (``price_intent``),
-and a gate model reads that typo as a pricing question and escalates before
-generation. What still reaches the guard with the turn's own signal is a message
-that asks the price and something else: the gate defers its escalation to
-generation. The typo'd questions below stand in for such a turn, answered MIXED
-by a fake gate model; every other message is decided by the fallback rules.
+and escalates before generation only a question its wording rule also reads as
+pricing. The typo'd questions below are read as PRICE by a fake gate model and
+missed by the wording rule, so they reach the guard with the turn's own signal
+and the escalation replaces the answer; every other message is decided by the
+fallback rules.
+
+A message that asks the price and something else (MIXED) keeps the something
+else (evaluation, 2026-09-17): only the sentences stating a figure are dropped,
+and the escalation follows the rest.
 """
 
 import asyncio
@@ -46,8 +50,15 @@ FINES_CHUNKS = ("GDPR fines can reach ", "€20", " million or 4% of annual turn
 TYPO = "what is th picin for SOC"
 KB = (_doc("SOC as a Service pricing: ₹2,66,250 per month."),)
 
-#: Messages the fake gate model reads as asking the price and something else.
-_ASKS_THE_PRICE_AND_MORE = frozenset({TYPO, "and whats th picin for SOC again", "hw much", "qoute for 3 sites"})
+#: Messages the fake gate model reads as asking the price, which the wording rule misses.
+_ASKS_THE_PRICE = frozenset({TYPO, "and whats th picin for SOC again", "hw much", "qoute for 3 sites"})
+#: A message that asks the price and more, which the wording rule reads as pricing.
+MIXED = "whats the pricing, are you hiring, and where is your office"
+MIXED_CHUNKS = (
+    "Pricing for SOC starts at ",
+    "₹2,66,250 per month. We are hiring for ",
+    "19 roles, and our office is in Pune.",
+)
 
 
 class _Classifier:
@@ -59,7 +70,9 @@ class _Classifier:
     def __call__(self, question: str) -> str:
         if question in self.answers:
             return self.answers[question]
-        if question in _ASKS_THE_PRICE_AND_MORE:
+        if question in _ASKS_THE_PRICE:
+            return "price"
+        if question == MIXED:
             return "mixed"
         return price_intent.fallback_price_intent(question)
 
@@ -626,3 +639,95 @@ async def test_the_cache_read_decides_a_fee_as_the_stream_does(db, monkeypatch, 
     else:
         assert "25,000" not in _answer_text(frames)
         assert key in captured["cache"].deleted
+
+
+@pytest.mark.asyncio
+async def test_a_mixed_turn_keeps_the_rest_of_the_answer_and_adds_the_escalation(db, monkeypatch, metrics):
+    """Evaluation, 2026-09-17: the hiring and office parts were lost to the escalation."""
+    bot, captured = _guarded(db, monkeypatch, "guard-mixed", chunks=MIXED_CHUNKS, live_chat_enabled=True)
+
+    frames = await _drive_stream(bot, MIXED, "guard-mixed")
+
+    expected = f"We are hiring for 19 roles, and our office is in Pune.\n\n{_expected()}"
+    meta = _final_meta(frames)
+    assert _answer_text(frames) == expected
+    assert "2,66,250" not in "".join(frames)
+    assert meta["answer_override"] == expected
+    assert meta["suggest_handoff"] is True
+    # The kept answer is drawn from the knowledge base, so its sources stay.
+    assert "sources" not in meta
+    messages = _messages(db, "guard-mixed", role="bot")
+    assert [m.content for m in messages] == [expected]
+    assert messages[0].is_unanswered is False
+    assert _cards(db, "guard-mixed").get("pricing_escalated") is True
+    assert captured["cache"].store == {}
+    assert len(_named(metrics, "price_guard_redacted")) == 1
+    assert _named(metrics, "price_guard_tripped") == []
+    assert [tags["reason"] for tags in _named(metrics, "pricing_gate_escalation")] == ["price_guard_redacted"]
+
+
+@pytest.mark.asyncio
+async def test_a_mixed_turn_without_a_figure_streams_unchanged(db, monkeypatch, metrics):
+    chunks = ("The team will confirm pricing. ", "We are hiring, and our office is in Pune.")
+    bot, _ = _guarded(db, monkeypatch, "guard-mixed-clean", chunks=chunks)
+
+    frames = await _drive_stream(bot, MIXED, "guard-mixed-clean")
+
+    assert _answer_text(frames) == "".join(chunks)
+    assert "answer_override" not in _final_meta(frames)
+    assert _named(metrics, "price_guard_redacted") == []
+
+
+@pytest.mark.asyncio
+async def test_a_mixed_turn_of_nothing_but_figures_is_replaced_like_a_price_turn(db, monkeypatch, metrics):
+    chunks = ("Starter is ₹999 a month. ", "Growth is ₹2,499 a month.")
+    bot, _ = _guarded(db, monkeypatch, "guard-mixed-all", chunks=chunks, live_chat_enabled=True)
+
+    frames = await _drive_stream(bot, MIXED, "guard-mixed-all")
+
+    meta = _final_meta(frames)
+    assert _answer_text(frames) == _expected()
+    assert meta["answer_override"] == _expected()
+    assert meta["sources"] == []
+    assert _messages(db, "guard-mixed-all", role="bot")[-1].is_unanswered is True
+    assert len(_named(metrics, "price_guard_tripped")) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_non_streaming_reply_of_a_mixed_turn_matches_the_stream(db, monkeypatch):
+    bot, _ = _guarded(db, monkeypatch, "guard-mixed-collect", chunks=MIXED_CHUNKS)
+
+    payload = await rs.collect_rag_pipeline(bot, MIXED, session_id="guard-mixed-collect", bot_id=bot.id)
+
+    assert payload["answer"] == f"We are hiring for 19 roles, and our office is in Pune.\n\n{_expected()}"
+
+
+@pytest.mark.asyncio
+async def test_a_disconnect_on_a_mixed_turn_saves_only_what_was_shown(db, monkeypatch):
+    session_id = "guard-mixed-cancel"
+    bot, _ = _guarded(db, monkeypatch, session_id)
+    shown = "We are hiring for 19 roles. "
+
+    async def stalling_stream(prompt, **kwargs):
+        yield "SOC is ₹2,66,250 a month. " + shown + "x" * 70
+        await asyncio.sleep(3600)
+        yield " done."  # pragma: no cover - never reached
+
+    monkeypatch.setattr(rs, "generate_response_stream", stalling_stream)
+    frames: list[str] = []
+    seen = asyncio.Event()
+
+    async def consume():
+        async for frame in rs.rag_pipeline_stream(bot, MIXED, session_id, bot_id=bot.id):
+            frames.append(frame)
+            if shown in "".join(frames):
+                seen.set()
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(seen.wait(), timeout=10)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert "2,66,250" not in "".join(frames)
+    assert [m.content for m in _messages(db, session_id, role="bot")] == [shown.strip()]

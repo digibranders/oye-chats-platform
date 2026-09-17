@@ -92,6 +92,7 @@ from app.services.llm_service import (
 )
 from app.services.notification_service import notify_handoff_request
 from app.services.price_guard import (
+    PriceSentenceRedactor,
     PriceStreamGuard,
     answer_trips_price_guard,
     price_guard_applies,
@@ -8227,7 +8228,9 @@ def _cached_answer_trips_price_guard(
     return answer_trips_price_guard(answer, signal=_price_guard_signal(might_ask_price(question), chat_session))
 
 
-def _without_held_price_text(answer: str, guard: PriceStreamGuard | None) -> str:
+def _without_held_price_text(
+    answer: str, guard: PriceStreamGuard | PriceSentenceRedactor | None, opener: str = ""
+) -> str:
     """``answer`` without the text the price guard is still holding back.
 
     The guard holds a possible figure, or an unpriced figure's sentence, until it
@@ -8235,7 +8238,12 @@ def _without_held_price_text(answer: str, guard: PriceStreamGuard | None) -> str
     or the stream failed) must not save what the visitor never saw. The held text
     is always the end of what the model streamed, which ends ``answer`` until the
     answer is replaced.
+
+    A redactor also drops sentences from the middle of the answer, so what the
+    visitor saw is the ``opener`` and what it emitted.
     """
+    if isinstance(guard, PriceSentenceRedactor):
+        return opener + guard.emitted
     held = guard.held if guard is not None else ""
     if held and answer.endswith(held):
         return answer[: -len(held)]
@@ -10610,19 +10618,26 @@ async def rag_pipeline_stream(
             # replacement after it does database work. With the signal every figure
             # trips; without it only a figure whose sentence or paragraph names the
             # company's own price in the first person does.
-            _price_guard = (
-                PriceStreamGuard(
-                    signal=_price_guard_signal(guard_asks_price(_price_intent, _price_question), chat_session)
+            #
+            # A turn that asks the price and something else (MIXED) is not
+            # replaced whole: that lost the rest of the question (evaluation,
+            # 2026-09-17). Its redactor drops only the sentences that state a
+            # figure, and the escalation follows the rest.
+            _price_guard: PriceStreamGuard | PriceSentenceRedactor | None = None
+            if price_guard_applies(
+                gate_outcome=_pricing_decision.outcome,
+                pricing_url=_price_guard_pricing_url,
+                answer_from_knowledge_base=_pricing_from_kb,
+                support_enabled=_plan_support_allowed,
+                judges_bypassed=_judges_bypassed,
+            ):
+                _price_guard = (
+                    PriceSentenceRedactor()
+                    if _price_intent.asks_more
+                    else PriceStreamGuard(
+                        signal=_price_guard_signal(guard_asks_price(_price_intent, _price_question), chat_session)
+                    )
                 )
-                if price_guard_applies(
-                    gate_outcome=_pricing_decision.outcome,
-                    pricing_url=_price_guard_pricing_url,
-                    answer_from_knowledge_base=_pricing_from_kb,
-                    support_enabled=_plan_support_allowed,
-                    judges_bypassed=_judges_bypassed,
-                )
-                else None
-            )
             _price_guard_repeat = _price_guard is not None and _card_already_shown(chat_session, "pricing_escalated")
             # The pricing escalation that replaced the answer, once the guard trips.
             _price_guard_pivot: _pricing_gate.PricingPivot | None = None
@@ -10633,6 +10648,9 @@ async def rag_pipeline_stream(
             _leak_aborted = False
             # The price guard tripped and the pricing escalation replaced the answer.
             _answer_replaced = False
+            # The redactor dropped the sentences stating a figure and the pricing
+            # escalation follows the rest of the answer.
+            _redacted_turn = False
             # Set by the output moderation guard below; True until it says
             # otherwise, and it is skipped on a leak-abort or a stream error.
             _answer_safe = True
@@ -10761,13 +10779,18 @@ async def rag_pipeline_stream(
                         if safe_chunk:
                             _answer_text_streamed = True
                             yield safe_chunk
-                if _price_guard is not None and _price_guard.tripped:
+                # A redactor's answer is what it emitted: the sentences it dropped
+                # never reached the visitor and never reach the transcript. When
+                # every sentence stated a figure, the escalation is the whole reply,
+                # exactly as on a turn that asks only the price.
+                _redactor_emptied = False
+                if isinstance(_price_guard, PriceSentenceRedactor) and not _leak_aborted:
+                    full_answer = _opener + _price_guard.emitted
+                    _redacted_turn = _price_guard.redacted and bool(_scrub_cta_sentinels(_price_guard.emitted).strip())
+                    _redactor_emptied = _price_guard.redacted and not _redacted_turn
+                if _price_guard is not None and (_price_guard.tripped or _redacted_turn or _redactor_emptied):
                     # The reply the pricing gate gives this bot, so a typo changes
-                    # nothing the visitor sees. ``_answer_replaced`` skips the drain
-                    # (the held tail may be half a figure), output moderation (the
-                    # reply is a template) and the topical media card, carries the
-                    # reply to the widget and ``collect_rag_pipeline`` as
-                    # ``answer_override`` and drops the sources. Bookkeeping follows
+                    # nothing the visitor sees. Bookkeeping follows
                     # ``_price_guard_pivot`` below: the card, the cache skip and the
                     # pricing_escalated mark.
                     _price_guard_pivot = _pricing_gate.pricing_pivot(
@@ -10779,18 +10802,28 @@ async def rag_pipeline_stream(
                         repeat=_price_guard_repeat,
                         subject=_pricing_gate.pricing_subject(_price_question, _company_name, _service_names),
                     )
-                    _safety_net_metric("price_guard_tripped", path="stream", session=session_id, bot_id=bid)
-                    # Also counted as one of the gate's escalations, so a view of
+                    suggest_handoff = _price_guard_pivot.suggest_handoff
+                    # Counted with the gate's own escalations too, so a view of
                     # those includes the pricing questions the guard caught.
                     _safety_net_metric(
                         "pricing_gate_escalation",
-                        reason="price_guard",
+                        reason="price_guard_redacted" if _redacted_turn else "price_guard",
                         path="stream",
                         session=session_id,
                         bot_id=bid,
                     )
+                if _redacted_turn and _price_guard_pivot is not None:
+                    # The rest of the answer stays; the escalation follows it once
+                    # the drain below has emitted everything the answer kept.
+                    _safety_net_metric("price_guard_redacted", path="stream", session=session_id, bot_id=bid)
+                elif _price_guard_pivot is not None:
+                    # ``_answer_replaced`` skips the drain (the held tail may be half
+                    # a figure), output moderation (the reply is a template) and the
+                    # topical media card, carries the reply to the widget and
+                    # ``collect_rag_pipeline`` as ``answer_override`` and drops the
+                    # sources.
+                    _safety_net_metric("price_guard_tripped", path="stream", session=session_id, bot_id=bid)
                     _answer_replaced = True
-                    suggest_handoff = _price_guard_pivot.suggest_handoff
                     full_answer = _opener + _price_guard_pivot.text
                     if _show_qualified_popup:
                         # The buffered turn has emitted nothing yet, not even the opener.
@@ -10810,12 +10843,17 @@ async def rag_pipeline_stream(
                         # trailing question the model appended despite the rule,
                         # then emit the whole answer at once.
                         full_answer = _strip_trailing_question(_scrub_cta_sentinels(full_answer))
+                        if _redacted_turn and _price_guard_pivot is not None:
+                            full_answer = f"{full_answer}\n\n{_price_guard_pivot.text}"
                         if full_answer:
                             yield full_answer
                     else:
                         tail = cta_sanitizer.flush()
                         if tail:
                             yield tail
+                        if _redacted_turn and _price_guard_pivot is not None:
+                            yield f"\n\n{_price_guard_pivot.text}"
+                            full_answer = f"{full_answer.rstrip()}\n\n{_price_guard_pivot.text}"
 
                 if chunk_count == 0:
                     logger.warning(f"LLM returned zero chunks for session {session_id}")
@@ -10840,7 +10878,7 @@ async def rag_pipeline_stream(
                 # being closed must not resume.
                 # Text the price guard was still holding never reached the
                 # visitor, and must not reach the transcript either.
-                _partial = _scrub_cta_sentinels(_without_held_price_text(full_answer, _price_guard)).strip()
+                _partial = _scrub_cta_sentinels(_without_held_price_text(full_answer, _price_guard, _opener)).strip()
                 if _partial:
                     try:
                         add_chat_message(
@@ -10869,7 +10907,7 @@ async def rag_pipeline_stream(
                 logger.error(f"Streaming prompt error ({type(e).__name__}): {e}", exc_info=True)
                 # Saved below as the partial answer: without the text the price
                 # guard was still holding, which the visitor never saw.
-                full_answer = _without_held_price_text(full_answer, _price_guard)
+                full_answer = _without_held_price_text(full_answer, _price_guard, _opener)
                 yield " [I encountered an error. Please try again.]"
                 _stream_error = True
                 suggest_handoff = False  # Don't suggest handoff on errored/partial responses
@@ -11180,7 +11218,8 @@ async def rag_pipeline_stream(
                         media_secondary=_media_secondary,
                         # The pricing escalation is recorded as unanswered, as the
                         # gate's own pivot is.
-                        is_unanswered=_price_guard_pivot is not None,
+                        # A redacted turn answered the rest of the question.
+                        is_unanswered=_answer_replaced,
                     )
 
                     if _lf and hasattr(bot_msg, "trace_id"):
@@ -11319,7 +11358,7 @@ async def rag_pipeline_stream(
 
                     if bot_msg_id:
                         final_meta["message_id"] = bot_msg_id
-                    if _leak_aborted or _answer_replaced or not _answer_safe:
+                    if _leak_aborted or _answer_replaced or _redacted_turn or not _answer_safe:
                         # The stream cannot recall bytes it already sent, so
                         # a leak, a moderation hit or the price guard rewrote
                         # only the persisted text. Carry that text so the widget
