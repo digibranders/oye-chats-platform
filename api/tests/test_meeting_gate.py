@@ -227,10 +227,14 @@ class TestIsMeetingQuestion:
             "ek meeting schedule karni hai",
             "demo book karna hai",
             "meeting karni hai",
-            "baat karni hai team se",
-            "team se baat karni hai",
-            "aapki team se baat karna hai",
             "sales team se call pe baat karni hai",
+            "team se phone par baat ho sakti hai",
+            "kal team se baat karni hai",
+            "kal sales team se baat ho sakti hai kya",
+            "team se kal baat ho sakti hai",
+            "shaam 5 baje team se baat karni hai",
+            "team se demo ke liye baat karni hai",
+            "baat karni hai team se kal",
             "call pe baat ho sakti hai?",
             "kya demo mil sakta hai",
             "aapse milna hai",
@@ -263,6 +267,13 @@ class TestIsMeetingQuestion:
             "call center ke liye kya services hain",
             "team kitni badi hai",
             "baat ye hai ki pricing kya hai",
+            # A request for a person, not for time: the handoff path answers it.
+            "team se baat karni hai",
+            "mujhe team se baat karni hai",
+            "baat karni hai team se",
+            "aapki team se baat karna hai",
+            "abhi team se baat karni hai",
+            "aapse baat ho sakti hai",
         ],
     )
     def test_a_hinglish_message_that_asks_for_no_time_does_not_fire(self, q):
@@ -276,8 +287,10 @@ class TestIsMeetingQuestion:
             "call pe baat " * 2000,
             "meeting set " * 2000,
             "demo " + " " * 20_000 + "chahiye nahi",
+            "kal " * 5000 + "team se x",
+            "baat karni hai team se " * 1000 + "x",
         ],
-        ids=["call", "team-se", "call-pe-baat", "meeting-set", "spaces"],
+        ids=["call", "team-se", "call-pe-baat", "meeting-set", "spaces", "kal", "baat-team-se"],
     )
     def test_a_long_hinglish_message_is_fast(self, text):
         assert len(text) >= 20_000

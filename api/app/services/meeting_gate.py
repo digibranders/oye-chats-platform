@@ -43,8 +43,8 @@ Pure module by design: no DB, no I/O, and no import from ``rag_service`` (which
 imports this one). Everything here is a decision the callers act on.
 
 KNOWN LIMITATION, deliberate: ``is_meeting_question`` reads English and the
-common Hinglish request shapes ("mujhe call chahiye", "meeting set karo", "team
-se baat karni hai"), so a scheduling request in another language does not fire
+common Hinglish request shapes ("mujhe call chahiye", "meeting set karo", "kal
+team se baat karni hai"), so a scheduling request in another language does not fire
 the gate and falls through to the prompt as before. That is the safe direction
 (nothing regresses for those visitors) and it matches the same constraint on
 ``pricing_gate`` and the CRAG judge. Fix them together, not separately.
@@ -196,6 +196,19 @@ _HI_TALK = (
     r"|ho\s+(?:sakti|sakta)|hogi|ho\s+jaye|karte\s+hain)\b"
 )
 _HI_PEOPLE = r"(?:team|aap|sales|experts?|founders?)\s+se|aapse"
+# "team se baat karni hai" alone asks for a person, which the handoff path
+# answers. It asks for time only with a medium ("call pe", "demo ke liye") or a
+# time to meet ("kal", "shaam 5 baje"). "abhi" and "aaj" say "now", not a slot.
+_HI_MEDIUM = (
+    r"(?:(?:call|phone|video\s+call|zoom|meet|meeting)\s+(?:pe|par)"
+    r"|(?:demo|meeting|call|appointment)\s+(?:ke\s+liye|ki|karne\s+ke\s+liye))\s+"
+)
+_HI_WHEN = (
+    r"(?:kal|parso|tomorrow|kab|subah|shaam|sham|dopahar|raat"
+    r"|agle\s+(?:hafte|week|din|mahine)|next\s+week|is\s+(?:hafte|week)|weekend"
+    r"|(?:mon|tues|wednes|thurs|fri|satur|sun)day|somvar|mangalvar|budhvar|guruvar|shukravar|shanivar|ravivar"
+    r"|\d{1,2}(?::\d{2})?\s*(?:baje|am|pm))\b"
+)
 
 _HINGLISH_MEETING_RE = re.compile(
     # "mujhe demo chahiye", "ek call chahiye please", "kya demo mil sakta hai".
@@ -225,15 +238,31 @@ _HINGLISH_MEETING_RE = re.compile(
     + r"|\bcall(?:\s+back)?\s+"
     + _HI_DO
     + _HI_NEGATION
-    # "team se baat karni hai", "kal team se call pe baat ho sakti hai kya".
+    # "sales team se call pe baat karni hai", "team se kal baat ho sakti hai".
     + r"|\b(?:"
     + _HI_PEOPLE
-    + r")\s+(?:(?:call|phone)\s+(?:pe|par)\s+)?"
+    + r")\s+(?:"
+    + _HI_MEDIUM
+    + r"|"
+    + _HI_WHEN
+    + r"\s+(?:"
+    + _HI_MEDIUM
+    + r")?)"
     + _HI_TALK
-    # "baat karni hai team se".
+    # "kal team se baat karni hai", "shaam 5 baje sales team se baat ho sakti hai".
+    + r"|\b"
+    + _HI_WHEN
+    + r"\s+(?:[\w-]+\s+){0,2}?(?:"
+    + _HI_PEOPLE
+    + r")\s+(?:"
+    + _HI_MEDIUM
+    + r")?"
+    + _HI_TALK
+    # "baat karni hai team se kal".
     + r"|\bbaat\s+(?:karni|karna)\s+(?:hai|h|he|thi)\s+(?:(?:aapki|aapke|apki|your)\s+)?(?:"
     + _HI_PEOPLE
-    + r")\b"
+    + r")\s+"
+    + _HI_WHEN
     # "call pe baat ho sakti hai?"
     + r"|\b(?:call|phone)\s+(?:pe|par)\s+"
     + _HI_TALK
