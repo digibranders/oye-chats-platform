@@ -5,7 +5,7 @@ import BotAvatar from './BotAvatar';
 import LauncherMark from './LauncherMark';
 import { getLocale, onLocaleChange, t } from '../i18n/i18n.js';
 
-const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
+const Launcher = ({ isOpen, toggleChat, settings, settingsLoaded, onBubbleSend }) => {
     // The launcher mounts before any non-English dictionary is loaded and, unlike
     // ChatWindow and QualificationCTA, had no subscription - so every t() call
     // below was evaluated once against English and never refreshed. A visitor
@@ -135,8 +135,11 @@ const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
             )}
 
             {/* Tooltip. Visible only when greeting bubble is not showing, and
-                only when the admin has not switched the launcher text off. */}
-            {!showGreeting && showLauncherText && (
+                only when the admin has not switched the launcher text off.
+                Held until the bot's settings arrive: rendering the default
+                label first showed text the customer may have turned off, and
+                resized the tooltip when their own label replaced it. */}
+            {settingsLoaded && !showGreeting && showLauncherText && (
                 // `end-0` and `me-2`, not `mr-2`: with no inline anchor the
                 // tooltip took its static position, which flips with the
                 // container, so in Arabic it grew away from the launcher and

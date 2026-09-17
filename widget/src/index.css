@@ -162,6 +162,13 @@
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   transition: transform 320ms cubic-bezier(.16, 1, .3, 1), box-shadow 320ms ease;
+  /* Opacity only: the launcher appears in its final place and never moves in.
+     The global reduced-motion rule below cuts it to an instant. */
+  animation: oyechatsLauncherIn 240ms ease-out backwards;
+}
+
+@keyframes oyechatsLauncherIn {
+  from { opacity: 0; }
 }
 
 .oyechats-launcher::before,

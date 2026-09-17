@@ -21,6 +21,7 @@ export default defineConfig([
         __WIDGET_VERSION__: 'readonly',
         __WIDGET_BUILD__: 'readonly',
         __WIDGET_BASE__: 'readonly',
+        __OYECHATS_CHUNKS__: 'readonly',
       },
       parserOptions: {
         ecmaVersion: 'latest',

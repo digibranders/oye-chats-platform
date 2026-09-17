@@ -6,6 +6,7 @@ import ErrorBoundary from './components/ErrorBoundary.jsx'
 import { getController } from './widget-controller.js'
 import { getDirection, onLocaleChange, setLocale } from './i18n/i18n.js'
 import { readLocalePreference } from './services/storage-keys.js'
+import { CONTAINER_ID, ensureHost, ensureStylesheet, whenStylesheetReady } from './lib/widgetHost.js'
 
 // True when the page embedding the widget is a developer machine rather than a
 // deployed site, including a production widget bundle (`vite preview`) dropped
@@ -55,39 +56,15 @@ if (typeof window !== 'undefined' && window.OYECHATS_DEBUG === true) {
 const VERSION = typeof __WIDGET_VERSION__ !== 'undefined' ? __WIDGET_VERSION__ : '0.0.0'
 const BUILD = typeof __WIDGET_BUILD__ !== 'undefined' ? __WIDGET_BUILD__ : 'dev'
 
-const CONTAINER_ID = 'oyechats-widget-root'
 const RENDER_TARGET_ID = 'oyechats-shadow-inner'
-const STYLE_LINK_ATTR = 'data-oyechats-style'
 
 let _root = null
 let _container = null
+// Set while mount() waits for the stylesheet, so a second init() in that
+// window does not start a second wait.
+let _pendingMount = null
 
-const ensureContainer = () => {
-  let container = document.getElementById(CONTAINER_ID)
-  if (!container) {
-    container = document.createElement('div')
-    container.id = CONTAINER_ID
-    document.body.appendChild(container)
-  }
-  // Opt this subtree out of Lenis smooth-scroll hijacking. When a wheel event
-  // crosses the Shadow DOM boundary it is retargeted to this host element, so
-  // Lenis's ancestor check sees the attribute here and lets native scrolling
-  // through. Covering the case (capture-phase listeners) that plain
-  // stopPropagation inside the widget can't. Complements the wheel-propagation
-  // guard in ChatWindow, which defeats bubble-phase hijackers generically.
-  container.setAttribute('data-lenis-prevent', '')
-  return container
-}
-
-const ensureShadowAndStyles = (container, cssUrl) => {
-  const shadow = container.shadowRoot || container.attachShadow({ mode: 'open' })
-  if (cssUrl && !shadow.querySelector(`link[${STYLE_LINK_ATTR}="1"]`)) {
-    const link = document.createElement('link')
-    link.rel = 'stylesheet'
-    link.href = cssUrl
-    link.setAttribute(STYLE_LINK_ATTR, '1')
-    shadow.appendChild(link)
-  }
+const ensureRenderTarget = (container, shadow) => {
   let target = shadow.querySelector(`#${RENDER_TARGET_ID}`)
   if (!target) {
     target = document.createElement('div')
@@ -149,25 +126,7 @@ let _bootContext = null
 let _registered = false
 let _localeUnsubscribe = null
 
-const mount = () => {
-  if (_root) return
-  if (!_bootContext) {
-    console.error('[OyeChats] init() called before loader bootstrap, no boot context.')
-    return
-  }
-  // Apply a previously stored locale before the shadow host is created, so a
-  // returning RTL visitor does not get a frame of left-to-right layout while
-  // the bot settings request is still in flight. ChatWidget re-resolves against
-  // the bot's supported locales once settings arrive and corrects this if the
-  // stored value is no longer offered.
-  const storedPreference = readLocalePreference()
-  if (storedPreference?.locale) setLocale(storedPreference.locale)
-
-  const container = ensureContainer()
-  _container = container
-  const target = ensureShadowAndStyles(container, _bootContext.cssUrl)
-  if (target.dataset.oyechatsMounted === 'true') return
-  target.dataset.oyechatsMounted = 'true'
+const render = (target) => {
   _root = createRoot(target)
   _root.render(
     <StrictMode>
@@ -198,7 +157,56 @@ const mount = () => {
   setTimeout(() => getController().emit('ready', { version: VERSION }), 0)
 }
 
+const mount = () => {
+  if (_root || _pendingMount) return
+  if (!_bootContext) {
+    console.error('[OyeChats] init() called before loader bootstrap, no boot context.')
+    return
+  }
+  // Apply a previously stored locale before the shadow host is created, so a
+  // returning RTL visitor does not get a frame of left-to-right layout while
+  // the bot settings request is still in flight. ChatWidget re-resolves against
+  // the bot's supported locales once settings arrive and corrects this if the
+  // stored value is no longer offered.
+  const storedPreference = readLocalePreference()
+  if (storedPreference?.locale) setLocale(storedPreference.locale)
+
+  const { host, shadow } = ensureHost()
+  _container = host
+  const link = _bootContext.cssUrl ? ensureStylesheet(shadow, _bootContext.cssUrl) : null
+  const target = ensureRenderTarget(host, shadow)
+  if (target.dataset.oyechatsMounted === 'true') return
+  target.dataset.oyechatsMounted = 'true'
+  if (!link) {
+    render(target)
+    return
+  }
+
+  // Render only once the stylesheet applies. Before that the launcher draws as
+  // an unstyled button inside the customer's page, then jumps into its corner.
+  const pending = {}
+  _pendingMount = pending
+  whenStylesheetReady(link).then(
+    () => {
+      if (_pendingMount !== pending) return
+      _pendingMount = null
+      render(target)
+    },
+    (error) => {
+      if (_pendingMount !== pending) return
+      _pendingMount = null
+      target.dataset.oyechatsMounted = ''
+      // Dropped so a later OyeChats.init() requests the stylesheet afresh
+      // instead of reusing the failed element.
+      link.remove()
+      console.error('[OyeChats]', error)
+      getController().emit('error', { message: error.message, source: 'stylesheet' })
+    },
+  )
+}
+
 const unmount = () => {
+  _pendingMount = null
   if (_localeUnsubscribe) {
     try { _localeUnsubscribe() } catch { /* listener already gone */ }
     _localeUnsubscribe = null
@@ -219,6 +227,7 @@ const unmount = () => {
     _container = null
   }
   getController().shutdown()
+  getController().resetReady()
 }
 
 // Entry exported to the loader. Called once after dynamic import resolves.

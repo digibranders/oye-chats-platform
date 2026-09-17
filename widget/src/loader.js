@@ -4,13 +4,20 @@
 //   2. Expose `window.OyeChats` as a stub-and-queue API so customer code can call
 //      `OyeChats.on('ready', cb)` etc. before the React app has loaded.
 //   3. Honor `window.OYECHATS_ASYNC_INIT` for consent-gated installs (GDPR).
-//   4. Mount the shadow DOM container, fetch the app manifest from CDN,
-//      and dynamic-import the ESM app entry chunk.
+//   4. Create the shadow host, start the stylesheet, and dynamic-import the
+//      ESM app entry chunk together with the chunks it depends on.
 //
 // Kept tiny on purpose. Every byte here ships on every customer page load.
 
+import { chunksFromManifest } from './lib/manifestChunks.js'
+import { ensureHost, ensureStylesheet } from './lib/widgetHost.js'
+
 const VERSION = typeof __WIDGET_VERSION__ !== 'undefined' ? __WIDGET_VERSION__ : '0.0.0'
 const BUILD = typeof __WIDGET_BUILD__ !== 'undefined' ? __WIDGET_BUILD__ : 'dev'
+// The app build's chunk names, baked in by vite.loader.config.js. Saves the
+// manifest round trip on every page view. Null when the loader was built
+// without the app, in which case boot() reads the manifest instead.
+const BUILT_CHUNKS = typeof __OYECHATS_CHUNKS__ !== 'undefined' ? __OYECHATS_CHUNKS__ : null
 const PREFIX = '[OyeChats]'
 
 // A second execution of this loader (SPA re-mount, GTM firing on two triggers,
@@ -156,6 +163,14 @@ const BASE_URL = resolveBaseUrl()
 // ── Boot the React app via dynamic import. ─────────────────────────────────
 let _bootPromise = null
 
+const fetchManifestChunks = async () => {
+  const res = await fetch(`${BASE_URL}/app/manifest.json`, { credentials: 'omit', mode: 'cors' })
+  if (!res.ok) {
+    throw new Error(`manifest fetch failed: ${res.status}`)
+  }
+  return chunksFromManifest(await res.json())
+}
+
 const boot = async (overrides = {}) => {
   if (_bootPromise) return _bootPromise
 
@@ -163,40 +178,27 @@ const boot = async (overrides = {}) => {
   if (overrides.botKey) window.OYECHATS_BOT_KEY = overrides.botKey
   if (overrides.apiKey) window.OYECHATS_API_KEY = overrides.apiKey
 
-  // Defense in depth: a compromised manifest can't escape the cdn.oyechats.com
-  // origin (browser URL parsing keeps the same origin), but a flat-filename
-  // check rejects obvious tampering early and avoids confusing 404s.
-  const SAFE_CHUNK_NAME = /^[a-zA-Z0-9._-]+$/
-
   _bootPromise = (async () => {
     try {
-      const manifestUrl = `${BASE_URL}/app/manifest.json`
-      const res = await fetch(manifestUrl, { credentials: 'omit', mode: 'cors' })
-      if (!res.ok) {
-        throw new Error(`manifest fetch failed: ${res.status}`)
-      }
-      const manifest = await res.json()
-      const entry = manifest['src/app-entry.jsx']
-      if (!entry || !entry.file) {
-        throw new Error('manifest missing entry chunk')
-      }
-      if (!SAFE_CHUNK_NAME.test(entry.file)) {
-        throw new Error(`manifest entry has unsafe filename: ${entry.file}`)
-      }
-      const entryUrl = `${BASE_URL}/app/${entry.file}`
-      // CSS lookup: prefer entry.css[] (set when cssCodeSplit=true), else
-      // fall back to the top-level style.css manifest entry (cssCodeSplit=false).
-      let cssFile = entry.css?.[0]
-      if (!cssFile) {
-        const styleEntry = manifest['style.css']
-        if (styleEntry?.file) cssFile = styleEntry.file
-      }
-      if (cssFile && !SAFE_CHUNK_NAME.test(cssFile)) {
-        throw new Error(`manifest css has unsafe filename: ${cssFile}`)
-      }
-      const cssUrl = cssFile ? `${BASE_URL}/app/${cssFile}` : null
+      const chunks = BUILT_CHUNKS || await fetchManifestChunks()
+      const chunkUrl = (file) => `${BASE_URL}/app/${file}`
+      const cssUrl = chunks.css ? chunkUrl(chunks.css) : null
 
-      const mod = await import(/* @vite-ignore */ entryUrl)
+      // Start the stylesheet now, in parallel with the scripts. The app waits
+      // for it before rendering, so starting it here is what keeps it from
+      // adding its own round trip after the JS.
+      if (cssUrl && document.body) {
+        ensureStylesheet(ensureHost().shadow, cssUrl)
+      }
+      // The entry is a two-line module that re-exports the app from these
+      // chunks. Requesting them now fetches them alongside the entry instead
+      // of after it has been parsed. A failure here resurfaces, and is
+      // reported, through the entry import below.
+      for (const file of chunks.imports) {
+        import(/* @vite-ignore */ chunkUrl(file)).catch(() => undefined)
+      }
+
+      const mod = await import(/* @vite-ignore */ chunkUrl(chunks.entry))
       if (typeof mod.init !== 'function') {
         throw new Error('app entry missing init() export')
       }
