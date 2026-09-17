@@ -210,6 +210,15 @@ _BARE_AFFIRMATION_RE = re.compile(
 _BARE_REFUSAL_RE = re.compile(r"(?i)^\s*(?:no|n|nope|nah|not really|no thanks|no thank you|not now)\s*[.!]*\s*$")
 
 
+def is_bare_affirmation(text: str | None) -> bool:
+    """True when the whole message only agrees ("yes", "sure", "ok", "yes please").
+
+    It carries no request of its own, so what it agrees to is whatever the bot's
+    previous message offered. "connect me" is not one: it names what it wants.
+    """
+    return bool(_BARE_AFFIRMATION_RE.match(text or ""))
+
+
 #: Characters a model wraps around the bare YES/NO it was asked for.
 _HANDOFF_REPLY_DECORATION = " \t\r\n\"'`*_.!"
 

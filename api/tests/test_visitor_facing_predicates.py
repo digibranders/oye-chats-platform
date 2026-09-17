@@ -5,9 +5,9 @@ LLM classifier. That proposal is rejected, but the audit turned up twelve
 predicates with no coverage, and these four are the ones whose output the
 visitor reads:
 
-* ``_response_suggests_handoff`` flips ``suggest_handoff``, so the widget
-  renders the handoff form. It is the safety net for when the intent
-  classifier times out and the model produces handoff language anyway.
+* ``_response_suggests_handoff`` marks an answer that offers the team. It no
+  longer opens the handoff form (the visitor has not said yes yet), but it
+  keeps that answer out of the shared QA cache.
 * ``_is_pure_budget_disclosure`` EMPTIES the retrieval context. Get it wrong in
   one direction and a visitor stating their budget is quoted the business's own
   price list back at them; wrong in the other and a genuine question loses its
@@ -58,8 +58,7 @@ class TestTheAnswerAskedForAHuman:
         ],
     )
     def test_an_ordinary_answer_does_not_trip_it(self, answer):
-        """A false positive here shows the visitor a handoff form nobody
-        offered them, on a turn that answered their question."""
+        """A false positive here keeps an ordinary answer out of the QA cache."""
         assert _response_suggests_handoff(answer) is False
 
 

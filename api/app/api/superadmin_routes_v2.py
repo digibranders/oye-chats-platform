@@ -1623,7 +1623,9 @@ def patch_model_config(
 _SAFETY_NET_METRIC_NAMES = [
     "bant_extraction_failed",
     "groundedness_check",
-    "handoff_safety_net_triggered",
+    # An answer that offers the team; it waits for the visitor's "yes" and no
+    # longer opens the form (it was "handoff_safety_net_triggered").
+    "handoff_offer_awaiting_consent",
     "injection_attempt",
     "intent_router_short_circuit",
     "leave_message_card_rendered",
@@ -1650,6 +1652,10 @@ _SAFETY_NET_METRIC_NAMES = [
     "document_request_fell_through",
     "unhelped_offer",
     "handoff_reply",
+    # A bare "yes" to an offer with options, answered as its first option, and a
+    # new question after the support reply, answered instead of the repeat.
+    "affirmed_offered_option",
+    "support_repeat_answered",
     "system_prompt_leak",
     # AR-15/AR-16: LLM call-outcome metrics (llm_service.py), included here
     # for a single unified reporting endpoint even though they're not

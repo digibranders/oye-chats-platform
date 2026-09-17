@@ -65,7 +65,7 @@ from app.services.email_service import (
 )
 from app.services.groundedness_gate import check_groundedness, should_sample
 from app.services.handoff_reply import handoff_reply, unhelped_offer
-from app.services.intent_router import route_intent, strip_greeting_lead, term_spellings
+from app.services.intent_router import offered_option_question, route_intent, strip_greeting_lead, term_spellings
 from app.services.intent_service import (
     GENERIC_INVITE_RE,
     HANDOFF_OFFER_RE,
@@ -73,6 +73,7 @@ from app.services.intent_service import (
     detect_company_deal_intent,
     detect_handoff_intent,
     detect_handoff_intent_keywords,
+    is_bare_affirmation,
 )
 from app.services.kb_quality import first_visitor_placeholder
 from app.services.live_chat_availability_service import (
@@ -1044,10 +1045,10 @@ def _resolve_meeting_booking(bot, session, session_id: str, bot_id: int) -> dict
     return {"show_booking": True, "calendly_url": active_url, "meeting_provider": provider}
 
 
-# Safety-net regex: detect handoff language in the LLM's generated response.
-# When the intent classifier misses a handoff (timeout, typo, etc.) but the
-# main LLM still produces a handoff-style response (because the system prompt
-# told it to), this regex catches it and ensures suggest_handoff is set.
+# Handoff language in the LLM's generated response: an offer to connect the
+# visitor, or a promise that the team will. It never sets suggest_handoff: the
+# visitor has not agreed to anything yet (see ``_model_offered_handoff`` in the
+# stream). It is counted, and it keeps the answer out of the QA cache.
 _HANDOFF_RESPONSE_RE = re.compile(
     r"(?i)("
     r"team.{0,20}(?:will be with you|will (?:assist|help|get back|reach out|connect))"
@@ -1061,7 +1062,7 @@ _HANDOFF_RESPONSE_RE = re.compile(
 
 
 def _response_suggests_handoff(text: str) -> bool:
-    """Safety net: detect handoff language in the LLM's generated response."""
+    """True when the LLM's generated response offers or promises the team."""
     return bool(_HANDOFF_RESPONSE_RE.search(text))
 
 
@@ -5683,6 +5684,15 @@ def _probe_question_for(
     return pick_probe_variant(bant_config.get("framework") or "bant", dimension, base, seed=seed, avoid_text=avoid_text)
 
 
+def _reports_a_service_problem(question: str) -> bool:
+    """True when the message says a service is failing or someone is not answering.
+
+    The support route's own problem vocabulary (``support_route._PROBLEM_STATE_RE``),
+    read the way that route reads a message. Pure and linear.
+    """
+    return support_route._PROBLEM_STATE_RE.search(support_route._fold(question or "")) is not None
+
+
 def _is_affirmative_reply(question: str) -> bool:
     """True if the whole message is a short affirmation ("yes", "sure", "ok")."""
     return bool(_AFFIRMATIVE_RE.match((question or "").strip()))
@@ -8566,13 +8576,24 @@ async def rag_pipeline_stream(
                 _waiting_on_offered_form = _card_already_shown(
                     session.query(ChatSession).filter(*_waiting_filters).first(), "handoff_offered"
                 )
-            if (
+
+            # Once the team was alerted and its form or message card offered, the
+            # repeat words are kept for a visitor who asks for a person again or
+            # reports a problem again ("our portal is still down"), which still
+            # needs the team and not DIY steps. Anything else is a new question,
+            # and the pipeline answers it while the form stays in the chat: "i
+            # need the escalation matrix now" after the support reply got the
+            # repeat form line on the 2026-09-17 eval. Such a turn skips the
+            # classifier, whose verdict could not change it.
+            _support_candidate = (
                 not _waiting_on_offered_form
                 and support_route.might_be_support_request(question)
                 and not support_route.asks_only_about_policies(question)
                 and not _english_judges_bypassed(language, question)
-                and await support_route.detect_support_request_bounded(question)
-            ):
+            )
+            _support_session = None
+            _support_repeat = False
+            if _support_candidate:
                 _support_filters = [ChatSession.id == session_id]
                 if bid:
                     _support_filters.append(ChatSession.bot_id == bid)
@@ -8584,6 +8605,18 @@ async def rag_pipeline_stream(
                 _support_repeat = _card_already_shown(_support_session, "support_notified") or _card_already_shown(
                     _support_session, "urgent_notified"
                 )
+                _team_channel_offered = _card_already_shown(_support_session, "handoff_offered") or _card_already_shown(
+                    _support_session, "leave_message"
+                )
+                if (
+                    _support_repeat
+                    and _team_channel_offered
+                    and not detect_handoff_intent_keywords(question)
+                    and not _reports_a_service_problem(question)
+                ):
+                    _support_candidate = False
+                    _safety_net_metric("support_repeat_answered", path="stream", session=session_id, bot_id=bid)
+            if _support_candidate and await support_route.detect_support_request_bounded(question):
                 _support = support_route.support_reply(
                     company_name=_company_name,
                     support_enabled=_plan_support_allowed,
@@ -8664,15 +8697,29 @@ async def rag_pipeline_stream(
             if _deferred_q is not None:
                 question = _deferred_q
 
-            # ── Affirmative reply to a handoff offer (B9, streaming) ─────────
+            # ── Affirmative reply to an offer (B9, streaming) ────────────────
             # "sure"/"yes"/"ok" after "want me to
             # connect you with the team?" routes into the handoff flow instead of
             # the intent router's generic ack or the gate's refusal.
+            #
+            # After an offer with options ("Want to hear about our services, see
+            # recent work, or chat with the team?") the visitor agreed to the first
+            # option, so the turn is answered as that question. A "yes" to the
+            # greeting got "Got it." on the 2026-09-17 eval. When the first option
+            # is the team, or there are no options, the handoff offer check
+            # decides. The transcript keeps what the visitor typed: the user
+            # message is already saved.
             _affirmed_handoff = False
+            _offered_option: str | None = None
             if _is_affirmative_reply(question):
-                _affirmed_handoff = _last_bot_offered_handoff(
-                    get_chat_history(session, session_id, client_id=cid, limit=3, bot_id=bid)
-                )
+                _offer_history = get_chat_history(session, session_id, client_id=cid, limit=3, bot_id=bid)
+                if is_bare_affirmation(question):
+                    _offered_option = offered_option_question(_last_bot_message(_offer_history))
+                if _offered_option is not None:
+                    _safety_net_metric("affirmed_offered_option", path="stream", session=session_id, bot_id=bid)
+                    question = _offered_option
+                else:
+                    _affirmed_handoff = _last_bot_offered_handoff(_offer_history)
 
             # ── Deterministic intent router (streaming path) ─────────────────
             # Greetings, acks and identity questions
@@ -8734,7 +8781,7 @@ async def rag_pipeline_stream(
 
             _intent = (
                 None
-                if (_affirmed_handoff or _judges_bypassed)
+                if (_affirmed_handoff or _offered_option is not None or _judges_bypassed)
                 else route_intent(
                     question,
                     _company_name,
@@ -9113,14 +9160,15 @@ async def rag_pipeline_stream(
                 bool(_flow_name) and not _just_named and _is_first_bot_reply(history) and not _is_preview
             )
             # ``question`` may have been rebound above to the visitor's DEFERRED
-            # original question (they declined the name ask, or changed topic).
+            # original question (they declined the name ask, or changed topic),
+            # or to the offered option a bare "yes" agreed to.
             # Never extract a name from that deferred text: a short topic query
             # like "clean libraries" would be misread as a bare-reply name,
             # because the name ask is still the most recent bot turn in history.
             # Trust the name the flow already resolved; only fall back to
             # extraction from the visitor's ACTUAL message when nothing was
             # deferred this turn.
-            if _deferred_q is not None:
+            if _deferred_q is not None or _offered_option is not None:
                 visitor_name = _flow_name
             else:
                 visitor_name = _flow_name or resolve_visitor_name(session, session_id, bid, cid, question, history)
@@ -10869,20 +10917,26 @@ async def rag_pipeline_stream(
                     _media_card.get("type"),
                 )
 
-            # Safety net: if the intent classifier missed handoff but the LLM
-            # still produced a handoff-style response, override suggest_handoff.
-            if (
+            # An answer that offers the team waits for the visitor. The model's
+            # words used to set ``suggest_handoff`` here, and the prompt asks for
+            # that offer in many places, so a grounded answer closing "I can
+            # connect you with them if you want the exact figure" opened the form
+            # with nobody saying yes (CleanStart, 2026-09-17 eval). The form now
+            # opens only when the visitor asked for a person, agreed to an offer,
+            # or a fixed route decided it; all of those are settled before
+            # generation. The offer is the saved bot message itself: a bare "yes"
+            # to it on the next turn reaches ``_last_bot_offered_handoff``.
+            _model_offered_handoff = (
                 not suggest_handoff
                 and not _stream_error
-                # The escalation already decided the handoff; its repeat wording
-                # ("I'll connect you") must not re-open the form.
+                # The escalation already decided the handoff and wrote its own words.
                 and _price_guard_pivot is None
                 and live_chat_on
                 and _response_suggests_handoff(full_answer)
-            ):
-                suggest_handoff = True
+            )
+            if _model_offered_handoff:
                 _safety_net_metric(
-                    "handoff_safety_net_triggered",
+                    "handoff_offer_awaiting_consent",
                     path="stream",
                     bot_id=bid,
                     session=session_id,
@@ -11030,6 +11084,9 @@ async def rag_pipeline_stream(
                     # on future hits, making a cached response miss its CTA.
                     _skip_cache_for_turn = (
                         suggest_handoff
+                        # An offer to connect is worded for this conversation, and
+                        # was kept out of the cache while it set the flag.
+                        or _model_offered_handoff
                         # A tripped price guard's escalation: served from the cache
                         # it would lose its card and its repeat wording.
                         or _price_guard_pivot is not None

@@ -415,6 +415,96 @@ def _asks_if_ai(norm: str) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# A "yes" to an offer with options
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: A blank line, which may hold spaces or a carriage return.
+_PARAGRAPH_BREAK_RE = re.compile(r"\n\s*\n")
+#: The space after the end of a sentence.
+_SENTENCE_BREAK_RE = re.compile(r"(?<=[.?!])\s+")
+#: How an offer that lists what the visitor can pick opens: "Want to hear about
+#: ...", "Would you like to ...", "Are you exploring ...".
+_OPTION_LEAD_RE = re.compile(
+    r"^(?:"
+    r"(?:do\s+you\s+)?want\s+(?:me\s+)?to"
+    r"|would\s+you\s+like(?:\s+me)?\s+to"
+    r"|would\s+it\s+help\s+to"
+    r"|(?:are\s+you\s+)?(?:curious|interested)\s+(?:about|in)"
+    r"|are\s+you\s+(?:looking\s+(?:at|for|into)|exploring)"
+    r")\s+"
+)
+#: A question that asks what the visitor wants without naming anything. The
+#: sentence after it lists the options: "What would you like to know? Our
+#: services, recent work, or how to get started with Acme?"
+_OPEN_QUESTION_RE = re.compile(
+    r"^(?:what\s+would\s+you\s+like\s+to\s+(?:know|explore|see)"
+    r"|what\s+can\s+i\s+help\s+(?:you\s+)?with"
+    r"|what\s+brings\s+you\s+here(?:\s+today)?)\?$"
+)
+#: Where one option ends and the next starts: a comma, "or", or both.
+_OPTION_SPLIT_RE = re.compile(r",\s*(?:or\s+)?|\s+or\s+")
+#: The words that open an option without naming its topic ("hear about", "see").
+_OPTION_VERB_RE = re.compile(
+    r"^(?:(?:hear|know|learn|find\s+out|read)\s+(?:more\s+)?about|see|explore|check\s+out|look\s+at|discuss)\s+"
+)
+#: An option that is a person rather than a topic. A "yes" to it is a handoff,
+#: which the handoff affirmation decides.
+_TEAM_OPTION_RE = re.compile(
+    r"\b(?:team|someone|somebody|human|person|expert|specialist|connect(?:ing)?|in\s+touch|contact)\b"
+)
+_SERVICES_OPTION_RE = re.compile(r"\b(?:services?|offerings?)\b")
+#: A topic that already says whose it is.
+_DETERMINED_TOPIC_RE = re.compile(r"^(?:your|the|a|an)\b")
+#: The standalone question a "yes" to the services option is answered as.
+SERVICES_QUESTION = "what services do you offer"
+
+
+def offered_option_question(bot_message: str | None) -> str | None:
+    """The question a bare "yes" to ``bot_message`` asks, when that message offers options.
+
+    ``bot_message`` offers options when its closing sentence is a question that
+    lists two or more things the visitor can pick, after an offer ("Want to hear
+    about our services, see recent work, or chat with the team?") or after an
+    open question ("What would you like to know? Our services, recent work, or
+    how to get started?"). Agreeing to that picks the first option, so the turn
+    is answered as a standalone question about it: the services option is
+    ``SERVICES_QUESTION``, "how to X" is "how do i X", and any other topic is
+    "tell me about your X".
+
+    None when the message offers no options, or when the first option is a
+    person ("connect you with our team, or ..."): a "yes" to that is a handoff.
+    Only the closing paragraph is read, like ``intent_service.bot_offers_handoff``,
+    because an answer puts its follow-up question there. Pure and linear.
+    """
+    text = (bot_message or "").replace("*", "").strip()
+    closing = _PARAGRAPH_BREAK_RE.split(text)[-1]
+    sentences = [" ".join(sentence.lower().split()) for sentence in _SENTENCE_BREAK_RE.split(closing)]
+    sentences = [sentence for sentence in sentences if sentence]
+    if not sentences or not sentences[-1].endswith("?"):
+        return None
+    offer = sentences[-1].rstrip("?").strip()
+    lead = _OPTION_LEAD_RE.match(offer)
+    if lead is not None:
+        body = offer[lead.end() :]
+    elif len(sentences) >= 2 and _OPEN_QUESTION_RE.match(sentences[-2]):
+        body = offer
+    else:
+        return None
+    options = [option.strip() for option in _OPTION_SPLIT_RE.split(body) if option.strip()]
+    if len(options) < 2 or _TEAM_OPTION_RE.search(options[0]):
+        return None
+    topic = _OPTION_VERB_RE.sub("", options[0], count=1)
+    if _SERVICES_OPTION_RE.search(topic):
+        return SERVICES_QUESTION
+    if topic.startswith("how to "):
+        return f"how do i {topic[len('how to ') :]}"
+    topic = re.sub(r"\bour\b", "your", topic)
+    if _DETERMINED_TOPIC_RE.match(topic) is None:
+        topic = f"your {topic}"
+    return f"tell me about {topic}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Public router
 # ─────────────────────────────────────────────────────────────────────────────
 
