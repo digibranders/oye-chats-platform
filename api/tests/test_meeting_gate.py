@@ -285,6 +285,10 @@ class TestIsMeetingQuestion:
         is_meeting_question(text)
         assert time.perf_counter() - started < 1.0
 
+    def test_the_hinglish_shapes_can_be_left_unread(self):
+        assert is_meeting_question("mujhe demo chahiye", hinglish=False) is False
+        assert is_meeting_question("book a demo", hinglish=False) is True
+
     def test_disqualifiers(self):
         assert is_meeting_question("cancel my meeting") is False
         assert is_meeting_question("reschedule my call") is False

@@ -9777,8 +9777,9 @@ async def rag_pipeline_stream(
                         )
                         _pick = None
             # A request for time with the team, read once for the meeting gate,
-            # the document reply and the handoff reply.
-            _meeting_request = _meeting_gate.is_meeting_question(_gate_question)
+            # the document reply, the handoff reply and the booking card. The
+            # Hinglish shapes are read only in an English conversation.
+            _meeting_request = _meeting_gate.is_meeting_question(_gate_question, hinglish=not _judges_bypassed)
 
             # ── Meeting gate ─────────────────────────────────────────────
             # A scheduling request on a bot with NO usable online scheduler is

@@ -244,7 +244,7 @@ _HINGLISH_MEETING_RE = re.compile(
 )
 
 
-def is_meeting_question(question: object) -> bool:
+def is_meeting_question(question: object, *, hinglish: bool = True) -> bool:
     """True when the visitor is asking to get time with the team.
 
     Deliberately narrower than "the message mentions a meeting": it needs a
@@ -252,12 +252,16 @@ def is_meeting_question(question: object) -> bool:
     shapes. A bot whose knowledge base is ABOUT meetings (a venue, an events
     company) must still be able to answer questions on that subject from its
     own content, so a bare noun never fires the gate.
+
+    ``hinglish`` also reads the Hinglish shapes. A caller in a conversation held
+    in another language turns it off: the replies these shapes lead to are
+    English, and that conversation's model answers in its own language.
     """
     if not isinstance(question, str) or not question.strip():
         return False
     if _MEETING_DISQUALIFIER_RE.search(question):
         return False
-    return bool(_MEETING_RE.search(question) or _HINGLISH_MEETING_RE.search(question))
+    return bool(_MEETING_RE.search(question) or (hinglish and _HINGLISH_MEETING_RE.search(question)))
 
 
 def scheduler_is_configured(bot: object) -> bool:
