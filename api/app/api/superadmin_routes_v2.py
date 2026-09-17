@@ -1646,6 +1646,10 @@ _SAFETY_NET_METRIC_NAMES = [
     # not state as the company's own, replaced after the stream
     # (commitment_guard.py via rag_service.py).
     "commitment_figure_redacted",
+    # A reply sentence saying the company serves a country the reference
+    # does not support (a form's country dropdown), replaced after the stream
+    # (commitment_guard.py via rag_service.py).
+    "country_claim_redacted",
     # Scheduling request answered deterministically because the bot has no
     # scheduler configured (meeting_gate.py via rag_service.py).
     "meeting_gate_pivot",

@@ -21,7 +21,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.ingestion.cleaner import expand_contact_links, strip_phone_code_runs, tidy_reference_text
+from app.ingestion.cleaner import (
+    expand_contact_links,
+    strip_country_name_runs,
+    strip_phone_code_runs,
+    tidy_reference_text,
+)
 from app.services import rag_service as rs
 from tests.test_rag_pipeline_defects import _doc, _drive_stream, _make_bot, _make_client, _make_session, _stub_pipeline
 
@@ -139,6 +144,95 @@ class TestPhoneCodeRuns:
         assert strip_phone_code_runs(text) is text
 
 
+#: The plain country dropdown of a form on
+#: https://eventussecurity.com/cybersecurity/security-operations-market/, which
+#: still gave "Yes, France is listed among the countries we serve." after the
+#: phone-code picker was dropped (production, 2026-09-17 14:25 UTC).
+_EVENTUS_DROPDOWN = (
+    "[Document: https://eventussecurity.com/cybersecurity/security-operations-market/] [Page: 3]"
+    " Select Country\n"
+    "Democratic Republic of the Congo (Kinshasa)\n"
+    "Denmark\n"
+    "Djibouti\n"
+    "Dominica\n"
+    "Dominican Republic\n"
+    "Ecuador\n"
+    "Egypt\n"
+    "El Salvador\n"
+    "Finland\n"
+    "France\n"
+    "French Guiana\n"
+    "Macao S.A.R., China\n"
+    "South Georgia/Sandwich Islands\n"
+    "Saint Martin (Dutch part)\n"
+    "Vatican\n"
+    "Submit"
+)
+
+
+class TestCountryNameRuns:
+    def test_the_production_dropdown_is_dropped_and_the_page_kept(self):
+        cleaned = strip_country_name_runs(_EVENTUS_DROPDOWN)
+
+        assert "France" not in cleaned
+        assert cleaned.split("\n") == [
+            "[Document: https://eventussecurity.com/cybersecurity/security-operations-market/] [Page: 3]"
+            " Select Country",
+            "Submit",
+        ]
+
+    def test_a_chunk_that_opens_inside_the_dropdown_keeps_its_document_header(self):
+        names = ("Finland", "France", "Gabon", "Gambia", "Georgia", "Germany", "Ghana", "Greece", "Grenada", "Guam")
+        text = "[Document: https://acme.com/form/] [Page: 2] " + "\n".join(names) + "\nTitle"
+
+        assert strip_country_name_runs(text) == "[Document: https://acme.com/form/] [Page: 2]\nTitle"
+
+    def test_bullets_count_and_a_bullet_list_of_ten_is_dropped(self):
+        names = ("India", "France", "Japan", "Kenya", "Mexico", "Norway", "Peru", "Qatar", "Spain", "Togo")
+        text = "Intro\n" + "\n".join(f"*   {name}" for name in names) + "\nOutro"
+
+        assert strip_country_name_runs(text) == "Intro\nOutro"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # Nine names are a list someone wrote, not a form's dropdown.
+            "Regions we serve:\n- India\n- United Arab Emirates\n- Saudi Arabia\n- Qatar\n- United States\n"
+            "- Singapore\n- United Kingdom\n- Australia\n- Germany",
+            # An office list and an address block: the lines hold more than a name.
+            "Our offices\nIndia: Ahmedabad\nUAE: Dubai\nSaudi Arabia: Riyadh\nQatar: Doha\nUSA: New York\n"
+            "India office\nFrance office\nGermany office\nJapan office\nKenya office\nPeru office",
+            "Eventus Security\nB-1203, Titanium City Center\nAhmedabad 380015\nIndia",
+            # Prose that names countries.
+            "We serve France, Germany and Spain.\nFrance\nGermany",
+            # A run of ten broken by a real line is judged per side.
+            "India\nFrance\nJapan\nKenya\nMexico\nOur Paris office\nNorway\nPeru\nQatar\nSpain\nTogo",
+            # Not countries: a list of industries.
+            "\n".join(("Banking", "Insurance", "Healthcare", "Retail", "Energy", "Telecom", "Education", "Government"))
+            + "\nManufacturing\nLogistics\nHospitality",
+        ],
+    )
+    def test_short_lists_offices_and_addresses_are_kept(self, text):
+        assert strip_country_name_runs(text) == text
+
+    def test_long_adversarial_lines_stay_linear(self):
+        hostile = "\n".join(
+            [
+                "[Document: x] [Page: 1]" + " " * 50_000 + "a" * 50_000,
+                "*" + " " * 50_000 + "France" + " " * 50_000,
+                "(" * 50_000 + "France",
+                "France, " * 20_000,
+                "[Document: " + "]" * 50_000,
+                *(["France"] * 20_000),
+            ]
+        )
+        started = time.perf_counter()
+        cleaned = strip_country_name_runs(hostile)
+
+        assert time.perf_counter() - started < 2.0
+        assert "\nFrance\n" not in cleaned
+
+
 class TestContactLinks:
     def test_the_truncated_production_label_shows_the_whole_address(self):
         text = "The team rebuilding the base layer.  [careers@](mailto:careers@cleanstart.com) [About Us](https://x)"
@@ -224,10 +318,13 @@ class TestTheReferenceContextIsTidied:
         assert "hello@acme.com" in context
         assert "[truncated]" not in context
 
-    def test_tidy_is_both_cleaners(self):
+    def test_tidy_is_every_cleaner(self):
         text = "Mail [hr@](mailto:hr@acme.com)\nChad+235\nChile+56\nChina+86\nCuba+53\nCyprus+357"
+        dropdown = "\n".join(
+            ("Chad", "Chile", "China", "Cuba", "Cyprus", "Denmark", "Egypt", "Fiji", "France", "Gabon")
+        )
 
-        assert tidy_reference_text(text) == "Mail hr@acme.com"
+        assert tidy_reference_text(f"{text}\n{dropdown}\nEnd") == "Mail hr@acme.com\nEnd"
 
 
 class TestTheModelSeesTheAddressAndNoPicker:

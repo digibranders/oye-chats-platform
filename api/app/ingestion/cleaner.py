@@ -2,7 +2,7 @@ import re
 from urllib.parse import unquote
 
 from app.security.injection_patterns import compile_line_anchored_strip_pattern
-from app.services.kb_quality import starts_with_country_name
+from app.services.kb_quality import is_country_name, starts_with_country_name
 
 # A "cell" that is nothing but a single markdown link. I.e. a nav-bar entry.
 # Used to distinguish pipe-separated nav rows from real markdown data tables.
@@ -370,6 +370,33 @@ def _phone_code_line(line: str) -> re.Match[str] | None:
     return match
 
 
+def _strip_runs(lines: list[str], matches: list[re.Match[str] | None], min_run: int) -> list[str]:
+    """``lines`` without each run of at least ``min_run`` consecutive matched lines.
+
+    A dropped line's ``prefix`` group (a chunk's document header) is kept on
+    its own line.
+    """
+    kept: list[str] = []
+    start = 0
+    while start < len(lines):
+        if matches[start] is None:
+            kept.append(lines[start])
+            start += 1
+            continue
+        end = start
+        while end < len(lines) and matches[end] is not None:
+            end += 1
+        if end - start < min_run:
+            kept.extend(lines[start:end])
+        else:
+            for match in matches[start:end]:
+                prefix = match.group("prefix") if match else None
+                if prefix:
+                    kept.append(prefix)
+        start = end
+    return kept
+
+
 def strip_phone_code_runs(text: str) -> str:
     """Drop runs of five or more consecutive country-code picker lines.
 
@@ -382,26 +409,52 @@ def strip_phone_code_runs(text: str) -> str:
     if "+" not in text:
         return text
     lines = text.split("\n")
-    matches = [_phone_code_line(line) for line in lines]
-    kept: list[str] = []
-    start = 0
-    while start < len(lines):
-        if matches[start] is None:
-            kept.append(lines[start])
-            start += 1
-            continue
-        end = start
-        while end < len(lines) and matches[end] is not None:
-            end += 1
-        if end - start < _PHONE_CODE_MIN_RUN:
-            kept.extend(lines[start:end])
-        else:
-            for match in matches[start:end]:
-                prefix = match.group("prefix") if match else None
-                if prefix:
-                    kept.append(prefix)
-        start = end
-    return "\n".join(kept)
+    return "\n".join(_strip_runs(lines, [_phone_code_line(line) for line in lines], _PHONE_CODE_MIN_RUN))
+
+
+# One option of a plain country dropdown: a line that is only a country or
+# territory name, with an optional bullet ("France", "*   Saint Martin (Dutch
+# part)"). A form on an Eventus Security page lists about 250 of them, and the
+# model read "France" there as a country the company serves (production,
+# 2026-09-17 14:25 UTC, after the phone-code picker was already dropped). The
+# name holds no digit and is bounded, the header prefix ends on a required
+# "]", so a hostile line costs linear time.
+_COUNTRY_LINE_RE = re.compile(
+    r"(?P<prefix>\[Document: [^\]\n]*\](?:[ \t]*\[Page: \d+\])?)?"
+    r"[ \t]*(?:[*\-•][ \t]+)?"
+    r"(?P<name>[^\W\d_][^\d\n]{0,79})"
+)
+# A line longer than this is never a dropdown option, header included.
+_COUNTRY_LINE_MAX_CHARS = 600
+
+# Fewer lines than this are a list someone wrote ("regions we serve", a set of
+# offices), not a form's dropdown, which runs to hundreds of lines. In the
+# 2026-09-17 knowledge base exports the shortest dropdown run, cut by a chunk
+# edge, is 19 lines, and no other run of name-only lines is longer than 3.
+_COUNTRY_LINE_MIN_RUN = 10
+
+
+def _country_line(line: str) -> re.Match[str] | None:
+    if not line or len(line) > _COUNTRY_LINE_MAX_CHARS:
+        return None
+    match = _COUNTRY_LINE_RE.fullmatch(line)
+    if match is None or not is_country_name(match.group("name").strip()):
+        return None
+    return match
+
+
+def strip_country_name_runs(text: str) -> str:
+    """Drop runs of ten or more consecutive lines that are each only a country or territory name.
+
+    Every line of a run is a whole name (``kb_quality.is_country_name``) with
+    an optional bullet. A shorter list, an office list ("India: Ahmedabad"),
+    an address block and prose are kept. When a dropped line carries a chunk's
+    document header, the header is kept on its own line.
+    """
+    lines = text.split("\n")
+    if len(lines) < _COUNTRY_LINE_MIN_RUN:
+        return text
+    return "\n".join(_strip_runs(lines, [_country_line(line) for line in lines], _COUNTRY_LINE_MIN_RUN))
 
 
 # ``[label](mailto:address)`` and ``[label](tel:number)``. The label may not be
@@ -453,4 +506,4 @@ def expand_contact_links(text: str) -> str:
 
 def tidy_reference_text(text: str) -> str:
     """Chunk text as the answer model should read it."""
-    return expand_contact_links(strip_phone_code_runs(text))
+    return expand_contact_links(strip_country_name_runs(strip_phone_code_runs(text)))

@@ -51,7 +51,11 @@ from app.services import field_question as _field_question
 from app.services import meeting_gate as _meeting_gate
 from app.services import plan_entitlements_service, runtime_config, support_route, urgent_route, visitor_reaction
 from app.services import pricing_gate as _pricing_gate
-from app.services.commitment_guard import redact_unsupported_commitments, snapshot_chunks
+from app.services.commitment_guard import (
+    redact_unsupported_commitments,
+    redact_unsupported_country_claims,
+    snapshot_chunks,
+)
 from app.services.document_request import (
     TOPIC_MIN_OVERLAP,
     DocumentIntentDecision,
@@ -11261,8 +11265,8 @@ async def rag_pipeline_stream(
             # The redactor dropped the sentences stating a figure and the pricing
             # escalation follows the rest of the answer.
             _redacted_turn = False
-            # The commitment guard replaced a service figure the reference does
-            # not state as the company's own.
+            # The commitment guard replaced a service figure or a country the
+            # reference does not state as the company's own.
             _commitment_redacted = False
             # Set by the output moderation guard below; True until it says
             # otherwise, and it is skipped on a leak-abort or a stream error.
@@ -11753,6 +11757,25 @@ async def rag_pipeline_stream(
                         "commitment_figure_redacted",
                         path="stream",
                         figures="|".join(_commitment.figures)[:80],
+                        session=session_id,
+                        bot_id=bid,
+                    )
+                # A country the company serves, the same way: production,
+                # 2026-09-17 14:25 UTC, Eventus said "Yes, France is listed among
+                # the countries we serve." from a form's country dropdown.
+                _country_claims = redact_unsupported_country_claims(
+                    full_answer,
+                    _commitment_chunks,
+                    company_name=_company_name,
+                    owner_texts=_commitment_owner_texts,
+                )
+                if _country_claims.redacted:
+                    _commitment_redacted = True
+                    full_answer = _country_claims.text
+                    _safety_net_metric(
+                        "country_claim_redacted",
+                        path="stream",
+                        countries="|".join(_country_claims.countries)[:80],
                         session=session_id,
                         bot_id=bid,
                     )
