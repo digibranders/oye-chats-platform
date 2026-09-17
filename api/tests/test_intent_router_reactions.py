@@ -17,7 +17,14 @@ import time
 
 import pytest
 
-from app.services.intent_router import CARE_NOTE, care_note, crisis_reply, follows_a_reaction_reply, route_intent
+from app.services.intent_router import (
+    CARE_NOTE,
+    care_note,
+    crisis_reply,
+    follows_a_reaction_reply,
+    is_verdict_on_the_chat,
+    route_intent,
+)
 from app.services.intent_service import bot_offers_handoff
 
 COMPANY = "Acme"
@@ -58,6 +65,10 @@ def _routed(msg: str, **kwargs):
         "no help at all",
         "dumb bot lol",
         "this bot is absolute trash \U0001f644",
+        "this is useless, you never answer anything",
+        "you never answer anything",
+        "you don't help",
+        "useless bot and you never answer my questions",
     ],
 )
 def test_frustration_with_the_bot_is_routed(msg):
@@ -77,6 +88,8 @@ def test_frustration_with_the_bot_is_routed(msg):
         "how do i stop stupid spam leads",
         "do you remove trash from construction sites",
         "is the chatbot useful for sales teams",
+        "you don't answer calls on weekends?",
+        "can you help me answer rfp questions",
     ],
 )
 def test_questions_and_answer_complaints_are_not_routed_as_frustration(msg):
@@ -429,3 +442,17 @@ def test_long_inputs_stay_fast(msg):
     route_intent(msg, COMPANY)
     follows_a_reaction_reply(msg)
     assert time.perf_counter() - started < 0.5
+
+
+@pytest.mark.parametrize(
+    ("msg", "expected"),
+    [
+        ("this is useless, you never answer anything", True),
+        ("shut up", True),
+        ("our account manager isnt responding for 3 days", False),
+        ("nobody from your team answered my emails", False),
+        ("what services do you offer?", False),
+    ],
+)
+def test_a_verdict_on_the_chat_is_told_apart_from_a_customer_left_unanswered(msg, expected):
+    assert is_verdict_on_the_chat(msg) is expected
