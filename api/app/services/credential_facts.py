@@ -164,20 +164,30 @@ _HOLD_VERB = (
     r"|comply|follow|adhere)"
 )
 
-#: A credential whose subject is a person or a product, not the business.
+#: A credential whose subject is a person or a product, not the business, and a
+#: certificate that is a product, a document or a TLS artifact ("gift
+#: certificate", "certificate of insurance", "SSL certificate").
 _NOT_THE_BUSINESS_RE = re.compile(
     r"\b(?:board|pre-?owned|used)\s+certified\b"
     r"|\bcertified\s+(?:pre-?owned|used|organic|refurbished|translations?|copies|copy|mail|translators?)\b"
+    r"|\b(?:gift|completion|participation|attendance|ssl|tls|https|insurance)\s+certificates?\b"
+    r"|\bcertificates?\s+of\s+(?:insurance|completion|participation|attendance)\b"
 )
 #: A learner's certificate: a training business selling courses.
 _LEARNER_RE = re.compile(
     r"\b(?:courses?|training|trainings|classes|class|exams?|students?|learners?|trainees?|workshops?"
     r"|lead\s+auditor|lead\s+implementer|syllabus|curriculum)\b"
 )
-#: A buyer asking for the service rather than about the vendor's own credential.
+#: A buyer asking for the service or a product rather than about the vendor's
+#: own credential ("does your app support NIST password rules", "do you sell
+#: HIPAA compliant forms").
 _SERVICE_REQUEST_RE = re.compile(
     r"\b(?:help|helps|helping|assist|assists|assisting|guide\s+us|prepare|consult\w*|implement\w*|readiness"
-    r"|gap\s+analysis|checklists?|templates?|toolkits?|webinars?)\b"
+    r"|gap\s+analysis|checklists?|templates?|toolkits?|webinars?"
+    r"|supports|supporting|sell|sells|selling|stock|stocks)\b"
+    r"|\b(?:do|does|can|will)\s+(?:you|u|it|(?:your|ur|the)\s+\S+)\s+support\b"
+    r"|\b(?:offer|offers|provide|provides|have|has)\s+(?:\S+\s+){0,3}?(?:compliant|certified)\s+(?:\S+\s+)?"
+    r"(?:forms?|products?|devices?|equipment|kits?|policies|policy)\b"
     r"|\b(?:conduct|perform|offer|provide|carry\s+out|run|do\s+(?:you|u)\s+do)\s+(?:\S+\s+){0,3}?"
     r"(?:audits?|assessments?|certifications?)\b(?!\s+reports?)"
 )
@@ -349,9 +359,9 @@ def credential_excerpts(chunks: Iterable[object]) -> list[Excerpt]:
 
 # ── Stage 2: the classifier ───────────────────────────────────────────────────
 
-#: One bounded attempt, the other gate-tier classifiers' budget
-#: (``support_route._SUPPORT_LLM_TIMEOUT_S``).
-_CREDENTIAL_LLM_TIMEOUT_S = 3.0
+#: One bounded attempt, inside ``_CREDENTIAL_CHECK_TIMEOUT_S`` so a slow model
+#: still leaves the fallback rules time to answer.
+_CREDENTIAL_LLM_TIMEOUT_S = 2.0
 _CREDENTIAL_LLM_NUM_RETRIES = 0
 #: Room for one line per credential with a short quote.
 _CREDENTIAL_LLM_MAX_TOKENS = 400
@@ -681,9 +691,10 @@ def fallback_credential_facts(question: str, excerpts: Sequence[Excerpt], compan
 
 # ── The bounded call ──────────────────────────────────────────────────────────
 
-#: The check is awaited before generation, so it gets the other pre-generation
-#: classifiers' ceiling (``rag_service._HANDOFF_INTENT_TIMEOUT_S``).
-_CREDENTIAL_CHECK_TIMEOUT_S = float(os.getenv("CREDENTIAL_CHECK_TIMEOUT_S", "4.0"))
+#: The check is awaited before generation, and every second of it is a second
+#: before the visitor sees a token, so it is held below the other
+#: pre-generation classifiers' ceiling.
+_CREDENTIAL_CHECK_TIMEOUT_S = float(os.getenv("CREDENTIAL_CHECK_TIMEOUT_S", "2.5"))
 
 
 async def check_credentials_bounded(

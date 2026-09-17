@@ -50,6 +50,11 @@ def _chunk(content, name="https://acme.example/services/"):
         "do you comply with NIST?",
         "tell me about your ISO 27001 mapping",
         "we need a vendor that is ISO 27001 certified. are you certified, and do you help with SOC 2?",
+        "can you share your ISO 27001 certificate",
+        "does your company have a certificate of incorporation or ISO certificate",
+        "does your app comply with NIST 800-53",
+        "does your team hold SSL and ISO 27001 certifications",
+        "do you have 24x7 support and ISO 27001 certification",
     ],
 )
 def test_the_prefilter_passes_a_question_about_the_companys_own_credentials(question):
@@ -80,6 +85,16 @@ def test_the_prefilter_passes_a_question_about_the_companys_own_credentials(ques
         "do you do SOC 2 audits",
         "do you offer ISO 27001 certification consulting",
         "do you provide a HIPAA compliance checklist",
+        "does your app support NIST password rules",
+        "do you sell HIPAA compliant forms",
+        "do you offer GDPR compliant templates for small shops",
+        # A certificate that is a product, a document or a technical artifact, not a credential.
+        "can I buy your gift certificate",
+        "how do I download your completion certificate",
+        "your certificate of insurance please",
+        "what is your SSL certificate provider",
+        "is your TLS certificate valid",
+        "do you give a participation certificate",
         # Unrelated reports and ordinary questions.
         "do you have a report on data breach costs",
         "what services do you offer",
@@ -104,11 +119,18 @@ def test_the_prefilter_needs_the_company_name_to_read_a_third_person_question():
     assert not cf.asks_about_credentials("is acme corp soc 2 compliant", "Globex")
 
 
+def test_the_check_deadline_leaves_room_before_generation():
+    assert cf._CREDENTIAL_CHECK_TIMEOUT_S == 2.5
+    assert cf._CREDENTIAL_LLM_TIMEOUT_S < cf._CREDENTIAL_CHECK_TIMEOUT_S
+
+
 def test_the_prefilter_is_fast_on_a_long_adversarial_message():
     question = ("are you " * 2000) + ("iso " * 2000) + "certified " * 2000
     started = time.perf_counter()
     cf.asks_about_credentials(question, "Acme")
     cf.asks_about_credentials("your " + "a " * 20000 + "certifications", "Acme")
+    cf.asks_about_credentials("do you offer " + "hipaa compliant " * 3000 + "x", "Acme")
+    cf.asks_about_credentials("your " + "gift " * 5000 + "certificate of " * 3000, "Acme")
     assert time.perf_counter() - started < 1.0
 
 
