@@ -48,7 +48,10 @@ def _chunk(content: str, name: str) -> SimpleNamespace:
         "https://www.cleanstart.com/knowledge-hub/what-is-sbom",
         "https://www.cleanstart.com/knowledge-hub/glossary",
         "https://www.cleanstart.com/knowledge-hub/container-registries-compared",
-        "https://www.cleanstart.com/knowledge-hub/how-enterprises-patch-containers",
+        "https://example.com/top-10-siem-tools-2025/",
+        "https://example.com/insights/zero-trust-roadmap/",
+        "https://example.com/resources/soc-maturity/",
+        "https://example.com/soc-onboarding-explained/",
     ],
 )
 def test_a_crawled_guide_listicle_comparison_or_blog_post_is_a_general_article(name):
@@ -72,6 +75,48 @@ def test_the_companys_own_service_terms_and_policy_pages_are_not(name):
     """CleanStart's SLA tiers live under /knowledge-hub/, so the hub itself is
     not a sign of a general article: only the page's own words are."""
     assert is_general_article(name, "Acme") is False
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "https://eventussecurity.com/how-does-24-7-managed-soc-support-work-in-practice/",
+        "https://eventussecurity.com/what-we-do/",
+        "https://eventussecurity.com/how-we-work/",
+        "https://eventussecurity.com/about/how-it-works/",
+        "https://eventussecurity.com/pricing/how-it-works",
+        "https://eventussecurity.com/why-choose-us/best-in-class-support/",
+        "https://eventussecurity.com/learn-more/",
+        "https://eventussecurity.com/top-rated-support/",
+        # A bare "how" slug reads like the company's own "how it works" page, so
+        # it is left untagged even when the page is an article.
+        "https://www.cleanstart.com/knowledge-hub/how-enterprises-patch-containers",
+    ],
+)
+def test_a_question_word_or_best_or_learn_alone_does_not_tag_a_page(name):
+    """Review, 2026-09-17: "how", "what", "best", "top" and "learn" as single
+    path words tagged the company's own service pages, so their SLAs and terms
+    were read as a general article's."""
+    assert is_general_article(name, "Acme") is False
+
+
+def test_the_check_is_linear_on_a_long_path():
+    import time
+
+    started = time.perf_counter()
+    for path in ("best-" * 5000, "top-" * 5000 + "1", "-vs" * 5000, "/blog" * 3000):
+        is_general_article(f"https://example.com/{path}", "Acme")
+    assert time.perf_counter() - started < 0.5
+
+
+def test_the_credential_own_page_check_keeps_its_broader_word_set():
+    """``credential_facts`` still treats any "how", "what", "best" or "learn"
+    page as not the company's own, which is the safe side for a credential."""
+    from app.services import credential_facts
+
+    assert credential_facts._is_own_page("https://acme.com/about/certifications") is True
+    assert credential_facts._is_own_page("https://acme.com/how-we-work/certifications") is False
+    assert credential_facts._is_own_page("https://acme.com/learn/about-certifications") is False
 
 
 @pytest.mark.parametrize(

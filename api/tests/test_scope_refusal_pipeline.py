@@ -26,6 +26,7 @@ from app.services import rag_service as rs
 from app.services.intent_router import route_intent as real_route_intent
 from tests.test_rag_pipeline_defects import (
     _answer_text,
+    _Cache,
     _doc,
     _drive_stream,
     _final_meta,
@@ -146,6 +147,83 @@ async def test_an_off_topic_question_on_a_bot_with_a_scheduler_is_still_refused(
     assert captured["prompts"] == []
 
 
+@pytest.mark.parametrize(
+    "question",
+    [
+        HINGLISH_CALL,
+        "can i book a demo with your team?",
+        "book a demo",
+        "can we schedule a call tomorrow",
+        "how can i book a demo?",
+        "how do i schedule a call with you",
+        "i want to set up a meeting with acme",
+    ],
+)
+def test_a_booking_request_addressed_to_the_business_is_one(question):
+    assert rs._is_booking_request(question, "Acme", hinglish=True)
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "how do I schedule a meeting in outlook?",
+        "how do i book a call on zoom for my team",
+        "what is the best way to schedule a meeting with my manager",
+        "where can i book a consultation with a lawyer",
+    ],
+)
+def test_a_scheduling_how_to_is_not_a_booking_request(question):
+    assert not rs._is_booking_request(question, "Acme", hinglish=True)
+
+
+@pytest.mark.asyncio
+async def test_a_scheduling_how_to_the_judge_rejects_is_not_bypassed(db, monkeypatch):
+    """Review, 2026-09-17: any meeting-shaped message skipped the judge on a bot
+    with a scheduler, so a question about Outlook reached the model."""
+    captured = _stub_pipeline(monkeypatch, chunks=MODEL_REPLY, retrieved=[_doc("We run a 24x7 SOC.")], relevant=False)
+    bot = _scheduler_bot(db, monkeypatch, "scope-outlook")
+
+    frames = await _drive_stream(bot, "how do I schedule a meeting in outlook?", "scope-outlook")
+
+    assert captured["prompts"] == []
+    assert "show_booking" not in _final_meta(frames)
+
+
+class _AlwaysHit(_Cache):
+    def get(self, key):
+        return {"answer": "A cached reply.", "sources": []}
+
+
+@pytest.mark.asyncio
+async def test_a_booking_request_is_never_served_from_the_qa_cache(db, monkeypatch):
+    """A cached answer carries no card, so a replayed one drops the booking card."""
+    captured = _stub_pipeline(
+        monkeypatch, chunks=MODEL_REPLY, retrieved=[_doc("We run a 24x7 SOC.")], cache=_AlwaysHit()
+    )
+    bot = _scheduler_bot(db, monkeypatch, "scope-cache-read")
+
+    frames = await _drive_stream(bot, "can i book a demo with your team?", "scope-cache-read")
+
+    assert "A cached reply." not in _answer_text(frames)
+    assert len(captured["prompts"]) == 1
+    assert _final_meta(frames)["show_booking"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_booking_request_is_never_written_to_the_qa_cache(db, monkeypatch):
+    """The second ask has its card deduped, so nothing else kept it out of the cache."""
+    captured = _stub_pipeline(monkeypatch, chunks=MODEL_REPLY, retrieved=[_doc("We run a 24x7 SOC.")])
+    bot = _scheduler_bot(db, monkeypatch, "scope-cache-write")
+
+    first = await _drive_stream(bot, "can i book a demo with your team?", "scope-cache-write")
+    second = await _drive_stream(bot, "can i book a demo with your team?", "scope-cache-write")
+
+    assert _final_meta(first)["show_booking"] is True
+    assert "show_booking" not in _final_meta(second)
+    assert len(captured["prompts"]) == 2
+    assert captured["cache"].store == {}
+
+
 # ── A request for the company's own material ─────────────────────────────────
 
 
@@ -188,6 +266,10 @@ def test_asking_the_business_for_its_material_is_clearly_on_scope(question):
         "summarise the ibm data breach report for me",
         "what is a good guide to learning french",
         "can i download movies for free",
+        "do you have any research on climate change",
+        "can you share some resources for learning python",
+        "do u have a guide to making sourdough",
+        "can you provide a checklist for my wedding",
     ],
 )
 def test_other_mentions_of_reports_and_downloads_are_not(question):

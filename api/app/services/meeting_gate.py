@@ -293,6 +293,63 @@ def is_meeting_question(question: object, *, hinglish: bool = True) -> bool:
     return bool(_MEETING_RE.search(question) or (hinglish and _HINGLISH_MEETING_RE.search(question)))
 
 
+# Who a scheduling request is addressed to. A bot with a scheduler lets a
+# meeting request skip the relevance judge (``rag_service``), which is right for
+# "can we get on a call with your team" and wrong for "how do I schedule a
+# meeting in outlook?" (review, 2026-09-17): the second asks how to use a tool.
+#
+# The visitor speaking to the business: "you", "your team", "us", "can we".
+_ADDRESSES_THE_BUSINESS_RE = re.compile(
+    r"\b(?:you|u|your|ur|yours|y'?all|us)\b" + r"|" + _LETS + r"|\b(?:can|could|shall)\s+we\b",
+    re.IGNORECASE,
+)
+# With the business in so many words: "with you", "with your sales team".
+_WITH_THE_BUSINESS_RE = re.compile(
+    r"\bwith\s+(?:you|u|us|y'?all|(?:your|ur)\s+(?:[a-z]+\s+)?(?:team|founders?|experts?|people|staff))\b",
+    re.IGNORECASE,
+)
+# A how-to question: "how do I schedule a meeting", "what is the best way to".
+_HOW_TO_RE = re.compile(
+    r"\bhow\s+(?:do|does|can|could|would|should|to)\b"
+    r"|\b(?:what(?:'s|\s+is)|which\s+is)\s+the\s+(?:best|easiest|right|fastest)\s+way\b"
+    r"|\bwhere\s+(?:do|does|can|could|should)\s+(?:i|we|one|people)\b",
+    re.IGNORECASE,
+)
+# The whole message is a bare request for time, with nothing naming a tool or a
+# third party: "book a demo", "can i get a call?", "how can i book a demo?".
+_BARE_BOOKING_REQUEST_RE = re.compile(
+    r"^\s*(?:(?:hi|hey|hello|ok|okay)[\s,!.]+)?(?:please\s+)?"
+    r"(?:(?:can|could|may)\s+i\s+|how\s+(?:can|do)\s+i\s+"
+    r"|i\s+(?:want|need|would\s+like|'d\s+like|wanna)\s+(?:to\s+)?)?"
+    r"(?:(?:book|schedule|get|set\s*up|arrange|request)\s+)?(?:a|an)\s+(?:quick\s+|short\s+|free\s+)?"
+    r"(?:meeting|demo|call|appointment|consultation|walkthrough)"
+    r"(?:\s+(?:please|pls))?\s*[.?!]*\s*$",
+    re.IGNORECASE,
+)
+
+
+def is_addressed_to_the_business(question: object, *, hinglish: bool = True) -> bool:
+    """True when a scheduling request asks the business itself for the time.
+
+    A Hinglish request shape counts (each one asks the team), as does a bare
+    request with nothing else in the message. A how-to question counts only
+    when it names the business ("how do i schedule a call with you"); any other
+    request needs a word addressing it ("you", "your team", "can we"). The
+    company's name is the caller's to check, since this module has no bot.
+    """
+    if not isinstance(question, str) or not question.strip():
+        return False
+    if _BARE_BOOKING_REQUEST_RE.match(question):
+        return True
+    if hinglish and _HINGLISH_MEETING_RE.search(question):
+        return True
+    if _WITH_THE_BUSINESS_RE.search(question):
+        return True
+    if _HOW_TO_RE.search(question):
+        return False
+    return bool(_ADDRESSES_THE_BUSINESS_RE.search(question))
+
+
 def scheduler_is_configured(bot: object) -> bool:
     """Whether this bot has a usable online scheduler.
 

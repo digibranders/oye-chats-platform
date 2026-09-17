@@ -129,7 +129,8 @@ _ACK_TERMS = {
 # fillers or a thanks, and close with up to two thanks or goodbyes, so "ok bye
 # thanks" and "no thats it thank you" match while "thanks, what does the soc plan
 # cost" and "thats all the services you offer?" do not. A message ending in "?"
-# never gets here ("that's it?" is surprise, not a goodbye; see ``route_intent``).
+# never gets here, nor one ending in "?" and then "!" ("that's it?" and
+# "that's it?!" are surprise, not a goodbye; see ``route_intent``).
 # Every repeat is bounded and the separators share no characters with the
 # words, so matching stays linear.
 _CLOSING_SEP = r"[\s,.!]+"
@@ -914,7 +915,11 @@ def route_intent(
 
     # A closing: whole message, a phrase that ends the chat, and not asked as a
     # question. After the term sets, so a bare "thanks" stays the ack.
-    if word_count <= 12 and not raw.endswith("?") and any(_CLOSING_RE.match(s) for s in term_spellings(norm)):
+    if (
+        word_count <= 12
+        and not raw.rstrip(" \t\r\n!.").endswith("?")
+        and any(_CLOSING_RE.match(s) for s in term_spellings(norm))
+    ):
         return _closing(company_name)
 
     # 4) One-word gibberish. The ASCII-letters-only guard keeps matching

@@ -49,6 +49,11 @@ class TestAReferenceToAnEarlierTurn:
             "actually we're a bank",
             "we are a bank, not an insurer",
             "not a hospital, a bank",
+            "not hospital, we are a bank",
+            "no, not a hospital. we are a bank",
+            "our company is a bank, not an insurer",
+            "i meant the enterprise plan.",
+            "actually we're a mid-size bank. what changes",
         ],
     )
     def test_refers_back(self, question):
@@ -63,6 +68,15 @@ class TestAReferenceToAnEarlierTurn:
             "we are a bank",
             "not sure",
             "is it a one time payment",
+            "I meant what is the capital of france",
+            "actually i'm looking for the weather in paris",
+            "i'm a developer, not a designer. write me a python sorting function",
+            "no, not really",
+            "not sure, a bit confused",
+            "not bad, a bit expensive",
+            "not now, maybe later",
+            "not interested",
+            "no not yet",
             "",
         ],
     )
@@ -105,6 +119,8 @@ class TestAnIdentityQuestion:
             "who are you partnered with",
             "is this free or paid",
             "is this eventus or globex",
+            "what company is this laptop from",
+            "which brand is this phone",
             "what is the capital of france",
             "",
         ],
@@ -144,13 +160,14 @@ class TestValueAndCareersQuestionsAreOnScope:
 
 
 class TestTheGapRule:
-    def test_the_gap_line_is_only_for_a_fact_the_conversation_lacks_too(self):
+    def test_the_gap_line_is_not_for_a_fact_already_given_or_a_listed_item(self):
         prompt, _user = rs.build_hybrid_prompt(
             SimpleNamespace(name="Acme", id=1), "the third one", "", "USER: hi\nBOT: hello", company_name="Acme"
         )
 
-        assert "absent from both the REFERENCE INFORMATION and the CONVERSATION HISTORY" in prompt
-        assert "never for an item you already listed" in prompt
+        assert "absent from the REFERENCE INFORMATION and from your own earlier replies" in prompt
+        assert "Never use it for an item you already listed" in prompt
+        assert "absent from both the REFERENCE INFORMATION and the CONVERSATION HISTORY" not in prompt
 
 
 class TestThePipeline:

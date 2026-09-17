@@ -60,8 +60,10 @@ QA_RESPONSE_TTL = 3600  # 1 hour
 #: carries in the reference context, and keeps SLAs, response times, guarantees and
 #: countries served to untagged pages; RULE 5c says a yes must match the exact
 #: capability asked; the 5a gap path also requires the fact to be absent from the
-#: conversation and is never for a listed item, a correction or who the bot is;
-#: essays and homework are out of scope (production evaluation, 2026-09-17).
+#: bot's own earlier replies (a visitor's claim never counts) and is never for a
+#: listed item, a correction or who the bot is; a borrowed figure points at the
+#: team only on a plan with a team path; essays and homework are out of scope
+#: (production evaluation, 2026-09-17).
 QA_PROMPT_VERSION = 7
 TRANSLATION_TTL = 86400  # 24 hours (Phase 4 operator translation)
 

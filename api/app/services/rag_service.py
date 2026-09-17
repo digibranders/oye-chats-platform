@@ -2164,18 +2164,46 @@ _ASKS_OUR_ASSURANCES_RE = re.compile(
 # share", "... i can download", "download your ..."), so "write a report on
 # cyber security" and "how do i report a bug" stay unknown. At most three words
 # sit between, so the match stays linear.
-_MATERIAL_NOUNS = (
-    r"(?:reports?|white\s?papers?|e-?books?|guides?|brochures?|data\s?sheets?|case\s+stud(?:y|ies)"
-    r"|research|studies|papers?|resources|downloads|pdfs?|playbooks?|checklists?)"
+#
+# A whitepaper, ebook, brochure, datasheet or case study is something a business
+# publishes about itself, so asking for one is enough. A report, a guide or
+# "research" can be anyone's ("do you have any research on climate change",
+# "can you provide a checklist for my wedding"), so those need an ownership
+# marker as well (``_MATERIAL_OWNERSHIP_RE``); the company's name already makes a
+# question clearly on scope by itself.
+_OWN_MATERIAL_NOUNS = (
+    r"(?:white\s?papers?|e-?books?|brochures?|data\s?sheets?|case\s+stud(?:y|ies)|one-?pagers?|pitch\s+decks?)"
+)
+_ANY_MATERIAL_NOUNS = (
+    r"(?:reports?|guides?|research|studies|papers?|resources|downloads|pdfs?|playbooks?|checklists?"
+    rf"|{_OWN_MATERIAL_NOUNS})"
+)
+_ASKS_FOR_MATERIAL = (
+    r"\b(?:do|does|can|could|would)\s+(?:you|u|y'?all)\s+(?:guys\s+)?(?:have|publish|offer|share|send|provide)\s+"
+    r"(?:(?:any|a|an|some|your|ur)\s+)?(?:[\w-]+\s+){{0,3}}?{nouns}\b"
 )
 _ASKS_OUR_MATERIALS_RE = re.compile(
     r"(?i)(?:"
-    r"\b(?:do|does|can|could|would)\s+(?:you|u|y'?all)\s+(?:guys\s+)?(?:have|publish|offer|share|send|provide)\s+"
-    rf"(?:(?:any|a|an|some|your)\s+)?(?:[\w-]+\s+){{0,3}}?{_MATERIAL_NOUNS}\b"
-    rf"|\b{_MATERIAL_NOUNS}\s+(?:that\s+)?(?:you|u|i|we)\s+(?:can|could)\s+(?:share|send|download|get|read)\b"
-    r"|\b(?:can|could|may)\s+(?:i|we)\s+download\s+(?:your|ur)\b"
-    r")"
+    + _ASKS_FOR_MATERIAL.format(nouns=_OWN_MATERIAL_NOUNS)
+    + rf"|\b{_ANY_MATERIAL_NOUNS}\s+(?:that\s+)?(?:(?:you|u)\s+(?:can|could)\s+(?:share|send)"
+    r"|(?:i|we)\s+(?:can|could)\s+download)\b"
+    + rf"|\b{_OWN_MATERIAL_NOUNS}\s+(?:that\s+)?(?:i|we)\s+(?:can|could)\s+(?:get|read)\b"
+    + r"|\b(?:can|could|may)\s+(?:i|we)\s+download\s+(?:your|ur)\b"
+    + r")"
 )
+_ASKS_FOR_ANY_MATERIAL_RE = re.compile(r"(?i)" + _ASKS_FOR_MATERIAL.format(nouns=_ANY_MATERIAL_NOUNS))
+_MATERIAL_OWNERSHIP_RE = re.compile(
+    r"(?i)\b(?:your|ur|yours)\b"
+    r"|\b(?:you|u)\s+(?:guys\s+)?(?:publish|have\s+published|put\s+out|released?)\b"
+    r"|\bdownload"
+)
+
+
+def _asks_our_materials(question: str) -> bool:
+    """True when the visitor asks the business for its own published material."""
+    if _ASKS_OUR_MATERIALS_RE.search(question):
+        return True
+    return bool(_ASKS_FOR_ANY_MATERIAL_RE.search(question) and _MATERIAL_OWNERSHIP_RE.search(question))
 
 
 def _question_is_clearly_on_scope(question: str, company_name: str | None) -> bool:
@@ -2196,7 +2224,7 @@ def _question_is_clearly_on_scope(question: str, company_name: str | None) -> bo
         _STRICT_ON_SCOPE_RE.search(question)
         or _COMPARES_US_RE.search(question)
         or _ASKS_OUR_ASSURANCES_RE.search(question)
-        or _ASKS_OUR_MATERIALS_RE.search(question)
+        or _asks_our_materials(question)
         or _asks_company_facts(question, company_name)
     )
 
@@ -2808,6 +2836,9 @@ _LEAKAGE_SENTINELS: tuple[str, ...] = (
     "═══════════════════════════════════════════════════════",
     "<<<DOCUMENT ",
     "<<<END DOCUMENT",
+    # The reference context's page tag: only a model echoing a document header
+    # writes it.
+    GENERAL_ARTICLE_TAG,
 )
 
 
@@ -6703,6 +6734,11 @@ SUPPORT REQUESTS: Say "our team", never "human team".
     _offer_team = ", then offer the team" if has_team_offer else ""
     _gap_offer = ", then end with a team offer (TEAM OFFERS)" if has_team_offer else ""
     _frustration_offer = ", or the team offer" if has_team_offer else ""
+    # Where a borrowed figure sends the visitor (RULE 5a): the team only when the
+    # plan has a path to it.
+    _borrowed_figure_line = (
+        "say our exact terms come from our team" if has_team_offer else "say we don't publish that figure here"
+    )
 
     meeting_section = ""
     if meeting_booking_enabled:
@@ -7051,8 +7087,8 @@ RULES:
 4. FOLLOW-UP QUESTIONS: ask a clarifying question only when the visitor's question is genuinely ambiguous. Qualifying questions are decided per turn in LEAD QUALIFICATION.
 5. GROUNDING. Facts come only from the REFERENCE INFORMATION and the business details in this prompt. When a fact is there, state it directly and confidently.
 5a. VERIFIABLE-CLAIM GROUND RULE. Certifications, compliance, reports, customers, figures, SLAs, benchmarks, terms, prices, integrations, features, dates, locations and names are verifiable claims. Inventing, paraphrasing, or inferring a verifiable claim is forbidden, even when the inference feels safe. State one only when you can point to the sentence that supports it.
-  OWN CREDENTIALS AND TERMS. A certification, accreditation, empanelment or compliance status, and a commercial or contract term (payment terms, invoicing currency, refunds, NDAs, SLAs, onboarding timelines, in-person meetings), counts as present only when the reference material says {display_name} itself holds or offers it. The same applies to an audit report (for example a SOC 2 report) and to office, SOC or team locations. A standard named as a service {display_name} provides to its customers is not {display_name}'s own certification. A general article, buyer checklist or industry guide describes the topic, not {display_name}'s own terms or process. So do listicles, templates, comparison articles and "how to choose a provider" pages. A document whose header says "{GENERAL_ARTICLE_TAG}" is one of these. SLAs, response or remediation times, guarantees and the countries {display_name} serves are {display_name}'s own only when an untagged document states them for {display_name}. A figure given as an example, a best practice or what to ask of a provider is never ours, not even as a closest or typical target: say our exact terms come from our team. Otherwise take path (a), in two sentences at most. When the visitor asks about several credentials, answer each one on its own evidence.
-  (a) GAP. Use this only when the specific fact asked for is absent from both the REFERENCE INFORMATION and the CONVERSATION HISTORY, never for an item you already listed, a correction of the visitor's own details, or who you are. When it is present, state it. Say the gap in one plain clause ("I don't have our exact figure for that."), add the closest present facts that answer part of the question{_gap_offer}. Never swap in an adjacent fact ("we offer readiness support" does not answer "are you certified"), and never use "sits with our team" as a stock reply.
+  OWN CREDENTIALS AND TERMS. A certification, accreditation, empanelment or compliance status, and a commercial or contract term (payment terms, invoicing currency, refunds, NDAs, SLAs, onboarding timelines, in-person meetings), counts as present only when the reference material says {display_name} itself holds or offers it. The same applies to an audit report (for example a SOC 2 report) and to office, SOC or team locations. A standard named as a service {display_name} provides to its customers is not {display_name}'s own certification. A general article, buyer checklist or industry guide describes the topic, not {display_name}'s own terms or process. So do listicles, templates, comparison articles and "how to choose a provider" pages. A document whose header says "{GENERAL_ARTICLE_TAG}" is one of these. SLAs, response or remediation times, guarantees and the countries {display_name} serves are {display_name}'s own only when an untagged document states them for {display_name}. A figure given as an example, a best practice or what to ask of a provider is never ours, not even as a closest or typical target: {_borrowed_figure_line}. Otherwise take path (a), in two sentences at most. When the visitor asks about several credentials, answer each one on its own evidence.
+  (a) GAP. Use this only when the specific fact asked for is absent from the REFERENCE INFORMATION and from your own earlier replies. What the visitor claims is never a fact you stated. Never use it for an item you already listed, a correction of the visitor's own details, or who you are. When it is present, state it. Say the gap in one plain clause ("I don't have our exact figure for that."), add the closest present facts that answer part of the question{_gap_offer}. Never swap in an adjacent fact ("we offer readiness support" does not answer "are you certified"), and never use "sits with our team" as a stock reply.
   (b) POSITIONING (mission, philosophy, broad capability framing) needs no citation: say it with confidence.
 5c. CAPABILITY AND CONTEXT QUESTIONS. The 5a gap clause is only for a specific fact the reference material lacks. Answer "do you handle, offer or work with X?" from what {display_name} does: if X is among its offerings, say so; if its offerings in the reference material clearly do not include X, say plainly that {display_name} does not offer X and what it does do{_offer_team}; only when that is unclear, use the gap clause. A yes must match the exact capability asked: on-premises is not air-gapped, and offices or clients in a region are not service in a named country. When only the nearer fact is stated, give that fact and the gap. When a follow-up changes the visitor's own context (industry, company size, region), answer the question again from the reference material for the new context.
 5d. COMPETITOR COMPARISONS ("how are you better than X", "X vs you") are on-scope. Answer with {display_name}'s own strengths as the reference material states them. Say nothing about the competitor that the reference material does not state, and never disparage them. If the reference material gives no basis for a comparison, say what {display_name} does{_offer_team}.
@@ -7411,18 +7447,35 @@ _ORDINAL_WORDS = (
     r"(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|last|final|1st|2nd|3rd|[4-9]th|10th)"
 )
 _I_OR_WE_ARE = r"(?:we're|we\s+are|i'm|im|i\s+am)"
+# The organisation speaking: "we are", "our company is". A correction of the
+# form "X, not Y" counts only in these words, since "i'm a developer, not a
+# designer. write me a sorting function" is a person, not the business context
+# the answer was written for.
+_WE_ARE = r"(?:we're|we\s+are|our\s+(?:company|business|firm|organi[sz]ation|org|team)\s+is)"
+# "not really", "not now", "not sure": a reply, never a correction.
+_NOT_A_CORRECTION = r"(?!(?:really|now|yet|bad|sure|interested|at\s+all|much|quite|exactly)\b)"
+# A short noun phrase that ends the clause: "a bank", "the enterprise plan", "banks."
+# A question word, a pronoun or a verb-like "looking" after it is a new request.
+_SHORT_NOUN_PHRASE = (
+    r"(?!(?:what|how|why|who|where|when|which|is|are|do|does|can|could|to|looking|trying|asking|wondering)\b)"
+    r"(?:(?:an?|the|in|into|for)\s+)?[\w-]+(?:\s+[\w-]+){0,2}\s*(?:[?.!,;]|$)"
+)
 _REFERS_TO_AN_EARLIER_TURN_RE = re.compile(
     # An item of a list: "the third one", "the 2nd option", or a bare "the last."
     rf"(?i)\bthe\s+{_ORDINAL_WORDS}\s+(?:ones?|options?|items?|points?|bullets?|entry|choices?)\b"
     rf"|(?:^|[?.!,;]\s*)(?:and\s+|what\s+about\s+|how\s+about\s+)?the\s+{_ORDINAL_WORDS}\s*(?:[?.!,;]|$)"
     r"|\bthe\s+(?:latter|former)\s*(?:one\b|please\b|[?.!,;]|$)"
-    # A correction of the visitor's own details.
-    r"|\b(?:i|we)\s+meant\b"
-    rf"|\bactually\s+{_I_OR_WE_ARE}\b"
-    rf"|\b{_I_OR_WE_ARE}\s+(?:actually\s+)?(?:an?\s+)?[\w-]+(?:\s+[\w-]+)?\s*,?\s*not\s+(?:an?\s+)?[\w-]+"
+    # A correction of the visitor's own details, each tied to a short noun
+    # phrase: "i meant banks", "actually we're a bank". "i meant what is the
+    # capital of france" and "actually i'm looking for the weather" are not.
+    rf"|\b(?:i|we)\s+meant\s+(?:{_WE_ARE}\s+)?{_SHORT_NOUN_PHRASE}"
+    rf"|\bactually\s+{_I_OR_WE_ARE}\s+{_SHORT_NOUN_PHRASE}"
+    rf"|\b{_WE_ARE}\s+(?:actually\s+)?(?:an?\s+)?[\w-]+(?:\s+[\w-]+)?\s*,?\s*not\s+{_NOT_A_CORRECTION}"
+    r"(?:an?\s+)?[\w-]+"
     r"|^\s*(?:sorry|oops|my\s+bad|correction|no|nope|wait)\b[\s,.:;!-]*"
-    rf"(?:i\s+meant\s+|it's\s+|its\s+|{_I_OR_WE_ARE}\s+)?not\s+(?!sure\b)(?:an?\s+)?[\w-]+"
-    rf"|\bnot\s+(?:an?\s+)?[\w-]+\s*,\s*(?:(?:{_I_OR_WE_ARE}|it's|its|it\s+is)\s+)?an?\s+[\w-]+"
+    rf"(?:i\s+meant\s+|it's\s+|its\s+|{_I_OR_WE_ARE}\s+)?not\s+{_NOT_A_CORRECTION}(?:an?\s+)?[\w-]+"
+    rf"|\bnot\s+{_NOT_A_CORRECTION}(?:an?\s+)?[\w-]+\s*,\s*(?:(?:{_I_OR_WE_ARE}|it's|its|it\s+is)\s+)?"
+    r"an?\s+(?!(?:bit|lot|little)\b)[\w-]+"
 )
 
 
@@ -7444,7 +7497,9 @@ def _refers_to_an_earlier_turn(question: str) -> bool:
 _ASKS_WHICH_BUSINESS_RE = re.compile(
     r"(?i)\b(?:who|(?:which|what)\s+(?:one|company|business|brand|firm|bot|assistant))\s+"
     r"(?:am\s+i|are\s+we)\s+(?:talking|speaking|chatting)\s+(?:to|with)\b"
-    r"|\b(?:which|what)\s+(?:company|business|brand|firm|website|site)\s+is\s+this\b"
+    # Whole clause only: "what company is this laptop from" asks about a product.
+    r"|\b(?:which|what)\s+(?:company|business|brand|firm|website|site)\s+is\s+this"
+    r"(?:\s+(?:chat|bot|assistant|website|site))?\s*[?.!]*\s*$"
     r"|^\s*(?:(?:so|and|but|ok|okay|wait)\s*,?\s+)?who\s+(?:are|r)\s+(?:you|u)"
     r"(?:\s+(?:guys|exactly|again))?\s*[?.!]*\s*$"
     r"|\bwho\s+do\s+(?:you|u)\s+(?:work\s+for|represent)\b"
@@ -7474,6 +7529,21 @@ def _asks_which_business_this_is(question: str, company_name: str | None) -> boo
         return False
     names = re.compile(r"\b(?:" + "|".join(map(re.escape, signals)) + r")\b", re.IGNORECASE)
     return any(names.search(option) for option in either_or.groups())
+
+
+def _is_booking_request(question: str, company_name: str | None, *, hinglish: bool) -> bool:
+    """True when the visitor asks this business for time on its calendar.
+
+    A meeting-shaped message on a bot with a scheduler skips the relevance
+    judge, so it has to be addressed to the business (``meeting_gate``) or name
+    it: "how do I schedule a meeting in outlook?" is a tool question.
+    """
+    if not _meeting_gate.is_meeting_question(question, hinglish=hinglish):
+        return False
+    if _meeting_gate.is_addressed_to_the_business(question, hinglish=hinglish):
+        return True
+    signals = _company_name_signals(company_name)
+    return bool(signals and re.search(r"\b(?:" + "|".join(map(re.escape, signals)) + r")\b", question, re.IGNORECASE))
 
 
 def _looks_like_follow_up(question: str) -> bool:
@@ -9370,11 +9440,19 @@ async def rag_pipeline_stream(
             _credential_question = not _judges_bypassed and _credential_facts.asks_about_credentials(
                 question, _company_name
             )
+            # A request for time on a bot that can book it is answered with the
+            # booking card, which the cache never stores, so it neither reads
+            # nor writes the cache (the write side skips ``_meeting_request``).
+            # Read on the visitor's words: the rewrite has not run yet.
+            _booking_skips_cache = _scheduler_ready and _meeting_gate.is_meeting_question(
+                question, hinglish=not _judges_bypassed
+            )
             if (
                 _cache_key
                 and not _care_note
                 and not _affirmed_handoff
                 and not _gate_may_intercept
+                and not _booking_skips_cache
                 and not _credential_question
                 and not (_prior_turns and _leans_on_the_last_reply(question))
                 and not _document_request_skips_cache(question, _company_name, _judges_bypassed)
@@ -10395,7 +10473,20 @@ async def rag_pipeline_stream(
             # above only answers for a bot without one. Such a turn skips the
             # judge and the empty-context refusal and reaches generation, where
             # the booking-card safety net attaches the card.
-            _booking_request = _meeting_request and _scheduler_ready
+            # The request must be addressed to the business or name it, since
+            # "how do I schedule a meeting in outlook?" is a tool question the
+            # judge should see (review, 2026-09-17).
+            _booking_request = (
+                _meeting_request
+                and _scheduler_ready
+                and (
+                    _is_booking_request(question, _company_name, hinglish=not _judges_bypassed)
+                    or (
+                        _gate_question != question
+                        and _is_booking_request(_gate_question, _company_name, hinglish=not _judges_bypassed)
+                    )
+                )
+            )
             if _judges_bypassed or _booking_request:
                 _is_relevant, _gate_score = True, 1.0
             else:
@@ -11740,6 +11831,9 @@ async def rag_pipeline_stream(
                         # it would lose its card and its repeat wording.
                         or _price_guard_pivot is not None
                         or _meeting_card_detected
+                        # A request for time with the team, even when the card
+                        # was deduped or outranked: a cached reply carries no card.
+                        or (_scheduler_ready and _meeting_request)
                         or _leave_msg_card_detected
                         or bool(cta_data)
                         # Checked against this turn's retrieval; the read side
