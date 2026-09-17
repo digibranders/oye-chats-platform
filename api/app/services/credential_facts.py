@@ -48,10 +48,10 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import lru_cache
-from urllib.parse import urlsplit
 
 from app.services import runtime_config
 from app.services.llm_service import generate_response_checked
+from app.services.page_kind import GENERAL_ARTICLE_TOKENS, path_tokens
 from app.services.prompt_fence import neutralise_fence
 
 logger = logging.getLogger(__name__)
@@ -585,7 +585,6 @@ def check_credentials(question: str, excerpts: Sequence[Excerpt], company_name: 
 # sentence counts only on a company-own page, with the company as the subject,
 # a holding verb and no hedge, customer or negation in it.
 
-_TOKEN_SPLIT_RE = re.compile(r"[^a-z0-9]+")
 _OWN_PAGE_TOKENS = frozenset(
     {
         "about",
@@ -601,33 +600,18 @@ _OWN_PAGE_TOKENS = frozenset(
         "accreditations",
     }
 )
-_NOT_OWN_PAGE_TOKENS = frozenset(
+#: Every general-article word (shared with the reference context's page tags),
+#: plus the sections (services, careers, a knowledge hub, control mappings)
+#: where a sentence about a credential is not the company holding it.
+_NOT_OWN_PAGE_TOKENS = GENERAL_ARTICLE_TOKENS | frozenset(
     {
-        "blog",
-        "blogs",
-        "guide",
-        "guides",
         "knowledge",
         "hub",
         "mapping",
-        "what",
-        "how",
-        "checklist",
         "playbook",
-        "template",
-        "templates",
         "news",
-        "article",
-        "articles",
-        "insights",
         "resources",
-        "glossary",
-        "learn",
         "webinar",
-        "vs",
-        "comparison",
-        "top",
-        "best",
         "services",
         "service",
         "solutions",
@@ -649,13 +633,9 @@ _NOT_A_HOLDING_RE = re.compile(
 
 
 def _is_own_page(source: str) -> bool:
-    lowered = source.strip().casefold()
-    if lowered.startswith(("http://", "https://")):
-        tokens = set(_TOKEN_SPLIT_RE.split(urlsplit(lowered).path)) - {""}
-        if not tokens:
-            return True
-    else:
-        tokens = set(_TOKEN_SPLIT_RE.split(lowered)) - {""}
+    tokens = path_tokens(source)
+    if not tokens and source.strip().casefold().startswith(("http://", "https://")):
+        return True
     return bool(tokens & _OWN_PAGE_TOKENS) and not tokens & _NOT_OWN_PAGE_TOKENS
 
 

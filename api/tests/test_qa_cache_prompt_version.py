@@ -78,6 +78,10 @@ class TestAPromptChangeCannotShipWithoutAVersionBump:
         # request for a person answered with an offer rather than a promise (2026-09-17).
         # Re-recorded before its first deploy.
         6: "f2ebfda2186cf1fea01fdca76bc9af5ea1049b1dba2d42d7b3575cf510f46815",
+        # 7: general-article page tag, exact-capability yes, a gap path that counts only
+        # facts the bot already gave, a borrowed-figure line that names the team only
+        # on a plan with one, and essays out of scope (2026-09-17).
+        7: "b3279dd37103354b871a5b754963c907a7ec53ee1aebe065f73c2608b7ed397d",
     }
 
     @staticmethod

@@ -112,7 +112,11 @@ _GATE_TTL = 300
 # byte-identical to version 3, so its cached verdicts stay valid, and only a
 # passing verdict is ever cached, so an entry written under the older block can
 # only let a follow-up through for the rest of its five minutes.
-_GATE_PROMPT_VERSION = 3
+#
+# 4: a question about what a term in the business's field means, or how two
+# such terms differ, scores 0.5 (evaluation 2026-09-17: "whats the difference
+# between BAS and red teaming" was refused on a security company's bot).
+_GATE_PROMPT_VERSION = 4
 
 # How much of the retrieved context the judge sees. The preview covers a whole
 # default-size chunk (CHUNK_SIZE=1000) so the judge and the generator read the
@@ -334,6 +338,12 @@ Rate from 0.0 to 1.0:
 - 1.0: at least one chunk directly answers the question
 - 0.5: no chunk answers it outright, but at least one is related enough to help
 - 0.0: no chunk bears on the question at all
+
+A question asking what a term means, or how two terms differ, scores 0.5 when
+the chunks are about the business's field and the term belongs to that field
+(a security testing term asked of chunks about security products), even if no
+chunk names it: the business can say whether it offers it. A term from an
+unrelated field scores 0.0.
 
 IMPORTANT: the question and the chunks may be written in DIFFERENT languages.
 That is normal and expected. Judge only whether the chunks contain the

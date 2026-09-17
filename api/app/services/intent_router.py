@@ -83,7 +83,18 @@ _GREETING_TERMS = {
     "greetings",
     "gm",
     "ge",
+    # A returning visitor announcing themselves.
+    "i'm back",
+    "im back",
+    "i am back",
 }
+
+# "hello again", "hi there once again": a greeting term with "again" after it is
+# still only a greeting. On 2026-09-17 "hello again", the first message of a
+# returning visit, got "Welcome back, Eva!" and then the scope refusal on two
+# production bots. Stripped once from the end before the term lookup, so
+# "again" alone and "hello again, what's your pricing" are not greetings.
+_AGAIN_SUFFIX_RE = re.compile(r" (?:once )?again$")
 
 # Acknowledgements / closers. Short, non-question, no information request.
 _ACK_TERMS = {
@@ -110,6 +121,43 @@ _ACK_TERMS = {
     "k",
     "kk",
 }
+
+# A visitor closing the chat, whole message only (evaluation 2026-09-17: "thanks
+# thats all for now" got the scope refusal on two production bots, which
+# re-opens the conversation the visitor just ended). A closing phrase must be
+# there: "thanks" or "ok" on its own is an ack. It may open with up to two
+# fillers or a thanks, and close with up to two thanks or goodbyes, so "ok bye
+# thanks" and "no thats it thank you" match while "thanks, what does the soc plan
+# cost" and "thats all the services you offer?" do not. A message ending in "?"
+# never gets here, nor one ending in "?" and then "!" ("that's it?" and
+# "that's it?!" are surprise, not a goodbye; see ``route_intent``).
+# Every repeat is bounded and the separators share no characters with the
+# words, so matching stays linear.
+_CLOSING_SEP = r"[\s,.!]+"
+_CLOSING_THANKS = (
+    r"(?:thanks|thank\s+(?:you|u)|thx|ty|tysm|cheers|many\s+thanks)"
+    r"(?:\s+(?:a\s+lot|so\s+much|very\s+much|again|for\s+(?:the|your|all\s+the)\s+help|for\s+helping))?"
+)
+_CLOSING_FILLER = (
+    r"(?:ok|okay|okk|alright|cool|great|perfect|awesome|no|nope|nah|got\s+it|sure|yes|yeah|yep|that\s+helps)"
+)
+_CLOSING_GOODBYE = (
+    r"(?:bye(?:\s+bye)?|goodbye|good\s+bye|see\s+(?:you|ya|u)(?:\s+(?:later|soon|around))?"
+    r"|talk\s+(?:to\s+(?:you|u)\s+)?(?:later|soon)|ttyl|take\s+care|good\s+night"
+    r"|have\s+a\s+(?:good|great|nice|lovely)\s+(?:day|one|evening|night|weekend))"
+)
+_CLOSING_RE = re.compile(
+    rf"^(?:{_CLOSING_FILLER}{_CLOSING_SEP}){{0,2}}(?:{_CLOSING_THANKS}{_CLOSING_SEP})?(?:"
+    # "that's all for now", "thats it", "that's everything i needed"
+    r"(?:that'?s|thats|that\s+is|it'?s|its)\s+(?:all|it|everything)"
+    r"(?:\s+(?:for\s+(?:now|today)|i\s+(?:needed|wanted|had)(?:\s+to\s+know)?|from\s+(?:my\s+side|me)))?"
+    # "i'm done", "im all set for now"
+    r"|(?:i'?m|im|i\s+am|we'?re|we\s+are)\s+(?:done|all\s+(?:set|good)|sorted)(?:\s+(?:for\s+(?:now|today)|now))?"
+    # "nothing else", "nothing more for now"
+    r"|nothing\s+(?:else|more)(?:\s+for\s+(?:now|today))?"
+    rf"|{_CLOSING_GOODBYE}"
+    rf")(?:{_CLOSING_SEP}(?:{_CLOSING_THANKS}|{_CLOSING_GOODBYE})){{0,2}}$"
+)
 
 # Negative ack. Visitor declining a previous offer. "n" means no the same way
 # a bare "y" means yes; see rag_service._AFFIRMATIVE_RE and
@@ -502,7 +550,7 @@ class IntentResponse:
     answer
         The text to return verbatim.
     intent
-        Short label (greeting | ack | neg_ack | is_ai | bot_name | who_made_you
+        Short label (greeting | ack | closing | neg_ack | is_ai | bot_name | who_made_you
         | recorded | remember | how_are_you | compliment | frustration | abuse
         | crisis | medical_advice | unclear | name_recall). Used for
         logs/metrics, not shown to visitor.
@@ -858,12 +906,21 @@ def route_intent(
     #    is six or more consonants, which that check would read as unclear.
     if word_count <= 4:
         spellings = term_spellings(norm)
-        if any(spelling in _GREETING_TERMS for spelling in spellings):
+        if any(_AGAIN_SUFFIX_RE.sub("", spelling) in _GREETING_TERMS for spelling in spellings):
             return _greeting(company_name)
         if any(spelling in _ACK_TERMS for spelling in spellings):
             return _ack(company_name)
         if any(spelling in _NEG_ACK_TERMS for spelling in spellings):
             return _neg_ack(company_name)
+
+    # A closing: whole message, a phrase that ends the chat, and not asked as a
+    # question. After the term sets, so a bare "thanks" stays the ack.
+    if (
+        word_count <= 12
+        and not raw.rstrip(" \t\r\n!.").endswith("?")
+        and any(_CLOSING_RE.match(s) for s in term_spellings(norm))
+    ):
+        return _closing(company_name)
 
     # 4) One-word gibberish. The ASCII-letters-only guard keeps matching
     #    linear for a long adversarial input. The term sets are matched above,
@@ -946,6 +1003,14 @@ def _ack(company_name: str | None) -> IntentResponse:
         answer=f"Glad that helped. Anything else you want to know about {co}?",
         intent="ack",
     )
+
+
+def _closing(company_name: str | None) -> IntentResponse:
+    # One warm line and nothing to answer: no question, no offer, no sales
+    # route. "Thanks for chatting with us" reads oddly, so the None case gets
+    # its own wording instead of going through ``_co``.
+    where = f" with {_co(company_name)}" if company_name else ""
+    return IntentResponse(answer=f"Thanks for chatting{where}. Have a great day!", intent="closing")
 
 
 def _neg_ack(company_name: str | None) -> IntentResponse:

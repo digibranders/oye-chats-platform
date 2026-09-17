@@ -345,7 +345,8 @@ class TestNonEnglishIsNotRefusedAsOffTopic:
             # Anchored on the call site, not on a comment, so rewording a
             # comment can neither break this nor let a regression slip through.
             preceding = src[max(0, call - 2000) : call]
-            assert "if _judges_bypassed:" in preceding, (
+            # A bookable meeting request also skips the judge, in the same condition.
+            assert "if _judges_bypassed:" in preceding or "if _judges_bypassed or _booking_request:" in preceding, (
                 f"{fn.__name__} must not run the English-tuned relevance gate on a non-English conversation"
             )
 

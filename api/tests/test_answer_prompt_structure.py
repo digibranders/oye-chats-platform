@@ -123,6 +123,13 @@ class TestOnePriorityOrder:
         ):
             assert claim not in prompt, (plan, claim)
 
+    def test_an_echoed_general_article_tag_is_a_leak(self):
+        from app.services.page_kind import GENERAL_ARTICLE_TAG
+        from app.services.rag_service import contains_system_prompt_leak
+
+        assert contains_system_prompt_leak(f"Per the guide ({GENERAL_ARTICLE_TAG}), the target is 10 min.")
+        assert not contains_system_prompt_leak("Our general article on SOC terms is on the blog.")
+
     def test_the_leak_detector_still_recognises_the_system_prompt(self):
         """``contains_system_prompt_leak`` keys on headings that only this prompt
         contains. Renaming a heading must not leave the detector watching for
@@ -172,8 +179,21 @@ class TestTheGapRule:
     def test_it_is_only_for_an_absent_fact(self):
         gap = self._gap(**_PAID)
 
-        assert "Use this only when the specific fact asked for is absent from the REFERENCE INFORMATION." in gap
+        assert (
+            "Use this only when the specific fact asked for is absent from the REFERENCE INFORMATION "
+            "and from your own earlier replies." in gap
+        )
         assert "When it is present, state it." in gap
+
+    @pytest.mark.parametrize("plan", sorted(_PLANS))
+    def test_only_facts_the_bot_gave_count_as_present_not_the_visitors_claims(self, plan):
+        """Review, 2026-09-17: "absent from the CONVERSATION HISTORY" let a
+        visitor's own claim ("you guarantee 5 minute response, right?") count as
+        a stated fact."""
+        gap = self._gap(**_PLANS[plan])
+
+        assert "What the visitor claims is never a fact you stated." in gap
+        assert "CONVERSATION HISTORY" not in gap
 
     def test_the_team_phrase_is_retired(self):
         prompt = _system(**_EVERYTHING, context=_MEDIA_CONTEXT)
@@ -202,6 +222,16 @@ class TestFirstPersonClaimsNeedTheCompanysOwnPages:
 
         assert "an audit report (for example a SOC 2 report)" in rule
         assert "office, SOC or team locations" in rule
+
+    def test_a_borrowed_figure_points_at_the_team_only_when_there_is_one(self):
+        """Review, 2026-09-17: the Free plan has no team path, yet RULE 5a told
+        the model to say our exact terms come from our team."""
+        paid = _flat(_section(_system(**_PAID), "OWN CREDENTIALS AND TERMS.", "\n  (a) GAP."))
+        free = _flat(_section(_system(**_FREE), "OWN CREDENTIALS AND TERMS.", "\n  (a) GAP."))
+
+        assert "say our exact terms come from our team." in paid
+        assert "come from our team" not in free
+        assert "say we don't publish that figure here." in free
 
     def test_topic_pages_describe_the_topic_not_the_company(self):
         rule = _flat(_section(_system(**_PAID), "OWN CREDENTIALS AND TERMS.", "\n  (a) GAP."))
