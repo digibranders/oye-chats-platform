@@ -1995,6 +1995,11 @@ _STRICT_ON_SCOPE_RE = re.compile(
     r"|demo|trial|free\s+tier"
     r"|address|location|office|headquartered|based"
     r"|contact|support|helpdesk"
+    # Selling through or alongside the business. "whats the margin for channel
+    # partners" after an answer about the partner program was refused on two
+    # bots (reported from production on 2026-09-17).
+    r"|partners?|partnerships?|resellers?|resell|reselling|distributors?|affiliates?"
+    r"|referral\s+program|white[\s-]?label"
     r"|hours?|timezone|time\s+zone"
     r"|industry|industries|vertical|sector"
     r")\b"
@@ -2038,15 +2043,19 @@ _COMPARES_US_RE = re.compile(
 # what gdpr is" stay unknown. At most three words sit between, so the match
 # stays linear.
 _ASSURANCE_TERMS = (
-    r"(?:slas?|mttd|mttr|uptime|response\s+times?|compliance|certifications?"
-    r"|gdpr|hipaa|dpdp|iso\s*27001|soc\s*2|pci(?:[\s-]*dss)?)"
+    r"(?:slas?|mttd|mttr|uptime|response\s+times?|compliance|certifications?|certificates?"
+    r"|accreditations?|empanell?ments?|awards?|gdpr|hipaa|dpdp|iso\s*27001|soc\s*2|pci(?:[\s-]*dss)?)"
 )
 _ASKS_OUR_ASSURANCES_RE = re.compile(
     r"(?i)(?:"
     r"\b(?:are|r)\s+(?:you|u|y'?all)\s+(?:[\w-]+\s+){0,3}?"
-    r"(?:compliant|certified|accredited|audited|insured|licensed|registered)\b"
-    r"|\b(?:your|ur|(?:you|u)\s+(?:have|offer|provide|guarantee|follow|meet|support|comply\s+with))\s+"
+    r"(?:compliant|certified|accredited|audited|insured|licensed|registered|empanell?ed)\b"
+    r"|\b(?:your|ur|(?:you|u)\s+(?:have|hold|offer|provide|guarantee|follow|meet|support|comply\s+with))\s+"
     rf"(?:[\w-]+\s+){{0,3}}?{_ASSURANCE_TERMS}\b"
+    # The term first, the business after: "what certifications do you have"
+    # was refused on a bot whose knowledge base says it is CERT-In empanelled
+    # (reported from production on 2026-09-17).
+    rf"|\b{_ASSURANCE_TERMS}\s+(?:[\w-]+\s+){{0,2}}?(?:do|does|did|have|has)\s+(?:you|u|y'?all)\b"
     r")"
 )
 
@@ -7420,6 +7429,27 @@ def _is_elliptical_fragment(question: str) -> bool:
     )
 
 
+# A message joined onto the conversation rather than starting a new subject: a
+# clause opened by a conjunction ("... ? and is remote ok", "d'accord, et c'est
+# disponible en France ?"), an acknowledgement leading into more, or a bare
+# either-or ("paid or unpaid?").
+_CONTINUES_THE_CONVERSATION_RE = re.compile(
+    r"(?i)(?:^|[?,.;:!]\s*)(?:and|or|but|also|plus|so|then|et|aussi|y|und)\b"
+    r"|^\s*(?:d['\u2019]accord|ok(?:ay)?|alright|cool|great|nice|got\s+it)\b"
+    r"|^\s*[\w-]+\s+or\s+[\w-]+\s*\??\s*$"
+)
+
+
+def _continues_the_conversation(question: str) -> bool:
+    """True when the message is shaped as a continuation of the conversation.
+
+    Narrower than ``_is_elliptical_fragment`` on purpose. It decides whether a
+    fragment the judge rejected gets the no-info pivot instead of the scope
+    line, and "what is the capital of france" is a fragment too.
+    """
+    return bool(_CONTINUES_THE_CONVERSATION_RE.search(question or ""))
+
+
 def _looks_like_follow_up(question: str) -> bool:
     """True when the message refers back to the conversation: a pronoun,
     determiner or phrase signal (``_FOLLOW_UP_SIGNALS``), or a request for more
@@ -10419,7 +10449,18 @@ async def rag_pipeline_stream(
                 # On-scope questions where the
                 # gate fired (no matching chunks) get the graceful no-info pivot
                 # instead of the off-topic refusal.
-                _on_scope = _topical_followup or _question_looks_on_scope(question, _company_name)
+                # A short follow-up that visibly continues the reply it answers
+                # (read beside it, ``_gate_context``): "paid or unpaid? and is
+                # remote ok" after an internships answer. The judge can still find
+                # nothing in the chunks, since retrieval read the fragment's own
+                # words, and then the honest reply is that the detail is not on
+                # hand, not that the visitor went off topic (reported from
+                # production on 2026-09-17).
+                _on_scope = (
+                    _topical_followup
+                    or (_gate_context is not None and _continues_the_conversation(question))
+                    or _question_looks_on_scope(question, _company_name)
+                )
                 if not _on_scope and search_query != question:
                     _on_scope = _question_looks_on_scope(search_query, _company_name)
 
