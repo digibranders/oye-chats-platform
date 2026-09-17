@@ -47,9 +47,11 @@ from app.security.injection_patterns import (
 )
 from app.services import credential_facts as _credential_facts
 from app.services import currency_scoring as _currency_scoring
+from app.services import field_question as _field_question
 from app.services import meeting_gate as _meeting_gate
 from app.services import plan_entitlements_service, runtime_config, support_route, urgent_route, visitor_reaction
 from app.services import pricing_gate as _pricing_gate
+from app.services.commitment_guard import redact_unsupported_commitments, snapshot_chunks
 from app.services.document_request import (
     TOPIC_MIN_OVERLAP,
     DocumentIntentDecision,
@@ -728,6 +730,7 @@ def _enrich_media_card_from_context(card: dict | None, retrieved_chunks) -> None
 # See ``is_valid_file_url`` in ``app.ingestion.cleaner``, which the document
 # request route applies too, for the two checks.
 from app.ingestion.cleaner import is_valid_file_url as _is_valid_file_url  # noqa: E402
+from app.ingestion.cleaner import tidy_reference_text  # noqa: E402
 
 # Words we ignore when comparing a primary card's title against candidate
 # secondary asset names to score topical overlap. Everything below reads to
@@ -1269,16 +1272,37 @@ def _question_suggests_leave_message(text: str) -> bool:
     return bool(_LEAVE_MESSAGE_QUESTION_RE.search(text))
 
 
+# A contact the reply itself gives: an email address, or a phone number of
+# seven or more digits. Both repeats are bounded, so the scan is linear.
+_REPLY_EMAIL_RE = re.compile(r"[\w.+'-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63}){1,4}")
+_REPLY_PHONE_RE = re.compile(r"(?<![\w.])\+?\(?\d[\d ().-]{5,18}\d(?!\w|\.\d)")
+_ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_PHONE_MIN_DIGITS = 7
+
+
+def _reply_gives_contact(text: str) -> bool:
+    """Whether the reply names an email address or a phone number."""
+    if "@" in text and _REPLY_EMAIL_RE.search(text):
+        return True
+    return any(
+        sum(char.isdigit() for char in match.group(0)) >= _PHONE_MIN_DIGITS
+        and _ISO_DATE_RE.fullmatch(match.group(0)) is None
+        for match in _REPLY_PHONE_RE.finditer(text)
+    )
+
+
 def _response_suggests_leave_message(text: str) -> bool:
     """Safety net: detect async contact-the-team affordance in the bot response.
 
     Requires tight co-occurrence of a leave/send/write verb with a
     message/note/email noun. Informational "our team will follow up with
-    the details" no longer matches.
+    the details" no longer matches. A reply that gives an email address or a
+    phone number ("Write to us at hello@eventussecurity.com.") answered the
+    visitor, so it does not force the form either (review, 2026-09-17).
     """
     if not text:
         return False
-    return bool(_LEAVE_MESSAGE_RESPONSE_RE.search(text))
+    return bool(_LEAVE_MESSAGE_RESPONSE_RE.search(text)) and not _reply_gives_contact(text)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2990,8 +3014,13 @@ def _build_reference_context(final_results: list, company_name: str | None) -> s
         context_parts.append(header)
     budget_remaining = _MAX_CONTEXT_TOKENS - _count_tokens(header)
     for i, doc in enumerate(final_results, 1):
+        # Page furniture the model read as facts goes first, before the length
+        # cap: a phone country-code picker became "We serve France." and a link
+        # labelled "careers@" hid the careers address (production, 2026-09-17).
+        chunk_content = tidy_reference_text(doc.content)
         # Truncate per-chunk to prevent prompt token overflow on large documents.
-        chunk_content = doc.content[:5000] + " [truncated]" if len(doc.content) > 5000 else doc.content
+        if len(chunk_content) > 5000:
+            chunk_content = chunk_content[:5000] + " [truncated]"
         # Neutralise the fence delimiters INSIDE the data. Without this a crawled
         # page or uploaded document containing "<<<END DOCUMENT 1>>>" closes its
         # own fence, and everything after it reads to the model as top-level
@@ -6652,17 +6681,20 @@ CURRENT QUALIFICATION STATE:
     # ─── Leave-message card instructions ───
     # WHEN / SHAPE / one example / the promises that break it. Said once: the
     # old block stated the same rule three ways and its examples opened with
-    # "Of course" and "Absolutely", the openers the style block bans.
+    # "Of course" and "Absolutely", the openers the style block bans. A contact
+    # address the reference material gives is the answer, not the form
+    # (production, 2026-09-17: "whats the hr mail id" got the form while the
+    # careers address was on the pinned contact page).
     _leave_msg_block = f"""
 LEAVE A MESSAGE ({LEAVE_MESSAGE_CARD_SENTINEL}):
-- WHEN: the visitor wants to send the team something (email, note, message, feedback) or asks how to contact or reach the team. Not for questions about the team ("how big is your team").
+- WHEN: the visitor wants to send the team something (email, note, message, feedback) or asks how to reach the team. Not for questions about the team ("how big is your team").
+- If the REFERENCE INFORMATION gives the email or phone asked for (HR, careers, support, sales), give it, with no form.
 - SHAPE: one short sentence, then the token alone on the last line:
-    visitor: "can I email support?"
+    visitor: "can I leave a note for the team?"
     you:
     I'll open a quick message form for you.
     {LEAVE_MESSAGE_CARD_SENTINEL}
-- Only the literal token opens the form; promising the form without it is a broken reply.
-- The form is the only way to reach the team: never say they can be reached "in this chat", never ask the visitor to type a message for you to forward, and never claim you will send anything yourself."""
+- Only the literal token opens the form. Never say they can be reached "in this chat", and never offer to forward or send a message yourself."""
 
     # Team offers. Worded as a question the visitor can accept: an offer that
     # reads as a handoff already under way ("I'll connect you with our team")
@@ -7090,7 +7122,7 @@ RULES:
   OWN CREDENTIALS AND TERMS. A certification, accreditation, empanelment or compliance status, and a commercial or contract term (payment terms, invoicing currency, refunds, NDAs, SLAs, onboarding timelines, in-person meetings), counts as present only when the reference material says {display_name} itself holds or offers it. The same applies to an audit report (for example a SOC 2 report) and to office, SOC or team locations. A standard named as a service {display_name} provides to its customers is not {display_name}'s own certification. A general article, buyer checklist or industry guide describes the topic, not {display_name}'s own terms or process. So do listicles, templates, comparison articles and "how to choose a provider" pages. A document whose header says "{GENERAL_ARTICLE_TAG}" is one of these. SLAs, response or remediation times, guarantees and the countries {display_name} serves are {display_name}'s own only when an untagged document states them for {display_name}. A figure given as an example, a best practice or what to ask of a provider is never ours, not even as a closest or typical target: {_borrowed_figure_line}. Otherwise take path (a), in two sentences at most. When the visitor asks about several credentials, answer each one on its own evidence.
   (a) GAP. Use this only when the specific fact asked for is absent from the REFERENCE INFORMATION and from your own earlier replies. What the visitor claims is never a fact you stated. Never use it for an item you already listed, a correction of the visitor's own details, or who you are. When it is present, state it. Say the gap in one plain clause ("I don't have our exact figure for that."), add the closest present facts that answer part of the question{_gap_offer}. Never swap in an adjacent fact ("we offer readiness support" does not answer "are you certified"), and never use "sits with our team" as a stock reply.
   (b) POSITIONING (mission, philosophy, broad capability framing) needs no citation: say it with confidence.
-5c. CAPABILITY AND CONTEXT QUESTIONS. The 5a gap clause is only for a specific fact the reference material lacks. Answer "do you handle, offer or work with X?" from what {display_name} does: if X is among its offerings, say so; if its offerings in the reference material clearly do not include X, say plainly that {display_name} does not offer X and what it does do{_offer_team}; only when that is unclear, use the gap clause. A yes must match the exact capability asked: on-premises is not air-gapped, and offices or clients in a region are not service in a named country. When only the nearer fact is stated, give that fact and the gap. When a follow-up changes the visitor's own context (industry, company size, region), answer the question again from the reference material for the new context.
+5c. CAPABILITY AND CONTEXT QUESTIONS. The 5a gap clause is only for a specific fact the reference material lacks. Answer "do you handle, offer or work with X?" from what {display_name} does: if X is among its offerings, say so; if its offerings in the reference material clearly do not include X, say plainly that {display_name} does not offer X and what it does do{_offer_team}; only when that is unclear, use the gap clause. A yes must match the exact capability asked: on-premises is not air-gapped, and offices or clients in a region are not service in a named country. When only the nearer fact is stated, give that fact and the gap. A country in a phone-code list or a form is not one we serve. When a follow-up changes the visitor's own context (industry, company size, region), answer the question again from the reference material for the new context.
 5d. COMPETITOR COMPARISONS ("how are you better than X", "X vs you") are on-scope. Answer with {display_name}'s own strengths as the reference material states them. Say nothing about the competitor that the reference material does not state, and never disparage them. If the reference material gives no basis for a comparison, say what {display_name} does{_offer_team}.
 6. DATES. Trust TODAY'S DATE over crawled labels like "upcoming events". For "upcoming", "next" or "this year" questions, list only items with a day and month in the REFERENCE INFORMATION that DATE ANALYSIS marks UPCOMING (or that fall after TODAY'S DATE). An undated item is not upcoming; a year in a title ("Summit 2026") is a name, not a date. Copy dates exactly. If nothing qualifies, say so and link the events page if one is given.{company_section}{services_section}{smart_links_section}
 {handoff_section}
@@ -10611,6 +10643,42 @@ async def rag_pipeline_stream(
                     session=session_id,
                     bot_id=bid,
                 )
+            # A question about a term or practice in the business's field that the
+            # knowledge base does not cover: "whats the difference between BAS and
+            # red teaming" on a supply chain security company's bot was refused
+            # with gate_score=0.00 (production, 2026-09-17). The judge is never told
+            # what the business does, so with only weakly related chunks it has no
+            # field to match the term to. A gate-tier second opinion that IS told
+            # (``field_question``) decides, asked only here, on a turn about to be
+            # refused with chunks in hand, so an ordinary turn costs nothing. On a
+            # YES the answer prompt explains briefly and says whether the business
+            # offers it (RULE 5c). A failure or a stall keeps the refusal. The
+            # empty-retrieval case is not asked, for the reason given above.
+            _relax_field_question = (
+                not _is_relevant
+                and not _trusted_cta
+                and not _answering_probe
+                and not _affirmed_handoff
+                and not _relax_topical
+                and not _relax_on_scope
+                and not _relax_identity
+                and bool(final_results)
+                and await _field_question.asks_about_the_field_bounded(
+                    question,
+                    _field_question.BusinessProfile.from_bot(
+                        _company_name, _company_desc, getattr(bot, "services", None) if bot else None
+                    ),
+                    bot_id=bid,
+                )
+            )
+            if _relax_field_question:
+                _safety_net_metric(
+                    "gate_relaxed_field_question",
+                    path="stream",
+                    gate_score=f"{_gate_score:.2f}",
+                    session=session_id,
+                    bot_id=bid,
+                )
             # ── Unhelped turns ───────────────────────────────────────────────
             # A turn about to be refused or pivoted is a turn the bot could not
             # help with. Counting by that decision rather than by the reply's
@@ -10634,7 +10702,7 @@ async def rag_pipeline_stream(
             # as relevant). ``check_relevance`` also returns relevant when there
             # are no chunks to judge or the gate is disabled, so those turns
             # reset the count rather than add to it.
-            _relaxed_turn = _relax_topical or _relax_on_scope or _relax_identity
+            _relaxed_turn = _relax_topical or _relax_on_scope or _relax_identity or _relax_field_question
             _unhelped_turn = (
                 not _is_relevant
                 and not _trusted_cta
@@ -10798,6 +10866,7 @@ async def rag_pipeline_stream(
                 and not _relax_topical
                 and not _relax_on_scope
                 and not _relax_identity
+                and not _relax_field_question
             ):
                 # On-scope questions where the
                 # gate fired (no matching chunks) get the graceful no-info pivot
@@ -11175,6 +11244,11 @@ async def rag_pipeline_stream(
                     )
                 )
             _price_guard_repeat = _price_guard is not None and _card_already_shown(chat_session, "pricing_escalated")
+            # What the commitment guard checks the finished answer against, read
+            # before the connection is released: the retrieved chunks and the
+            # text the owner wrote for the bot. See ``commitment_guard``.
+            _commitment_chunks = snapshot_chunks(final_results)
+            _commitment_owner_texts = (getattr(bot, "system_prompt", None) if bot else None, _company_desc)
             # The pricing escalation that replaced the answer, once the guard trips.
             _price_guard_pivot: _pricing_gate.PricingPivot | None = None
             # Whether any of the model's own text reached the visitor, so a
@@ -11187,6 +11261,9 @@ async def rag_pipeline_stream(
             # The redactor dropped the sentences stating a figure and the pricing
             # escalation follows the rest of the answer.
             _redacted_turn = False
+            # The commitment guard replaced a service figure the reference does
+            # not state as the company's own.
+            _commitment_redacted = False
             # Set by the output moderation guard below; True until it says
             # otherwise, and it is skipped on a leak-abort or a stream error.
             _answer_safe = True
@@ -11656,6 +11733,30 @@ async def rag_pipeline_stream(
                     _media_card.get("type"),
                 )
 
+            # A service commitment ("we remediate critical findings within 48
+            # hours") stays only when the reference states that figure as the
+            # company's own. Production, 2026-09-17: Eventus quoted a general
+            # best-practices list as its own SLA. Runs on the cleaned answer, so
+            # no sentinel or card goes with a replaced sentence; the text already
+            # streamed is corrected through ``answer_override`` below.
+            if not _leak_aborted and not _answer_replaced and not _stream_error and _answer_safe:
+                _commitment = redact_unsupported_commitments(
+                    full_answer,
+                    _commitment_chunks,
+                    company_name=_company_name,
+                    owner_texts=_commitment_owner_texts,
+                )
+                if _commitment.redacted:
+                    _commitment_redacted = True
+                    full_answer = _commitment.text
+                    _safety_net_metric(
+                        "commitment_figure_redacted",
+                        path="stream",
+                        figures="|".join(_commitment.figures)[:80],
+                        session=session_id,
+                        bot_id=bid,
+                    )
+
             # An answer that offers the team waits for the visitor. The model's
             # words used to set ``suggest_handoff`` here, and the prompt asks for
             # that offer in many places, so a grounded answer closing "I can
@@ -11927,11 +12028,12 @@ async def rag_pipeline_stream(
 
                     if bot_msg_id:
                         final_meta["message_id"] = bot_msg_id
-                    if _leak_aborted or _answer_replaced or _redacted_turn or not _answer_safe:
+                    if _leak_aborted or _answer_replaced or _redacted_turn or _commitment_redacted or not _answer_safe:
                         # The stream cannot recall bytes it already sent, so
-                        # a leak, a moderation hit or the price guard rewrote
-                        # only the persisted text. Carry that text so the widget
-                        # and ``collect_rag_pipeline`` (``POST /chat``) show what
+                        # a leak, a moderation hit, the price guard or the
+                        # commitment guard rewrote only the persisted text.
+                        # Carry that text so the widget and
+                        # ``collect_rag_pipeline`` (``POST /chat``) show what
                         # the transcript holds, not the frames already sent.
                         final_meta["answer_override"] = full_answer
                     if _answer_replaced:

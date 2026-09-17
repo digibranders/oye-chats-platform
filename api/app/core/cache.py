@@ -64,7 +64,12 @@ QA_RESPONSE_TTL = 3600  # 1 hour
 #: listed item, a correction or who the bot is; a borrowed figure points at the
 #: team only on a plan with a team path; essays and homework are out of scope
 #: (production evaluation, 2026-09-17).
-QA_PROMPT_VERSION = 7
+#: 8: LEAVE A MESSAGE gives a contact address or phone the reference material holds
+#: for what was asked instead of opening the form, after "whats the hr mail id" got
+#: the form; RULE 5c says a country in a phone-code list or a form is not one we
+#: serve, after a contact form's country picker became "We serve France."
+#: (production, 2026-09-17).
+QA_PROMPT_VERSION = 8
 TRANSLATION_TTL = 86400  # 24 hours (Phase 4 operator translation)
 
 

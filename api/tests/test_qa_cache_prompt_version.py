@@ -82,6 +82,9 @@ class TestAPromptChangeCannotShipWithoutAVersionBump:
         # facts the bot already gave, a borrowed-figure line that names the team only
         # on a plan with one, and essays out of scope (2026-09-17).
         7: "b3279dd37103354b871a5b754963c907a7ec53ee1aebe065f73c2608b7ed397d",
+        # 8: a contact address in the reference material is given instead of the message
+        # form, and a country in a phone-code list is not a country served (2026-09-17).
+        8: "af97602b8e4a00c8ff9f6f9eaef774187ae98854a719c133da4f0e75eadf3cd8",
     }
 
     @staticmethod
