@@ -276,9 +276,11 @@ class TestAPriceQuestionThatAsksMore:
         assert _named(metrics, "pricing_gate_escalation") == []
 
     @pytest.mark.asyncio
-    async def test_any_figure_in_the_answer_is_replaced_by_the_escalation(self, db, monkeypatch, classifier, metrics):
-        """The turn asks the price, so the guard trips even on a figure whose own
-        sentence names no price."""
+    async def test_a_sentence_with_any_figure_is_dropped_and_the_escalation_follows(
+        self, db, monkeypatch, classifier, metrics
+    ):
+        """The turn asks the price, so a figure whose own sentence names no price
+        still goes. The rest of the answer stays (evaluation, 2026-09-17)."""
         classifier.answers[self.QUESTION] = "MIXED"
         chunks = ("Yes, we have an office in Mumbai. SOC comes to ", "₹2,66,250", " a month for small teams.")
         bot, _ = _team_priced_bot(db, monkeypatch, "intent-mixed-figure", chunks=chunks)
@@ -289,9 +291,11 @@ class TestAPriceQuestionThatAsksMore:
             company_name="Acme", pricing_url=None, support_enabled=True, live_chat_enabled=True
         ).text
         assert "2,66,250" not in _answer_text(frames)
-        assert _answer_text(frames) == f"Yes, we have an office in Mumbai. SOC comes to \n\n{expected}"
-        assert _messages(db, "intent-mixed-figure", role="bot")[-1].content == expected
-        assert [tags["reason"] for tags in _named(metrics, "pricing_gate_escalation")] == ["price_guard"]
+        assert _answer_text(frames) == f"Yes, we have an office in Mumbai. \n\n{expected}"
+        assert _messages(db, "intent-mixed-figure", role="bot")[-1].content == (
+            f"Yes, we have an office in Mumbai.\n\n{expected}"
+        )
+        assert [tags["reason"] for tags in _named(metrics, "pricing_gate_escalation")] == ["price_guard_redacted"]
 
     @pytest.mark.asyncio
     async def test_a_bot_with_an_unpriced_pricing_page_is_guarded_too(self, db, monkeypatch, classifier):
