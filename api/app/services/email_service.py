@@ -1744,7 +1744,7 @@ def send_install_invite_email(
     The buyer is very often not the installer: for an SMB the person who signs
     up frequently cannot edit the website at all. This is the handoff, and it
     carries everything the recipient needs to finish without a second email -
-    the snippet, where it goes, and the two Content-Security-Policy origins
+    the snippet, where it goes, and the Content-Security-Policy directives
     that are the single most common reason a correct paste still shows nothing.
 
     ``reply_to`` is the requesting customer, never our support inbox. The
@@ -1774,7 +1774,9 @@ def send_install_invite_email(
         + p(f"1. It must be in {esc('<body>')}, not {esc('<head>')}.")
         + p(
             "2. If the site sends a Content-Security-Policy header, it needs "
-            f"{strong(esc('script-src ' + script_origin))} and {strong(esc('connect-src ' + api_origin))}."
+            f"{strong(esc('script-src ' + script_origin))}, {strong(esc('style-src ' + script_origin))} "
+            f"and {strong(esc('connect-src ' + api_origin))}. The widget's stylesheet comes from the same "
+            "origin as its script."
         )
         + p(f"Questions? Just reply to this email and it goes straight back to {esc(reply_to)}.", top=8)
     )

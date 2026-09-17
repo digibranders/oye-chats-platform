@@ -1362,7 +1362,7 @@ const en = {
     howManySignalsMustLand: 'How many signals must land',
     howQualifiedAVisitorMust: 'How qualified a visitor must be before it quotes',
     iHaveAddedItCheck: 'I have added it, check now',
-    ifYourSiteSendsA: 'If your site sends a CSP header, the browser refuses the script with a console error and nothing else. Allow both of these:',
+    ifYourSiteSendsA: 'If your site sends a CSP header, the browser refuses the widget with a console error and nothing else. Allow all three of these:',
     inHeadTheScriptRuns: 'In <head> the script runs before there is a document to mount into, so the launcher never appears. Paste it immediately before the closing </body> tag.',
     includesThreeConceptsAndTwo: 'Includes three concepts and two revision rounds.',
     installHelp: 'Install help',

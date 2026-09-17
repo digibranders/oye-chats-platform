@@ -109,7 +109,7 @@ ${steps}
 4. **Verification:**
    - Public info probe: \`GET ${api}/bots/settings/public\` (H: X-Bot-Key: ${botKey})
    - AI chat probe (consumes one message credit): \`POST ${api}/chat\` (H: X-Bot-Key: ${botKey}). Do not add an \`Origin\` or \`Referer\` header when testing via curl.
-5. **CSP Allowances (if CSP is active):** \`script-src ${new URL(scriptUrl).origin}\` and \`connect-src ${api}\`.
+5. **CSP Allowances (if CSP is active):** \`script-src ${new URL(scriptUrl).origin}\`, \`style-src ${new URL(scriptUrl).origin}\` and \`connect-src ${api}\`. The widget's stylesheet comes from the same origin as its script.
 
 ## Known Failure Modes
 Check these before reporting the install as done. Each one produces a page that
@@ -117,7 +117,8 @@ looks correct and a widget that never appears.
 1. **The tag is in \`<head>\`.** It must be in \`<body>\`, immediately before the
    closing tag - in \`<head>\` it runs before there is a document to mount into.
 2. **A CSP header is silently refusing the bundle.** The browser logs a console
-   error and renders nothing else. Add the two directives above.
+   error and renders nothing else. Add the three directives above. With the
+   script allowed but not the stylesheet, the widget loads and still shows nothing.
 3. **A cache is still serving the previous HTML.** Purge the CDN or page cache
    and hard-refresh before concluding the tag is missing.
 4. **Origin restrictions.** The account can lock this chatbot to an allow-list of
