@@ -66,6 +66,11 @@ tripped on. Only words within ``_HOLD_CAP_CHARS`` characters of the figure
 count. ``answer_trips_price_guard`` feeds a whole answer through the same
 guard, so the cache read decides exactly as the stream does.
 
+A turn that asks the price and something else (``price_intent`` decided MIXED)
+is not replaced whole: ``PriceSentenceRedactor`` drops each sentence that states
+a figure and keeps the rest, and ``redact_price_sentences`` reads a whole answer
+the same way.
+
 Pure module: no DB, no I/O, and no import from ``rag_service``.
 """
 
