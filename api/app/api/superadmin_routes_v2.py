@@ -1642,6 +1642,10 @@ _SAFETY_NET_METRIC_NAMES = [
     # the escalation after the rest; also counted above with
     # reason=price_guard_redacted.
     "price_guard_redacted",
+    # A service commitment ("we remediate within 48 hours") the reference does
+    # not state as the company's own, replaced after the stream
+    # (commitment_guard.py via rag_service.py).
+    "commitment_figure_redacted",
     # Scheduling request answered deterministically because the bot has no
     # scheduler configured (meeting_gate.py via rag_service.py).
     "meeting_gate_pivot",

@@ -50,6 +50,7 @@ from app.services import currency_scoring as _currency_scoring
 from app.services import meeting_gate as _meeting_gate
 from app.services import plan_entitlements_service, runtime_config, support_route, urgent_route, visitor_reaction
 from app.services import pricing_gate as _pricing_gate
+from app.services.commitment_guard import redact_unsupported_commitments, snapshot_chunks
 from app.services.document_request import (
     TOPIC_MIN_OVERLAP,
     DocumentIntentDecision,
@@ -11184,6 +11185,11 @@ async def rag_pipeline_stream(
                     )
                 )
             _price_guard_repeat = _price_guard is not None and _card_already_shown(chat_session, "pricing_escalated")
+            # What the commitment guard checks the finished answer against, read
+            # before the connection is released: the retrieved chunks and the
+            # text the owner wrote for the bot. See ``commitment_guard``.
+            _commitment_chunks = snapshot_chunks(final_results)
+            _commitment_owner_texts = (getattr(bot, "system_prompt", None) if bot else None, _company_desc)
             # The pricing escalation that replaced the answer, once the guard trips.
             _price_guard_pivot: _pricing_gate.PricingPivot | None = None
             # Whether any of the model's own text reached the visitor, so a
@@ -11196,6 +11202,9 @@ async def rag_pipeline_stream(
             # The redactor dropped the sentences stating a figure and the pricing
             # escalation follows the rest of the answer.
             _redacted_turn = False
+            # The commitment guard replaced a service figure the reference does
+            # not state as the company's own.
+            _commitment_redacted = False
             # Set by the output moderation guard below; True until it says
             # otherwise, and it is skipped on a leak-abort or a stream error.
             _answer_safe = True
@@ -11665,6 +11674,30 @@ async def rag_pipeline_stream(
                     _media_card.get("type"),
                 )
 
+            # A service commitment ("we remediate critical findings within 48
+            # hours") stays only when the reference states that figure as the
+            # company's own. Production, 2026-09-17: Eventus quoted a general
+            # best-practices list as its own SLA. Runs on the cleaned answer, so
+            # no sentinel or card goes with a replaced sentence; the text already
+            # streamed is corrected through ``answer_override`` below.
+            if not _leak_aborted and not _answer_replaced and not _stream_error and _answer_safe:
+                _commitment = redact_unsupported_commitments(
+                    full_answer,
+                    _commitment_chunks,
+                    company_name=_company_name,
+                    owner_texts=_commitment_owner_texts,
+                )
+                if _commitment.redacted:
+                    _commitment_redacted = True
+                    full_answer = _commitment.text
+                    _safety_net_metric(
+                        "commitment_figure_redacted",
+                        path="stream",
+                        figures="|".join(_commitment.figures)[:80],
+                        session=session_id,
+                        bot_id=bid,
+                    )
+
             # An answer that offers the team waits for the visitor. The model's
             # words used to set ``suggest_handoff`` here, and the prompt asks for
             # that offer in many places, so a grounded answer closing "I can
@@ -11936,11 +11969,12 @@ async def rag_pipeline_stream(
 
                     if bot_msg_id:
                         final_meta["message_id"] = bot_msg_id
-                    if _leak_aborted or _answer_replaced or _redacted_turn or not _answer_safe:
+                    if _leak_aborted or _answer_replaced or _redacted_turn or _commitment_redacted or not _answer_safe:
                         # The stream cannot recall bytes it already sent, so
-                        # a leak, a moderation hit or the price guard rewrote
-                        # only the persisted text. Carry that text so the widget
-                        # and ``collect_rag_pipeline`` (``POST /chat``) show what
+                        # a leak, a moderation hit, the price guard or the
+                        # commitment guard rewrote only the persisted text.
+                        # Carry that text so the widget and
+                        # ``collect_rag_pipeline`` (``POST /chat``) show what
                         # the transcript holds, not the frames already sent.
                         final_meta["answer_override"] = full_answer
                     if _answer_replaced:
