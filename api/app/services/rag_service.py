@@ -33,6 +33,8 @@ from app.db.repository import (
     get_lead_info_by_session,
     get_upcoming_events,
     knowledge_state_for_bot,
+    list_crawled_page_names,
+    search_documents_in_pages,
     search_keyword_documents,
     search_similar_documents,
 )
@@ -76,6 +78,7 @@ from app.services.intent_service import (
     is_bare_affirmation,
 )
 from app.services.kb_quality import first_visitor_placeholder
+from app.services.knowledge_links import company_fact_pages
 from app.services.live_chat_availability_service import (
     LiveChatState,
     _within_business_hours,
@@ -2065,7 +2068,131 @@ def _question_is_clearly_on_scope(question: str, company_name: str | None) -> bo
         _STRICT_ON_SCOPE_RE.search(question)
         or _COMPARES_US_RE.search(question)
         or _ASKS_OUR_ASSURANCES_RE.search(question)
+        or _asks_company_facts(question, company_name)
     )
+
+
+# ── Questions about the company's own facts ─────────────────────────────────
+#
+# Where the company is, how to reach it and who runs it. Reported from
+# production on 2026-09-17: on a managed SOC's bot "where are the soc centers ?"
+# was refused as off-topic (gate score 0.00), and "list soc centers" was
+# answered with the services list, although the contact page names every SOC
+# city. On about 7,900 chunks the SOC blog posts and careers pages outranked
+# that one chunk for every phrasing tried, so the judge and the model never saw
+# it. A question matched here is on scope, and retrieval pins the company's own
+# contact, locations, about and team pages (``_pin_company_fact_chunks``).
+#
+# Every shape names the company, addresses it, or uses a noun only a company has
+# ("headquarters", "SOC centers"). "where is my order", "location of the event
+# venue" and "where do I find the settings" name none, so they stay unmatched.
+# Word gaps are bounded, so every pattern stays linear on long input.
+_FACT_PLACES = (
+    r"(?:offices?|locations?|branch(?:es)?|cent(?:er|re)s?|facilit(?:y|ies)|premises"
+    r"|addresse?s?|presence|hubs?|campus(?:es)?|headquarters?)"
+)
+_FACT_PLURAL_PLACES = r"(?:offices|locations|branches|cent(?:er|re)s|facilities|hubs|campuses)"
+# A bare "email" counts only at the end of the question: "your email marketing
+# service" asks about a product.
+_FACT_CONTACTS = (
+    r"(?:phone(?:\s+numbers?)?|telephone|landline|whatsapp|contact\s+(?:details|number|info(?:rmation)?)"
+    r"|e-?mail\s+(?:address|id)|mail\s+id|e-?mail(?=\s*(?:[?.!]|please|pls|$))|address)"
+)
+# No bare "team" or "staff": "can your team build an app" asks about a service.
+_FACT_PEOPLE = (
+    r"(?:founders?|co-?founders?|leadership|leaders|management\s+team|directors?|owners?"
+    r"|ceo|cto|coo|cfo|ciso|president|team\s+(?:members|size)|headcount)"
+)
+_OWNED_BY_US = r"(?:your|ur|yr|the\s+company'?s?|company'?s)"
+
+_COMPANY_FACT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "locations",
+        re.compile(
+            r"(?i)\b(?:head\s*quarter(?:s|ed)?|head\s+office|hq|registered\s+office|corporate\s+office"
+            r"|global\s+presence|socs"
+            r"|(?:soc|noc|security\s+operations?|cyber\s*security\s+operations?|delivery|development"
+            r"|operations|innovation|r\s*&\s*d)\s+cent(?:er|re)s?)\b"
+        ),
+    ),
+    ("locations", re.compile(rf"(?i)\b{_OWNED_BY_US}\s+(?:[\w-]+\s+)?{_FACT_PLACES}\b")),
+    (
+        "locations",
+        re.compile(
+            r"(?i)\bwhere\s+(?:are|r)\s+(?:you|u|y'?all)(?:\s+guys)?\s+(?:located|based|headquartered|situated|from)\b"
+            r"|\b(?:are|r)\s+(?:you|u|y'?all)\s+(?:located|based|headquartered|situated)\b"
+            r"|\bwhere\s+(?:is|'s)\s+(?:your|ur)\s+(?:company|firm|business|office|hq)\b"
+        ),
+    ),
+    (
+        "locations",
+        re.compile(
+            r"(?i)\b(?:where|list|show|what\s+about|how\s+about|tell\s+me\s+about)\s+"
+            r"(?:(?:are|r|is)\s+)?(?:all\s+)?(?:(?:the|your|ur)\s+)?(?:[\w-]+\s+){0,2}?"
+            rf"{_FACT_PLURAL_PLACES}\b(?!\s+(?:of|for)\b)"
+        ),
+    ),
+    (
+        "locations",
+        re.compile(
+            r"(?i)\b(?:which|what)\s+(?:countries|regions|cities|markets|geographies)\s+"
+            r"(?:do|are|does|can|r)\s+(?:you|u|y'?all|your\s+\w+)\b"
+            r"|\b(?:countries|regions|cities|markets|geographies)\s+(?:do\s+)?(?:you|u)\s+"
+            r"(?:serve|operate|cover|work|support|are\s+in)\b"
+            r"|\b(?:do|does|are|r)\s+(?:you|u|y'?all)\s+"
+            r"(?:operate|work|serve|deliver|ship|available|present"
+            r"|have\s+(?:an?\s+|any\s+)?(?:offices?|presence|branch(?:es)?|teams?|clients|customers))"
+            r"\s+(?:in|to|across)\s+\w"
+        ),
+    ),
+    ("contact", re.compile(rf"(?i)\b{_OWNED_BY_US}\s+(?:[\w-]+\s+)?{_FACT_CONTACTS}\b")),
+    (
+        "contact",
+        re.compile(
+            r"(?i)\bhow\s+(?:can|do|should|could)\s+(?:i|we)\s+"
+            r"(?:contact|reach|call|email|e-mail|get\s+in\s+touch\s+with|get\s+hold\s+of)\s+"
+            r"(?:you|u|y'?all|your|the\s+(?:company|team))\b"
+        ),
+    ),
+    ("team", re.compile(rf"(?i)\b{_OWNED_BY_US}\s+(?:[\w-]+\s+)?{_FACT_PEOPLE}\b")),
+    (
+        "team",
+        re.compile(
+            r"(?i)\bwho\s+(?:runs|owns|founded|started|leads|heads|manages|is\s+behind)\s+"
+            r"(?:you|u|y'?all|this\s+company|the\s+company|your\s+\w+)\b"
+            r"|\bwho\s+(?:is|are|'s)\s+(?:the|your|ur)\s+"
+            r"(?:ceo|cto|coo|cfo|ciso|founders?|co-?founders?|owners?|directors?|leadership|management"
+            r"|managing\s+director|president)\b"
+            r"|\b(?:leadership|management)\s+team\b|\bboard\s+of\s+directors\b"
+            r"|\bhow\s+many\s+(?:employees|people|staff|team\s+members)\b"
+        ),
+    ),
+)
+
+#: The noun a question naming the company must also carry to be a facts
+#: question: "where is Eventus", "Eventus offices", "Eventus founders".
+_FACT_NOUN_BY_KIND: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("locations", re.compile(rf"(?i)\b(?:{_FACT_PLACES}|located|based|where)\b")),
+    ("contact", re.compile(rf"(?i)\b{_FACT_CONTACTS}\b")),
+    ("team", re.compile(rf"(?i)\b{_FACT_PEOPLE}\b")),
+)
+
+
+def _asks_company_facts(question: str, company_name: str | None = None) -> frozenset[str]:
+    """The company facts a question asks for: a subset of ``locations``,
+    ``contact`` and ``team``, empty for any other question.
+
+    A deterministic prefilter, English only, sized for precision: it decides
+    whether retrieval spends one extra query pinning the company's own pages,
+    and whether the relevance gate may be overruled.
+    """
+    if not question:
+        return frozenset()
+    kinds = {kind for kind, pattern in _COMPANY_FACT_PATTERNS if pattern.search(question)}
+    signals = _company_name_signals(company_name)
+    if signals and re.search(r"\b(?:" + "|".join(map(re.escape, signals)) + r")\b", question, re.IGNORECASE):
+        kinds.update(kind for kind, pattern in _FACT_NOUN_BY_KIND if pattern.search(question))
+    return frozenset(kinds)
 
 
 #: Words a company name can start with that say nothing about the company.
@@ -3103,6 +3230,91 @@ def _drop_placeholder_chunks(results: list, bot_id: int | None) -> list:
         increment_metric_counter_by("kb_placeholder_chunk_dropped", len(dropped), bot_id=bot_id)
         logger.info("kb_placeholder_chunk_dropped | bot=%s count=%d chunks=%s", bot_id, len(dropped), ",".join(dropped))
     return kept
+
+
+#: How many chunks of the company's own pages a facts question pins ahead of
+#: the retrieved ones. Four covers a contact page's address and phone blocks
+#: without pushing more than four retrieved chunks off the end of the list.
+COMPANY_FACTS_PIN_LIMIT = 4
+# Candidates read before choosing the pinned few: enough for a site whose
+# contact, locations and about pages run to a few chunks each.
+_COMPANY_FACTS_CANDIDATES = 24
+# How much of a chunk the content hints read. A default chunk is 1,000 characters.
+_COMPANY_FACTS_HINT_CHARS = 2000
+
+# A chunk that states the fact beats a chunk of the same page that does not (the
+# contact form's field labels, the cookie notice).
+_COMPANY_FACT_CONTENT_HINTS: dict[str, re.Pattern[str]] = {
+    "locations": re.compile(
+        r"(?i)\b(?:head\s*quarters?|offices?|address|located|avenue|street|road|floor|suite"
+        r"|cent(?:er|re)s?|branch(?:es)?)\b"
+    ),
+    "contact": re.compile(r"(?i)@|\b(?:phone|call|email|e-mail|whatsapp|address|tel)\b"),
+    "team": re.compile(
+        r"(?i)\b(?:founders?|co-?founders?|ceo|cto|coo|cfo|ciso|directors?|chief|head\s+of|president|leadership)\b"
+    ),
+}
+
+
+def _company_fact_chunks(cid: int | None, bid: int | None, query: str, kinds: frozenset[str]) -> list:
+    """Chunks of the company's own contact, locations, about and team pages that
+    answer a facts question asking ``kinds``, best first, at most
+    ``COMPANY_FACTS_PIN_LIMIT``.
+
+    Pages are chosen by URL (``knowledge_links.company_fact_pages``), so a bot
+    with no such crawled page pins nothing. Within them a chunk ranks by page
+    priority, then by whether it states a fact of the asked kind, then by its
+    keyword match on ``query``, then by document order.
+
+    Runs in its own session (thread-safe, like ``_keyword_search``) and never
+    raises: pinning is an addition to retrieval, never a reason to fail a turn.
+    """
+    if not kinds or not (bid or cid):
+        return []
+    try:
+        with get_session() as s:
+            pages = company_fact_pages(list_crawled_page_names(s, bot_id=bid, client_id=cid), kinds)
+            if not pages:
+                return []
+            rows = search_documents_in_pages(
+                s,
+                page_names=sorted(pages),
+                query=query,
+                k=_COMPANY_FACTS_CANDIDATES,
+                bot_id=bid,
+                client_id=cid,
+            )
+            for doc, _rank in rows:
+                s.expunge(doc)
+    except Exception:  # noqa: BLE001  Pinning is best-effort on the request path
+        logger.warning("company-facts pinning failed for bot %s", bid, exc_info=True)
+        return []
+    hints = [_COMPANY_FACT_CONTENT_HINTS[kind] for kind in sorted(kinds) if kind in _COMPANY_FACT_CONTENT_HINTS]
+
+    def _order(item: tuple[int, tuple]) -> tuple[int, bool, float, int]:
+        index, (doc, rank) = item
+        content = (getattr(doc, "content", None) or "")[:_COMPANY_FACTS_HINT_CHARS]
+        states_fact = any(hint.search(content) for hint in hints)
+        return (pages.get(doc.document_name, len(pages)), not states_fact, -rank, index)
+
+    ordered = sorted(enumerate(rows), key=_order)
+    return [doc for _index, (doc, _rank) in ordered[:COMPANY_FACTS_PIN_LIMIT]]
+
+
+def _pin_company_fact_chunks(results: list, pinned: list, top_k: int) -> list:
+    """``pinned`` first, then ``results`` without them, cut to ``top_k``.
+
+    First because the relevance judge reads only the top ``GATE_MAX_CHUNKS``: a
+    contact chunk appended at position 15 would reach the model and still be
+    invisible to the judge that refuses the turn. A pinned chunk retrieval had
+    already found moves up rather than appearing twice. What falls off the end
+    are the lowest-ranked retrieved chunks, so the list keeps its length.
+    """
+    if not pinned:
+        return list(results)
+    pinned_ids = {getattr(doc, "id", None) for doc in pinned}
+    rest = [doc for doc in results if getattr(doc, "id", None) not in pinned_ids]
+    return (list(pinned) + rest)[:top_k]
 
 
 # ─── Company-related query expansion ────────────────────────────────────────
@@ -9285,6 +9497,18 @@ async def rag_pipeline_stream(
                 # sessions (cross-lingual pairs sit at higher cosine distance).
                 # English / disabled pass None and keep the tuned default.
                 _xling_max_distance = CROSS_LINGUAL_MAX_DISTANCE if _judges_bypassed else None
+                # A question about the company's own locations, contact details or
+                # people also reads its contact, locations, about and team pages,
+                # alongside the two searches. The rewrite can carry the subject a
+                # follow-up leaves out ("so what about the locations?").
+                _fact_kinds = _asks_company_facts(question, _company_name) | (
+                    _asks_company_facts(search_query, _company_name) if search_query != question else frozenset()
+                )
+                _fact_task = (
+                    asyncio.create_task(asyncio.to_thread(_company_fact_chunks, cid, bid, search_query, _fact_kinds))
+                    if _fact_kinds
+                    else None
+                )
                 if query_embedding is not None:
                     vector_results, keyword_results = await asyncio.gather(
                         asyncio.to_thread(
@@ -9353,6 +9577,23 @@ async def rag_pipeline_stream(
                     # FlashRank's cross-encoder is CPU-bound and synchronous.
                     final_results = await asyncio.to_thread(rerank, search_query, final_results, top_n=_retrieval_k)
                     _rerank_ms = (_t.perf_counter() - _rerank_start) * 1000
+
+                # After the rerank, which would otherwise be free to cut a pinned
+                # chunk the cross-encoder scores low for the visitor's phrasing.
+                if _fact_task is not None:
+                    _fact_chunks = _drop_placeholder_chunks(await _fact_task, bid)
+                    if _fact_chunks:
+                        _found_ids = {getattr(doc, "id", None) for doc in final_results}
+                        final_results = _pin_company_fact_chunks(final_results, _fact_chunks, _retrieval_k)
+                        _safety_net_metric(
+                            "company_facts_pinned",
+                            path="stream",
+                            kinds=",".join(sorted(_fact_kinds)),
+                            pinned=len(_fact_chunks),
+                            already_retrieved=sum(1 for doc in _fact_chunks if getattr(doc, "id", None) in _found_ids),
+                            session=session_id,
+                            bot_id=bid,
+                        )
 
                 logger.info(
                     "[retrieval] hybrid_search bot=%s k=%d gather_ms=%.1f fuse_ms=%.1f "

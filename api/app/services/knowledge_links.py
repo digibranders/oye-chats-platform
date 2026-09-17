@@ -24,6 +24,7 @@ nothing. Widening this later is cheap; a wrong link shipped to visitors is not.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 
 from app.services.pricing_gate import normalize_url
@@ -90,3 +91,145 @@ def detect_contact_url(source_urls: Iterable[object] | None) -> str | None:
         return None
     candidates.sort()
     return candidates[0][2]
+
+
+# ── Company-facts pages ───────────────────────────────────────────────────────
+#
+# Where a company says where it is, how to reach it and who runs it. Reported
+# from production on 2026-09-17: a managed SOC's bot refused "where are the soc
+# centers ?" although its contact page lists every SOC city, because on a
+# knowledge base of about 7,900 chunks the SOC blog posts outranked that one
+# chunk for every phrasing tried. The retriever pins these pages for a question
+# about the company's own facts (``rag_service._asks_company_facts``).
+#
+# Same narrow matching as the contact slugs above: every segment of the path
+# (after an optional locale prefix such as ``en`` or ``en-us``) must be one of
+# these slugs, and there are at most two of them. ``/about-us/leadership`` is a
+# leadership page; ``/blog/our-team-at-rsa`` is an article.
+
+#: The facts a page carries, by kind.
+COMPANY_FACT_KINDS: tuple[str, ...] = ("contact", "locations", "team", "about")
+
+_COMPANY_FACT_SLUGS: dict[str, str] = {
+    **dict.fromkeys(CONTACT_SLUGS, "contact"),
+    **dict.fromkeys(
+        (
+            "locations",
+            "location",
+            "our-locations",
+            "offices",
+            "our-offices",
+            "office-locations",
+            "global-presence",
+            "our-presence",
+            "presence",
+            "where-we-are",
+            "find-us",
+            "branches",
+            "our-branches",
+        ),
+        "locations",
+    ),
+    **dict.fromkeys(
+        (
+            "team",
+            "our-team",
+            "meet-the-team",
+            "leadership",
+            "leadership-team",
+            "our-leadership",
+            "management",
+            "management-team",
+            "board",
+            "board-of-directors",
+            "founders",
+            "people",
+            "our-people",
+        ),
+        "team",
+    ),
+    **dict.fromkeys(
+        (
+            "about",
+            "about-us",
+            "aboutus",
+            "about_us",
+            "who-we-are",
+            "company",
+            "our-company",
+            "our-story",
+            "company-profile",
+        ),
+        "about",
+    ),
+}
+
+_LOCALE_SEGMENT_RE = re.compile(r"[a-z]{2}(?:[-_][a-z]{2})?")
+_MAX_FACT_PATH_SEGMENTS = 2
+
+
+def company_fact_page_kind(url: object) -> str | None:
+    """The kind of company-facts page ``url`` is (one of ``COMPANY_FACT_KINDS``),
+    or ``None`` for any other page.
+
+    The last segment decides the kind, so ``/about-us/contact`` is a contact
+    page and ``/company/leadership`` a team page. Junk input reads as ``None``.
+    """
+    normalized = normalize_url(url)
+    if normalized is None:
+        return None
+    segments = [s for s in _path_of(normalized).split("/") if s]
+    if segments and _LOCALE_SEGMENT_RE.fullmatch(segments[0]) and len(segments) > 1:
+        segments = segments[1:]
+    if not segments or len(segments) > _MAX_FACT_PATH_SEGMENTS:
+        return None
+    if any(segment not in _COMPANY_FACT_SLUGS for segment in segments):
+        return None
+    return _COMPANY_FACT_SLUGS[segments[-1]]
+
+
+#: Which pages answer which question, best first. An about page is the fallback
+#: for all three: it is where a small site puts its address and its founders.
+_PAGE_KINDS_FOR_QUESTION: dict[str, tuple[str, ...]] = {
+    "locations": ("contact", "locations", "about"),
+    "contact": ("contact", "about"),
+    "team": ("team", "about"),
+}
+
+
+def company_fact_page_priority(question_kinds: Iterable[str], page_kind: str | None) -> int | None:
+    """How well a page of ``page_kind`` answers a question asking
+    ``question_kinds``: 0 is best, ``None`` means it does not.
+
+    A question asking several kinds gives a page the best rank any of them
+    gives it.
+    """
+    if page_kind is None:
+        return None
+    best: int | None = None
+    for kind in question_kinds:
+        order = _PAGE_KINDS_FOR_QUESTION.get(kind, ())
+        if page_kind in order:
+            rank = order.index(page_kind)
+            best = rank if best is None else min(best, rank)
+    return best
+
+
+def company_fact_pages(source_urls: Iterable[object] | None, question_kinds: Iterable[str]) -> dict[str, int]:
+    """The crawled pages that answer a company-facts question, mapped to their
+    priority (see :func:`company_fact_page_priority`).
+
+    Keys are the URLs as stored, so they can be matched back against
+    ``documents.document_name``.
+    """
+    kinds = tuple(question_kinds)
+    if not source_urls or not kinds:
+        return {}
+    pages: dict[str, int] = {}
+    for raw in source_urls:
+        if not isinstance(raw, str):
+            continue
+        priority = company_fact_page_priority(kinds, company_fact_page_kind(raw))
+        if priority is not None:
+            pages[raw] = priority
+    return pages

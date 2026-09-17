@@ -1,7 +1,8 @@
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Float, case, cast, desc, func, insert, or_, select, text
+from sqlalchemy import Float, String, case, cast, desc, func, insert, or_, select, text
+from sqlalchemy.dialects.postgresql import TSQUERY
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased
 
@@ -859,6 +860,51 @@ def search_keyword_documents(session, client_id: int = None, query: str = "", k=
     )
 
     return session.execute(stmt).all()
+
+
+def list_crawled_page_names(session, *, bot_id: int | None = None, client_id: int | None = None) -> list[str]:
+    """The distinct URLs of a bot's active crawled pages, sorted.
+
+    Uploads are left out: their ``document_name`` is a bare filename, never a
+    page a URL rule can classify.
+    """
+    stmt = (
+        select(Document.document_name)
+        .where(_owner_filter(Document, bot_id, client_id), Document.source == "crawl")
+        .distinct()
+        .order_by(Document.document_name)
+    )
+    return list(session.execute(stmt).scalars())
+
+
+def search_documents_in_pages(
+    session,
+    *,
+    page_names: list[str],
+    query: str,
+    k: int,
+    bot_id: int | None = None,
+    client_id: int | None = None,
+) -> list[tuple[Document, float]]:
+    """Chunks of the named pages, best keyword match first, as ``(doc, rank)``.
+
+    Unlike :func:`search_keyword_documents` a chunk does not have to contain
+    every query term: the pages were already chosen for the question, so the
+    terms only order their chunks. ``plainto_tsquery`` ANDs its lexemes, and
+    its text form is rewritten to OR them. A query with no lexemes ranks every
+    chunk 0, which leaves them in document order.
+    """
+    if not page_names or k <= 0:
+        return []
+    any_term = cast(func.replace(cast(func.plainto_tsquery("english", query or ""), String), "&", "|"), TSQUERY)
+    rank = func.ts_rank(Document.search_vector, any_term).label("rank")
+    stmt = (
+        select(Document, rank)
+        .where(_owner_filter(Document, bot_id, client_id), Document.document_name.in_(page_names))
+        .order_by(rank.desc(), Document.document_name, Document.id)
+        .limit(k)
+    )
+    return [(doc, float(score or 0.0)) for doc, score in session.execute(stmt).all()]
 
 
 def search_similar_documents(
