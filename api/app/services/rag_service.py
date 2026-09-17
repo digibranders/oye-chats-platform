@@ -2190,17 +2190,34 @@ _FACT_PLACES = (
     r"|addresse?s?|presence|hubs?|campus(?:es)?|headquarters?)"
 )
 _FACT_PLURAL_PLACES = r"(?:offices|locations|branches|cent(?:er|re)s|facilities|hubs|campuses)"
-# A bare "email" counts only at the end of the question: "your email marketing
-# service" asks about a product.
+# Where a word ends a request: "what's your phone?", "your email please".
+_FACT_REQUEST_END = r"(?=\s*(?:[?.!,]|please|pls|and\b|or\b|$))"
+# A bare "email", "phone" or "whatsapp" counts only at the end of the request:
+# "your email marketing service", "does your phone support 5G" and "your
+# whatsapp integration" ask about a product.
 _FACT_CONTACTS = (
-    r"(?:phone(?:\s+numbers?)?|telephone|landline|whatsapp|contact\s+(?:details|number|info(?:rmation)?)"
-    r"|e-?mail\s+(?:address|id)|mail\s+id|e-?mail(?=\s*(?:[?.!]|please|pls|$))|address)"
+    r"(?:(?:phone|telephone|landline|mobile|whatsapp|contact)\s+(?:numbers?|no|details|info(?:rmation)?)"
+    r"|e-?mail\s+(?:address|id)|mail\s+id|address"
+    rf"|(?:phone|telephone|landline|whatsapp|e-?mail){_FACT_REQUEST_END})"
 )
 # No bare "team" or "staff": "can your team build an app" asks about a service.
+# "owners" only ends a request: "your owners manual" is a product's.
 _FACT_PEOPLE = (
-    r"(?:founders?|co-?founders?|leadership|leaders|management\s+team|directors?|owners?"
-    r"|ceo|cto|coo|cfo|ciso|president|team\s+(?:members|size)|headcount)"
+    r"(?:founders?|co-?founders?|leadership|leaders|management\s+team|directors?"
+    rf"|owners?{_FACT_REQUEST_END}|ceo|cto|coo|cfo|ciso|president|team\s+(?:members|size)|headcount)"
 )
+# A place a company is present in, for the verbs a visitor also uses about a
+# delivery, a skill or a meeting ("do you deliver to Pune", "do you work in
+# React", "are you available to take a call"): countries, cities or regions,
+# or a market name.
+_FACT_GEOGRAPHY = (
+    r"(?:(?:other|which|what|all|many|multiple|different|several|these|those|the)\s+)?"
+    r"(?:countr(?:y|ies)|cit(?:y|ies)|regions?|states|markets|geographies|continents)\b"
+    r"|(?:the\s+)?(?:india|usa?|uk|uae|europe|asia|africa|america|australia|canada|singapore|dubai|france"
+    r"|germany|middle\s+east|gcc|apac|emea|latam)\b"
+)
+# The company as the object of a head count: "your firm", "the company".
+_FACT_THE_COMPANY = r"(?:you|u|y'?all|(?:your|ur)\s+\w+|the\s+(?:company|firm|organi[sz]ation|business|agency))"
 _OWNED_BY_US = r"(?:your|ur|yr|the\s+company'?s?|company'?s)"
 
 _COMPANY_FACT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -2238,9 +2255,11 @@ _COMPANY_FACT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
             r"|\b(?:countries|regions|cities|markets|geographies)\s+(?:do\s+)?(?:you|u)\s+"
             r"(?:serve|operate|cover|work|support|are\s+in)\b"
             r"|\b(?:do|does|are|r)\s+(?:you|u|y'?all)\s+"
-            r"(?:operate|work|serve|deliver|ship|available|present"
+            r"(?:operate|serve|present"
             r"|have\s+(?:an?\s+|any\s+)?(?:offices?|presence|branch(?:es)?|teams?|clients|customers))"
             r"\s+(?:in|to|across)\s+\w"
+            r"|\b(?:do|does|are|r)\s+(?:you|u|y'?all)\s+(?:work|deliver|ship|available)\s+(?:in|across)\s+"
+            rf"(?:{_FACT_GEOGRAPHY})"
         ),
     ),
     ("contact", re.compile(rf"(?i)\b{_OWNED_BY_US}\s+(?:[\w-]+\s+)?{_FACT_CONTACTS}\b")),
@@ -2262,7 +2281,11 @@ _COMPANY_FACT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
             r"(?:ceo|cto|coo|cfo|ciso|founders?|co-?founders?|owners?|directors?|leadership|management"
             r"|managing\s+director|president)\b"
             r"|\b(?:leadership|management)\s+team\b|\bboard\s+of\s+directors\b"
-            r"|\bhow\s+many\s+(?:employees|people|staff|team\s+members)\b"
+            # A head count of the company, not of a venue or a plan's seats.
+            r"|\bhow\s+many\s+(?:employees|people|staff|team\s+members)\s+"
+            rf"(?:(?:do|does)\s+{_FACT_THE_COMPANY}\s+(?:have|employ)\b"
+            rf"|(?:work|are\s+working|are\s+employed)\s+(?:at|for|in|with)\s+{_FACT_THE_COMPANY}\b"
+            rf"|(?:are\s+there\s+)?(?:in|at)\s+{_FACT_THE_COMPANY}\b)"
         ),
     ),
 )
