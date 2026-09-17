@@ -142,6 +142,23 @@ def _credential_check_is_down(request: pytest.FixtureRequest, monkeypatch: pytes
     monkeypatch.setattr(credential_facts, "generate_response_checked", lambda *_args, **_kwargs: ("", True))
 
 
+@pytest.fixture(autouse=True)
+def _field_question_check_is_down(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The field-question check answers as if its model were down, so the scope refusal stands.
+
+    ``field_question`` asks the gate model whenever the relevance judge is about to
+    refuse a turn with chunks in hand on a bot with a description, and many
+    pipeline tests stub the judge to reject. A test of the check stubs
+    ``field_question.generate_response_checked`` or
+    ``field_question._classify_field_question_raw`` itself, which overrides this.
+    """
+    if request.node.get_closest_marker(ALLOW_REAL_LLM_CALL) is not None:
+        return
+    from app.services import field_question
+
+    monkeypatch.setattr(field_question, "generate_response_checked", lambda *_args, **_kwargs: ("", True))
+
+
 # ── Real-Postgres throwaway DB (for DB-layer tests: locks, ledger, clawback) ──
 #
 # Mirrors the throwaway-database pattern in test_affiliate_service.py. Requires a

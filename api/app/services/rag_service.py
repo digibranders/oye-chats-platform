@@ -47,6 +47,7 @@ from app.security.injection_patterns import (
 )
 from app.services import credential_facts as _credential_facts
 from app.services import currency_scoring as _currency_scoring
+from app.services import field_question as _field_question
 from app.services import meeting_gate as _meeting_gate
 from app.services import plan_entitlements_service, runtime_config, support_route, urgent_route, visitor_reaction
 from app.services import pricing_gate as _pricing_gate
@@ -10621,6 +10622,42 @@ async def rag_pipeline_stream(
                     session=session_id,
                     bot_id=bid,
                 )
+            # A question about a term or practice in the business's field that the
+            # knowledge base does not cover: "whats the difference between BAS and
+            # red teaming" on a supply chain security company's bot was refused
+            # with gate_score=0.00 (production, 2026-09-17). The judge is never told
+            # what the business does, so with only weakly related chunks it has no
+            # field to match the term to. A gate-tier second opinion that IS told
+            # (``field_question``) decides, asked only here, on a turn about to be
+            # refused with chunks in hand, so an ordinary turn costs nothing. On a
+            # YES the answer prompt explains briefly and says whether the business
+            # offers it (RULE 5c). A failure or a stall keeps the refusal. The
+            # empty-retrieval case is not asked, for the reason given above.
+            _relax_field_question = (
+                not _is_relevant
+                and not _trusted_cta
+                and not _answering_probe
+                and not _affirmed_handoff
+                and not _relax_topical
+                and not _relax_on_scope
+                and not _relax_identity
+                and bool(final_results)
+                and await _field_question.asks_about_the_field_bounded(
+                    question,
+                    _field_question.BusinessProfile.from_bot(
+                        _company_name, _company_desc, getattr(bot, "services", None) if bot else None
+                    ),
+                    bot_id=bid,
+                )
+            )
+            if _relax_field_question:
+                _safety_net_metric(
+                    "gate_relaxed_field_question",
+                    path="stream",
+                    gate_score=f"{_gate_score:.2f}",
+                    session=session_id,
+                    bot_id=bid,
+                )
             # ── Unhelped turns ───────────────────────────────────────────────
             # A turn about to be refused or pivoted is a turn the bot could not
             # help with. Counting by that decision rather than by the reply's
@@ -10644,7 +10681,7 @@ async def rag_pipeline_stream(
             # as relevant). ``check_relevance`` also returns relevant when there
             # are no chunks to judge or the gate is disabled, so those turns
             # reset the count rather than add to it.
-            _relaxed_turn = _relax_topical or _relax_on_scope or _relax_identity
+            _relaxed_turn = _relax_topical or _relax_on_scope or _relax_identity or _relax_field_question
             _unhelped_turn = (
                 not _is_relevant
                 and not _trusted_cta
@@ -10808,6 +10845,7 @@ async def rag_pipeline_stream(
                 and not _relax_topical
                 and not _relax_on_scope
                 and not _relax_identity
+                and not _relax_field_question
             ):
                 # On-scope questions where the
                 # gate fired (no matching chunks) get the graceful no-info pivot
