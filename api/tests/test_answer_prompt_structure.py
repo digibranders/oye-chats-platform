@@ -473,3 +473,34 @@ class TestRoleAcknowledgment:
         assert '"' not in rule
         assert "signing off" not in prompt.lower()
         assert "Never say they approve or sign off unless they said so" in rule
+
+
+class TestAContactAddressIsTheAnswer:
+    """Production, 2026-09-17. CleanStart: "want to apply for a devops role, whats
+    the hr mail id" got the message form although the careers address was on the
+    pinned contact page. Eventus Security: "c'est disponible en France ?" got "We
+    serve France." from the phone country-code list of its contact form."""
+
+    @pytest.mark.parametrize("plan", ["paid", "offline", "async"])
+    def test_a_given_address_is_given_instead_of_the_form(self, plan):
+        block = _flat(_section(_system(**_PLANS[plan]), "LEAVE A MESSAGE", "TEAM OFFERS"))
+
+        assert (
+            "If the REFERENCE INFORMATION gives the email or phone asked for (HR, careers, support, sales), "
+            "give it, with no form." in block
+        )
+        assert "The form is the only way to reach the team" not in block
+
+    def test_the_form_example_does_not_ask_for_an_address(self):
+        block = _section(_system(**_PAID), "LEAVE A MESSAGE", "TEAM OFFERS")
+
+        assert 'visitor: "can I leave a note for the team?"' in block
+        assert "email support" not in block
+
+    @pytest.mark.parametrize("plan", list(_PLANS))
+    def test_a_phone_code_list_is_not_a_country_served(self, plan):
+        system = _system(**_PLANS[plan])
+        rule = _flat(_section(system, "\n5c. ", "\n5d. "))
+
+        assert "A country in a phone-code list or a form is not one we serve." in rule
+        assert system.count("phone-code list") == 1
