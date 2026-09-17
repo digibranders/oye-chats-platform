@@ -393,7 +393,7 @@ async def test_an_opted_out_bot_with_nothing_retrieved_does_not_invent_a_price(
 
 # ── The live-team promise reads operator presence, not just the clock ────────
 
-_LIVE_PROMISE = "will be with them shortly"
+_LIVE_PROMISE = "Would you like to speak with our team now?"
 _NOTIFY_COPY = "our team will be notified and will get back to them"
 _OFFLINE_CLAIM = "the team is offline right now"
 

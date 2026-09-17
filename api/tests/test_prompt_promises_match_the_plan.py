@@ -14,7 +14,7 @@ executes its promises:
 3. The LIVE SUPPORT block promised "a team member will be with you shortly"
    whenever live chat was on. ``business_hours`` had no reader anywhere in the
    pipeline, so that promise was made at 3am, and the widget then showed the
-   offline form.
+   offline form. The block now offers the live team as a question instead.
 """
 
 from __future__ import annotations
@@ -22,6 +22,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from app.services.rag_service import build_hybrid_prompt
+
+#: The live team offer, made only when someone can take the chat.
+_LIVE_OFFER = "Would you like to speak with our team now?"
 
 _CLIENT = SimpleNamespace(name="Acme")
 _CONTEXT = "<<<DOCUMENT 1 | about.md>>>\nAcme builds analytics tooling.\n<<<END DOCUMENT 1>>>\n"
@@ -69,12 +72,12 @@ class TestLiveSupportIsNotPromisedOutsideBusinessHours:
     def test_inside_hours_the_promise_stands(self):
         prompt = _prompt(live_chat_enabled=True, support_enabled=True, within_business_hours=True)
 
-        assert "will be with them shortly" in prompt
+        assert _LIVE_OFFER in prompt
 
     def test_when_no_one_can_join_the_bot_says_the_team_will_be_notified(self):
         prompt = " ".join(_prompt(live_chat_enabled=True, support_enabled=True, within_business_hours=False).split())
 
-        assert "will be with them shortly" not in prompt
+        assert _LIVE_OFFER not in prompt
         assert "our team will be notified and will get back to them" in prompt
         assert "[LEAVE_MESSAGE_CARD]" in prompt, "the visitor still needs somewhere to go"
 
@@ -98,7 +101,7 @@ class TestLiveSupportIsNotPromisedOutsideBusinessHours:
         ``live_chat_availability_service._within_business_hours``."""
         prompt = _prompt(live_chat_enabled=True, support_enabled=True)
 
-        assert "will be with them shortly" in prompt
+        assert _LIVE_OFFER in prompt
 
 
 class TestBothPipelinesResolveTheseBeforeBuildingThePrompt:

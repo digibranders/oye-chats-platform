@@ -250,6 +250,42 @@ class TestTeamOffers:
         assert "Would you like to connect with our team?" in user
 
 
+class TestARequestForAPersonEndsWithAnOffer:
+    """In English a request for a person gets the fixed handoff reply, so the
+    model writes the support block's reply only when the handoff classifier said
+    no. Model text never opens the form, so the reply must be a question the
+    visitor can accept: a "yes" to it on the next turn is the consent."""
+
+    _EXAMPLES = re.compile(r'"((?:Want|Would)[^"]*\?)"')
+
+    def _support(self, plan: str) -> str:
+        system = _system(**_PLANS[plan])
+        start = "LIVE SUPPORT:" if "LIVE SUPPORT:" in system else "SUPPORT REQUESTS ("
+        return _flat(_section(system, start, "LEAVE A MESSAGE"))
+
+    @pytest.mark.parametrize("plan", ["paid", "offline"])
+    def test_every_example_is_an_offer_and_not_a_started_handoff(self, plan):
+        examples = self._EXAMPLES.findall(self._support(plan))
+
+        assert examples, plan
+        for offer in examples:
+            assert bot_offers_handoff(offer), offer
+            assert not _response_suggests_handoff(offer), offer
+
+    def test_live_support_asks_instead_of_announcing(self):
+        support = self._support("paid")
+
+        assert '"Would you like to speak with our team now?"' in support
+        assert "will be with them shortly" not in support
+        assert "Do not say a team member is on the way" in support
+
+    def test_the_offline_reply_ends_with_the_message_offer(self):
+        support = self._support("offline")
+
+        assert "our team will be notified and will get back to them" in support
+        assert 'then ask "Want me to take a message for our team?"' in support
+
+
 class TestFeaturedServices:
     def _services(self) -> str:
         return _flat(_section(_system(**_EVERYTHING), "FEATURED SERVICES", "\n\n"))

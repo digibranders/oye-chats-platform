@@ -3505,8 +3505,8 @@ def _answer_is_cacheable(
     return not _answer_mentions_visitor_name(answer, visitor_name)
 
 
-# States in which "a team member will be with you shortly" is a promise the
-# widget can keep: someone is online and the queue has room for one more.
+# States in which a live team offer ("Would you like to speak with our team
+# now?") is one the widget can keep: someone is online and the queue has room for one more.
 # ALL_OFFLINE, QUEUE_FULL and NO_OPERATORS all send the visitor to the offline
 # form, the same place OUT_OF_HOURS does.
 _LIVE_TEAM_REACHABLE_STATES = frozenset({LiveChatState.AVAILABLE, LiveChatState.ALL_BUSY})
@@ -6222,7 +6222,7 @@ def build_hybrid_prompt(
     bant_config: dict = None,
     live_chat_enabled: bool = True,
     # Whether "now" falls inside the bot's configured business hours. The LIVE
-    # SUPPORT block promises "a team member will be with you shortly", and
+    # SUPPORT block promised "a team member will be with you shortly", and
     # ``business_hours`` had no reader anywhere in this pipeline, so the promise
     # was made at 3am to a visitor whose widget was about to offer them the
     # offline form instead. None means unknown, which is treated as open, the
@@ -6588,19 +6588,27 @@ NO HUMAN HANDOFF: This workspace has no live-chat or message-forwarding channel.
         # widget then breaks by showing the offline form. Saying "offline" is
         # just as wrong the other way: an operator in another tab is still
         # reachable, and the handoff push can bring them in, so the model only
-        # says the team will be told and will reply.
+        # says the team will be told and will reply, then offers to take a
+        # message as a question the visitor can accept.
         handoff_section = f"""
 SUPPORT REQUESTS (no one is guaranteed to join a live chat right now):
   If the visitor asks to speak with a person, say our team will be notified and
-  will get back to them, and offer to take a message. Never tell the visitor the
-  team is offline, away or unavailable, and do not promise that anyone will join
-  right away. Say "our team", never "human team".
+  will get back to them, then ask "Want me to take a message for our team?".
+  Never tell the visitor the team is offline, away or unavailable, and do not
+  promise that anyone will join right away. Say "our team", never "human team".
 {_leave_msg_block}
 {_team_offers_block(_message_offer_examples)}"""
         has_team_offer = True
     elif live_chat_enabled:
+        # In English a request for a person gets the fixed handoff reply before
+        # generation, so the model writes this reply only when the handoff
+        # classifier said no. Its words never open the form, so the reply is an
+        # offer the visitor can accept: a "yes" to it is the consent. The example
+        # must be read by ``bot_offers_handoff`` and not by
+        # ``_HANDOFF_RESPONSE_RE``; ``tests/test_answer_prompt_structure.py``
+        # checks both, as it does for the message offer above.
         handoff_section = f"""
-LIVE SUPPORT: When the visitor asks to speak with a person or have a live conversation now, reply warmly in 1 to 2 sentences: a team member will be with them shortly. Do not say the connection is already made, and do not go on to answer their question. Say "our team", never "human team".
+LIVE SUPPORT: When the visitor asks to speak with a person or have a live conversation now, reply warmly in one sentence that asks whether to bring in our team, for example "Would you like to speak with our team now?". Do not say a team member is on the way or that the connection is made, and do not go on to answer their question. Say "our team", never "human team".
 {_leave_msg_block}
 - Use the message form when the visitor wants a reply later (write, email, leave a note); use LIVE SUPPORT when they want a live conversation now.
 {_team_offers_block(_live_offer_examples)}"""

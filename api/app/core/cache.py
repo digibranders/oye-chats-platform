@@ -52,7 +52,8 @@ QA_RESPONSE_TTL = 3600  # 1 hour
 #: 6: the answer prompt was restructured around one PRIORITY ORDER (8,027 and
 #: 8,514 tokens down to about 4,000 on two live bots): FEATURED SERVICES is no
 #: longer an exhaustive list, one LENGTH AND DEPTH rule gives follow-ups real
-#: depth, the gap path is only for an absent fact, team offers are questions,
+#: depth, the gap path is only for an absent fact, team offers (including the
+#: reply to a request for a person) are questions,
 #: frustration gets a next step, and a mixed pricing turn is told to leave the
 #: figure out (production review, 2026-09-17).
 QA_PROMPT_VERSION = 6
