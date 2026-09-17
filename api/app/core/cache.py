@@ -56,7 +56,12 @@ QA_RESPONSE_TTL = 3600  # 1 hour
 #: reply to a request for a person) are questions,
 #: frustration gets a next step, and a mixed pricing turn is told to leave the
 #: figure out (production review, 2026-09-17).
-QA_PROMPT_VERSION = 6
+#: 7: RULE 5a reads the "general article" tag a guide, listicle or blog post now
+#: carries in the reference context, and keeps SLAs, response times, guarantees and
+#: countries served to untagged pages; RULE 5c says a yes must match the exact
+#: capability asked, after live bots quoted a buyer guide's example P1 target as
+#: their own and said yes to air-gapped and to France (production, 2026-09-17).
+QA_PROMPT_VERSION = 7
 TRANSLATION_TTL = 86400  # 24 hours (Phase 4 operator translation)
 
 
