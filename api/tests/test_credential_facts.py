@@ -282,6 +282,40 @@ def test_a_held_verdict_without_verifiable_evidence_is_not_held(monkeypatch, lin
     assert [(f.name, f.verdict) for f in facts.facts] == [("ISO 27001", Verdict.UNVERIFIED)]
 
 
+#: CleanStart's own vendor-risk page on production, 2026-09-17.
+PENDING_CHUNKS = [
+    _chunk(
+        "ISO 27001 certification in progress; expected completion Q2 2026. "
+        "ISO 27001 Certificate (once audit completed, Q2 2026).",
+        "https://www.cleanstart.com/trust/",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'ISO 27001 | HELD | DOC 1 | "ISO 27001 certification"',
+        'ISO 27001 | HELD | DOC 1 | "ISO 27001 Certificate"',
+    ],
+)
+def test_a_quote_from_a_sentence_about_a_pending_credential_is_not_held(monkeypatch, line):
+    monkeypatch.setattr(cf, "generate_response_checked", _Model(line))
+
+    facts = cf.check_credentials("are you ISO 27001 certified", cf.credential_excerpts(PENDING_CHUNKS), "CleanStart")
+
+    assert [(f.name, f.verdict) for f in facts.facts] == [("ISO 27001", Verdict.UNVERIFIED)]
+
+
+def test_the_classifier_is_told_that_a_pending_audit_is_not_held(monkeypatch):
+    model = _Model("ISO 27001 | NOT_FOUND")
+    monkeypatch.setattr(cf, "generate_response_checked", model)
+
+    cf.check_credentials("are you ISO 27001 certified", cf.credential_excerpts(PENDING_CHUNKS), "CleanStart")
+
+    assert "described as in progress, expected or due once something completes" in model.calls[0]["prompt"]
+
+
 def test_a_quote_matches_across_case_whitespace_and_quote_marks(monkeypatch):
     line = "CERT-In | HELD | DOC 2 | “eventus security is \t CERT-In  empanelled”"
     monkeypatch.setattr(cf, "generate_response_checked", _Model(line))
@@ -356,6 +390,18 @@ def test_no_credential_sentence_in_the_reference_needs_no_model_call(monkeypatch
         # A company-own page without a holding statement.
         ("ISO 27001 is a standard for security.", "https://acme.example/about/", Verdict.UNVERIFIED),
         ("We help clients become ISO 27001 compliant.", "https://acme.example/compliance/", Verdict.UNVERIFIED),
+        # A holding sentence about a credential still on its way.
+        (
+            "We are ISO 27001 certified, audit expected to complete in Q2.",
+            "https://acme.example/trust",
+            Verdict.UNVERIFIED,
+        ),
+        ("Our ISO 27001 certificate is pending the final audit.", "https://acme.example/security/", Verdict.UNVERIFIED),
+        (
+            "Acme has achieved ISO 27001 certification once the audit completes.",
+            "https://acme.example/",
+            Verdict.UNVERIFIED,
+        ),
         # A different credential on the page.
         ("We are SOC 2 certified.", "https://acme.example/about/", Verdict.UNVERIFIED),
     ],
