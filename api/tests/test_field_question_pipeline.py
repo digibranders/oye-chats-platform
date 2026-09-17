@@ -21,6 +21,7 @@ import pytest
 from app.services import document_request, field_question, urgent_route
 from app.services import rag_service as rs
 from tests.test_rag_pipeline_defects import (
+    _anonymous_visitor,
     _answer_text,
     _doc,
     _drive_stream,
@@ -238,3 +239,121 @@ async def test_an_empty_retrieval_is_not_let_through(db, monkeypatch):
     assert captured["prompts"] == []
     assert classifier.calls == []
     assert not _answer_text(frames).endswith("".join(MODEL_REPLY))
+
+
+# Production, 2026-09-17 14:25 UTC, CleanStart: the second opinion said YES
+# (``gate_relaxed_field_question gate_score=0.00``), the turn reached the answer
+# model, and the model replied with the prompt's scope line anyway.
+SCOPE_LINE_REPLY = (
+    "I'm here to help with questions about Acme. ",
+    "Is there something about our services I can help with?",
+)
+FIELD_LINE = "THIS TURN, FIELD QUESTION:"
+
+
+@pytest.fixture()
+def metrics(monkeypatch):
+    seen: list[tuple[str, dict]] = []
+    real = rs._safety_net_metric
+
+    def spy(name, **tags):
+        seen.append((name, tags))
+        real(name, **tags)
+
+    monkeypatch.setattr(rs, "_safety_net_metric", spy)
+    return seen
+
+
+@pytest.mark.asyncio
+async def test_a_relaxed_turn_tells_the_model_to_explain_the_concept(db, monkeypatch):
+    captured = _stub_pipeline(monkeypatch, chunks=MODEL_REPLY, retrieved=[WEAK_CHUNK], relevant=False)
+    _classifier(monkeypatch, True)
+    bot = _bot(db, "field-line")
+
+    await _drive_stream(bot, PRODUCTION_QUESTION, "field-line")
+
+    ((system, user),) = captured["prompts"]
+    assert FIELD_LINE in user
+    assert FIELD_LINE not in system
+    assert "whether Acme offers it" in user
+
+
+@pytest.mark.asyncio
+async def test_a_relevant_turn_gets_no_field_question_line(db, monkeypatch):
+    captured = _stub_pipeline(monkeypatch, chunks=MODEL_REPLY, retrieved=[WEAK_CHUNK], relevant=True)
+    _classifier(monkeypatch, True)
+    bot = _bot(db, "field-no-line")
+
+    await _drive_stream(bot, PRODUCTION_QUESTION, "field-no-line")
+
+    ((_system, user),) = captured["prompts"]
+    assert FIELD_LINE not in user
+
+
+@pytest.mark.asyncio
+async def test_a_relaxed_turn_is_not_written_to_the_answer_cache(db, monkeypatch):
+    """The relax rests on a classifier's answer, so a cache hit must not skip it."""
+    relaxed = _stub_pipeline(monkeypatch, chunks=MODEL_REPLY, retrieved=[WEAK_CHUNK], relevant=False)
+    # No by-name opener, which would keep the turn out of the cache on its own.
+    _anonymous_visitor(monkeypatch)
+    _classifier(monkeypatch, True)
+    await _drive_stream(_bot(db, "field-cache-relaxed"), PRODUCTION_QUESTION, "field-cache-relaxed")
+
+    assert relaxed["cache"].store == {}
+
+    # The same turn judged relevant is cached, so the skip above is the relax's.
+    relevant = _stub_pipeline(monkeypatch, chunks=MODEL_REPLY, retrieved=[WEAK_CHUNK], relevant=True)
+    _anonymous_visitor(monkeypatch)
+    await _drive_stream(_bot(db, "field-cache-relevant"), PRODUCTION_QUESTION, "field-cache-relevant")
+
+    assert [value["answer"] for value in relevant["cache"].store.values()] == ["".join(MODEL_REPLY)]
+
+
+@pytest.mark.asyncio
+async def test_a_scope_refusal_after_the_relax_is_counted_and_not_retried(db, monkeypatch, metrics):
+    captured = _stub_pipeline(monkeypatch, chunks=SCOPE_LINE_REPLY, retrieved=[WEAK_CHUNK], relevant=False)
+    _anonymous_visitor(monkeypatch)
+    _classifier(monkeypatch, True)
+    bot = _bot(db, "field-refused")
+
+    frames = await _drive_stream(bot, PRODUCTION_QUESTION, "field-refused")
+
+    assert len(captured["prompts"]) == 1
+    assert _answer_text(frames).endswith("Is there something about our services I can help with?")
+    refused = [tags for name, tags in metrics if name == "field_question_answer_refused"]
+    assert len(refused) == 1
+    assert refused[0]["bot_id"] == bot.id
+
+
+@pytest.mark.asyncio
+async def test_a_scope_refusal_after_an_opener_is_counted(db, monkeypatch, metrics):
+    """The stubbed visitor is greeted back by name, so the reply opens with "Welcome back, Tester!"."""
+    _stub_pipeline(monkeypatch, chunks=SCOPE_LINE_REPLY, retrieved=[WEAK_CHUNK], relevant=False)
+    _classifier(monkeypatch, True)
+    bot = _bot(db, "field-refused-opener")
+
+    frames = await _drive_stream(bot, PRODUCTION_QUESTION, "field-refused-opener")
+
+    assert _answer_text(frames).startswith("Welcome back, Tester!")
+    assert [name for name, _ in metrics if name == "field_question_answer_refused"] == ["field_question_answer_refused"]
+
+
+@pytest.mark.asyncio
+async def test_an_answer_after_the_relax_is_not_counted_as_refused(db, monkeypatch, metrics):
+    _stub_pipeline(monkeypatch, chunks=MODEL_REPLY, retrieved=[WEAK_CHUNK], relevant=False)
+    _classifier(monkeypatch, True)
+    bot = _bot(db, "field-answered")
+
+    await _drive_stream(bot, PRODUCTION_QUESTION, "field-answered")
+
+    assert [name for name, _ in metrics if name == "field_question_answer_refused"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_scope_line_on_a_relevant_turn_is_not_counted(db, monkeypatch, metrics):
+    _stub_pipeline(monkeypatch, chunks=SCOPE_LINE_REPLY, retrieved=[WEAK_CHUNK], relevant=True)
+    bot = _bot(db, "field-relevant-refused")
+
+    await _drive_stream(bot, PRODUCTION_QUESTION, "field-relevant-refused")
+
+    assert [name for name, _ in metrics if name == "field_question_answer_refused"] == []

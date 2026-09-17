@@ -1778,6 +1778,24 @@ def _is_known_refusal(text: str, company_name: str) -> bool:
     return False
 
 
+# The answer prompt's scope line ("I'm here to help with questions about
+# Acme. ..."), at the start of the reply or of a line (after an opener such as
+# "Welcome back, Eva!"), optionally after a short form of address ("Eva, ").
+# Every repeat is bounded, so the scan is linear.
+_SCOPE_LINE_RE = re.compile(
+    r"(?:^|\n)[ \t]{0,8}(?:[^\W\d_][\w .'\u2019-]{0,39},[ \t]{1,3})?"
+    r"i['\u2019]m\s{1,3}here\s{1,3}to\s{1,3}help\s{1,3}with\s{1,3}questions\s{1,3}about\b",
+    re.IGNORECASE,
+)
+
+
+def _is_scope_refusal(text: str, company_name: str) -> bool:
+    """True if ``text`` is a refusal: the prompt's scope line, or a refusal template."""
+    if not text:
+        return False
+    return _SCOPE_LINE_RE.search(text.strip()) is not None or _is_known_refusal(text, company_name)
+
+
 # ── Phase 3: multilingual helpers ───────────────────────────────────────────
 #
 # `language` throughout the pipeline is a `LanguageContext | None`. It is None
@@ -6424,6 +6442,10 @@ def build_hybrid_prompt(
     # the team (pricing gate outcome ``escalate_deferred``). Adds one per-turn
     # line telling the model to answer the rest and state no figure.
     pricing_mixed: bool = False,
+    # The relevance judge rejected the turn and the field-question second
+    # opinion (``field_question``) let it through. Adds one per-turn line
+    # telling the model to explain the concept and say whether we offer it.
+    field_question: bool = False,
 ) -> tuple[str, str]:
     """Construct the Hybrid RAG prompt with BANT qualification support.
 
@@ -7152,6 +7174,20 @@ RULES:
             f"Say in one short sentence that {_price_deferral}.\n"
         )
 
+    # One line for a turn the field-question second opinion let through.
+    # Production, 2026-09-17 14:25 UTC, CleanStart: "whats the difference
+    # between BAS and red teaming" passed the second opinion and the model
+    # still answered with the scope line, since the reference material says
+    # nothing about either. Per turn, like the pricing line above.
+    field_turn_section = ""
+    if field_question:
+        field_turn_section = (
+            f"\nTHIS TURN, FIELD QUESTION: the visitor asks about a concept in {display_name}'s field, so it is "
+            "in scope: do not use the scope line. Explain it briefly in general terms (two or three sentences), "
+            f"then say plainly whether {display_name} offers it, from the REFERENCE INFORMATION; if it does not, "
+            "name the closest thing it does offer.\n"
+        )
+
     # AR-27: the qualification (BANT) state, retrieved context, conversation
     # history, and the question itself are the only genuinely per-turn-variable
     # parts of the prompt. Everything above (identity/scope/voice/rules plus
@@ -7163,7 +7199,7 @@ RULES:
     # message the caller sent, one section away from the stable rules, so ANY
     # turn where BANT state changed (i.e. almost every turn) silently defeated
     # caching for the entire prompt with no test/metric catching it.
-    user_prompt = f"""{_CLOSURE_SECTION}{pricing_turn_section}
+    user_prompt = f"""{_CLOSURE_SECTION}{pricing_turn_section}{field_turn_section}
 {qualification_section}
 ═══════════════════════════════════════════════════════
 REFERENCE INFORMATION
@@ -10655,9 +10691,11 @@ async def rag_pipeline_stream(
             # field to match the term to. A gate-tier second opinion that IS told
             # (``field_question``) decides, asked only here, on a turn about to be
             # refused with chunks in hand, so an ordinary turn costs nothing. On a
-            # YES the answer prompt explains briefly and says whether the business
-            # offers it (RULE 5c). A failure or a stall keeps the refusal. The
-            # empty-retrieval case is not asked, for the reason given above.
+            # YES the turn's prompt carries a FIELD QUESTION line (explain briefly,
+            # say whether the business offers it), the model's scope line is
+            # counted as ``field_question_answer_refused``, and the answer is not
+            # cached. A failure or a stall keeps the refusal. The empty-retrieval
+            # case is not asked, for the reason given above.
             _relax_field_question = (
                 not _is_relevant
                 and not _trusted_cta
@@ -11204,6 +11242,7 @@ async def rag_pipeline_stream(
                     pricing_url=getattr(bot, "pricing_url", None) if bot else None,
                 ),
                 pricing_mixed=_pricing_decision.outcome == "escalate_deferred",
+                field_question=_relax_field_question,
                 team_connect_offer=_team_connect_offer and not _show_qualified_popup,
                 suppress_probe=_show_qualified_popup,
                 recently_probed=_recently_probed,
@@ -11780,6 +11819,23 @@ async def rag_pipeline_stream(
                         bot_id=bid,
                     )
 
+            # The field-question second opinion let the turn through and the
+            # model refused it anyway (CleanStart, 2026-09-17 14:25 UTC). The
+            # per-turn prompt line is the fix; this counts what it misses. No
+            # retry: a second generation would double the cost of the turn.
+            if (
+                _relax_field_question
+                and not _stream_error
+                and _is_scope_refusal(full_answer, _company_name or "our company")
+            ):
+                _safety_net_metric(
+                    "field_question_answer_refused",
+                    path="stream",
+                    gate_score=f"{_gate_score:.2f}",
+                    session=session_id,
+                    bot_id=bid,
+                )
+
             # An answer that offers the team waits for the visitor. The model's
             # words used to set ``suggest_handoff`` here, and the prompt asks for
             # that offer in many places, so a grounded answer closing "I can
@@ -11964,6 +12020,9 @@ async def rag_pipeline_stream(
                         # skips these too (see ``_credential_question``).
                         or _credential_question
                         or _credential_task is not None
+                        # Let through by the field-question classifier after the
+                        # judge rejected it; a cache hit would skip both.
+                        or _relax_field_question
                         # Only the turn that actually produced a card is skipped, and
                         # only when the model chose that card: nothing on a cache hit
                         # can know which asset the model would have picked. A card the
