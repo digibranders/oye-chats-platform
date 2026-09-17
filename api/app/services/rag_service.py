@@ -53,12 +53,14 @@ from app.services import pricing_gate as _pricing_gate
 from app.services.document_request import (
     TOPIC_MIN_OVERLAP,
     DocumentIntentDecision,
+    DocumentPick,
     decide_document_intent,
     document_reply,
     fallback_document_intent,
     looks_like_a_document_request,
     mentions_document,
     pick_documents,
+    refers_back,
 )
 from app.services.email_service import (
     get_notification_recipients,
@@ -89,6 +91,13 @@ from app.services.llm_service import (
     _apply_model_family_kwargs,
     generate_response,
     generate_response_stream,
+)
+from app.services.media_cards import (
+    card_identity,
+    dedupe_cards,
+    is_owned_file_url,
+    media_owned_domains,
+    owned_media_payloads,
 )
 from app.services.notification_service import notify_handoff_request
 from app.services.price_guard import (
@@ -802,6 +811,8 @@ def _topical_media_card(
     company_name: str | None,
     retrieved_chunks,
     extra_payloads=None,
+    *,
+    owned: frozenset[str] = frozenset(),
 ) -> dict | None:
     """The one catalog asset the visitor's question is clearly about, or None.
 
@@ -830,6 +841,9 @@ def _topical_media_card(
     ``Penetration-Testing.pdf`` over ``Sample_Web_Application_Penetration_
     Testing_Report`` for "explain penetration testing", where both share two
     words but only one is entirely about the subject.
+
+    ``owned`` is the bot's own domains (``media_cards.media_owned_domains``): a
+    file elsewhere is never attached. Empty filters nothing.
     """
     company_tokens = _title_tokens(company_name)
     anchor = _title_tokens(question) - company_tokens
@@ -852,7 +866,7 @@ def _topical_media_card(
             title = entry.get("title")
         else:
             key = entry.get("url")
-            if not _is_valid_file_url(key):
+            if not _is_valid_file_url(key) or not is_owned_file_url(key, owned):
                 return
             raw_name = entry.get("name")
             title = (
@@ -909,6 +923,8 @@ def _pick_secondary_media(
     primary: dict | None,
     retrieved_chunks,
     extra_payloads=None,
+    *,
+    owned: frozenset[str] = frozenset(),
 ) -> list[dict]:
     """Pick at most ONE secondary asset of the OPPOSITE type to the primary.
 
@@ -931,6 +947,8 @@ def _pick_secondary_media(
     "video_id": "...", "title": "...", "url": "..."}]``. The list shape
     keeps the widget contract stable if we later relax the one-secondary
     cap without another metadata migration.
+
+    ``owned`` is the bot's own domains: a file elsewhere is never a chip.
     """
     if not primary or not isinstance(primary, dict):
         return []
@@ -1008,7 +1026,9 @@ def _pick_secondary_media(
                 continue
             # Reject pre-fix junk file entries so they can never surface as
             # secondary chips even if they slip past the primary emission.
-            if target_type == "download" and not _is_valid_file_url(entry.get("url")):
+            if target_type == "download" and not (
+                _is_valid_file_url(entry.get("url")) and is_owned_file_url(entry.get("url"), owned)
+            ):
                 continue
             _consider(entry, target_type)
 
@@ -1363,6 +1383,66 @@ def _media_card_key(card: dict | None) -> str | None:
         return None
     sig = card.get("url") or card.get("video_id") or card.get("id")
     return f"media:{sig}" if sig else None
+
+
+def _media_card_shown_keys(card: dict | None) -> list[str]:
+    """Every ``inline_cards_shown`` key a card is remembered under.
+
+    ``_media_card_key`` (the raw URL or id) and one key per ``card_identity``, so
+    the same file at a second URL, or with a different query string, counts as
+    already shown too.
+    """
+    key = _media_card_key(card)
+    keys = [key] if key else []
+    keys.extend(f"media:{identity}" for identity in sorted(card_identity(card)))
+    return keys
+
+
+def _media_card_already_shown(chat_session, card: dict | None) -> bool:
+    return any(_card_already_shown(chat_session, key) for key in _media_card_shown_keys(card))
+
+
+def _mark_media_card_shown(chat_session, card: dict | None) -> None:
+    for key in _media_card_shown_keys(card):
+        _mark_card_shown(chat_session, key)
+
+
+def _referred_documents(
+    history: list, company_name: str | None, catalog: list[dict], owned: frozenset[str]
+) -> DocumentPick | None:
+    """The files a request that points back ("is there a pdf of this") means, or None.
+
+    The download card the last reply carried, with its chip, is the file "this"
+    points at (evaluation, 2026-09-17: a turn after a card was attached answered
+    "I don't have a downloadable document for that here"). A last reply without
+    one leaves the topic of the visitor's previous message, whose files are
+    picked as that message would have picked them. ``history`` ends with the
+    current message.
+    """
+    earlier = list(history or [])[:-1]
+    last_bot = next((m for m in reversed(earlier) if _msg_role(m) == "bot"), None)
+    if last_bot is not None:
+        shown = [getattr(last_bot, "media_card", None), *(getattr(last_bot, "media_secondary", None) or [])]
+        docs = dedupe_cards(
+            card
+            for card in shown
+            if isinstance(card, dict)
+            and card.get("type") == "download"
+            and _is_valid_file_url(card.get("url"))
+            and is_owned_file_url(card.get("url"), owned)
+        )
+        if docs:
+            return DocumentPick(docs=docs[:2], exact=True)
+    previous = next((m for m in reversed(earlier) if _msg_role(m) == "user"), None)
+    if previous is None:
+        return None
+    pick = pick_documents(_msg_content(previous), company_name, catalog)
+    return pick if pick.docs else None
+
+
+def _owned_bot_catalog(session, bot_id: int, owned: frozenset[str]) -> list[dict]:
+    """The bot-wide media catalog without the files the bot does not own (see ``media_cards``)."""
+    return owned_media_payloads(get_bot_media_urls(session, bot_id=bot_id), owned)
 
 
 # Generic media-request terms, in addition to the specific file/video ask
@@ -8408,6 +8488,13 @@ async def rag_pipeline_stream(
             _scheduler_ready = _meeting_gate.scheduler_is_configured(bot) and (
                 plan_entitlements_service.is_meeting_booking_enabled_for_bot(bot.id, session) if _has_bot else False
             )
+            # The domains this bot's own files live on: a file anywhere else (a
+            # NIST or IBM PDF its pages link) is never offered as its download.
+            _owned_media = (
+                media_owned_domains(getattr(bot, "website", None), getattr(bot, "allowed_domains", None))
+                if _has_bot
+                else frozenset()
+            )
             # Resolved once per turn and handed to the prompt. Until now
             # ``business_hours`` had no reader in this pipeline at all, so the
             # LIVE SUPPORT block promised "a team member will be with you
@@ -9029,7 +9116,12 @@ async def rag_pipeline_stream(
             # so SimpleNamespace is a faithful, session-free stand-in. The
             # visitor's own message is already persisted, so it is the last entry.
             history = [
-                SimpleNamespace(role=m.role, content=m.content)
+                SimpleNamespace(
+                    role=m.role,
+                    content=m.content,
+                    media_card=getattr(m, "media_card", None),
+                    media_secondary=getattr(m, "media_secondary", None),
+                )
                 for m in get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
             ]
             _prior_turns = _has_prior_visitor_turns(history)
@@ -9157,16 +9249,20 @@ async def rag_pipeline_stream(
                             _cached_session = session.query(ChatSession).filter(*_cached_filters).first()
                         if bid is not None and not _cached_is_refusal:
                             _cached_card = _topical_media_card(
-                                question, _company_name, [], get_bot_media_urls(session, bot_id=bid)
+                                question,
+                                _company_name,
+                                [],
+                                _owned_bot_catalog(session, bid, _owned_media),
+                                owned=_owned_media,
                             )
                             _cached_key = _media_card_key(_cached_card)
                             if _cached_key:
-                                if not _is_explicit_media_request(question) and _card_already_shown(
-                                    _cached_session, _cached_key
+                                if not _is_explicit_media_request(question) and _media_card_already_shown(
+                                    _cached_session, _cached_card
                                 ):
                                     _cached_card = None
                                 else:
-                                    _mark_card_shown(_cached_session, _cached_key)
+                                    _mark_media_card_shown(_cached_session, _cached_card)
                             if _cached_card:
                                 _cached_meta["media_card"] = _cached_card
                                 logger.info(
@@ -9730,8 +9826,13 @@ async def rag_pipeline_stream(
             _doc_intent_tags: dict[str, str] = {}
             if _doc_intent_task is not None:
                 if bid is not None:
-                    _bot_catalog = get_bot_media_urls(session, bot_id=bid)
+                    _bot_catalog = _owned_bot_catalog(session, bid, _owned_media)
                 _pick = pick_documents(question, _company_name, _bot_catalog or [])
+                # "is there a pdf of this i can share with my boss" names no topic of
+                # its own: it means the file the last reply carried, or the topic of
+                # the visitor's previous message.
+                if _prior_turns and refers_back(question) and not (_pick.docs and _pick.exact):
+                    _pick = _referred_documents(history, _company_name, _bot_catalog or [], _owned_media) or _pick
                 # A pricing question belongs to the pricing gate, whichever way the
                 # gate went. "can you send me your pricing pdf?" on a bot with a
                 # pricing page is answered from that page (the gate narrowed the
@@ -9910,7 +10011,8 @@ async def rag_pipeline_stream(
                     _doc_meta["media_card"] = _pick.docs[0]
                     if len(_pick.docs) > 1:
                         _doc_meta["media_secondary"] = _pick.docs[1:]
-                    _mark_card_shown(chat_session, _media_card_key(_pick.docs[0]))
+                    for _doc in _pick.docs:
+                        _mark_media_card_shown(chat_session, _doc)
                     # Documents were offered, so the unhelped run ends.
                     _set_unhelped_streak(chat_session, 0)
                 # With no file the team is offered in words only: no form opens, so
@@ -10532,10 +10634,10 @@ async def rag_pipeline_stream(
             # Combine retrieved-chunk
             # media with the bot-wide DB fetch so the LLM sees every
             # video/file in the KB and can pick by topic match.
-            media_sources = _iter_media_urls_from_chunks(final_results)
+            media_sources = owned_media_payloads(_iter_media_urls_from_chunks(final_results), _owned_media)
             if bid is not None:
                 if _bot_catalog is None:
-                    _bot_catalog = get_bot_media_urls(session, bot_id=bid)
+                    _bot_catalog = _owned_bot_catalog(session, bid, _owned_media)
                 media_sources.extend(_bot_catalog)
             context_text += _build_media_catalog(media_sources)
             context_text += _maybe_events_block(session, bot_id=bid, question=question)
@@ -11070,10 +11172,12 @@ async def rag_pipeline_stream(
             # path for rationale. Drops cards whose IDs the LLM recalled
             # from memory rather than the current turn's catalog.
             _allowed_yt, _allowed_files = _collect_available_media(final_results)
+            # A file the bot does not own is never a card, whichever path attaches it.
+            _allowed_files = {url for url in _allowed_files if is_owned_file_url(url, _owned_media)}
             _bot_media_for_validate: list[dict] = []
             if bid is not None:
                 if _bot_catalog is None:
-                    _bot_catalog = get_bot_media_urls(session, bot_id=bid)
+                    _bot_catalog = _owned_bot_catalog(session, bid, _owned_media)
                 _bot_media_for_validate = _bot_catalog
                 for _bm in _bot_media_for_validate:
                     for _yt in _bm.get("youtube") or []:
@@ -11110,7 +11214,9 @@ async def rag_pipeline_stream(
                 # Whitelisted against the same set as a model-emitted card, so an
                 # attached card can never point at a URL this bot does not own.
                 _media_card = _drop_hallucinated_media_card(
-                    _topical_media_card(question, _company_name, final_results, _bot_media_for_validate),
+                    _topical_media_card(
+                        question, _company_name, final_results, _bot_media_for_validate, owned=_owned_media
+                    ),
                     _allowed_yt,
                     _allowed_files,
                 )
@@ -11130,19 +11236,30 @@ async def rag_pipeline_stream(
             )
             _enrich_media_card_from_context(_media_card, final_results)
             # Option E secondary chip.
-            _media_secondary = _pick_secondary_media(_media_card, final_results, _bot_media_for_validate)
+            _media_secondary = _pick_secondary_media(
+                _media_card, final_results, _bot_media_for_validate, owned=_owned_media
+            )
+            # One card per file: a chip that is the primary under another URL, or a
+            # file this conversation was already shown, is not offered.
+            _media_secondary = [
+                chip
+                for chip in dedupe_cards([_media_card, *_media_secondary])[1:]
+                if not _media_card_already_shown(chat_session, chip)
+            ]
             # Per-session dedupe.
             _media_key = _media_card_key(_media_card)
             if (
                 _media_key
                 and not _is_explicit_media_request(question)
-                and _card_already_shown(chat_session, _media_key)
+                and _media_card_already_shown(chat_session, _media_card)
             ):
                 logger.info("Media card suppressed (already shown) | session=%s key=%s", session_id, _media_key)
                 _media_card = None
                 _media_secondary = []
             elif _media_key:
-                _mark_card_shown(chat_session, _media_key)
+                _mark_media_card_shown(chat_session, _media_card)
+                for _chip in _media_secondary:
+                    _mark_media_card_shown(chat_session, _chip)
             if _media_card:
                 logger.info(
                     "Media card token detected | session=%s type=%s",

@@ -48,6 +48,7 @@ from urllib.parse import unquote
 from app.ingestion.cleaner import is_valid_file_url
 from app.services import runtime_config
 from app.services.llm_service import generate_response_checked
+from app.services.media_cards import dedupe_cards
 from app.services.prompt_fence import neutralise_fence
 
 logger = logging.getLogger(__name__)
@@ -221,6 +222,24 @@ _NOT_ASKING_RULES = tuple(
         r"\b(?:do|does|should|must)\s+(?:i|we)\s+(?:need|have)\s+to\b",
     )
 )
+
+
+#: A pronoun that stands for a document or topic from earlier in the
+#: conversation: "is there a pdf of this i can share", "send it as a pdf", "a
+#: datasheet for the same". It must not be followed by a word it could be
+#: describing ("that SOC datasheet", "this year's brochure", "is it possible"),
+#: so only the end of the message, punctuation or a short function word may follow.
+_REFERS_BACK_RE = re.compile(
+    r"\b(?:this|that|it|these|those|them|the\s+same(?:\s+one)?)"
+    r"(?=\s{0,3}(?:$|[.,!?;:)]|(?:i|to|with|as|please|pls|plz|so|for|and|in|on|over|too|also|we|you|my|me|now"
+    r"|again|here|there|available|asap)\b))",
+    re.IGNORECASE,
+)
+
+
+def refers_back(question: object) -> bool:
+    """True when a message asks for a document by pointing back at the conversation ("a pdf of this")."""
+    return isinstance(question, str) and _REFERS_BACK_RE.search(question) is not None
 
 
 def mentions_document(question: object) -> bool:
@@ -1197,7 +1216,9 @@ def _offer(first: _File, others: list[_File], *, exact: bool, limit: int) -> Doc
     same kind as the first: two spec sheets, not a datasheet and a report.
     """
     companions = others if exact else [f for f in others if f.kinds & first.kinds]
-    return DocumentPick(docs=[f.card for f in (first, *companions)][:limit], exact=exact)
+    # One file stored at two URLs ("iifl-case-study.pdf" and
+    # "iifl-case-study-29330f6b.pdf") is offered once, and the next file takes the chip.
+    return DocumentPick(docs=dedupe_cards(f.card for f in (first, *companions))[:limit], exact=exact)
 
 
 def pick_documents(question: str, company_name: str | None, catalog: object, limit: int = 2) -> DocumentPick:

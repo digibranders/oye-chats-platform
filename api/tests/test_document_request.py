@@ -27,6 +27,7 @@ from app.services.document_request import (
     is_document_request,
     mentions_document,
     pick_documents,
+    refers_back,
 )
 from app.services.intent_service import bot_offers_handoff
 
@@ -1481,3 +1482,65 @@ def test_no_message_is_no_document_request(message):
 def test_the_request_check_is_linear_on_long_input():
     message = "send me the menu and the guide " * 800
     assert timeit.timeit(lambda: document_request.looks_like_a_document_request(message), number=1) < 2.0
+
+
+# ── The same file twice, and a request that points back ───────────────────────
+
+IIFL = "https://cdn.cleanstart.com/case-studies/iifl-case-study.pdf"
+IIFL_HASHED = "https://cdn.cleanstart.com/web/case-study/iifl-case-study-29330f6b.pdf"
+RETAIL = "https://cdn.cleanstart.com/case-studies/retail-bank-case-study.pdf"
+
+
+def test_one_case_study_stored_twice_is_offered_once():
+    """Evaluation, 2026-09-17: "**iifl case study** and **iifl case study** are ready to download below"."""
+    catalog = [
+        {"files": [{"url": IIFL, "name": "iifl-case-study.pdf"}]},
+        {"files": [{"url": IIFL_HASHED, "name": "iifl-case-study-29330f6b.pdf"}]},
+        {"files": [{"url": RETAIL, "name": "retail-bank-case-study.pdf"}]},
+    ]
+
+    pick = pick_documents("send me some case studies on my email", "CleanStart", catalog)
+
+    urls = [doc["url"] for doc in pick.docs]
+    assert len(urls) == 2
+    assert len({url for url in urls if "iifl" in url}) == 1
+    assert RETAIL in urls
+    assert document_reply(pick, company_name="CleanStart", support_enabled=True).count("iifl") == 1
+
+
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "is there a pdf of this i can share with my boss",
+        "can I get a pdf of that?",
+        "send it as a pdf please",
+        "can you share this as a brochure",
+        "is this available as a pdf",
+        "do you have a datasheet for the same",
+        "pdf of these?",
+        "i want a pdf version of it",
+    ],
+)
+def test_a_request_that_points_back_is_recognised(msg):
+    assert refers_back(msg) is True
+
+
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "send me that SOC datasheet",
+        "can you send me this year's brochure",
+        "is it possible to get your brochure",
+        "send me your brochure",
+        "what is this company",
+        "",
+        None,
+    ],
+)
+def test_a_request_that_names_its_document_does_not_point_back(msg):
+    assert refers_back(msg) is False
+
+
+def test_refers_back_is_fast_on_a_long_message():
+    msg = "this " * 5000 + "x" * 5000
+    assert timeit.timeit(lambda: refers_back(msg), number=1) < 0.5
