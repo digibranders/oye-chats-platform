@@ -17,7 +17,7 @@ import time
 
 import pytest
 
-from app.services.intent_router import follows_a_reaction_reply, route_intent
+from app.services.intent_router import CARE_NOTE, care_note, crisis_reply, follows_a_reaction_reply, route_intent
 from app.services.intent_service import bot_offers_handoff
 
 COMPANY = "Acme"
@@ -267,6 +267,76 @@ def test_distress_wins_over_the_identity_and_business_guards():
     assert _routed("what services do you offer, i want to kill myself").intent == "crisis"
 
 
+# Review 2026-09-17 (finding 6): questions a healthcare or retail bot exists to
+# answer got the crisis reply.
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "I can't breathe through my nose, do you do septoplasty?",
+        "i cant breath in this mask, do you sell N95?",
+        "i can't breathe with my old inhaler, do you stock the new one",
+        "I'm having a stroke of luck",
+        "I have chest pain after running, should I book a cardiology consult?",
+        "i have chest pains when i climb stairs, can i book an appointment",
+    ],
+)
+def test_service_questions_with_body_words_are_not_the_crisis_reply(msg):
+    routed = route_intent(msg, COMPANY)
+    assert routed is None or routed.intent != "crisis", msg
+    assert crisis_reply(msg) is None, msg
+
+
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "I have chest pain after running, should I book a cardiology consult?",
+        "i have chest pains when i climb stairs, can i book an appointment",
+        "my chest hurts after coughing, do you offer a check-up",
+    ],
+)
+def test_chest_pain_with_a_booking_question_keeps_a_short_emergency_line(msg):
+    note = care_note(msg)
+    assert note == CARE_NOTE
+    assert "local emergency number" in note
+    assert "can't help" not in note
+    assert not re.search(r"\d", note), "never invent a phone number"
+    assert not any(dash in note for dash in _DASHES)
+    assert not follows_a_reaction_reply(note)
+
+
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "i have chest pain right now",
+        "I'm having crushing chest pain, can I book an appointment",
+        "my chest hurts and my arm is numb, do you do ecgs",
+        "i have severe chest pains, should i book a consult",
+        "I'm having a stroke, can i book an appointment",
+        "i cant breathe",
+        "i want to die, can i book a consult",
+    ],
+)
+def test_acute_distress_keeps_the_crisis_reply_even_with_a_booking_question(msg):
+    assert crisis_reply(msg) is not None, msg
+    assert _routed(msg).intent == "crisis", msg
+    assert care_note(msg) == "", msg
+
+
+@pytest.mark.parametrize(
+    "msg",
+    ["what are your opening hours", "i want to die", "I can't breathe through my nose, do you do septoplasty?", ""],
+)
+def test_no_emergency_line_without_chest_pain_and_a_booking_question(msg):
+    assert care_note(msg) == ""
+
+
+def test_the_early_crisis_reply_is_the_routers_reply():
+    early = crisis_reply("my name is Sam, i want to kill myself")
+    routed = _routed("my name is Sam, i want to kill myself")
+    assert early == routed
+    assert early.intent == "crisis"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Requests for medical advice
 # ─────────────────────────────────────────────────────────────────────────────
@@ -300,6 +370,23 @@ def test_requests_for_medication_get_the_doctor_reply(msg):
 def test_other_questions_are_not_medical_advice(msg):
     routed = route_intent(msg, COMPANY)
     assert routed is None or routed.intent != "medical_advice", msg
+
+
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "how many tablets should I take of your ashwagandha",
+        "how many capsules should i take of ur multivitamin",
+        "how many Acme tablets should i take",
+    ],
+)
+def test_a_dosage_question_about_the_business_product_reaches_retrieval(msg):
+    routed = route_intent(msg, COMPANY)
+    assert routed is None or routed.intent not in {"crisis", "medical_advice"}, msg
+
+
+def test_a_dosage_question_naming_another_brand_still_gets_the_doctor_reply():
+    assert _routed("how many crocin tablets should i take").intent == "medical_advice"
 
 
 def test_the_doctor_reply_shows_care_and_names_no_medicine():

@@ -70,7 +70,14 @@ from app.services.email_service import (
 )
 from app.services.groundedness_gate import check_groundedness, should_sample
 from app.services.handoff_reply import handoff_reply, unhelped_offer
-from app.services.intent_router import offered_option_question, route_intent, strip_greeting_lead, term_spellings
+from app.services.intent_router import (
+    care_note,
+    crisis_reply,
+    offered_option_question,
+    route_intent,
+    strip_greeting_lead,
+    term_spellings,
+)
 from app.services.intent_service import (
     GENERIC_INVITE_RE,
     HANDOFF_OFFER_RE,
@@ -8567,6 +8574,51 @@ async def rag_pipeline_stream(
             )
             session.commit()
 
+            # ── A visitor in distress, before every other route ─────────────
+            # On the visitor's own words and ahead of the urgent and support
+            # routes, the name step and moderation, each of which used to answer
+            # first: "my name is Sam, i want to kill myself" saved the name and
+            # answered the deferred question, and "i want to die, you charged me
+            # twice" alerted the team with a support reply. The crisis reply is
+            # the router's own (no company, no team offer, no by-name opener),
+            # rules only, so this turn makes no model call and alerts no one.
+            # Not behind the English check: the patterns only match English words,
+            # and a visitor who wrote them should get help in any session.
+            _crisis = crisis_reply(question)
+            if _crisis is not None:
+                _safety_net_metric(
+                    "intent_router_short_circuit",
+                    path="stream",
+                    intent=_crisis.intent,
+                    session=session_id,
+                    bot_id=bid,
+                )
+                # A second message in distress hears new words (``answer_after``).
+                _crisis_text = _crisis.answer_after(
+                    _reply_before_this_turn(get_chat_history(session, session_id, client_id=cid, limit=2, bot_id=bid))
+                )
+                # Fixed text, saved before the first frame like the urgent reply.
+                _crisis_msg = add_chat_message(
+                    session,
+                    session_id,
+                    client_id=cid,
+                    role="bot",
+                    content=_crisis_text,
+                    bot_id=bid,
+                    source_language=_lang_base(language),
+                )
+                session.flush()
+                _crisis_msg_id = _crisis_msg.id
+                session.commit()
+                yield _stream_metadata(session_id, [], language)
+                yield _crisis_text
+                yield f"\nFINAL_METADATA:{json.dumps({'message_id': _crisis_msg_id})}\n"
+                return
+            # Chest pain beside a booking or service question: answered, under a
+            # short emergency line that leads every reply below and keeps the
+            # answer out of the shared QA cache.
+            _care_note = care_note(question)
+
             # Owner-preview: seed the session's lead with the owner's first name
             # before the name flow runs, so it resolves as already-known and the
             # preview never spends its first turn asking "may I know your name?".
@@ -8888,8 +8940,10 @@ async def rag_pipeline_stream(
                 _wait_session = session.query(ChatSession).filter(*_wait_filters).first()
                 if _card_already_shown(_wait_session, "handoff_offered"):
                     _safety_net_metric("handoff_waiting_reply", path="stream", session=session_id, bot_id=bid)
-                    _wait_text = _name_ack_prefix(_flow_name, _just_named, language) + handoff_reply(
-                        team_available=bool(_team_online), repeat=True
+                    _wait_text = (
+                        _care_note
+                        + _name_ack_prefix(_flow_name, _just_named, language)
+                        + handoff_reply(team_available=bool(_team_online), repeat=True)
                     )
                     # Fixed text, saved before the first frame like the urgent reply.
                     _bot_msg = add_chat_message(
@@ -8941,7 +8995,7 @@ async def rag_pipeline_stream(
                     if _intent.repeat_answer is not None
                     else _intent.answer
                 )
-                _intent_answer = _maybe_append_name_ask(
+                _intent_answer = _care_note + _maybe_append_name_ask(
                     _intent_text,
                     session,
                     session_id,
@@ -9165,6 +9219,7 @@ async def rag_pipeline_stream(
             )
             if (
                 _cache_key
+                and not _care_note
                 and not _affirmed_handoff
                 and not _gate_may_intercept
                 and not _credential_question
@@ -9752,7 +9807,9 @@ async def rag_pipeline_stream(
                     subject=_pricing_gate.pricing_subject(_price_question, _company_name, _service_names),
                 )
                 _pivot_text = (
-                    _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + _pivot.text
+                    _care_note
+                    + _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name)
+                    + _pivot.text
                 )
                 yield _stream_metadata(session_id, [], language)
                 yield _pivot_text
@@ -9928,7 +9985,9 @@ async def rag_pipeline_stream(
                     contact_url=_contact_url,
                 )
                 _mtg_text = (
-                    _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + _mtg.text
+                    _care_note
+                    + _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name)
+                    + _mtg.text
                 )
                 yield _stream_metadata(session_id, [], language)
                 yield _mtg_text
@@ -9989,13 +10048,15 @@ async def rag_pipeline_stream(
                         contact_url=_contact_url,
                         after_another_reply=True,
                     )
-                _doc_text = _name_ack_prefix(
-                    _flow_name, _just_named, language, returning=_returning_by_name
-                ) + document_reply(
-                    _pick,
-                    company_name=_company_name,
-                    support_enabled=_plan_support_allowed,
-                    booking=bool(_doc_booking),
+                _doc_text = (
+                    _care_note
+                    + _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name)
+                    + document_reply(
+                        _pick,
+                        company_name=_company_name,
+                        support_enabled=_plan_support_allowed,
+                        booking=bool(_doc_booking),
+                    )
                 )
                 if _doc_meeting_pivot is not None:
                     _doc_text = f"{_doc_text} {_doc_meeting_pivot.text}"
@@ -10064,9 +10125,11 @@ async def rag_pipeline_stream(
                     session=session_id,
                     bot_id=bid,
                 )
-                _handoff_text = _name_ack_prefix(
-                    _flow_name, _just_named, language, returning=_returning_by_name
-                ) + handoff_reply(team_available=bool(_team_online), repeat=_handoff_repeat)
+                _handoff_text = (
+                    _care_note
+                    + _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name)
+                    + handoff_reply(team_available=bool(_team_online), repeat=_handoff_repeat)
+                )
                 yield _stream_metadata(session_id, [], language)
                 yield _handoff_text
                 _bot_msg = add_chat_message(
@@ -10348,7 +10411,9 @@ async def rag_pipeline_stream(
                     bot_id=bid,
                 )
                 _reaction_text = (
-                    _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + _reaction.text
+                    _care_note
+                    + _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name)
+                    + _reaction.text
                 )
                 # Fixed text, saved with its flags before the first frame, like the
                 # unhelped offer below.
@@ -10396,7 +10461,9 @@ async def rag_pipeline_stream(
                     bot_id=bid,
                 )
                 _offer_text = (
-                    _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + _offer.text
+                    _care_note
+                    + _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name)
+                    + _offer.text
                 )
                 # The offer is fixed text, so it and its flags are saved BEFORE the
                 # first frame, like the urgent and document replies: a visitor who
@@ -10476,10 +10543,18 @@ async def rag_pipeline_stream(
                     # no human channel: it may hardcode a "connect with the team"
                     # offer the Free-plan bot can't honor. Fall to the gated
                     # default pivot, which drops the offer when support is off.
-                    _pivot = _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + (
-                        (_canned_localized("no_info_pivot", _company_name, language) if _plan_support_allowed else None)
-                        or _no_info_pivot(
-                            _company_name, support_enabled=_plan_support_allowed, contact_url=_contact_url
+                    _pivot = (
+                        _care_note
+                        + _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name)
+                        + (
+                            (
+                                _canned_localized("no_info_pivot", _company_name, language)
+                                if _plan_support_allowed
+                                else None
+                            )
+                            or _no_info_pivot(
+                                _company_name, support_enabled=_plan_support_allowed, contact_url=_contact_url
+                            )
                         )
                     )
                     yield _stream_metadata(session_id, [], language)
@@ -10509,10 +10584,14 @@ async def rag_pipeline_stream(
                     bot_id=bid,
                 )
                 _recent_bot = [m.content for m in history if m.role == "bot"][-3:]
-                _refusal_text = _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + (
-                    _canned_localized("off_topic_refusal", _company_name, language)
-                    or _refusal_or_browsing_ack(
-                        question, _company_name, _recent_bot, support_enabled=_plan_support_allowed
+                _refusal_text = (
+                    _care_note
+                    + _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name)
+                    + (
+                        _canned_localized("off_topic_refusal", _company_name, language)
+                        or _refusal_or_browsing_ack(
+                            question, _company_name, _recent_bot, support_enabled=_plan_support_allowed
+                        )
                     )
                 )
                 yield _stream_metadata(session_id, [], language)
@@ -10573,10 +10652,18 @@ async def rag_pipeline_stream(
                     # no human channel: it may hardcode a "connect with the team"
                     # offer the Free-plan bot can't honor. Fall to the gated
                     # default pivot, which drops the offer when support is off.
-                    _pivot = _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + (
-                        (_canned_localized("no_info_pivot", _company_name, language) if _plan_support_allowed else None)
-                        or _no_info_pivot(
-                            _company_name, support_enabled=_plan_support_allowed, contact_url=_contact_url
+                    _pivot = (
+                        _care_note
+                        + _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name)
+                        + (
+                            (
+                                _canned_localized("no_info_pivot", _company_name, language)
+                                if _plan_support_allowed
+                                else None
+                            )
+                            or _no_info_pivot(
+                                _company_name, support_enabled=_plan_support_allowed, contact_url=_contact_url
+                            )
                         )
                     )
                     yield _stream_metadata(session_id, [], language)
@@ -10605,10 +10692,14 @@ async def rag_pipeline_stream(
                     bot_id=bid,
                 )
                 _recent_bot = [m.content for m in history if m.role == "bot"][-3:]
-                _refusal_text = _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name) + (
-                    _canned_localized("off_topic_refusal", _company_name, language)
-                    or _refusal_or_browsing_ack(
-                        question, _company_name, _recent_bot, support_enabled=_plan_support_allowed
+                _refusal_text = (
+                    _care_note
+                    + _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name)
+                    + (
+                        _canned_localized("off_topic_refusal", _company_name, language)
+                        or _refusal_or_browsing_ack(
+                            question, _company_name, _recent_bot, support_enabled=_plan_support_allowed
+                        )
                     )
                 )
                 yield _stream_metadata(session_id, [], language)
@@ -10856,7 +10947,7 @@ async def rag_pipeline_stream(
             # reliable: a returning visitor's first reply shipped with no greeting
             # and no name at all. Not emitted on the buffered qualified-popup turn
             # below, which yields the whole answer at once after the loop.
-            _opener = _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name)
+            _opener = _care_note + _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name)
             if _opener:
                 full_answer += _opener
                 if not _show_qualified_popup:

@@ -407,14 +407,32 @@ _CRISIS_RE = re.compile(
     r"|\b(?:took|taken|take|taking|had)\s+an\s+overdose\b"
     rf"|{_I_TOOK}{_MANY}\s+(?:[a-z]+\s+)?{_PILLS}\b"
     rf"|{_I_TOOK}(?:(?:my|some|the|a\s+few|a\s+couple\s+of|two|three)\s+)?{_SLEEPING_PILLS}\b"
-    # A medical emergency
-    r"|\b(?:i\s+have|i've\s+got|ive\s+got|i\s+got|i'm\s+having|im\s+having|i\s+am\s+having|having|i\s+feel|feeling"
+    # A medical emergency. Breathing "through", "in" or "with" something is a
+    # question about a nose, a mask or an inhaler ("I can't breathe through my
+    # nose, do you do septoplasty?"), and "a stroke of luck" is not a stroke.
+    r"|\bi\s+(?:can't|cant|cannot|can\s+not)\s+breathe?\b(?!\s+(?:through|in|with)\b)"
+    r"|\b(?:i'm|im|i\s+am)\s+having\s+an?\s+(?:heart\s+attack|stroke(?!\s+of\b)|seizure)\b"
+    r")"
+)
+# Chest pain in the visitor's own voice. On its own, or said to be acute, it
+# gets the crisis reply. Beside a question about booking or a service ("I have
+# chest pain after running, should I book a cardiology consult?") it is the
+# question a clinic's bot exists to answer: the pipeline answers it under a short
+# emergency line (``care_note``) instead of saying it can't help.
+_CHEST_PAIN_RE = re.compile(
+    r"\b(?:i\s+have|i've\s+got|ive\s+got|i\s+got|i'm\s+having|im\s+having|i\s+am\s+having|having|i\s+feel|feeling"
     r"|getting)\s+(?:(?:a|some|really|very|bad|severe|sharp|strong|crushing)\s+){0,2}"
     r"(?:chest\s+pains?|pains?\s+in\s+my\s+chest|chest\s+tightness|tightness\s+in\s+my\s+chest)\b"
     r"|\bmy\s+chest\s+(?:hurts|is\s+hurting|is\s+tight|feels\s+tight|is\s+in\s+pain|is\s+pounding)\b"
-    r"|\bi\s+(?:can't|cant|cannot|can\s+not)\s+breathe?\b"
-    r"|\b(?:i'm|im|i\s+am)\s+having\s+an?\s+(?:heart\s+attack|stroke|seizure)\b"
-    r")"
+)
+_BOOKING_OR_SERVICE_RE = re.compile(
+    r"\b(?:book|booking|appointments?|consult|consultation|schedule|check-?up"
+    r"|do\s+you\s+(?:offer|do|treat|provide|have|see)|can\s+i\s+(?:see|get|visit|come))\b"
+)
+# Words that make the pain an emergency now, whatever else the message asks.
+_ACUTE_RE = re.compile(
+    r"\b(?:now|currently|at\s+the\s+moment|crushing|severe|unbearable|spreading|numb|emergency|dying"
+    r"|help\s+me|(?:can't|cant|cannot)\s+breathe?)\b"
 )
 # A request for medication, which the bot must never answer: "which tablets
 # should i take". "which plan should i take" and "do you sell sleeping pills"
@@ -431,6 +449,10 @@ _MEDICAL_ADVICE_RE = re.compile(
     rf"|\bshould\s+i\s+take\s+(?:a\s+|some\s+|any\s+)?(?:{_SLEEPING_PILLS}|painkillers?|antidepressants?|melatonin)\b"
     r")"
 )
+# A dosage question about the business's own product ("how many tablets should I
+# take of your ashwagandha") is for the knowledge base of a supplement or
+# pharmacy bot: its label is there.
+_OWN_PRODUCT_RE = re.compile(r"\b(?:your|ur|yours)\b")
 # One-word gibberish: a lone letter (not k, n or y, which mean ok, no and yes),
 # six or more consonants (y counts as a vowel), or a keyboard run. The caller
 # checks the word is ASCII letters only, which also keeps matching linear.
@@ -683,6 +705,60 @@ def offered_option_question(bot_message: str | None) -> str | None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Distress, ahead of every route
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: The line above an answer to a chest-pain booking or service question.
+CARE_NOTE = "If the chest pain is severe or getting worse, please call your local emergency number now.\n\n"
+
+
+def _care_text(question: str) -> str:
+    """``question`` normalised for the distress patterns, curly apostrophe straightened."""
+    return _normalise(question).replace("\u2019", "'")
+
+
+def _distress(care_text: str) -> str | None:
+    """``"crisis"``, ``"care_note"`` (chest pain beside a booking or service
+    question, with nothing acute) or ``None``. Each search is linear."""
+    if not care_text:
+        return None
+    if _CRISIS_RE.search(care_text):
+        return "crisis"
+    if not _CHEST_PAIN_RE.search(care_text):
+        return None
+    if _BOOKING_OR_SERVICE_RE.search(care_text) and not _ACUTE_RE.search(care_text):
+        return "care_note"
+    return "crisis"
+
+
+def _names_the_business(care_text: str, company_name: str | None) -> bool:
+    """Whether the message is about the business's own product: "your", or the company name."""
+    if _OWN_PRODUCT_RE.search(care_text):
+        return True
+    name = (company_name or "").strip().lower()
+    return bool(name) and re.search(rf"(?<!\w){re.escape(name)}(?!\w)", care_text) is not None
+
+
+def crisis_reply(question: str) -> IntentResponse | None:
+    """The crisis reply when the visitor's own message reads as distress, else ``None``.
+
+    The same reply ``route_intent`` gives, for the pipeline to send before any
+    other route: a visitor who may be in danger is answered before the urgent
+    and support routes, the name step and moderation (see ``rag_pipeline_stream``).
+    """
+    if not question or not isinstance(question, str):
+        return None
+    return _crisis() if _distress(_care_text(question)) == "crisis" else None
+
+
+def care_note(question: str) -> str:
+    """``CARE_NOTE`` for chest pain beside a booking or service question, else ""."""
+    if not question or not isinstance(question, str):
+        return ""
+    return CARE_NOTE if _distress(_care_text(question)) == "care_note" else ""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Public router
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -728,10 +804,10 @@ def route_intent(
     # Distress first, at any length and whatever else the message asks: the
     # reply must reach a visitor who may be in danger. The curly apostrophe is
     # straightened for these patterns only.
-    care_text = norm.replace("\u2019", "'")
-    if _CRISIS_RE.search(care_text):
+    care_text = _care_text(raw)
+    if _distress(care_text) == "crisis":
         return _crisis()
-    if _MEDICAL_ADVICE_RE.search(care_text):
+    if _MEDICAL_ADVICE_RE.search(care_text) and not _names_the_business(care_text, company_name):
         return _medical_advice(company_name)
 
     # Word count gate: identity/meta patterns can be longer; greetings/acks
