@@ -135,6 +135,9 @@ export function toBotPatch(routing: EmailRouting): Record<string, unknown> {
   return {
     reply_to_email: routing.replyTo.trim() || null,
     notification_emails: notificationEmails,
+    // The legacy field is shown in the default list and saved there, so it
+    // is cleared here; otherwise emptying the list would bring it back.
+    notification_email: null,
     email_on_qualified: routing.onQualified,
     email_on_handoff: routing.onHandoff,
     email_on_offline: routing.onOffline,

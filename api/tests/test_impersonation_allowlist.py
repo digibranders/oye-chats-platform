@@ -185,6 +185,7 @@ class TestAllowlistedSurfacesAreWritable:
             {"domain_check_enabled": False},
             {"session_share_domain": "evil.example"},
             {"notification_email": "attacker@evil.example"},
+            {"notification_emails": {"default": ["attacker@evil.example"]}},
             {"reply_to_email": "attacker@evil.example"},
             # Mixed: one benign + one sensitive field must be rejected whole.
             {"name": "Renamed by support", "domain_check_enabled": False},

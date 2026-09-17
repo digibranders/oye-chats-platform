@@ -2181,12 +2181,6 @@ export const detectBrandTone = async (botId: number): Promise<Record<string, unk
 };
 
 /**
- * Generate a 1-2 sentence sample bot reply in the given (unsaved) tone.
- * @param {number} botId
- * @param {string} brandTone - the current draft tone text
- * @returns {Promise<{sample: string}>}
- */
-/**
  * The contact page a chatbot links visitors to (a `contact` Smart Link, else
  * one found among its crawled pages). Only a Free chatbot hands it out.
  */
@@ -2200,6 +2194,12 @@ export const getBotContactLink = async (botId: number): Promise<Record<string, u
     }
 };
 
+/**
+ * Generate a 1-2 sentence sample bot reply in the given (unsaved) tone.
+ * @param {number} botId
+ * @param {string} brandTone - the current draft tone text
+ * @returns {Promise<{sample: string}>}
+ */
 export const previewBrandTone = async (botId: number, brandTone: string): Promise<{ sample?: string }> => {
     try {
         const response = await api.post(`/bots/${botId}/brand-tone/preview`, { brand_tone: brandTone });

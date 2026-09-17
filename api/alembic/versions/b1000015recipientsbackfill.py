@@ -50,14 +50,15 @@ _AS_OBJECT = (
 )
 
 _HAS_DEFAULT = """
-COALESCE(
-    jsonb_typeof(b.notification_emails -> 'default') = 'array'
-    AND EXISTS (
-        SELECT 1
-        FROM jsonb_array_elements(b.notification_emails -> 'default') AS entry
-        WHERE jsonb_typeof(entry) = 'string' AND btrim(entry #>> '{}') <> ''
-    ),
-    false
+(
+    CASE
+        WHEN jsonb_typeof(b.notification_emails -> 'default') = 'array' THEN EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(b.notification_emails -> 'default') AS entry
+            WHERE jsonb_typeof(entry) = 'string' AND btrim(entry #>> '{}') <> ''
+        )
+        ELSE false
+    END
 )
 """
 

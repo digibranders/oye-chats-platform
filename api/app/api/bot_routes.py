@@ -1629,7 +1629,10 @@ def list_bots(
         bots = session.execute(stmt).scalars().all()
         # One query for every owner address instead of one per bot.
         owner_emails: dict[int, str] = dict(
-            session.execute(select(Client.id, Client.email).where(Client.id.in_({b.client_id for b in bots}))).all()
+            (client_id, email.strip())
+            for client_id, email in session.execute(
+                select(Client.id, Client.email).where(Client.id.in_({b.client_id for b in bots}))
+            ).all()
         )
         bots_response = []
         for b in bots:
@@ -2917,6 +2920,7 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
                         "domain_check_enabled",
                         "session_share_domain",
                         "notification_email",
+                        "notification_emails",
                         "reply_to_email",
                         # The two metered-enrichment toggles. A customer turns
                         # these off specifically so credits stop being spent;

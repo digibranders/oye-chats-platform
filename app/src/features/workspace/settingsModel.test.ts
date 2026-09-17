@@ -399,6 +399,8 @@ describe('emailModel', () => {
     const routing = readEmailRouting(bot);
     const patch = toBotPatch({ ...routing, recipients: ['a@b.com'] });
     expect(patch.notification_emails).toEqual({ default: ['a@b.com'] });
+    // The legacy field was folded into the list above, so it is cleared.
+    expect(patch.notification_email).toBeNull();
 
     const withOverride = toBotPatch({
       ...routing,

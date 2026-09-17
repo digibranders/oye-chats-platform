@@ -316,3 +316,40 @@ def test_no_contact_page_anywhere_reads_as_none(db, monkeypatch, _no_entitlement
     tc = _db_app(db, monkeypatch, client.id)
     response = tc.get(f"/bots/{bot.id}/contact-link")
     assert response.json() == {"effective_url": None, "source": None, "detected_url": None}
+
+
+# ── An owner email change carries the saved default along ────────────────────
+
+
+@pg
+def test_a_default_list_that_is_the_old_owner_address_follows_the_change(db):
+    from app.services.bot_defaults import follow_owner_email_change
+
+    client = _client(db, email="old-owner@acme.test")
+    followed = _mk_bot(
+        db,
+        client,
+        f"bot-follow-{next(_seq)}",
+        notification_emails={"default": ["Old-Owner@acme.test"], "qualified_lead": ["sales@acme.test"]},
+    )
+    chosen = _mk_bot(
+        db, client, f"bot-chosen-{next(_seq)}", notification_emails={"default": ["old-owner@acme.test", "b@acme.test"]}
+    )
+    other_account = _client(db, email="someone@acme.test")
+    foreign = _mk_bot(
+        db, other_account, f"bot-foreign-{next(_seq)}", notification_emails={"default": ["old-owner@acme.test"]}
+    )
+
+    follow_owner_email_change(db, client.id, "old-owner@acme.test", "new-owner@acme.test")
+    db.flush()
+
+    assert followed.notification_emails == {"default": ["new-owner@acme.test"], "qualified_lead": ["sales@acme.test"]}
+    assert chosen.notification_emails["default"] == ["old-owner@acme.test", "b@acme.test"]
+    assert foreign.notification_emails == {"default": ["old-owner@acme.test"]}
+
+
+def test_confirming_an_email_change_moves_the_saved_defaults():
+    source = (Path(__file__).resolve().parents[1] / "app/api/client_routes.py").read_text(encoding="utf-8")
+    body = source[source.index("def confirm_client_email_change") :]
+    body = body[: body.index("\n@router")]
+    assert "follow_owner_email_change(" in body

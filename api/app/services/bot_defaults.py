@@ -21,7 +21,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import Client
+from app.core.cache import bot_config_key, cache_delete
+from app.db.models import Bot, Client
 
 # ``UpdateBotRequest.company_name`` accepts at most this many characters. A
 # longer copy would leave the bot unsaveable from the console.
@@ -49,3 +50,30 @@ def owner_contact_defaults(session: Session, client_id: int) -> dict[str, Any]:
 
 def _text(value: object) -> str:
     return value.strip() if isinstance(value, str) else ""
+
+
+def follow_owner_email_change(session: Session, client_id: int, old_email: str, new_email: str) -> None:
+    """Move default recipient lists that are exactly the old owner address.
+
+    A bot created or backfilled with the owner's address saved a copy of it.
+    Before that copy existed, the send-time fallback followed the account's
+    current email, so a list that is still only the old address follows the
+    change too. A list the customer extended or replaced is left alone. The
+    caller owns the commit.
+    """
+    old = old_email.strip().casefold()
+    new = new_email.strip()
+    if not old or not new or old == new.casefold():
+        return
+    bots = session.execute(select(Bot).where(Bot.client_id == client_id)).scalars().all()
+    for bot in bots:
+        routing = bot.notification_emails
+        if not isinstance(routing, dict):
+            continue
+        listed = routing.get("default")
+        if not (isinstance(listed, list) and len(listed) == 1 and isinstance(listed[0], str)):
+            continue
+        if listed[0].strip().casefold() != old:
+            continue
+        bot.notification_emails = {**routing, "default": [new]}
+        cache_delete(bot_config_key(bot.bot_key))

@@ -3261,10 +3261,10 @@ def _alert_team_of_urgent_incident(session, bot, client_id: int, session_id: str
     """
     bot_id = getattr(bot, "id", None)
     bot_name = getattr(bot, "name", None)
-    reply_to = get_reply_to_address(bot)
     queue_timeout = getattr(bot, "live_chat_queue_timeout_seconds", None) or _DEFAULT_QUEUE_TIMEOUT_SECONDS
     wants_email = bot is not None and bool(getattr(bot, "email_on_handoff", True))
     recipients = get_notification_recipients(bot, "handoff_request") if wants_email else []
+    reply_to = get_reply_to_address(bot) if recipients else None
     try:
         lead = get_lead_info_by_session(session, session_id, bot_id=bot_id)
     except Exception:  # noqa: BLE001 - a failed lookup leaves the alert anonymous, not unsent
