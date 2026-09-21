@@ -66,10 +66,15 @@ tripped on. Only words within ``_HOLD_CAP_CHARS`` characters of the figure
 count. ``answer_trips_price_guard`` feeds a whole answer through the same
 guard, so the cache read decides exactly as the stream does.
 
-A turn that asks the price and something else (``price_intent`` decided MIXED)
-is not replaced whole: ``PriceSentenceRedactor`` drops each sentence that states
-a figure and keeps the rest, and ``redact_price_sentences`` reads a whole answer
-the same way.
+A turn the whole answer belongs to is not replaced whole:
+``PriceSentenceRedactor`` drops each sentence that states a price and keeps the
+rest, and ``redact_price_sentences`` reads a whole answer the same way. It takes
+the turn's signal too. With it (``price_intent`` decided MIXED) every sentence
+stating a figure goes. Without it only a sentence an unsignalled
+``PriceStreamGuard`` would trip on goes, so a bot that quotes GDPR fines, court
+fees or salaries on a turn that asked no price still answers the question it was
+asked (production, 2026-09-21: "tell me abt ur services" got the pricing
+escalation and the handoff form, because the answer happened to quote a price).
 
 Pure module: no DB, no I/O, and no import from ``rag_service``.
 """
@@ -640,6 +645,67 @@ class _AnswerReader:
         )
 
 
+class _HeldSentence:
+    """The sentence an unsignalled figure sits in, read for the words that say whose price it is.
+
+    A figure with no turn signal is held until its sentence names the company's
+    price, and tripped on, or until the sentence ends and it is released.
+    ``PriceStreamGuard`` reads the sentence as the stream arrives and
+    ``PriceSentenceRedactor`` reads it in one go, so both decide the same figures.
+
+    Only the first ``_HOLD_CAP_CHARS`` characters from the figure are read, so the
+    decision does not depend on how the answer was chunked. Each ``read`` takes
+    only what arrived since the last one, plus enough overlap for a word split
+    across chunks.
+    """
+
+    def __init__(self, words: re.Pattern[str], flags: tuple[bool, bool, bool], figure_len: int) -> None:
+        self._words = words
+        #: What the sentence named before the figure.
+        self._own, self._qualified, self._first_person = flags
+        #: The figure's length, and, measured from its start: how far the sentence
+        #: was read for words, where the last word read ends, and where the search
+        #: for the sentence end resumes.
+        self.figure_len = figure_len
+        self._read = 0
+        self._word_end = 0
+        self._end_from = figure_len
+        #: The sentence names the company's price, and the figure can be released.
+        self.tripped = False
+        self.settled = False
+
+    def read(self, window: str, start: int, *, final: bool) -> None:
+        """Read what has arrived of the sentence: ``window[start:]``, from the figure on."""
+        limit = start + _HOLD_CAP_CHARS
+        # One character past the cap, so a word or full stop ending at it is settled.
+        bound = min(len(window), limit + 1)
+        end = _SENTENCE_END_RE.search(window, start + self._end_from, bound)
+        sentence_ended = end is not None and end.start() < limit
+        if end is None:
+            # A full stop that has arrived last may still be followed by whitespace.
+            self._end_from = max(self.figure_len, bound - start - 1)
+        stop = end.start() if sentence_ended else limit
+        for word in self._words.finditer(window, start + max(0, self._read - _TAIL_CHARS), bound):
+            if word.start() >= stop or word.end() > limit:
+                break
+            # A word at the very end of what has arrived may still grow into
+            # another one ("plan" + "et"), and a "tier" into "tier 2 cities": only a
+            # later chunk, ``flush`` or the cap decides.
+            if not final and len(window) <= limit and (word.end() == len(window) or _may_grow_into_places(word, bound)):
+                break
+            if word.end() - start <= self._word_end:
+                continue
+            self._word_end = word.end() - start
+            self._own = self._own or word.lastgroup == "own"
+            self._qualified = self._qualified or word.lastgroup == "qualified"
+            self._first_person = self._first_person or word.lastgroup == "first_person"
+            if self._own or (self._qualified and self._first_person):
+                self.tripped = True
+                return
+        self._read = bound - start
+        self.settled = sentence_ended or final or len(window) > limit
+
+
 class PriceStreamGuard:
     """Feed streamed chunks in; get back only text that cannot be part of a figure the guard trips on.
 
@@ -664,17 +730,8 @@ class PriceStreamGuard:
         self._context = ""
         #: Text fed in and not emitted yet.
         self._pending = ""
-        #: Above zero while ``_pending`` starts with an unpriced figure of this length.
-        self._held_figure_len = 0
-        #: While a figure is held, measured from the start of ``_pending``: how far
-        #: its sentence was read for words, where the last word read ends, where the
-        #: search for the sentence end resumes, and what the sentence named so far.
-        self._held_read = 0
-        self._held_word_end = 0
-        self._held_end_from = 0
-        self._held_own = False
-        self._held_qualified = False
-        self._held_first_person = False
+        #: The sentence of the unpriced figure ``_pending`` starts with, while one is held.
+        self._held: _HeldSentence | None = None
         self._tripped = False
 
     @property
@@ -702,7 +759,7 @@ class PriceStreamGuard:
     def _advance(self, *, final: bool) -> str:
         emitted: list[str] = []
         while self._pending:
-            if self._held_figure_len:
+            if self._held is not None:
                 progressed = self._settle_held_figure(emitted, final=final)
             else:
                 progressed = self._scan(emitted, final=final)
@@ -734,11 +791,7 @@ class PriceStreamGuard:
             if self._reader.sentence_names_own_price() or self._reader.in_price_context(self._reader.position):
                 self._trip()
                 return False
-            self._held_figure_len = match.end() - match.start()
-            self._held_own, self._held_qualified, self._held_first_person = self._reader.sentence_flags()
-            self._held_read = 0
-            self._held_word_end = 0
-            self._held_end_from = self._held_figure_len
+            self._held = _HeldSentence(self._words, self._reader.sentence_flags(), match.end() - match.start())
             return True
         cut = len(window)
         if not final:
@@ -751,46 +804,19 @@ class PriceStreamGuard:
     def _settle_held_figure(self, emitted: list[str], *, final: bool) -> bool:
         """Trip if the held figure's sentence names the company's price; release the figure once it cannot.
 
-        Only the first ``_HOLD_CAP_CHARS`` characters from the figure are read, so
-        the decision does not depend on how the answer was chunked. Each call reads
-        only what arrived since the last one, plus enough overlap for a word split
-        across chunks. Returns True when the figure was released and scanning
-        continues after it.
+        Returns True when the figure was released and scanning continues after it.
         """
         window = self._context + self._pending
         start = len(self._context)
-        limit = start + _HOLD_CAP_CHARS
-        # One character past the cap, so a word or full stop ending at it is settled.
-        bound = min(len(window), limit + 1)
-        end = _SENTENCE_END_RE.search(window, start + self._held_end_from, bound)
-        sentence_ended = end is not None and end.start() < limit
-        if end is None:
-            # A full stop that has arrived last may still be followed by whitespace.
-            self._held_end_from = max(self._held_figure_len, bound - start - 1)
-        stop = end.start() if end is not None and sentence_ended else limit
-        for word in self._words.finditer(window, start + max(0, self._held_read - _TAIL_CHARS), bound):
-            if word.start() >= stop or word.end() > limit:
-                break
-            # A word at the very end of what has arrived may still grow into
-            # another one ("plan" + "et"), and a "tier" into "tier 2 cities": only a
-            # later chunk, ``flush`` or the cap decides.
-            if not final and len(window) <= limit and (word.end() == len(window) or _may_grow_into_places(word, bound)):
-                break
-            if word.end() - start <= self._held_word_end:
-                continue
-            self._held_word_end = word.end() - start
-            self._held_own = self._held_own or word.lastgroup == "own"
-            self._held_qualified = self._held_qualified or word.lastgroup == "qualified"
-            self._held_first_person = self._held_first_person or word.lastgroup == "first_person"
-            if self._held_own or (self._held_qualified and self._held_first_person):
-                self._trip()
-                return False
-        self._held_read = bound - start
-        if not (sentence_ended or final or len(window) > limit):
+        held = self._held
+        held.read(window, start, final=final)
+        if held.tripped:
+            self._trip()
             return False
-        figure_end = start + self._held_figure_len
-        self._held_figure_len = 0
-        self._emit(emitted, window, start, figure_end, figure_follows=False)
+        if not held.settled:
+            return False
+        self._held = None
+        self._emit(emitted, window, start, start + held.figure_len, figure_follows=False)
         return True
 
     def _emit(self, emitted: list[str], window: str, start: int, cut: int, *, figure_follows: bool) -> None:
@@ -807,7 +833,7 @@ class PriceStreamGuard:
     def _trip(self) -> None:
         self._tripped = True
         self._pending = ""
-        self._held_figure_len = 0
+        self._held = None
 
 
 #: How far past the end of a unit a figure that starts inside it is read, so "50"
@@ -824,16 +850,23 @@ _LEAD_LINE_RE = re.compile(r"[^\S\n]{0,3}#{1,6}[^\S\n].*|(?:\*\*|__)[^*_\n]+(?:\
 
 
 class PriceSentenceRedactor:
-    """For a turn that asks the price and something else: drop each sentence that states a figure, keep the rest.
+    """For a turn whose answer must survive a price figure: drop each sentence that states one, keep the rest.
 
-    On such a turn (``price_intent`` decided MIXED) replacing the whole answer
-    with the pricing escalation loses the other half of the question, so the
-    stream is cut into units instead: a sentence with the whitespace after it and
-    at most one line break, or a line. A unit is held until it and
-    ``_FIGURE_LOOKAHEAD_CHARS`` after it have arrived, then dropped when a figure
-    (``_FIGURE_RE``, the figures a signalled ``PriceStreamGuard`` trips on) starts
-    inside it or runs into it, and emitted otherwise. The caller appends the
-    escalation when ``redacted`` is set.
+    Replacing the whole answer with the pricing escalation loses everything else
+    the visitor asked, so the stream is cut into units instead: a sentence with
+    the whitespace after it and at most one line break, or a line. A unit is held
+    until it and the lookahead its decision needs have arrived, then dropped when
+    a figure starts inside it or runs into it, and emitted otherwise. The caller
+    appends the escalation when ``redacted`` is set.
+
+    ``signal`` is the turn's own price signal, as ``PriceStreamGuard`` takes it.
+    With it (``price_intent`` decided MIXED) every figure ``_FIGURE_RE`` finds
+    drops its unit, exactly as a signalled guard trips on every figure. Without it
+    a figure drops its unit only when an unsignalled guard would trip on it: its
+    sentence names the company's own price, or it sits in a price context
+    (``_HeldSentence`` and ``_AnswerReader``, the guard's own reading). A GDPR
+    fine, a court fee and a salary therefore stay in the answer of a turn that
+    asked no price.
 
     Blocks are kept whole where a dropped unit would leave them dangling: a lead
     line (a heading, a bold line, a line ending in a colon) goes when every item
@@ -842,12 +875,22 @@ class PriceSentenceRedactor:
     nothing dropped, the answer streams byte for byte.
 
     Every decision reads a fixed extent of the source (the unit, its lookahead,
-    ``_UNIT_CAP_CHARS``), never what happens to have arrived, so a whole answer
+    ``_UNIT_CAP_CHARS``, and for an unsignalled figure ``_HOLD_CAP_CHARS`` from
+    it), never what happens to have arrived, so a whole answer
     (``redact_price_sentences``) and any chunking of it give the same text.
     ``tripped`` is always False: nothing here stops the stream.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, signal: bool = True) -> None:
+        self._signal = signal
+        #: Without a signal the answer is read as the guard reads it, for the
+        #: sentence a figure sits in and the price context around it. The whole
+        #: answer is read, the dropped sentences included: the guard would have
+        #: stopped at the first figure it tripped on, and what follows that figure
+        #: is the same answer, not a new one.
+        self._reader = None if signal else _AnswerReader(_PRICE_WORDS_RE)
+        #: How much of the answer the reader has read.
+        self._reader_at = 0
         #: Text fed in and not yet cut into a unit, where it starts in the answer,
         #: and the source text just before it.
         self._pending = ""
@@ -910,7 +953,9 @@ class PriceSentenceRedactor:
             length = self._next_unit(final=final)
             if length is None:
                 break
-            dropped = self._states_figure(length)
+            dropped = self._states_figure(length, final=final)
+            if dropped is None:
+                break
             unit = self._pending[:length]
             self._before = (self._before + unit)[-_SOURCE_BEFORE_CHARS:]
             self._pending = self._pending[length:]
@@ -951,18 +996,72 @@ class PriceSentenceRedactor:
             return None
         return stop
 
-    def _states_figure(self, length: int) -> bool:
-        """Whether a figure starts in the next ``length`` characters, or runs into them."""
+    def _states_figure(self, length: int, *, final: bool) -> bool | None:
+        """Whether a figure the turn drops starts in the next ``length`` characters, or runs into them.
+
+        None while a figure has arrived whose sentence has not, so the unit waits
+        for the next chunk rather than being decided on less text than a whole
+        answer would read.
+        """
         dropped = self._offset < self._drop_until
         window = self._before + self._pending
         base = len(self._before)
         endpos = min(len(window), base + length + _FIGURE_LOOKAHEAD_CHARS)
+        figures: list[re.Match[str]] = []
         for match in _FIGURE_RE.finditer(window, base, endpos):
             if match.start() >= base + length:
                 break
+            figures.append(match)
+        if self._signal:
+            for match in figures:
+                dropped = True
+                self._drop_until = max(self._drop_until, self._offset + match.end() - base)
+            return dropped
+        if not final and any(not self._figure_is_readable(window, match) for match in figures):
+            # Nothing is read into the reader until every figure can be decided,
+            # so the retry reads the unit exactly once, in order.
+            return None
+        for match in figures:
+            if not self._figure_names_own_price(window, base, match):
+                continue
             dropped = True
             self._drop_until = max(self._drop_until, self._offset + match.end() - base)
+        self._read_source(window, base, base + length, figure_follows=False)
         return dropped
+
+    @staticmethod
+    def _figure_is_readable(window: str, match: re.Match[str]) -> bool:
+        """Whether the sentence a figure sits in has arrived as far as the guard reads it.
+
+        The guard reads from the figure to the end of its sentence, or to
+        ``_HOLD_CAP_CHARS`` past the figure, whichever comes first. Once either is
+        in ``window``, more text cannot change the reading: no word the guard reads
+        spans a sentence end, so none of them reaches past it.
+        """
+        limit = match.start() + _HOLD_CAP_CHARS
+        if len(window) > limit:
+            return True
+        end = _SENTENCE_END_RE.search(window, match.end(), min(len(window), limit + 1))
+        return end is not None and end.start() < limit
+
+    def _figure_names_own_price(self, window: str, base: int, match: re.Match[str]) -> bool:
+        """Whether an unsignalled ``PriceStreamGuard`` would trip on this figure."""
+        self._read_source(window, base, match.start(), figure_follows=True)
+        if self._reader.sentence_names_own_price() or self._reader.in_price_context(self._reader.position):
+            return True
+        # ``_figure_is_readable`` held the unit back until the sentence was read as
+        # far as the guard reads it, so this reads it once and for all.
+        held = _HeldSentence(_PRICE_WORDS_RE, self._reader.sentence_flags(), match.end() - match.start())
+        held.read(window, match.start(), final=True)
+        return held.tripped
+
+    def _read_source(self, window: str, base: int, stop: int, *, figure_follows: bool) -> None:
+        """Read the answer up to ``window[stop]`` into the reader, in order and once."""
+        start = base + self._reader_at - self._offset
+        if stop <= start:
+            return
+        self._reader.read(window[start:stop], window[stop : stop + 1], figure_follows=figure_follows)
+        self._reader_at += stop - start
 
     def _route(self, unit: str, dropped: bool, emitted: list[str]) -> None:
         if dropped:
@@ -1038,11 +1137,11 @@ class PriceSentenceRedactor:
         self._tail = (self._tail + text)[-2:]
 
 
-def redact_price_sentences(text: object) -> tuple[str, bool]:
+def redact_price_sentences(text: object, *, signal: bool = True) -> tuple[str, bool]:
     """A complete answer as ``PriceSentenceRedactor`` streams it, and whether anything was dropped."""
     if not isinstance(text, str) or not text:
         return "", False
-    redactor = PriceSentenceRedactor()
+    redactor = PriceSentenceRedactor(signal=signal)
     redactor.feed(text)
     redactor.flush()
     return redactor.emitted, redactor.redacted
@@ -1077,10 +1176,9 @@ def price_guard_applies(
 
     ``escalate_deferred`` is a turn the gate would have escalated, deferred
     because the visitor also asked something besides the price. Its answer is
-    generated from the whole knowledge base, so the guard (for a MIXED decision,
-    ``PriceSentenceRedactor``) watches it on every bot
-    the gate escalates on, a bot whose pricing page carries no prices and a Free
-    bot that hands over its contact page included.
+    generated from the whole knowledge base, so the redactor watches it on every
+    bot the gate escalates on, a bot whose pricing page carries no prices and a
+    Free bot that hands over its contact page included.
     """
     if gate_outcome == "escalate_deferred":
         return not answer_from_knowledge_base and not judges_bypassed

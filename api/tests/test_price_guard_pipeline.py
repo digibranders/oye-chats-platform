@@ -16,6 +16,13 @@ fallback rules.
 A message that asks the price and something else (MIXED) keeps the something
 else (evaluation, 2026-09-17): only the sentences stating a figure are dropped,
 and the escalation follows the rest.
+
+Since 2026-09-21 a message that reads as no price question keeps its answer the
+same way. Production, that day: "would like to know more abt the service" was
+answered with the pricing escalation and the handoff form, because the model's
+answer quoted a price from the knowledge base. Such a turn drops far less than a
+MIXED one: only a sentence the unsignalled guard would have tripped on, so a
+fine, a court fee and a third party's bill stay.
 """
 
 import asyncio
@@ -146,6 +153,58 @@ async def test_figures_are_replaced_by_the_escalation(db, monkeypatch, metrics):
     assert len(_named(metrics, "price_guard_tripped")) == 1
     # Counted with the gate's own escalations too.
     assert [tags["reason"] for tags in _named(metrics, "pricing_gate_escalation")] == ["price_guard"]
+
+
+#: The visitor asked about the services; the model answered with a price in the middle.
+SERVICES = "tell me abt ur services"
+SERVICES_CHUNKS = (
+    "We build websites and brand systems. ",
+    "Our retainer is ₹",
+    "2,66,250 per month. ",
+    "Our office is in Pune.",
+)
+SERVICES_KEPT = "We build websites and brand systems. Our office is in Pune."
+
+
+@pytest.mark.asyncio
+async def test_a_turn_that_asks_no_price_keeps_its_answer_and_adds_the_escalation(db, monkeypatch, metrics):
+    """Production, 2026-09-21: "tell me abt ur services" was replaced whole by the
+    pricing escalation and the handoff form, because the model's answer quoted a
+    price. The visitor's own question went unanswered."""
+    bot, captured = _guarded(db, monkeypatch, "guard-services", chunks=SERVICES_CHUNKS, live_chat_enabled=True)
+
+    frames = await _drive_stream(bot, SERVICES, "guard-services")
+
+    expected = f"{SERVICES_KEPT}\n\n{_expected()}"
+    meta = _final_meta(frames)
+    assert _answer_text(frames) == expected
+    assert "2,66,250" not in "".join(frames)
+    assert meta["answer_override"] == expected
+    assert meta["suggest_handoff"] is True
+    messages = _messages(db, "guard-services", role="bot")
+    assert [m.content for m in messages] == [expected]
+    assert messages[0].is_unanswered is False
+    assert captured["cache"].store == {}
+    assert len(_named(metrics, "price_guard_redacted")) == 1
+    assert _named(metrics, "price_guard_tripped") == []
+    assert [tags["reason"] for tags in _named(metrics, "pricing_gate_escalation")] == ["price_guard_redacted"]
+
+
+@pytest.mark.asyncio
+async def test_a_cached_answer_the_turn_would_redact_is_not_served_untouched(db, monkeypatch):
+    """The cache read asks the same unsignalled guard the turn's redactor asks, so
+    an answer it would redact is dropped and the turn regenerated, never replayed
+    with the price in it."""
+    bot, captured = _guarded(db, monkeypatch, "guard-services-cached", chunks=SERVICES_CHUNKS)
+    question_hash = hashlib.sha256(rs._normalize_question_for_cache(SERVICES).encode()).hexdigest()[:32]
+    key = rs.qa_response_key(bot.id, question_hash, rs._cache_lang_segment(None))
+    captured["cache"].store[key] = {"answer": "".join(SERVICES_CHUNKS), "sources": []}
+
+    frames = await _drive_stream(bot, SERVICES, "guard-services-cached")
+
+    assert key in captured["cache"].deleted
+    assert "2,66,250" not in _answer_text(frames)
+    assert _messages(db, "guard-services-cached", role="bot")[-1].content == f"{SERVICES_KEPT}\n\n{_expected()}"
 
 
 @pytest.mark.parametrize("live_chat", [True, False])
@@ -360,12 +419,21 @@ async def test_figures_stream_where_the_guard_does_not_apply(db, monkeypatch, cl
     assert "2,66,250" in _answer_text(frames)
 
 
+#: A turn with no price signal is redacted sentence by sentence, so a sentence
+#: reaches the visitor only once it is known to stay: the held text is the whole
+#: unfinished sentence, not just the figure in it.
+UNSIGNALLED_HELD = (
+    FINES,
+    "GDPR fines are set by the regulator. They can reach €20 million or 4% of annual turnover, whichever is higher.",
+    "GDPR fines are set by the regulator.",
+)
+
+
 @pytest.mark.parametrize(
     ("question", "streamed", "shown"),
     [
         (TYPO, "Budget about 50 lakh", "Budget about"),
-        # No signal: the figure and the rest of its sentence wait for the sentence to end.
-        (FINES, "GDPR fines can reach €20 million or 4% of", "GDPR fines can reach"),
+        UNSIGNALLED_HELD,
     ],
     ids=["held_figure", "held_sentence"],
 )
@@ -374,8 +442,8 @@ async def test_a_disconnect_while_text_is_held_keeps_it_out_of_the_transcript(
     db, monkeypatch, question, streamed, shown
 ):
     """ "50 lakh" at the end of a chunk is held until the next chunk decides it, and
-    an unpriced figure is held until its sentence ends. A visitor who leaves in
-    between saw only the text before it, and the partial answer saved on
+    a sentence that may yet be dropped is held until it ends. A visitor who leaves
+    in between saw only the text before it, and the partial answer saved on
     disconnect must hold no more than that."""
     session_id = f"guard-cancel-{shown[:6]}"
     bot, _ = _guarded(db, monkeypatch, session_id)
@@ -484,7 +552,7 @@ async def test_a_trip_after_a_name_opener_follows_it_without_a_blank_line(db, mo
     ("question", "streamed", "shown"),
     [
         (TYPO, "Budget about 50 lakh", "Budget about"),
-        (FINES, "GDPR fines can reach €20 million", "GDPR fines can reach"),
+        UNSIGNALLED_HELD,
     ],
     ids=["held_figure", "held_sentence"],
 )
@@ -561,28 +629,41 @@ async def test_an_answer_override_carries_no_sentinel(db, monkeypatch, source):
 
 
 @pytest.mark.parametrize(
-    ("question", "chunks", "figure"),
+    ("question", "chunks", "figure", "kept"),
     [
         # A first-person word makes a fee its own (review, 2026-09-11).
-        ("tell me about onboarding", ("Our onboarding fee is ", "₹25,000", " for small teams."), "25,000"),
+        ("tell me about onboarding", ("Our onboarding fee is ", "₹25,000", " for small teams."), "25,000", ""),
         # A price word outside the figure's sentence opens a price context.
-        ("tell me about SOC", ("We offer three plans:\n- Starter: ", "₹9,999/month\n- Growth: ₹24,999/month"), "9,999"),
-        ("tell me about SOC", ("Here are our SOC packages.\n\n**Essentials**: ", "₹1,20,000 a month"), "1,20,000"),
+        (
+            "tell me about SOC",
+            ("We offer three plans:\n- Starter: ", "₹9,999/month\n- Growth: ₹24,999/month"),
+            "9,999",
+            "",
+        ),
+        # The lead is a sentence of its own, so the turn keeps it and the
+        # escalation follows it: only the priced paragraph goes.
+        (
+            "tell me about SOC",
+            ("Here are our SOC packages.\n\n**Essentials**: ", "₹1,20,000 a month"),
+            "1,20,000",
+            "Here are our SOC packages.\n\n",
+        ),
         # Typo'd pricing questions are a signal.
-        ("hw much", ("For 50 users it is ", "€3,200", " a year."), "3,200"),
-        ("qoute for 3 sites", ("For three sites it would be around ", "7 lakh", "."), "7 lakh"),
+        ("hw much", ("For 50 users it is ", "€3,200", " a year."), "3,200", ""),
+        ("qoute for 3 sites", ("For three sites it would be around ", "7 lakh", "."), "7 lakh", ""),
     ],
     ids=["our_fee", "plan_list", "packages_blank_line", "hw_much", "qoute"],
 )
 @pytest.mark.asyncio
-async def test_an_own_price_outside_the_old_sentence_rule_is_replaced(db, monkeypatch, question, chunks, figure):
+async def test_an_own_price_outside_the_old_sentence_rule_is_replaced(db, monkeypatch, question, chunks, figure, kept):
     session_id = f"guard-own-{figure[:5]}"
     bot, _ = _guarded(db, monkeypatch, session_id, chunks=chunks)
 
     frames = await _drive_stream(bot, question, session_id)
 
+    expected = f"{kept.rstrip()}\n\n{_expected()}" if kept else _expected()
     assert figure not in _answer_text(frames)
-    assert _messages(db, session_id, role="bot")[-1].content == _expected()
+    assert _messages(db, session_id, role="bot")[-1].content == expected
 
 
 @pytest.mark.parametrize(
@@ -594,8 +675,9 @@ async def test_an_own_price_outside_the_old_sentence_rule_is_replaced(db, monkey
         ("Visa fees are set by the government, not by us. The fee is ", "$185", "."),
         ("Ambulance transport is billed separately from our clinic services; expect ", "$500", " to $1,200."),
         ("Acme's onboarding fee is ", "₹25,000", " for small teams."),
+        ("Domain renewal is billed separately by the registrar, at about ", "₹1,200", " a year."),
     ],
-    ids=["court_fee", "not_by_us", "billed_separately", "company_third_person"],
+    ids=["court_fee", "not_by_us", "billed_separately", "company_third_person", "registrar"],
 )
 @pytest.mark.asyncio
 async def test_someone_elses_fee_streams_unchanged_on_a_guarded_bot(db, monkeypatch, metrics, chunks):

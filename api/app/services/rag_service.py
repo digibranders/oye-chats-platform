@@ -8757,6 +8757,11 @@ def _cached_answer_trips_price_guard(
     The cache is read before the stream loads the chat session, so the session the
     signal needs is looked up here, tenant-scoped, and only for an answer that
     holds a figure at all.
+
+    A turn with no signal redacts rather than replaces, and its redactor drops
+    exactly the sentences this guard trips on, so one reading covers both: an
+    answer the turn would redact is dropped here and regenerated, never replayed
+    with the price still in it. See ``price_guard``.
     """
     if not answer_trips_price_guard(answer, signal=True):
         return False
@@ -11423,10 +11428,16 @@ async def rag_pipeline_stream(
             # trips; without it only a figure whose sentence or paragraph names the
             # company's own price in the first person does.
             #
-            # A turn that asks the price and something else (MIXED) is not
-            # replaced whole: that lost the rest of the question (evaluation,
-            # 2026-09-17). Its redactor drops only the sentences that state a
-            # figure, and the escalation follows the rest.
+            # Only a turn that asks the price and nothing else is replaced whole,
+            # where the figure IS the answer. A turn that asks something else too
+            # (MIXED) keeps that answer and loses only the sentences that state a
+            # figure (evaluation, 2026-09-17), and so does a turn that reads as no
+            # price question at all: replacing that one whole answered a plain
+            # "tell me abt ur services" with the pricing escalation and the handoff
+            # form, because the model's answer happened to quote a price
+            # (production, 2026-09-21). Without the turn's signal the redactor
+            # drops a sentence only where the whole-answer guard would have
+            # tripped, so a GDPR fine or a court fee still streams.
             _price_guard: PriceStreamGuard | PriceSentenceRedactor | None = None
             if price_guard_applies(
                 gate_outcome=_pricing_decision.outcome,
@@ -11435,12 +11446,11 @@ async def rag_pipeline_stream(
                 support_enabled=_plan_support_allowed,
                 judges_bypassed=_judges_bypassed,
             ):
+                _guard_signal = _price_guard_signal(guard_asks_price(_price_intent, _price_question), chat_session)
                 _price_guard = (
-                    PriceSentenceRedactor()
-                    if _price_intent.asks_more
-                    else PriceStreamGuard(
-                        signal=_price_guard_signal(guard_asks_price(_price_intent, _price_question), chat_session)
-                    )
+                    PriceStreamGuard(signal=True)
+                    if _guard_signal and not _price_intent.asks_more
+                    else PriceSentenceRedactor(signal=_guard_signal)
                 )
             _price_guard_repeat = _price_guard is not None and _card_already_shown(chat_session, "pricing_escalated")
             # What the commitment guard checks the finished answer against, read
