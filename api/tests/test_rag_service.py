@@ -2624,7 +2624,10 @@ class TestResolveNameFlowRename:
             ask, deferred, name, just_named = rag_service.resolve_name_flow(
                 MagicMock(), "s1", 3, 9, "rename it to jason", company_name="Acme"
             )
-        assert ask is None and deferred is None
+        # A message that only renames the visitor is answered by the
+        # acknowledgement and stops there; nothing is left for retrieval.
+        assert ask == rag_service._name_correction_message("Jason", "Acme")
+        assert deferred is None
         assert name == "Jason"
         assert just_named is True
         mock_save.assert_called_once()

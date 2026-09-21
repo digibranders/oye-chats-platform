@@ -212,7 +212,16 @@ class TestCorrections:
             ask, deferred, name, just_named = rag_service.resolve_name_flow(
                 MagicMock(), "s1", 3, 9, "actually my name is not eva, its priya. typo earlier", company_name="Acme"
             )
-        assert (ask, deferred, name, just_named) == (None, None, "Priya", True)
+        # The correction is the whole message, so the turn ends on the
+        # acknowledgement instead of carrying "actually my name is not eva" into
+        # retrieval, which appended a scope refusal to it (production,
+        # 2026-09-18, both bots).
+        assert (ask, deferred, name, just_named) == (
+            rag_service._name_correction_message("Priya", "Acme"),
+            None,
+            "Priya",
+            True,
+        )
         assert save.call_args.kwargs["name"] == "Priya"
 
     def test_the_flow_keeps_the_name_on_a_callback_request(self):

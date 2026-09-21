@@ -5710,6 +5710,126 @@ def _extract_name_change(question: str) -> str | None:
     return _extract_name_correction(q, None) or _first_name_capture(q, (*_NAME_RENAME_PATTERNS, *_NAME_INTRO_PATTERNS))
 
 
+#: Every word a message may carry besides the visitor's own name and still be
+#: nothing but the name: the naming and correction phrasings, and chat filler.
+#: A whitelist, not a list of question words, so anything unforeseen ("im arjun,
+#: security lead at Foo") keeps flowing to the pipeline exactly as before.
+#: Apostrophes are stripped before the lookup, so "i'm" and "im" are one entry.
+_NAME_TURN_FILLER = frozenset(
+    {
+        # the naming and correction phrasings
+        "call",
+        "called",
+        "change",
+        "correction",
+        "misspelled",
+        "mistake",
+        "name",
+        "names",
+        "rename",
+        "save",
+        "saved",
+        "spell",
+        "spelled",
+        "spelling",
+        "stored",
+        "typo",
+        "wrong",
+        # pronouns, copulas and articles
+        "a",
+        "am",
+        "i",
+        "id",
+        "im",
+        "is",
+        "it",
+        "its",
+        "me",
+        "my",
+        "thats",
+        "that",
+        "the",
+        "theres",
+        "there",
+        "this",
+        "was",
+        "you",
+        "your",
+        "youre",
+        "u",
+        "ur",
+        # chat filler a correction arrives with
+        "actually",
+        "also",
+        "and",
+        "apologies",
+        "btw",
+        "by",
+        "did",
+        "earlier",
+        "first",
+        "for",
+        "from",
+        "go",
+        "guess",
+        "hey",
+        "hi",
+        "hello",
+        "just",
+        "know",
+        "let",
+        "no",
+        "not",
+        "now",
+        "of",
+        "oh",
+        "ok",
+        "okay",
+        "only",
+        "or",
+        "please",
+        "right",
+        "say",
+        "short",
+        "sorry",
+        "sure",
+        "then",
+        "to",
+        "use",
+        "used",
+        "using",
+        "well",
+        "with",
+        "ya",
+        "yeah",
+        "yep",
+        "yes",
+    }
+)
+#: A message that only names the visitor is short. Insurance against a long
+#: filler-only paste, nothing more.
+_NAME_TURN_WORD_CAP = 14
+_NAME_TURN_WORD_RE = re.compile(r"[a-z0-9']+")
+
+
+def _says_only_their_name(question: str, *names: str | None) -> bool:
+    """Whether ``question`` does nothing but give or correct the visitor's name.
+
+    Such a turn has no question behind it, so the acknowledgement is the whole
+    reply and the turn ends there. Sending it on to retrieval put the scope
+    refusal under "Thanks, Arjun!" in the same reply (production, 2026-09-18,
+    both bots). A message that names the visitor AND asks something ("call me
+    Alex, what do you charge?") carries a word outside the filler set, so it
+    still flows to the pipeline.
+    """
+    words = [word.replace("'", "") for word in _NAME_TURN_WORD_RE.findall((question or "").lower())]
+    words = [word for word in words if word]
+    if not words or len(words) > _NAME_TURN_WORD_CAP:
+        return False
+    own = {word.replace("'", "") for name in names for word in _NAME_TURN_WORD_RE.findall((name or "").lower())}
+    return all(word in own or word in _NAME_TURN_FILLER for word in words)
+
+
 _NAME_DECLINE_STARTS = (
     "no ",
     "nope",
@@ -5931,6 +6051,18 @@ def _name_ack_message(name: str, company_name: str | None) -> str:
         f"Nice to meet you, {name}! "
         f"What would you like to know? Our services, recent work, or how to get started with {co}?"
     )
+
+
+def _name_correction_message(name: str, company_name: str | None) -> str:
+    """Warm one-liner for a turn that only corrects a name already on file.
+
+    The capture wording ("Nice to meet you") reads wrong on a second
+    introduction, so a correction gets its own line. Same job as
+    ``_name_ack_message``: the turn ends here, because a message that only fixes
+    the name has nothing for retrieval to answer."""
+    if company_name:
+        return f"Thanks for correcting that, {name}. What can I help you with at **{company_name}**?"
+    return f"Thanks for correcting that, {name}. What can I help you with?"
 
 
 def _msg_role(message) -> str | None:
@@ -6314,6 +6446,20 @@ def resolve_name_flow(session, session_id, bot_id, client_id, question, company_
                     deferred = _recover_deferred_question(history)
                     if deferred and _deferred_is_worth_replaying(deferred, company_name):
                         return (None, deferred, renamed, True)
+                # Nothing else in the message to answer: acknowledge the name and
+                # STOP, the way a name-only reply does below. Without this the
+                # turn went on to retrieval, which has no chunk about the
+                # visitor's name, and the reply became "Thanks, Arjun!" followed
+                # by the scope refusal (production, 2026-09-18, both bots). Only
+                # in English: a non-English turn skips the canned wordings here
+                # exactly as it skips the intent router.
+                if not _english_judges_bypassed(language, question) and _says_only_their_name(question, renamed, known):
+                    ack = (
+                        _name_correction_message(renamed, company_name)
+                        if known
+                        else _name_ack_message(renamed, company_name)
+                    )
+                    return (ack, None, renamed, True)
                 return (None, None, renamed, True)
 
         if known:
