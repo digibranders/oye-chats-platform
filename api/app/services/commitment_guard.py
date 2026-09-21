@@ -10,15 +10,21 @@ critical-severity findings within 48 hours". Its URL has no article shape, so
 This check runs on the finished answer, with no model call:
 
 1. A sentence of the answer is a commitment when it speaks for the company
-   ("we", "our", "us", the company's name, "you'll get") and states a
-   commitment figure: a duration in minutes, hours, days or weeks in the same
+   ("we", "our", "us", the company's name, "you'll get"), or has no subject at
+   all while the visitor asked about the company's own terms (``question``
+   says "your", "ur", "you", or asks for an SLA, a response time, a guarantee
+   or a contract term), and states a commitment figure: a duration in
+   minutes, hours, days or weeks in the same
    clause as a commitment word ("we respond in 15 min", "a 4-hour response")
    or right after a firm time bound ("within 48 hours", "under 5 minutes"),
    or a percentage with an uptime, availability or SLA word at most three
    words away in its clause ("our SLA is 99.9%"). "24x7", "founded in 2015",
    "over 500 customers", "24 hours a day", "a 30-minute call", "a 32 week
    rollout", "our webinar is in 3 days", the visitor's own timeline ("if you
-   need it in 2 weeks") and "85% fewer false positives" are not.
+   need it in 2 weeks") and "85% fewer false positives" are not. A subjectless
+   sentence that words the figure as general ("typically", "usually",
+   "industry", "for example", "e.g.", "best practice", "providers often") is
+   not presented as ours and stays.
 2. Each figure of such a sentence needs support: a retrieved chunk that is not
    a general article (``page_kind``) and states the same figure. Durations are
    compared in minutes, so "48 hours", "48h", "48-hour" and "2 days" are one
@@ -38,6 +44,11 @@ This check runs on the finished answer, with no model call:
    only the unsupported clauses go, so "Our Starter plan is $49 per month, and
    setup takes under 5 minutes." keeps its price. The rest of the answer,
    including the team offer, stays.
+4. The reply never keeps a figure it also denies having. Once a sentence is
+   replaced, every other sentence stating one of the unsupported figures goes
+   the same way, whoever its subject is. And the gap sentence is written only
+   when the reply does not already say it lacks the figure ("I don't have our
+   exact MTTD and MTTR SLA."), so it is never read twice.
 
 A country the answer says the company serves ("Yes, France is listed among the
 countries we serve.") is checked the same way, by
@@ -166,6 +177,38 @@ _FIRST_PERSON_RE = re.compile(
 )
 _LOWER_US_RE = re.compile(r"\bus\b")
 
+#: The visitor asking about the company's own terms, so a subjectless figure in
+#: the reply is read as ours: the question addresses the company ("your SLA",
+#: "ur", "do you guarantee"), or names a term of service.
+_OUR_TERMS_QUESTION_RE = re.compile(
+    r"\b(?:your|yours|ur|u|you|you['’]re)\b"
+    r"|\bslas?\b|\bslos?\b|\bservice[ -]level\b|\bunderpinning\s{1,3}contract\b"
+    r"|\b(?:response|resolution|reaction|turn\s{0,3}-?\s{0,3}around|acknowledg\w{0,6})\s{1,3}times?\b"
+    r"|\bguarantee\w{0,3}\b|\bcommit(?:ment|ments|ted)\b|\bwarrant\w{0,3}\b"
+    r"|\bcontract\w{0,3}\b|\bagreements?\b|\bmsa\b|\bterms?\s{1,3}(?:of|and)\b",
+    re.IGNORECASE,
+)
+#: A question is read up to this many characters; a visitor turn is far shorter.
+_MAX_QUESTION_CHARS = 2_000
+#: A reply sentence that words its figure as general rather than as the
+#: company's own, so a subjectless sentence keeps it: "providers typically
+#: remediate within 48 hours", "the industry benchmark is 4 hours".
+_GENERAL_WORDING_RE = re.compile(
+    r"\b(?:typical\w{0,2}|usual\w{0,2}|general\w{0,2}|common\w{0,2}|often|normal\w{0,2}"
+    r"|industr\w{1,3}|benchmarks?|providers?|vendors?|competitors?|guides?|checklists?|examples?"
+    r"|for\s{1,3}example|best\s{1,3}practices?|rule\s{1,3}of\s{1,3}thumb)\b|\be\.g\b",
+    re.IGNORECASE,
+)
+#: The reply already saying it lacks the figure, so the guard writes no second
+#: gap sentence: "I don't have our exact MTTD and MTTR SLA.", "I don't have our
+#: exact contractual P1 response time here."
+_STATED_GAP_RE = re.compile(
+    r"\b(?:i|we)\s{1,3}(?:do\s{1,3}not|don['’]?t|can['’]?t|cannot)\s{1,3}"
+    r"(?:have|share|confirm|state|quote)\b[^.!?\n]{0,120}"
+    r"\b(?:figures?|numbers?|slas?|times?|timelines?|windows?|targets?|terms?|commitments?|guarantees?)\b",
+    re.IGNORECASE,
+)
+
 #: Links and addresses are dropped before looking for the company's name,
 #: which every URL on its own site carries.
 _ADDRESS_RE = re.compile(r"https?://\S{1,2000}|www\.\S{1,2000}|[\w.+-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63}){1,4}")
@@ -195,10 +238,14 @@ _SENTENCE_STOPS = (".", "!", "?", "\u0964", "\u0965")
 
 #: A chunk sentence that reads as advice or an example rather than the
 #: company's own term: "e.g.", "for example", "should", "look for", "best
-#: practice", "typically", "aim for", "demand".
+#: practice", "typically", "aim for", "demand". The hedges are the wording the
+#: reply side treats as general too: a term nobody is held to is not one the
+#: company states ("Pro Tip: most cybercrime units act faster if victims report
+#: incidents within 48 hours", Eventus knowledge base, 2026-09-18).
 _ADVICE_RE = re.compile(
     r"\be\.g\b|\bfor\s{1,3}example\b|\bshould\b|\bmust\b|\blook\s{1,3}for\b|\bask\s{1,3}your\s{1,3}provider\b"
-    r"|\bbest\s{1,3}practices?\b|\brecommended\b|\btypically\b|\baim\s{1,3}for\b|(?<![\w-])demand\b",
+    r"|\bbest\s{1,3}practices?\b|\brecommended\b|\btypically\b|\baim\s{1,3}for\b|(?<![\w-])demand\b"
+    r"|\busually\b|\bgenerally\b|\bideally\b|\bpro\s{1,3}tips?\b|\brule\s{1,3}of\s{1,3}thumb\b",
     re.IGNORECASE,
 )
 #: A change, which is a result rather than a term: "fell from 48 hours to 4 hours".
@@ -494,65 +541,152 @@ def _kept_clauses(kept: list[str], terminal: str) -> str:
     return text[:1].upper() + text[1:]
 
 
+@dataclass(frozen=True)
+class _UnitPlan:
+    """One sentence of the answer after the check.
+
+    ``kept`` is the sentence, or the clauses of it that stay, or "" when
+    nothing does; ``trailing`` is the whitespace that followed it, and
+    ``missing`` names the unsupported figures it stated, empty when it stays
+    whole.
+    """
+
+    kept: str
+    trailing: str
+    missing: tuple[str, ...]
+
+
+def _is_company_claim(unit: str, company_re: re.Pattern[str] | None, *, asks_our_terms: bool) -> bool:
+    """Whether ``unit`` states its figure as the company's own.
+
+    It does when the company speaks in it, and also when it has no subject at
+    all and the visitor asked about the company's own terms, unless it words
+    the figure as general ("providers typically ...").
+    """
+    if _speaks_for_company(unit, company_re):
+        return True
+    return asks_our_terms and _GENERAL_WORDING_RE.search(unit) is None
+
+
+def _cut_unit(
+    unit: str,
+    clauses: Sequence[str],
+    figures: Sequence[Sequence[tuple[tuple[float, str], int, str]]],
+    supported: frozenset[tuple[float, str]],
+) -> _UnitPlan:
+    """``unit`` with every clause stating an unsupported figure taken out."""
+    missing = [[shown for key, _, shown in found if key not in supported] for found in figures]
+    if not any(missing):
+        return _UnitPlan(unit, "", ())
+    stripped = unit.rstrip()
+    trailing = unit[len(stripped) :] or " "
+    kept = [clause for clause, shown in zip(clauses, missing, strict=True) if not shown]
+    terminal = stripped[-1] if stripped.endswith(_SENTENCE_STOPS) else "."
+    lead = _kept_clauses(kept, terminal) if kept else ""
+    return _UnitPlan(lead, trailing, tuple(shown for found in missing for shown in found))
+
+
+def _asks_about_our_terms(question: str | None) -> bool:
+    """Whether the visitor asked about the company's own terms.
+
+    "whats ur SLA for patching critical CVEs", "if we raise a P1 at 2am whats
+    the guaranteed response time in the contract".
+    """
+    return bool(question) and _OUR_TERMS_QUESTION_RE.search(question[:_MAX_QUESTION_CHARS]) is not None
+
+
 def redact_unsupported_commitments(
     answer: str,
     chunks: Sequence[object],
     *,
     company_name: str | None,
     owner_texts: Iterable[str | None] = (),
+    question: str | None = None,
 ) -> CommitmentRedaction:
     """``answer`` with each commitment sentence the reference does not support handled.
 
     The first becomes ``COMMITMENT_GAP_SENTENCE``; any later one is dropped.
+    ``question`` is the visitor's turn, which decides whether a subjectless
+    sentence states its figure as the company's own.
     """
     if not answer or len(answer) > _MAX_ANSWER_CHARS or not (_DURATION_RE.search(answer) or "%" in answer):
         return CommitmentRedaction(answer, ())
     company_re = _company_name_re(company_name)
+    asks_our_terms = _asks_about_our_terms(question)
     supported: frozenset[tuple[float, str]] | None = None
-    unsupported: list[str] = []
-    gap_placed = False
-    lines_out: list[str] = []
+    dropped: set[tuple[float, str]] = set()
+    plans: list[tuple[str, list[_UnitPlan]]] = []
     for line in answer.split("\n"):
         marker = _LINE_MARKER_RE.match(line)
         prefix = marker.group(0) if marker else ""
-        units_out: list[str] = []
-        changed = False
+        units: list[_UnitPlan] = []
         for unit in _answer_units(line[len(prefix) :]):
             clauses = _clauses(unit)
             figures = [_figures(clause, commitments_only=True) for clause in clauses]
-            if not any(figures) or not _speaks_for_company(unit, company_re):
-                units_out.append(unit)
+            if not any(figures) or not _is_company_claim(unit, company_re, asks_our_terms=asks_our_terms):
+                units.append(_UnitPlan(unit, "", ()))
                 continue
             if supported is None:
                 supported = supported_figures(chunks, company_name=company_name, owner_texts=owner_texts)
-            missing = [[shown for key, _, shown in found if key not in supported] for found in figures]
-            if not any(missing):
-                units_out.append(unit)
+            plan = _cut_unit(unit, clauses, figures, supported)
+            if plan.missing:
+                dropped.update(key for found in figures for key, _, _ in found if key not in supported)
+            units.append(plan)
+        plans.append((prefix, units))
+    if not dropped:
+        return CommitmentRedaction(answer, ())
+    _drop_the_same_figures_elsewhere(plans, frozenset(dropped))
+    return _rebuild(plans)
+
+
+def _drop_the_same_figures_elsewhere(
+    plans: Sequence[tuple[str, list[_UnitPlan]]], dropped: frozenset[tuple[float, str]]
+) -> None:
+    """Take an unsupported figure out of every other sentence still stating it.
+
+    A reply never keeps the figure and also says it does not have it, whatever
+    subject the other sentence has. Wording that is plainly general is left
+    alone, since it is not presented as the company's own.
+    """
+    for _, units in plans:
+        for index, plan in enumerate(units):
+            if plan.missing or not plan.kept or _GENERAL_WORDING_RE.search(plan.kept):
                 continue
-            changed = True
-            for shown in missing:
-                unsupported.extend(shown)
-            stripped = unit.rstrip()
-            trailing = unit[len(stripped) :] or " "
-            kept = [clause for clause, shown in zip(clauses, missing, strict=True) if not shown]
-            terminal = stripped[-1] if stripped.endswith(_SENTENCE_STOPS) else "."
-            lead = _kept_clauses(kept, terminal) + " " if kept else ""
-            if not gap_placed:
-                gap_placed = True
-                units_out.append(lead + COMMITMENT_GAP_SENTENCE + trailing)
-            elif lead:
-                units_out.append(lead.rstrip() + trailing)
-        if not changed:
-            lines_out.append(line)
+            clauses = _clauses(plan.kept)
+            figures = [
+                [found for found in _figures(clause, commitments_only=True) if found[0] in dropped]
+                for clause in clauses
+            ]
+            if any(figures):
+                units[index] = _cut_unit(plan.kept, clauses, figures, frozenset())
+
+
+def _rebuild(plans: Sequence[tuple[str, list[_UnitPlan]]]) -> CommitmentRedaction:
+    """The answer written back from ``plans``, with one gap sentence at most."""
+    # The reply may already say it lacks the figure, in which case the guard
+    # adds nothing: "I don't have our exact MTTD and MTTR SLA."
+    gap_placed = any(_STATED_GAP_RE.search(plan.kept) for _, units in plans for plan in units if plan.kept)
+    lines_out: list[str] = []
+    for prefix, units in plans:
+        if not any(plan.missing for plan in units):
+            lines_out.append(prefix + "".join(plan.kept for plan in units))
             continue
+        units_out: list[str] = []
+        for plan in units:
+            if not plan.missing:
+                units_out.append(plan.kept)
+            elif not gap_placed:
+                gap_placed = True
+                units_out.append((plan.kept + " " if plan.kept else "") + COMMITMENT_GAP_SENTENCE + plan.trailing)
+            elif plan.kept:
+                units_out.append(plan.kept + plan.trailing)
         # A line, or a list item, left with nothing else goes.
         rest = "".join(units_out).rstrip()
         if rest:
             lines_out.append(prefix + rest)
-    if not unsupported:
-        return CommitmentRedaction(answer, ())
+    figures = tuple(dict.fromkeys(shown for _, units in plans for plan in units for shown in plan.missing))
     text = re.sub(r"\n{3,}", "\n\n", "\n".join(lines_out)).strip()
-    return CommitmentRedaction(text, tuple(dict.fromkeys(unsupported)))
+    return CommitmentRedaction(text, figures)
 
 
 # ---------------------------------------------------------------------------

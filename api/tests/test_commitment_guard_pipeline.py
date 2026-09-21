@@ -102,6 +102,57 @@ async def test_the_non_streaming_reply_is_the_corrected_text(db, monkeypatch):
     assert [m.content for m in _messages(db, "commit-3", role="bot")] == [CORRECTED]
 
 
+# ── A figure with no subject ─────────────────────────────────────────────────
+#
+# Production, 2026-09-18: the same question got "Critical-severity findings are
+# remediated within 48 hours. For medium-severity findings, the SLA is 7 days.",
+# with no subject at all, so the guard let the best-practices figure through.
+
+PASSIVE_CHUNKS = (
+    "Critical-severity findings are remediated ",
+    "within 48 hours. ",
+    "For medium-severity findings, the SLA is 7 days.",
+)
+PASSIVE_OWN_KB = (
+    _doc(
+        "Critical-severity findings are remediated within 48 hours. Medium-severity findings carry a 7 day SLA.",
+        name="https://acme.com/services/soc/",
+    ),
+)
+
+
+@pytest.mark.asyncio
+async def test_the_passive_production_answer_is_corrected_everywhere(db, monkeypatch, metrics):
+    client = _make_client(db)
+    bot = _make_bot(db, client)
+    _make_session(db, bot, client, "commit-4")
+    captured = _stub_pipeline(monkeypatch, retrieved=ARTICLE_KB, chunks=PASSIVE_CHUNKS)
+    _anonymous_visitor(monkeypatch)
+
+    frames = await _drive_stream(bot, QUESTION, "commit-4")
+
+    assert _final_meta(frames)["answer_override"] == COMMITMENT_GAP_SENTENCE
+    assert [m.content for m in _messages(db, "commit-4", role="bot")] == [COMMITMENT_GAP_SENTENCE]
+    assert [tags["figures"] for name, tags in metrics if name == "commitment_figure_redacted"] == ["48 hours|7 days"]
+    for cached in captured["cache"].store.values():
+        assert "48" not in cached["answer"]
+
+
+@pytest.mark.asyncio
+async def test_a_passive_figure_the_company_page_states_streams_unchanged(db, monkeypatch, metrics):
+    client = _make_client(db)
+    bot = _make_bot(db, client)
+    _make_session(db, bot, client, "commit-5")
+    _stub_pipeline(monkeypatch, retrieved=PASSIVE_OWN_KB, chunks=PASSIVE_CHUNKS)
+    _anonymous_visitor(monkeypatch)
+
+    frames = await _drive_stream(bot, QUESTION, "commit-5")
+
+    assert "answer_override" not in _final_meta(frames)
+    assert _answer_text(frames) == "".join(PASSIVE_CHUNKS)
+    assert [name for name, _ in metrics if name == "commitment_figure_redacted"] == []
+
+
 FRANCE_QUESTION = "d'accord, et c'est disponible en France ?"
 FRANCE_CHUNKS = ("Yes, France is listed among the countries we serve. ", "Our SOC runs 24x7.")
 FRANCE_CORRECTED = "I don't have a statement about serving France here. Our SOC runs 24x7."

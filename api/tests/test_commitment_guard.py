@@ -239,7 +239,7 @@ _ADVERSARIAL = [
 def test_long_adversarial_input_is_handled_quickly(text):
     chunks = [_chunk(text), _chunk(text, "https://acme.com/sla/"), _chunk(text, "notes.pdf")]
     started = time.perf_counter()
-    _redact(text, chunks)
+    _redact(text, chunks, question=text)
     supported_figures(chunks, company_name="Acme")
     elapsed = time.perf_counter() - started
     assert elapsed < 1.0, elapsed
@@ -511,3 +511,156 @@ def test_long_adversarial_sentences_are_handled_quickly(text):
     supported_figures(chunks, company_name="Acme")
     elapsed = time.perf_counter() - started
     assert elapsed < 1.0, elapsed
+
+
+# ── A figure with no subject, when the visitor asked about our terms ─────────
+#
+# Production, 2026-09-18: "whats ur SLA for patching critical CVEs? like in how
+# many hours" got "Critical findings are remediated within 48 hours. I don't
+# have our exact figure for that." Only the sentence with a subject was
+# checked, so the best-practices figure stayed beside the gap sentence denying
+# it. The 48 hours are the "Alert Triage SLAs" bullets of a generic
+# vulnerability-management page, not an Eventus Security term.
+
+PATCH_QUESTION = "whats ur SLA for patching critical CVEs? like in how many hours"
+PASSIVE_ANSWER = (
+    "Critical-severity findings are remediated within 48 hours. For medium-severity findings, the SLA is 7 days."
+)
+OWN_PATCH_CHUNK = _chunk(
+    "Critical-severity findings are remediated within 48 hours. Medium-severity findings carry a 7 day SLA.",
+    "https://eventussecurity.com/soc-as-a-service/",
+)
+MTTD_GUIDE = _chunk(
+    "What to ask a provider\n* SLA examples, e.g. P1 acknowledge \u2264 10 min, MTTD \u2264 10 min for exploitation, "
+    "MTTR \u2264 60 min for P1 and \u2264 4 hrs for P2\n",
+    "https://eventussecurity.com/best-soc-as-a-service-providers-2025/",
+)
+
+
+def test_the_production_passive_answer_loses_both_figures():
+    result = _redact(PASSIVE_ANSWER, [_chunk(EVENTUS_CHUNK, EVENTUS_PAGE)], company=EVENTUS, question=PATCH_QUESTION)
+
+    assert result.text == COMMITMENT_GAP_SENTENCE
+    assert result.figures == ("48 hours", "7 days")
+    assert "48" not in result.text
+
+
+def test_the_production_passive_answer_stays_when_the_company_page_states_it():
+    result = _redact(PASSIVE_ANSWER, [OWN_PATCH_CHUNK], company=EVENTUS, question=PATCH_QUESTION)
+
+    assert result.redacted is False
+    assert result.text == PASSIVE_ANSWER
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "Critical findings are remediated within 48 hours.",
+        "Response time: 48 hours.",
+        "Patching happens within 48 hours.",
+        "The SLA for critical findings is 48 hours.",
+        "Critical CVEs get a 48-hour remediation target.",
+    ],
+)
+@pytest.mark.parametrize(
+    "question",
+    [
+        PATCH_QUESTION,
+        "if we raise a P1 at 2am whats the guaranteed response time in the contract",
+        "do you publish an SLA?",
+        "whats ur turnaround time",
+    ],
+)
+def test_a_subjectless_figure_is_checked_when_the_visitor_asked_about_our_terms(answer, question):
+    result = _redact(
+        f"{answer} Anything else?", [_chunk(EVENTUS_CHUNK, EVENTUS_PAGE)], company=EVENTUS, question=question
+    )
+
+    assert result.text == f"{COMMITMENT_GAP_SENTENCE} Anything else?"
+
+
+def test_a_subjectless_figure_stays_when_the_visitor_asked_about_nobody_in_particular():
+    answer = "Critical findings are remediated within 48 hours."
+
+    for question in (None, "", "how does vulnerability management work"):
+        result = _redact(answer, [_chunk(EVENTUS_CHUNK, EVENTUS_PAGE)], company=EVENTUS, question=question)
+        assert result.redacted is False, question
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "Providers typically remediate critical findings within 48 hours.",
+        "Most providers patch critical findings within 48 hours.",
+        "Critical findings are usually remediated within 48 hours.",
+        "The industry benchmark for critical remediation is 48 hours.",
+        "For example, a critical remediation target of 48 hours is common.",
+        "Best practice is to remediate critical findings within 48 hours.",
+        "Buyer guides list e.g. a 48-hour remediation target.",
+    ],
+)
+def test_general_wording_is_not_presented_as_ours(answer):
+    result = _redact(answer, [_chunk(EVENTUS_CHUNK, EVENTUS_PAGE)], company=EVENTUS, question=PATCH_QUESTION)
+
+    assert result.redacted is False, result.figures
+    assert result.text == answer
+
+
+# ── One coherent answer: never the figure and the gap sentence together ──────
+
+
+def test_a_replaced_sentence_takes_the_same_figure_out_of_the_rest_of_the_reply():
+    answer = (
+        "Critical findings are remediated within 48 hours. "
+        "We remediate critical findings within 48 hours. Anything else?"
+    )
+
+    result = _redact(answer, [_chunk(EVENTUS_CHUNK, EVENTUS_PAGE)], company=EVENTUS)
+
+    assert result.text == f"{COMMITMENT_GAP_SENTENCE} Anything else?"
+    assert result.figures == ("48 hours",)
+
+
+def test_general_wording_keeps_its_figure_while_our_own_sentence_goes():
+    answer = (
+        "We remediate critical findings within 48 hours. Providers typically close them within 48 hours. Anything else?"
+    )
+
+    result = _redact(answer, [_chunk(EVENTUS_CHUNK, EVENTUS_PAGE)], company=EVENTUS)
+
+    assert result.text == (f"{COMMITMENT_GAP_SENTENCE} Providers typically close them within 48 hours. Anything else?")
+
+
+def test_a_reply_that_already_says_it_lacks_the_figure_gets_no_second_gap_sentence():
+    """Evaluation, 2026-09-18, Eventus Security: "whats ur MTTD and MTTR sla"."""
+    answer = (
+        "I don't have our exact MTTD and MTTR SLA. The closest published figures we have are example bands for "
+        "CISOs: MTTD of \u2264 10 min for exploitation, and MTTR of \u2264 60 min for P1.\n\n"
+        "Want me to take a message for our team?"
+    )
+
+    result = _redact(answer, [MTTD_GUIDE], company=EVENTUS, question="whats ur MTTD and MTTR sla")
+
+    assert result.text == ("I don't have our exact MTTD and MTTR SLA.\n\nWant me to take a message for our team?")
+    assert result.text.count("I don't have") == 1
+    assert result.figures == ("10 min", "60 min")
+
+
+def test_the_p1_reply_keeps_its_one_honest_clause():
+    """Evaluation, 2026-09-18: the borrowed "P1 acknowledge target" came from a buyer guide."""
+    answer = (
+        "I don't have our exact contractual P1 response time here. The closest stated terms are a P1 acknowledge "
+        "target of \u2264 10 min, plus 24x7 coverage and SLA-based response expectations.\n\n"
+        "Want me to take a message for our team?"
+    )
+
+    result = _redact(
+        answer,
+        [MTTD_GUIDE],
+        company=EVENTUS,
+        question="if we raise a P1 at 2am whats the guaranteed response time in the contract",
+    )
+
+    assert result.text == (
+        "I don't have our exact contractual P1 response time here.\n\nWant me to take a message for our team?"
+    )

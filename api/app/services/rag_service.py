@@ -11935,7 +11935,10 @@ async def rag_pipeline_stream(
             # A service commitment ("we remediate critical findings within 48
             # hours") stays only when the reference states that figure as the
             # company's own. Production, 2026-09-17: Eventus quoted a general
-            # best-practices list as its own SLA. Runs on the cleaned answer, so
+            # best-practices list as its own SLA. 2026-09-18: the same list came
+            # back with no subject ("Critical findings are remediated within 48
+            # hours"), so the question goes in too, which decides whether a
+            # subjectless figure is read as ours. Runs on the cleaned answer, so
             # no sentinel or card goes with a replaced sentence; the text already
             # streamed is corrected through ``answer_override`` below.
             if not _leak_aborted and not _answer_replaced and not _stream_error and _answer_safe:
@@ -11944,6 +11947,7 @@ async def rag_pipeline_stream(
                     _commitment_chunks,
                     company_name=_company_name,
                     owner_texts=_commitment_owner_texts,
+                    question=question,
                 )
                 if _commitment.redacted:
                     _commitment_redacted = True
