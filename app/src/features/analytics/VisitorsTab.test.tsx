@@ -23,8 +23,18 @@ vi.mock('../../context/BotContext', () => ({
 
 const { VisitorsTab, VISITORS_READ_LIMIT } = await import('./VisitorsTab');
 
+/**
+ * Yesterday, so a row always falls inside the range under test. A fixed date
+ * ("2026-08-19") sat inside the 30 day window when this file was written and
+ * outside it 33 days later, so CI failed on a change that touched no frontend
+ * file.
+ */
+function recentIso(): string {
+  return new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+}
+
 /** One API row: a deduped visitor, carrying every session it owns. */
-function visitor(index: number, sessions: number, lastActiveAt = '2026-08-19T10:00:00Z') {
+function visitor(index: number, sessions: number, lastActiveAt = recentIso()) {
   const ids = Array.from({ length: sessions }, (_, n) => `s${index}-${n}`);
   return {
     session_id: ids.join(','),
