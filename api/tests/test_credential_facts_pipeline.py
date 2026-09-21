@@ -16,6 +16,7 @@ import pytest
 from app.services import credential_facts
 from app.services import rag_service as rs
 from tests.test_rag_pipeline_defects import (
+    _answer_text,
     _Cache,
     _doc,
     _drive_stream,
@@ -31,6 +32,30 @@ SERVICES_PAGE = _doc(
 )
 ABOUT_PAGE = _doc("Acme is CERT-In empanelled. We are proud of our team.", name="https://acme.example/about/")
 PLAIN_PAGE = _doc("We run a 24x7 SOC for banks and fintechs.", name="https://acme.example/services/soc/")
+
+#: CleanStart's own vendor-risk page on production, 2026-09-18: the SOC 2
+#: status it holds, the ISO 27001 status it does not yet hold, and an appendix
+#: listing the certificate among documents available under NDA.
+PENDING_PAGE = _doc(
+    "### ISO 27001 Certification\n"
+    "**Current Status**: ISO 27001 certification in progress; expected completion Q2 2026\n"
+    "**Interim Measures**: Current controls documented in internal ISMS",
+    name="https://acme.example/knowledge-hub/secure-vendor-risk-assessment",
+)
+APPENDIX_PAGE = _doc(
+    "## Appendix A: Certification and Compliance Artifacts\n"
+    "The following documents are available upon request (typically via signed NDA):\n"
+    "1.   **SOC 2 Type II Report** (12-month audit, completed [Date])\n"
+    "2.   **ISO 27001 Certificate** (once audit completed, Q2 2026)",
+    name="https://acme.example/knowledge-hub/secure-vendor-risk-assessment",
+)
+#: Eventus's own "Top 10 SOC Service Providers in India" page: a ranked list
+#: where every entry names certifications, only one entry of which is Acme.
+LISTICLE_PAGE = _doc(
+    "Acme\n* **Certifications**: CERT-In empaneled, ISO 27001 certified.\n"
+    "Globex\n* **Certifications**: ISO 27001, SOC 2, PCI-DSS.",
+    name="https://acme.example/cybersecurity/india/soc-service-providers/",
+)
 
 
 class _Model:
@@ -99,6 +124,16 @@ def _bot(db, monkeypatch, session_id, *, retrieved, support=True, cache=None):
 def _user_prompt(captured):
     (_system, prompt), *_ = captured["prompts"]
     return prompt
+
+
+def _streaming(captured, answer: str):
+    """The answering model, writing ``answer`` instead of the fixture's chunks."""
+
+    async def fake_stream(prompt, **kwargs):
+        captured["prompts"].append((kwargs.get("system_prompt"), prompt))
+        yield answer
+
+    return fake_stream
 
 
 @pytest.mark.asyncio
@@ -285,3 +320,41 @@ async def test_a_visitor_who_leaves_before_generation_leaves_no_check_running(db
     (task,) = tasks
     await asyncio.gather(task, return_exceptions=True)
     assert task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_a_pending_certification_reaches_the_visitor_as_in_progress(db, monkeypatch, model, metrics):
+    """Production, 2026-09-18: CleanStart offered an "ISO 27001 Certificate"
+    under NDA, dropping its own page's "(once audit completed, Q2 2026)"."""
+    model.reply = 'ISO 27001 | HELD | DOC 2 | "ISO 27001 Certificate"'
+    reply = "Our ISO 27001 certification is in progress, with completion expected in Q2 2026."
+    bot, captured = _bot(db, monkeypatch, "cred-pending", retrieved=(PENDING_PAGE, APPENDIX_PAGE))
+    monkeypatch.setattr(rs, "generate_response_stream", _streaming(captured, reply))
+
+    frames = await _drive_stream(bot, "can you share your ISO 27001 certificate", "cred-pending")
+
+    prompt = _user_prompt(captured)
+    assert "- ISO 27001: not held by Acme yet, still in progress." in prompt
+    assert "expected completion Q2 2026" in prompt
+    assert "never say Acme has its certificate or report" in prompt
+    assert "held by Acme (stated on" not in prompt
+
+    answer = _answer_text(frames)
+    assert "in progress" in answer
+    assert "certificate is available" not in answer.casefold()
+    assert _named(metrics, "credential_facts_checked")[0]["pending"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_ranked_list_of_providers_never_confirms_our_own_certification(db, monkeypatch, model, metrics):
+    """Production, 2026-09-18: Eventus answered "ISO 27001 certified" for
+    itself out of its own "Top 10 SOC Service Providers in India" listicle."""
+    model.reply = 'ISO 27001 | HELD | DOC 1 | "CERT-In empaneled, ISO 27001 certified"'
+    bot, captured = _bot(db, monkeypatch, "cred-listicle", retrieved=(LISTICLE_PAGE,))
+
+    await _drive_stream(bot, "are you iso 27001 certified? need it for our vendor onboarding form", "cred-listicle")
+
+    prompt = _user_prompt(captured)
+    assert "- ISO 27001: could not be confirmed from the reference information." in prompt
+    assert "held by Acme" not in prompt
+    assert _named(metrics, "credential_facts_checked")[0]["held"] == 0

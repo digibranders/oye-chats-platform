@@ -310,15 +310,56 @@ _REMEMBER_ME_RE = re.compile(
 # Small talk / social reflexes the knowledge base can never answer. Whole-message
 # matches only, so a real question that happens to contain one of these words
 # still reaches retrieval ("how are your SOC services priced" is not a greeting).
+# "hey hows ur day going" reached the relevance gate on both production bots
+# (2026-09-18) and got the scope refusal: the route knew three fixed shapes and
+# none of them was a question about the day. Every branch is anchored at both
+# ends and the openers and tails are bounded repeats, so matching stays linear
+# and "how are your SOC services priced" still reaches retrieval.
+_PLEASANTRY_OPENER = r"(?:hi|hey|hello|yo|so|heya)"
+_PLEASANTRY_TAIL = r"(?:today|these\s+days|so\s+far|mate|man|bro|dude|buddy|yaar|then)"
 _HOW_ARE_YOU_RE = re.compile(
-    r"^(?:(?:hi|hey|hello)\s+)?(?:how\s+(?:are|r)\s+(?:you|u)(?:\s+doing)?(?:\s+today)?"
-    r"|how'?s\s+it\s+going|how\s+do\s+you\s+do)$"
+    rf"^(?:{_PLEASANTRY_OPENER}[\s,]+){{0,2}}"
+    r"(?:how\s+(?:are|r)\s+(?:you|u|ya)(?:\s+doing)?"
+    r"|how\s+(?:are|r)\s+things(?:\s+going)?"
+    r"|how'?s\s+it\s+going"
+    r"|how\s+do\s+you\s+do"
+    r"|how(?:'?s|\s+is|\s+was)\s+(?:your|ur|yr|the)\s+day(?:\s+(?:going|been|treating\s+(?:you|u)))?"
+    r"|how'?s\s+(?:everything|things)(?:\s+going)?"
+    r"|hope\s+(?:you(?:'re|\s+are)|u\s+(?:r|are)|ur)\s+(?:doing\s+)?(?:well|good|ok|okay)"
+    r")"
+    rf"(?:[\s,]+{_PLEASANTRY_TAIL}){{0,2}}$"
+)
+
+# Praise, for the bot or for the company's public face. "nice website btw, very
+# clean design" got the gap line on both production bots (2026-09-18): the route
+# only knew praise aimed at the bot itself, so a compliment about the site fell
+# through to retrieval, which has no chunk about it. Whole message only, and a
+# clause is praise or nothing, so "nice website, what does your SOC service
+# cost?" fails the match and reaches retrieval. Every repeat is bounded.
+_PRAISE_SUBJECT = (
+    r"(?:bot|chat\s?bot|assistant|ai|reply|answer"
+    r"|site|website|web\s?site|page|homepage|landing\s+page|design|layout|ui|ux|brand(?:ing)?|logo"
+    r"|product|platform|app|service|services|work|job|stuff|team|company)"
+)
+_PRAISE_ADJECTIVE = (
+    r"(?:good|great|nice|clean|slick|sleek|lovely|beautiful|gorgeous|cool|awesome|amazing|impressive"
+    r"|helpful|smart|useful|neat|solid|excellent|fantastic|brilliant)"
+)
+_PRAISE_INTENSIFIER = r"(?:(?:very|really|so|super|pretty|quite|genuinely)\s+){0,2}"
+_PRAISE_FILLER = r"(?:btw|by\s+the\s+way|though|honestly|seriously|just\s+saying|tbh|man|bro|dude|mate|guys|team)"
+_PRAISE_CLAUSE = (
+    rf"(?:(?:you(?:'re|\s+are|\s+r)|u\s+(?:r|are)|ur)\s+(?:an?\s+)?{_PRAISE_INTENSIFIER}{_PRAISE_ADJECTIVE}"
+    rf"(?:\s+{_PRAISE_SUBJECT})?"
+    rf"|(?:i\s+)?(?:love|loving|like|really\s+like)\s+(?:your|ur|the|this)\s+(?:new\s+)?{_PRAISE_SUBJECT}"
+    rf"|(?:your|ur|the|this|that)\s+(?:new\s+)?{_PRAISE_SUBJECT}\s+(?:is|looks|looked|was|seems)\s+"
+    rf"{_PRAISE_INTENSIFIER}{_PRAISE_ADJECTIVE}"
+    rf"|{_PRAISE_INTENSIFIER}{_PRAISE_ADJECTIVE}\s+(?:new\s+)?{_PRAISE_SUBJECT}"
+    rf"|(?:this|that|it)\s+(?:is|was)\s+{_PRAISE_INTENSIFIER}{_PRAISE_ADJECTIVE}"
+    r")"
 )
 _COMPLIMENT_RE = re.compile(
-    r"^(?:you(?:'re|\s+are)\s+(?:a\s+)?(?:good|great|nice|helpful|smart|awesome|amazing|cool)"
-    r"(?:\s+(?:bot|assistant|chatbot))?"
-    r"|(?:good|great|nice)\s+(?:bot|job|work)"
-    r"|(?:this|that)\s+(?:is|was)\s+(?:helpful|great|awesome|useful))$"
+    rf"^{_PRAISE_CLAUSE}(?:[\s,]+{_PRAISE_FILLER}){{0,2}}"
+    rf"(?:[\s,]+(?:and\s+)?{_PRAISE_CLAUSE}(?:[\s,]+{_PRAISE_FILLER}){{0,2}}){{0,2}}$"
 )
 _FRUSTRATION_RE = re.compile(
     r"^(?:non\s?sense|useless|not\s+helpful|wtf"
@@ -1081,10 +1122,13 @@ def _remember(company_name: str | None) -> IntentResponse:
 def _how_are_you(company_name: str | None) -> IntentResponse:
     # No company name reads oddly as "at us", so this route gets its own
     # neutral close instead of routing the None case through ``_co``.
+    # Not "Doing well": ``response_style`` bans that opener for the answer model
+    # and the 2026-09-18 eval rubric fails it here for the same reason, and the
+    # reply must not claim a human day either.
     if company_name:
-        answer = f"Doing well, thanks for asking. What can I help you with at {_co(company_name)}?"
+        answer = f"Thanks for asking, all good here. What can I help you with at {_co(company_name)}?"
     else:
-        answer = "Doing well, thanks for asking. What can I help you with?"
+        answer = "Thanks for asking, all good here. What can I help you with?"
     return IntentResponse(answer=answer, intent="how_are_you")
 
 

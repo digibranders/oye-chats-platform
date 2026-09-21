@@ -52,6 +52,13 @@ def _chunk(content: str, name: str) -> SimpleNamespace:
         "https://example.com/insights/zero-trust-roadmap/",
         "https://example.com/resources/soc-maturity/",
         "https://example.com/soc-onboarding-explained/",
+        # A roll-call of other firms, with no "best" or "top" in the slug.
+        # Production evaluation, 2026-09-18: Eventus answered "ISO 27001
+        # certified" for itself out of this page.
+        "https://eventussecurity.com/cybersecurity/india/soc-service-providers/",
+        "https://eventussecurity.com/cybersecurity/top-red-teaming-companies-in-india/",
+        "https://eventussecurity.com/india/incident-response-companies/",
+        "https://eventussecurity.com/uae/mssp-providers/",
     ],
 )
 def test_a_crawled_guide_listicle_comparison_or_blog_post_is_a_general_article(name):
@@ -69,6 +76,10 @@ def test_a_crawled_guide_listicle_comparison_or_blog_post_is_a_general_article(n
         "https://www.cleanstart.com/knowledge-hub/sla-support-tiers",
         "https://www.cleanstart.com/knowledge-hub/air-gapped-deployment",
         "https://www.cleanstart.com/legal/master-serviceand-license-agreement",
+        # A list noun needs a word in front of it: a bare section is the
+        # company's own.
+        "https://eventussecurity.com/providers/",
+        "https://www.cleanstart.com/knowledge-hub/secure-vendor-risk-assessment",
     ],
 )
 def test_the_companys_own_service_terms_and_policy_pages_are_not(name):
@@ -104,7 +115,7 @@ def test_the_check_is_linear_on_a_long_path():
     import time
 
     started = time.perf_counter()
-    for path in ("best-" * 5000, "top-" * 5000 + "1", "-vs" * 5000, "/blog" * 3000):
+    for path in ("best-" * 5000, "top-" * 5000 + "1", "-vs" * 5000, "/blog" * 3000, "a-" * 5000 + "providers"):
         is_general_article(f"https://example.com/{path}", "Acme")
     assert time.perf_counter() - started < 0.5
 

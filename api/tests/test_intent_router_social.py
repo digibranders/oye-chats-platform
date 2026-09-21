@@ -18,7 +18,9 @@ import pytest
 
 from app.services.intent_router import (
     _ACK_TERMS,
+    _COMPLIMENT_RE,
     _GREETING_TERMS,
+    _HOW_ARE_YOU_RE,
     _NEG_ACK_TERMS,
     route_intent,
 )
@@ -232,3 +234,105 @@ def test_unclear_drops_getting_in_touch_without_support():
     reply = route_intent("h", COMPANY, support_enabled=False).answer
     assert "getting in touch" not in reply
     assert "services" in reply and "pricing" in reply
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Praise for the company, and pleasantries the "how are you" shapes missed.
+#
+# Production, 2026-09-18, Eventus Security and CleanStart, both after the name
+# step: "nice website btw, very clean design" got the gap line ("I don't have
+# that detail here. Want me to loop in the team on this?") and "hey hows ur day
+# going" got the scope refusal ("I'm focused on questions about CleanStart").
+# Both reached the relevance gate because the compliment route only knew praise
+# aimed at the bot itself and the pleasantry route knew three fixed shapes.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "nice website btw, very clean design",
+        "nice website",
+        "love the new site",
+        "i love your website",
+        "your product looks great",
+        "the new design is really clean",
+        "your team is great",
+        "great work",
+        "really nice site btw",
+        "your app looks slick",
+    ],
+)
+def test_praise_for_the_company_is_routed_as_a_compliment(msg):
+    routed = route_intent(msg, COMPANY)
+    assert routed is not None, msg
+    assert routed.intent == "compliment", msg
+
+
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "hey hows ur day going",
+        "hows your day going",
+        "how is your day going",
+        "hows your day",
+        "how are things going",
+        "hows everything going",
+    ],
+)
+def test_pleasantries_are_routed_as_how_are_you(msg):
+    routed = route_intent(msg, COMPANY)
+    assert routed is not None, msg
+    assert routed.intent == "how_are_you", msg
+
+
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "nice website, what does your SOC service cost?",
+        "nice website, do you have pricing",
+        "your product looks great, can i get a demo",
+        "i love the design of your dashboard, how much is it",
+        "how are your SOC services priced",
+        "how is your product different from Zoho",
+        "hows the pricing work for 50 seats",
+        "is your website down",
+        "what makes your platform great",
+        "do you have a good product for small teams",
+    ],
+)
+def test_a_real_question_with_praise_in_it_still_reaches_retrieval(msg):
+    assert route_intent(msg, COMPANY) is None, msg
+
+
+def test_the_pleasantry_reply_is_short_warm_and_offers_help():
+    """The rubric fails an opener of "Doing well", "Absolutely" or "Of course",
+    the same openers ``response_style`` already bans for the answer model."""
+    reply = route_intent("hey hows ur day going", COMPANY).answer
+    assert not reply.startswith(("Doing well", "Doing great", "Absolutely", "Of course"))
+    assert f"**{COMPANY}**" in reply
+    assert reply.count("?") == 1
+    assert len(reply.split()) <= 20
+
+
+def test_the_compliment_reply_thanks_the_visitor_and_offers_help():
+    reply = route_intent("nice website btw, very clean design", COMPANY).answer
+    assert reply.lower().startswith("thank")
+    assert f"**{COMPANY}**" in reply
+    assert reply.count("?") == 1
+
+
+@pytest.mark.parametrize("dash", [chr(0x2014), chr(0x2013)])
+@pytest.mark.parametrize("msg", ["nice website btw, very clean design", "hey hows ur day going"])
+def test_the_new_replies_carry_no_dashes(msg, dash):
+    assert dash not in route_intent(msg, COMPANY).answer
+
+
+@pytest.mark.parametrize("pattern", [_COMPLIMENT_RE, _HOW_ARE_YOU_RE])
+def test_timing_on_a_long_near_miss(pattern):
+    """Bounded repeats only. The word gate keeps a message this long away from
+    these patterns, so they are timed directly."""
+    mash = ("very nice website btw, " * 250)[:4999] + "x"
+    started = time.perf_counter()
+    pattern.match(mash)
+    assert time.perf_counter() - started < 0.5
