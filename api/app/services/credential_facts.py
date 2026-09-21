@@ -45,7 +45,18 @@ NDA although its own vendor-risk page says the certification is in progress,
 expected Q2 2026: the pending test read only the sentence holding the quote, so
 a quote taken from the heading above it ("SOC 2 Type II and ISO 27001
 Compliance") or from a document list passed. The test now reads the
-surrounding context, and a stated pending status outranks every other verdict.
+surrounding context, and a stated pending status outranks the model's verdict.
+
+The review of 2026-09-21 found two ways that test went wrong. The context is
+200 characters either side of the quote, so a neighbouring credential's status
+refused a quote about a credential of its own ("CleanStart is ISO 27001
+certified." one line above "Our SOC 2 Type II attestation is in progress"), and
+the model path and the fallback disagreed about the same page. The pending test
+is now anchored on the quoted credential's own label. And PENDING outranked
+HELD across excerpts, so the recertification, surveillance and renewal audits a
+certification runs on hid the certification itself: those audits are no longer
+read as a pending status, and a credential any excerpt states the company holds
+is never called pending.
 
 ``credential_facts_block`` renders the verdicts as a self-contained block for
 the per-turn user prompt. ``check_credentials_bounded`` is what the chat stream
@@ -545,9 +556,37 @@ _MAX_DETAIL_CHARS = 120
 _AWARDED_NOUN = r"(?:certification|certificate|accreditation|attestation|empanell?ment|audit|report|compliance)"
 _PENDING_STATUS_RE = re.compile(rf".{{0,40}}?\b{_AWARDED_NOUN}\b[^.!?]{{0,48}}?\b(?:{_PENDING_IN_TIME})\b")
 
+#: The routine audit cycle a certification the company already holds runs on.
+#: "Our ISO 27001 recertification audit is scheduled for Q3 2026" and "the next
+#: surveillance audit is due in Q3" are what holding one looks like; read as a
+#: status they would tell the visitor the company is not certified.
+_ROUTINE_AUDIT_RE = re.compile(r"\b(?:re-?certification|re-?assessment|surveillance|renewals?|re-?newing)\b")
+
 
 def _is_pending(text: str) -> bool:
     return _PENDING_RE.search(_fold(text)) is not None
+
+
+def _pending_status_at(folded: str, position: int) -> bool:
+    """Whether ``folded`` puts a pending status right after the credential at ``position``."""
+    status = _PENDING_STATUS_RE.match(folded, position)
+    return status is not None and _ROUTINE_AUDIT_RE.search(status.group(0)) is None
+
+
+def _states_pending(label: str, text: str) -> bool:
+    """Whether ``text`` says this credential in particular is still on its way.
+
+    ``Excerpt.context`` is 200 characters either side of the quote, so it can
+    carry a neighbouring credential's status ("CleanStart is ISO 27001
+    certified." one line above "Our SOC 2 Type II attestation is in progress").
+    The test therefore starts at each mention of this credential's own label
+    and reads only the status position that follows it.
+    """
+    folded = _CHUNK_HEADER_RE.sub("", _fold(text))
+    return any(
+        _labels_match(label, found) and _pending_status_at(folded, position)
+        for position, found in _labels_with_positions(folded)
+    )
 
 
 def _stated_status(text: str) -> str:
@@ -561,11 +600,17 @@ def _pending_statuses(excerpts: Sequence[Excerpt], company_name: str | None) -> 
 
     Precision first, as everywhere in this module. A sentence counts only when
     it is not on a page ``page_kind`` tags as a general article, names no other
-    party, carries no negation or question, is not itself a holding statement
-    (so "we are ISO 27001 certified, next surveillance audit scheduled for Q3"
-    stays held), and puts the pending wording where this credential's own
-    status goes (``_PENDING_STATUS_RE``).
+    party, carries no negation or question, and puts the pending wording where
+    this credential's own status goes (``_pending_status_at``), which excludes
+    the recertification, surveillance and renewal audits a company runs on a
+    credential it already holds.
+
+    A credential any excerpt states the company holds is never listed here. A
+    routine audit and a real certification sit on the same page as often as
+    not, and a wrong PENDING tells the visitor the company lacks a
+    certification its own page states.
     """
+    held = _held_labels(excerpts, company_name)
     statuses: dict[str, str] = {}
     for excerpt in excerpts:
         if is_general_article(excerpt.source, company_name):
@@ -575,10 +620,10 @@ def _pending_statuses(excerpts: Sequence[Excerpt], company_name: str | None) -> 
             continue
         if _NOT_A_STATUS_RE.search(text) is not None:
             continue
-        if any(pattern.search(text) for pattern in _holding_patterns(company_name)):
-            continue
         for position, label in _labels_with_positions(text):
-            if _PENDING_STATUS_RE.match(text, position) is not None:
+            if any(_labels_match(label, name) for name in held):
+                continue
+            if _pending_status_at(text, position):
                 statuses.setdefault(label, _stated_status(excerpt.text))
     return statuses
 
@@ -586,10 +631,12 @@ def _pending_statuses(excerpts: Sequence[Excerpt], company_name: str | None) -> 
 def _with_pending(facts: Sequence[CredentialFact], statuses: dict[str, str]) -> tuple[CredentialFact, ...]:
     """``facts`` with every credential the reference calls pending marked PENDING.
 
-    A stated pending status outranks every other verdict, HELD included: the
+    A stated pending status outranks the model's verdict, HELD included: the
     quote behind a HELD can come from a heading or a document list that carries
-    no qualifier of its own. A pending credential nobody listed is added, so a
-    general question is answered with its status rather than with silence.
+    no qualifier of its own. It never outranks the reference itself, because
+    ``_pending_statuses`` leaves out every credential an excerpt states the
+    company holds. A pending credential nobody listed is added, so a general
+    question is answered with its status rather than with silence.
     """
     marked: list[CredentialFact] = []
     for fact in facts:
@@ -608,10 +655,10 @@ def _verified_source(
 ) -> str | None:
     """The cited document's name when the quote is in it and names the credential, else ``None``.
 
-    A quote verifies nothing when its surrounding context says the credential
-    is still pending, or when it comes from a page that describes a topic
-    rather than the company: a buyer guide, or a ranked list of providers where
-    every entry names certifications that are not this company's.
+    A quote verifies nothing when the context says this credential in
+    particular is still pending, or when it comes from a page that describes a
+    topic rather than the company: a buyer guide, or a ranked list of providers
+    where every entry names certifications that are not this company's.
     """
     if len(parts) < 4:
         return None
@@ -626,7 +673,7 @@ def _verified_source(
     if not cited or is_general_article(cited[0].source, company_name):
         return None
     if not any(
-        quote in _normalise_for_match(excerpt.text) and not _is_pending(excerpt.context or excerpt.text)
+        quote in _normalise_for_match(excerpt.text) and not _states_pending(label, excerpt.context or excerpt.text)
         for excerpt in cited
     ):
         return None
@@ -811,6 +858,11 @@ def _held_in(excerpt: Excerpt, company_name: str | None) -> list[str]:
     if not any(pattern.search(text) for pattern in _holding_patterns(company_name)):
         return []
     return named_credentials(text)
+
+
+def _held_labels(excerpts: Sequence[Excerpt], company_name: str | None) -> frozenset[str]:
+    """Every credential the excerpts state the company holds, under the fallback's rules."""
+    return frozenset(label for excerpt in excerpts for label in _held_in(excerpt, company_name))
 
 
 def fallback_credential_facts(question: str, excerpts: Sequence[Excerpt], company_name: str | None) -> CredentialFacts:

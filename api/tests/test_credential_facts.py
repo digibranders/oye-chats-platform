@@ -140,6 +140,24 @@ def test_the_prefilter_is_fast_on_a_long_adversarial_message():
 
 
 @pytest.mark.parametrize(
+    "text",
+    [
+        "iso 27001 " * 3000,
+        "iso 27001 certification " + "a " * 5000 + "in progress",
+        ("iso 27001 " + "x " * 20) * 500,
+        "certification " * 5000,
+        "iso 27001 recertification audit " * 2000,
+        "once " + "a " * 10000 + "completed",
+    ],
+)
+def test_the_pending_test_is_fast_on_a_long_adversarial_page(text):
+    started = time.perf_counter()
+    cf._states_pending("ISO 27001", text)
+    cf._pending_statuses(cf.credential_excerpts([_chunk(text, "https://acme.example/trust/")]), "Acme")
+    assert time.perf_counter() - started < 1.0, text[:40]
+
+
+@pytest.mark.parametrize(
     ("text", "names"),
     [
         ("are you ISO/IEC 27001:2022 and iso 9001 certified", ["ISO 27001", "ISO 9001"]),
@@ -413,10 +431,11 @@ def test_a_pending_line_on_a_general_article_or_about_another_party_is_not_our_s
 
 
 def test_a_renewal_audit_is_never_announced_as_a_pending_certification(monkeypatch):
-    """A holding sentence with a date in it stays unconfirmed, as it always was.
+    """A holding sentence with a routine audit's date in it stays held.
 
     It must not turn into "in progress": the visitor would be told the company
-    is not certified when its own page says it is.
+    is not certified when its own page says it is. Nor may the date leave the
+    certification unconfirmed, which reads to the visitor almost the same.
     """
     chunks = [
         _chunk(
@@ -428,7 +447,107 @@ def test_a_renewal_audit_is_never_announced_as_a_pending_certification(monkeypat
 
     facts = cf.check_credentials("are you ISO 27001 certified", cf.credential_excerpts(chunks), "Acme")
 
-    assert [(f.name, f.verdict) for f in facts.facts] == [("ISO 27001", Verdict.UNVERIFIED)]
+    assert [(f.name, f.verdict) for f in facts.facts] == [("ISO 27001", Verdict.HELD)]
+
+
+#: CleanStart's trust page, 2026-09-18: one credential it holds and another it
+#: is still waiting for, one line apart. The context window the pending test
+#: reads is 200 characters either side of a quote, so it spans both.
+NEIGHBOUR_CHUNKS = [
+    _chunk(
+        "CleanStart is ISO 27001 certified, audited by BSI in 2024.\n"
+        "Our SOC 2 Type II attestation is in progress, expected completion Q2 2026.",
+        "https://www.cleanstart.com/trust/",
+    ),
+]
+
+
+def test_a_neighbours_pending_status_does_not_refuse_a_held_quote(monkeypatch):
+    """The pending test reads the quoted credential's own status, not the window."""
+    line = 'ISO 27001 | HELD | DOC 1 | "CleanStart is ISO 27001 certified"'
+    monkeypatch.setattr(cf, "generate_response_checked", _Model(line))
+    excerpts = cf.credential_excerpts(NEIGHBOUR_CHUNKS)
+
+    facts = cf.check_credentials("are you ISO 27001 certified", excerpts, "CleanStart")
+
+    by_name = {fact.name: fact.verdict for fact in facts.facts}
+    assert by_name["ISO 27001"] is Verdict.HELD
+    # The neighbour keeps its own status, which is what the window was carrying.
+    assert by_name["SOC 2"] is Verdict.PENDING
+
+
+def test_the_model_path_and_the_fallback_agree_about_a_credential_beside_a_pending_one(monkeypatch):
+    line = 'ISO 27001 | HELD | DOC 1 | "CleanStart is ISO 27001 certified"'
+    monkeypatch.setattr(cf, "generate_response_checked", _Model(line))
+    excerpts = cf.credential_excerpts(NEIGHBOUR_CHUNKS)
+    question = "are you ISO 27001 certified"
+
+    by_model = cf.check_credentials(question, excerpts, "CleanStart")
+    by_rules = cf.fallback_credential_facts(question, excerpts, "CleanStart")
+
+    assert [(f.name, f.verdict) for f in by_model.facts] == [(f.name, f.verdict) for f in by_rules.facts]
+    assert ("ISO 27001", Verdict.HELD) in [(f.name, f.verdict) for f in by_model.facts]
+
+
+def test_the_pending_neighbour_is_still_pending_when_it_is_the_one_asked_about(monkeypatch):
+    monkeypatch.setattr(cf, "generate_response_checked", _Model("SOC 2 | NOT_FOUND"))
+    excerpts = cf.credential_excerpts(NEIGHBOUR_CHUNKS)
+
+    facts = cf.check_credentials("do you have a SOC 2 report", excerpts, "CleanStart")
+
+    (fact,) = [f for f in facts.facts if f.name == "SOC 2"]
+    assert fact.verdict is Verdict.PENDING
+    assert "expected completion Q2 2026" in fact.detail
+
+
+#: A company that holds a certification and states its next routine audit. The
+#: recertification, surveillance and renewal cycle is what holding one looks
+#: like; read as a pending status it tells the visitor the opposite.
+RECERTIFICATION_CHUNKS = [
+    _chunk("We are ISO 27001 certified.", "https://acme.example/trust/"),
+    _chunk("Our ISO 27001 recertification audit is scheduled for Q3 2026.", "https://acme.example/trust/"),
+]
+
+
+@pytest.mark.parametrize(
+    "routine",
+    [
+        "Our ISO 27001 recertification audit is scheduled for Q3 2026.",
+        "Our ISO 27001 re-certification audit is expected in Q3 2026.",
+        "The next ISO 27001 surveillance audit is scheduled for Q3 2026.",
+        "ISO 27001 renewal audit in progress.",
+    ],
+)
+def test_a_routine_audit_of_a_held_certification_never_makes_it_pending(monkeypatch, routine):
+    chunks = [RECERTIFICATION_CHUNKS[0], _chunk(routine, "https://acme.example/trust/")]
+    monkeypatch.setattr(cf, "generate_response_checked", _Model('ISO 27001 | HELD | DOC 1 | "We are ISO 27001"'))
+
+    facts = cf.check_credentials("are you ISO 27001 certified", cf.credential_excerpts(chunks), "Acme")
+
+    assert [(f.name, f.verdict) for f in facts.facts] == [("ISO 27001", Verdict.HELD)]
+
+
+def test_a_credential_an_excerpt_states_as_held_outranks_a_pending_line_elsewhere(monkeypatch):
+    """One excerpt says the company holds it, so no other excerpt can put it in progress."""
+    chunks = [
+        RECERTIFICATION_CHUNKS[0],
+        _chunk("ISO 27001 certification in progress; expected completion Q3 2026.", "https://acme.example/trust/"),
+    ]
+    monkeypatch.setattr(cf, "generate_response_checked", _Model('ISO 27001 | HELD | DOC 1 | "We are ISO 27001"'))
+
+    facts = cf.check_credentials("are you ISO 27001 certified", cf.credential_excerpts(chunks), "Acme")
+
+    assert [(f.name, f.verdict) for f in facts.facts] == [("ISO 27001", Verdict.HELD)]
+
+
+def test_the_block_never_denies_a_certification_the_reference_states(monkeypatch):
+    monkeypatch.setattr(cf, "generate_response_checked", _Model('ISO 27001 | HELD | DOC 1 | "We are ISO 27001"'))
+
+    facts = cf.check_credentials("are you ISO 27001 certified", cf.credential_excerpts(RECERTIFICATION_CHUNKS), "Acme")
+    block = cf.credential_facts_block(facts, "Acme", team_offer=True)
+
+    assert "- ISO 27001: held by Acme" in block
+    assert "not held by Acme yet" not in block
 
 
 @pytest.mark.parametrize(
@@ -529,17 +648,18 @@ def test_no_credential_sentence_in_the_reference_needs_no_model_call(monkeypatch
         # A company-own page without a holding statement.
         ("ISO 27001 is a standard for security.", "https://acme.example/about/", Verdict.UNVERIFIED),
         ("We help clients become ISO 27001 compliant.", "https://acme.example/compliance/", Verdict.UNVERIFIED),
-        # A holding sentence about a credential still on its way.
+        # A holding sentence about a credential still on its way. Never held,
+        # and the stated status now reaches the visitor instead of nothing.
         (
             "We are ISO 27001 certified, audit expected to complete in Q2.",
             "https://acme.example/trust",
-            Verdict.UNVERIFIED,
+            Verdict.PENDING,
         ),
-        ("Our ISO 27001 certificate is pending the final audit.", "https://acme.example/security/", Verdict.UNVERIFIED),
+        ("Our ISO 27001 certificate is pending the final audit.", "https://acme.example/security/", Verdict.PENDING),
         (
             "Acme has achieved ISO 27001 certification once the audit completes.",
             "https://acme.example/",
-            Verdict.UNVERIFIED,
+            Verdict.PENDING,
         ),
         # A different credential on the page.
         ("We are SOC 2 certified.", "https://acme.example/about/", Verdict.UNVERIFIED),

@@ -10,10 +10,9 @@ critical-severity findings within 48 hours". Its URL has no article shape, so
 This check runs on the finished answer, with no model call:
 
 1. A sentence of the answer is a commitment when it speaks for the company
-   ("we", "our", "us", the company's name, "you'll get"), or has no subject at
-   all while the visitor asked about the company's own terms (``question``
-   says "your", "ur", "you", or asks for an SLA, a response time, a guarantee
-   or a contract term), and states a commitment figure: a duration in
+   ("we", "our", "us", the company's name, "you'll get"), or has no subject of
+   its own while the visitor asked about the company's own terms, and states a
+   commitment figure: a duration in
    minutes, hours, days or weeks in the same
    clause as a commitment word ("we respond in 15 min", "a 4-hour response")
    or right after a firm time bound ("within 48 hours", "under 5 minutes"),
@@ -24,7 +23,19 @@ This check runs on the finished answer, with no model call:
    need it in 2 weeks") and "85% fewer false positives" are not. A subjectless
    sentence that words the figure as general ("typically", "usually",
    "industry", "for example", "e.g.", "best practice", "providers often") is
-   not presented as ours and stays.
+   not presented as ours and stays. A sentence with a subject of its own is
+   somebody else's whatever the question was: a name with a verb after it
+   ("Gartner recommends patching critical vulnerabilities within 48 hours.")
+   or a third-party nominal ("the vendor", "most providers", "customers"). A
+   leading vocative ("Eva, ...") and a leading adverbial ("For critical
+   findings, ...") are not subjects. And the question qualifies only when it
+   names a term of service (an SLA, a response or resolution time, a
+   turnaround, a guarantee, a warranty, a commitment, a contract, an
+   agreement, an MSA, uptime) or asks how long something the company does
+   takes ("how many hours to patch a critical CVE"): the review of 2026-09-21
+   found a bare "you", "u" or "your" enough on its own, which qualified 166 of
+   the 1,034 visitor turns of the evaluation of 2026-09-18, "hey hows ur day
+   going" among them. Twelve qualify now.
 2. Each figure of such a sentence needs support: a retrieved chunk that is not
    a general article (``page_kind``) and states the same figure. Durations are
    compared in minutes, so "48 hours", "48h", "48-hour" and "2 days" are one
@@ -42,11 +53,18 @@ This check runs on the finished answer, with no model call:
    (``COMMITMENT_GAP_SENTENCE``), and any further one is dropped, so the figure
    never survives. When the sentence joins clauses (";", ", and", ", but"),
    only the unsupported clauses go, so "Our Starter plan is $49 per month, and
-   setup takes under 5 minutes." keeps its price. The rest of the answer,
-   including the team offer, stays.
+   setup takes under 5 minutes." keeps its price. A clause the removed one
+   carries goes with it unless it speaks for the company or to the visitor, so
+   the reply is never left with a fragment of a sentence it no longer makes
+   ("Our onboarding call is booked within 48 hours of signup, and the kickoff
+   pack follows." does not become "The kickoff pack follows."). The rest of the
+   answer, including the team offer, stays.
 4. The reply never keeps a figure it also denies having. Once a sentence is
-   replaced, every other sentence stating one of the unsupported figures goes
-   the same way, whoever its subject is. And the gap sentence is written only
+   replaced, every other sentence presenting one of the unsupported figures as
+   ours goes the same way, read without the commitment test of step 1 so that a
+   bare restatement ("The 48 hour clock starts at detection.") goes too. A
+   third party's sentence and plainly general wording keep their figure, which
+   was never the company's to deny. And the gap sentence is written only
    when the reply does not already say it lacks the figure ("I don't have our
    exact MTTD and MTTR SLA."), so it is never read twice.
 
@@ -177,15 +195,37 @@ _FIRST_PERSON_RE = re.compile(
 )
 _LOWER_US_RE = re.compile(r"\bus\b")
 
+#: A term of service the company can be held to, by name.
+_TERM_WORD = (
+    r"slas?|slos?|service[ -]level|underpinning\s{1,3}contract|uptime"
+    r"|guarantee\w{0,3}|commit(?:ment|ments|ted)|warrant\w{0,3}"
+    r"|contract\w{0,3}|agreements?|msa|terms?\s{1,3}(?:of|and)"
+    r"|(?:response|resolution|reaction|turn\s{0,3}-?\s{0,3}around|acknowledg\w{0,6})\s{1,3}times?"
+    r"|turn\s{0,3}-?\s{0,3}around"
+)
+#: Something the company does against a clock, and a clock. Neither is a
+#: question about our terms on its own; together they are one ("how many hours
+#: to patch a critical CVE", "how long before you fix it").
+_WORK_WORD = (
+    r"patch\w{0,4}|remediat\w{0,5}|respon(?:d|ds|se)|resolv\w{0,3}|resolution"
+    r"|fix(?:es|ed|ing)?|acknowledg\w{0,6}|escalat\w{0,3}|restor\w{0,3}"
+)
+_CLOCK_WORD = (
+    r"how\s{1,3}(?:long|fast|soon|quick\w{0,2}|many\s{1,3}(?:hours?|hrs?|days?|minutes?|mins?|weeks?))"
+    r"|hours?|hrs?|days?|minutes?|mins?|weeks?|times?|timelines?|deadlines?|windows?|sla"
+)
+#: How far apart the two halves may sit. Bounded, so the pattern stays linear.
+_TERM_SENSE_REACH_CHARS = 60
 #: The visitor asking about the company's own terms, so a subjectless figure in
-#: the reply is read as ours: the question addresses the company ("your SLA",
-#: "ur", "do you guarantee"), or names a term of service.
+#: the reply is read as ours. The review of 2026-09-21 found a bare "you", "u"
+#: or "your" enough on its own, which made 166 of the 1,034 visitor turns of
+#: the evaluation of 2026-09-18 qualify, "hey hows ur day going" among them. A
+#: pronoun now proves nothing: the turn has to name a term of service, or ask
+#: how long something the company does takes.
 _OUR_TERMS_QUESTION_RE = re.compile(
-    r"\b(?:your|yours|ur|u|you|you['’]re)\b"
-    r"|\bslas?\b|\bslos?\b|\bservice[ -]level\b|\bunderpinning\s{1,3}contract\b"
-    r"|\b(?:response|resolution|reaction|turn\s{0,3}-?\s{0,3}around|acknowledg\w{0,6})\s{1,3}times?\b"
-    r"|\bguarantee\w{0,3}\b|\bcommit(?:ment|ments|ted)\b|\bwarrant\w{0,3}\b"
-    r"|\bcontract\w{0,3}\b|\bagreements?\b|\bmsa\b|\bterms?\s{1,3}(?:of|and)\b",
+    rf"\b(?:{_TERM_WORD})\b"
+    rf"|\b(?:{_WORK_WORD})\b[^\n]{{0,{_TERM_SENSE_REACH_CHARS}}}?\b(?:{_CLOCK_WORD})\b"
+    rf"|\b(?:{_CLOCK_WORD})\b[^\n]{{0,{_TERM_SENSE_REACH_CHARS}}}?\b(?:{_WORK_WORD})\b",
     re.IGNORECASE,
 )
 #: A question is read up to this many characters; a visitor turn is far shorter.
@@ -199,6 +239,34 @@ _GENERAL_WORDING_RE = re.compile(
     r"|for\s{1,3}example|best\s{1,3}practices?|rule\s{1,3}of\s{1,3}thumb)\b|\be\.g\b",
     re.IGNORECASE,
 )
+#: A leading vocative or adverbial phrase, which is not the sentence's subject:
+#: "Eva, remediation runs within 48 hours.", "For critical findings, the target
+#: is 48 hours." Read once, at the start, and only when it is short.
+_LEAD_PHRASE_RE = re.compile(r"[^,\n]{0,60},\s{1,3}")
+_LEAD_PHRASE_MAX_WORDS = 6
+#: Somebody other than us in the subject position: a determiner or quantifier,
+#: up to two modifiers, then a noun naming a third party.
+_THIRD_PARTY_SUBJECT_RE = re.compile(
+    r"(?:(?:most|many|some|several|other|others|all|each|every|few|the|a|an|this|that|these|those)\s{1,3})?"
+    r"(?:[a-z][\w-]{0,20}\s{1,3}){0,2}"
+    r"(?:vendors?|providers?|suppliers?|competitors?|customers?|clients?|company|companies|firms?"
+    r"|organi[sz]ations?|analysts?|auditors?|regulators?|buyers?|users?|industry|market)\b",
+    re.IGNORECASE,
+)
+#: A proper noun in the subject position with a verb of its own after it:
+#: "Gartner recommends ...", "NIST requires ...", "CrowdStrike guarantees ...".
+#: Read case-sensitively, so only a name qualifies, and the verb list is the
+#: narrow one an outside authority is quoted with, so an impersonal opener
+#: ("Patching happens ...", "Critical CVEs get ...") is not mistaken for a name.
+_PROPER_NOUN_SUBJECT_RE = re.compile(
+    r"[A-Z][\w&.-]{1,30}(?:\s{1,3}[A-Z][\w&.-]{1,30}){0,3}\s{1,3}"
+    r"(?:says?|said|states?|stated|recommends?|recommended|advises?|advised|suggests?|suggested"
+    r"|requires?|required|mandates?|mandated|defines?|defined|publishes?|published|reports?|reported"
+    r"|notes?|noted|finds?|found|offers?|offered|provides?|provided|guarantees?|guaranteed"
+    r"|promises?|promised|patches|patched|remediates?|remediated|responds?|responded"
+    r"|resolves?|resolved|delivers?|delivered)\b"
+)
+
 #: The reply already saying it lacks the figure, so the guard writes no second
 #: gap sentence: "I don't have our exact MTTD and MTTR SLA.", "I don't have our
 #: exact contractual P1 response time here."
@@ -234,6 +302,16 @@ _ABBREVIATION_REACH_CHARS = 8
 #: one clause.
 _CLAUSE_JOIN_RE = re.compile(r"(?:;|,\s{0,3}(?:and|but|while|whereas|so)\b)\s{0,3}", re.IGNORECASE)
 _TRAILING_JOIN_RE = re.compile(r"\s{0,3}(?:;|,\s{0,3}(?:and|but|while|whereas|so))$", re.IGNORECASE)
+#: A clause that ends on a coordinating conjunction carries the next one: "Our
+#: onboarding call is booked within 48 hours of signup, and the kickoff pack
+#: follows." A semicolon joins two independent clauses and does not do this.
+_CONTINUATION_TAIL_RE = re.compile(r",\s{0,3}(?:and|but|while|whereas|so)\s{0,3}$", re.IGNORECASE)
+#: What a carried clause needs to be read on its own once the clause it
+#: continued is gone: the reply speaking to the visitor or for the company ("but
+#: I can't share the contract"). Naming a thing is not enough, because the
+#: sentence that said what the thing was has just been taken out ("and the
+#: kickoff pack follows", "and P4 next release").
+_STANDS_ALONE_RE = re.compile(r"\b(?:i|me|my|we|we['’]re|we['’]ve|our|ours|us|you|your|yours)\b", re.IGNORECASE)
 _SENTENCE_STOPS = (".", "!", "?", "\u0964", "\u0965")
 
 #: A chunk sentence that reads as advice or an example rather than the
@@ -556,16 +634,45 @@ class _UnitPlan:
     missing: tuple[str, ...]
 
 
+def _subject_position(unit: str) -> str:
+    """``unit`` from where its subject would start: past any list mark, and past
+    one short leading vocative or adverbial phrase."""
+    mark = _LEAD_MARKS_RE.match(unit)
+    body = unit[mark.end() :] if mark else unit  # every part of the mark is optional
+    lead = _LEAD_PHRASE_RE.match(body)
+    if lead is not None and len(body[: lead.end()].split()) <= _LEAD_PHRASE_MAX_WORDS:
+        return body[lead.end() :]
+    return body
+
+
+def _has_own_subject(unit: str) -> bool:
+    """Whether ``unit`` has a subject of its own, so its figure is somebody else's.
+
+    A name ("Gartner recommends ...") or a third-party nominal ("the vendor",
+    "most providers", "customers") in the subject position. The company's own
+    voice is settled before this, by ``_speaks_for_company``.
+    """
+    subject = _subject_position(unit)
+    return _PROPER_NOUN_SUBJECT_RE.match(subject) is not None or _THIRD_PARTY_SUBJECT_RE.match(subject) is not None
+
+
 def _is_company_claim(unit: str, company_re: re.Pattern[str] | None, *, asks_our_terms: bool) -> bool:
     """Whether ``unit`` states its figure as the company's own.
 
     It does when the company speaks in it, and also when it has no subject at
     all and the visitor asked about the company's own terms, unless it words
     the figure as general ("providers typically ...").
+
+    The review of 2026-09-21 found the subject never read, although this
+    docstring said it was: with the question rule passed, a sentence about
+    anybody at all ("Gartner recommends patching critical vulnerabilities
+    within 48 hours.") was replaced with the gap sentence.
     """
     if _speaks_for_company(unit, company_re):
         return True
-    return asks_our_terms and _GENERAL_WORDING_RE.search(unit) is None
+    if not asks_our_terms:
+        return False
+    return _GENERAL_WORDING_RE.search(unit) is None and not _has_own_subject(unit)
 
 
 def _cut_unit(
@@ -574,13 +681,24 @@ def _cut_unit(
     figures: Sequence[Sequence[tuple[tuple[float, str], int, str]]],
     supported: frozenset[tuple[float, str]],
 ) -> _UnitPlan:
-    """``unit`` with every clause stating an unsupported figure taken out."""
+    """``unit`` with every clause stating an unsupported figure taken out.
+
+    A clause the removed one carries goes with it, so the sentence left behind
+    is never a fragment of one the reply no longer makes.
+    """
     missing = [[shown for key, _, shown in found if key not in supported] for found in figures]
     if not any(missing):
         return _UnitPlan(unit, "", ())
     stripped = unit.rstrip()
     trailing = unit[len(stripped) :] or " "
-    kept = [clause for clause, shown in zip(clauses, missing, strict=True) if not shown]
+    kept: list[str] = []
+    for index, (clause, shown) in enumerate(zip(clauses, missing, strict=True)):
+        if not shown:
+            kept.append(clause)
+            continue
+        rest = "".join(clauses[index + 1 :])
+        if rest and _CONTINUATION_TAIL_RE.search(clause) and _STANDS_ALONE_RE.search(rest) is None:
+            break
     terminal = stripped[-1] if stripped.endswith(_SENTENCE_STOPS) else "."
     lead = _kept_clauses(kept, terminal) if kept else ""
     return _UnitPlan(lead, trailing, tuple(shown for found in missing for shown in found))
@@ -635,26 +753,37 @@ def redact_unsupported_commitments(
         plans.append((prefix, units))
     if not dropped:
         return CommitmentRedaction(answer, ())
-    _drop_the_same_figures_elsewhere(plans, frozenset(dropped))
+    _drop_the_same_figures_elsewhere(plans, frozenset(dropped), company_re)
     return _rebuild(plans)
 
 
 def _drop_the_same_figures_elsewhere(
-    plans: Sequence[tuple[str, list[_UnitPlan]]], dropped: frozenset[tuple[float, str]]
+    plans: Sequence[tuple[str, list[_UnitPlan]]],
+    dropped: frozenset[tuple[float, str]],
+    company_re: re.Pattern[str] | None,
 ) -> None:
-    """Take an unsupported figure out of every other sentence still stating it.
+    """Take an unsupported figure out of every other sentence presenting it as ours.
 
-    A reply never keeps the figure and also says it does not have it, whatever
-    subject the other sentence has. Wording that is plainly general is left
-    alone, since it is not presented as the company's own.
+    A reply never keeps the figure and also says it does not have it. Only a
+    sentence that states the figure as the company's own goes: the reply has
+    already denied the figure for the company, so a sentence with no subject is
+    read as ours here whatever the visitor asked, while a third party's
+    sentence ("Gartner recommends ...") and plainly general wording keep
+    theirs.
+
+    The figure is read without the commitment test the first pass uses, so a
+    bare restatement of it ("The 48 hour clock starts at detection.") does not
+    survive beside the denial.
     """
     for _, units in plans:
         for index, plan in enumerate(units):
-            if plan.missing or not plan.kept or _GENERAL_WORDING_RE.search(plan.kept):
+            if plan.missing or not plan.kept:
+                continue
+            if not _is_company_claim(plan.kept, company_re, asks_our_terms=True):
                 continue
             clauses = _clauses(plan.kept)
             figures = [
-                [found for found in _figures(clause, commitments_only=True) if found[0] in dropped]
+                [found for found in _figures(clause, commitments_only=False) if found[0] in dropped]
                 for clause in clauses
             ]
             if any(figures):

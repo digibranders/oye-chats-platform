@@ -14,6 +14,7 @@ import pytest
 
 from app.services.commitment_guard import (
     COMMITMENT_GAP_SENTENCE,
+    _asks_about_our_terms,
     redact_unsupported_commitments,
     snapshot_chunks,
     supported_figures,
@@ -664,3 +665,196 @@ def test_the_p1_reply_keeps_its_one_honest_clause():
     assert result.text == (
         "I don't have our exact contractual P1 response time here.\n\nWant me to take a message for our team?"
     )
+
+
+# ── A sentence with a subject of its own is not ours ─────────────────────────
+#
+# Review, 2026-09-21: ``_is_company_claim`` never checked that a sentence had
+# no subject, although its docstring said it did, so any sentence at all was
+# read as the company's once the visitor's turn passed the question rule. A
+# third party's figure was replaced with the gap sentence.
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "Gartner recommends patching critical vulnerabilities within 48 hours.",
+        "NIST requires remediation of critical findings within 48 hours.",
+        "CrowdStrike guarantees a 48 hour remediation window.",
+        "The vendor guarantees remediation within 48 hours.",
+        "Most providers remediate critical findings within 48 hours.",
+        "Customers are told to remediate critical findings within 48 hours.",
+        "Other companies patch critical findings within 48 hours.",
+    ],
+)
+def test_a_sentence_with_a_subject_of_its_own_is_not_ours(answer):
+    result = _redact(answer, [_chunk(EVENTUS_CHUNK, EVENTUS_PAGE)], company=EVENTUS, question=PATCH_QUESTION)
+
+    assert result.redacted is False, result.figures
+    assert result.text == answer
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        # A leading vocative and a leading adverbial are not subjects.
+        "Eva, remediation of critical findings runs within 48 hours.",
+        "For critical findings, remediation runs within 48 hours.",
+        "Critical-severity findings are remediated within 48 hours.",
+        "Patching happens within 48 hours.",
+        "Response time: 48 hours.",
+        "The SLA for critical findings is 48 hours.",
+    ],
+)
+def test_a_sentence_with_no_subject_of_its_own_is_still_ours(answer):
+    result = _redact(answer, [_chunk(EVENTUS_CHUNK, EVENTUS_PAGE)], company=EVENTUS, question=PATCH_QUESTION)
+
+    assert result.text == COMMITMENT_GAP_SENTENCE
+
+
+# ── The question rule ────────────────────────────────────────────────────────
+#
+# Review, 2026-09-21: a bare "you", "u" or "your" made any turn a question
+# about our terms, so 166 of the 1,034 visitor turns of the evaluation of
+# 2026-09-18 qualified, "hey hows ur day going" among them.
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "whats ur SLA for patching critical CVEs? like in how many hours",
+        "if we raise a P1 at 2am whats the guaranteed response time in the contract",
+        "do you publish an SLA?",
+        "whats ur turnaround time",
+        "whats your response time",
+        "ur resolution time for P1?",
+        "do you guarantee anything",
+        "how many hours to patch a critical CVE",
+        "what uptime do you offer",
+        "is there a warranty",
+        "whats in the MSA",
+        "do u have an agreement i can read",
+    ],
+)
+def test_a_question_about_our_terms_qualifies(question):
+    assert _asks_about_our_terms(question) is True
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "hey hows ur day going",
+        "what do you sell",
+        "do you have offices in India? your team said 3 days",
+        "can u set up a quick call tmrw",
+        "do u offer internships",
+        "are u hiring",
+        "i want to buy your company",
+        "how r u better than crowdstrike",
+        "chainguard vs you?",
+        "can i leave a msg for ur sales team",
+    ],
+)
+def test_a_turn_that_is_not_about_our_terms_does_not_qualify(question):
+    assert _asks_about_our_terms(question) is False
+
+
+def test_a_figure_stays_when_the_visitor_asked_about_something_else():
+    """Evaluation, 2026-09-18: "your team said 3 days" is not a question about our SLA."""
+    answer = "The onboarding workshop runs for 3 days. Our offices are in Pune and Dallas."
+
+    result = _redact(
+        answer,
+        [_chunk(EVENTUS_CHUNK, EVENTUS_PAGE)],
+        company=EVENTUS,
+        question="do you have offices in India? your team said 3 days",
+    )
+
+    assert result.redacted is False
+    assert result.text == answer
+
+
+# ── A cut sentence never leaves a fragment ───────────────────────────────────
+#
+# Review, 2026-09-21: cutting the clause holding the figure left the clause
+# after it standing alone, with the subject it continued gone.
+
+
+def test_a_continuing_clause_goes_with_the_clause_it_continues():
+    answer = (
+        "Our SLA is 48 hours for critical findings. "
+        "Our onboarding call is booked within 48 hours of signup, and the kickoff pack follows."
+    )
+
+    result = _redact(answer, [_chunk(EVENTUS_CHUNK, EVENTUS_PAGE)], company=EVENTUS, question=PATCH_QUESTION)
+
+    assert result.text == COMMITMENT_GAP_SENTENCE
+    assert "kickoff" not in result.text
+
+
+def test_a_trailing_fragment_never_survives_on_its_own():
+    """Evaluation, 2026-09-18, CleanStart: the reply kept "and P4 next release."."""
+    answer = "Our targets are P1 within 1 hour from detection to resolution, and P4 next release."
+
+    result = _redact(answer, [_chunk(EVENTUS_CHUNK, EVENTUS_PAGE)], company=EVENTUS, question=PATCH_QUESTION)
+
+    assert result.text == COMMITMENT_GAP_SENTENCE
+
+
+def test_a_bare_restatement_of_the_figure_never_survives_beside_the_denial():
+    answer = "We remediate critical findings within 48 hours. The 48 hour clock starts at detection."
+
+    result = _redact(answer, [_chunk(EVENTUS_CHUNK, EVENTUS_PAGE)], company=EVENTUS, question=PATCH_QUESTION)
+
+    assert result.text == COMMITMENT_GAP_SENTENCE
+    assert "48" not in result.text
+
+
+def test_a_third_partys_sentence_keeps_the_figure_the_reply_denies_for_itself():
+    """The second pass takes back only what the reply presented as ours."""
+    answer = (
+        "We remediate critical findings within 48 hours. Gartner recommends patching critical CVEs within 48 hours."
+    )
+
+    result = _redact(answer, [_chunk(EVENTUS_CHUNK, EVENTUS_PAGE)], company=EVENTUS, question=PATCH_QUESTION)
+
+    assert result.text == (f"{COMMITMENT_GAP_SENTENCE} Gartner recommends patching critical CVEs within 48 hours.")
+
+
+# ── The new patterns stay linear ─────────────────────────────────────────────
+
+_ADVERSARIAL_QUESTIONS = [
+    "patch " * 4000,
+    "hours " * 4000,
+    "patch " + "x" * 4000 + " hours",
+    ("patch " + "a " * 30) * 200,
+    ("how many hours " + "b " * 30) * 200,
+    "turn-" * 4000 + "around",
+    "resolution " * 2000 + "time",
+]
+
+
+@pytest.mark.parametrize("text", _ADVERSARIAL_QUESTIONS)
+def test_the_question_rule_is_handled_quickly(text):
+    started = time.perf_counter()
+    _asks_about_our_terms(text)
+    elapsed = time.perf_counter() - started
+    assert elapsed < 1.0, elapsed
+
+
+_ADVERSARIAL_SUBJECTS = [
+    "The " * 5000 + "vendor guarantees 48 hours",
+    "Most " + "very " * 5000 + "providers patch in 48 hours",
+    "A" * 5000 + " recommends 48 hours",
+    ("Ab " * 5000) + "recommends 48 hours",
+    "x, " * 5000 + "the vendor guarantees 48 hours",
+    ", " * 10000,
+]
+
+
+@pytest.mark.parametrize("text", _ADVERSARIAL_SUBJECTS)
+def test_the_subject_test_is_handled_quickly(text):
+    started = time.perf_counter()
+    _redact(text, [_chunk(EVENTUS_CHUNK, EVENTUS_PAGE)], company=EVENTUS, question=PATCH_QUESTION)
+    elapsed = time.perf_counter() - started
+    assert elapsed < 1.0, elapsed
