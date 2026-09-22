@@ -191,6 +191,30 @@ async def test_a_turn_that_asks_no_price_keeps_its_answer_and_adds_the_escalatio
 
 
 @pytest.mark.asyncio
+async def test_an_escalated_session_still_answers_a_later_question_that_asks_no_price(db, monkeypatch, metrics):
+    """Production, 2026-09-21, bot 14 (Firstfold): once the session had been
+    escalated on pricing, every later turn was replaced whole, so "tell me abt ur
+    services" got the pricing escalation again. The session's signal still drops
+    every sentence stating a figure; the rest of the answer is the visitor's."""
+    bot, _ = _guarded(
+        db,
+        monkeypatch,
+        "guard-escalated-services",
+        chunks=SERVICES_CHUNKS,
+        cards={"pricing_escalated": True},
+        live_chat_enabled=True,
+    )
+
+    frames = await _drive_stream(bot, SERVICES, "guard-escalated-services")
+
+    expected = f"{SERVICES_KEPT}\n\n{_expected(repeat=True)}"
+    assert _answer_text(frames) == expected
+    assert "2,66,250" not in "".join(frames)
+    assert _messages(db, "guard-escalated-services", role="bot")[-1].content == expected
+    assert _named(metrics, "price_guard_tripped") == []
+
+
+@pytest.mark.asyncio
 async def test_a_cached_answer_the_turn_would_redact_is_not_served_untouched(db, monkeypatch):
     """The cache read asks the same unsignalled guard the turn's redactor asks, so
     an answer it would redact is dropped and the turn regenerated, never replayed

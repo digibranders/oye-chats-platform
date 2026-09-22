@@ -58,7 +58,9 @@ This check runs on the finished answer, with no model call:
    and the clause keeps the rest: the evaluation of 2026-09-21 cut "Our SOC 2
    Type II report is available to customers under NDA, typically within 48
    hours of a signed agreement." down to the gap sentence, losing the answer
-   (case ``x-cert-soc2-report``, CleanStart). A clause the removed one
+   (case ``x-cert-soc2-report``, CleanStart). A leading adjunct goes only when
+   it is a hedge ("Typically within 48 hours, ..."), because a bare preposition
+   bounds what the rest of the clause claims. A clause the removed one
    carries goes with it unless it speaks for the company or to the visitor, so
    the reply is never left with a fragment of a sentence it no longer makes
    ("Our onboarding call is booked within 48 hours of signup, and the kickoff
@@ -327,18 +329,30 @@ _TRAILING_JOIN_RE = re.compile(r"\s{0,3}(?:;|,\s{0,3}(?:and|but|while|whereas|so
 #: follows." A semicolon joins two independent clauses and does not do this.
 _CONTINUATION_TAIL_RE = re.compile(r",\s{0,3}(?:and|but|while|whereas|so)\s{0,3}$", re.IGNORECASE)
 #: Where a comma sets an adjunct off inside one clause. The clause joins are
-#: already split (``_CLAUSE_JOIN_RE``), so what is left is a plain comma.
-_SEGMENT_SPLIT_RE = re.compile(r",\s{0,3}")
+#: already split (``_CLAUSE_JOIN_RE``), so what is left is a plain comma. A
+#: comma that closes a quoted span is not one of them: the review of 2026-09-22
+#: found the cut splitting 'between "patch available" and "patch running in
+#: production," multiple CVEs might drop.' at it, leaving the quote behind.
+_SEGMENT_SPLIT_RE = re.compile(r",\s{0,3}(?![\"'\u2019\u201d)\]])")
 #: The first word of a comma-set phrase that can go on its own and leave a
-#: sentence behind: "..., typically within 48 hours of a signed agreement",
-#: "Within 48 hours of signing, ...". A phrase opening with anything else
-#: carries the clause's own subject or object and is not cut out of it.
-_EDGE_ADJUNCT_RE = re.compile(
-    r"(?:typical\w{0,2}|usual\w{0,2}|general\w{0,2}|normal\w{0,2}|often|about|around|roughly"
-    r"|approximately|within|under|over|up\s{1,3}to|in|at|on|for|after|before|with|without|plus"
+#: sentence behind. At the end of a clause that is any adjunct word ("...,
+#: typically within 48 hours of a signed agreement"). At the start only a hedge
+#: is one, because a bare preposition bounds what the rest of the clause claims:
+#: the review of 2026-09-22 found "Over a 14-day vulnerability window (fast
+#: patching), the total risk value is $311,500." cut down to a total risk value
+#: that holds for all time, and "At T+4.0 hours, all affected versions are fully
+#: patched." to versions that are simply patched. A phrase opening with anything
+#: else carries the clause's own subject or object and is not cut out of it.
+_HEDGE_OPENERS = r"typical\w{0,2}|usual\w{0,2}|general\w{0,2}|normal\w{0,2}|often|about|around|roughly|approximately"
+_LEADING_ADJUNCT_RE = re.compile(rf"(?:{_HEDGE_OPENERS})\b", re.IGNORECASE)
+_TRAILING_ADJUNCT_RE = re.compile(
+    rf"(?:{_HEDGE_OPENERS}|within|under|over|up\s{{1,3}}to|in|at|on|for|after|before|with|without|plus"
     r"|including|depending|based|subject|starting|beginning|then|or)\b",
     re.IGNORECASE,
 )
+#: What the remainder of a cut clause has to open with to read as a sentence.
+#: Anything else is a mark the cut orphaned, and the clause goes whole instead.
+_KEPT_OPENER_RE = re.compile(r"\w")
 #: What a carried clause needs to be read on its own once the clause it
 #: continued is gone: the reply speaking to the visitor or for the company ("but
 #: I can't share the contract"). Naming a thing is not enough, because the
@@ -712,12 +726,14 @@ def _edge_adjunct_cut(clause: str, figures: Sequence[tuple[tuple[float, str], in
     """``clause`` with the comma-set adjunct holding every unsupported figure taken out.
 
     ``None`` when there is no such adjunct, so the whole clause goes. The
-    adjunct has to sit at one edge of the clause, leave a segment behind and
-    open with an adjunct word, which is what keeps the rest of the clause a
-    sentence: "Our SOC 2 Type II report is available to customers under NDA,
-    typically within 48 hours of a signed agreement." keeps its first clause,
-    while "The closest stated terms are a P1 acknowledge target of 10 min, plus
-    24x7 coverage." has its figure in the head and goes whole.
+    adjunct has to sit at one edge of the clause, leave a segment that still
+    opens like a sentence, and open with an adjunct word itself, which is what
+    keeps the rest of the clause a sentence: "Our SOC 2 Type II report is
+    available to customers under NDA, typically within 48 hours of a signed
+    agreement." keeps its first clause, while "The closest stated terms are a P1
+    acknowledge target of 10 min, plus 24x7 coverage." has its figure in the head
+    and goes whole. A leading adjunct has to be a hedge on top of that, since
+    only a hedge leaves the rest of the clause claiming no more than it did.
     """
     stripped = clause.rstrip()
     join = _TRAILING_JOIN_RE.search(stripped)
@@ -735,10 +751,14 @@ def _edge_adjunct_cut(clause: str, figures: Sequence[tuple[tuple[float, str], in
     if first == 0 and last == len(starts) - 1:
         return None  # Every segment holds a figure.
     lead = body[starts[first] : ends[first]]
-    if _EDGE_ADJUNCT_RE.match(lead[_LEAD_MARKS_RE.match(lead).end() :]) is None:  # type: ignore[union-attr]
-        return None  # Every part of the lead mark is optional, so the match is never None.
+    # Every part of a lead mark is optional, so neither match below is ever None.
+    opener = _LEADING_ADJUNCT_RE if first == 0 else _TRAILING_ADJUNCT_RE
+    if opener.match(lead[_LEAD_MARKS_RE.match(lead).end() :]) is None:  # type: ignore[union-attr]
+        return None
     kept = body[ends[last] :].lstrip(" ,") if first == 0 else body[: starts[first]].rstrip(" ,")
-    return kept + suffix if kept.strip() else None
+    if _KEPT_OPENER_RE.match(kept[_LEAD_MARKS_RE.match(kept).end() :]) is None:  # type: ignore[union-attr]
+        return None  # Nothing is left, or the cut orphaned a mark the segment opens on.
+    return kept + suffix
 
 
 def _cut_unit(

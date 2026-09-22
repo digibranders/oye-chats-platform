@@ -1068,3 +1068,58 @@ def test_the_edge_adjunct_cut_is_handled_quickly(text):
     _redact(text, [_chunk(EVENTUS_CHUNK, EVENTUS_PAGE)], company=EVENTUS, question=PATCH_QUESTION)
     elapsed = time.perf_counter() - started
     assert elapsed < 1.0, elapsed
+
+
+# ── The review of 2026-09-22: the edge adjunct cut was too free ──────────────
+#
+# The cut reads commas, so it split a quoted span and left the quote behind,
+# and it took a leading adjunct off a claim that was only true within it.
+
+#: Verbatim from the CleanStart knowledge base (kb_4 of the 2026-09-21 run).
+QUOTED_SPAN_ANSWER = (
+    'In those two weeks between "patch available" and "patch running in production," multiple CVEs might drop.'
+)
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        QUOTED_SPAN_ANSWER,
+        # The lead is a hedge the cut may take, but the comma it would cut at
+        # closes a quoted span, so the rest opens on the quote.
+        'Typically within 48 hours of what the guide calls "patch available," we finish.',
+    ],
+    ids=["knowledge_base", "hedged_lead"],
+)
+def test_a_cut_that_would_leave_an_orphan_quote_is_not_made(answer):
+    result = _redact(answer, [_chunk(EVENTUS_CHUNK, EVENTUS_PAGE)], company=EVENTUS, question=PATCH_QUESTION)
+
+    assert result.text == COMMITMENT_GAP_SENTENCE
+    assert '"' not in result.text
+
+
+@pytest.mark.parametrize(
+    ("answer", "claim"),
+    [
+        ("Over a 14-day vulnerability window (fast patching), the total risk value is $311,500.", "risk value"),
+        ("At T+4.0 hours, all affected versions are fully patched.", "fully patched"),
+    ],
+    ids=["risk_window", "patched_at"],
+)
+def test_a_leading_adjunct_that_bounds_the_claim_is_not_cut_off_it(answer, claim):
+    """Cutting "Over a 14-day window" or "At T+4.0 hours" leaves the sentence
+    asserting of all time what the source said of one window."""
+    result = _redact(answer, [_chunk(EVENTUS_CHUNK, EVENTUS_PAGE)], company=EVENTUS, question=PATCH_QUESTION)
+
+    assert result.text == COMMITMENT_GAP_SENTENCE
+    assert claim not in result.text
+
+
+def test_a_hedging_lead_is_still_cut_and_leaves_the_claim_standing():
+    """ "Typically" says no more than the sentence without it, so the claim survives."""
+    answer = "Typically within 48 hours, we deliver the remediation report to the customer."
+
+    result = _redact(answer, [_chunk(EVENTUS_CHUNK, EVENTUS_PAGE)], company=EVENTUS, question=PATCH_QUESTION)
+
+    assert result.text == f"We deliver the remediation report to the customer. {COMMITMENT_GAP_SENTENCE}"
+    assert result.figures == ("48 hours",)

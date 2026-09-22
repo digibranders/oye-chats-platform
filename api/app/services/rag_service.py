@@ -11458,9 +11458,14 @@ async def rag_pipeline_stream(
             # price question at all: replacing that one whole answered a plain
             # "tell me abt ur services" with the pricing escalation and the handoff
             # form, because the model's answer happened to quote a price
-            # (production, 2026-09-21). Without the turn's signal the redactor
-            # drops a sentence only where the whole-answer guard would have
-            # tripped, so a GDPR fine or a court fee still streams.
+            # (production, 2026-09-21). Whether the answer is replaced is this
+            # turn's question alone, never the session's signal: an escalated
+            # session went on replacing every later answer whole for the rest of
+            # the conversation (production, 2026-09-21, bot 14). The session still
+            # carries the signal into the redactor, so every sentence stating a
+            # figure goes; without the signal the redactor drops a sentence only
+            # where the whole-answer guard would have tripped, so a GDPR fine or a
+            # court fee still streams.
             _price_guard: PriceStreamGuard | PriceSentenceRedactor | None = None
             if price_guard_applies(
                 gate_outcome=_pricing_decision.outcome,
@@ -11469,10 +11474,11 @@ async def rag_pipeline_stream(
                 support_enabled=_plan_support_allowed,
                 judges_bypassed=_judges_bypassed,
             ):
-                _guard_signal = _price_guard_signal(guard_asks_price(_price_intent, _price_question), chat_session)
+                _turn_asks_price = guard_asks_price(_price_intent, _price_question)
+                _guard_signal = _price_guard_signal(_turn_asks_price, chat_session)
                 _price_guard = (
                     PriceStreamGuard(signal=True)
-                    if _guard_signal and not _price_intent.asks_more
+                    if _turn_asks_price and not _price_intent.asks_more
                     else PriceSentenceRedactor(signal=_guard_signal)
                 )
             _price_guard_repeat = _price_guard is not None and _card_already_shown(chat_session, "pricing_escalated")

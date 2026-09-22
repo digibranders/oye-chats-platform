@@ -91,6 +91,13 @@ def test_a_crawled_guide_listicle_comparison_or_blog_post_is_a_general_article(n
         "https://www.cleanstart.com/for-ciso",
         "https://www.cleanstart.com/event/et-ciso",
         "https://eventussecurity.com/ciso/",
+        # A page that takes the visitor to the role rather than describing the
+        # market for it: "verb-possessive-role" is the company's own.
+        "https://eventussecurity.com/meet-our-cto/",
+        "https://eventussecurity.com/contact-a-ciso/",
+        "https://eventussecurity.com/leadership-team-cto/",
+        "https://eventussecurity.com/about-our-ciso/",
+        "https://eventussecurity.com/team-page-cfo/",
     ],
 )
 def test_the_companys_own_service_terms_and_policy_pages_are_not(name):

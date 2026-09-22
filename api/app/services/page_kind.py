@@ -91,7 +91,11 @@ _ARTICLE_SECTION_RE = re.compile(
 #: a CISO should demand of any provider, and the evaluation of 2026-09-21 found
 #: Eventus stating it as "our terms". One word before the role is not this
 #: shape: "/for-ciso/" and "/event/et-ciso/" are the company's own pages for an
-#: audience, not a checklist about the market.
+#: audience, not a checklist about the market. Neither is a page that takes the
+#: visitor to the role rather than describing the market for it, so a slug
+#: opening on "meet", "contact", "about", "leadership" or "team" is left alone
+#: ("/meet-our-cto/", "/leadership-team-cto/"). The review of 2026-09-22 found
+#: those shapes tagged; no page in either knowledge base has one today.
 _ARTICLE_SLUG_RE = re.compile(
     r"(?:what-is|what-are|how-to)-[a-z0-9-]*"
     r"|top-\d{1,3}-[a-z0-9-]*"
@@ -101,7 +105,7 @@ _ARTICLE_SLUG_RE = re.compile(
     r"|[a-z0-9-]*-(?:vs|versus)-[a-z0-9-]*"
     r"|[a-z0-9-]*-(?:comparison|compared|checklist|explained|tutorial)(?:-[a-z0-9-]*)?"
     r"|[a-z0-9-]+-(?:providers|vendors|companies|firms)(?:-[a-z0-9-]*)?"
-    r"|[a-z0-9]+(?:-[a-z0-9]+)+-(?:cisos?|cios?|ctos?|cxos?|cfos?|buyers?)"
+    r"|(?!(?:meet|contact|about|leadership|team)-)[a-z0-9]+(?:-[a-z0-9]+)+-(?:cisos?|cios?|ctos?|cxos?|cfos?|buyers?)"
 )
 _SLUG_RE = re.compile(r"[a-z0-9-]{1,200}")
 
