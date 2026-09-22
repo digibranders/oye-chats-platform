@@ -858,3 +858,213 @@ def test_the_subject_test_is_handled_quickly(text):
     _redact(text, [_chunk(EVENTUS_CHUNK, EVENTUS_PAGE)], company=EVENTUS, question=PATCH_QUESTION)
     elapsed = time.perf_counter() - started
     assert elapsed < 1.0, elapsed
+
+
+# ── The evaluation of 2026-09-21: the guard was too blunt ────────────────────
+#
+# Reviewed by hand against the 2026-09-18 baseline. Three regressions: a sound
+# answer cut down to or interrupted by the gap sentence, a reply left as the
+# gap sentence on its own, and the gap wording on a turn that asked for no
+# figure at all.
+
+CLEANSTART = "CleanStart"
+TEAM_OFFER = "Want me to take a message for our team?"
+SOC2_QUESTION = "can u share your SOC 2 type 2 report"
+ONBOARDING_QUESTION = "im the CISO here and i sign off on all vendors. how does onboarding work with you"
+EXIT_QUESTION = "if we sign 1 year contract can we exit after 3 months, any penalty"
+P1_QUESTION = "if we raise a P1 at 2am whats the guaranteed response time in the contract"
+#: The buyer checklist Eventus Security quoted as its own contract. Its slug
+#: now reads as a general article (``page_kind``), so nothing on it is ours.
+CISO_CHECKLIST = _chunk(
+    "[Document: https://eventussecurity.com/soc-as-a-service-ciso/] [Page: 1] "
+    "[Section: How should procurement pricing and contracts be structured for SOC as a Service?]\n"
+    "**Compliance**SOC 2, ISO 27001, mapped controls.\n"
+    "**Penalties & Exit**SLA credits, fee-at-risk, step-in rights, 90-day assisted exit.\n",
+    "https://eventussecurity.com/soc-as-a-service-ciso/",
+)
+#: CleanStart's own compliance page: it says the report is under NDA, and
+#: nothing about how long it takes to arrive.
+CLEANSTART_COMPLIANCE = _chunk(
+    "[Document: https://www.cleanstart.com/knowledge-hub/compliance-architecture] [Page: 1] "
+    "#### Audit evidence\nOur SOC 2 Type II report is available to customers under NDA.\n",
+    "https://www.cleanstart.com/knowledge-hub/compliance-architecture",
+)
+
+
+def test_the_soc2_answer_keeps_its_facts_and_loses_only_the_borrowed_figure():
+    """Case x-cert-soc2-report, CleanStart: a pass became "I don't have our exact figure for that.".
+
+    The report being available to customers under NDA answers the question and
+    is on the company's own page. Only the 48 hours have no source at all.
+    """
+    answer = (
+        "Our SOC 2 Type II report is available to customers under NDA, typically within 48 hours "
+        f"of a signed agreement.\n\n{TEAM_OFFER}"
+    )
+
+    result = _redact(answer, [CLEANSTART_COMPLIANCE], company=CLEANSTART, question=SOC2_QUESTION)
+
+    assert result.text == f"Our SOC 2 Type II report is available to customers under NDA.\n\n{TEAM_OFFER}"
+    assert result.figures == ("48 hours",)
+
+
+def test_the_onboarding_answer_keeps_its_steps_and_is_not_interrupted():
+    """Case y-e15-ciso-onboarding, Eventus Security: the gap sentence landed mid-answer.
+
+    The visitor asked how onboarding works, not how long it takes, so the
+    weeks go and nothing is said about a figure.
+    """
+    answer = (
+        "You sign off on vendors. Onboarding with **Eventus Security** typically takes 2 to 4 weeks. "
+        "It usually needs asset inventory, technology stack details and current SOC workflows."
+    )
+
+    result = _redact(answer, [_chunk(EVENTUS_CHUNK, EVENTUS_PAGE)], company=EVENTUS, question=ONBOARDING_QUESTION)
+
+    assert result.text == (
+        "You sign off on vendors. It usually needs asset inventory, technology stack details and current SOC workflows."
+    )
+    assert COMMITMENT_GAP_SENTENCE not in result.text
+    assert result.figures == ("2 to 4 weeks",)
+
+
+def test_the_contract_exit_answer_never_states_the_buyer_checklists_terms_as_ours():
+    """Case x-contract-exit, Eventus Security: "Our terms mention a 90-day assisted exit".
+
+    The line is the CISO buyer checklist's "Penalties & Exit", what to demand
+    of any provider. The reply's own hedge stands in for it.
+    """
+    answer = (
+        "Our terms mention a 90-day assisted exit, SLA credits, fee-at-risk, and step-in rights for "
+        "**SOC as a Service**. I do not have our exact penalty terms for a 1-year contract exit after "
+        f"3 months.\n\n{TEAM_OFFER}"
+    )
+
+    result = _redact(answer, [CISO_CHECKLIST], company=EVENTUS, question=EXIT_QUESTION, team_offer=TEAM_OFFER)
+
+    assert result.text == (
+        f"I do not have our exact penalty terms for a 1-year contract exit after 3 months.\n\n{TEAM_OFFER}"
+    )
+    assert "90-day" not in result.text
+
+
+def test_a_reply_cut_back_to_the_gap_sentence_ends_with_the_team_offer():
+    """Case y-e06-patch-sla, Eventus Security: the whole reply was one bare line."""
+    result = _redact(
+        PASSIVE_ANSWER,
+        [_chunk(EVENTUS_CHUNK, EVENTUS_PAGE)],
+        company=EVENTUS,
+        question=PATCH_QUESTION,
+        team_offer=TEAM_OFFER,
+    )
+
+    assert result.text == f"{COMMITMENT_GAP_SENTENCE}\n\n{TEAM_OFFER}"
+    assert "48" not in result.text
+
+
+def test_a_reply_left_with_only_its_own_gap_line_ends_with_the_team_offer():
+    """Case y-d1-p1-response-time, Eventus Security: the borrowed 10 min went, and so did the offer."""
+    answer = (
+        "We do not have our exact contractual P1 response time here. The closest stated terms are a P1 "
+        "acknowledge target of ≤ 10 min, plus 24x7 coverage."
+    )
+
+    result = _redact(answer, [MTTD_GUIDE], company=EVENTUS, question=P1_QUESTION, team_offer=TEAM_OFFER)
+
+    assert result.text == f"We do not have our exact contractual P1 response time here.\n\n{TEAM_OFFER}"
+    assert result.figures == ("10 min",)
+
+
+def test_a_plan_with_no_team_path_gets_no_offer():
+    result = _redact(PASSIVE_ANSWER, [_chunk(EVENTUS_CHUNK, EVENTUS_PAGE)], company=EVENTUS, question=PATCH_QUESTION)
+
+    assert result.text == COMMITMENT_GAP_SENTENCE
+
+
+def test_a_reply_that_kept_a_fact_of_its_own_keeps_its_own_ending():
+    answer = f"Our SOC 2 Type II report is available under NDA, typically within 48 hours.\n\n{TEAM_OFFER}"
+
+    result = _redact(answer, [CLEANSTART_COMPLIANCE], company=CLEANSTART, question=SOC2_QUESTION, team_offer=TEAM_OFFER)
+
+    assert result.text.count(TEAM_OFFER) == 1
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        (PATCH_QUESTION, f"{COMMITMENT_GAP_SENTENCE} Anything else?"),
+        (P1_QUESTION, f"{COMMITMENT_GAP_SENTENCE} Anything else?"),
+        # No turn to read: the guard cannot tell, and says the gap.
+        (None, f"{COMMITMENT_GAP_SENTENCE} Anything else?"),
+        (SOC2_QUESTION, "Anything else?"),
+        (ONBOARDING_QUESTION, "Anything else?"),
+        ("what do you sell", "Anything else?"),
+    ],
+)
+def test_the_gap_sentence_is_written_only_for_a_turn_that_asked_for_a_figure(question, expected):
+    answer = "We remediate critical findings within 48 hours. Anything else?"
+
+    result = _redact(answer, [_chunk(EVENTUS_CHUNK, EVENTUS_PAGE)], company=EVENTUS, question=question)
+
+    assert result.text == expected
+    assert result.figures == ("48 hours",)
+
+
+def test_the_gap_sentence_is_written_when_suppressing_it_would_empty_the_reply():
+    result = _redact(
+        "We remediate critical findings within 48 hours.",
+        [_chunk(EVENTUS_CHUNK, EVENTUS_PAGE)],
+        company=EVENTUS,
+        question="what do you sell",
+    )
+
+    assert result.text == COMMITMENT_GAP_SENTENCE
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        # The borrowed 48 hours of the 2026-09-17 production answer.
+        "We remediate critical-severity findings within 48 hours.",
+        "Critical-severity findings are remediated within 48 hours.",
+        "Our critical remediation SLA is 48 hours, guaranteed in the contract.",
+        "We remediate critical findings within 48 hours, typically in one working day.",
+    ],
+)
+def test_the_borrowed_forty_eight_hours_still_goes(answer):
+    result = _redact(answer, [_chunk(EVENTUS_CHUNK, EVENTUS_PAGE)], company=EVENTUS, question=PATCH_QUESTION)
+
+    assert "48" not in result.text
+    assert COMMITMENT_GAP_SENTENCE in result.text
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        # The borrowed 10 min of the buyer guide, 2026-09-18.
+        "Our P1 acknowledge target is 10 min.",
+        "We acknowledge P1 incidents within 10 minutes, 24x7.",
+        "The P1 acknowledge target is ≤ 10 min under our SLA.",
+    ],
+)
+def test_the_borrowed_ten_minutes_still_goes(answer):
+    result = _redact(answer, [MTTD_GUIDE], company=EVENTUS, question=P1_QUESTION)
+
+    assert "10 min" not in result.text
+    assert COMMITMENT_GAP_SENTENCE in result.text
+
+
+_ADVERSARIAL_CLAUSES = [
+    "we , " * 5000 + "within 48 hours",
+    "Our SLA is 48 hours" + ", typically" * 3000,
+    ", typically " * 4000 + "48 hours",
+    "our " + "a, " * 5000 + "response within 48 hours",
+]
+
+
+@pytest.mark.parametrize("text", _ADVERSARIAL_CLAUSES)
+def test_the_edge_adjunct_cut_is_handled_quickly(text):
+    started = time.perf_counter()
+    _redact(text, [_chunk(EVENTUS_CHUNK, EVENTUS_PAGE)], company=EVENTUS, question=PATCH_QUESTION)
+    elapsed = time.perf_counter() - started
+    assert elapsed < 1.0, elapsed

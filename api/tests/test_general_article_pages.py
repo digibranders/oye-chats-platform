@@ -59,6 +59,12 @@ def _chunk(content: str, name: str) -> SimpleNamespace:
         "https://eventussecurity.com/cybersecurity/top-red-teaming-companies-in-india/",
         "https://eventussecurity.com/india/incident-response-companies/",
         "https://eventussecurity.com/uae/mssp-providers/",
+        # A buyer checklist: a topic, then the role it is written for.
+        # Production evaluation, 2026-09-21: Eventus gave this page's
+        # "Penalties & Exit" row as "our terms" (case x-contract-exit).
+        "https://eventussecurity.com/soc-as-a-service-ciso/",
+        "https://example.com/managed-detection-and-response-cto/",
+        "https://example.com/container-security-buyers/",
     ],
 )
 def test_a_crawled_guide_listicle_comparison_or_blog_post_is_a_general_article(name):
@@ -80,6 +86,11 @@ def test_a_crawled_guide_listicle_comparison_or_blog_post_is_a_general_article(n
         # company's own.
         "https://eventussecurity.com/providers/",
         "https://www.cleanstart.com/knowledge-hub/secure-vendor-risk-assessment",
+        # One word before the role is the company's own page for an audience,
+        # not a checklist about the market.
+        "https://www.cleanstart.com/for-ciso",
+        "https://www.cleanstart.com/event/et-ciso",
+        "https://eventussecurity.com/ciso/",
     ],
 )
 def test_the_companys_own_service_terms_and_policy_pages_are_not(name):
@@ -115,7 +126,15 @@ def test_the_check_is_linear_on_a_long_path():
     import time
 
     started = time.perf_counter()
-    for path in ("best-" * 5000, "top-" * 5000 + "1", "-vs" * 5000, "/blog" * 3000, "a-" * 5000 + "providers"):
+    for path in (
+        "best-" * 5000,
+        "top-" * 5000 + "1",
+        "-vs" * 5000,
+        "/blog" * 3000,
+        "a-" * 5000 + "providers",
+        "a-" * 5000 + "ciso",
+        "a-" * 99 + "ciso",
+    ):
         is_general_article(f"https://example.com/{path}", "Acme")
     assert time.perf_counter() - started < 0.5
 

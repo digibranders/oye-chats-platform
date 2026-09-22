@@ -53,7 +53,12 @@ This check runs on the finished answer, with no model call:
    (``COMMITMENT_GAP_SENTENCE``), and any further one is dropped, so the figure
    never survives. When the sentence joins clauses (";", ", and", ", but"),
    only the unsupported clauses go, so "Our Starter plan is $49 per month, and
-   setup takes under 5 minutes." keeps its price. A clause the removed one
+   setup takes under 5 minutes." keeps its price. Inside a clause, a comma-set
+   adjunct at either edge that holds every unsupported figure goes on its own
+   and the clause keeps the rest: the evaluation of 2026-09-21 cut "Our SOC 2
+   Type II report is available to customers under NDA, typically within 48
+   hours of a signed agreement." down to the gap sentence, losing the answer
+   (case ``x-cert-soc2-report``, CleanStart). A clause the removed one
    carries goes with it unless it speaks for the company or to the visitor, so
    the reply is never left with a fragment of a sentence it no longer makes
    ("Our onboarding call is booked within 48 hours of signup, and the kickoff
@@ -67,6 +72,21 @@ This check runs on the finished answer, with no model call:
    was never the company's to deny. And the gap sentence is written only
    when the reply does not already say it lacks the figure ("I don't have our
    exact MTTD and MTTR SLA."), so it is never read twice.
+5. The gap sentence is written only when the visitor's turn asked for a figure,
+   the same turn test as step 1. Otherwise the unsupported text goes without
+   it: the evaluation of 2026-09-21 answered "how does onboarding work with
+   you" with "You sign off on vendors. I don't have our exact figure for that.
+   It usually needs asset inventory ..." (case ``y-e15-ciso-onboarding``,
+   Eventus Security), a figure nobody had asked for. With no turn to read the
+   guard cannot tell, and writes the sentence. It writes it whatever the turn
+   asked when suppressing it would leave the reply empty.
+6. A redaction that leaves the reply with nothing but a gap sentence, its own
+   or one the answer already had, ends with the plan's team offer
+   (``team_offer``), as the answer prompt's gap rule does. The evaluation of
+   2026-09-21 left "I don't have our exact figure for that." on its own, with
+   no other fact and nowhere to go (cases ``y-e06-patch-sla`` and
+   ``y-d1-p1-response-time``, Eventus Security). A plan with no team path
+   passes no offer and gets none.
 
 A country the answer says the company serves ("Yes, France is listed among the
 countries we serve.") is checked the same way, by
@@ -306,6 +326,19 @@ _TRAILING_JOIN_RE = re.compile(r"\s{0,3}(?:;|,\s{0,3}(?:and|but|while|whereas|so
 #: onboarding call is booked within 48 hours of signup, and the kickoff pack
 #: follows." A semicolon joins two independent clauses and does not do this.
 _CONTINUATION_TAIL_RE = re.compile(r",\s{0,3}(?:and|but|while|whereas|so)\s{0,3}$", re.IGNORECASE)
+#: Where a comma sets an adjunct off inside one clause. The clause joins are
+#: already split (``_CLAUSE_JOIN_RE``), so what is left is a plain comma.
+_SEGMENT_SPLIT_RE = re.compile(r",\s{0,3}")
+#: The first word of a comma-set phrase that can go on its own and leave a
+#: sentence behind: "..., typically within 48 hours of a signed agreement",
+#: "Within 48 hours of signing, ...". A phrase opening with anything else
+#: carries the clause's own subject or object and is not cut out of it.
+_EDGE_ADJUNCT_RE = re.compile(
+    r"(?:typical\w{0,2}|usual\w{0,2}|general\w{0,2}|normal\w{0,2}|often|about|around|roughly"
+    r"|approximately|within|under|over|up\s{1,3}to|in|at|on|for|after|before|with|without|plus"
+    r"|including|depending|based|subject|starting|beginning|then|or)\b",
+    re.IGNORECASE,
+)
 #: What a carried clause needs to be read on its own once the clause it
 #: continued is gone: the reply speaking to the visitor or for the company ("but
 #: I can't share the contract"). Naming a thing is not enough, because the
@@ -675,6 +708,39 @@ def _is_company_claim(unit: str, company_re: re.Pattern[str] | None, *, asks_our
     return _GENERAL_WORDING_RE.search(unit) is None and not _has_own_subject(unit)
 
 
+def _edge_adjunct_cut(clause: str, figures: Sequence[tuple[tuple[float, str], int, str]]) -> str | None:
+    """``clause`` with the comma-set adjunct holding every unsupported figure taken out.
+
+    ``None`` when there is no such adjunct, so the whole clause goes. The
+    adjunct has to sit at one edge of the clause, leave a segment behind and
+    open with an adjunct word, which is what keeps the rest of the clause a
+    sentence: "Our SOC 2 Type II report is available to customers under NDA,
+    typically within 48 hours of a signed agreement." keeps its first clause,
+    while "The closest stated terms are a P1 acknowledge target of 10 min, plus
+    24x7 coverage." has its figure in the head and goes whole.
+    """
+    stripped = clause.rstrip()
+    join = _TRAILING_JOIN_RE.search(stripped)
+    body = stripped[: join.start()] if join else stripped
+    suffix = stripped[len(body) :] + clause[len(stripped) :]
+    bounds = [(match.start(), match.end()) for match in _SEGMENT_SPLIT_RE.finditer(body)]
+    if not bounds:
+        return None
+    starts = [0, *(end for _, end in bounds)]
+    ends = [start for start, _ in bounds] + [len(body)]
+    first = min(bisect.bisect_right(starts, position) - 1 for _, position, _ in figures)
+    last = max(bisect.bisect_right(starts, position) - 1 for _, position, _ in figures)
+    if first > 0 and last < len(starts) - 1:
+        return None  # The adjunct is in the middle, with a segment either side.
+    if first == 0 and last == len(starts) - 1:
+        return None  # Every segment holds a figure.
+    lead = body[starts[first] : ends[first]]
+    if _EDGE_ADJUNCT_RE.match(lead[_LEAD_MARKS_RE.match(lead).end() :]) is None:  # type: ignore[union-attr]
+        return None  # Every part of the lead mark is optional, so the match is never None.
+    kept = body[ends[last] :].lstrip(" ,") if first == 0 else body[: starts[first]].rstrip(" ,")
+    return kept + suffix if kept.strip() else None
+
+
 def _cut_unit(
     unit: str,
     clauses: Sequence[str],
@@ -695,6 +761,11 @@ def _cut_unit(
     for index, (clause, shown) in enumerate(zip(clauses, missing, strict=True)):
         if not shown:
             kept.append(clause)
+            continue
+        unsupported = [found for found in figures[index] if found[0] not in supported]
+        trimmed = _edge_adjunct_cut(clause, unsupported)
+        if trimmed is not None:
+            kept.append(trimmed)
             continue
         rest = "".join(clauses[index + 1 :])
         if rest and _CONTINUATION_TAIL_RE.search(clause) and _STANDS_ALONE_RE.search(rest) is None:
@@ -720,12 +791,17 @@ def redact_unsupported_commitments(
     company_name: str | None,
     owner_texts: Iterable[str | None] = (),
     question: str | None = None,
+    team_offer: str | None = None,
 ) -> CommitmentRedaction:
     """``answer`` with each commitment sentence the reference does not support handled.
 
     The first becomes ``COMMITMENT_GAP_SENTENCE``; any later one is dropped.
     ``question`` is the visitor's turn, which decides whether a subjectless
-    sentence states its figure as the company's own.
+    sentence states its figure as the company's own and whether the gap
+    sentence is written at all: a turn that asked for no figure is answered
+    without one. ``team_offer`` is the plan's team offer, which follows a
+    redaction that left the reply with nothing but a gap sentence; a plan with
+    no path to the team passes none.
     """
     if not answer or len(answer) > _MAX_ANSWER_CHARS or not (_DURATION_RE.search(answer) or "%" in answer):
         return CommitmentRedaction(answer, ())
@@ -754,7 +830,12 @@ def redact_unsupported_commitments(
     if not dropped:
         return CommitmentRedaction(answer, ())
     _drop_the_same_figures_elsewhere(plans, frozenset(dropped), company_re)
-    return _rebuild(plans)
+    # A turn that asked for no figure gets no sentence about one. With no turn
+    # to read, and when the sentence is all the reply has left, it is written.
+    result = _rebuild(plans, write_gap=asks_our_terms or question is None)
+    if not result.text:
+        result = _rebuild(plans, write_gap=True)
+    return _with_team_offer(result, team_offer)
 
 
 def _drop_the_same_figures_elsewhere(
@@ -790,8 +871,11 @@ def _drop_the_same_figures_elsewhere(
                 units[index] = _cut_unit(plan.kept, clauses, figures, frozenset())
 
 
-def _rebuild(plans: Sequence[tuple[str, list[_UnitPlan]]]) -> CommitmentRedaction:
-    """The answer written back from ``plans``, with one gap sentence at most."""
+def _rebuild(plans: Sequence[tuple[str, list[_UnitPlan]]], *, write_gap: bool) -> CommitmentRedaction:
+    """The answer written back from ``plans``, with one gap sentence at most.
+
+    Without ``write_gap`` the unsupported text goes and nothing takes its place.
+    """
     # The reply may already say it lacks the figure, in which case the guard
     # adds nothing: "I don't have our exact MTTD and MTTR SLA."
     gap_placed = any(_STATED_GAP_RE.search(plan.kept) for _, units in plans for plan in units if plan.kept)
@@ -804,7 +888,7 @@ def _rebuild(plans: Sequence[tuple[str, list[_UnitPlan]]]) -> CommitmentRedactio
         for plan in units:
             if not plan.missing:
                 units_out.append(plan.kept)
-            elif not gap_placed:
+            elif write_gap and not gap_placed:
                 gap_placed = True
                 units_out.append((plan.kept + " " if plan.kept else "") + COMMITMENT_GAP_SENTENCE + plan.trailing)
             elif plan.kept:
@@ -816,6 +900,31 @@ def _rebuild(plans: Sequence[tuple[str, list[_UnitPlan]]]) -> CommitmentRedactio
     figures = tuple(dict.fromkeys(shown for _, units in plans for plan in units for shown in plan.missing))
     text = re.sub(r"\n{3,}", "\n\n", "\n".join(lines_out)).strip()
     return CommitmentRedaction(text, figures)
+
+
+def _is_only_a_gap(text: str) -> bool:
+    """Whether the whole reply is one sentence saying we lack the figure."""
+    if "\n" in text:
+        return False
+    units = _answer_units(text)
+    if len(units) != 1:
+        return False
+    sentence = units[0].strip()
+    return sentence == COMMITMENT_GAP_SENTENCE or _STATED_GAP_RE.search(sentence) is not None
+
+
+def _with_team_offer(result: CommitmentRedaction, team_offer: str | None) -> CommitmentRedaction:
+    """``result`` with the plan's team offer after a reply the redaction left bare.
+
+    The answer prompt's gap rule ends a gap with the team offer, and a reply
+    the guard cut back to the gap sentence has to read the same way: the
+    evaluation of 2026-09-21 ended two Eventus Security turns on "I don't have
+    our exact figure for that." alone. A reply that kept a fact of its own
+    keeps its own ending.
+    """
+    if not team_offer or not result.figures or not _is_only_a_gap(result.text):
+        return result
+    return CommitmentRedaction(f"{result.text}\n\n{team_offer}", result.figures)
 
 
 # ---------------------------------------------------------------------------

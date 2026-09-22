@@ -10,6 +10,7 @@ import pytest
 
 from app.services import rag_service as rs
 from app.services.commitment_guard import COMMITMENT_GAP_SENTENCE
+from app.services.rag_service import TEAM_MESSAGE_OFFER
 from tests.test_rag_pipeline_defects import (
     _anonymous_visitor,
     _answer_text,
@@ -136,6 +137,28 @@ async def test_the_passive_production_answer_is_corrected_everywhere(db, monkeyp
     assert [tags["figures"] for name, tags in metrics if name == "commitment_figure_redacted"] == ["48 hours|7 days"]
     for cached in captured["cache"].store.values():
         assert "48" not in cached["answer"]
+
+
+@pytest.mark.asyncio
+async def test_a_reply_cut_back_to_the_gap_sentence_ends_with_the_plans_team_offer(db, monkeypatch):
+    """Evaluation, 2026-09-21, Eventus Security: cases y-e06-patch-sla and y-d1-p1-response-time.
+
+    The reply was "I don't have our exact figure for that." and nothing else:
+    no fact, and nowhere to take the question. The bot above has no plan, so
+    it is offered nothing (``test_the_passive_production_answer_is_corrected_everywhere``).
+    """
+    client = _make_client(db)
+    bot = _make_bot(db, client, live_chat_enabled=False)
+    _make_session(db, bot, client, "commit-offer")
+    _stub_pipeline(monkeypatch, retrieved=ARTICLE_KB, chunks=PASSIVE_CHUNKS)
+    _anonymous_visitor(monkeypatch)
+    monkeypatch.setattr(rs.plan_entitlements_service, "is_live_chat_enabled_for_bot", lambda *_a, **_k: True)
+
+    frames = await _drive_stream(bot, QUESTION, "commit-offer")
+
+    corrected = f"{COMMITMENT_GAP_SENTENCE}\n\n{TEAM_MESSAGE_OFFER}"
+    assert _final_meta(frames)["answer_override"] == corrected
+    assert [m.content for m in _messages(db, "commit-offer", role="bot")] == [corrected]
 
 
 @pytest.mark.asyncio
