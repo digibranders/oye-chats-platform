@@ -76,13 +76,26 @@ _ARTICLE_SECTION_RE = re.compile(
 #: a plain slug of at most 200 characters (``_SLUG_RE``), so every open repeat
 #: runs to the end of the segment and matching stays linear.
 #:
-#: The last shape is a roll-call of other firms ("/soc-service-providers/",
+#: The roll-call shape is a list of other firms ("/soc-service-providers/",
 #: "/top-red-teaming-companies-in-india/"). It needs no "best" or "top" and
 #: allows words after the list noun, because the production evaluation of
 #: 2026-09-18 found Eventus answering "ISO 27001 certified" for itself from its
 #: own "Top 10 SOC Service Providers in India" listicle, whose slug carried
 #: neither a count nor a trailing list noun. A page naming the company is
 #: exempt (``_names_company``), so the company's own "our vendors" page is safe.
+#:
+#: The last shape is a buyer checklist: a topic of two or more words, then the
+#: buyer role the page is written for ("/soc-as-a-service-ciso/", "SOC as a
+#: Service: Future and Key Trends Every CISO Should Know"). Its "Penalties &
+#: Exit: SLA credits, fee-at-risk, step-in rights, 90-day assisted exit" is what
+#: a CISO should demand of any provider, and the evaluation of 2026-09-21 found
+#: Eventus stating it as "our terms". One word before the role is not this
+#: shape: "/for-ciso/" and "/event/et-ciso/" are the company's own pages for an
+#: audience, not a checklist about the market. Neither is a page that takes the
+#: visitor to the role rather than describing the market for it, so a slug
+#: opening on "meet", "contact", "about", "leadership" or "team" is left alone
+#: ("/meet-our-cto/", "/leadership-team-cto/"). The review of 2026-09-22 found
+#: those shapes tagged; no page in either knowledge base has one today.
 _ARTICLE_SLUG_RE = re.compile(
     r"(?:what-is|what-are|how-to)-[a-z0-9-]*"
     r"|top-\d{1,3}-[a-z0-9-]*"
@@ -92,6 +105,7 @@ _ARTICLE_SLUG_RE = re.compile(
     r"|[a-z0-9-]*-(?:vs|versus)-[a-z0-9-]*"
     r"|[a-z0-9-]*-(?:comparison|compared|checklist|explained|tutorial)(?:-[a-z0-9-]*)?"
     r"|[a-z0-9-]+-(?:providers|vendors|companies|firms)(?:-[a-z0-9-]*)?"
+    r"|(?!(?:meet|contact|about|leadership|team)-)[a-z0-9]+(?:-[a-z0-9]+)+-(?:cisos?|cios?|ctos?|cxos?|cfos?|buyers?)"
 )
 _SLUG_RE = re.compile(r"[a-z0-9-]{1,200}")
 

@@ -21,7 +21,14 @@ from tests.test_price_guard_pipeline import CHUNKS, TYPO, _guarded
 from tests.test_rag_pipeline_defects import _answer_text, _drive_stream
 
 QUESTION = "what do you do?"
-ANSWER = ("We monitor your network ", "around the clock ", "from two regions.")
+#: A turn with no price signal is redacted sentence by sentence, so text reaches
+#: the visitor only once its sentence and the lookahead after it have arrived.
+#: The answer therefore finishes a sentence and writes on, or the visitor below
+#: would have nothing to leave in the middle of.
+ANSWER = (
+    "We monitor your network around the clock. ",
+    "Two regions cover it, and an engineer is on call at every hour of the day.",
+)
 
 
 @pytest.fixture()

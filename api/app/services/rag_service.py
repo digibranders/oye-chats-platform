@@ -6527,6 +6527,29 @@ If the visitor's latest message only closes the conversation and asks nothing ne
 """
 
 
+#: The team offers the answer prompt asks the model to close a gap with (TEAM
+#: OFFERS below). ``commitment_guard`` ends a reply it cut back to the gap
+#: sentence with the same words, so the two never drift apart, and
+#: ``intent_service.bot_offers_handoff`` has to read both;
+#: ``tests/test_answer_prompt_structure.py`` checks that.
+TEAM_MESSAGE_OFFER = "Want me to take a message for our team?"
+TEAM_LIVE_OFFER = "Want me to loop in our team on this?"
+
+
+def gap_team_offer(*, support_enabled: bool, live_chat_enabled: bool, within_business_hours: bool) -> str | None:
+    """The team offer this plan can make, or ``None`` when it has no team path.
+
+    The branches are the ones ``build_hybrid_prompt`` picks the TEAM OFFERS
+    examples with, so a reply the guard finishes reads like one the model
+    wrote on the same turn.
+    """
+    if not support_enabled:
+        return None
+    if live_chat_enabled and within_business_hours:
+        return TEAM_LIVE_OFFER
+    return TEAM_MESSAGE_OFFER
+
+
 def build_hybrid_prompt(
     client,
     question: str,
@@ -6891,8 +6914,8 @@ TEAM OFFERS:
 - Make it a question the visitor can accept, alone in the last paragraph, for example {examples}. At most once per reply.
 - Do not say a form is opening or that someone will contact them unless the visitor asked for a person or said yes to your offer."""
 
-    _live_offer_examples = '"Want me to loop in our team on this?" or "Would you like to speak with our team about it?"'
-    _message_offer_examples = '"Want me to take a message for our team?"'
+    _live_offer_examples = f'"{TEAM_LIVE_OFFER}" or "Would you like to speak with our team about it?"'
+    _message_offer_examples = f'"{TEAM_MESSAGE_OFFER}"'
 
     if not support_enabled:
         # No human escape hatch on this plan (e.g. Free). The bot must not offer
@@ -6915,7 +6938,7 @@ NO HUMAN HANDOFF: This workspace has no live-chat or message-forwarding channel.
         handoff_section = f"""
 SUPPORT REQUESTS (no one is guaranteed to join a live chat right now):
   If the visitor asks to speak with a person, say our team will be notified and
-  will get back to them, then ask "Want me to take a message for our team?".
+  will get back to them, then ask "{TEAM_MESSAGE_OFFER}".
   Never tell the visitor the team is offline, away or unavailable, and do not
   promise that anyone will join right away. Say "our team", never "human team".
 {_leave_msg_block}
@@ -8757,6 +8780,11 @@ def _cached_answer_trips_price_guard(
     The cache is read before the stream loads the chat session, so the session the
     signal needs is looked up here, tenant-scoped, and only for an answer that
     holds a figure at all.
+
+    A turn with no signal redacts rather than replaces, and its redactor drops
+    exactly the sentences this guard trips on, so one reading covers both: an
+    answer the turn would redact is dropped here and regenerated, never replayed
+    with the price still in it. See ``price_guard``.
     """
     if not answer_trips_price_guard(answer, signal=True):
         return False
@@ -11423,10 +11451,21 @@ async def rag_pipeline_stream(
             # trips; without it only a figure whose sentence or paragraph names the
             # company's own price in the first person does.
             #
-            # A turn that asks the price and something else (MIXED) is not
-            # replaced whole: that lost the rest of the question (evaluation,
-            # 2026-09-17). Its redactor drops only the sentences that state a
-            # figure, and the escalation follows the rest.
+            # Only a turn that asks the price and nothing else is replaced whole,
+            # where the figure IS the answer. A turn that asks something else too
+            # (MIXED) keeps that answer and loses only the sentences that state a
+            # figure (evaluation, 2026-09-17), and so does a turn that reads as no
+            # price question at all: replacing that one whole answered a plain
+            # "tell me abt ur services" with the pricing escalation and the handoff
+            # form, because the model's answer happened to quote a price
+            # (production, 2026-09-21). Whether the answer is replaced is this
+            # turn's question alone, never the session's signal: an escalated
+            # session went on replacing every later answer whole for the rest of
+            # the conversation (production, 2026-09-21, bot 14). The session still
+            # carries the signal into the redactor, so every sentence stating a
+            # figure goes; without the signal the redactor drops a sentence only
+            # where the whole-answer guard would have tripped, so a GDPR fine or a
+            # court fee still streams.
             _price_guard: PriceStreamGuard | PriceSentenceRedactor | None = None
             if price_guard_applies(
                 gate_outcome=_pricing_decision.outcome,
@@ -11435,12 +11474,12 @@ async def rag_pipeline_stream(
                 support_enabled=_plan_support_allowed,
                 judges_bypassed=_judges_bypassed,
             ):
+                _turn_asks_price = guard_asks_price(_price_intent, _price_question)
+                _guard_signal = _price_guard_signal(_turn_asks_price, chat_session)
                 _price_guard = (
-                    PriceSentenceRedactor()
-                    if _price_intent.asks_more
-                    else PriceStreamGuard(
-                        signal=_price_guard_signal(guard_asks_price(_price_intent, _price_question), chat_session)
-                    )
+                    PriceStreamGuard(signal=True)
+                    if _turn_asks_price and not _price_intent.asks_more
+                    else PriceSentenceRedactor(signal=_guard_signal)
                 )
             _price_guard_repeat = _price_guard is not None and _card_already_shown(chat_session, "pricing_escalated")
             # What the commitment guard checks the finished answer against, read
@@ -11948,6 +11987,13 @@ async def rag_pipeline_stream(
                     company_name=_company_name,
                     owner_texts=_commitment_owner_texts,
                     question=question,
+                    # A reply the guard cuts back to the gap sentence ends where
+                    # the prompt's gap rule ends: on this plan's team offer.
+                    team_offer=gap_team_offer(
+                        support_enabled=_plan_support_allowed,
+                        live_chat_enabled=live_chat_on,
+                        within_business_hours=bool(_team_online),
+                    ),
                 )
                 if _commitment.redacted:
                     _commitment_redacted = True

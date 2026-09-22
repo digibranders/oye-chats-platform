@@ -6,6 +6,11 @@ escalation alone. The price guard replaced the whole answer, so the hiring and
 office parts were lost. On such a turn (the price decision is MIXED) only the
 sentences that state a figure are dropped, and the escalation follows the rest.
 
+A turn that reads as no price question at all keeps its answer the same way
+(production, 2026-09-21), but drops far less: without the turn's signal a
+sentence goes only where an unsignalled ``PriceStreamGuard`` would have tripped,
+so a fine, a court fee or a third party's bill stays in the answer.
+
 Every decision is made on text whose extent does not depend on how the answer
 was chunked, so a whole answer (the cache and the tests) and a stream agree.
 """
@@ -15,11 +20,16 @@ import time
 
 import pytest
 
-from app.services.price_guard import PriceSentenceRedactor, PriceStreamGuard, redact_price_sentences
+from app.services.price_guard import (
+    PriceSentenceRedactor,
+    PriceStreamGuard,
+    answer_trips_price_guard,
+    redact_price_sentences,
+)
 
 
-def _feed(chunks):
-    redactor = PriceSentenceRedactor()
+def _feed(chunks, *, signal=True):
+    redactor = PriceSentenceRedactor(signal=signal)
     out = "".join(redactor.feed(c) for c in chunks)
     out += redactor.flush()
     return redactor, out
@@ -192,3 +202,106 @@ def test_a_long_run_without_a_sentence_end_streams_quickly():
 def test_redact_price_sentences_reads_anything():
     assert redact_price_sentences("") == ("", False)
     assert redact_price_sentences(None) == ("", False)
+
+
+# ── A turn with no price signal ───────────────────────────────────────────────
+
+#: (answer, what is kept) with ``signal=False``. None keeps the whole answer.
+UNSIGNALLED_CASES = [
+    # Production, 2026-09-21: the visitor asked about the services, and the whole
+    # answer was replaced because it happened to quote the retainer.
+    (
+        "We build websites and brand systems. Our retainer is ₹2,66,250 per month. Our office is in Pune.",
+        "We build websites and brand systems. Our office is in Pune.",
+    ),
+    # Someone else's figure stays: a fine, a court fee, a third party's bill.
+    ("GDPR fines can reach €20 million or 4% of annual turnover.", None),
+    ("For a ₹10 lakh suit in Delhi, the court fee works out to roughly ₹12,000 under the Act.", None),
+    ("Domain renewal is billed separately by the registrar, at about ₹1,200 a year.", None),
+    ("Visa fees are set by the government, not by us. The fee is $185.", None),
+    ("We are hiring for 19 roles across 3 offices since 2019.", None),
+    # A figure whose own sentence names no price still stays: only the turn's
+    # signal makes every figure the company's.
+    ("SOC as a Service comes to ₹2,66,250 a month for small teams.", None),
+    # A price context opened on an earlier line reaches the figure under it.
+    (
+        "We offer three plans:\n- Starter: ₹9,999/month\n- Growth: ₹24,999/month\n\nWe are hiring.",
+        "We are hiring.",
+    ),
+    (
+        "Here are our SOC packages.\n\n**Essentials**: ₹1,20,000 a month.\n\nOur office is in Pune.",
+        "Here are our SOC packages.\n\nOur office is in Pune.",
+    ),
+    # Every sentence names the company's price.
+    ("Our Starter plan is ₹999 a month. Our Growth plan is ₹2,499 a month.", ""),
+]
+
+
+@pytest.mark.parametrize(("text", "kept"), UNSIGNALLED_CASES, ids=lambda v: v[:40] if isinstance(v, str) else v)
+def test_without_a_signal_only_the_sentences_naming_our_own_price_are_dropped(text, kept):
+    expected = text if kept is None else kept
+    whole, redacted = redact_price_sentences(text, signal=False)
+    assert whole == expected
+    assert redacted is (kept is not None)
+    for chunks in _splits(text):
+        redactor, out = _feed(chunks, signal=False)
+        assert out == expected, chunks
+        assert redactor.emitted == expected, chunks
+        assert redactor.redacted is (kept is not None), chunks
+        assert redactor.tripped is False
+
+
+@pytest.mark.parametrize(("text", "kept"), UNSIGNALLED_CASES, ids=lambda v: v[:40] if isinstance(v, str) else v)
+def test_without_a_signal_no_dropped_text_is_emitted_even_for_a_moment(text, kept):
+    expected = text if kept is None else kept
+    for chunks in _splits(text):
+        redactor = PriceSentenceRedactor(signal=False)
+        shown = ""
+        for chunk in chunks:
+            shown += redactor.feed(chunk)
+            assert expected.startswith(shown), (chunks, shown)
+        shown += redactor.flush()
+        assert shown == expected
+
+
+@pytest.mark.parametrize("text", [text for text, _ in (*CASES, *UNSIGNALLED_CASES)])
+@pytest.mark.parametrize("signal", [True, False])
+def test_a_unit_is_dropped_exactly_when_the_guard_of_the_same_signal_would_trip(text, signal):
+    """The cache reads a whole answer with ``answer_trips_price_guard`` and drops
+    the entry when it trips, so the two must agree on every answer: a cached answer
+    the turn would redact must never be replayed as if untouched."""
+    assert redact_price_sentences(text, signal=signal)[1] is answer_trips_price_guard(text, signal=signal)
+
+
+def test_a_sentence_ending_past_the_hold_cap_is_read_the_same_however_it_arrives():
+    """The guard reads at most ``_HOLD_CAP_CHARS`` from a figure, so a first-person
+    price word further away than that does not make the figure ours."""
+    text = "The court fee is ₹12,000 " + "and the hearing is listed in Delhi " * 12 + "at our office.\nWe are hiring."
+    assert redact_price_sentences(text, signal=False) == (text, False)
+    for size in (1, 7, 64, 512):
+        _, out = _feed([text[i : i + size] for i in range(0, len(text), size)], signal=False)
+        assert out == text, size
+
+
+def test_a_long_sentence_without_a_signal_is_cut_without_letting_our_price_through():
+    text = "word " * 200 + "and our plan costs ₹2,66,250 for the whole team. We are hiring."
+    kept, redacted = redact_price_sentences(text, signal=False)
+    assert redacted is True
+    assert "2,66,250" not in kept
+    assert kept.endswith("We are hiring.")
+    for size in (1, 5, 64):
+        _, out = _feed([text[i : i + size] for i in range(0, len(text), size)], signal=False)
+        assert out == kept, size
+
+
+def test_a_long_answer_without_a_signal_is_redacted_in_linear_time():
+    paragraph = "We are hiring for many roles across the country. Our SOC plan is ₹2,66,250 a month.\n"
+    short = paragraph * 50
+    long = paragraph * 400
+    timings = []
+    for text in (short, long):
+        started = time.perf_counter()
+        _feed([text[i : i + 3] for i in range(0, len(text), 3)], signal=False)
+        timings.append(time.perf_counter() - started)
+    assert timings[1] < 16 * max(timings[0], 1e-3)
+    assert timings[1] < 4.0
