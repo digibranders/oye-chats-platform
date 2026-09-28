@@ -5,7 +5,6 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 from urllib.parse import urlparse
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response
@@ -55,6 +54,7 @@ from app.core.cache import (
 )
 from app.core.origin_check import extract_hostname, is_origin_allowed, normalize_domain_input
 from app.core.rate_limit import limiter
+from app.core.timezones import UnknownTimezoneError, load_zone
 from app.db.models import ActivationEvent, Bot, BotGrowthEvent, Client
 from app.db.repository import stamp_manual_avatar, stamp_manual_platform
 from app.db.session import get_session
@@ -603,20 +603,20 @@ class BusinessHours(BaseModel):
     @field_validator("timezone")
     @classmethod
     def _known_timezone(cls, v: str | None) -> str | None:
-        """Reject a zone ``zoneinfo`` cannot load.
+        """Reject a zone ``zoneinfo`` cannot load, and store the canonical name.
 
         The evaluator catches the lookup failure and fails OPEN, the agent
         reports itself available around the clock. A typo in this field is
         therefore a silent availability change, so it is caught at write time
-        instead.
+        instead. A legacy alias the browser reports (``Asia/Calcutta``) is
+        stored as its canonical zone, the only form the production host loads.
         """
         if v is None:
             return None
         try:
-            ZoneInfo(v)
-        except (ZoneInfoNotFoundError, ValueError) as exc:
+            return load_zone(v).key
+        except UnknownTimezoneError as exc:
             raise ValueError(f"'{v}' is not a known IANA timezone.") from exc
-        return v
 
 
 class LeadFormField(BaseModel):

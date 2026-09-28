@@ -141,6 +141,18 @@ def test_it_shares_the_ip_paths_idempotency_key(db):
     )
 
 
+def test_a_company_found_by_a_billed_verification_is_not_charged_again(db):
+    """Verifying a professional address includes naming its employer. The
+    5-credit company lookup is billed only when no verification was billed."""
+    _lead(db, 77, "s-pb77")
+    with _gates_open(db) as (_resolver, charge):
+        _resolve_lead_company("s-pb77", "infosys.com", 77, verification_billed=True)
+
+    assert charge.call_count == 0
+    db.expire_all()
+    assert db.query(LeadInfo).filter(LeadInfo.session_id == "s-pb77").first().company_name == "Infosys Limited"
+
+
 def test_an_unpaid_resolution_is_withheld(db):
     """Out of credits: the answer is not given away, and the domain remains."""
     _lead(db, 74, "s-pb74")
@@ -246,7 +258,8 @@ class TestTheWiringItself:
         ):
             chat_routes._enrich_lead_in_background("s-wire", "priya@infosys.com", bot_id=90)
 
-        resolve.assert_called_once_with("s-wire", "infosys.com", 90)
+        # Verification is off, so the company lookup is billed on its own.
+        resolve.assert_called_once_with("s-wire", "infosys.com", 90, verification_billed=False)
 
     def test_it_is_queued_after_the_email_verdict_is_committed(self, db):
         """The enqueue happens after the write, so a queue outage can never
@@ -262,7 +275,9 @@ class TestTheWiringItself:
                 return False
 
         with (
-            patch.object(chat_routes, "_queue_lead_company_resolution", side_effect=lambda *_: order.append("resolve")),
+            patch.object(
+                chat_routes, "_queue_lead_company_resolution", side_effect=lambda *_a, **_k: order.append("resolve")
+            ),
             patch("app.services.email_domain_service.extract_company_domain", return_value="infosys.com"),
             patch("app.api.chat_routes.is_email_validation_enabled_for_bot", return_value=False),
             patch("app.api.chat_routes.get_session", return_value=_Recording(db)),
@@ -319,7 +334,7 @@ class TestItGoesToTheDurableQueue:
             patch("app.worker.enqueue.enqueue_sync") as enqueue,
             patch.object(chat_routes, "submit_background") as pool,
         ):
-            chat_routes._queue_lead_company_resolution("s-q", "infosys.com", 5)
+            chat_routes._queue_lead_company_resolution("s-q", "infosys.com", 5, verification_billed=True)
 
         # `_job_id` is deterministic per (session, domain) so ARQ collapses the
         # two posts the widget makes for one visitor. See
@@ -329,6 +344,7 @@ class TestItGoesToTheDurableQueue:
             "s-q",
             "infosys.com",
             5,
+            True,
             _job_id="resolve-company:s-q:infosys.com",
         )
         assert pool.call_count == 0, "queued AND run in-process, the work would happen twice"
@@ -345,7 +361,9 @@ class TestItGoesToTheDurableQueue:
             chat_routes._queue_lead_company_resolution("s-q", "infosys.com", 5)
 
         assert enqueue.call_count == 0
-        pool.assert_called_once_with(chat_routes._resolve_lead_company, "s-q", "infosys.com", 5)
+        pool.assert_called_once_with(
+            chat_routes._resolve_lead_company, "s-q", "infosys.com", 5, verification_billed=False
+        )
 
     @pytest.mark.parametrize(("domain", "bot_id"), [(None, 5), ("", 5), ("infosys.com", None)])
     def test_nothing_is_queued_without_a_domain_and_a_bot(self, domain, bot_id):

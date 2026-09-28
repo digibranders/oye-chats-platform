@@ -356,7 +356,9 @@ async def task_extract_qualification(
     return True
 
 
-async def task_resolve_lead_company(ctx: dict, session_id: str, domain: str, bot_id: int) -> bool:
+async def task_resolve_lead_company(
+    ctx: dict, session_id: str, domain: str, bot_id: int, verification_billed: bool = False
+) -> bool:
     """Resolve a lead's email domain to its company identity.
 
     Why this is a QUEUED task and not a tail call on the request-adjacent
@@ -393,7 +395,9 @@ async def task_resolve_lead_company(ctx: dict, session_id: str, domain: str, bot
     logger.info("task_resolve_lead_company: session=%s domain=%s bot_id=%s", session_id, domain, bot_id)
 
     loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, lambda: _resolve_lead_company(session_id, domain, bot_id))
+    await loop.run_in_executor(
+        None, lambda: _resolve_lead_company(session_id, domain, bot_id, verification_billed=verification_billed)
+    )
     return True
 
 
@@ -2367,6 +2371,24 @@ async def task_send_visitor_message_email(
 
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _run)
+
+
+async def task_urgent_no_contact_follow_up(ctx: dict, session_id: str, bot_id: int, alerted_at: float) -> bool:
+    """Tell the team when a visitor who reported an urgent incident left no way to reach them.
+
+    Scheduled by ``rag_service._alert_team_of_urgent_incident`` with ``_defer_by``
+    set to ``urgent_followup.NO_CONTACT_FOLLOW_UP_DELAY_SECONDS``, only when the
+    alert went out with no email or phone. ``run_no_contact_follow_up`` re-reads
+    the session and the lead, so contact details that arrived in the meantime
+    (from the form or typed in the chat) cancel it, and it records its run
+    before sending, so an ARQ retry sends nothing twice.
+    """
+    import asyncio
+
+    from app.services.urgent_followup import run_no_contact_follow_up
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, run_no_contact_follow_up, session_id, bot_id, alerted_at)
 
 
 async def task_dispatch_transfer_push(

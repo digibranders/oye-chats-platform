@@ -433,6 +433,12 @@ class TestBotConfigValidation:
         assert body.business_hours is not None
         assert body.model_dump(exclude_unset=True)["business_hours"]["mon"]["start"] == "09:00"
 
+    def test_stores_the_canonical_zone_for_a_legacy_browser_name(self):
+        # Chrome reports India as Asia/Calcutta, which the production host
+        # cannot load; the evaluator would then fail open around the clock.
+        body = UpdateBotRequest(business_hours={"mon": {"start": "09:00", "end": "17:00"}, "timezone": "Asia/Calcutta"})
+        assert body.model_dump(exclude_unset=True)["business_hours"]["timezone"] == "Asia/Kolkata"
+
     def test_rejects_invalid_notification_recipient(self):
         assert _rejects(UpdateBotRequest, notification_emails={"default": ["not-an-email"]})
 

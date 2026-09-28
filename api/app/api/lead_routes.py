@@ -3,9 +3,8 @@
 import csv
 import io
 import logging
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from typing import Literal
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
@@ -16,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from app.api.auth import get_current_client_or_operator
 from app.config import API_BASE_URL
 from app.core.csv_safety import csv_safe_row
+from app.core.timezones import UnknownTimezoneError, load_zone
 from app.core.visitor_privacy import redact_visitor_ip
 from app.db.models import BANTSignal, Bot, ChatMessage, ChatSession, EmailSuppression, LeadInfo
 from app.db.session import get_session
@@ -116,7 +116,7 @@ def _resolve_client_bot_ids(session, auth: dict, bot_id: int | None) -> list[int
     return [bot_id]
 
 
-def _zone(tz: str | None) -> ZoneInfo:
+def _zone(tz: str | None) -> tzinfo:
     """The IANA zone the caller's calendar days are cut in, UTC when unusable.
 
     A bad or unknown zone must never 500 a list of leads: the window silently
@@ -126,8 +126,8 @@ def _zone(tz: str | None) -> ZoneInfo:
     if not tz:
         return UTC
     try:
-        return ZoneInfo(tz)
-    except (ZoneInfoNotFoundError, ValueError):
+        return load_zone(tz)
+    except UnknownTimezoneError:
         logger.warning("Unknown IANA zone %r on a leads window; falling back to UTC", tz[:64])
         return UTC
 

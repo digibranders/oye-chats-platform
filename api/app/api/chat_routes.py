@@ -17,6 +17,7 @@ from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from app.api.auth import (
     bot_subscription_status,
@@ -33,7 +34,7 @@ from app.core.rate_limit import consume_vendor_budget, key_from_bot_key, limiter
 from app.core.streaming import ClosingStreamingResponse
 from app.core.thread_pool import submit_background
 from app.core.visitor_privacy import format_visitor_location
-from app.db.models import Bot, ChatSession
+from app.db.models import Bot, ChatSession, CreditLedger
 from app.db.repository import (
     create_or_update_lead_info,
     ensure_chat_session,
@@ -637,11 +638,9 @@ def _already_resolved(session_id: str, ip_address: str) -> tuple[bool, bool]:
 
 
 # The per-agent customer toggles, by the enrichment action they gate. Both
-# columns default OFF (migration ``b3d9f1a7c2e5``): enrichment spends credits,
-# so it is an explicit opt-in the customer switches on, not a metered feature
-# left running until they find the settings page. This is the third of three
-# independent gates, the plan and the super-admin kill switch still have to
-# pass as well.
+# columns default ON (migration ``b1000005enrichon``) and the customer can switch
+# either off. This is the third of three independent gates, the plan and the
+# super-admin kill switch still have to pass as well.
 _AGENT_TOGGLE_COLUMN = {
     "email_verification": "email_verification_enabled",
     "company_name": "company_lookup_enabled",
@@ -969,6 +968,90 @@ def _resolve_and_update_location(session_id: str, ip_address: str, bot_id: int |
         logger.warning(f"Background geolocation failed | session={session_id} | {e}")
 
 
+def _enrichment_debit(session: Session, idempotency_key: str) -> CreditLedger | None:
+    """The ledger debit an enrichment charge wrote under ``idempotency_key``."""
+    return (
+        session.query(CreditLedger)
+        .filter(CreditLedger.idempotency_key == idempotency_key, CreditLedger.delta < 0)
+        .first()
+    )
+
+
+def _enrichment_refund_note(debit: CreditLedger) -> str:
+    return f"Refund: {debit.reason} did not run (charge #{debit.id})"
+
+
+def _enrichment_charge_exists(idempotency_key: str) -> bool:
+    """True when a debit exists under ``idempotency_key``.
+
+    An unreadable ledger reads as True: that blocks a refund we cannot prove is
+    owed, and never blocks the enrichment itself.
+    """
+    try:
+        with get_session() as session:
+            return _enrichment_debit(session, idempotency_key) is not None
+    except Exception:
+        logger.warning("could not read enrichment charge %s", idempotency_key, exc_info=True)
+        return True
+
+
+def _enrichment_charge_refunded(idempotency_key: str) -> bool:
+    """True when the debit under ``idempotency_key`` has been refunded.
+
+    An unreadable ledger reads as False (the charge stands), which at worst
+    skips a second 5-credit company charge rather than breaking enrichment.
+    """
+    try:
+        with get_session() as session:
+            debit = _enrichment_debit(session, idempotency_key)
+            if debit is None:
+                return False
+            return (
+                session.query(CreditLedger.id)
+                .filter(
+                    CreditLedger.client_id == debit.client_id,
+                    CreditLedger.reason == "refund",
+                    CreditLedger.note == _enrichment_refund_note(debit),
+                )
+                .first()
+                is not None
+            )
+    except Exception:
+        logger.warning("could not read enrichment refund for %s", idempotency_key, exc_info=True)
+        return False
+
+
+def _refund_enrichment_charge(idempotency_key: str) -> bool:
+    """Give back an enrichment charge whose paid lookup never ran. Never raises.
+
+    Idempotent: the refund note names the charge, so a second call for the same
+    debit finds the first refund and does nothing.
+    """
+    from app.services import credit_service
+
+    try:
+        if _enrichment_charge_refunded(idempotency_key):
+            return False
+        with get_session() as session:
+            debit = _enrichment_debit(session, idempotency_key)
+            if debit is None:
+                return False
+            credit_service.refund(
+                session,
+                debit.client_id,
+                abs(int(debit.delta)),
+                reference_id=debit.reference_id,
+                note=_enrichment_refund_note(debit),
+                bot_id=debit.bot_id,
+                attributed_bot_id=debit.attributed_bot_id,
+            )
+            session.commit()
+            return True
+    except Exception:
+        logger.warning("enrichment refund failed for %s", idempotency_key, exc_info=True)
+        return False
+
+
 def _enrich_lead_in_background(session_id: str, email: str | None, bot_id: int | None = None):
     """Fire-and-forget: free domain extraction + Reoon power-mode validation.
 
@@ -1012,16 +1095,21 @@ def _enrich_lead_in_background(session_id: str, email: str | None, bot_id: int |
     # credits/hour, which empties a Standard plan's monthly allowance in about
     # 25 minutes.
     email_fingerprint = hashlib.sha256(email.strip().lower().encode()).hexdigest()[:16]
-    if (
-        plan_allows_verification
-        and _agent_enrichment_opt_in(bot_id, "email_verification")
-        and _charge_for_enrichment(
-            bot_id,
-            "email_verification",
-            idempotency_key=f"enrich:email_verification:{session_id}:{email_fingerprint}",
-        )
-    ):
-        validation = verify_email(email)
+    verification_key = f"enrich:email_verification:{session_id}:{email_fingerprint}"
+    verification_billed = False
+    if plan_allows_verification and _agent_enrichment_opt_in(bot_id, "email_verification"):
+        # Read before charging: only the POST that CREATES the debit may refund
+        # it. A repost of the same address is a ledger no-op, and a vendor
+        # failure on the repost must not refund a verification that the first
+        # POST completed.
+        charged_before = _enrichment_charge_exists(verification_key)
+        if _charge_for_enrichment(bot_id, "email_verification", idempotency_key=verification_key):
+            validation = verify_email(email)
+            # None means Reoon never answered (down, out of credits, no key).
+            # Nothing was verified, so nothing is billed.
+            if validation is None and not charged_before:
+                _refund_enrichment_charge(verification_key)
+            verification_billed = not _enrichment_charge_refunded(verification_key)
 
     with get_session() as session:
         lead = session.query(LeadInfo).filter(LeadInfo.session_id == session_id).first()
@@ -1063,10 +1151,12 @@ def _enrich_lead_in_background(session_id: str, email: str | None, bot_id: int |
 
     # Resolve the domain to the company's own declared identity. QUEUED, not
     # run here. See `_queue_lead_company_resolution`.
-    _queue_lead_company_resolution(session_id, domain, bot_id)
+    _queue_lead_company_resolution(session_id, domain, bot_id, verification_billed=verification_billed)
 
 
-def _queue_lead_company_resolution(session_id: str, domain: str | None, bot_id: int | None) -> None:
+def _queue_lead_company_resolution(
+    session_id: str, domain: str | None, bot_id: int | None, *, verification_billed: bool = False
+) -> None:
     """Hand the company resolution to the durable queue, or the pool if it is down.
 
     This used to be a tail call on this same thread, justified in a comment
@@ -1107,10 +1197,11 @@ def _queue_lead_company_resolution(session_id: str, domain: str | None, bot_id: 
             session_id,
             domain,
             bot_id,
+            verification_billed,
             _job_id=f"resolve-company:{session_id}:{domain}",
         )
     else:
-        submit_background(_resolve_lead_company, session_id, domain, bot_id)
+        submit_background(_resolve_lead_company, session_id, domain, bot_id, verification_billed=verification_billed)
 
 
 def _company_already_resolved(session_id: str, domain: str) -> bool:
@@ -1145,7 +1236,9 @@ def _company_already_resolved(session_id: str, domain: str) -> bool:
         return False
 
 
-def _resolve_lead_company(session_id: str, domain: str | None, bot_id: int | None) -> None:
+def _resolve_lead_company(
+    session_id: str, domain: str | None, bot_id: int | None, verification_billed: bool = False
+) -> None:
     """Turn the lead's email domain into a company name, description and logo.
 
     "infosys.com" becomes "Infosys Limited". The work happens in
@@ -1159,9 +1252,12 @@ def _resolve_lead_company(session_id: str, domain: str | None, bot_id: int | Non
     one feature ("who is this visitor's company?") with two signal sources:
     the plan, the super-admin kill switch, and the per-agent toggle.
 
-    It shares the IP path's IDEMPOTENCY KEY on purpose. A session where the IP
-    already identified an employer has been charged; finding the same answer
-    again from the email domain must not bill twice. Whichever signal gets
+    Billing follows the finalised pricing sheet. When ``verification_billed``
+    (the 10-credit email verification was charged for this address), naming
+    the employer behind a professional domain is part of that verification and
+    costs nothing more. Otherwise this is a standalone company lookup at 5
+    credits, sharing the IP path's IDEMPOTENCY KEY so a session where the IP
+    already identified an employer is not billed twice. Whichever signal gets
     there first pays, once per session.
 
     ``lead.company`` keeps the raw domain either way, a failed resolution
@@ -1188,8 +1284,11 @@ def _resolve_lead_company(session_id: str, domain: str | None, bot_id: int | Non
             return  # parked domain, unreachable site, or nothing declared
 
         # Charge only for an answer, same rule as the IP path: we absorb the
-        # crawl when we cannot identify anyone.
-        if not _charge_for_enrichment(bot_id, "company_name", idempotency_key=f"enrich:company_name:{session_id}"):
+        # crawl when we cannot identify anyone. A billed verification already
+        # paid for this answer.
+        if not verification_billed and not _charge_for_enrichment(
+            bot_id, "company_name", idempotency_key=f"enrich:company_name:{session_id}"
+        ):
             logger.info("company resolved for %s but not charged. Withholding", session_id)
             return
 
@@ -2717,12 +2816,15 @@ def get_pending_connect_request(session_id: SessionId, bot: Bot = Depends(get_cu
 
     Auth: ``X-Bot-Key`` (visitor widget). The session must belong to the bot.
     """
+    from app.services import urgent_followup
+
     with get_session() as session:
         chat_session = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
         if not chat_session:
             return {"pending": False}
         if chat_session.bot_id != bot.id:
             raise HTTPException(status_code=403, detail="Access denied")
+        awaits_urgent_follow_up = urgent_followup.awaits_follow_up(chat_session)
 
     from app.services.live_chat_service import manager as live_manager
 
@@ -2730,6 +2832,12 @@ def get_pending_connect_request(session_id: SessionId, bot: Bot = Depends(get_cu
     # "visitor is still on the page chatting with the AI". We piggyback the
     # heartbeat here so we don't need a second endpoint for presence.
     live_manager.record_bot_session_activity(session_id)
+    # That record lives in this process only. The urgent no-contact follow-up runs
+    # in the worker and tells the team whether the visitor is still on the page,
+    # so an urgent session also writes the heartbeat to the shared cache until
+    # the follow-up has run. Every other session costs nothing extra.
+    if awaits_urgent_follow_up:
+        urgent_followup.record_presence(session_id)
 
     req = live_manager.get_connect_request(session_id)
     if not req:

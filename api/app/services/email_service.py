@@ -46,6 +46,7 @@ from app.config import (
 from app.db.models import Client
 from app.db.session import get_session
 from app.services import email_design as ed
+from app.services.contact_details import URGENT_NO_CONTACT_LINE
 from app.services.email_design import button, code_box, esc, h1, info_table, link, p, pre_box, shell, strong
 
 logger = logging.getLogger(__name__)
@@ -988,6 +989,21 @@ def send_handoff_request_email(
     )
 
 
+def _conversation_url(session_id: str | None) -> str:
+    """The dashboard inbox, opened on ``session_id`` when there is one."""
+    return f"{APP_URL}/support?session={quote(session_id, safe='')}" if session_id else f"{APP_URL}/support"
+
+
+def _contact_rows(email: str | None, phone: str | None) -> list[tuple[str, str]]:
+    """The Email and Phone rows a visitor has values for, and no empty ones."""
+    rows = []
+    if email:
+        rows.append(("Email", _mailto(email)))
+    if phone:
+        rows.append(("Phone", esc(phone)))
+    return rows
+
+
 def _send_urgent_incident_email(
     notification_email: str,
     bot_name: str,
@@ -997,17 +1013,29 @@ def _send_urgent_incident_email(
     reply_to: str | None,
     session_id: str | None,
 ) -> None:
-    """The ``urgent`` variant of :func:`send_handoff_request_email`."""
+    """The ``urgent`` variant of :func:`send_handoff_request_email`.
+
+    On 2026-09-28 the owner got one showing Name "Eva" and an Email row with only
+    a dash, and asked how the team could reach her. Without an email or a phone
+    the alert now says so and sends the team to the conversation, and says what
+    comes next: the chat asked the visitor for a number or an email
+    (``urgent_route.urgent_reply``), and a follow-up email carries it, or reports
+    after a few minutes that none came (``urgent_followup``).
+    """
     who = contact.get("name") or "A visitor"
     subject = f"URGENT: {who} reported an active incident on {bot_name}"
-    rows = [
-        ("Name", esc(contact.get("name")) if contact.get("name") else "Unknown"),
-        ("Email", _mailto(contact.get("email"))),
-    ]
-    if contact.get("phone"):
-        rows.append(("Phone", esc(contact.get("phone"))))
+    rows = [("Name", esc(contact.get("name")) if contact.get("name") else "Unknown")]
+    contact_rows = _contact_rows(contact.get("email"), contact.get("phone"))
+    rows.extend(contact_rows or [("Contact", esc(URGENT_NO_CONTACT_LINE))])
     rows.append(("Message", esc(message) if message else "No message provided"))
-    conversation_url = f"{APP_URL}/support?session={quote(session_id, safe='')}" if session_id else f"{APP_URL}/support"
+    next_step = (
+        "Reach out as soon as you can."
+        if contact_rows
+        else (
+            "The chat asked them for a phone number or email. You will get another email as soon as they share "
+            "one, or in a few minutes if they have not."
+        )
+    )
     inner = (
         h1(f"URGENT: {esc(who)} reported an active incident")
         + p(
@@ -1016,12 +1044,106 @@ def _send_urgent_incident_email(
         )
         + ed.section_label("Visitor")
         + info_table(rows)
-        + ed.alert("Reach out as soon as you can. Their details may still be on the way from the chat form.", "danger")
-        + button("Open conversation", conversation_url)
+        + ed.alert(next_step, "danger")
+        + button("Open conversation", _conversation_url(session_id))
     )
     html_body = shell(
         subject=subject,
         preheader=f"A visitor reported an active incident on {bot_name}.",
+        inner=inner,
+    )
+    send_email_async(
+        notification_email,
+        subject,
+        html_body,
+        reply_to=reply_to,
+        sender_name=_branded_sender_name(bot_name),
+    )
+
+
+def send_urgent_contact_email(
+    notification_email: str,
+    bot_name: str,
+    visitor_name: str | None,
+    *,
+    email: str | None,
+    phone: str | None,
+    reply_to: str | None,
+    session_id: str | None,
+) -> None:
+    """Tell the team how to reach a visitor who reported an urgent incident.
+
+    Sent when the visitor types an email address or a phone number in the chat
+    after the urgent alert, which may have gone out with neither.
+    """
+    who = visitor_name or "a visitor"
+    values = ", ".join(value for value in (email, phone) if value)
+    subject = f"Contact details for {who}: {values}"
+    inner = (
+        h1(f"Contact details for {esc(who)}")
+        + p(
+            f"{esc(visitor_name) if visitor_name else 'The visitor'}, who reported an active incident on "
+            f"{strong(esc(bot_name))}, shared how to reach them in the chat."
+        )
+        + ed.section_label("Visitor")
+        + info_table([("Name", esc(visitor_name) if visitor_name else "Unknown"), *_contact_rows(email, phone)])
+        + ed.alert("Reach out as soon as you can.", "danger")
+        + button("Open conversation", _conversation_url(session_id))
+    )
+    html_body = shell(
+        subject=subject,
+        preheader=f"How to reach the visitor who reported an active incident on {bot_name}.",
+        inner=inner,
+    )
+    send_email_async(
+        notification_email,
+        subject,
+        html_body,
+        reply_to=reply_to,
+        sender_name=_branded_sender_name(bot_name),
+    )
+
+
+def send_urgent_no_contact_email(
+    notification_email: str,
+    bot_name: str,
+    visitor_name: str | None,
+    *,
+    presence: str,
+    minutes_since_alert: int,
+    reply_to: str | None,
+    session_id: str | None,
+) -> None:
+    """Tell the team a visitor who reported an urgent incident left no way to reach them.
+
+    Sent once, a few minutes after the urgent alert, only when neither the form
+    nor the chat has given an email or a phone number by then. ``presence`` is
+    ``urgent_followup.describe_presence``'s sentence on whether their chat
+    window is still open.
+    """
+    who = visitor_name or "a visitor"
+    subject = f"Still no contact details for {who}"
+    since = "a minute ago" if minutes_since_alert <= 1 else f"{minutes_since_alert} minutes ago"
+    inner = (
+        h1(f"Still no contact details for {esc(who)}")
+        + p(
+            f"{esc(visitor_name) if visitor_name else 'A visitor'} reported an active incident on "
+            f"{strong(esc(bot_name))} {since} and has not shared an email or phone number yet, in the chat "
+            f"or the form."
+        )
+        + ed.section_label("Visitor")
+        + info_table(
+            [
+                ("Name", esc(visitor_name) if visitor_name else "Unknown"),
+                ("Presence", esc(presence)),
+            ]
+        )
+        + ed.alert("The conversation is the only way to reach them. Reply there now.", "danger")
+        + button("Open conversation", _conversation_url(session_id))
+    )
+    html_body = shell(
+        subject=subject,
+        preheader=f"The visitor who reported an active incident on {bot_name} left no email or phone.",
         inner=inner,
     )
     send_email_async(
@@ -1042,17 +1164,26 @@ def _send_support_request_email(
     reply_to: str | None,
     session_id: str | None,
 ) -> None:
-    """The ``support`` variant of :func:`send_handoff_request_email`."""
+    """The ``support`` variant of :func:`send_handoff_request_email`.
+
+    Like the urgent alert, it shows only the contact rows the visitor has values
+    for and, with neither an email nor a phone, says so and sends the team to
+    the conversation instead of promising details that may never come.
+    """
     who = contact.get("name") or "A visitor"
     subject = f"Support request: {who} needs help on {bot_name}"
-    rows = [
-        ("Name", esc(contact.get("name")) if contact.get("name") else "Unknown"),
-        ("Email", _mailto(contact.get("email"))),
-    ]
-    if contact.get("phone"):
-        rows.append(("Phone", esc(contact.get("phone"))))
+    rows = [("Name", esc(contact.get("name")) if contact.get("name") else "Unknown")]
+    contact_rows = _contact_rows(contact.get("email"), contact.get("phone"))
+    rows.extend(contact_rows or [("Contact", esc(URGENT_NO_CONTACT_LINE))])
     rows.append(("Message", esc(message) if message else "No message provided"))
-    conversation_url = f"{APP_URL}/support?session={quote(session_id, safe='')}" if session_id else f"{APP_URL}/support"
+    next_step = (
+        "Reply as soon as you can."
+        if contact_rows
+        else (
+            "Reply in the conversation as soon as you can: it is the only way to reach them until they share an "
+            "email or phone."
+        )
+    )
     inner = (
         h1(f"Support request from {esc(who)}")
         + p(
@@ -1061,8 +1192,8 @@ def _send_support_request_email(
         )
         + ed.section_label("Visitor")
         + info_table(rows)
-        + ed.alert("Reply as soon as you can. Their details may still be on the way from the chat form.", "warning")
-        + button("Open conversation", conversation_url)
+        + ed.alert(next_step, "warning")
+        + button("Open conversation", _conversation_url(session_id))
     )
     html_body = shell(
         subject=subject,

@@ -16,6 +16,10 @@ from tests.test_rag_pipeline_defects import _make_bot, _make_client, _make_sessi
 MESSAGE = "we are under a ransomware attack right now, please help!"
 PUSH_TASK = "task_dispatch_handoff_push"
 PUSH_REASON = "URGENT: active incident reported in chat"
+PUSH_REASON_NO_CONTACT = (
+    "URGENT: active incident reported in chat. No email or phone yet. Reply in the conversation now."
+)
+FOLLOW_UP_TASK = "task_urgent_no_contact_follow_up"
 
 
 @pytest.fixture()
@@ -88,7 +92,10 @@ def test_falls_back_to_the_default_list_without_a_lead(db, outbox):
     assert [email["to"] for email in outbox["emails"]] == ["owner@acme.test"]
     assert outbox["emails"][0]["contact"] is None
     assert outbox["notify"][0]["visitor_name"] is None
-    assert outbox["enqueue"] == [(PUSH_TASK, ("urgent-mail-2", bot.id, None, None, PUSH_REASON, 60))]
+    # No email or phone: the push says so and a follow-up is scheduled.
+    assert outbox["notify"][0]["no_contact"] is True
+    assert outbox["enqueue"][0] == (PUSH_TASK, ("urgent-mail-2", bot.id, None, None, PUSH_REASON_NO_CONTACT, 60))
+    assert [task for task, _args in outbox["enqueue"]] == [PUSH_TASK, FOLLOW_UP_TASK]
 
 
 def test_an_owner_who_turned_off_handoff_email_still_gets_the_inbox_alert_and_push(db, outbox):
@@ -103,7 +110,7 @@ def test_an_owner_who_turned_off_handoff_email_still_gets_the_inbox_alert_and_pu
 
     assert outbox["emails"] == []
     assert len(outbox["notify"]) == 1
-    assert [task for task, _args in outbox["enqueue"]] == [PUSH_TASK]
+    assert [task for task, _args in outbox["enqueue"]] == [PUSH_TASK, FOLLOW_UP_TASK]
 
 
 def test_one_failing_recipient_does_not_stop_the_next(db, outbox, monkeypatch):
@@ -159,4 +166,4 @@ def test_a_failed_notification_is_rolled_back_and_the_email_and_push_still_go(db
 
     assert db.execute(text("SELECT 1")).scalar() == 1, "the session must be usable after the failed notification"
     assert len(outbox["emails"]) == 1
-    assert [task for task, _args in outbox["enqueue"]] == [PUSH_TASK]
+    assert [task for task, _args in outbox["enqueue"]] == [PUSH_TASK, FOLLOW_UP_TASK]

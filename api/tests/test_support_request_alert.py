@@ -230,6 +230,40 @@ def test_a_support_request_email_without_a_name_or_phone_names_a_visitor():
     assert ">Phone<" not in html_body
 
 
+@pytest.mark.parametrize("contact", [None, {"name": "Eva", "email": None, "phone": None}])
+def test_a_support_request_email_without_email_or_phone_says_so_and_what_to_do(contact):
+    """The urgent alert's treatment: no empty Email row, and no promise that details are on the way."""
+    _, html_body, _ = _render("cs@acme.test", "Acme Bot", MESSAGE, contact, support=True, session_id="support-3")
+
+    assert ">Email<" not in html_body and ">Phone<" not in html_body
+    assert (
+        "No email or phone yet. Reply in the conversation now: they were on the page when this was sent." in html_body
+    )
+    assert (
+        "Reply in the conversation as soon as you can: it is the only way to reach them until they share an email "
+        "or phone." in html_body
+    )
+    assert "may still be on the way" not in html_body
+    assert f'href="{APP_URL}/support?session=support-3"' in html_body
+
+
+def test_a_support_request_email_with_an_email_shows_it_and_no_empty_phone_row():
+    _, html_body, _ = _render(
+        "cs@acme.test",
+        "Acme Bot",
+        MESSAGE,
+        {"name": "Eva", "email": "eva@x.test", "phone": None},
+        support=True,
+        session_id="support-4",
+    )
+
+    assert ">Email<" in html_body and "eva@x.test" in html_body
+    assert ">Phone<" not in html_body
+    assert "No email or phone yet" not in html_body
+    assert "Reply as soon as you can." in html_body
+    assert "may still be on the way" not in html_body
+
+
 def test_a_support_request_email_escapes_the_message_and_the_session_id():
     _, html_body, _ = _render(
         "cs@acme.test", "Acme Bot", "<script>alert(1)</script>", None, support=True, session_id="a b&c"

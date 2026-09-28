@@ -263,6 +263,40 @@ def test_activity_route_accepts_a_timezone(db) -> None:
     assert bad.status_code == 422, bad.text
 
 
+def test_activity_route_resolves_the_zone_chrome_reports_for_india(db) -> None:
+    """Chrome names India ``Asia/Calcutta``; production only loads ``Asia/Kolkata``.
+
+    Ubuntu 24.04 keeps the legacy name in ``tzdata-legacy``, which the host
+    does not install, so both ``zoneinfo`` and Postgres rejected it and every
+    IST viewer's Activity card showed a 422. A developer machine loads the
+    legacy name, so the query is checked for the canonical name directly.
+    """
+    from sqlalchemy import event
+
+    client = _make_client(db, email="win-tz-legacy@e.com")
+    bot = _make_bot(db, client, key="bot-win-tz-legacy")
+
+    chat = _session_row(db, bot, sid="s-tz-legacy", created_at=datetime(2026, 7, 30, 12, 0, tzinfo=UTC))
+    _message(db, chat, created_at=datetime(2026, 7, 31, 20, 30, tzinfo=UTC))
+    db.commit()
+
+    zone_params: list[object] = []
+
+    def _capture(_conn, _cursor, statement, parameters, _context, _executemany) -> None:
+        if "timezone(" in statement and isinstance(parameters, dict):
+            zone_params.extend(v for v in parameters.values() if isinstance(v, str) and "/" in v)
+
+    engine = db.get_bind()
+    event.listen(engine, "before_cursor_execute", _capture)
+    try:
+        res = _get(db, client, f"/analytics/activity?bot_id={bot.id}&days=365&tz=Asia/Calcutta")
+    finally:
+        event.remove(engine, "before_cursor_execute", _capture)
+
+    assert res.status_code == 200, res.text
+    assert zone_params == ["Asia/Kolkata"]
+
+
 def test_days_window_is_cut_on_whole_local_days(db) -> None:
     """``days=1`` means today in ``tz``, not the trailing 24 hours."""
     client = _make_client(db, email="win-tz-days@e.com")

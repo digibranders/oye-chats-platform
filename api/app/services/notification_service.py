@@ -28,6 +28,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from app.db.models import Notification
+from app.services.contact_details import URGENT_NO_CONTACT_LINE
 
 logger = logging.getLogger(__name__)
 
@@ -345,15 +346,23 @@ def notify_handoff_request(
     department_id: int | None = None,
     department_name: str | None = None,
     urgent: bool = False,
+    no_contact: bool = False,
 ) -> dict[str, Any]:
     """The inbox notification for a visitor waiting on the team.
 
     ``urgent`` marks a visitor who reported an active incident in chat, so the
     title says so and the payload carries the flag for the dashboard.
+    ``no_contact`` marks one with no email or phone yet: the body then says the
+    conversation is the way to reach them, as the alert email does.
     """
     who = visitor_name or "A visitor"
     title = f"URGENT: {who} reported an active incident" if urgent else f"{who} wants to talk to a human"
-    body = f"Live chat request via {bot_name}." if bot_name else "Live chat request waiting for an operator."
+    if no_contact:
+        body = URGENT_NO_CONTACT_LINE
+    elif bot_name:
+        body = f"Live chat request via {bot_name}."
+    else:
+        body = "Live chat request waiting for an operator."
     return create_notification(
         session,
         client_id=client_id,
@@ -368,7 +377,34 @@ def notify_handoff_request(
             "department_id": department_id,
             "department_name": department_name,
             "urgent": urgent,
+            "no_contact": no_contact,
         },
+    )
+
+
+def notify_urgent_follow_up(
+    session: Session,
+    *,
+    client_id: int,
+    session_id: str,
+    title: str,
+    body: str,
+    kind: str,
+) -> dict[str, Any]:
+    """An inbox update on an urgent incident the team was already alerted to.
+
+    ``kind`` is ``"contact"`` when the visitor typed an email or phone number in
+    the chat, and ``"no_contact"`` when none arrived a few minutes after the alert.
+    The type and link are the alert's, so it opens the same conversation.
+    """
+    return create_notification(
+        session,
+        client_id=client_id,
+        type_=TYPE_HANDOFF_REQUEST,
+        title=title,
+        body=body,
+        link=f"/support?session={session_id}",
+        data={"session_id": session_id, "urgent": True, "follow_up": kind},
     )
 
 

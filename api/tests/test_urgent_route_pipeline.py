@@ -162,9 +162,11 @@ async def test_a_reachable_team_is_offered_a_connection_right_away(db, monkeypat
     frames = await _drive_stream(bot, URGENT, "urgent-team")
     meta = _final_meta(frames)
 
+    # No lead yet, so the reply also asks for a phone number or email in the chat.
     assert _answer_text(frames) == (
-        "This sounds urgent, so I've flagged it to **Acme** as a priority. Share your details in the form "
-        "below and I'll connect you with them right away."
+        "This sounds urgent, so I've flagged it to **Acme** as a priority. What's the best phone number or email "
+        "to reach you on right now? Type it here, or share your details in the form below and I'll connect you "
+        "with them right away."
     )
     assert meta["suggest_handoff"] is True
     assert "show_leave_message" not in meta
@@ -172,8 +174,8 @@ async def test_a_reachable_team_is_offered_a_connection_right_away(db, monkeypat
     again = await _drive_stream(bot, "our servers have been hacked, please hurry", "urgent-team")
 
     assert _answer_text(again) == (
-        "I've already flagged this to **Acme** as a priority. The form is just below: "
-        "share your details there and I'll connect you with them right away."
+        "I've already flagged this to **Acme** as a priority. Type the best phone number or email to reach you "
+        "on here, or share your details in the form just below and I'll connect you with them right away."
     )
     assert _final_meta(again)["suggest_handoff"] is True
     assert len(alerts["notify"]) == 1 and len(_push_jobs(alerts)) == 1
@@ -200,8 +202,8 @@ async def test_a_bot_without_live_chat_opens_the_message_card(db, monkeypatch, a
     again = await _drive_stream(bot, URGENT, "urgent-3")
 
     assert _answer_text(again) == (
-        "I've already flagged this to **Acme** as a priority. Leave your details in the message form "
-        "so the team can contact you as soon as possible."
+        "I've already flagged this to **Acme** as a priority. Type the best phone number or email to reach you "
+        "on here, or leave your details in the message form so the team can contact you as soon as possible."
     )
     assert _final_meta(again)["show_leave_message"] is True
     assert _final_meta(again)["suggest_handoff"] is False
@@ -573,6 +575,49 @@ async def test_an_incident_reported_with_a_service_question_still_gets_the_urgen
     assert classifier.calls == [question]
     assert _answer_text(frames).startswith("This sounds urgent")
     assert len(alerts["notify"]) == 1
+
+
+#: Production, 2026-09-28: both security vendors' bots answered this with the
+#: urgent reply and emailed the owner about an active incident.
+PAST_PROBLEM_PROSPECT = (
+    "hey so um we were wondering if you guys do like sock monitoring for hospitals cause our it guy left last "
+    "month and we had some weird logins so yeah what would you offer for that"
+)
+ACTIVE_RANSOMWARE = "ransomware on our servers RIGHT NOW files getting encrypted pls help"
+
+
+@pytest.mark.asyncio
+async def test_a_prospect_with_a_past_problem_gets_the_answer_and_an_active_incident_still_alerts(
+    db, monkeypatch, alerts, classifier
+):
+    """The fake classifier says YES to both, as the production model did to the
+    first. The prospect never reaches it: the visitor asked what the business
+    offers, and the weird logins were last month's background."""
+    client = _make_client(db)
+    bot = _make_bot(db, client, live_chat_enabled=True, notification_emails=TEAM_EMAILS)
+    _make_session(db, bot, client, "urgent-background")
+    _make_session(db, bot, client, "urgent-active")
+    knowledge = "Acme runs 24/7 SOC monitoring for hospitals and clinics."
+    cap = _stub_pipeline(monkeypatch, chunks=(knowledge,), retrieved=(_doc(knowledge),), support=True)
+
+    frames = await _drive_stream(bot, PAST_PROBLEM_PROSPECT, "urgent-background")
+    answer = _answer_text(frames)
+
+    assert classifier.calls == []
+    assert knowledge in answer
+    assert "This sounds urgent" not in answer and "flagged" not in answer
+    assert len(cap["prompts"]) == 1, "the normal pipeline wrote the answer"
+    assert alerts == {"notify": [], "emails": [], "enqueue": []}
+    assert not _cards_shown(db, "urgent-background").get("urgent_notified")
+
+    urgent = await _drive_stream(bot, ACTIVE_RANSOMWARE, "urgent-active")
+
+    assert classifier.calls == [ACTIVE_RANSOMWARE]
+    assert _answer_text(urgent).startswith("This sounds urgent, so I've flagged it to **Acme** as a priority.")
+    assert len(alerts["notify"]) == 1 and alerts["notify"][0]["session_id"] == "urgent-active"
+    assert [email["reason"] for email in alerts["emails"]] == [ACTIVE_RANSOMWARE]
+    assert [job[0] for job in _push_jobs(alerts)] == ["urgent-active"]
+    assert _cards_shown(db, "urgent-active").get("urgent_notified") is True
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,4 @@
 from datetime import UTC, datetime, timedelta
-from zoneinfo import ZoneInfo
 
 from sqlalchemy import Float, String, case, cast, desc, func, insert, or_, select, text
 from sqlalchemy.dialects.postgresql import TSQUERY
@@ -7,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased
 
 from app.core.exceptions import SessionOwnershipError
+from app.core.timezones import load_zone
 from app.db.models import (
     Bot,
     BotGrowthEvent,
@@ -1581,17 +1581,18 @@ def get_message_activity(session, client_id: int = None, days: int = None, bot_i
     Without it this is an unbounded aggregate over the workspace's entire
     history, which is a real timeout on a busy account.
 
+    A legacy alias such as ``Asia/Calcutta`` (what Chrome reports for India)
+    is resolved to its canonical zone first: the production host's tzdata and
+    Postgres only know ``Asia/Kolkata``.
+
     Raises ``ValueError`` for an unknown zone name.
     """
-    try:
-        zone = ZoneInfo(tz)
-    except (KeyError, ValueError) as exc:
-        raise ValueError(f"Unknown timezone: {tz!r}") from exc
+    zone = load_zone(tz)
 
     sf = _session_owner_filter(bot_id, client_id)
     # ``timezone(<zone>, ts)`` renders the instant as wall-clock time in that
     # zone; ``date()`` then cuts the bucket on the visitor's midnight.
-    bucket = func.date(func.timezone(tz, ChatMessage.created_at)).label("activity_date")
+    bucket = func.date(func.timezone(zone.key, ChatMessage.created_at)).label("activity_date")
     stmt = (
         select(bucket, func.count(ChatMessage.id).label("message_count"))
         .join(ChatSession)

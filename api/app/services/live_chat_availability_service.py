@@ -54,6 +54,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.cache import PREFIX, get_redis
+from app.core.timezones import UnknownTimezoneError, load_zone
 from app.db.models import Bot, ChatSession, Operator
 from app.services import operator_presence_service as presence
 
@@ -485,12 +486,10 @@ def _next_business_hour_iso(business_hours: dict | None) -> str | None:
 
 def _now_in_timezone(tz_name: str | None) -> datetime:
     """Return current datetime in the named timezone. Defaults to UTC."""
-    if not tz_name:
+    if not tz_name or not isinstance(tz_name, str):
         return datetime.now(UTC)
     try:
-        from zoneinfo import ZoneInfo
-
-        return datetime.now(ZoneInfo(tz_name))
-    except Exception:
-        # zoneinfo raises on unknown names. Caller treats this as "fail open"
+        return datetime.now(load_zone(tz_name))
+    except UnknownTimezoneError:
+        # Caller treats this as "fail open"
         return datetime.now(UTC)

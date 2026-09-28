@@ -8,8 +8,9 @@ import logging
 import os
 import random
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 
 import litellm
@@ -49,12 +50,26 @@ from app.services import credential_facts as _credential_facts
 from app.services import currency_scoring as _currency_scoring
 from app.services import field_question as _field_question
 from app.services import meeting_gate as _meeting_gate
-from app.services import plan_entitlements_service, runtime_config, support_route, urgent_route, visitor_reaction
+from app.services import (
+    plan_entitlements_service,
+    runtime_config,
+    support_route,
+    urgent_followup,
+    urgent_route,
+    visitor_reaction,
+)
 from app.services import pricing_gate as _pricing_gate
 from app.services.commitment_guard import (
     redact_unsupported_commitments,
     redact_unsupported_country_claims,
     snapshot_chunks,
+)
+from app.services.contact_details import (
+    URGENT_NO_CONTACT_SHORT,
+    FoundContact,
+    find_contact,
+    is_only_contact,
+    mentions_contact,
 )
 from app.services.document_request import (
     TOPIC_MIN_OVERLAP,
@@ -1277,23 +1292,9 @@ def _question_suggests_leave_message(text: str) -> bool:
     return bool(_LEAVE_MESSAGE_QUESTION_RE.search(text))
 
 
-# A contact the reply itself gives: an email address, or a phone number of
-# seven or more digits. Both repeats are bounded, so the scan is linear.
-_REPLY_EMAIL_RE = re.compile(r"[\w.+'-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63}){1,4}")
-_REPLY_PHONE_RE = re.compile(r"(?<![\w.])\+?\(?\d[\d ().-]{5,18}\d(?!\w|\.\d)")
-_ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
-_PHONE_MIN_DIGITS = 7
-
-
 def _reply_gives_contact(text: str) -> bool:
     """Whether the reply names an email address or a phone number."""
-    if "@" in text and _REPLY_EMAIL_RE.search(text):
-        return True
-    return any(
-        sum(char.isdigit() for char in match.group(0)) >= _PHONE_MIN_DIGITS
-        and _ISO_DATE_RE.fullmatch(match.group(0)) is None
-        for match in _REPLY_PHONE_RE.finditer(text)
-    )
+    return mentions_contact(text)
 
 
 def _response_suggests_leave_message(text: str) -> bool:
@@ -3699,6 +3700,8 @@ def _live_team_reachable(bot_id: int, within_hours: bool) -> bool:
 
 #: The push body for an urgent incident, shown under the handoff push's "New chat from" title.
 _URGENT_PUSH_REASON = "URGENT: active incident reported in chat"
+#: The same push when the visitor has left no email or phone, worded like the alert email.
+_URGENT_PUSH_REASON_NO_CONTACT = f"{_URGENT_PUSH_REASON}. {URGENT_NO_CONTACT_SHORT}"
 #: How much of the visitor's message the team email quotes.
 _URGENT_EMAIL_MESSAGE_LIMIT = 500
 #: The live-chat queue timeout a handoff push is enqueued with when the bot has none
@@ -3706,7 +3709,7 @@ _URGENT_EMAIL_MESSAGE_LIMIT = 500
 _DEFAULT_QUEUE_TIMEOUT_SECONDS = 60
 
 
-def _alert_team_of_urgent_incident(session, bot, client_id: int, session_id: str, visitor_message: str) -> None:
+def _alert_team_of_urgent_incident(session, bot, client_id: int, session_id: str, visitor_message: str) -> float | None:
     """Tell the team a visitor reported an active incident. Never breaks the turn.
 
     Three channels, each failing on its own:
@@ -3725,6 +3728,13 @@ def _alert_team_of_urgent_incident(session, bot, client_id: int, session_id: str
 
     The visitor's name and contact come from the stored lead, never from the
     message, which is quoted in the email as it was written.
+
+    Without an email or a phone on the lead, all three say so (the owner's
+    report of 2026-09-28: an alert with only a name), and a worker job is
+    scheduled for ``urgent_followup.NO_CONTACT_FOLLOW_UP_DELAY_SECONDS`` later to
+    tell the team if none has arrived by then. Returns when that job is due, or
+    None when no job was enqueued (the lead had contact, or the enqueue failed),
+    so the caller records the due time only for a job that exists.
     """
     bot_id = getattr(bot, "id", None)
     bot_name = getattr(bot, "name", None)
@@ -3741,6 +3751,8 @@ def _alert_team_of_urgent_incident(session, bot, client_id: int, session_id: str
     # Plain values, read before the notification: its rollback on failure expires the row.
     visitor_name = lead.name if lead is not None and lead.name else None
     contact = {"name": lead.name, "email": lead.email, "phone": lead.phone} if lead is not None else None
+    no_contact = not urgent_followup.lead_has_contact(lead)
+    alerted_at = time.time()
 
     try:
         notify_handoff_request(
@@ -3750,6 +3762,7 @@ def _alert_team_of_urgent_incident(session, bot, client_id: int, session_id: str
             visitor_name=visitor_name,
             bot_name=bot_name,
             urgent=True,
+            no_contact=no_contact,
         )
     except Exception:  # noqa: BLE001 - an alert failure must not lose the visitor's reply
         logger.warning("urgent_incident_notification_failed | bot=%s session=%s", bot_id, session_id, exc_info=True)
@@ -3771,7 +3784,7 @@ def _alert_team_of_urgent_incident(session, bot, client_id: int, session_id: str
             logger.warning("urgent_incident_email_failed | bot=%s session=%s", bot_id, session_id, exc_info=True)
 
     if bot_id is None:
-        return
+        return None
     try:
         enqueue_sync(
             "task_dispatch_handoff_push",
@@ -3779,11 +3792,66 @@ def _alert_team_of_urgent_incident(session, bot, client_id: int, session_id: str
             bot_id,
             None,
             visitor_name,
-            _URGENT_PUSH_REASON,
+            _URGENT_PUSH_REASON_NO_CONTACT if no_contact else _URGENT_PUSH_REASON,
             queue_timeout,
         )
     except Exception:  # noqa: BLE001 - a queue failure must not lose the visitor's reply
         logger.warning("urgent_incident_push_enqueue_failed | bot=%s session=%s", bot_id, session_id, exc_info=True)
+    if not no_contact:
+        return None
+    try:
+        # One job per conversation: the alert fires once, and the fixed id lets
+        # ARQ drop a duplicate enqueue.
+        enqueue_sync(
+            urgent_followup.NO_CONTACT_FOLLOW_UP_TASK,
+            session_id,
+            bot_id,
+            alerted_at,
+            _defer_by=timedelta(seconds=urgent_followup.NO_CONTACT_FOLLOW_UP_DELAY_SECONDS),
+            _job_id=f"urgent-no-contact:{session_id}",
+        )
+    except Exception:  # noqa: BLE001 - a queue failure must not lose the visitor's reply
+        logger.warning("urgent_no_contact_enqueue_failed | bot=%s session=%s", bot_id, session_id, exc_info=True)
+        return None
+    return alerted_at + urgent_followup.NO_CONTACT_FOLLOW_UP_DELAY_SECONDS
+
+
+def _capture_urgent_contact(
+    session, bot, *, client_id: int, bot_id: int, session_id: str, found: FoundContact, is_preview: bool
+) -> str | None:
+    """Take the visitor's email or phone from a message in an urgent conversation.
+
+    The urgent reply asks for one (the owner's report of 2026-09-28: the team
+    was alerted with no way to reach the visitor). Returns the acknowledgement
+    to send, or None so the turn goes on as usual: normal lead capture is not
+    this route's job. Capture has an end: only on the first
+    ``urgent_followup.CONTACT_WINDOW_TURNS`` visitor turns after a reply that
+    asked, and only while the lead has neither an email nor a phone, so a
+    later ticket number or a second address is never read as contact details
+    and never replaces the first.
+
+    The values are saved to the lead as the form saves them and go to the team,
+    as the alert did. An owner preview saves and acknowledges but pages no one,
+    like the urgent route.
+    """
+    chat_session = session.query(ChatSession).filter(ChatSession.id == session_id, ChatSession.bot_id == bot_id).first()
+    if not urgent_followup.is_urgent_session(chat_session) or not urgent_followup.in_contact_window(
+        session, chat_session
+    ):
+        return None
+    if urgent_followup.lead_has_contact(get_lead_info_by_session(session, session_id, bot_id=bot_id)):
+        return None
+    visitor_name, new_values = urgent_followup.save_urgent_contact(
+        session, chat_session, bot_id=bot_id, session_id=session_id, found=found
+    )
+    session.commit()
+    if new_values and is_preview:
+        logger.info("urgent_contact_alert_skipped_for_preview | bot=%s session=%s", bot_id, session_id)
+    elif new_values:
+        urgent_followup.alert_team_of_contact(
+            session, bot, client_id=client_id, session_id=session_id, visitor_name=visitor_name, contact=new_values
+        )
+    return urgent_followup.contact_acknowledgement(found)
 
 
 def _has_prior_visitor_turns(history: list) -> bool:
@@ -9215,6 +9283,66 @@ async def rag_pipeline_stream(
                 except Exception:  # noqa: BLE001  Preview personalization is best-effort
                     logger.warning("preview name seed failed for session %s", session_id, exc_info=True)
 
+            # ── Contact details after an urgent alert ───────────────────────
+            # The urgent reply asks for a phone number or email, so the next
+            # visitor turns of that conversation are read for one before any
+            # other route (``_capture_urgent_contact`` has the window). A
+            # number the message gives as someone else's ("the attacker called
+            # us from +44 ...") is rejected by ``find_contact`` itself. A
+            # visitor who gives their own number while the incident goes on
+            # ("+91 98765 43210, ransomware is still encrypting our servers")
+            # is captured, and the urgent reply that follows no longer asks for
+            # a contact it now has. Pure regex checks first: an ordinary turn
+            # pays no query. Only on a plan whose team gets the alert.
+            #
+            # A message that also asks something ("+91 98765 43210. what should
+            # we do first?") gets the acknowledgement as the first line of the
+            # normal reply; one that is only the contact gets only the
+            # acknowledgement.
+            _contact_lead = ""
+            _found_contact = find_contact(question) if _plan_support_allowed and bid is not None else None
+            if _found_contact:
+                _contact_ack = _capture_urgent_contact(
+                    session,
+                    bot,
+                    client_id=cid,
+                    bot_id=bid,
+                    session_id=session_id,
+                    found=_found_contact,
+                    is_preview=_is_preview,
+                )
+                if _contact_ack is not None and not is_only_contact(question, _found_contact):
+                    _safety_net_metric(
+                        "urgent_contact_captured", path="stream", with_question="True", session=session_id, bot_id=bid
+                    )
+                    # ``_care_note`` leads every reply below, and a reply that
+                    # carries it skips the shared answer cache.
+                    _contact_lead = f"{_contact_ack}\n\n"
+                    _care_note += _contact_lead
+                elif _contact_ack is not None:
+                    _safety_net_metric("urgent_contact_captured", path="stream", session=session_id, bot_id=bid)
+                    # Fixed text, saved before the first frame like the urgent reply.
+                    _contact_msg = add_chat_message(
+                        session,
+                        session_id,
+                        client_id=cid,
+                        role="bot",
+                        content=_contact_ack,
+                        bot_id=bid,
+                        source_language=_lang_base(language),
+                    )
+                    session.flush()
+                    _contact_meta = {
+                        "message_id": _contact_msg.id,
+                        "suggest_handoff": False,
+                        "qualification_pending": False,
+                    }
+                    session.commit()
+                    yield _stream_metadata(session_id, [], language)
+                    yield _contact_ack
+                    yield f"\nFINAL_METADATA:{json.dumps(_contact_meta)}\n"
+                    return
+
             # ── Urgent incident ──────────────────────────────────────────────
             # A visitor reporting an attack in progress gets the fastest human
             # route and a priority alert. On 2026-09-10 "we are under a
@@ -9235,7 +9363,9 @@ async def rag_pipeline_stream(
             # that names an incident or describes a symptom reaches the
             # classifier, on a worker thread under a deadline, and not one that
             # only asks about the business's services ("do you offer phishing
-            # simulation training?" on a security vendor's bot).
+            # simulation training?" on a security vendor's bot), or asks about
+            # them with a past problem as background ("we got phished last year,
+            # do you do training?").
             if (
                 urgent_route.might_be_urgent_incident(question)
                 and not urgent_route.asks_only_about_services(question)
@@ -9253,6 +9383,10 @@ async def rag_pipeline_stream(
                 # Set once the team was alerted: a second urgent message gets its
                 # own words and alerts no one again.
                 _urgent_repeat = _card_already_shown(_urgent_session, "urgent_notified")
+                # With no email or phone on file the reply asks for one in the chat.
+                _urgent_contact_known = urgent_followup.lead_has_contact(
+                    get_lead_info_by_session(session, session_id, bot_id=bid)
+                )
                 _urgent = urgent_reply(
                     company_name=_company_name,
                     support_enabled=_plan_support_allowed,
@@ -9261,6 +9395,7 @@ async def rag_pipeline_stream(
                     emergency_url=emergency_url_from_answer_links(getattr(bot, "answer_links", None)),
                     contact_url=_contact_url,
                     repeat=_urgent_repeat,
+                    ask_for_contact=not _urgent_contact_known,
                 )
                 _safety_net_metric(
                     "urgent_incident",
@@ -9269,6 +9404,9 @@ async def rag_pipeline_stream(
                     session=session_id,
                     bot_id=bid,
                 )
+                # A contact captured from this same message is acknowledged
+                # first, as the support reply below does.
+                _urgent_text = _contact_lead + _urgent.text
                 # The reply is fixed text, so it is saved and the team alerted
                 # BEFORE the first frame: a visitor who closes the tab mid-stream
                 # still leaves the reply and the alert behind.
@@ -9277,7 +9415,7 @@ async def rag_pipeline_stream(
                     session_id,
                     client_id=cid,
                     role="bot",
-                    content=_urgent.text,
+                    content=_urgent_text,
                     bot_id=bid,
                     source_language=_lang_base(language),
                 )
@@ -9297,6 +9435,9 @@ async def rag_pipeline_stream(
                     _mark_card_shown(_urgent_session, "handoff_offered")
                 # The visitor was offered a person (or a page to reach one): not unhelped.
                 _set_unhelped_streak(_urgent_session, 0)
+                if _plan_support_allowed and not _urgent_contact_known:
+                    # The next visitor turns are read for the phone or email asked for.
+                    urgent_followup.mark_contact_asked(_urgent_session, _bot_msg.id)
                 if _plan_support_allowed and not _urgent_repeat:
                     _mark_card_shown(_urgent_session, "urgent_notified")
                     # The reply and its flags are committed before the alert,
@@ -9307,10 +9448,14 @@ async def rag_pipeline_stream(
                         # the reply, but the real team is not paged for it.
                         logger.info("urgent_incident_alert_skipped_for_preview | bot=%s session=%s", bid, session_id)
                     else:
-                        _alert_team_of_urgent_incident(session, bot, cid, session_id, question)
+                        _follow_up_due = _alert_team_of_urgent_incident(session, bot, cid, session_id, question)
+                        if _follow_up_due is not None:
+                            # The widget's poll writes the presence heartbeat only
+                            # for a follow-up job that exists.
+                            urgent_followup.mark_follow_up_due(_urgent_session, _follow_up_due)
                 session.commit()
                 yield _stream_metadata(session_id, [], language)
-                yield _urgent.text
+                yield _urgent_text
                 yield f"\nFINAL_METADATA:{json.dumps(_urgent_meta)}\n"
                 return
 
@@ -9401,12 +9546,13 @@ async def rag_pipeline_stream(
                 )
                 # Fixed text, so saved and the team alerted BEFORE the first frame,
                 # as the urgent reply is.
+                _support_text = _contact_lead + _support.text
                 _support_bot_msg = add_chat_message(
                     session,
                     session_id,
                     client_id=cid,
                     role="bot",
-                    content=_support.text,
+                    content=_support_text,
                     bot_id=bid,
                     source_language=_lang_base(language),
                 )
@@ -9433,7 +9579,7 @@ async def rag_pipeline_stream(
                         support_route.alert_team_of_support_request(session, bot, cid, session_id, question)
                 session.commit()
                 yield _stream_metadata(session_id, [], language)
-                yield _support.text
+                yield _support_text
                 yield f"\nFINAL_METADATA:{json.dumps(_support_meta)}\n"
                 return
 
