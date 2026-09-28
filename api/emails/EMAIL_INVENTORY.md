@@ -29,11 +29,11 @@
 ### Rendering — all in code (one design system)
 **Every email now renders raw HTML in Python** from the shared design system in
 `app/services/email_design.py` (monochrome + single-indigo-accent, dark-mode hardened
-for Outlook). There are **no Brevo saved templates in the send path** — all 30 senders
+for Outlook). There are **no Brevo saved templates in the send path** — all 32 senders
 build HTML and dispatch through `send_email_async()` → `_send_raw_email()` →
 `_send_brevo_email()` (which supports attachments, used by invoices). The gallery in
 `emails/gallery/` is generated from these same senders, so what you review is what
-customers receive — but note it renders **19 of the 30**, not all of them; see
+customers receive — but note it renders **19 of the 32**, not all of them; see
 `emails/gallery/README.md`.
 
 The legacy `_send_brevo_template()` transport and the `TEMPLATE_*` IDs (57–63) still
@@ -50,7 +50,7 @@ exist for backward-compat and the super-admin catalogue, but nothing sends throu
 
 ---
 
-## 2. Email Catalogue (30 distinct emails)
+## 2. Email Catalogue (32 distinct emails)
 
 Grouped by category. All emails render raw HTML in code (see above). Any `#NN` is the legacy Brevo template ID for reference only — it is **not** used to send.
 
@@ -323,6 +323,26 @@ Grouped by category. All emails render raw HTML in code (see above). Any `#NN` i
 | Trigger | `quotation_routes.py` — deferred `QUOTATION_EMAIL_DELAY_SECONDS` (~10 min) after `POST /chat/quotation/accept`, via ARQ `task_send_quotation_visitor_email` |
 | Metered | No |
 
+#### D10. Urgent incident: visitor contact details
+| | |
+|---|---|
+| Function | `send_urgent_contact_email(notification_email, bot_name, visitor_name, email, phone, reply_to, session_id)` |
+| Subject | `Contact details for {name}: {email}, {phone}` ("a visitor" without a name) |
+| Audience | Operator(s): the bot's `handoff_request` list, as the urgent alert (D2, `urgent=True`) |
+| Body | The email and/or phone number the visitor typed in the chat after the urgent reply asked for one, with a link to the conversation |
+| Trigger | `rag_service._capture_urgent_contact` via `urgent_followup.alert_team_of_contact`, once per new value, on a chat turn in a conversation the team was alerted to. Not for owner previews |
+| Metered | No |
+
+#### D11. Urgent incident: still no contact details
+| | |
+|---|---|
+| Function | `send_urgent_no_contact_email(notification_email, bot_name, visitor_name, presence, minutes_since_alert, reply_to, session_id)` |
+| Subject | `Still no contact details for {name}` ("a visitor" without a name) |
+| Audience | Operator(s): the bot's `handoff_request` list, as the urgent alert (D2, `urgent=True`) |
+| Body | The visitor reported an active incident N minutes ago and left no email or phone; one line on whether they are still on the page; link to the conversation |
+| Trigger | ARQ `task_urgent_no_contact_follow_up`, deferred 3 minutes after an urgent alert sent with no email or phone. Sends nothing when contact details arrived, an operator joined, or it already ran |
+| Metered | No |
+
 ### E. Affiliate / Partners (raw HTML — free)
 
 #### E1. Affiliate welcome
@@ -390,7 +410,7 @@ From `api/app/worker/settings.py` (`cron_jobs`) — server timezone:
 
 ## 4. Summary
 
-- **30 distinct emails** across 7 categories: Auth (4), Trial lifecycle (5), Billing (8), Lead/Live-chat (9), Affiliate (2), Team (1), Install handoff (1).
+- **32 distinct emails** across 7 categories: Auth (4), Trial lifecycle (5), Billing (8), Lead/Live-chat (11), Affiliate (2), Team (1), Install handoff (1).
 - **All 19 render raw HTML in code** from the shared design system (`app/services/email_design.py`); no Brevo saved templates are used to send. Legacy template IDs 57–63 remain for reference only.
 - **Audiences:** customer/client, operator, and website **visitor** (transcript, visitor confirmation, missed callback).
 - **Attachments:** only invoices (C1) attach a file (the PDF). The quotation document (D9) is inline-only.
