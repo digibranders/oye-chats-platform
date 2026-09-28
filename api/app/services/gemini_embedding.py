@@ -109,31 +109,11 @@ def _embed_one_batch(
     max_wait_s: float | None = None,
     task_type: str | None = None,
 ) -> list[list[float]]:
-    """Embed one batch, recorded as one Langfuse embedding observation.
+    """Embed one batch with retries, recorded as one Langfuse embedding observation.
 
     The observation carries counts and sizes, never the text: a crawl embeds
     thousands of chunks, and a query embedding is the visitor's own words.
     """
-    characters = sum(len(text) for text in batch)
-    with langfuse_generation(
-        "gemini-embedding",
-        model=f"gemini/{GEMINI_EMBED_MODEL}",
-        input={"texts": len(batch), "characters": characters, "task_type": task_type},
-        as_type="embedding",
-    ) as observation:
-        vectors, reported_tokens = _request_batch(client, batch, max_wait_s, task_type)
-        observation.record_embedding(texts=len(batch), characters=characters, reported_input_tokens=reported_tokens)
-    return vectors
-
-
-def _request_batch(
-    client: httpx.Client,
-    batch: list[str],
-    max_wait_s: float | None,
-    task_type: str | None,
-) -> tuple[list[list[float]], int | None]:
-    """POST one batch with retries. Returns the normalized vectors and the
-    provider's input token count, if it reported one."""
     url = f"{GEMINI_EMBED_URL}/models/{GEMINI_EMBED_MODEL}:batchEmbedContents"
     # ``taskType`` is what makes the embedding asymmetric: RETRIEVAL_DOCUMENT
     # for stored chunks, RETRIEVAL_QUERY for the question. It is a property of
@@ -152,55 +132,66 @@ def _request_batch(
             for text in batch
         ]
     }
-    last_err: str = "unknown error"
-    for attempt in range(1, _RETRY_ATTEMPTS + 1):
-        # Reserve this batch's request-units against the project-wide per-minute
-        # quota before every POST (retries included. Each POST is billed) so we
-        # pace under the ceiling instead of bursting into 429s. A caller-supplied
-        # ``max_wait_s`` (the query path) raises EmbedWaitExceeded here rather
-        # than sleeping behind bulk-ingestion debt. Deliberately NOT caught by
-        # this retry loop: retrying can't make the bucket drain faster.
-        embed_rate_limiter.acquire(len(batch), max_wait=max_wait_s)
-        try:
-            resp = client.post(url, params={"key": GOOGLE_API_KEY}, json=body, timeout=_TIMEOUT)
-        except httpx.HTTPError as exc:
-            # Network-level failure. Retry with exponential backoff.
-            last_err = f"{type(exc).__name__}: {exc}"
-            delay = min(_RETRY_BASE * (2 ** (attempt - 1)), _RETRY_MAX)
-        else:
-            if resp.status_code == 200:
-                try:
-                    payload = resp.json()
-                    embeddings = payload["embeddings"]
-                except (KeyError, TypeError, ValueError) as exc:
-                    raise RuntimeError(f"Gemini returned an unparseable body: {exc}") from exc
-                if len(embeddings) != len(batch):
-                    raise RuntimeError(f"Gemini returned {len(embeddings)} embeddings for {len(batch)} inputs")
-                return [_l2_normalize(item["values"]) for item in embeddings], _reported_input_tokens(payload)
-            if resp.status_code == 429:
-                # Quota. Honour the server's own retry hint; fall back to backoff.
-                server_delay = _retry_delay_from_429(resp)
-                backoff = min(_RETRY_BASE * (2 ** (attempt - 1)), _RETRY_MAX)
-                delay = min((server_delay if server_delay is not None else backoff) + 0.5, _RETRY_MAX_429)
-                last_err = f"429 quota: {resp.text[:200]}"
-            elif resp.status_code >= 500:
-                last_err = f"{resp.status_code}: {resp.text[:200]}"
+    characters = sum(len(text) for text in batch)
+    with langfuse_generation(
+        "gemini-embedding",
+        model=f"gemini/{GEMINI_EMBED_MODEL}",
+        input={"texts": len(batch), "characters": characters, "task_type": task_type},
+        as_type="embedding",
+    ) as observation:
+        last_err: str = "unknown error"
+        for attempt in range(1, _RETRY_ATTEMPTS + 1):
+            # Reserve this batch's request-units against the project-wide per-minute
+            # quota before every POST (retries included. Each POST is billed) so we
+            # pace under the ceiling instead of bursting into 429s. A caller-supplied
+            # ``max_wait_s`` (the query path) raises EmbedWaitExceeded here rather
+            # than sleeping behind bulk-ingestion debt. Deliberately NOT caught by
+            # this retry loop: retrying can't make the bucket drain faster.
+            embed_rate_limiter.acquire(len(batch), max_wait=max_wait_s)
+            try:
+                resp = client.post(url, params={"key": GOOGLE_API_KEY}, json=body, timeout=_TIMEOUT)
+            except httpx.HTTPError as exc:
+                # Network-level failure. Retry with exponential backoff.
+                last_err = f"{type(exc).__name__}: {exc}"
                 delay = min(_RETRY_BASE * (2 ** (attempt - 1)), _RETRY_MAX)
             else:
-                # 4xx other than 429 (bad request, auth), not retryable.
-                raise RuntimeError(f"Gemini embedding rejected ({resp.status_code}): {resp.text[:300]}")
+                if resp.status_code == 200:
+                    try:
+                        payload = resp.json()
+                        embeddings = payload["embeddings"]
+                    except (KeyError, TypeError, ValueError) as exc:
+                        raise RuntimeError(f"Gemini returned an unparseable body: {exc}") from exc
+                    if len(embeddings) != len(batch):
+                        raise RuntimeError(f"Gemini returned {len(embeddings)} embeddings for {len(batch)} inputs")
+                    vectors = [_l2_normalize(item["values"]) for item in embeddings]
+                    observation.record_embedding(
+                        texts=len(batch), characters=characters, reported_input_tokens=_reported_input_tokens(payload)
+                    )
+                    return vectors
+                if resp.status_code == 429:
+                    # Quota. Honour the server's own retry hint; fall back to backoff.
+                    server_delay = _retry_delay_from_429(resp)
+                    backoff = min(_RETRY_BASE * (2 ** (attempt - 1)), _RETRY_MAX)
+                    delay = min((server_delay if server_delay is not None else backoff) + 0.5, _RETRY_MAX_429)
+                    last_err = f"429 quota: {resp.text[:200]}"
+                elif resp.status_code >= 500:
+                    last_err = f"{resp.status_code}: {resp.text[:200]}"
+                    delay = min(_RETRY_BASE * (2 ** (attempt - 1)), _RETRY_MAX)
+                else:
+                    # 4xx other than 429 (bad request, auth), not retryable.
+                    raise RuntimeError(f"Gemini embedding rejected ({resp.status_code}): {resp.text[:300]}")
 
-        if attempt == _RETRY_ATTEMPTS:
-            break
-        logger.warning(
-            "Gemini embed retryable error (%s). Retry %d/%d in %.1fs",
-            last_err.split(":")[0],
-            attempt,
-            _RETRY_ATTEMPTS,
-            delay,
-        )
-        time.sleep(delay)
-    raise RuntimeError(f"Gemini embedding failed after {_RETRY_ATTEMPTS} attempts: {last_err}")
+            if attempt == _RETRY_ATTEMPTS:
+                break
+            logger.warning(
+                "Gemini embed retryable error (%s). Retry %d/%d in %.1fs",
+                last_err.split(":")[0],
+                attempt,
+                _RETRY_ATTEMPTS,
+                delay,
+            )
+            time.sleep(delay)
+        raise RuntimeError(f"Gemini embedding failed after {_RETRY_ATTEMPTS} attempts: {last_err}")
 
 
 def embed_texts(
