@@ -1,6 +1,8 @@
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from app.services.ip_intel_service import fetch_ip_intel
 
 
@@ -54,3 +56,22 @@ def test_fetch_ip_intel_returns_none_without_api_key(monkeypatch):
     monkeypatch.delenv("IPAPI_IS_KEY", raising=False)
     result = fetch_ip_intel("1.2.3.4")
     assert result is None
+
+
+@pytest.mark.parametrize("flag", ["is_vpn", "is_proxy", "is_tor", "is_datacenter"])
+def test_an_anonymised_or_server_address_is_never_a_company(monkeypatch, flag):
+    """A VPN, proxy, Tor or datacenter exit names whoever runs the exit, not the
+    visitor's employer. Pricing bills 5 credits only for a real business, so
+    these must resolve to no company even on a range typed ``business``."""
+    monkeypatch.setenv("IPAPI_IS_KEY", "test-key")
+    payload = {
+        "company": {"name": "Acme Corp", "domain": "acme.com", "type": "business"},
+        "asn": {"asn": 64500, "org": "Acme Corp"},
+        flag: True,
+    }
+    with patch("app.services.ip_intel_service.urllib.request.urlopen", return_value=_mock_response(payload)):
+        result = fetch_ip_intel("1.2.3.4")
+
+    assert result["company_name"] is None
+    assert result["company_domain"] is None
+    assert result[flag] is True  # the free signal is still reported

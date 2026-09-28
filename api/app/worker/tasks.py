@@ -356,7 +356,9 @@ async def task_extract_qualification(
     return True
 
 
-async def task_resolve_lead_company(ctx: dict, session_id: str, domain: str, bot_id: int) -> bool:
+async def task_resolve_lead_company(
+    ctx: dict, session_id: str, domain: str, bot_id: int, verification_billed: bool = False
+) -> bool:
     """Resolve a lead's email domain to its company identity.
 
     Why this is a QUEUED task and not a tail call on the request-adjacent
@@ -393,7 +395,9 @@ async def task_resolve_lead_company(ctx: dict, session_id: str, domain: str, bot
     logger.info("task_resolve_lead_company: session=%s domain=%s bot_id=%s", session_id, domain, bot_id)
 
     loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, lambda: _resolve_lead_company(session_id, domain, bot_id))
+    await loop.run_in_executor(
+        None, lambda: _resolve_lead_company(session_id, domain, bot_id, verification_billed=verification_billed)
+    )
     return True
 
 

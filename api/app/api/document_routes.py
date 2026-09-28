@@ -689,7 +689,8 @@ def ingest_documents(
     and delete what they already uploaded, just not add more until they
     reactivate.
 
-    Credit-metered at ``credit_cost.document_upload`` per file (default 2).
+    Credit-metered at one credit per ``credit_cost.document_upload_words_per_credit``
+    words (250), with ``credit_cost.document_upload`` (1) as the per-file minimum.
     Cost is calculated against the post-validation file count so unsupported
     extensions and oversize files don't burn credits. Deduction happens
     BEFORE the disk write so we never persist a file we can't bill for; if
