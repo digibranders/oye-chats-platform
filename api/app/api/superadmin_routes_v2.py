@@ -1666,6 +1666,9 @@ _SAFETY_NET_METRIC_NAMES = [
     # the model (document_request.py), the offer of a person after two unhelped
     # turns, and the fixed reply to a request for a person (handoff_reply.py).
     "urgent_incident",
+    # An email or phone number typed after the urgent reply asked for one,
+    # saved to the lead and sent to the team (urgent_followup.py).
+    "urgent_contact_captured",
     "support_request",
     "document_request",
     "document_request_fell_through",

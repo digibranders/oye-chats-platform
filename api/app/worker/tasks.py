@@ -2369,6 +2369,24 @@ async def task_send_visitor_message_email(
     return await loop.run_in_executor(None, _run)
 
 
+async def task_urgent_no_contact_follow_up(ctx: dict, session_id: str, bot_id: int, alerted_at: float) -> bool:
+    """Tell the team when a visitor who reported an urgent incident left no way to reach them.
+
+    Scheduled by ``rag_service._alert_team_of_urgent_incident`` with ``_defer_by``
+    set to ``urgent_followup.NO_CONTACT_FOLLOW_UP_DELAY_SECONDS``, only when the
+    alert went out with no email or phone. ``run_no_contact_follow_up`` re-reads
+    the session and the lead, so contact details that arrived in the meantime
+    (from the form or typed in the chat) cancel it, and it records its run
+    before sending, so an ARQ retry sends nothing twice.
+    """
+    import asyncio
+
+    from app.services.urgent_followup import run_no_contact_follow_up
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, run_no_contact_follow_up, session_id, bot_id, alerted_at)
+
+
 async def task_dispatch_transfer_push(
     ctx: dict,
     session_id: str,

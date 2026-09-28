@@ -2717,12 +2717,15 @@ def get_pending_connect_request(session_id: SessionId, bot: Bot = Depends(get_cu
 
     Auth: ``X-Bot-Key`` (visitor widget). The session must belong to the bot.
     """
+    from app.services import urgent_followup
+
     with get_session() as session:
         chat_session = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
         if not chat_session:
             return {"pending": False}
         if chat_session.bot_id != bot.id:
             raise HTTPException(status_code=403, detail="Access denied")
+        awaits_urgent_follow_up = urgent_followup.awaits_follow_up(chat_session)
 
     from app.services.live_chat_service import manager as live_manager
 
@@ -2730,6 +2733,12 @@ def get_pending_connect_request(session_id: SessionId, bot: Bot = Depends(get_cu
     # "visitor is still on the page chatting with the AI". We piggyback the
     # heartbeat here so we don't need a second endpoint for presence.
     live_manager.record_bot_session_activity(session_id)
+    # That record lives in this process only. The urgent no-contact follow-up runs
+    # in the worker and tells the team whether the visitor is still on the page,
+    # so an urgent session also writes the heartbeat to the shared cache until
+    # the follow-up has run. Every other session costs nothing extra.
+    if awaits_urgent_follow_up:
+        urgent_followup.record_presence(session_id)
 
     req = live_manager.get_connect_request(session_id)
     if not req:

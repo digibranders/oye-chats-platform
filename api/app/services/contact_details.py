@@ -45,6 +45,8 @@ _PHONE_CUE_RE = re.compile(r"(?i)\b(?:phone|call|mobile|cell|number|whatsapp|tel
 URGENT_NO_CONTACT_LINE = (
     "No email or phone yet. Reply in the conversation now: they were on the page when this was sent."
 )
+#: The same, for a push notification body, which has no room for the second half.
+URGENT_NO_CONTACT_SHORT = "No email or phone yet. Reply in the conversation now."
 
 
 @dataclass(frozen=True)

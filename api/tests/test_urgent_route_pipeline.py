@@ -162,9 +162,11 @@ async def test_a_reachable_team_is_offered_a_connection_right_away(db, monkeypat
     frames = await _drive_stream(bot, URGENT, "urgent-team")
     meta = _final_meta(frames)
 
+    # No lead yet, so the reply also asks for a phone number or email in the chat.
     assert _answer_text(frames) == (
-        "This sounds urgent, so I've flagged it to **Acme** as a priority. Share your details in the form "
-        "below and I'll connect you with them right away."
+        "This sounds urgent, so I've flagged it to **Acme** as a priority. What's the best phone number or email "
+        "to reach you on right now? Type it here, or share your details in the form below and I'll connect you "
+        "with them right away."
     )
     assert meta["suggest_handoff"] is True
     assert "show_leave_message" not in meta
@@ -172,8 +174,8 @@ async def test_a_reachable_team_is_offered_a_connection_right_away(db, monkeypat
     again = await _drive_stream(bot, "our servers have been hacked, please hurry", "urgent-team")
 
     assert _answer_text(again) == (
-        "I've already flagged this to **Acme** as a priority. The form is just below: "
-        "share your details there and I'll connect you with them right away."
+        "I've already flagged this to **Acme** as a priority. Type the best phone number or email to reach you "
+        "on here, or share your details in the form just below and I'll connect you with them right away."
     )
     assert _final_meta(again)["suggest_handoff"] is True
     assert len(alerts["notify"]) == 1 and len(_push_jobs(alerts)) == 1
@@ -200,8 +202,8 @@ async def test_a_bot_without_live_chat_opens_the_message_card(db, monkeypatch, a
     again = await _drive_stream(bot, URGENT, "urgent-3")
 
     assert _answer_text(again) == (
-        "I've already flagged this to **Acme** as a priority. Leave your details in the message form "
-        "so the team can contact you as soon as possible."
+        "I've already flagged this to **Acme** as a priority. Type the best phone number or email to reach you "
+        "on here, or leave your details in the message form so the team can contact you as soon as possible."
     )
     assert _final_meta(again)["show_leave_message"] is True
     assert _final_meta(again)["suggest_handoff"] is False
