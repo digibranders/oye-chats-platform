@@ -736,10 +736,28 @@ _ADVERSARIAL_SEEDS = [
     "password was ",
     "strange admin ",
     "logins from ",
+    # Tokens of the background skip: a dated past, an ask about the offering, the
+    # cuts at "and" and "because", and Hinglish.
+    "last month ",
+    "we had ",
+    "and ",
+    "cause ",
+    "do you guys do ",
+    "what would you offer ",
+    "your services ",
+    "pichle mahine ",
+    "aap kya ",
+    "we had some weird logins last month and ",
+    "what would you offer? we had a breach last year and ",
+    "do you offer ddos protection, we got phished last year and ",
 ]
 
 
-@pytest.mark.parametrize("check", [might_be_urgent_incident, _fallback_is_urgent], ids=lambda fn: fn.__name__)
+@pytest.mark.parametrize(
+    "check",
+    [might_be_urgent_incident, _fallback_is_urgent, urgent_route.asks_only_about_services],
+    ids=lambda fn: fn.__name__,
+)
 @pytest.mark.parametrize("seed", _ADVERSARIAL_SEEDS)
 def test_a_long_adversarial_message_is_judged_quickly(check, seed):
     message = (seed * (20_000 // len(seed) + 1))[:20_000]
@@ -957,3 +975,138 @@ def test_a_message_without_incident_words_is_not_a_service_question_about_them(m
 def test_the_service_question_check_is_linear_on_long_input():
     message = "do you offer ddos protection for your clients " * 500 + "?"
     assert timeit.timeit(lambda: urgent_route.asks_only_about_services(message), number=1) < 2.0
+
+
+# ── A prospect's question with a past problem as background ──────────────────
+
+#: Production, 2026-09-28, on two security vendors' bots. Both answered with the
+#: urgent reply and emailed the owner "URGENT: Eva reported an active incident".
+_PRODUCTION_FALSE_ALARM = (
+    "hey so um we were wondering if you guys do like sock monitoring for hospitals cause our it guy left last "
+    "month and we had some weird logins so yeah what would you offer for that"
+)
+#: Prospects who mention a past problem as the reason they ask what the business
+#: offers. Nothing is happening now and nobody asks for help with it now.
+_BACKGROUND_PROSPECTS = [
+    _PRODUCTION_FALSE_ALARM,
+    "we got phished last year, do you do training",
+    "after a breach last quarter we are evaluating SOC providers",
+    "pichle mahine hack hua tha, aap kya services dete ho",
+    "2 saal pehle hamara data leak hua tha, kya aap dark web monitoring karte ho",
+    "our site got hacked last year, what do you offer?",
+    "we were breached in 2023 and are looking for a managed SOC, what do you charge?",
+    "a couple of years ago our accounts got taken over, does your team do account security reviews",
+    "hi we had a data leak back in march and want to know what your dark web monitoring costs",
+    "Our previous IT company got hit by ransomware two years ago so we are shopping around for a new MSP, "
+    "do you offer managed backups?",
+    "what does your incident response retainer cost? we had a malware scare earlier this year",
+    "My wife's bakery had its instagram hijacked a few months back, do you do account security for small businesses",
+    "Last year someone got into our email and sent fake invoices. Do you offer email security?",
+    "we had a ddos a few years ago, what ddos protection plans do you have",
+    # Voice-to-text run-ons.
+    "ok so basically last year we had a ransomware thing at our clinic and it was a mess so we were thinking "
+    "do you guys offer backups and like recovery planning and stuff",
+    "yeah so like our clinic got hit with some phishing thing a while back um and our old it guy handled it but "
+    "he quit so do you guys do managed security for small clinics",
+]
+#: Incidents happening now, including ones that began earlier, come with a
+#: question about the services, or are dated in the past and said to continue.
+_ONGOING_INCIDENTS = [
+    "we got hacked",
+    "ransomware on our servers RIGHT NOW files getting encrypted pls help",
+    "customer data from our app is being sold on dark web, what do we do first",
+    "someone is using our stripe account",
+    "someone took over our stripe account and changed the payout details",
+    "customers say they get emails from us we never sent",
+    "someone is logged into our admin panel right now",
+    "our site got defaced this morning and its still up",
+    "we just found a crypto miner on our server",
+    "we got hacked last month and they are still in our systems, what do you offer",
+    "we had a breach last year and now it is happening again, do you do incident response?",
+    "our it guy left last month and now someone is logging into our email, what would you offer",
+    "we were hacked last year and the attacker is back in our network, can you help",
+    "a couple of years ago we got ransomware and our files are encrypted again, what do you offer",
+    "abhi hamara server hack ho gaya hai, aap kya services dete ho",
+    "so um yeah last month we had some weird logins and uh theyre still happening like every night do you guys "
+    "do monitoring",
+    "our site was hacked last month and it redirects to a casino, do you offer cleanup",
+    "we had a breach last year. can you do something about the ransomware on our servers",
+    "last year we got phished and since then someone keeps logging into our mailbox, what do you offer",
+    "we had some weird logins last month, what would you offer? also someone is sending emails from us we never sent",
+]
+#: Prospects the skip leaves to the classifier: the problem is recent enough to
+#: still be running, or the ask about the service names the incident on the
+#: visitor's own systems. The prompt's past-versus-ongoing rule decides these.
+_BACKGROUND_LEFT_TO_THE_CLASSIFIER = [
+    "we got hacked last week, do you offer incident response?",
+    "we had some weird logins, what would you offer",
+    "we were victims of a phishing scam in 2021, can you run phishing simulations for our staff",
+    "I've been hacked before so security matters to me",
+]
+
+
+@pytest.mark.parametrize("message", _BACKGROUND_PROSPECTS + _ONGOING_INCIDENTS + _BACKGROUND_LEFT_TO_THE_CLASSIFIER)
+def test_every_background_and_ongoing_message_passes_the_vocabulary_check(message):
+    assert might_be_urgent_incident(message) is True
+
+
+@pytest.mark.parametrize("message", _BACKGROUND_PROSPECTS)
+def test_a_service_question_with_a_past_problem_skips_the_classifier(message):
+    assert urgent_route.asks_only_about_services(message) is True
+
+
+@pytest.mark.parametrize("message", _ONGOING_INCIDENTS + _BACKGROUND_LEFT_TO_THE_CLASSIFIER)
+def test_an_ongoing_or_recent_incident_still_reaches_the_classifier(message):
+    assert urgent_route.asks_only_about_services(message) is False
+
+
+@pytest.mark.parametrize("message", _ALL_INCIDENTS)
+def test_no_labelled_incident_is_taken_for_background(message):
+    assert urgent_route.asks_only_about_services(message) is False
+
+
+@pytest.mark.parametrize("message", _BACKGROUND_PROSPECTS)
+def test_a_background_prospect_is_not_urgent_even_when_the_model_would_say_yes(model, message):
+    """The production model answered YES; the skip decides before it is asked."""
+    model.answer = "YES"
+
+    assert is_urgent_incident(message) is False
+    assert model.calls == []
+
+
+@pytest.mark.parametrize("message", _ONGOING_INCIDENTS)
+def test_an_ongoing_incident_is_urgent_when_the_model_says_yes(model, message):
+    model.answer = "YES"
+
+    assert is_urgent_incident(message) is True
+    assert len(model.calls) == 1
+
+
+@pytest.mark.parametrize("message", _BACKGROUND_PROSPECTS)
+def test_the_fallback_rules_do_not_page_for_a_background_prospect(message):
+    assert _fallback_is_urgent(message) is False
+
+
+def test_the_prompt_states_the_past_versus_ongoing_rule_with_examples(model):
+    message = _BACKGROUND_LEFT_TO_THE_CLASSIFIER[1]
+
+    is_urgent_incident(message)
+    prompt = _prompt(model)
+
+    assert f"<<<VISITOR MESSAGE>>>\n{message}\n<<<END VISITOR MESSAGE>>>" in prompt
+    for phrase in (
+        "A question about services or capabilities that mentions a past or background problem, with nothing said "
+        "to be happening now",
+        '"we had some weird logins last month, what would you offer"',
+        '"we got phished last year, do you do training"',
+        '"after a breach last quarter we are evaluating SOC providers"',
+        "PAST VERSUS ONGOING: an incident is YES only when it is happening now, or was just found and is still "
+        "going on.",
+        '("they are still in our systems", "it started again today")',
+        "A problem told in the past tense as background to a question about what the business offers is NO",
+        "When a message both asks about services and reports something happening now, answer YES.",
+    ):
+        assert phrase in prompt, phrase
+    # The rule sits outside the fence, above the data.
+    assert prompt.index("PAST VERSUS ONGOING") < prompt.index("<<<VISITOR MESSAGE>>>")
+    assert prompt.endswith("Respond with ONLY the word YES or NO.")

@@ -577,6 +577,49 @@ async def test_an_incident_reported_with_a_service_question_still_gets_the_urgen
     assert len(alerts["notify"]) == 1
 
 
+#: Production, 2026-09-28: both security vendors' bots answered this with the
+#: urgent reply and emailed the owner about an active incident.
+PAST_PROBLEM_PROSPECT = (
+    "hey so um we were wondering if you guys do like sock monitoring for hospitals cause our it guy left last "
+    "month and we had some weird logins so yeah what would you offer for that"
+)
+ACTIVE_RANSOMWARE = "ransomware on our servers RIGHT NOW files getting encrypted pls help"
+
+
+@pytest.mark.asyncio
+async def test_a_prospect_with_a_past_problem_gets_the_answer_and_an_active_incident_still_alerts(
+    db, monkeypatch, alerts, classifier
+):
+    """The fake classifier says YES to both, as the production model did to the
+    first. The prospect never reaches it: the visitor asked what the business
+    offers, and the weird logins were last month's background."""
+    client = _make_client(db)
+    bot = _make_bot(db, client, live_chat_enabled=True, notification_emails=TEAM_EMAILS)
+    _make_session(db, bot, client, "urgent-background")
+    _make_session(db, bot, client, "urgent-active")
+    knowledge = "Acme runs 24/7 SOC monitoring for hospitals and clinics."
+    cap = _stub_pipeline(monkeypatch, chunks=(knowledge,), retrieved=(_doc(knowledge),), support=True)
+
+    frames = await _drive_stream(bot, PAST_PROBLEM_PROSPECT, "urgent-background")
+    answer = _answer_text(frames)
+
+    assert classifier.calls == []
+    assert knowledge in answer
+    assert "This sounds urgent" not in answer and "flagged" not in answer
+    assert len(cap["prompts"]) == 1, "the normal pipeline wrote the answer"
+    assert alerts == {"notify": [], "emails": [], "enqueue": []}
+    assert not _cards_shown(db, "urgent-background").get("urgent_notified")
+
+    urgent = await _drive_stream(bot, ACTIVE_RANSOMWARE, "urgent-active")
+
+    assert classifier.calls == [ACTIVE_RANSOMWARE]
+    assert _answer_text(urgent).startswith("This sounds urgent, so I've flagged it to **Acme** as a priority.")
+    assert len(alerts["notify"]) == 1 and alerts["notify"][0]["session_id"] == "urgent-active"
+    assert [email["reason"] for email in alerts["emails"]] == [ACTIVE_RANSOMWARE]
+    assert [job[0] for job in _push_jobs(alerts)] == ["urgent-active"]
+    assert _cards_shown(db, "urgent-active").get("urgent_notified") is True
+
+
 @pytest.mark.asyncio
 async def test_an_incident_with_a_document_request_gets_the_urgent_reply_and_no_card(db, monkeypatch, alerts):
     """The urgent check runs before the document route. A visitor under attack who

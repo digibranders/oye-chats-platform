@@ -9326,7 +9326,9 @@ async def rag_pipeline_stream(
             # that names an incident or describes a symptom reaches the
             # classifier, on a worker thread under a deadline, and not one that
             # only asks about the business's services ("do you offer phishing
-            # simulation training?" on a security vendor's bot).
+            # simulation training?" on a security vendor's bot), or asks about
+            # them with a past problem as background ("we got phished last year,
+            # do you do training?").
             if (
                 urgent_route.might_be_urgent_incident(question)
                 and not urgent_route.asks_only_about_services(question)
