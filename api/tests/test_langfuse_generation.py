@@ -1,5 +1,7 @@
 """The shared langfuse_generation helper: no-op when disabled, records when on."""
 
+import pytest
+
 import app.core.langfuse_client as lc
 
 
@@ -68,10 +70,12 @@ def test_generation_records_when_enabled(monkeypatch):
     # Started as a generation observation with the given name.
     assert fake.kw["name"] == "gen"
     assert fake.kw["as_type"] == "generation"
-    # Recorded output + token usage pulled from the LiteLLM response.
+    # Recorded output + token usage pulled from the LiteLLM response, under the
+    # keyword Langfuse v4 actually reads (it drops an unknown ``usage=``).
     assert span.updates[-1]["output"] == "out"
     assert span.updates[-1]["model"] == "resolved-model"
-    assert span.updates[-1]["usage"] == {"input": 10, "output": 5}
+    assert span.updates[-1]["usage_details"] == {"input": 10, "output": 5, "total": 15}
+    assert "usage" not in span.updates[-1]
 
 
 # ── PII redaction (AR-30) ────────────────────────────────────────────────────
@@ -181,7 +185,7 @@ class TestLitellmUsage:
     usage-bearing chunk."""
 
     def test_extracts_the_langfuse_usage_shape(self):
-        assert lc.litellm_usage(_Resp()) == {"input": 10, "output": 5}
+        assert lc.litellm_usage(_Resp()) == {"input": 10, "output": 5, "total": 15}
 
     def test_none_when_the_object_carries_no_usage(self):
         assert lc.litellm_usage(object()) is None
@@ -197,7 +201,7 @@ class TestLitellmUsage:
                 prompt_tokens = None
                 completion_tokens = 7
 
-        assert lc.litellm_usage(_Partial()) == {"input": 0, "output": 7}
+        assert lc.litellm_usage(_Partial()) == {"input": 0, "output": 7, "total": 7}
 
     def test_never_raises(self):
         class _Garbage:
@@ -250,3 +254,198 @@ def test_generation_setup_failure_logs_at_warning_not_debug(monkeypatch, caplog)
 
     assert any("langfuse_generation start failed" in r.message for r in caplog.records)
     assert all(r.levelno >= logging.WARNING for r in caplog.records)
+
+
+# ── Usage, cost and model name reach Langfuse (production: every Gemini
+# generation showed 0 tokens and $0, because ``usage=`` was dropped) ─────────
+
+
+def _litellm_response(
+    *,
+    model: str,
+    provider: str | None,
+    prompt_tokens: int,
+    completion_tokens: int,
+    cached_tokens: int | None = None,
+    reasoning_tokens: int | None = None,
+    content: str = "out",
+):
+    """A real ``litellm.ModelResponse``, so pricing runs against LiteLLM's own table."""
+    from litellm.types.utils import ModelResponse, Usage
+
+    usage_kwargs: dict = {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+    }
+    if cached_tokens is not None:
+        usage_kwargs["prompt_tokens_details"] = {"cached_tokens": cached_tokens}
+    if reasoning_tokens is not None:
+        usage_kwargs["completion_tokens_details"] = {"reasoning_tokens": reasoning_tokens}
+    response = ModelResponse(
+        model=model,
+        choices=[{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
+        usage=Usage(**usage_kwargs),
+    )
+    if provider is not None:
+        response._hidden_params = {"custom_llm_provider": provider}
+    return response
+
+
+def _record(monkeypatch, requested_model: str, response, **record_kwargs) -> dict:
+    span = _FakeSpan()
+    monkeypatch.setattr(lc, "get_langfuse", lambda: _FakeLF(span))
+    with lc.langfuse_generation("gen", model=requested_model, prompt="hi") as gen:
+        gen.record_litellm(response, **record_kwargs)
+    return span.updates[-1]
+
+
+class TestRecordLitellmSendsUsageAndCost:
+    def test_openai_response_without_details(self, monkeypatch):
+        response = _litellm_response(
+            model="gpt-5.4-mini-2026-03-17", provider="openai", prompt_tokens=1000, completion_tokens=200
+        )
+
+        sent = _record(monkeypatch, "openai/gpt-5.4-mini", response)
+
+        assert sent["usage_details"] == {"input": 1000, "output": 200, "total": 1200}
+        # LiteLLM's own gpt-5.4-mini price: $0.75/M input, $4.50/M output.
+        assert sent["cost_details"]["input"] == pytest.approx(1000 * 0.75e-6)
+        assert sent["cost_details"]["output"] == pytest.approx(200 * 4.5e-6)
+        assert sent["cost_details"]["total"] == pytest.approx(1000 * 0.75e-6 + 200 * 4.5e-6)
+        # The served snapshot is the requested model: recorded under the bare
+        # alias, the snapshot kept in metadata.
+        assert sent["model"] == "gpt-5.4-mini"
+        assert sent["metadata"]["served_model"] == "gpt-5.4-mini-2026-03-17"
+        assert sent["metadata"]["provider"] == "openai"
+        assert sent["metadata"]["usage_reported"] is True
+        assert "usage" not in sent
+
+    def test_cached_and_reasoning_tokens_use_langfuse_usage_types(self, monkeypatch):
+        response = _litellm_response(
+            model="gpt-5.4-mini",
+            provider="openai",
+            prompt_tokens=1000,
+            completion_tokens=200,
+            cached_tokens=800,
+            reasoning_tokens=50,
+        )
+
+        sent = _record(monkeypatch, "openai/gpt-5.4-mini", response)
+
+        # input/output exclude the detail types, so the parts sum to the
+        # provider's prompt and completion counts.
+        assert sent["usage_details"] == {
+            "input": 200,
+            "input_cached_tokens": 800,
+            "output": 150,
+            "output_reasoning_tokens": 50,
+            "total": 1200,
+        }
+        # Cached input is priced at LiteLLM's cached rate ($0.075/M).
+        assert sent["cost_details"]["input"] == pytest.approx(200 * 0.75e-6 + 800 * 0.075e-6)
+        assert sent["cost_details"]["output"] == pytest.approx(200 * 4.5e-6)
+
+    def test_gemini_response_records_tokens_and_cost(self, monkeypatch):
+        response = _litellm_response(
+            model="gemini-2.5-flash", provider="gemini", prompt_tokens=1234, completion_tokens=6
+        )
+
+        sent = _record(monkeypatch, "gemini/gemini-2.5-flash", response, output="yes")
+
+        assert sent["usage_details"] == {"input": 1234, "output": 6, "total": 1240}
+        # $0.30/M input, $2.50/M output.
+        assert sent["cost_details"]["total"] == pytest.approx(1234 * 0.3e-6 + 6 * 2.5e-6)
+        assert sent["model"] == "gemini-2.5-flash"
+        assert "served_model" not in sent["metadata"]
+        assert sent["output"] == "yes"
+
+    def test_a_fallback_is_recorded_and_priced_as_the_model_that_served(self, monkeypatch):
+        response = _litellm_response(
+            model="gemini-2.5-flash", provider="gemini", prompt_tokens=100, completion_tokens=10
+        )
+
+        sent = _record(monkeypatch, "openai/gpt-5.4-mini", response)
+
+        assert sent["model"] == "gemini-2.5-flash"
+        assert sent["metadata"]["provider"] == "gemini"
+        assert sent["cost_details"]["total"] == pytest.approx(100 * 0.3e-6 + 10 * 2.5e-6)
+
+    def test_a_pricing_failure_is_swallowed_and_usage_still_recorded(self, monkeypatch):
+        import litellm
+
+        def _boom(**_kwargs):
+            raise RuntimeError("price table exploded")
+
+        monkeypatch.setattr(litellm, "cost_per_token", _boom)
+        response = _litellm_response(model="gemini-2.5-flash", provider="gemini", prompt_tokens=10, completion_tokens=2)
+
+        sent = _record(monkeypatch, "gemini/gemini-2.5-flash", response)
+
+        assert sent["usage_details"] == {"input": 10, "output": 2, "total": 12}
+        assert "cost_details" not in sent
+
+    def test_an_unpriced_model_records_usage_without_cost(self, monkeypatch):
+        response = _litellm_response(model="house-model-x", provider="openai", prompt_tokens=10, completion_tokens=2)
+
+        sent = _record(monkeypatch, "openai/house-model-x", response)
+
+        assert sent["usage_details"]["total"] == 12
+        assert "cost_details" not in sent
+
+    def test_a_stream_without_a_usage_chunk_records_text_and_flags_it(self, monkeypatch):
+        sent = _record(monkeypatch, "openai/gpt-5.4-mini", None, output="partial answer")
+
+        assert sent["output"] == "partial answer"
+        assert sent["model"] == "gpt-5.4-mini"
+        assert sent["metadata"] == {"usage_reported": False, "provider": "openai"}
+        assert "usage_details" not in sent
+        assert "cost_details" not in sent
+
+    def test_the_observation_starts_under_the_bare_model_name(self, monkeypatch):
+        fake = _FakeLF(_FakeSpan())
+        monkeypatch.setattr(lc, "get_langfuse", lambda: fake)
+
+        with lc.langfuse_generation("gen", model="gemini/gemini-2.5-flash", prompt="hi"):
+            pass
+
+        assert fake.kw["model"] == "gemini-2.5-flash"
+        assert fake.kw["as_type"] == "generation"
+
+
+class TestRecordEmbedding:
+    def test_records_counts_estimated_tokens_and_cost_without_text(self, monkeypatch):
+        span = _FakeSpan()
+        fake = _FakeLF(span)
+        monkeypatch.setattr(lc, "get_langfuse", lambda: fake)
+
+        with lc.langfuse_generation(
+            "gemini-embedding",
+            model="gemini/gemini-embedding-001",
+            input={"texts": 3, "characters": 401},
+            as_type="embedding",
+        ) as obs:
+            obs.record_embedding(texts=3, characters=401, reported_input_tokens=None)
+
+        assert fake.kw["as_type"] == "embedding"
+        sent = span.updates[-1]
+        assert sent["model"] == "gemini-embedding-001"
+        assert sent["usage_details"] == {"input": 101, "total": 101}
+        # LiteLLM's gemini-embedding-001 price: $0.15/M input tokens.
+        assert sent["cost_details"]["total"] == pytest.approx(101 * 0.15e-6)
+        assert sent["metadata"] == {"texts": 3, "characters": 401, "usage_source": "estimate: characters / 4"}
+
+    def test_a_reported_token_count_replaces_the_estimate(self, monkeypatch):
+        span = _FakeSpan()
+        monkeypatch.setattr(lc, "get_langfuse", lambda: _FakeLF(span))
+
+        with lc.langfuse_generation("e", model="gemini/gemini-embedding-001", as_type="embedding") as obs:
+            obs.record_embedding(texts=2, characters=400, reported_input_tokens=77)
+
+        assert span.updates[-1]["usage_details"] == {"input": 77, "total": 77}
+        assert span.updates[-1]["metadata"]["usage_source"] == "reported"
+
+    def test_noop_when_disabled(self, monkeypatch):
+        monkeypatch.setattr(lc, "get_langfuse", lambda: None)
+        with lc.langfuse_generation("e", model="gemini/gemini-embedding-001", as_type="embedding") as obs:
+            obs.record_embedding(texts=1, characters=1, reported_input_tokens=None)

@@ -7,12 +7,13 @@ import re
 import litellm
 
 from app.config import FALLBACK_MODEL_KEY_SET, PRIMARY_MODEL_KEY_SET
-from app.core.langfuse_client import langfuse_generation, litellm_usage
+from app.core.langfuse_client import langfuse_generation
 from app.core.metrics import (
     forward_to_sentry_if_alertable,
     increment_metric_counter,
     increment_metric_counter_by,
 )
+from app.core.model_names import bare_model, same_model
 from app.services import runtime_config
 from app.services.brand_tone import BRAND_TONE_PRESETS, PRESET_KEYS
 
@@ -85,24 +86,6 @@ def _classify_and_log_llm_error(exc: Exception, *, context: str) -> None:
         increment_metric_counter("llm_unknown_error")
 
 
-def _same_model(requested_model: str, actual_model: str) -> bool:
-    """Whether ``actual_model`` (as LiteLLM reports it) is the model we asked for.
-
-    Provider prefixes are stripped from both sides and the comparison is
-    case-insensitive. A dated snapshot suffix counts as the same model in
-    either direction: ``gpt-5.4-mini`` requested and ``gpt-5.4-mini-2026-03-01``
-    served is the primary answering under its resolved snapshot, and a pinned
-    snapshot request served under the bare alias is the same thing the other
-    way round. Two genuinely different ids (``gpt-5.4-mini`` vs
-    ``gemini-2.5-flash``) share no prefix and never match.
-    """
-    requested = _bare_model(requested_model).strip().lower()
-    actual = _bare_model(actual_model).strip().lower()
-    if not requested or not actual:
-        return False
-    return requested == actual or actual.startswith(requested) or requested.startswith(actual)
-
-
 def _meter_fallback_if_used(requested_model: str, response) -> None:
     """AR-16: detect and meter a silent primary->fallback degradation.
 
@@ -121,7 +104,7 @@ def _meter_fallback_if_used(requested_model: str, response) -> None:
     was pure noise. Two signals are used instead, either of which marks a
     fallback:
 
-    * the provider-stripped names genuinely differ (:func:`_same_model`);
+    * the provider-stripped names genuinely differ (:func:`app.core.model_names.same_model`);
     * LiteLLM's ``response._hidden_params["custom_llm_provider"]`` (stamped on
       every completion) names a provider other than the requested prefix.
       This catches a same-name-different-route fallback the name check cannot.
@@ -145,7 +128,7 @@ def _meter_fallback_if_used(requested_model: str, response) -> None:
             and actual_provider.lower() != requested_provider.lower()
         )
         model_differs = (
-            isinstance(actual_model, str) and bool(actual_model) and not _same_model(requested_model, actual_model)
+            isinstance(actual_model, str) and bool(actual_model) and not same_model(requested_model, actual_model)
         )
         if provider_differs or model_differs:
             logger.warning(
@@ -227,11 +210,6 @@ LLM_CONTEXT_OVERFLOW_MESSAGE = (
 )
 
 
-def _bare_model(model: str) -> str:
-    """Strip a LiteLLM provider prefix (``openai/``, ``azure/`` …) from a model id."""
-    return model.split("/", 1)[1] if "/" in model else model
-
-
 def _apply_model_family_kwargs(kwargs: dict, model: str) -> None:
     """Inject family-specific parameters into a LiteLLM ``completion`` kwargs dict.
 
@@ -268,7 +246,7 @@ def _apply_model_family_kwargs(kwargs: dict, model: str) -> None:
     ``app/worker/settings.py``) silently strips this for providers that do not
     understand it if the LiteLLM fallback path retries elsewhere.
     """
-    bare = _bare_model(model)
+    bare = bare_model(model)
     if bare.startswith("gpt-5.4"):
         kwargs.setdefault("reasoning_effort", "none")
     elif bare.startswith("gpt-5"):
@@ -869,7 +847,12 @@ async def _stream_from_model(
                     except Exception as close_err:
                         logger.debug(f"LiteLLM stream aclose() raised on cleanup: {close_err}")
         finally:
-            gen.update(output=_output, model=model, usage=litellm_usage(last_usage_chunk))
+            # The usage chunk carries the served model and the provider's token
+            # counts, so the stream is recorded exactly like a non-streaming
+            # response. ``None`` (a stream closed before the provider sent it:
+            # the price guard, a visitor who left, an error) records the text
+            # and flags the usage as unreported rather than guessing.
+            gen.record_litellm(last_usage_chunk, output=_output)
 
 
 async def generate_response_stream(
