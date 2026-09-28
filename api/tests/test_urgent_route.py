@@ -750,6 +750,11 @@ _ADVERSARIAL_SEEDS = [
     "we had some weird logins last month and ",
     "what would you offer? we had a breach last year and ",
     "do you offer ddos protection, we got phished last year and ",
+    # Tokens of the damage that has not ended.
+    "haven't ",
+    "not yet been ",
+    "never got ",
+    "hacked last month and we have not yet been ",
 ]
 
 
@@ -1033,6 +1038,15 @@ _ONGOING_INCIDENTS = [
     "we had a breach last year. can you do something about the ransomware on our servers",
     "last year we got phished and since then someone keeps logging into our mailbox, what do you offer",
     "we had some weird logins last month, what would you offer? also someone is sending emails from us we never sent",
+    # Dated in the past, but the damage or the access has not ended.
+    "last month we noticed weird logins and they haven't stopped, what do you offer",
+    "we were hacked last month. our files remain encrypted. what services do you offer?",
+    "our admin account was hijacked last month and we never got it back, what do you offer",
+    "someone hacked our instagram last month and we lost access, do you offer account recovery?",
+    "hacked last month, need recovery, what's your pricing",
+    "our email was breached last year and it has not been fixed yet, what would you offer",
+    "we had ransomware in 2023 and some servers are not recovered, do you offer recovery",
+    "our domain was hijacked last month and we have no access to it, what services do you offer",
 ]
 #: Prospects the skip leaves to the classifier: the problem is recent enough to
 #: still be running, or the ask about the service names the incident on the

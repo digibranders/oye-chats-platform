@@ -948,9 +948,14 @@ _PAST_TENSE_RE = re.compile(
 #: The problem continuing, or a plea: "still", "again", "since", "now", "just
 #: found", "can't log in", "help", "!", and the Hinglish "abhi" (now), "aaj"
 #: (today), "jaldi" (quickly), "madad" (help). "help companies recover" describes
-#: a service, so it does not count.
+#: a service, so it does not count. A past incident whose damage or access has
+#: not ended counts too: "they haven't stopped", "not fixed yet", "we never got
+#: it back", "our files remain encrypted", "we lost access", "need recovery".
 _ONGOING_OR_PLEA_RE = re.compile(
     r"!|\b(?:still|currently|now|right\s+away|at\s+the\s+moment|as\s+we\s+speak|ongoing|in\s+progress|again"
+    r"|(?:haven['’]?t|hasn['’]?t|isn['’]?t|aren['’]?t|wasn['’]?t|weren['’]?t|not|never)\s+(?:yet\s+)?(?:been\s+)?"
+    r"(?:stopped|ended|fixed|resolved|recovered|restored|removed|cleaned|regained|got|gotten|back)"
+    r"|remains?|lost\s+(?:access|control)|no\s+(?:longer\s+)?access|needs?"
     r"|today|tonight|this\s+(?:morning|afternoon|evening|week)|yesterday|last\s+night|since|keeps?|kept"
     r"|continu\w*|any\s*more|recently|lately|these\s+days|every\s+(?:day|night|hour|minute)"
     r"|just\s+(?:found|discovered|noticed|saw|got|realised|realized|happened|started|now)"
