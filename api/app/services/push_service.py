@@ -27,7 +27,7 @@ import json
 import logging
 from datetime import UTC, datetime, time
 from typing import Any
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo
 
 import httpx
 from py_vapid import Vapid
@@ -42,6 +42,7 @@ from app.config import (
     VAPID_SUBJECT,
     WEB_PUSH_ENABLED,
 )
+from app.core.timezones import UnknownTimezoneError, load_zone
 from app.db.models import Client, Operator, OperatorExpoPushToken, OperatorPushSubscription
 
 logger = logging.getLogger(__name__)
@@ -358,8 +359,8 @@ def _in_quiet_hours(quiet: dict[str, Any], now_utc: datetime) -> bool:
 
     tz_name = quiet.get("tz") if isinstance(quiet.get("tz"), str) else "UTC"
     try:
-        tz = ZoneInfo(tz_name)
-    except ZoneInfoNotFoundError:
+        tz = load_zone(tz_name)
+    except UnknownTimezoneError:
         tz = ZoneInfo("UTC")
 
     local_now = now_utc.astimezone(tz).time()

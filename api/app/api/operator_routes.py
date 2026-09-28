@@ -17,6 +17,7 @@ from app.api.invite_routes import _map_invite_error
 from app.api.quotation_routes import build_quotation_summary
 from app.core.rate_limit import key_from_operator_credential, limiter
 from app.core.security import get_password_hash
+from app.core.timezones import canonical_zone_name
 from app.core.visitor_privacy import redact_visitor_ip, redact_visitor_metadata
 from app.db.models import (
     BANTSignal,
@@ -2089,6 +2090,16 @@ class QuietHoursModel(BaseModel):
         except (ValueError, TypeError):
             raise ValueError("time must be 'HH:MM' in 24-hour form") from None
         return v
+
+    @field_validator("tz")
+    @classmethod
+    def _canonical_tz(cls, v: str) -> str:
+        """Store ``Asia/Kolkata`` when the browser reports ``Asia/Calcutta``.
+
+        Unknown names are still accepted (the dispatcher falls back to UTC),
+        so this only rewrites a legacy alias the production host cannot load.
+        """
+        return canonical_zone_name(v)
 
 
 class PushPreferencesModel(BaseModel):
