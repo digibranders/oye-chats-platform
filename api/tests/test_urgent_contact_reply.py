@@ -102,4 +102,4 @@ def test_every_reply_that_asks_still_closes_on_an_offer(live_chat_enabled, team_
     )
     assert bot_offers_handoff(reply.text) is True, reply.text
     assert "**Acme**" in reply.text
-    assert "—" not in reply.text and "–" not in reply.text
+    assert chr(0x2014) not in reply.text and chr(0x2013) not in reply.text, "no em or en dash"

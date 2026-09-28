@@ -40,7 +40,7 @@ def _alert(contact):
 
 
 def _no_dashes(html_body: str) -> None:
-    for dash in ("—", "–", "&#8212;", "&mdash;", "&ndash;"):
+    for dash in (chr(0x2014), chr(0x2013), "&#8212;", "&mdash;", "&ndash;"):
         assert dash not in html_body, dash
 
 
