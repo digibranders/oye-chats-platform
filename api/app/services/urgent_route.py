@@ -945,6 +945,7 @@ def urgent_reply(
     emergency_url: str | None,
     contact_url: str | None,
     repeat: bool = False,
+    ask_for_contact: bool = False,
 ) -> HandoffOffer:
     """The reply to an urgent incident. "Flagged" is only said on a plan whose team gets the alert.
 
@@ -953,6 +954,12 @@ def urgent_reply(
     identical text, and the same flags as the first reply. Neither duplicates
     anything: the widget re-opens the handoff form, and it shows the message
     card at most once per conversation, so the second flag is ignored there.
+
+    ``ask_for_contact`` is True when the team has no email or phone number for
+    the visitor yet. On 2026-09-28 an alert reached the team with only a name,
+    and a visitor under attack may never fill in a form, so the reply also asks
+    for a phone number or email in the chat. The next message is read for one
+    (``rag_service._capture_urgent_contact``). The form stays on offer.
     """
     co = f"**{company_name}**" if company_name else "the team"
     urgent_link = f" If this is an active incident, don't wait for a reply: {emergency_url}" if emergency_url else ""
@@ -970,40 +977,52 @@ def urgent_reply(
             suggest_handoff=False,
             needs_message_card=False,
         )
+    flagged = f"This sounds urgent, so I've flagged it to {co} as a priority."
     already_flagged = f"I've already flagged this to {co} as a priority."
     # Every reply that opens a form closes on words ``intent_service.HANDOFF_OFFER_RE``
     # reads as an offer ("connect you with", "the team can contact you"), so an "ok"
     # on the next turn opens the form instead of the router's "Glad that helped".
+    # The ask for a phone number or email comes before that closing offer.
     if not live_chat_enabled:
-        text = (
-            f"{already_flagged} Leave your details in the message form so the team can contact you as soon as possible."
-            if repeat
-            else (
-                f"This sounds urgent, so I've flagged it to {co} as a priority. I'll open a quick message form "
-                f"so the team can contact you as soon as possible."
+        if ask_for_contact:
+            text = (
+                f"{already_flagged} Type the best phone number or email to reach you on here, or leave your "
+                "details in the message form so the team can contact you as soon as possible."
+                if repeat
+                else (
+                    f"{flagged} What's the best phone number or email to reach you on right now? Type it here, "
+                    "or I'll open a quick message form so the team can contact you as soon as possible."
+                )
             )
-        )
+        else:
+            text = (
+                f"{already_flagged} Leave your details in the message form so the team can contact you as soon "
+                "as possible."
+                if repeat
+                else f"{flagged} I'll open a quick message form so the team can contact you as soon as possible."
+            )
         return HandoffOffer(text=text + urgent_link, suggest_handoff=False, needs_message_card=True)
-    if team_available:
-        text = (
-            f"{already_flagged} The form is just below: share your details there and I'll connect you with them "
-            "right away."
-            if repeat
-            else (
-                f"This sounds urgent, so I've flagged it to {co} as a priority. Share your details in the form "
-                f"below and I'll connect you with them right away."
-            )
-        )
-        return HandoffOffer(text=text + urgent_link, suggest_handoff=True, needs_message_card=False)
     # Nobody on the dashboard is not an offline team: the handoff route still
     # queues the visitor and pushes anyone reachable on a phone or another tab.
-    text = (
-        f"{already_flagged} The form is just below: share your details there so the team can contact you as soon "
-        "as possible."
-        if repeat
-        else (
-            f"This sounds urgent, so I've flagged it to {co} as a priority. Share your details in the form "
-            f"below so the team can contact you as soon as possible."
-        )
+    closing = (
+        "and I'll connect you with them right away."
+        if team_available
+        else "so the team can contact you as soon as possible."
     )
+    if ask_for_contact:
+        text = (
+            f"{already_flagged} Type the best phone number or email to reach you on here, or share your details "
+            f"in the form just below {closing}"
+            if repeat
+            else (
+                f"{flagged} What's the best phone number or email to reach you on right now? Type it here, or "
+                f"share your details in the form below {closing}"
+            )
+        )
+    else:
+        text = (
+            f"{already_flagged} The form is just below: share your details there {closing}"
+            if repeat
+            else f"{flagged} Share your details in the form below {closing}"
+        )
     return HandoffOffer(text=text + urgent_link, suggest_handoff=True, needs_message_card=False)

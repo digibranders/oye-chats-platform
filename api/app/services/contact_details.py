@@ -39,6 +39,14 @@ _DATE_RE = re.compile(r"\d{1,4}[./-]\d{1,2}[./-]\d{1,4}")
 _PHONE_CUE_RE = re.compile(r"(?i)\b(?:phone|call|mobile|cell|number|whatsapp|tel|telephone|landline|ring|text|sms)\b")
 
 
+#: What the team is told when an urgent alert has no email or phone for the
+#: visitor: the email's contact row and the inbox notification's body. The alert
+#: goes out inside the visitor's chat turn, so they were on the page then.
+URGENT_NO_CONTACT_LINE = (
+    "No email or phone yet. Reply in the conversation now: they were on the page when this was sent."
+)
+
+
 @dataclass(frozen=True)
 class FoundContact:
     """The first email address and the first phone number in a message, as written."""
