@@ -30,6 +30,10 @@ stream runs the vocabulary check itself, then
 on a worker thread under a deadline. The one decision feeds both the pricing
 gate and the price guard's turn signal.
 
+``non_price_remainder`` gives the clauses of a MIXED message that do not ask the
+price, with the fallback rules' own clause test, so a deferred pricing turn can
+search for the part the model must answer.
+
 No database and no import from ``rag_service``; the classifier is the only model call.
 """
 
@@ -314,6 +318,15 @@ def _without_other_senses(question: str) -> str:
     return "".join(pieces)
 
 
+def _about_price(blanked_clause: str) -> bool:
+    """Whether a clause, its price words in another sense already blanked, is about the price."""
+    return bool(
+        might_ask_price(blanked_clause)
+        or _PRICE_TOPIC_RE.search(blanked_clause)
+        or _CURRENCY_AMOUNT_RE.search(blanked_clause)
+    )
+
+
 def _asks_something_else(question: str, blanked: str) -> bool:
     """Whether a clause opens a question or a request that is not about the price."""
     for sentence_start, sentence_end in _spans(question, _SENTENCE_END_RE):
@@ -323,8 +336,7 @@ def _asks_something_else(question: str, blanked: str) -> bool:
             rest = clause.lstrip()[lead.end() if lead else 0 :]
             if not _ASK_RE.match(rest):
                 continue
-            about = blanked[start:end]
-            if not (might_ask_price(about) or _PRICE_TOPIC_RE.search(about) or _CURRENCY_AMOUNT_RE.search(about)):
+            if not _about_price(blanked[start:end]):
                 return True
     return False
 
@@ -346,3 +358,48 @@ def fallback_price_intent(question: object) -> PriceIntent:
     if not is_pricing_question(blanked):
         return "no"
     return "mixed" if _asks_something_else(question, blanked) else "price"
+
+
+# ── The rest of a MIXED message ───────────────────────────────────────────────
+
+#: Where a MIXED message splits into clauses: a clause end above, or "and", "also",
+#: "plus" or the Hinglish "aur" between two asks. A comma or full stop inside a
+#: figure ("1,20,000", "4.5") does not split.
+_REMAINDER_BREAK_RE = re.compile(r"[?!;\n]|[.,](?=\s|$)|\b(?:and|also|plus|aur)\b", re.IGNORECASE)
+_WORD_CHAR_RE = re.compile(r"\w")
+
+
+def non_price_remainder(question: object) -> str | None:
+    """The clauses of ``question`` that do not ask the price, or None when there are none to search for.
+
+    Production, 2026-09-28: "how does onboarding work with you, and roughly what
+    does it cost?" was retrieved for as a whole, the price half pulled the pricing
+    page to the top, and the onboarding content never reached the model. On a
+    deferred pricing turn the chat stream searches again for what this returns
+    ("how does onboarding work with you").
+
+    A clause is about the price when the fallback rules' own test says so: the
+    price vocabulary, a price topic ("per month", "discount") or a currency
+    amount, read with the price words in another sense blanked out, so "how much
+    time does onboarding take" stays. Greetings and joining words are left out.
+    None when no clause asks the price (the remainder would be the whole question)
+    or every clause does. Linear: a long message takes milliseconds.
+    """
+    if not isinstance(question, str) or not question.strip():
+        return None
+    blanked = _without_other_senses(question)
+    kept: list[str] = []
+    dropped = False
+    for start, end in _spans(question, _REMAINDER_BREAK_RE):
+        clause = question[start:end].strip()
+        lead = _LEAD_FILLER_RE.match(clause)
+        clause = clause[lead.end() :].strip() if lead else clause
+        if not _WORD_CHAR_RE.search(clause):
+            continue
+        if _about_price(blanked[start:end]):
+            dropped = True
+        else:
+            kept.append(clause)
+    if not dropped or not kept:
+        return None
+    return ", ".join(kept)

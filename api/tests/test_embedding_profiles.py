@@ -252,7 +252,8 @@ class TestQueryPathFollowsTheBotProfile:
         profile from the bot once and hand it to every retrieval step it
         runs; a call site that forgets it silently searches the legacy space."""
         # One pipeline now: the synchronous path is a collector over this one.
-        for pipeline_fn, expected_uses in ((rs.rag_pipeline_stream, 3),):
+        # The fourth use is the second search of a deferred pricing turn.
+        for pipeline_fn, expected_uses in ((rs.rag_pipeline_stream, 4),):
             source = inspect.getsource(pipeline_fn)
             assert source.count("_embedding_profile = (") == 1, pipeline_fn.__name__
             assert source.count("embedding_profile=_embedding_profile") == expected_uses, pipeline_fn.__name__
