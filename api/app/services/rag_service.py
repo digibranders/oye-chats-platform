@@ -56,6 +56,7 @@ from app.services.commitment_guard import (
     redact_unsupported_country_claims,
     snapshot_chunks,
 )
+from app.services.contact_details import mentions_contact
 from app.services.document_request import (
     TOPIC_MIN_OVERLAP,
     DocumentIntentDecision,
@@ -1277,23 +1278,9 @@ def _question_suggests_leave_message(text: str) -> bool:
     return bool(_LEAVE_MESSAGE_QUESTION_RE.search(text))
 
 
-# A contact the reply itself gives: an email address, or a phone number of
-# seven or more digits. Both repeats are bounded, so the scan is linear.
-_REPLY_EMAIL_RE = re.compile(r"[\w.+'-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63}){1,4}")
-_REPLY_PHONE_RE = re.compile(r"(?<![\w.])\+?\(?\d[\d ().-]{5,18}\d(?!\w|\.\d)")
-_ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
-_PHONE_MIN_DIGITS = 7
-
-
 def _reply_gives_contact(text: str) -> bool:
     """Whether the reply names an email address or a phone number."""
-    if "@" in text and _REPLY_EMAIL_RE.search(text):
-        return True
-    return any(
-        sum(char.isdigit() for char in match.group(0)) >= _PHONE_MIN_DIGITS
-        and _ISO_DATE_RE.fullmatch(match.group(0)) is None
-        for match in _REPLY_PHONE_RE.finditer(text)
-    )
+    return mentions_contact(text)
 
 
 def _response_suggests_leave_message(text: str) -> bool:
