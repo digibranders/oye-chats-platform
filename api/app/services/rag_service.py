@@ -128,6 +128,7 @@ from app.services.price_intent import (
     fallback_price_intent,
     guard_asks_price,
     might_ask_price,
+    non_price_remainder,
 )
 from app.services.qualification_service import (
     calculate_composite_score,
@@ -8032,6 +8033,109 @@ async def _turn_price_intent(
     return (rewritten_decision, rewritten) if rewritten_decision.asks_price else (decision, question)
 
 
+# The second search on a deferred pricing turn (``_widen_mixed_turn_context``)
+# sits between the pricing gate and the first token, like the classifiers, and
+# gets less time than they do: one embedding (often cached) and two indexed
+# queries. A stall keeps the first search's chunks.
+_MIXED_TURN_RETRIEVAL_TIMEOUT_S = float(os.getenv("MIXED_TURN_RETRIEVAL_TIMEOUT_S", "2.0"))
+
+
+async def _hybrid_search(
+    cid: int | None, bid: int | None, query: str, k: int, embedding_profile: str | None = None
+) -> list:
+    """The turn's hybrid retrieval for one more query: embedding and keyword search
+    at once, then the vector search, fusion, the placeholder filter, the trim and
+    the rerank, each the helper the first search uses. No zero-result fallback:
+    an empty result leaves the first search's chunks as they are."""
+    query_embedding, keyword_results = await asyncio.gather(
+        _embed_query_cached_async(bid, cid, query, embedding_profile=embedding_profile),
+        asyncio.to_thread(_keyword_search, cid, bid, query, k),
+    )
+    vector_results = (
+        await asyncio.to_thread(_vector_search, cid, bid, query_embedding, k, embedding_profile=embedding_profile)
+        if query_embedding is not None
+        else []
+    )
+    results = _trim_results(
+        _drop_placeholder_chunks(reciprocal_rank_fusion(vector_results, keyword_results), bid), top_k=k
+    )
+    if RERANK_ENABLED and results:
+        results = await asyncio.to_thread(rerank, query, results, top_n=k)
+    return results
+
+
+def _merge_mixed_turn_chunks(original: list, found: list, *, top_k: int, pinned: list) -> tuple[list, int]:
+    """The second search's chunks ahead of the first's, and how many of them are new.
+
+    ``found`` answers the part of the question the model must answer, so its top
+    half of ``top_k`` leads; the first search's chunks follow, then the rest of
+    ``found`` fills what they leave. Deduped by chunk id and cut to ``top_k``, the
+    size of the first search. The company facts pinned on the first search stay
+    first (``_pin_company_fact_chunks``).
+    """
+    lead = found[: max(1, top_k // 2)]
+    merged: list = []
+    seen: set = set()
+    for doc in (*lead, *original, *found[len(lead) :]):
+        doc_id = getattr(doc, "id", None)
+        if doc_id in seen:
+            continue
+        seen.add(doc_id)
+        merged.append(doc)
+    merged = _pin_company_fact_chunks(merged[:top_k], pinned, top_k)
+    original_ids = {getattr(doc, "id", None) for doc in original}
+    return merged, sum(1 for doc in merged if getattr(doc, "id", None) not in original_ids)
+
+
+async def _widen_mixed_turn_context(
+    final_results: list,
+    price_question: str,
+    *,
+    cid: int | None,
+    bid: int | None,
+    company_name: str | None,
+    top_k: int,
+    pinned: list,
+    embedding_profile: str | None,
+    session_id: str,
+) -> list:
+    """``final_results`` with the chunks for the part of a deferred pricing turn that does not ask the price.
+
+    Production, 2026-09-28, CleanStart: "how does onboarding work with you, and
+    roughly what does it cost?" was searched as a whole, the price half pulled the
+    pricing page to the top, and the model, told to answer the onboarding half,
+    had nothing about onboarding. ``price_question`` is the phrasing the price
+    decision was made on; its clauses that do not ask the price
+    (``price_intent.non_price_remainder``) are searched the way the first search
+    was, under ``_MIXED_TURN_RETRIEVAL_TIMEOUT_S``, and merged ahead of the first
+    search's chunks. No remainder, a stall or an error returns ``final_results``
+    unchanged.
+    """
+    remainder = non_price_remainder(price_question)
+    if remainder is None:
+        return final_results
+    query = _expand_company_query(remainder, company_name)
+    try:
+        found = await asyncio.wait_for(
+            _hybrid_search(cid, bid, query, top_k, embedding_profile=embedding_profile),
+            timeout=_MIXED_TURN_RETRIEVAL_TIMEOUT_S,
+        )
+    except TimeoutError:
+        logger.warning(
+            "Mixed turn retrieval exceeded %.1fs. Keeping the first search's chunks", _MIXED_TURN_RETRIEVAL_TIMEOUT_S
+        )
+        _safety_net_metric("mixed_turn_retrieval_timeout", path="stream", session=session_id, bot_id=bid)
+        return final_results
+    except Exception as exc:  # noqa: BLE001 - a second search is an improvement, never a dependency
+        logger.warning("Mixed turn retrieval failed (%s). Keeping the first search's chunks", type(exc).__name__)
+        return final_results
+    merged, added = _merge_mixed_turn_chunks(final_results, found, top_k=top_k, pinned=pinned)
+    _safety_net_metric(
+        "mixed_turn_retrieval", path="stream", added=added, found=len(found), session=session_id, bot_id=bid
+    )
+    return merged
+
+
 def rewrite_query(session_id: str, question: str, history: list) -> str:
     """Rewrite a follow-up question into a standalone search query using conversation history."""
     if not history or len(history) < 2:
@@ -9942,6 +10046,9 @@ async def rag_pipeline_stream(
             if not _judges_bypassed and might_ask_price(question):
                 _price_intent_task = asyncio.create_task(_detect_price_intent_bounded(question))
 
+            # The company facts pinned ahead of the retrieved chunks, kept first
+            # when a deferred pricing turn searches again below.
+            _pinned_fact_chunks: list = []
             if _use_cag_lite:
                 logger.info(f"CAG-lite stream mode: injecting all {_total_chunks} chunks (bot_id={bid})")
                 final_results = _drop_placeholder_chunks(
@@ -10079,6 +10186,7 @@ async def rag_pipeline_stream(
                     if _fact_chunks:
                         _found_ids = {getattr(doc, "id", None) for doc in final_results}
                         final_results = _pin_company_fact_chunks(final_results, _fact_chunks, _retrieval_k)
+                        _pinned_fact_chunks = _fact_chunks
                         _safety_net_metric(
                             "company_facts_pinned",
                             path="stream",
@@ -10270,6 +10378,23 @@ async def rag_pipeline_stream(
                 # and the price guard below drops every sentence that states a
                 # figure and adds this bot's escalation after the rest.
                 _safety_net_metric("pricing_gate_deferred", path="stream", session=session_id, bot_id=bid)
+                # Retrieval ran on the whole question, so its price half can fill
+                # the context with the pricing page and leave nothing for the half
+                # the model must answer (production, 2026-09-28). Search again for
+                # the clauses that do not ask the price. CAG-lite already hands the
+                # model every chunk.
+                if not _use_cag_lite:
+                    final_results = await _widen_mixed_turn_context(
+                        final_results,
+                        _price_question,
+                        cid=cid,
+                        bid=bid,
+                        company_name=_company_name,
+                        top_k=_retrieval_k,
+                        pinned=_pinned_fact_chunks,
+                        embedding_profile=_embedding_profile,
+                        session_id=session_id,
+                    )
             elif _pricing_decision.fired:
                 _safety_net_metric(
                     "pricing_gate_escalation",

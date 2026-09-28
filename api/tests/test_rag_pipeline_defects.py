@@ -123,6 +123,12 @@ def _stub_pipeline(
         return question, None
 
     monkeypatch.setattr(rs, "_resolve_search_query_and_embedding", fake_resolve)
+
+    async def no_embedding(*_a, **_k):
+        return None
+
+    # The second search of a MIXED turn embeds its own query.
+    monkeypatch.setattr(rs, "_embed_query_cached_async", no_embedding)
     monkeypatch.setattr(rs, "_vector_search", lambda *a, **k: [])
     monkeypatch.setattr(rs, "_keyword_search", lambda *a, **k: [])
     monkeypatch.setattr(rs, "_zero_result_multi_query_fallback", lambda *a, **k: [])
