@@ -366,6 +366,8 @@ def _llm_probe() -> tuple[bool, str | None]:
     detail: str | None = None
     try:
         model = runtime_config.get_primary_model()
+        # Untraced on purpose: a health poll every ~30s is not model usage, and
+        # tracing it would bury real generations under "ping" in Langfuse.
         _litellm.completion(
             model=model,
             messages=[{"role": "user", "content": "ping"}],
@@ -527,6 +529,8 @@ def _run_gate_probe(report: dict) -> None:
     # (gemini-2.5 spends the whole token budget thinking otherwise). Probing
     # with reasoning on would fail a call the application never makes.
     _apply_model_family_kwargs(kwargs, model)
+    # Untraced on purpose, like the primary probe in ``_llm_probe``: health
+    # polling is not model usage.
     _litellm.completion(
         model=model,
         messages=[{"role": "user", "content": "ping"}],

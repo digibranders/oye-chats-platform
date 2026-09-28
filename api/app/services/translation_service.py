@@ -49,6 +49,7 @@ from typing import NamedTuple, Protocol
 import litellm
 
 from app.core.cache import TRANSLATION_TTL, cache_get, cache_set, translation_key
+from app.core.langfuse_client import langfuse_generation
 from app.core.metrics import (
     forward_to_sentry_if_alertable,
     increment_metric_counter,
@@ -186,13 +187,18 @@ class LiteLLMTranslationProvider:
             {"role": "user", "content": text},
         ]
         try:
-            response = await litellm.acompletion(
-                model=self.model,
-                messages=messages,
-                timeout=timeout if timeout is not None else TRANSLATION_TIMEOUT_S,
-                num_retries=TRANSLATION_NUM_RETRIES,
-                temperature=0,
-            )
+            # ``messages`` carries the visitor's or operator's text, so it is
+            # traced as a messages list, which ``langfuse_generation`` redacts
+            # per message (AR-30).
+            with langfuse_generation("live-chat-translation", model=self.model, input=messages) as gen:
+                response = await litellm.acompletion(
+                    model=self.model,
+                    messages=messages,
+                    timeout=timeout if timeout is not None else TRANSLATION_TIMEOUT_S,
+                    num_retries=TRANSLATION_NUM_RETRIES,
+                    temperature=0,
+                )
+                gen.record_litellm(response)
         except Exception as exc:
             # Every provider failure class collapses to one outcome here:
             # the caller sends the original. Distinguishing them would only

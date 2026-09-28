@@ -31,6 +31,7 @@ import litellm
 from pydantic import BaseModel, Field
 
 from app import config
+from app.core.langfuse_client import langfuse_generation
 from app.services import runtime_config
 from app.services.llm_service import _apply_model_family_kwargs
 
@@ -244,8 +245,10 @@ def extract_events(
     _apply_model_family_kwargs(kwargs, model)
 
     try:
-        response = litellm.completion(**kwargs)
-        raw = (response.choices[0].message.content or "").strip()
+        with langfuse_generation("event-extractor", model=model, prompt=prompt) as gen:
+            response = litellm.completion(**kwargs)
+            raw = (response.choices[0].message.content or "").strip()
+            gen.record_litellm(response, output=raw)
         parsed = _ExtractedEvents.model_validate_json(raw)
     except Exception as exc:  # noqa: BLE001  never block ingestion on LLM error
         logger.info("event_extractor: LLM call failed for %s (%s)", source_url, exc)

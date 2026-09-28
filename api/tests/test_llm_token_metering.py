@@ -16,8 +16,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.core import langfuse_client
 from app.core.metrics import increment_metric_counter_by
-from app.services import llm_service
 from app.services.llm_service import _meter_token_usage, _stream_from_model
 
 
@@ -218,24 +218,51 @@ class TestStreamMetersUsageOnceFromTheLastUsageChunk:
 
 
 class TestStreamUsageReachesLangfuse:
-    """The streaming generation used to be recorded with output only, so every
-    streamed reply (the production chat path) showed no token usage in
-    Langfuse while the non-streaming calls did."""
+    """The streamed chat reply (``rag-stream-generation``) is the production
+    answer path. Its generation first recorded no usage at all, then sent it as
+    ``usage=``, which the Langfuse v4 SDK drops: the token counts production
+    showed were Langfuse's own tokenisation of the text, and a Gemini fallback
+    stream showed none. The final usage chunk now goes through the same
+    ``record_litellm`` as a non-streaming response."""
+
+    class _Span:
+        def __init__(self):
+            self.updates: list[dict] = []
+
+        def update(self, **kw):
+            self.updates.append(kw)
+
+    @classmethod
+    def _enable_langfuse(cls, monkeypatch):
+        span = cls._Span()
+
+        @contextlib.contextmanager
+        def _observation(**_kwargs):
+            yield span
+
+        fake = SimpleNamespace(start_as_current_observation=lambda **kw: _observation(**kw))
+        monkeypatch.setattr(langfuse_client, "get_langfuse", lambda: fake)
+        return span
 
     @staticmethod
-    def _capturing_generation(updates: list):
-        @contextlib.contextmanager
-        def _gen(*args, **kwargs):
-            yield SimpleNamespace(update=lambda **kw: updates.append(kw), record_litellm=lambda *a, **k: None)
+    def _usage_chunk(*, model: str, provider: str, prompt_tokens: int, completion_tokens: int):
+        from litellm.types.utils import ModelResponseStream, Usage
 
-        return _gen
+        chunk = ModelResponseStream(model=model, choices=[])
+        chunk.usage = Usage(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=prompt_tokens + completion_tokens,
+        )
+        chunk._hidden_params = {"custom_llm_provider": provider}
+        return chunk
 
     @pytest.mark.asyncio
-    async def test_last_usage_chunk_is_attached_to_the_generation(self, monkeypatch):
-        updates: list = []
-        monkeypatch.setattr(llm_service, "langfuse_generation", self._capturing_generation(updates))
-        final = MagicMock(usage=MagicMock(prompt_tokens=80, completion_tokens=12))
-        final.choices = []
+    async def test_the_final_usage_chunk_records_usage_and_cost(self, monkeypatch):
+        span = self._enable_langfuse(monkeypatch)
+        final = self._usage_chunk(
+            model="gpt-5.4-mini-2026-03-17", provider="openai", prompt_tokens=8000, completion_tokens=300
+        )
 
         with patch(
             "app.services.llm_service.litellm.acompletion", side_effect=_stream_of(_content_chunk("hello"), final)
@@ -243,17 +270,69 @@ class TestStreamUsageReachesLangfuse:
             chunks = [c async for c in _stream_from_model("openai/gpt-5.4-mini", "hi", None, None)]
 
         assert chunks == ["hello"]
-        assert updates[-1]["output"] == "hello"
-        assert updates[-1]["model"] == "openai/gpt-5.4-mini"
-        # Same shape ``record_litellm`` produces for non-streaming calls.
-        assert updates[-1]["usage"] == {"input": 80, "output": 12}
+        sent = span.updates[-1]
+        assert sent["output"] == "hello"
+        assert sent["model"] == "gpt-5.4-mini"
+        # The provider's counts, not a tokenisation of the five visible characters.
+        assert sent["usage_details"] == {"input": 8000, "output": 300, "total": 8300}
+        assert sent["cost_details"]["total"] == pytest.approx(8000 * 0.75e-6 + 300 * 4.5e-6)
+        assert "usage" not in sent
 
     @pytest.mark.asyncio
-    async def test_no_usage_chunk_records_none(self, monkeypatch):
-        updates: list = []
-        monkeypatch.setattr(llm_service, "langfuse_generation", self._capturing_generation(updates))
+    async def test_a_gemini_fallback_stream_records_its_tokens(self, monkeypatch):
+        span = self._enable_langfuse(monkeypatch)
+        final = self._usage_chunk(model="gemini-2.5-flash", provider="gemini", prompt_tokens=5000, completion_tokens=90)
+
+        with patch("app.services.llm_service.litellm.acompletion", side_effect=_stream_of(_content_chunk("hi"), final)):
+            [c async for c in _stream_from_model("gemini/gemini-2.5-flash", "hi", None, None)]
+
+        sent = span.updates[-1]
+        assert sent["model"] == "gemini-2.5-flash"
+        assert sent["usage_details"] == {"input": 5000, "output": 90, "total": 5090}
+        assert sent["cost_details"]["total"] == pytest.approx(5000 * 0.3e-6 + 90 * 2.5e-6)
+
+    @pytest.mark.asyncio
+    @pytest.mark.allow_real_llm_call
+    async def test_real_litellm_stream_output_tokens_come_from_the_usage_chunk(self, monkeypatch):
+        """End to end through LiteLLM's own stream wrapper: the usage chunk it
+        emits for ``include_usage`` is the one recorded, so output tokens are
+        the count for the whole answer. ``mock_response`` makes LiteLLM answer
+        locally, so the real client is used without reaching a provider."""
+        import litellm
+
+        span = self._enable_langfuse(monkeypatch)
+        answer = "We offer managed detection and response, with a 24x7 SOC and monthly reporting. " * 4
+        real_acompletion = litellm.acompletion
+        seen_chunks: list = []
+
+        async def _mocked(**kwargs):
+            stream = await real_acompletion(**kwargs, mock_response=answer, api_key="test-key")
+
+            async def _tap():
+                async for chunk in stream:
+                    seen_chunks.append(chunk)
+                    yield chunk
+
+            return _tap()
+
+        with patch("app.services.llm_service.litellm.acompletion", side_effect=_mocked):
+            chunks = [c async for c in _stream_from_model("openai/gpt-5.4-mini", "hi", None, None)]
+
+        assert "".join(chunks) == answer
+        final_usage = next(c.usage for c in reversed(seen_chunks) if getattr(c, "usage", None) is not None)
+        sent = span.updates[-1]
+        assert sent["usage_details"]["output"] == final_usage.completion_tokens > 50
+        assert sent["usage_details"]["input"] == final_usage.prompt_tokens
+        assert sent["cost_details"]["total"] > 0
+
+    @pytest.mark.asyncio
+    async def test_no_usage_chunk_records_the_text_and_flags_unreported_usage(self, monkeypatch):
+        span = self._enable_langfuse(monkeypatch)
 
         with patch("app.services.llm_service.litellm.acompletion", side_effect=_stream_of(_content_chunk("hello"))):
             [c async for c in _stream_from_model("openai/gpt-5.4-mini", "hi", None, None)]
 
-        assert updates[-1]["usage"] is None
+        sent = span.updates[-1]
+        assert sent["output"] == "hello"
+        assert sent["metadata"]["usage_reported"] is False
+        assert "usage_details" not in sent

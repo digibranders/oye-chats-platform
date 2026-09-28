@@ -32,6 +32,7 @@ and keep Gemini as the fallback.
 """
 
 import contextlib
+import contextvars
 import logging
 import math
 import re
@@ -49,6 +50,7 @@ from app.config import (
     GOOGLE_API_KEY,
 )
 from app.core import embed_rate_limiter
+from app.core.langfuse_client import langfuse_generation
 
 logger = logging.getLogger(__name__)
 
@@ -88,12 +90,50 @@ def _retry_delay_from_429(resp: httpx.Response) -> float | None:
     return float(match.group(1)) if match else None
 
 
+def _reported_input_tokens(payload: dict) -> int | None:
+    """The prompt token count Gemini reports for a batch, ``None`` when it reports none.
+
+    ``batchEmbedContents`` has answered with vectors only so far. Read
+    defensively so a ``usageMetadata`` block, should the API add one, replaces
+    the character estimate in :meth:`_GenerationRecorder.record_embedding`
+    without a code change.
+    """
+    usage = payload.get("usageMetadata")
+    count = usage.get("promptTokenCount") if isinstance(usage, dict) else None
+    return count if isinstance(count, int) and not isinstance(count, bool) and count >= 0 else None
+
+
 def _embed_one_batch(
     client: httpx.Client,
     batch: list[str],
     max_wait_s: float | None = None,
     task_type: str | None = None,
 ) -> list[list[float]]:
+    """Embed one batch, recorded as one Langfuse embedding observation.
+
+    The observation carries counts and sizes, never the text: a crawl embeds
+    thousands of chunks, and a query embedding is the visitor's own words.
+    """
+    characters = sum(len(text) for text in batch)
+    with langfuse_generation(
+        "gemini-embedding",
+        model=f"gemini/{GEMINI_EMBED_MODEL}",
+        input={"texts": len(batch), "characters": characters, "task_type": task_type},
+        as_type="embedding",
+    ) as observation:
+        vectors, reported_tokens = _request_batch(client, batch, max_wait_s, task_type)
+        observation.record_embedding(texts=len(batch), characters=characters, reported_input_tokens=reported_tokens)
+    return vectors
+
+
+def _request_batch(
+    client: httpx.Client,
+    batch: list[str],
+    max_wait_s: float | None,
+    task_type: str | None,
+) -> tuple[list[list[float]], int | None]:
+    """POST one batch with retries. Returns the normalized vectors and the
+    provider's input token count, if it reported one."""
     url = f"{GEMINI_EMBED_URL}/models/{GEMINI_EMBED_MODEL}:batchEmbedContents"
     # ``taskType`` is what makes the embedding asymmetric: RETRIEVAL_DOCUMENT
     # for stored chunks, RETRIEVAL_QUERY for the question. It is a property of
@@ -130,12 +170,13 @@ def _embed_one_batch(
         else:
             if resp.status_code == 200:
                 try:
-                    embeddings = resp.json()["embeddings"]
-                except (KeyError, ValueError) as exc:
+                    payload = resp.json()
+                    embeddings = payload["embeddings"]
+                except (KeyError, TypeError, ValueError) as exc:
                     raise RuntimeError(f"Gemini returned an unparseable body: {exc}") from exc
                 if len(embeddings) != len(batch):
                     raise RuntimeError(f"Gemini returned {len(embeddings)} embeddings for {len(batch)} inputs")
-                return [_l2_normalize(item["values"]) for item in embeddings]
+                return [_l2_normalize(item["values"]) for item in embeddings], _reported_input_tokens(payload)
             if resp.status_code == 429:
                 # Quota. Honour the server's own retry hint; fall back to backoff.
                 server_delay = _retry_delay_from_429(resp)
@@ -213,8 +254,13 @@ def embed_texts(
     start = perf_counter()
     pool = ThreadPoolExecutor(max_workers=workers)
     try:
+        # Each batch runs in a copy of this thread's context, so its Langfuse
+        # observation nests under the caller's trace (the chat turn, the crawl
+        # job) instead of starting an orphan trace per worker thread. One copy
+        # per task: a context cannot be entered by two threads at once.
         future_to_idx = {
-            pool.submit(_embed_one_batch, client, b, max_wait_s, task_type): i for i, b in enumerate(batches)
+            pool.submit(contextvars.copy_context().run, _embed_one_batch, client, b, max_wait_s, task_type): i
+            for i, b in enumerate(batches)
         }
         try:
             for future in as_completed(future_to_idx):
