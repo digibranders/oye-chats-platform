@@ -1127,8 +1127,8 @@ def urgent_reply(
     ``ask_for_contact`` is True when the team has no email or phone number for
     the visitor yet. On 2026-09-28 an alert reached the team with only a name,
     and a visitor under attack may never fill in a form, so the reply also asks
-    for a phone number or email in the chat. The next message is read for one
-    (``rag_service._capture_urgent_contact``). The form stays on offer.
+    for a phone number or email in the chat. The next two visitor turns are
+    read for one (``rag_service._capture_urgent_contact``). The form stays on offer.
     """
     co = f"**{company_name}**" if company_name else "the team"
     urgent_link = f" If this is an active incident, don't wait for a reply: {emergency_url}" if emergency_url else ""

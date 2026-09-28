@@ -5,11 +5,13 @@ phone, and the owner asked how anyone could reach her. The alert goes out on the
 visitor's first urgent message, before any form, and a panicked visitor may never
 fill one in. Three pieces close the gap:
 
-1. The urgent reply asks for a phone number or email in the chat. On the next
-   turns of that conversation ``rag_service`` reads the visitor's message with
+1. The urgent reply asks for a phone number or email in the chat and records
+   which message asked (``mark_contact_asked``). On the next
+   ``CONTACT_WINDOW_TURNS`` visitor turns, and only while the lead has neither
+   an email nor a phone, ``rag_service`` reads the visitor's message with
    ``contact_details.find_contact``; this module saves what it finds to the lead
-   the way the form does (``save_urgent_contact``) and sends the team each new
-   value once (``alert_team_of_contact``).
+   the way the form does, never over a value already there
+   (``save_urgent_contact``), and sends it to the team (``alert_team_of_contact``).
 2. The alert itself says when there is no email or phone yet (``email_service``
    and ``notification_service``).
 3. A delayed worker job (``run_no_contact_follow_up``) checks a few minutes
@@ -20,7 +22,10 @@ fill one in. Three pieces close the gap:
 The worker cannot see the API's in-process record of who is on the page, so the
 widget's five-second poll for operator invitations also writes a timestamp to the
 shared cache while an urgent session waits for its follow-up (``record_presence``).
-Without the cache the job falls back to the visitor's last activity.
+It writes only while a job is scheduled and unsettled, and for at most
+``PRESENCE_GRACE_SECONDS`` past the job's due time: the alert records the due
+time only when it enqueued a job, and the job settles the session on every
+outcome. Without the cache the job falls back to the visitor's last activity.
 
 Every team message here goes to the bot's ``handoff_request`` list, as the alert
 did, and never raises into the caller: an alert failure must not cost the
@@ -53,8 +58,17 @@ logger = logging.getLogger(__name__)
 URGENT_NOTIFIED_KEY = "urgent_notified"
 #: ``inline_cards_shown`` key: the normalised contact values already sent to the team.
 CONTACTS_SENT_KEY = "urgent_contacts_sent"
-#: ``inline_cards_shown`` key: set once the no-contact follow-up has run for the session.
+#: ``inline_cards_shown`` key: set once the no-contact follow-up is settled for the
+#: session, because it ran, or because it found nothing left to do.
 NO_CONTACT_FOLLOW_UP_KEY = "urgent_no_contact_follow_up"
+#: ``inline_cards_shown`` key: when the scheduled follow-up is due, as a unix time.
+#: Set only when the alert enqueued the job, so no job means no heartbeat.
+FOLLOW_UP_DUE_KEY = "urgent_no_contact_follow_up_due_at"
+#: ``inline_cards_shown`` key: the id of the bot message that last asked the
+#: visitor for a phone number or email.
+CONTACT_ASKED_KEY = "urgent_contact_asked_after"
+#: How many visitor turns after the ask are read for contact details.
+CONTACT_WINDOW_TURNS = 2
 
 #: The worker task that sends the no-contact follow-up.
 NO_CONTACT_FOLLOW_UP_TASK = "task_urgent_no_contact_follow_up"
@@ -67,6 +81,9 @@ PRESENCE_TTL_SECONDS = 3600
 #: A timestamp younger than this means the page is open. The widget polls every
 #: five seconds and the API itself forgets a session after twenty.
 PRESENCE_FRESH_SECONDS = 30
+#: How long past the follow-up's due time the heartbeat is still written, for a
+#: worker that runs the job late. After it the poll writes nothing.
+PRESENCE_GRACE_SECONDS = 600
 
 _PRESENCE_PREFIX = "urgent_presence:"
 
@@ -84,9 +101,75 @@ def is_urgent_session(chat_session: ChatSession | None) -> bool:
     return bool(_shown(chat_session).get(URGENT_NOTIFIED_KEY))
 
 
-def awaits_follow_up(chat_session: ChatSession | None) -> bool:
-    """Whether this urgent session's no-contact follow-up has yet to run."""
-    return is_urgent_session(chat_session) and not _shown(chat_session).get(NO_CONTACT_FOLLOW_UP_KEY)
+def _due_at(chat_session: ChatSession | None) -> float | None:
+    due = _shown(chat_session).get(FOLLOW_UP_DUE_KEY)
+    return float(due) if isinstance(due, int | float) and not isinstance(due, bool) else None
+
+
+def follow_up_pending(chat_session: ChatSession | None) -> bool:
+    """Whether a no-contact follow-up job was scheduled for this session and is not settled."""
+    return (
+        is_urgent_session(chat_session)
+        and _due_at(chat_session) is not None
+        and not _shown(chat_session).get(NO_CONTACT_FOLLOW_UP_KEY)
+    )
+
+
+def awaits_follow_up(chat_session: ChatSession | None, *, now: float | None = None) -> bool:
+    """Whether the widget's poll should write the presence heartbeat for this session.
+
+    Only while a scheduled follow-up is pending, and no later than
+    ``PRESENCE_GRACE_SECONDS`` past its due time.
+    """
+    if not follow_up_pending(chat_session):
+        return False
+    due_at = _due_at(chat_session)
+    moment = time.time() if now is None else now
+    return due_at is not None and moment <= due_at + PRESENCE_GRACE_SECONDS
+
+
+def _set_flag(chat_session: ChatSession, key: str, value: object) -> None:
+    shown = dict(_shown(chat_session))
+    shown[key] = value
+    # JSONB is tracked only when the value is reassigned.
+    chat_session.inline_cards_shown = shown
+
+
+def mark_follow_up_due(chat_session: ChatSession | None, due_at: float) -> None:
+    """Record that a follow-up job was enqueued and when it is due. The caller commits."""
+    if chat_session is not None:
+        _set_flag(chat_session, FOLLOW_UP_DUE_KEY, due_at)
+
+
+def settle_follow_up(chat_session: ChatSession | None) -> None:
+    """Record that the follow-up has nothing (more) to do, which stops the heartbeat. The caller commits."""
+    if chat_session is not None and not _shown(chat_session).get(NO_CONTACT_FOLLOW_UP_KEY):
+        _set_flag(chat_session, NO_CONTACT_FOLLOW_UP_KEY, True)
+
+
+def mark_contact_asked(chat_session: ChatSession | None, message_id: int) -> None:
+    """Record the bot message that asked for a phone number or email. The caller commits."""
+    if chat_session is not None:
+        _set_flag(chat_session, CONTACT_ASKED_KEY, message_id)
+
+
+def in_contact_window(db, chat_session: ChatSession | None) -> bool:
+    """Whether this visitor turn is one of the first ``CONTACT_WINDOW_TURNS`` after the ask.
+
+    The visitor's message is saved before the pipeline runs, so the count
+    includes it.
+    """
+    asked_after = _shown(chat_session).get(CONTACT_ASKED_KEY)
+    if chat_session is None or not isinstance(asked_after, int) or isinstance(asked_after, bool):
+        return False
+    turns = db.execute(
+        select(func.count(ChatMessage.id)).where(
+            ChatMessage.session_id == chat_session.id,
+            ChatMessage.role == "user",
+            ChatMessage.id > asked_after,
+        )
+    ).scalar_one()
+    return 1 <= turns <= CONTACT_WINDOW_TURNS
 
 
 def lead_has_contact(lead: LeadInfo | None) -> bool:
@@ -110,18 +193,20 @@ def save_urgent_contact(
 
     The lead is written with ``create_or_update_lead_info``, as the chat form's
     ``/chat/lead-capture`` writes it, so the leads view and every later alert
-    show the value. Returns the visitor's name and the values not sent to the
-    team before, which are recorded as sent here: the caller commits, then
-    alerts. Flushes only.
+    show the value. An email or a phone already on the lead is never replaced.
+    Returns the visitor's name and the values saved and not sent to the team
+    before, which are recorded as sent here, and settles the no-contact
+    follow-up: the caller commits, then alerts. Flushes only.
     """
-    lead = create_or_update_lead_info(
-        session, session_id=session_id, bot_id=bot_id, email=found.email, phone=found.phone
-    )
+    existing = get_lead_info_by_session(session, session_id, bot_id=bot_id)
+    email = found.email if not (existing is not None and existing.email) else None
+    phone = found.phone if not (existing is not None and existing.phone) else None
+    lead = create_or_update_lead_info(session, session_id=session_id, bot_id=bot_id, email=email, phone=phone)
     shown = dict(_shown(chat_session))
     stored = shown.get(CONTACTS_SENT_KEY)
     sent = [value for value in stored if isinstance(value, str)] if isinstance(stored, list) else []
-    new_email = found.email if found.email and _normalised_email(found.email) not in sent else None
-    new_phone = found.phone if found.phone and _normalised_phone(found.phone) not in sent else None
+    new_email = email if email and _normalised_email(email) not in sent else None
+    new_phone = phone if phone and _normalised_phone(phone) not in sent else None
     if new_email:
         sent.append(_normalised_email(new_email))
     if new_phone:
@@ -130,6 +215,9 @@ def save_urgent_contact(
         shown[CONTACTS_SENT_KEY] = sent
         # JSONB is tracked only when the value is reassigned.
         chat_session.inline_cards_shown = shown
+    if lead_has_contact(lead):
+        # The team can reach the visitor now: no reminder, no heartbeat.
+        settle_follow_up(chat_session)
     session.flush()
     return (lead.name or None), FoundContact(email=new_email, phone=new_phone)
 
@@ -188,15 +276,27 @@ def alert_team_of_contact(
 
 
 def record_presence(session_id: str) -> None:
-    """Note that the visitor's widget is open on the page, for the worker to read. Best effort."""
-    cache_set(f"{_PRESENCE_PREFIX}{session_id}", {"seen_at": time.time()}, PRESENCE_TTL_SECONDS)
+    """Note that the visitor's chat window is open, for the worker to read. Never raises.
+
+    ``cache_set`` swallows a failed write, but ``get_redis`` raises in production
+    when it cannot connect, and this runs inside the widget's poll, which must
+    not turn into a 500 over a heartbeat.
+    """
+    try:
+        cache_set(f"{_PRESENCE_PREFIX}{session_id}", {"seen_at": time.time()}, PRESENCE_TTL_SECONDS)
+    except Exception:  # noqa: BLE001 - presence is best effort; the poll must answer
+        logger.warning("urgent_presence_write_failed | session=%s", session_id, exc_info=True)
 
 
 def presence_seen_at(session_id: str) -> float | None:
-    """When the visitor's widget last polled from the page, if the shared cache knows."""
-    value = cache_get(f"{_PRESENCE_PREFIX}{session_id}")
+    """When the visitor's chat window last polled, if the shared cache knows. Never raises."""
+    try:
+        value = cache_get(f"{_PRESENCE_PREFIX}{session_id}")
+    except Exception:  # noqa: BLE001 - the follow-up falls back to the last activity
+        logger.warning("urgent_presence_read_failed | session=%s", session_id, exc_info=True)
+        return None
     seen_at = value.get("seen_at") if isinstance(value, dict) else None
-    return float(seen_at) if isinstance(seen_at, int | float) else None
+    return float(seen_at) if isinstance(seen_at, int | float) and not isinstance(seen_at, bool) else None
 
 
 def _ago(seconds: float) -> str:
@@ -206,20 +306,39 @@ def _ago(seconds: float) -> str:
     return "1 minute ago" if minutes == 1 else f"{minutes} minutes ago"
 
 
-def describe_presence(*, status: str | None, seen_at: float | None, last_active_at: float | None, now: float) -> str:
+def _about_ago(seconds: float) -> str:
+    minutes = int(max(seconds, 0) // 60)
+    return "less than a minute ago" if minutes < 1 else f"about {_ago(seconds)}"
+
+
+def describe_presence(
+    *,
+    status: str | None,
+    seen_at: float | None,
+    last_active_at: float | None,
+    now: float,
+    heartbeat_until: float | None = None,
+) -> str:
     """One sentence on whether the visitor is still on the page.
 
-    The widget's poll (``seen_at``) is the only live signal the worker has. It
-    stops when the tab closes, so a stale one means the visitor has probably
-    left. Without it, the last visitor activity (a message, a page view) is all
-    there is, and that cannot say whether the page is still open.
+    The widget's poll (``seen_at``) is the only live signal the worker has. The
+    widget polls only while the chat panel is open, so a stale one says the chat
+    window closed, not that the visitor left the page. The poll stops writing at
+    ``heartbeat_until`` on purpose, so a record from that moment says nothing.
+    Without it, the last visitor activity (a message, a page view) is all there
+    is, and that cannot say whether the page is still open.
     """
     if status == "waiting":
         return "Waiting in the live chat queue now."
     if seen_at is not None:
         if now - seen_at <= PRESENCE_FRESH_SECONDS:
             return "Still on the page: their chat window checked in less than a minute ago."
-        return f"Probably left the page: their chat window last checked in {_ago(now - seen_at)}."
+        if heartbeat_until is not None and seen_at >= heartbeat_until - PRESENCE_FRESH_SECONDS:
+            return (
+                "Not known whether they are still on the page. "
+                f"Their chat window last checked in {_ago(now - seen_at)}."
+            )
+        return f"Their chat window closed {_about_ago(now - seen_at)}."
     if last_active_at is not None:
         return f"Not known whether they are still on the page. Last active {_ago(now - last_active_at)}."
     return "Not known whether they are still on the page."
@@ -246,11 +365,13 @@ def run_no_contact_follow_up(session_id: str, bot_id: int, alerted_at: float, *,
 
     Runs in the worker a few minutes after the alert. Does nothing when the
     session has an email or a phone by then (the form's email or
-    ``alert_team_of_contact`` already carried it), when an operator is already in
-    the chat, or when it ran before. The session row is locked and the run
-    recorded before anything is sent, so a retry or a second job sends nothing
-    twice. Owner previews never get here: their urgent turn alerts no one, so no
-    job is scheduled. Returns True when the team was told.
+    ``alert_team_of_contact`` already carried it), when an operator is assigned
+    or in the chat, when the conversation is closed, or when it ran before. Each
+    of those outcomes settles the session, so the widget's poll stops writing the
+    presence heartbeat. The session row is locked and the run recorded before
+    anything is sent, so a retry or a second job sends nothing twice. Owner
+    previews never get here: their urgent turn alerts no one, so no job is
+    scheduled. Returns True when the team was told.
     """
     from app.db.session import SessionLocal
 
@@ -260,22 +381,28 @@ def run_no_contact_follow_up(session_id: str, bot_id: int, alerted_at: float, *,
         chat_session = db.execute(
             select(ChatSession).where(ChatSession.id == session_id, ChatSession.bot_id == bot_id).with_for_update()
         ).scalar_one_or_none()
-        if not awaits_follow_up(chat_session):
+        if not follow_up_pending(chat_session):
             return False
         bot = db.get(Bot, bot_id)
         lead = get_lead_info_by_session(db, session_id, bot_id=bot_id)
-        if bot is None or lead_has_contact(lead) or chat_session.status == "live":
+        settle_follow_up(chat_session)
+        if (
+            bot is None
+            or lead_has_contact(lead)
+            or chat_session.status in ("live", "closed")
+            or chat_session.assigned_operator_id is not None
+        ):
+            db.commit()
             return False
-        shown = dict(_shown(chat_session))
-        shown[NO_CONTACT_FOLLOW_UP_KEY] = True
-        chat_session.inline_cards_shown = shown
         visitor_name = lead.name if lead is not None and lead.name else None
         moment = time.time() if now is None else now
+        due_at = _due_at(chat_session)
         presence = describe_presence(
             status=chat_session.status,
             seen_at=presence_seen_at(session_id),
             last_active_at=_last_active_at(db, chat_session),
             now=moment,
+            heartbeat_until=(due_at + PRESENCE_GRACE_SECONDS) if due_at is not None else None,
         )
         client_id = bot.client_id
         bot_name = bot.name

@@ -8,6 +8,7 @@ visitor is still on the page.
 """
 
 import os
+import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -15,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.auth import get_current_bot
-from app.db.models import ChatMessage, ChatSession, LeadInfo
+from app.db.models import ChatMessage, ChatSession, LeadInfo, Operator
 from app.services import urgent_followup
 from app.worker import tasks
 from tests.test_rag_pipeline_defects import _make_bot, _make_client, _make_session
@@ -23,6 +24,9 @@ from tests.test_rag_pipeline_defects import _make_bot, _make_client, _make_sessi
 TEAM_EMAILS = {"handoff_request": ["soc@acme.test"], "default": ["owner@acme.test"]}
 NOW = datetime(2026, 9, 28, 10, 0, tzinfo=UTC)
 ALERTED_AT = (NOW - timedelta(minutes=3)).timestamp()
+DUE_AT = ALERTED_AT + urgent_followup.NO_CONTACT_FOLLOW_UP_DELAY_SECONDS
+#: The flags ``rag_service`` leaves on a session whose alert enqueued the follow-up.
+SCHEDULED = {"urgent_notified": True, urgent_followup.FOLLOW_UP_DUE_KEY: DUE_AT}
 
 
 class _Cache:
@@ -70,7 +74,7 @@ def _urgent_session(db, session_id, *, lead=None, status="bot", flags=None, last
         client,
         session_id,
         status=status,
-        inline_cards_shown={"urgent_notified": True, **(flags or {})},
+        inline_cards_shown={**SCHEDULED, **(flags or {})},
         last_active_at=NOW - timedelta(minutes=10),
     )
     if lead is not None:
@@ -144,16 +148,58 @@ def test_contact_details_that_arrived_cancel_the_follow_up(db, cache, team, cont
     assert _run("follow-3", bot) is False
 
     assert team == {"emails": [], "updates": []}
-    assert urgent_followup.NO_CONTACT_FOLLOW_UP_KEY not in _flags(db, "follow-3")
+    # Settled, so the widget's poll stops writing the heartbeat.
+    assert _flags(db, "follow-3")[urgent_followup.NO_CONTACT_FOLLOW_UP_KEY] is True
+    assert urgent_followup.awaits_follow_up(db.get(ChatSession, "follow-3"), now=NOW.timestamp()) is False
 
 
-def test_a_visitor_whose_chat_stopped_polling_has_probably_left(db, cache, team):
+def test_a_chat_window_that_stopped_polling_closed(db, cache, team):
+    """The widget polls only while the chat panel is open: a stale poll says the window closed, not the page."""
     _client, bot = _urgent_session(db, "follow-4", lead={"name": "Eva"})
     cache.store["urgent_presence:follow-4"] = {"seen_at": NOW.timestamp() - 150}
 
     _run("follow-4", bot)
 
-    assert team["emails"][0]["presence"] == ("Probably left the page: their chat window last checked in 2 minutes ago.")
+    assert team["emails"][0]["presence"] == "Their chat window closed about 2 minutes ago."
+
+
+@pytest.mark.parametrize(
+    ("seconds", "presence"),
+    [
+        (4, "Still on the page: their chat window checked in less than a minute ago."),
+        (45, "Their chat window closed less than a minute ago."),
+        (70, "Their chat window closed about 1 minute ago."),
+        (150, "Their chat window closed about 2 minutes ago."),
+    ],
+)
+def test_the_presence_line(seconds, presence):
+    now = NOW.timestamp()
+    assert (
+        urgent_followup.describe_presence(status="bot", seen_at=now - seconds, last_active_at=None, now=now) == presence
+    )
+
+
+def test_a_heartbeat_that_stopped_on_purpose_says_nothing_about_the_window():
+    """A late job reads the last write before the poll stopped at ``heartbeat_until``: not a closed window."""
+    now = NOW.timestamp()
+    until = now - 300
+    presence = urgent_followup.describe_presence(
+        status="bot", seen_at=until - 3, last_active_at=None, now=now, heartbeat_until=until
+    )
+    assert presence == "Not known whether they are still on the page. Their chat window last checked in 5 minutes ago."
+
+
+def test_a_failing_cache_read_falls_back_to_the_last_activity(db, team, monkeypatch):
+    def broken(_key):
+        raise RuntimeError("Redis is required in production but connection failed")
+
+    monkeypatch.setattr(urgent_followup, "cache_get", broken)
+    _client, bot = _urgent_session(
+        db, "follow-cache", lead={"name": "Eva"}, last_message_at=NOW - timedelta(minutes=4, seconds=10)
+    )
+
+    assert _run("follow-cache", bot) is True
+    assert team["updates"][0]["body"] == "Not known whether they are still on the page. Last active 4 minutes ago."
 
 
 def test_without_a_presence_record_the_last_activity_is_reported(db, cache, team):
@@ -181,6 +227,40 @@ def test_an_operator_already_in_the_chat_needs_no_reminder(db, cache, team):
 
     assert _run("follow-7", bot) is False
     assert team == {"emails": [], "updates": []}
+    assert _flags(db, "follow-7")[urgent_followup.NO_CONTACT_FOLLOW_UP_KEY] is True
+
+
+def test_a_closed_conversation_needs_no_reminder(db, cache, team):
+    _client, bot = _urgent_session(db, "follow-closed", lead={"name": "Eva"}, status="closed")
+
+    assert _run("follow-closed", bot) is False
+    assert team == {"emails": [], "updates": []}
+    assert _flags(db, "follow-closed")[urgent_followup.NO_CONTACT_FOLLOW_UP_KEY] is True
+
+
+def test_an_assigned_operator_needs_no_reminder(db, cache, team):
+    client, bot = _urgent_session(db, "follow-assigned", lead={"name": "Eva"}, status="waiting")
+    operator = Operator(client_id=client.id, bot_id=bot.id, name="Op", email="op@acme.test")
+    db.add(operator)
+    db.flush()
+    db.get(ChatSession, "follow-assigned").assigned_operator_id = operator.id
+    db.commit()
+
+    assert _run("follow-assigned", bot) is False
+    assert team == {"emails": [], "updates": []}
+    assert _flags(db, "follow-assigned")[urgent_followup.NO_CONTACT_FOLLOW_UP_KEY] is True
+
+
+def test_a_session_whose_alert_scheduled_no_job_is_not_followed_up(db, cache, team):
+    """No due time means no job was enqueued: nothing to send and no heartbeat."""
+    _client, bot = _urgent_session(db, "follow-unscheduled", lead={"name": "Eva"})
+    chat_session = db.get(ChatSession, "follow-unscheduled")
+    chat_session.inline_cards_shown = {"urgent_notified": True}
+    db.commit()
+
+    assert _run("follow-unscheduled", bot) is False
+    assert team == {"emails": [], "updates": []}
+    assert urgent_followup.awaits_follow_up(db.get(ChatSession, "follow-unscheduled"), now=NOW.timestamp()) is False
 
 
 def test_a_session_the_team_was_never_alerted_about_is_skipped(db, cache, team):
@@ -253,11 +333,35 @@ def _poll(bot, session_id):
 
 
 def test_the_widget_poll_records_presence_while_the_follow_up_is_due(db, cache):
-    _client, bot = _urgent_session(db, "beat-1")
+    _client, bot = _urgent_session(db, "beat-1", flags={urgent_followup.FOLLOW_UP_DUE_KEY: time.time() + 120})
 
     assert _poll(bot, "beat-1").json() == {"pending": False}
 
     assert urgent_followup.presence_seen_at("beat-1") is not None
+
+
+def test_the_widget_poll_stops_recording_after_the_grace_past_the_due_time(db, cache):
+    overdue = time.time() - urgent_followup.PRESENCE_GRACE_SECONDS - 5
+    _client, bot = _urgent_session(db, "beat-late", flags={urgent_followup.FOLLOW_UP_DUE_KEY: overdue})
+
+    assert _poll(bot, "beat-late").json() == {"pending": False}
+
+    assert cache.store == {}
+
+
+def test_a_failing_cache_never_turns_the_poll_into_an_error(db, monkeypatch):
+    """``get_redis`` raises RuntimeError in production when it cannot connect."""
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("Redis is required in production but connection failed")
+
+    monkeypatch.setattr(urgent_followup, "cache_set", broken)
+    _client, bot = _urgent_session(db, "beat-broken", flags={urgent_followup.FOLLOW_UP_DUE_KEY: time.time() + 120})
+
+    response = _poll(bot, "beat-broken")
+
+    assert response.status_code == 200
+    assert response.json() == {"pending": False}
 
 
 def test_the_widget_poll_records_nothing_for_other_sessions(db, cache):

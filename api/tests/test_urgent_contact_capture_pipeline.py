@@ -2,9 +2,12 @@
 
 On 2026-09-28 an urgent alert reached the team with the name "Eva" and no email,
 and the owner asked how the team could reach her. The urgent reply now asks for a
-phone number or email in the chat. The next message that holds one is saved to
-the lead the way the form saves it, acknowledged in one sentence, and sent to the
-team once per value, on the alert's own recipients.
+phone number or email in the chat. On the next two visitor turns, and only while
+the lead has neither, a message that holds the visitor's own contact is saved to
+the lead the way the form saves it, acknowledged in one sentence (above the normal
+reply when the message also asks something), and sent to the team on the alert's
+own recipients. Numbers that are not phone numbers, someone else's details and a
+new incident report are never captured, and nothing replaces a value on the lead.
 """
 
 import pytest
@@ -169,23 +172,132 @@ async def test_an_email_and_a_phone_in_one_message_go_out_together(db, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_each_value_is_sent_to_the_team_once(db, monkeypatch, team):
-    _client, bot, _cap = _urgent_bot(db, monkeypatch, "contact-once")
+async def test_once_the_lead_has_a_contact_later_messages_go_through_the_normal_pipeline(db, monkeypatch, team):
+    """Capture ends at the first contact: a later number or email is never read as one, nor overwrites it."""
+    _client, bot, cap = _urgent_bot(db, monkeypatch, "contact-once")
     await _drive_stream(bot, URGENT, "contact-once")
 
     await _drive_stream(bot, "+91 98765 43210", "contact-once")
-    again = await _drive_stream(bot, "it's +91 98765 43210, please call", "contact-once")
     later = await _drive_stream(bot, "or email eva@acme.test", "contact-once")
 
-    assert _answer_text(again) == "Thanks, the team will reach you on +91 98765 43210."
-    assert _answer_text(later) == "Thanks, the team will reach you on eva@acme.test."
-    assert [(email["email"], email["phone"]) for email in team["contact_emails"]] == [
-        (None, "+91 98765 43210"),
-        ("eva@acme.test", None),
-    ]
-    assert len(team["updates"]) == 2
+    assert "Thanks, the team will reach you" not in _answer_text(later)
+    assert len(cap["prompts"]) == 1, "the later message is answered by the normal pipeline"
+    assert [(email["email"], email["phone"]) for email in team["contact_emails"]] == [(None, "+91 98765 43210")]
     lead = _lead(db, "contact-once")
-    assert (lead.email, lead.phone) == ("eva@acme.test", "+91 98765 43210")
+    assert (lead.email, lead.phone) == (None, "+91 98765 43210")
+
+
+@pytest.mark.asyncio
+async def test_a_contact_from_the_form_after_the_ask_is_never_overwritten(db, monkeypatch, team):
+    _client, bot, _cap = _urgent_bot(db, monkeypatch, "contact-form")
+    await _drive_stream(bot, URGENT, "contact-form")
+    db.query(LeadInfo).filter(LeadInfo.session_id == "contact-form").update({"email": "form@acme.test"})
+    db.commit()
+
+    frames = await _drive_stream(bot, "+91 98765 43210", "contact-form")
+
+    assert "Thanks, the team will reach you" not in _answer_text(frames)
+    lead = _lead(db, "contact-form")
+    assert (lead.email, lead.phone) == ("form@acme.test", None)
+    assert team["contact_emails"] == [] and team["updates"] == []
+
+
+@pytest.mark.asyncio
+async def test_the_second_visitor_turn_after_the_ask_is_still_read(db, monkeypatch, team):
+    _client, bot, _cap = _urgent_bot(db, monkeypatch, "contact-second")
+    await _drive_stream(bot, URGENT, "contact-second")
+    await _drive_stream(bot, "what should we do first?", "contact-second")
+
+    frames = await _drive_stream(bot, "+91 98765 43210", "contact-second")
+
+    assert _answer_text(frames) == "Thanks, the team will reach you on +91 98765 43210."
+    assert _lead(db, "contact-second").phone == "+91 98765 43210"
+
+
+@pytest.mark.asyncio
+async def test_a_number_three_visitor_turns_after_the_ask_is_not_read(db, monkeypatch, team):
+    _client, bot, _cap = _urgent_bot(db, monkeypatch, "contact-late")
+    await _drive_stream(bot, URGENT, "contact-late")
+    await _drive_stream(bot, "what should we do first?", "contact-late")
+    await _drive_stream(bot, "and after that?", "contact-late")
+
+    frames = await _drive_stream(bot, "+91 98765 43210", "contact-late")
+
+    assert "Thanks, the team will reach you" not in _answer_text(frames)
+    assert _lead(db, "contact-late").phone is None
+    assert team["contact_emails"] == [] and team["updates"] == []
+
+
+@pytest.mark.asyncio
+async def test_the_ask_is_recorded_on_the_urgent_reply_that_made_it(db, monkeypatch, team):
+    _client, bot, _cap = _urgent_bot(db, monkeypatch, "contact-mark")
+
+    await _drive_stream(bot, URGENT, "contact-mark")
+
+    db.expire_all()
+    shown = db.get(ChatSession, "contact-mark").inline_cards_shown
+    assert shown[urgent_followup.CONTACT_ASKED_KEY] == _messages(db, "contact-mark", role="bot")[-1].id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message",
+    [
+        "ticket #9876543210",
+        "invoice 2024001234",
+        "1727500000",
+        "version 10.0.19045.3693",
+        "account 123456789012",
+    ],
+)
+async def test_a_number_that_is_not_a_phone_number_is_not_captured(db, monkeypatch, team, message):
+    _client, bot, _cap = _urgent_bot(db, monkeypatch, "contact-not")
+    await _drive_stream(bot, URGENT, "contact-not")
+
+    frames = await _drive_stream(bot, message, "contact-not")
+
+    assert "Thanks, the team will reach you" not in _answer_text(frames)
+    assert _lead(db, "contact-not").phone is None
+    assert team["contact_emails"] == [] and team["updates"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message",
+    [
+        # Someone else's contact details.
+        "the attacker called us from +44 7700 900123",
+        "they emailed us from support@paypa1-secure.com",
+        # A new incident report, not an answer to the ask.
+        "+91 98765 43210, ransomware is still encrypting our servers",
+    ],
+)
+async def test_an_attackers_contact_or_a_new_incident_report_is_not_captured(db, monkeypatch, team, message):
+    _client, bot, _cap = _urgent_bot(db, monkeypatch, "contact-other")
+    await _drive_stream(bot, URGENT, "contact-other")
+
+    frames = await _drive_stream(bot, message, "contact-other")
+
+    assert "Thanks, the team will reach you" not in _answer_text(frames)
+    lead = _lead(db, "contact-other")
+    assert (lead.email, lead.phone) == (None, None)
+    assert team["contact_emails"] == [] and team["updates"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_contact_with_a_question_is_acknowledged_and_the_question_answered(db, monkeypatch, team):
+    _client, bot, cap = _urgent_bot(db, monkeypatch, "contact-and-question")
+    await _drive_stream(bot, URGENT, "contact-and-question")
+
+    frames = await _drive_stream(bot, "+91 98765 43210. what should we do first?", "contact-and-question")
+
+    answer = _answer_text(frames)
+    assert answer.startswith("Thanks, the team will reach you on +91 98765 43210.\n\n")
+    assert answer.endswith("Our hours are 9 to 5.")
+    assert len(cap["prompts"]) == 1, "the question reaches the normal pipeline"
+    assert _messages(db, "contact-and-question", role="bot")[-1].content == answer
+    assert _lead(db, "contact-and-question").phone == "+91 98765 43210"
+    assert [(email["email"], email["phone"]) for email in team["contact_emails"]] == [(None, "+91 98765 43210")]
 
 
 @pytest.mark.asyncio
@@ -265,3 +377,91 @@ async def test_an_unnamed_visitor_is_named_a_visitor(db, monkeypatch, team):
     assert team["updates"][0]["title"] == "Contact details for a visitor: +91 98765 43210"
     shown = db.get(ChatSession, "contact-anon").inline_cards_shown
     assert shown[urgent_followup.CONTACTS_SENT_KEY] == ["phone:+919876543210"]
+
+
+@pytest.mark.asyncio
+async def test_a_contact_with_a_support_request_leads_the_support_reply(db, monkeypatch, team):
+    _client, bot, cap = _urgent_bot(db, monkeypatch, "contact-support")
+    await _drive_stream(bot, URGENT, "contact-support")
+    monkeypatch.setattr("app.services.support_route._classify_support_request_raw", lambda _question: True)
+
+    frames = await _drive_stream(
+        bot, "9876543210. also our client portal is not loading since morning", "contact-support"
+    )
+
+    answer = _answer_text(frames)
+    assert answer.startswith("Thanks, the team will reach you on 9876543210.\n\n")
+    assert "Our team already knows about this." in answer, "the support route follows the acknowledgement"
+    assert cap["prompts"] == []
+    assert _messages(db, "contact-support", role="bot")[-1].content == answer
+    assert _lead(db, "contact-support").phone == "9876543210"
+
+
+# ── When the presence heartbeat is written ───────────────────────────────────
+
+
+def _awaits(db, session_id):
+    db.expire_all()
+    return urgent_followup.awaits_follow_up(db.get(ChatSession, session_id))
+
+
+@pytest.mark.asyncio
+async def test_an_alert_that_enqueued_the_follow_up_records_when_it_is_due(db, monkeypatch, team):
+    _client, bot, _cap = _urgent_bot(db, monkeypatch, "beat-due")
+
+    await _drive_stream(bot, URGENT, "beat-due")
+
+    (job,) = [entry for entry in team["enqueue"] if entry[0] == FOLLOW_UP_TASK]
+    alerted_at = job[1][2]
+    shown = db.get(ChatSession, "beat-due").inline_cards_shown
+    assert shown[urgent_followup.FOLLOW_UP_DUE_KEY] == alerted_at + urgent_followup.NO_CONTACT_FOLLOW_UP_DELAY_SECONDS
+    assert _awaits(db, "beat-due") is True
+
+
+@pytest.mark.asyncio
+async def test_no_heartbeat_when_the_alert_already_had_a_contact(db, monkeypatch, team):
+    _client, bot, _cap = _urgent_bot(db, monkeypatch, "beat-known")
+    db.query(LeadInfo).filter(LeadInfo.session_id == "beat-known").update({"phone": "+91 98765 43210"})
+    db.commit()
+
+    await _drive_stream(bot, URGENT, "beat-known")
+
+    assert _awaits(db, "beat-known") is False
+
+
+@pytest.mark.asyncio
+async def test_no_heartbeat_when_the_follow_up_could_not_be_enqueued(db, monkeypatch, team):
+    _client, bot, _cap = _urgent_bot(db, monkeypatch, "beat-enqueue")
+
+    def enqueue(task, *args, **kwargs):
+        if task == FOLLOW_UP_TASK:
+            raise ConnectionError("queue unavailable")
+        team["enqueue"].append((task, args, kwargs))
+
+    monkeypatch.setattr(rs, "enqueue_sync", enqueue)
+
+    frames = await _drive_stream(bot, URGENT, "beat-enqueue")
+
+    assert ASK in _answer_text(frames)
+    assert _awaits(db, "beat-enqueue") is False
+
+
+@pytest.mark.asyncio
+async def test_no_heartbeat_for_an_owner_preview(db, monkeypatch, team):
+    _client, bot, _cap = _urgent_bot(db, monkeypatch, "beat-preview")
+    bot._is_preview = True
+
+    await _drive_stream(bot, URGENT, "beat-preview")
+
+    assert _awaits(db, "beat-preview") is False
+
+
+@pytest.mark.asyncio
+async def test_a_captured_contact_stops_the_heartbeat(db, monkeypatch, team):
+    _client, bot, _cap = _urgent_bot(db, monkeypatch, "beat-captured")
+    await _drive_stream(bot, URGENT, "beat-captured")
+    assert _awaits(db, "beat-captured") is True
+
+    await _drive_stream(bot, "+91 98765 43210", "beat-captured")
+
+    assert _awaits(db, "beat-captured") is False

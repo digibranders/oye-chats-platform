@@ -1118,7 +1118,8 @@ def send_urgent_no_contact_email(
 
     Sent once, a few minutes after the urgent alert, only when neither the form
     nor the chat has given an email or a phone number by then. ``presence`` is
-    one sentence on whether the visitor is still on the page.
+    ``urgent_followup.describe_presence``'s sentence on whether their chat
+    window is still open.
     """
     who = visitor_name or "a visitor"
     subject = f"Still no contact details for {who}"
@@ -1163,17 +1164,26 @@ def _send_support_request_email(
     reply_to: str | None,
     session_id: str | None,
 ) -> None:
-    """The ``support`` variant of :func:`send_handoff_request_email`."""
+    """The ``support`` variant of :func:`send_handoff_request_email`.
+
+    Like the urgent alert, it shows only the contact rows the visitor has values
+    for and, with neither an email nor a phone, says so and sends the team to
+    the conversation instead of promising details that may never come.
+    """
     who = contact.get("name") or "A visitor"
     subject = f"Support request: {who} needs help on {bot_name}"
-    rows = [
-        ("Name", esc(contact.get("name")) if contact.get("name") else "Unknown"),
-        ("Email", _mailto(contact.get("email"))),
-    ]
-    if contact.get("phone"):
-        rows.append(("Phone", esc(contact.get("phone"))))
+    rows = [("Name", esc(contact.get("name")) if contact.get("name") else "Unknown")]
+    contact_rows = _contact_rows(contact.get("email"), contact.get("phone"))
+    rows.extend(contact_rows or [("Contact", esc(URGENT_NO_CONTACT_LINE))])
     rows.append(("Message", esc(message) if message else "No message provided"))
-    conversation_url = f"{APP_URL}/support?session={quote(session_id, safe='')}" if session_id else f"{APP_URL}/support"
+    next_step = (
+        "Reply as soon as you can."
+        if contact_rows
+        else (
+            "Reply in the conversation as soon as you can: it is the only way to reach them until they share an "
+            "email or phone."
+        )
+    )
     inner = (
         h1(f"Support request from {esc(who)}")
         + p(
@@ -1182,8 +1192,8 @@ def _send_support_request_email(
         )
         + ed.section_label("Visitor")
         + info_table(rows)
-        + ed.alert("Reply as soon as you can. Their details may still be on the way from the chat form.", "warning")
-        + button("Open conversation", conversation_url)
+        + ed.alert(next_step, "warning")
+        + button("Open conversation", _conversation_url(session_id))
     )
     html_body = shell(
         subject=subject,

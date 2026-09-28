@@ -29,11 +29,11 @@
 ### Rendering — all in code (one design system)
 **Every email now renders raw HTML in Python** from the shared design system in
 `app/services/email_design.py` (monochrome + single-indigo-accent, dark-mode hardened
-for Outlook). There are **no Brevo saved templates in the send path** — all 32 senders
+for Outlook). There are **no Brevo saved templates in the send path**. All 32 senders
 build HTML and dispatch through `send_email_async()` → `_send_raw_email()` →
 `_send_brevo_email()` (which supports attachments, used by invoices). The gallery in
 `emails/gallery/` is generated from these same senders, so what you review is what
-customers receive — but note it renders **19 of the 32**, not all of them; see
+customers receive, but note it renders **19 of the 32**, not all of them; see
 `emails/gallery/README.md`.
 
 The legacy `_send_brevo_template()` transport and the `TEMPLATE_*` IDs (57–63) still
@@ -330,7 +330,7 @@ Grouped by category. All emails render raw HTML in code (see above). Any `#NN` i
 | Subject | `Contact details for {name}: {email}, {phone}` ("a visitor" without a name) |
 | Audience | Operator(s): the bot's `handoff_request` list, as the urgent alert (D2, `urgent=True`) |
 | Body | The email and/or phone number the visitor typed in the chat after the urgent reply asked for one, with a link to the conversation |
-| Trigger | `rag_service._capture_urgent_contact` via `urgent_followup.alert_team_of_contact`, once per new value, on a chat turn in a conversation the team was alerted to. Not for owner previews |
+| Trigger | `rag_service._capture_urgent_contact` via `urgent_followup.alert_team_of_contact`, on one of the two visitor turns after the urgent reply asked for a phone or email, while the lead has neither. Never for someone else's details or a new incident report, and not for owner previews |
 | Metered | No |
 
 #### D11. Urgent incident: still no contact details
@@ -339,8 +339,8 @@ Grouped by category. All emails render raw HTML in code (see above). Any `#NN` i
 | Function | `send_urgent_no_contact_email(notification_email, bot_name, visitor_name, presence, minutes_since_alert, reply_to, session_id)` |
 | Subject | `Still no contact details for {name}` ("a visitor" without a name) |
 | Audience | Operator(s): the bot's `handoff_request` list, as the urgent alert (D2, `urgent=True`) |
-| Body | The visitor reported an active incident N minutes ago and left no email or phone; one line on whether they are still on the page; link to the conversation |
-| Trigger | ARQ `task_urgent_no_contact_follow_up`, deferred 3 minutes after an urgent alert sent with no email or phone. Sends nothing when contact details arrived, an operator joined, or it already ran |
+| Body | The visitor reported an active incident N minutes ago and left no email or phone; one line on whether their chat window is still open; link to the conversation |
+| Trigger | ARQ `task_urgent_no_contact_follow_up`, deferred 3 minutes after an urgent alert sent with no email or phone. Sends nothing when contact details arrived, an operator was assigned or joined, the conversation was closed, or it already ran |
 | Metered | No |
 
 ### E. Affiliate / Partners (raw HTML — free)
