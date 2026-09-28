@@ -9287,10 +9287,13 @@ async def rag_pipeline_stream(
             # The urgent reply asks for a phone number or email, so the next
             # visitor turns of that conversation are read for one before any
             # other route (``_capture_urgent_contact`` has the window). A
-            # message that reads as a new incident report is not an answer to
-            # the ask ("the attacker called us from +44 ..."), so it goes on to
-            # the urgent route. Pure regex checks first: an ordinary turn pays
-            # no query. Only on a plan whose team gets the alert.
+            # number the message gives as someone else's ("the attacker called
+            # us from +44 ...") is rejected by ``find_contact`` itself. A
+            # visitor who gives their own number while the incident goes on
+            # ("+91 98765 43210, ransomware is still encrypting our servers")
+            # is captured, and the urgent reply that follows no longer asks for
+            # a contact it now has. Pure regex checks first: an ordinary turn
+            # pays no query. Only on a plan whose team gets the alert.
             #
             # A message that also asks something ("+91 98765 43210. what should
             # we do first?") gets the acknowledgement as the first line of the
@@ -9298,8 +9301,6 @@ async def rag_pipeline_stream(
             # acknowledgement.
             _contact_lead = ""
             _found_contact = find_contact(question) if _plan_support_allowed and bid is not None else None
-            if _found_contact and urgent_route.might_be_urgent_incident(question):
-                _found_contact = None
             if _found_contact:
                 _contact_ack = _capture_urgent_contact(
                     session,
@@ -9403,6 +9404,9 @@ async def rag_pipeline_stream(
                     session=session_id,
                     bot_id=bid,
                 )
+                # A contact captured from this same message is acknowledged
+                # first, as the support reply below does.
+                _urgent_text = _contact_lead + _urgent.text
                 # The reply is fixed text, so it is saved and the team alerted
                 # BEFORE the first frame: a visitor who closes the tab mid-stream
                 # still leaves the reply and the alert behind.
@@ -9411,7 +9415,7 @@ async def rag_pipeline_stream(
                     session_id,
                     client_id=cid,
                     role="bot",
-                    content=_urgent.text,
+                    content=_urgent_text,
                     bot_id=bid,
                     source_language=_lang_base(language),
                 )
@@ -9451,7 +9455,7 @@ async def rag_pipeline_stream(
                             urgent_followup.mark_follow_up_due(_urgent_session, _follow_up_due)
                 session.commit()
                 yield _stream_metadata(session_id, [], language)
-                yield _urgent.text
+                yield _urgent_text
                 yield f"\nFINAL_METADATA:{json.dumps(_urgent_meta)}\n"
                 return
 

@@ -268,11 +268,9 @@ async def test_a_number_that_is_not_a_phone_number_is_not_captured(db, monkeypat
         # Someone else's contact details.
         "the attacker called us from +44 7700 900123",
         "they emailed us from support@paypa1-secure.com",
-        # A new incident report, not an answer to the ask.
-        "+91 98765 43210, ransomware is still encrypting our servers",
     ],
 )
-async def test_an_attackers_contact_or_a_new_incident_report_is_not_captured(db, monkeypatch, team, message):
+async def test_an_attackers_contact_is_not_captured(db, monkeypatch, team, message):
     _client, bot, _cap = _urgent_bot(db, monkeypatch, "contact-other")
     await _drive_stream(bot, URGENT, "contact-other")
 
@@ -282,6 +280,27 @@ async def test_an_attackers_contact_or_a_new_incident_report_is_not_captured(db,
     lead = _lead(db, "contact-other")
     assert (lead.email, lead.phone) == (None, None)
     assert team["contact_emails"] == [] and team["updates"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_visitors_own_number_given_with_the_incident_is_captured_and_not_asked_for_again(db, monkeypatch, team):
+    """A panicked visitor answers the ask and repeats the incident in one message.
+    The number is theirs: it is saved and sent to the team, and the urgent reply
+    that follows does not ask for a contact the conversation now has."""
+    _client, bot, _cap = _urgent_bot(db, monkeypatch, "contact-and-incident")
+    await _drive_stream(bot, URGENT, "contact-and-incident")
+
+    frames = await _drive_stream(
+        bot, "+91 98765 43210, ransomware is still encrypting our servers", "contact-and-incident"
+    )
+
+    answer = _answer_text(frames)
+    assert answer.startswith("Thanks, the team will reach you on +91 98765 43210.")
+    assert ASK not in answer
+    assert "phone number or email" not in answer
+    assert _lead(db, "contact-and-incident").phone == "+91 98765 43210"
+    assert [(email["email"], email["phone"]) for email in team["contact_emails"]] == [(None, "+91 98765 43210")]
+    assert len(team["alerts"]) == 1, "the incident was already alerted; the repeat pages no one again"
 
 
 @pytest.mark.asyncio
