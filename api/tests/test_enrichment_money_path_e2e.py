@@ -5,8 +5,8 @@ test covered is the thing that actually costs money: a real visitor filling the
 widget form, against a real Postgres, with a real `CreditLedger`, and then
 doing it a SECOND time, because the widget POSTs `/chat/lead-capture` from both
 the pre-chat form and the handoff form. One visitor, two POSTs, and the
-question the customer's invoice answers is whether that visitor cost 15 credits
-or 30.
+question the customer's invoice answers is whether that visitor cost 10 credits
+or 20.
 
 Only the two paid vendors are faked (Reoon, and the company resolver's crawl).
 The route, the session, the lead row, the three gates, and every ledger write
@@ -34,8 +34,10 @@ pytestmark = pytest.mark.skipif(not os.getenv("DB_URL"), reason="needs a reachab
 _SESSION_ID = "sess-money-path"
 _EMAIL = "priya@infosys.com"
 
-# A fully-enriched lead is 15 credits, once: 10 for the address, 5 for the
-# employer.
+# A lead with a professional address is 10 credits, once. Verifying the address
+# includes naming the employer behind its domain (the finalised pricing sheet);
+# the 5-credit company lookup is only billed when no verification was billed
+# with it, i.e. the IP path or a verification that could not run.
 _EMAIL_COST = 10
 _COMPANY_COST = 5
 
@@ -122,7 +124,7 @@ def capture(db, paid_bot, monkeypatch):
     monkeypatch.setattr(
         chat_routes,
         "_queue_lead_company_resolution",
-        lambda session_id, domain, bot_id: chat_routes._resolve_lead_company(session_id, domain, bot_id),
+        lambda session_id, domain, bot_id, **kw: chat_routes._resolve_lead_company(session_id, domain, bot_id, **kw),
     )
     monkeypatch.setattr(chat_routes, "is_email_validation_enabled_for_bot", lambda *_a, **_k: True)
     monkeypatch.setattr(chat_routes, "is_visitor_intelligence_enabled_for_bot", lambda *_a, **_k: True)
@@ -138,8 +140,8 @@ def capture(db, paid_bot, monkeypatch):
 
 
 class TestOneVisitorOneCharge:
-    def test_a_captured_lead_is_verified_identified_and_billed_fifteen(self, db, capture):
-        """The happy path, priced: 10 for the address, 5 for the employer."""
+    def test_a_captured_lead_is_verified_identified_and_billed_ten(self, db, capture):
+        """The happy path, priced: 10 for the address, the employer included."""
         with (
             patch("app.services.reoon_service.verify_email", return_value=_REOON_VALID) as verify,
             patch("app.services.company_profile_service.resolve_company", return_value=_PROFILE) as resolve,
@@ -156,7 +158,8 @@ class TestOneVisitorOneCharge:
 
         verify.assert_called_once()
         resolve.assert_called_once()
-        assert credit_service.get_balance(db, 900) == 1000 - _EMAIL_COST - _COMPANY_COST
+        assert _debits(db, "company_name") == []
+        assert credit_service.get_balance(db, 900) == 1000 - _EMAIL_COST
 
     def test_the_handoff_form_repost_is_free(self, db, capture):
         """Pre-chat form, then "talk to a human", one lead, not two invoices.
@@ -184,7 +187,7 @@ class TestOneVisitorOneCharge:
 
         assert credit_service.get_balance(db, 900) == after_first
         assert len(_debits(db, "email_verification")) == 1
-        assert len(_debits(db, "company_name")) == 1
+        assert _debits(db, "company_name") == []
         # The dedup guard, not just the ledger: no second crawl on our dime.
         resolve.assert_not_called()
 
@@ -197,7 +200,13 @@ class TestOneVisitorOneCharge:
         from inside the vendor call reproduces exactly that interleaving.
         What makes the second run free is the shared idempotency key
         `enrich:company_name:{session_id}`, not the guard.
+
+        Email verification is off here, so the company lookup is billed on its
+        own. With verification on it is included and there is nothing to race.
         """
+        paid_bot = db.get(Bot, 900)
+        paid_bot.email_verification_enabled = False
+        db.commit()
         seen: list[str] = []
 
         def _reenter(domain: str):
@@ -215,7 +224,7 @@ class TestOneVisitorOneCharge:
 
         assert resolve.call_count == 2  # both runs really did reach the vendor
         assert len(_debits(db, "company_name")) == 1
-        assert credit_service.get_balance(db, 900) == 1000 - _EMAIL_COST - _COMPANY_COST
+        assert credit_service.get_balance(db, 900) == 1000 - _COMPANY_COST
 
     def test_a_second_capture_from_a_different_employer_re_resolves(self, db, capture, paid_bot):
         """The dedup guard must not freeze a stale company onto a moved lead.
@@ -251,9 +260,8 @@ class TestOneVisitorOneCharge:
         lead = db.query(LeadInfo).filter(LeadInfo.session_id == _SESSION_ID).one()
         assert lead.company == "wipro.com"
         assert lead.company_name == "Wipro Limited"
-        # Still one company charge: the ledger key is per SESSION, and this is
-        # the same visitor correcting their address, not a second lead.
-        assert len(_debits(db, "company_name")) == 1
+        # Both employers were named as part of a billed verification.
+        assert _debits(db, "company_name") == []
 
     def test_an_unidentifiable_company_is_not_charged_for(self, db, capture):
         """Charge on success. A parked domain costs us the crawl, not them."""
@@ -267,6 +275,46 @@ class TestOneVisitorOneCharge:
         assert lead.company == "infosys.com"  # degrades to the domain, never to nothing
         assert lead.company_name is None
         assert _debits(db, "company_name") == []
+        assert credit_service.get_balance(db, 900) == 1000 - _EMAIL_COST
+
+
+class TestAFailedVerificationIsNotBilled:
+    def test_a_vendor_failure_refunds_the_verification(self, db, capture):
+        """Reoon down, out of credits, or unconfigured: nothing was verified.
+
+        The 10 credits are reserved before the vendor call, so they come back
+        as a refund. The employer is then a standalone lookup, billed at 5.
+        """
+        with (
+            patch("app.services.reoon_service.verify_email", return_value=None) as verify,
+            patch("app.services.company_profile_service.resolve_company", return_value=_PROFILE),
+        ):
+            assert capture().status_code == 200
+
+        verify.assert_called_once()
+        lead = db.query(LeadInfo).filter(LeadInfo.session_id == _SESSION_ID).one()
+        assert lead.is_valid_email is None
+        assert lead.company_name == "Infosys Limited"
+        refunds = db.query(CreditLedger).filter(CreditLedger.client_id == 900, CreditLedger.reason == "refund").all()
+        assert [r.delta for r in refunds] == [_EMAIL_COST]
+        assert len(_debits(db, "company_name")) == 1
+        assert credit_service.get_balance(db, 900) == 1000 - _COMPANY_COST
+
+    def test_a_failed_repost_does_not_refund_a_verification_that_succeeded(self, db, capture):
+        """The handoff form reposts the same address. If the vendor fails on the
+        repost, the first POST's verification still happened and stays billed."""
+        with (
+            patch("app.services.reoon_service.verify_email", return_value=_REOON_VALID),
+            patch("app.services.company_profile_service.resolve_company", return_value=_PROFILE),
+        ):
+            capture()
+        with (
+            patch("app.services.reoon_service.verify_email", return_value=None),
+            patch("app.services.company_profile_service.resolve_company", return_value=_PROFILE),
+        ):
+            assert capture().status_code == 200
+
+        assert db.query(CreditLedger).filter(CreditLedger.client_id == 900, CreditLedger.reason == "refund").all() == []
         assert credit_service.get_balance(db, 900) == 1000 - _EMAIL_COST
 
 

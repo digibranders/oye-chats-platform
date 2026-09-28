@@ -164,6 +164,10 @@ class TestBackgroundEnrichmentGating:
             ) as mock_verify,
             # Credits successfully reserved → Reoon fires.
             patch("app.api.chat_routes._charge_for_enrichment", return_value=True) as mock_charge,
+            # The catch-all session mock would answer the ledger reads with the
+            # lead row. A first charge that has not been refunded:
+            patch("app.api.chat_routes._enrichment_charge_exists", return_value=False),
+            patch("app.api.chat_routes._enrichment_charge_refunded", return_value=False),
             patch("app.api.chat_routes.get_session") as mock_get_session,
             # The company leg is not what these test. Left unpatched it spawns
             # a real background thread that outlives the test and holds a
@@ -204,6 +208,10 @@ class TestBackgroundEnrichmentGating:
             patch("app.services.email_domain_service.extract_company_domain", return_value="acme.com") as mock_domain,
             patch("app.services.reoon_service.verify_email") as mock_verify,
             patch("app.api.chat_routes._charge_for_enrichment", return_value=True) as mock_charge,
+            # The catch-all session mock would answer the ledger reads with the
+            # lead row. A first charge that has not been refunded:
+            patch("app.api.chat_routes._enrichment_charge_exists", return_value=False),
+            patch("app.api.chat_routes._enrichment_charge_refunded", return_value=False),
             patch("app.api.chat_routes.get_session") as mock_get_session,
             # The company leg is not what these test. Left unpatched it spawns
             # a real background thread that outlives the test and holds a

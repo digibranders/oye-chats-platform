@@ -136,6 +136,9 @@ _MIN_COMPANY_NAME_LEN = 2
 # nothing costs less than showing a salesperson something false.
 _EMPLOYER_COMPANY_TYPES = frozenset({"business", "education", "government"})
 
+# ipapi.is booleans marking an address that is not a person at their desk.
+_ANONYMISED_OR_SERVER_FLAGS = ("is_vpn", "is_proxy", "is_tor", "is_datacenter")
+
 
 def _tokens(lowered: str) -> set[str]:
     """Word tokens, with trailing digits and a trailing plural ``s`` removed.
@@ -249,6 +252,12 @@ def fetch_ip_intel(ip_address: str) -> dict | None:
     # only survives as "the visitor's company" if the range is a type someone
     # can be employed by AND the name could plausibly be an employer.
     if company_type not in _EMPLOYER_COMPANY_TYPES or not is_usable_company_name(company_name):
+        company_name = None
+    # A VPN, proxy, Tor or datacenter exit names whoever runs the exit, never
+    # the visitor's employer, even when the range is typed ``business``. The
+    # 5-credit company lookup is billed only for a real business, and the
+    # caller bills exactly when this returns a name.
+    if any(bool(data.get(flag, False)) for flag in _ANONYMISED_OR_SERVER_FLAGS):
         company_name = None
 
     return {

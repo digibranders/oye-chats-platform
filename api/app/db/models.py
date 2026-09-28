@@ -2506,9 +2506,9 @@ class PricingConfig(Base):
     Lets the super admin change credit costs and top-up packs without a code
     deploy. Examples:
       * ``credit_cost.ai_chat`` → ``1``
-      * ``credit_cost.url_scan`` → ``3``
-      * ``seat_price_cents`` → ``1500``
-      * ``topup_packs`` → JSON array of {usd, credits, bonus_pct, ...}
+      * ``credit_cost.url_scan`` → ``5``
+      * ``seat_price_cents`` → ``49900``
+      * ``topup_packs`` → JSON array of {inr, usd, credits, bonus_pct, ...}
       * ``kill_switch`` → ``true`` halts all credit deductions globally
     """
 
