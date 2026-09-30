@@ -144,6 +144,7 @@ from app.services.price_intent import (
     guard_asks_price,
     might_ask_price,
     non_price_remainder,
+    rewrite_adds_no_price_word,
 )
 from app.services.qualification_service import (
     calculate_composite_score,
@@ -8063,12 +8064,12 @@ async def _detect_price_intent_bounded(question: str) -> PriceIntentDecision:
 
     The caller runs ``price_intent.might_ask_price`` first, so a message without a
     price word costs no thread and no model call. This runs
-    ``price_intent.decide_price_intent`` (which falls back to its rules on a model
-    error) on a worker thread under ``_PRICE_INTENT_TIMEOUT_S``. A stall uses the
-    fallback rules; the worker thread cannot be interrupted, so its late answer is
-    discarded.
+    ``price_intent.decide_price_intent`` (which retries one failed model call
+    inside the same deadline, then falls back to its rules) on a worker thread
+    under ``_PRICE_INTENT_TIMEOUT_S``. A stall uses the fallback rules; the worker
+    thread cannot be interrupted, so its late answer is discarded.
     """
-    task = asyncio.create_task(asyncio.to_thread(decide_price_intent, question))
+    task = asyncio.create_task(asyncio.to_thread(decide_price_intent, question, budget_s=_PRICE_INTENT_TIMEOUT_S))
     try:
         return await asyncio.wait_for(task, timeout=_PRICE_INTENT_TIMEOUT_S)
     except TimeoutError:
@@ -8092,13 +8093,28 @@ async def _turn_price_intent(
     rule also reads as pricing, so raw words that pass the classifier alone ("what
     plans do you have") still let a rewrite that names the price decide. The two
     are decided separately rather than concatenated, as the gate always read them.
+
+    A rewrite that is the raw words plus the company name
+    (``_expand_company_query``) is not decided again: it hides nothing. And when
+    the rewrite is decided, the fallback rules never override a decision the
+    model made on the raw words; a fallback only refines a fallback. Production,
+    2026-09-28 (case z-g05 on CleanStart): the model said NO on "roughly how much
+    does a soc 2 audit cost a company, from the auditor side?", the call on the
+    rewrite (those words plus "CleanStart") returned nothing, and the fallback
+    rules read the rewrite as a price question, so the visitor got the escalation
+    instead of the auditor-fee answer.
     """
     decision = await raw_task if raw_task is not None else NOT_A_PRICE_QUESTION
     raw_escalates = decision.asks_price and _pricing_gate.is_pricing_question(question)
-    if raw_escalates or rewritten == question or not might_ask_price(rewritten):
+    if raw_escalates or rewrite_adds_no_price_word(question, rewritten) or not might_ask_price(rewritten):
         return decision, question
     rewritten_decision = await _detect_price_intent_bounded(rewritten)
-    return (rewritten_decision, rewritten) if rewritten_decision.asks_price else (decision, question)
+    if not rewritten_decision.asks_price:
+        return decision, question
+    model_decided_raw = raw_task is not None and not decision.by_fallback
+    if rewritten_decision.by_fallback and model_decided_raw:
+        return decision, question
+    return rewritten_decision, rewritten
 
 
 # The second search on a deferred pricing turn (``_widen_mixed_turn_context``)

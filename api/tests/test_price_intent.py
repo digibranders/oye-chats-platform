@@ -11,6 +11,7 @@ model call: the price vocabulary, the gate model on a hit, and fallback rules
 when the model fails.
 """
 
+import logging
 import timeit
 
 import pytest
@@ -25,6 +26,7 @@ from app.services.price_intent import (
     fallback_price_intent,
     guard_asks_price,
     might_ask_price,
+    rewrite_adds_no_price_word,
 )
 from app.services.prompt_fence import neutralise_fence
 
@@ -95,21 +97,55 @@ class _FakeModel:
         self.answer = "PRICE"
         self.failed = False
         self.error: Exception | None = None
+        #: One entry per call, ahead of ``answer``: a reply, or an exception to raise.
+        self.script: list[str | Exception] = []
+        #: Seconds each call takes on the fake clock.
+        self.takes_s = 0.0
         self.calls: list[dict] = []
 
     def __call__(self, prompt: str, **kwargs) -> tuple[str, bool]:
         self.calls.append({"prompt": prompt, **kwargs})
+        _clock.advance(self.takes_s)
+        if self.script:
+            step = self.script.pop(0)
+            if isinstance(step, Exception):
+                raise step
+            return step, False
         if self.error is not None:
             raise self.error
         return self.answer, self.failed
+
+
+class _Clock:
+    """A monotonic clock the fake model advances, so no test sleeps."""
+
+    def __init__(self) -> None:
+        self.now = 1_000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+_clock = _Clock()
 
 
 @pytest.fixture()
 def model(monkeypatch):
     fake = _FakeModel()
     monkeypatch.setattr(price_intent, "generate_response_checked", fake)
+    monkeypatch.setattr(price_intent, "monotonic", _clock)
     monkeypatch.setattr(price_intent.runtime_config, "get_gate_model", lambda: _GATE_MODEL)
     return fake
+
+
+@pytest.fixture()
+def retry_metrics(monkeypatch):
+    seen: list[str] = []
+    monkeypatch.setattr(price_intent, "increment_metric_counter", lambda name, bot_id=None: seen.append(name))
+    return seen
 
 
 @pytest.mark.parametrize(
@@ -192,6 +228,104 @@ def test_without_a_model_answer_the_fallback_rules_decide(model, break_the_model
     assert decide_price_intent(question) == PriceIntentDecision(expected, by_fallback=True)
 
 
+# ── The retry, production 2026-09-28 ──────────────────────────────────────────
+#
+# Case z-g05 on CleanStart: the classifier returned an empty output with no usage
+# metadata (an API failure) on "roughly how much does a soc 2 audit cost a
+# company, from the auditor side?", the fallback rules read it as a price
+# question, and the visitor got the pricing escalation instead of the answer.
+
+AUDIT_FEE = "roughly how much does a soc 2 audit cost a company, from the auditor side?"
+
+
+def test_an_empty_first_answer_is_retried_once_and_the_retry_decides(model, retry_metrics, caplog):
+    model.script = ["", "NO"]
+
+    with caplog.at_level(logging.WARNING, logger=price_intent.logger.name):
+        decision = decide_price_intent(AUDIT_FEE, budget_s=4.0)
+
+    assert decision == PriceIntentDecision("no", by_fallback=False)
+    assert len(model.calls) == 2
+    assert retry_metrics == ["price_intent_retry_recovered"]
+    (record,) = [r for r in caplog.records if "price_intent_classifier_retried" in r.getMessage()]
+    assert record.levelno == logging.WARNING
+    assert "PriceClassifierUnavailableError" in record.getMessage()
+    assert "recovered" in record.getMessage()
+    assert "soc 2" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "script",
+    [["", ""], [RuntimeError("provider down"), ""], ["", RuntimeError("provider down")], ["maybe", "YES"]],
+    ids=["empty_twice", "raised_then_empty", "empty_then_raised", "unreadable_twice"],
+)
+def test_when_both_attempts_fail_the_fallback_rules_decide(model, retry_metrics, script, caplog):
+    model.script = script
+
+    with caplog.at_level(logging.WARNING, logger=price_intent.logger.name):
+        decision = decide_price_intent(AUDIT_FEE, budget_s=4.0)
+
+    assert decision == PriceIntentDecision("price", by_fallback=True)
+    assert len(model.calls) == 2
+    assert retry_metrics == ["price_intent_retry_failed"]
+    (record,) = [r for r in caplog.records if "price_intent_classifier_retried" in r.getMessage()]
+    assert record.levelno == logging.WARNING
+    assert "failed" in record.getMessage()
+    assert "soc 2" not in caplog.text
+
+
+def test_a_first_attempt_that_used_most_of_the_budget_is_not_retried(model, retry_metrics, caplog):
+    model.script = ["", "NO"]
+    model.takes_s = 3.2
+
+    with caplog.at_level(logging.WARNING, logger=price_intent.logger.name):
+        decision = decide_price_intent(AUDIT_FEE, budget_s=4.0)
+
+    assert decision == PriceIntentDecision("price", by_fallback=True)
+    assert len(model.calls) == 1
+    assert retry_metrics == ["price_intent_retry_skipped"]
+    (record,) = [r for r in caplog.records if "price_intent_classifier_failed" in r.getMessage()]
+    assert record.levelno == logging.WARNING
+    assert "PriceClassifierUnavailableError" in record.getMessage()
+    assert "soc 2" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("first_takes_s", "retry_timeout"),
+    [(0.4, 3.0), (1.2, 2.8), (2.5, 1.5), (2.9, 1.1)],
+)
+def test_the_retry_is_bounded_by_what_is_left_of_the_budget(model, retry_metrics, first_takes_s, retry_timeout):
+    model.script = ["", "NO"]
+    model.takes_s = first_takes_s
+
+    decision = decide_price_intent(AUDIT_FEE, budget_s=4.0)
+
+    assert decision == PriceIntentDecision("no", by_fallback=False)
+    first, retry = model.calls
+    assert first["timeout"] == 3.0
+    assert retry["timeout"] == pytest.approx(retry_timeout)
+    assert retry["timeout"] <= 4.0 - first_takes_s + 1e-9
+    assert retry["num_retries"] == 0
+
+
+def test_without_a_budget_the_retry_gets_the_full_attempt(model, retry_metrics):
+    model.script = ["", "NO"]
+    model.takes_s = 2.9
+
+    decision = decide_price_intent(AUDIT_FEE)
+
+    assert decision == PriceIntentDecision("no", by_fallback=False)
+    assert [call["timeout"] for call in model.calls] == [3.0, 3.0]
+
+
+def test_a_first_answer_costs_no_retry(model, retry_metrics):
+    model.answer = "NO"
+
+    assert decide_price_intent(AUDIT_FEE, budget_s=4.0) == PriceIntentDecision("no", by_fallback=False)
+    assert len(model.calls) == 1
+    assert retry_metrics == []
+
+
 def test_a_message_without_a_price_word_costs_no_model_call(model):
     assert classify_price_intent("where is your office?") == "no"
     assert model.calls == []
@@ -232,6 +366,39 @@ def test_the_decision_says_whether_the_turn_asks_the_price_and_whether_it_asks_m
 )
 def test_the_price_guard_signal(decision, question, signal):
     assert guard_asks_price(decision, question) is signal
+
+
+# ── The rewrite the turn re-decides ───────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "rewritten",
+    [
+        AUDIT_FEE,
+        AUDIT_FEE + " CleanStart",
+        "  " + AUDIT_FEE.upper() + "   cleanstart ",
+        AUDIT_FEE + " Eventus Security",
+    ],
+    ids=["same", "company_name", "case_and_spacing", "two_word_name"],
+)
+def test_a_rewrite_that_only_adds_the_company_name_carries_no_new_price_word(rewritten):
+    assert rewrite_adds_no_price_word(AUDIT_FEE, rewritten) is True
+
+
+@pytest.mark.parametrize(
+    ("question", "rewritten"),
+    [
+        ("and that one?", "what is the pricing of SOC as a Service"),
+        ("what plans do you have", "what is the price of your enterprise plan"),
+        (AUDIT_FEE, AUDIT_FEE + " and what would you charge for it"),
+        # A name the vocabulary reads as a price word still runs the second decision.
+        (AUDIT_FEE, AUDIT_FEE + " Costa Coffee"),
+        (AUDIT_FEE, "roughly how much does a soc 2 audit cost"),
+    ],
+    ids=["follow_up", "plan_follow_up", "added_price_clause", "name_with_a_price_word", "shortened"],
+)
+def test_a_rewrite_with_other_words_may_carry_a_price_word(question, rewritten):
+    assert rewrite_adds_no_price_word(question, rewritten) is False
 
 
 # ── Stage 3: the fallback rules ───────────────────────────────────────────────

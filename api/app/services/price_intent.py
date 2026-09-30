@@ -16,8 +16,11 @@ either, so this decision has their three stages:
 2. ``_classify_price_intent_raw``: on a hit, the gate-tier model says whether the
    visitor asks what this business charges for its own products or services and
    nothing else (PRICE), asks that and something else that needs its own answer
-   (MIXED), or neither (NO).
-3. ``fallback_price_intent``: when the model fails, rules decide. The gate's own
+   (MIXED), or neither (NO). A call that errors or answers nothing is made once
+   more when the turn's budget has room for it (production, 2026-09-28: one
+   empty reply out of five in two minutes sent an auditor-fee question to the
+   escalation).
+3. ``fallback_price_intent``: when both attempts fail, rules decide. The gate's own
    wording rule reads the message with the price words in another sense blanked
    out (a share price, a quote from a person or for a story, compensation, a
    salary, a refund, the cost of a breach), and a clause check tells MIXED from
@@ -27,8 +30,11 @@ either, so this decision has their three stages:
 ``decide_price_intent`` runs stages 2 and 3 and says which one decided. The chat
 stream runs the vocabulary check itself, then
 ``rag_service._detect_price_intent_bounded``, which runs ``decide_price_intent``
-on a worker thread under a deadline. The one decision feeds both the pricing
-gate and the price guard's turn signal.
+on a worker thread under a deadline and hands it that deadline as the budget the
+retry must fit. The one decision feeds both the pricing gate and the price
+guard's turn signal. ``rewrite_adds_no_price_word`` tells the stream when the
+search rewrite is the visitor's words plus the company name, so the turn is not
+decided twice on one phrasing.
 
 ``non_price_remainder`` gives the clauses of a MIXED message that do not ask the
 price, with the fallback rules' own clause test, so a deferred pricing turn can
@@ -43,8 +49,10 @@ import logging
 import re
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+from time import monotonic
 from typing import Literal
 
+from app.core.metrics import increment_metric_counter
 from app.services import runtime_config
 from app.services.llm_service import generate_response_checked
 from app.services.pricing_gate import (
@@ -97,13 +105,42 @@ def might_ask_price(question: object) -> bool:
     return is_pricing_question(question) or question_has_fuzzy_price_word(question)
 
 
+def _normalise_phrasing(text: str) -> str:
+    """``text`` with its case and spacing removed from the comparison."""
+    return " ".join(text.casefold().split())
+
+
+def rewrite_adds_no_price_word(question: str, rewritten: str) -> bool:
+    """Whether the search rewrite is the visitor's words, or those words followed by others that carry no price word.
+
+    The chat stream decides the rewrite too when it may carry a price question
+    the visitor's words hid. ``rag_service._expand_company_query`` appends the
+    company name to a question that mentions "the company", so the rewrite is
+    usually the same words plus a name: a second decision on it costs a call and
+    can only disagree with the first by noise (production, 2026-09-28). Case and
+    spacing do not count. A name the vocabulary reads as a price word ("Costa
+    Coffee") still gets the second decision, which the stream then only takes
+    from the model.
+    """
+    question_norm, rewritten_norm = _normalise_phrasing(question), _normalise_phrasing(rewritten)
+    if rewritten_norm == question_norm:
+        return True
+    if not rewritten_norm.startswith(question_norm + " "):
+        return False
+    return not might_ask_price(rewritten_norm[len(question_norm) :])
+
+
 # ── Stage 2: the classifier ───────────────────────────────────────────────────
 
 #: One bounded attempt, the document classifier's budget
-#: (``document_request._DOCUMENT_LLM_TIMEOUT_S`` and ``_DOCUMENT_LLM_NUM_RETRIES``):
-#: the chat stream awaits this under a 4s ceiling, which a retry could not meet.
+#: (``document_request._DOCUMENT_LLM_TIMEOUT_S`` and ``_DOCUMENT_LLM_NUM_RETRIES``).
+#: The chat stream awaits the decision under a 4s ceiling, so the provider's
+#: own retries stay off and ``decide_price_intent`` makes the one retry itself,
+#: cut to what is left of that ceiling.
 _PRICE_LLM_TIMEOUT_S = 3.0
 _PRICE_LLM_NUM_RETRIES = 0
+#: Below this much of the budget a retry cannot answer in time and is skipped.
+_PRICE_LLM_RETRY_MIN_S = 1.0
 #: Room for "MIXED" and whatever the model wraps around it.
 _PRICE_LLM_MAX_TOKENS = 16
 
@@ -117,11 +154,11 @@ class PriceClassifierUnavailableError(RuntimeError):
     """The model produced no usable answer: a missing key, an API error, or an empty or unreadable reply."""
 
 
-def _classify_price_intent_raw(question: str) -> PriceIntent:
+def _classify_price_intent_raw(question: str, timeout_s: float = _PRICE_LLM_TIMEOUT_S) -> PriceIntent:
     """Ask the gate-tier model whether the visitor asks what this business charges.
 
     Modelled on ``document_request._classify_document_request_raw``: temperature
-    0, a one-word answer, one attempt under a short timeout, the visitor's message
+    0, a one-word answer, one attempt under ``timeout_s``, the visitor's message
     fenced as data, and the leading word of the reply parsed after its decoration
     is stripped.
 
@@ -166,7 +203,7 @@ Respond with ONLY one word: PRICE, MIXED or NO."""
         max_tokens=_PRICE_LLM_MAX_TOKENS,
         metadata={"generation_name": "price-intent-detection"},
         model=runtime_config.get_gate_model(),
-        timeout=_PRICE_LLM_TIMEOUT_S,
+        timeout=timeout_s,
         num_retries=_PRICE_LLM_NUM_RETRIES,
     )
     if failed:
@@ -191,19 +228,59 @@ def guard_asks_price(decision: PriceIntentDecision, question: object) -> bool:
     return decision.asks_price or (decision.by_fallback and question_has_fuzzy_price_word(question))
 
 
-def decide_price_intent(question: str) -> PriceIntentDecision:
+#: What became of the one retry: it answered, it failed too, or there was no time for it.
+RetryOutcome = Literal["recovered", "failed", "skipped"]
+
+
+def _record_retry(outcome: RetryOutcome, error: str) -> None:
+    """The retry's outcome, as a ``rag.metric`` log line and an hourly counter, like the stream's own metrics."""
+    logger.info("rag.metric name=price_intent_retry outcome=%s error=%s", outcome, error)
+    increment_metric_counter(f"price_intent_retry_{outcome}")
+
+
+def decide_price_intent(question: str, budget_s: float | None = None) -> PriceIntentDecision:
     """Stages 2 and 3 for a message that already passed ``might_ask_price``.
 
     Called by ``rag_service._detect_price_intent_bounded`` on a worker thread; the
     chat stream runs ``might_ask_price`` itself, so the vocabulary check is not
-    repeated here. The classifier decides, and any classifier error hands the
-    decision to the fallback rules, which the result records.
+    repeated here. The classifier decides. When its call errors or answers
+    nothing, it is asked once more, and only the fallback rules decide after
+    that, which the result records.
+
+    ``budget_s`` is the deadline the caller awaits the whole decision under. The
+    retry's own timeout is cut to what the first attempt left of it, and when
+    that is under ``_PRICE_LLM_RETRY_MIN_S`` the retry is skipped: the worker
+    thread cannot be interrupted, and an answer after the deadline is discarded
+    anyway. Without a budget the retry gets a full attempt. Each failure is
+    logged by its class, never by the visitor's words.
     """
+    started = monotonic()
     try:
         return PriceIntentDecision(_classify_price_intent_raw(question), by_fallback=False)
-    except Exception as exc:  # noqa: BLE001 - a model failure falls back to the rules, never breaks the turn
-        logger.warning("price_intent_classifier_failed | %s. Using the fallback rules", type(exc).__name__)
+    except Exception as exc:  # noqa: BLE001 - a model failure is retried, then falls back to the rules
+        first_error = type(exc).__name__
+    remaining = _PRICE_LLM_TIMEOUT_S if budget_s is None else budget_s - (monotonic() - started)
+    if remaining < _PRICE_LLM_RETRY_MIN_S:
+        logger.warning(
+            "price_intent_classifier_failed | %s. %.1fs of the budget left, no retry. Using the fallback rules",
+            first_error,
+            remaining,
+        )
+        _record_retry("skipped", first_error)
         return PriceIntentDecision(fallback_price_intent(question), by_fallback=True)
+    try:
+        intent = _classify_price_intent_raw(question, timeout_s=min(_PRICE_LLM_TIMEOUT_S, remaining))
+    except Exception as exc:  # noqa: BLE001 - a second model failure falls back to the rules, never breaks the turn
+        logger.warning(
+            "price_intent_classifier_retried | %s, then %s. The retry failed. Using the fallback rules",
+            first_error,
+            type(exc).__name__,
+        )
+        _record_retry("failed", type(exc).__name__)
+        return PriceIntentDecision(fallback_price_intent(question), by_fallback=True)
+    logger.warning("price_intent_classifier_retried | %s. The retry recovered", first_error)
+    _record_retry("recovered", first_error)
+    return PriceIntentDecision(intent, by_fallback=False)
 
 
 def classify_price_intent(question: object) -> PriceIntent:
