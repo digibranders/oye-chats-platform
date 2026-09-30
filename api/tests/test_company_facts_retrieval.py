@@ -454,7 +454,7 @@ class TestThePinnedChunks:
         assert [doc.id for doc in pinned] == [address.id, form.id]
 
     @pytest.mark.parametrize("question", ["who are you guys exactly", "what do you guys do", "what is eventus"])
-    def test_an_identity_question_pins_the_about_page_in_page_order(self, db, question):
+    def test_an_identity_question_pins_the_about_page(self, db, question):
         bot = _make_bot(db, _make_client(db))
         _eventus_shaped_kb(db, bot)
         intro, story = _about_page(db, bot)
@@ -463,7 +463,33 @@ class TestThePinnedChunks:
         kinds = rs._asks_company_facts(question, "Eventus Security")
         pinned = rs._company_fact_chunks(bot.client_id, bot.id, question, kinds)
 
-        assert [doc.id for doc in pinned] == [intro.id, story.id]
+        # The chunk under an "Our story" heading first, then the rest of the page.
+        assert [doc.id for doc in pinned] == [story.id, intro.id]
+
+    def test_an_identity_question_pins_the_chunks_that_describe_the_company(self, db):
+        """Production about pages open with the cookie notice and the site menu
+        (four chunks of them on both bots evaluated on 2026-09-30), and "who are
+        you guys exactly" has no keyword to rank by, so page order alone pinned
+        the menu and left the description out."""
+        bot = _make_bot(db, _make_client(db))
+        boilerplate = [
+            _document(db, bot, _ABOUT_US, "We value your privacy. We use cookies to enhance your browsing experience."),
+            _document(
+                db, bot, _ABOUT_US, "Functional cookies help perform certain functionalities. No cookies to display."
+            ),
+            _document(
+                db, bot, _ABOUT_US, "Reject All Accept All Services Managed SOC VAPT Red Teaming Company About Us"
+            ),
+            _document(db, bot, _ABOUT_US, "Resources Blogs Guides Case Studies Newsroom Contact Sales Book a Demo"),
+        ]
+        mission = _document(
+            db, bot, _ABOUT_US, "Our Vision: to be a trusted global leader in managed security services. Our Mission..."
+        )
+        who = _document(db, bot, _ABOUT_US, "## Who We Are\nA managed security services provider with a 24x7 SOC.")
+
+        pinned = rs._company_fact_chunks(bot.client_id, bot.id, "who are you guys exactly", frozenset({"about"}))
+
+        assert [doc.id for doc in pinned] == [mission.id, who.id, boilerplate[0].id, boilerplate[1].id]
 
     def test_an_identity_question_pins_nothing_without_an_about_page(self, db):
         bot = _make_bot(db, _make_client(db))
@@ -593,7 +619,7 @@ class TestThePipeline:
         frames = await _drive_stream(bot, "who are you guys exactly", session_id)
 
         judged = judge.calls[-1][1]
-        assert [doc.id for doc in judged[:2]] == [intro.id, story.id]
+        assert [doc.id for doc in judged[:2]] == [story.id, intro.id]
         assert judged[2:] == retrieved[:13], "the retrieved chunks keep their order behind the pinned ones"
         assert "managed security services provider" in cap["prompts"][-1][1]
         assert _answer_text(frames).endswith("GENERATED ANSWER")

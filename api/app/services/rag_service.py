@@ -3657,6 +3657,14 @@ _COMPANY_FACT_CONTENT_HINTS: dict[str, re.Pattern[str]] = {
     "team": re.compile(
         r"(?i)\b(?:founders?|co-?founders?|ceo|cto|coo|cfo|ciso|directors?|chief|head\s+of|president|leadership)\b"
     ),
+    # The headings under which an about page says what the company is. "who are
+    # you guys exactly" has no keyword to rank by, and both production about
+    # pages open with four chunks of cookie notice and site menu (2026-09-30).
+    "about": re.compile(
+        r"(?i)\b(?:who\s+we\s+are|what\s+we\s+do|why\s+choose\s+us"
+        r"|our\s+(?:story|mission|vision|journey|history|purpose|values|core\s+values)"
+        r"|founded|established|incorporated)\b"
+    ),
 }
 
 
