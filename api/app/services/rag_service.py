@@ -6710,6 +6710,43 @@ _TIMELINE_STATED_RE = re.compile(
     r")"
 )
 
+# A duration, a date or "asap" is a timeline only when it is about what comes
+# next. Review 2026-09-30: "we've been in business 10 years" and "if we cancel
+# after 6 months do we get any refund?" were both recorded as the visitor's
+# timeline. A match is dropped when its own clause opens as a conditional or a
+# hypothetical, when a word about the past sits within three words before it,
+# or when the words straight after it make it an age, a tenure or a contract
+# term. Each is read in a window of ``_TIMELINE_CONTEXT_CHARS`` around the
+# match, so the check stays linear.
+_TIMELINE_CONTEXT_CHARS = 80
+_TIMELINE_HYPOTHETICAL_BEFORE_RE = re.compile(
+    r"(?i)\b(?:if|suppose|supposing|assuming|provided|unless|whether|once|in case|say we|let'?s say)\b"
+    r"[^.?!,;\n]{0,70}$"
+)
+_TIMELINE_PAST_BEFORE_RE = re.compile(
+    r"(?i)\b(?:been|since|was|were|had|last|past|previous|every|each|per)\b(?:\s{1,3}[\w'-]{1,20}){0,3}\s{0,3}$"
+)
+_TIMELINE_NOT_AHEAD_AFTER_RE = re.compile(
+    r"(?i)^\s{0,3}(?:-\s{0,3})?(?:ago|old|back|earlier|of\s{1,3}experience|experience|in\s{1,3}business|contract"
+    r"|term|plan|subscription|trial|warranty|notice|commitment|lock-?in|retention)\b"
+)
+
+
+def _stated_timeline(text: str) -> re.Match[str] | None:
+    """The first span of ``text`` that states when the visitor wants to move, or None."""
+    for match in _TIMELINE_STATED_RE.finditer(text):
+        before = text[max(0, match.start() - _TIMELINE_CONTEXT_CHARS) : match.start()]
+        after = text[match.end() : match.end() + _TIMELINE_CONTEXT_CHARS]
+        if (
+            _TIMELINE_HYPOTHETICAL_BEFORE_RE.search(before)
+            or _TIMELINE_PAST_BEFORE_RE.search(before)
+            or _TIMELINE_NOT_AHEAD_AFTER_RE.match(after)
+        ):
+            continue
+        return match
+    return None
+
+
 _ROLE_WORDS = (
     r"(?:ceo|cto|cfo|coo|cio|ciso|cmo|founder|co-?founder|owner|director|head|vp|vice president|manager|"
     r"lead|partner|president|principal|proprietor|decision[- ]maker|budget owner)"
@@ -6717,6 +6754,14 @@ _ROLE_WORDS = (
 # The words between "I'm researching" and "for my manager", or between "my
 # boss" and "decides": one sentence's worth, never the rest of the message.
 _AUTHORITY_GAP = r"[^.?!\n]{0,80}"
+# Who a visitor researches for when the decision is someone else's. A person or
+# a body that decides, never the visitor's own company, team or product:
+# "i am looking for a SOC provider for my company" says nothing about who
+# decides (review, 2026-09-30).
+_DECIDER_WORDS = (
+    r"(?:boss|manager|supervisor|ceo|cto|cfo|coo|cio|ciso|director|founder|co-?founder|owner|head|vp|client"
+    r"|customer|board|leadership|management|principal|partner|employer|colleague|friend)"
+)
 _AUTHORITY_STATED_RE = re.compile(
     r"(?i)(?:"
     rf"\bi(?:'m| am)\s{{1,3}}(?:(?:the|a|an|our|its|their)\s{{1,3}})?(?:[\w-]{{1,30}}\s{{1,3}})?{_ROLE_WORDS}\b"
@@ -6725,7 +6770,8 @@ _AUTHORITY_STATED_RE = re.compile(
     r"|\bi\s{1,3}(?:decide|sign off|approve)\b"
     r"|\b(?:it'?s|that'?s)\s{1,3}my\s{1,3}(?:decision|call)\b"
     r"|\bi(?:'m| am)\s{1,3}(?:just\s{1,3})?(?:researching|looking|asking|checking|gathering|scoping)\b"
-    rf"{_AUTHORITY_GAP}\b(?:for|on behalf of)\s{{1,3}}(?:my|our|the|a|someone)\b"
+    rf"{_AUTHORITY_GAP}\b(?:for|on behalf of)\s{{1,3}}"
+    rf"(?:(?:my|our|the|a)\s{{1,3}}{_DECIDER_WORDS}|someone|somebody)\b"
     r"|\b(?:my|our|the)\s{1,3}(?:boss|manager|ceo|cto|cfo|director|team|board|founder|owner|partners?|committee)\b"
     rf"{_AUTHORITY_GAP}"
     r"\b(?:decides?|will decide|makes? the (?:final\s{1,3})?(?:decision|call)|has to (?:approve|sign off)|signs? off|approves?)\b"
@@ -6786,7 +6832,7 @@ def _current_turn_states_dimension(question: str, dimension: str) -> str | None:
         return None
     kind = _dimension_kind(dimension)
     if kind == "timeline":
-        match = _TIMELINE_STATED_RE.search(q)
+        match = _stated_timeline(q)
     elif kind == "authority":
         match = _AUTHORITY_STATED_RE.search(q)
     elif kind == "budget":
@@ -6798,6 +6844,37 @@ def _current_turn_states_dimension(question: str, dimension: str) -> str | None:
     if match is None:
         return None
     return _stated_value(q, match.group(0))
+
+
+def _state_with_current_turn(
+    bant_state: dict | None, question: str, framework_config: dict
+) -> tuple[dict, dict[str, str]]:
+    """The qualification state with what the visitor's current message states merged in.
+
+    Returns ``(state, stated_now)``. ``stated_now`` maps each OPEN dimension the
+    message gives a value for to that value (``_current_turn_states_dimension``);
+    a stored value always wins. ``state`` is a copy carrying those values, or
+    ``bant_state`` itself when the message states nothing. Nothing is written
+    to the session: the extractor records the value, with its score, after the
+    reply.
+
+    The pipeline computes this once per turn and hands the same state to the
+    probe selector (whose pick it persists as ``last_probed_dimension``) and to
+    ``build_hybrid_prompt``, so what the prompt asks about is what the session
+    records as asked. Review 2026-09-30: the merge lived inside the prompt
+    builder only, so the prompt asked AUTHORITY while the session recorded
+    timeline.
+    """
+    state = bant_state or {}
+    order = framework_config.get("conversation_order") or _framework_dimensions(framework_config)
+    stated_now: dict[str, str] = {}
+    for dim in order:
+        if state.get(dim):
+            continue
+        stated = _current_turn_states_dimension(question, dim)
+        if stated:
+            stated_now[dim] = stated
+    return ({**state, **stated_now} if stated_now else state), stated_now
 
 
 # A recap turn: the visitor wants this conversation summarised (for a boss, a
@@ -6912,6 +6989,11 @@ def build_hybrid_prompt(
     # The visitor asked for a summary or recap of the conversation
     # (``_is_recap_turn``). Same hold (production, 2026-09-28, w-recap-for-boss).
     recap_turn: bool = False,
+    # What the visitor's current message states, already merged into
+    # ``bant_state`` by the caller (``_state_with_current_turn``), which picks
+    # the dimension it persists from that same state. None: the builder reads
+    # the message itself.
+    stated_now: dict[str, str] | None = None,
 ) -> tuple[str, str]:
     """Construct the Hybrid RAG prompt with BANT qualification support.
 
@@ -6932,15 +7014,10 @@ def build_hybrid_prompt(
         # dimension the visitor had just given, and the block asked it again.
         # A stored value always wins; only an open dimension is filled in, and
         # only in this turn's copy of the state (nothing is persisted here).
-        stated_now: dict[str, str] = {}
-        for dim in conversation_order:
-            if bs.get(dim):
-                continue
-            stated = _current_turn_states_dimension(question, dim)
-            if stated:
-                stated_now[dim] = stated
-        if stated_now:
-            bs = {**bs, **stated_now}
+        # The pipeline does the merge itself and passes ``stated_now``, so the
+        # dimension it persists as asked is picked from the same state.
+        if stated_now is None:
+            bs, stated_now = _state_with_current_turn(bs, question, config)
 
         # Build score-aware qualification state for the prompt's status block.
         state_lines = []
@@ -11957,9 +12034,24 @@ async def rag_pipeline_stream(
             # so the bot doesn't ask one more question in the turn the quote fires.
             _quote_hold = _quote_probe_hold(bot, current_bant, _answers_last_probe)
             _probe_ok = _should_probe_this_turn(question, history) and not _quote_hold
+            # Session-level holds on the qualifying question: the team has been
+            # alerted to an incident in this conversation, or this turn asks for
+            # a recap of it. See ``build_hybrid_prompt``.
+            _urgent_session = urgent_followup.is_urgent_session(chat_session)
+            _recap_turn = _is_recap_turn(question)
+            # ONE state for the turn: the stored state plus what this message
+            # itself states. The prompt is built from it and ``_next_probe`` is
+            # picked from it, so the dimension the prompt asks about is the one
+            # persisted as ``last_probed_dimension`` and appended after a media
+            # card. A held turn asks nothing, so it records nothing as asked.
+            _turn_bant, _stated_now = (
+                _state_with_current_turn(current_bant, question, bant_config)
+                if is_bant_enabled and bant_config
+                else (current_bant, {})
+            )
             _next_probe = (
-                select_next_probe_dimension(current_bant, bant_config, recently_probed=_recently_probed)[0]
-                if is_bant_enabled and bant_config and _probe_ok
+                select_next_probe_dimension(_turn_bant, bant_config, recently_probed=_recently_probed)[0]
+                if is_bant_enabled and bant_config and _probe_ok and not (_urgent_session or _recap_turn)
                 else None
             )
 
@@ -12002,7 +12094,8 @@ async def rag_pipeline_stream(
                 question,
                 context_text,
                 history_context,
-                bant_state=current_bant,
+                bant_state=_turn_bant,
+                stated_now=_stated_now,
                 bant_enabled=is_bant_enabled,
                 bant_config=bant_config,
                 live_chat_enabled=live_chat_on,
@@ -12038,11 +12131,8 @@ async def rag_pipeline_stream(
                 visitor_country=visitor_country,
                 language=language,
                 credential_block=_credential_block,
-                # Session-level holds on the qualifying question: the team has
-                # been alerted to an incident in this conversation, or this turn
-                # asks for a recap of it. See ``build_hybrid_prompt``.
-                urgent_session=urgent_followup.is_urgent_session(chat_session),
-                recap_turn=_is_recap_turn(question),
+                urgent_session=_urgent_session,
+                recap_turn=_recap_turn,
             )
             logger.info(f"Hybrid RAG stream prompt built | Context chunks: {len(final_results)}")
 
@@ -12747,6 +12837,8 @@ async def rag_pipeline_stream(
             # The media template makes the model drop the
             # probe after a card, so append it ourselves (streamed live AND folded
             # into full_answer so the transcript matches what the visitor saw).
+            # ``_next_probe`` is None on an urgent session and on a recap turn,
+            # so neither gets a question appended here.
             if (
                 _media_card
                 and is_bant_enabled
@@ -12834,6 +12926,10 @@ async def rag_pipeline_stream(
                         # Let through by the field-question classifier after the
                         # judge rejected it; a cache hit would skip both.
                         or _relax_field_question
+                        # Written for this conversation: an answer after an
+                        # incident, or a recap of what was said in it.
+                        or _urgent_session
+                        or _recap_turn
                         # Only the turn that actually produced a card is skipped, and
                         # only when the model chose that card: nothing on a cache hit
                         # can know which asset the model would have picked. A card the

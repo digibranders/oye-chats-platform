@@ -20,10 +20,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.db.models import ChatSession
 from app.db.repository import add_chat_message
 from app.services import rag_service as rs
 from app.services.qualification_service import get_framework_config
 from tests.test_rag_pipeline_defects import (
+    _answer_text,
     _doc,
     _drive_stream,
     _make_bot,
@@ -33,6 +35,7 @@ from tests.test_rag_pipeline_defects import (
 )
 
 BANT = get_framework_config(None)
+_CARD = {"type": "download", "url": "https://acme.com/files/Cloud-Workloads.pdf", "name": "Cloud-Workloads.pdf"}
 _HISTORY = "user: we run a 40 person fintech and need SOC monitoring\nbot: We can cover that. When are you looking to get started?"
 _NEED_KNOWN = {"need": "SOC monitoring", "need_score": 20}
 
@@ -179,6 +182,54 @@ class TestStatedDimensionDetection:
     @pytest.mark.parametrize(
         "text",
         [
+            # Review 2026-09-30: a fact about the past is not when they want to start.
+            "we've been in business 10 years",
+            "we signed up 3 months ago",
+            "our team has 5 years of experience with SIEM tools",
+            "we have used another vendor for the last 2 years",
+            "our company is 12 years old",
+            "we are on a 12 month contract with them",
+            # A conditional or a hypothetical states nothing.
+            "if we cancel after 6 months do we get any refund?",
+            "suppose we start next month, is there a discount",
+            "in case we need it live in 2 weeks, is that possible",
+            "once we cross 12 months the price changes, right",
+            "assuming we sign this quarter, who onboards us",
+        ],
+    )
+    def test_a_past_fact_or_a_hypothetical_is_not_a_timeline(self, text):
+        assert rs._current_turn_states_dimension(text, "timeline") is None
+
+    def test_a_timeline_beside_a_past_fact_is_still_read(self):
+        text = "we've been in business 10 years and want this live in 3 months"
+        assert rs._current_turn_states_dimension(text, "timeline")
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "i am looking for a SOC provider for my company",
+            "I'm looking for a tool for our team",
+            "i'm checking this for the website we run",
+            "I am scoping a project for a bank",
+        ],
+    )
+    def test_shopping_for_the_company_is_not_an_authority_statement(self, text):
+        assert rs._current_turn_states_dimension(text, "authority") is None
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "I'm just asking on behalf of our CTO",
+            "I'm looking into this for a client",
+            "I'm gathering options for someone else",
+        ],
+    )
+    def test_researching_for_a_person_is_an_authority_statement(self, text):
+        assert rs._current_turn_states_dimension(text, "authority")
+
+    @pytest.mark.parametrize(
+        "text",
+        [
             "I'm the CTO",
             "I am the founder and I decide",
             "my boss makes the final call",
@@ -203,6 +254,44 @@ class TestStatedDimensionDetection:
         assert rs._current_turn_states_dimension("by March", "timing")
         assert rs._current_turn_states_dimension("I'm the CFO", "economic_buyer")
         assert rs._current_turn_states_dimension("around $5,000 per month", "money")
+
+
+class TestTheCallerAndThePromptShareOneState:
+    """Review 2026-09-30: the prompt builder merged what the current message
+    states into its own copy of the state, while the pipeline picked the
+    dimension it persists from the untouched one. So the prompt asked about one
+    dimension and the session recorded another as asked."""
+
+    def test_the_merge_fills_only_open_dimensions(self):
+        state = {**_NEED_KNOWN, "authority": "CTO", "authority_score": 20}
+        merged, stated = rs._state_with_current_turn(state, "I'm the founder, we want to start in about 3 months", BANT)
+
+        assert stated == {"timeline": "I'm the founder, we want to start in about 3 months"}
+        assert merged["timeline"] == stated["timeline"]
+        assert merged["authority"] == "CTO"
+        assert state.get("timeline") is None, "the stored state is never written to"
+
+    def test_nothing_stated_returns_the_state_as_it_was(self):
+        state = dict(_NEED_KNOWN)
+        merged, stated = rs._state_with_current_turn(state, "do you cover AWS workloads too?", BANT)
+
+        assert stated == {}
+        assert merged == state
+
+    def test_the_prompt_asks_the_dimension_the_selector_picks_from_the_merged_state(self):
+        merged, stated = rs._state_with_current_turn(dict(_NEED_KNOWN), "about 3 months", BANT)
+        picked, _missing = rs.select_next_probe_dimension(merged, BANT)
+        prompt = _prompt("about 3 months", merged, stated_now=stated)
+
+        assert picked == "authority"
+        assert _asks_about(prompt, "authority")
+        assert "Timeline: about 3 months (stated in the visitor's latest message; not yet scored)" in prompt
+
+    def test_a_prompt_built_without_the_merge_still_reads_the_current_message(self):
+        prompt = _prompt("about 3 months", dict(_NEED_KNOWN))
+
+        assert "Timeline: about 3 months (stated in the visitor's latest message; not yet scored)" in prompt
+        assert _asks_about(prompt, "authority")
 
 
 class TestTheDetectorsAreLinear:
@@ -308,3 +397,119 @@ class TestPipelinePassesTheSessionFlags:
         prompt = await self._prompt_for(db, monkeypatch, "sess-f22-normal", "do you also cover cloud workloads?")
         assert "Do NOT ask a qualifying question this turn" not in prompt
         assert any(_asks_about(prompt, d) for d in ("need", "timeline", "authority", "budget"))
+
+
+class TestThePromptAndTheSessionAgree:
+    """What the prompt asks about is what the session records as asked."""
+
+    async def _turn(
+        self, db, monkeypatch, session_id: str, question: str, *, card: dict | None = None, **session_kwargs
+    ):
+        client = _make_client(db)
+        bot = _make_bot(db, client, bant_enabled=True)
+        _make_session(db, bot, client, session_id, bant_need="SOC monitoring", bant_need_score=20, **session_kwargs)
+        add_chat_message(
+            db, session_id, client_id=client.id, role="user", content="what does your SOC cover", bot_id=bot.id
+        )
+        add_chat_message(
+            db, session_id, client_id=client.id, role="bot", content="24x7 monitoring and response.", bot_id=bot.id
+        )
+        db.commit()
+        cap = _stub_pipeline(
+            monkeypatch,
+            bant_enabled=True,
+            support=True,
+            retrieved=(_doc("Acme covers cloud workloads on AWS and Azure. Cancel any time."),),
+            chunks=("Yes, we cover that.",),
+        )
+        monkeypatch.setattr(rs, "_topical_media_card", lambda *_a, **_k: card)
+        if card:
+            catalog = [{"files": [{"url": card["url"], "name": card["name"]}]}]
+            monkeypatch.setattr(rs, "get_bot_media_urls", lambda *_a, **_k: catalog)
+        frames = await _drive_stream(bot, question, session_id)
+        assert len(cap["prompts"]) == 1
+        db.expire_all()
+        chat_session = db.query(ChatSession).filter(ChatSession.id == session_id).one()
+        return cap["prompts"][0][1], chat_session, _answer_text(frames)
+
+    @staticmethod
+    def _asked(chat_session) -> set[str]:
+        prefix = rs._PROBE_ASKED_PREFIX
+        return {key[len(prefix) :] for key in (chat_session.inline_cards_shown or {}) if key.startswith(prefix)}
+
+    @pytest.mark.asyncio
+    async def test_a_hypothetical_duration_leaves_both_on_the_timeline(self, db, monkeypatch):
+        """The reviewed input: the prompt asked AUTHORITY, the session recorded timeline."""
+        prompt, chat_session, _answer = await self._turn(
+            db, monkeypatch, "sess-agree-refund", "if we cancel after 6 months do we get any refund?"
+        )
+
+        assert _asks_about(prompt, "timeline")
+        assert not _asks_about(prompt, "authority")
+        assert "Timeline: Not yet identified" in prompt
+        assert chat_session.last_probed_dimension == "timeline"
+        assert self._asked(chat_session) == {"timeline"}
+
+    @pytest.mark.asyncio
+    async def test_a_stated_timeline_moves_both_to_the_next_dimension(self, db, monkeypatch):
+        prompt, chat_session, _answer = await self._turn(
+            db, monkeypatch, "sess-agree-stated", "we want this live in about 3 months on our AWS workloads"
+        )
+
+        assert "(stated in the visitor's latest message; not yet scored)" in prompt
+        assert _asks_about(prompt, "authority")
+        assert not _asks_about(prompt, "timeline")
+        assert chat_session.last_probed_dimension == "authority"
+        assert self._asked(chat_session) == {"authority"}
+
+    @pytest.mark.asyncio
+    async def test_an_urgent_session_records_nothing_as_asked(self, db, monkeypatch):
+        prompt, chat_session, _answer = await self._turn(
+            db,
+            monkeypatch,
+            "sess-agree-urgent",
+            "do you also cover cloud workloads?",
+            inline_cards_shown={"urgent_notified": True},
+        )
+
+        assert "Do NOT ask a qualifying question this turn" in prompt
+        assert chat_session.last_probed_dimension is None
+        assert self._asked(chat_session) == set()
+
+    @pytest.mark.asyncio
+    async def test_a_recap_turn_records_nothing_as_asked(self, db, monkeypatch):
+        prompt, chat_session, _answer = await self._turn(
+            db, monkeypatch, "sess-agree-recap", "summarise this for my boss"
+        )
+
+        assert "Do NOT ask a qualifying question this turn" in prompt
+        assert chat_session.last_probed_dimension is None
+        assert self._asked(chat_session) == set()
+
+    @pytest.mark.asyncio
+    async def test_a_media_card_turn_still_gets_its_follow_up_question(self, db, monkeypatch):
+        _prompt_text, chat_session, answer = await self._turn(
+            db, monkeypatch, "sess-agree-card", "do you also cover cloud workloads?", card=dict(_CARD)
+        )
+
+        assert answer.rstrip().endswith("?"), answer
+        assert chat_session.last_probed_dimension == "timeline"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("question", "session_kwargs"),
+        [
+            ("do you also cover cloud workloads?", {"inline_cards_shown": {"urgent_notified": True}}),
+            ("summarise this for my boss", {}),
+        ],
+        ids=["urgent", "recap"],
+    )
+    async def test_a_media_card_turn_appends_no_question_on_an_urgent_or_recap_turn(
+        self, db, monkeypatch, question, session_kwargs
+    ):
+        _prompt_text, chat_session, answer = await self._turn(
+            db, monkeypatch, "sess-agree-card-hold", question, card=dict(_CARD), **session_kwargs
+        )
+
+        assert "?" not in answer, answer
+        assert chat_session.last_probed_dimension is None
