@@ -96,6 +96,10 @@ _ABOUT_QUESTIONS = [
     "what is your company about",
     "who are you guys and what do you do",
     "who are you guys exactly? what do you do?",
+    # The intent router hands the singular over when the message also asks
+    # about the business.
+    "who are you and what do you do",
+    "who are you? what does your company do",
 ]
 
 #: Near misses: the bot's own name, a service, a concept, a price, a person.
@@ -124,6 +128,8 @@ _NOT_ABOUT_QUESTIONS = [
     "tell me about ransomware",
     "who are you guys partnering with",
     "who are you guys and what do you charge",
+    "who are you and what is your name",
+    "who are you and who are you",
     "what do you do and how much does it cost",
     "what kind of company should use a soc",
     "what is this company policy on refunds",
@@ -293,6 +299,7 @@ class TestTheQuestionIsRecognised:
             "your owners " * 3000,
             "who are you guys " * 1200,
             "who are you guys and " * 1000,
+            "who are you and " * 1200,
             "what do you guys do " * 1000,
             "tell me about " * 1500,
             "what is " + "eventus " * 3000,

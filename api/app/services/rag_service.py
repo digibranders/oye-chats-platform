@@ -2377,9 +2377,13 @@ _ABOUT_US_CLAUSE = (
     rf"|{_WHAT_OR_WHO_IS}\s+{_THIS_COMPANY}(?:\s+(?:all\s+)?about)?"
     rf"){_IDENTITY_CLOSERS}"
 )
-# One such question, or two in a row: "who are you guys and what do you do".
+# One such question, or two in a row ("who are you guys and what do you do"). The
+# first may be the singular "who are you": the intent router hands that message
+# over when it also asks about the business.
+_NEXT_CLAUSE = r"\s*[?,.]?\s+(?:and\s+)?"
 _ASKS_ABOUT_US_RE = re.compile(
-    rf"(?i){_IDENTITY_LEAD_IN}{_ABOUT_US_CLAUSE}(?:\s*[?,.]?\s+(?:and\s+)?{_ABOUT_US_CLAUSE})?\s*[?.!]*\s*$"
+    rf"(?i){_IDENTITY_LEAD_IN}(?:who\s+(?:are|r)\s+(?:you|u){_IDENTITY_CLOSERS}{_NEXT_CLAUSE})?"
+    rf"{_ABOUT_US_CLAUSE}(?:{_NEXT_CLAUSE}{_ABOUT_US_CLAUSE})?\s*[?.!]*\s*$"
 )
 # The same shapes about a subject the visitor names, which counts only when it
 # is this company's name (``_is_the_company_name``): "what is SOC 2" asks about a
