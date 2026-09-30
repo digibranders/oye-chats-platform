@@ -305,6 +305,10 @@ class TestTheQuestionIsRecognised:
             "what is " + "eventus " * 3000,
             "what kind of company " * 1000,
             "so " * 5000 + "who are you guys",
+            # A run of spaces inside a message as long as the API accepts.
+            "who are you guys" + " " * 4980 + "x",
+            "what is" + " " * 4980 + "eventus",
+            "tell me about" + " " * 4980,
             "a" * 20_000,
         ],
     )
@@ -313,6 +317,23 @@ class TestTheQuestionIsRecognised:
         rs._asks_company_facts(text, "Eventus Security")
         rs._question_is_clearly_on_scope(text, "Eventus Security")
         assert time.perf_counter() - started < 0.5
+
+
+class TestAnIdentityQuestionIsShort:
+    """The whole-message identity patterns read a message with its whitespace
+    collapsed, and only one short enough to be such a question."""
+
+    @pytest.mark.parametrize(
+        "question",
+        ["who  are   you guys\texactly", "  what   does\nyour company do ?", "what is   eventus   security"],
+    )
+    def test_extra_whitespace_changes_nothing(self, question):
+        assert "about" in rs._asks_company_facts(question, "Eventus Security")
+
+    def test_a_long_message_is_not_an_identity_question(self):
+        padded = "who are you guys exactly " + "really " * 40
+        assert len(padded) > rs._IDENTITY_QUESTION_MAX_CHARS
+        assert "about" not in rs._asks_company_facts(padded, "Eventus Security")
 
 
 class TestThePagesAreRecognised:

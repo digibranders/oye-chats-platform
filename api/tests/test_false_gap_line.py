@@ -97,6 +97,7 @@ class TestAReferenceToAnEarlierTurn:
             "sorry " + "x " * 10_000,
             "who are you guys " * 1200,
             "who are you " + "guys exactly again " * 1500,
+            "who are you guys" + " " * 4980 + "x",
         ):
             rs._refers_to_an_earlier_turn(text)
             rs._asks_which_business_this_is(text, _COMPANY)

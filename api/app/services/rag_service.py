@@ -2478,7 +2478,6 @@ _COMPANY_FACT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
             rf"|(?:are\s+there\s+)?(?:in|at)\s+{_FACT_THE_COMPANY}\b)"
         ),
     ),
-    ("about", _ASKS_ABOUT_US_RE),
 )
 
 #: The noun a question naming the company must also carry to be a facts
@@ -2488,6 +2487,20 @@ _FACT_NOUN_BY_KIND: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("contact", re.compile(rf"(?i)\b{_FACT_CONTACTS}\b")),
     ("team", re.compile(rf"(?i)\b{_FACT_PEOPLE}\b")),
 )
+
+
+#: A whole-message identity question is short. The two patterns above are
+#: anchored at both ends with optional parts between, which backtracks over a long
+#: run of spaces (4,000 of them cost 1.9 s), so they read a message with its
+#: whitespace collapsed and only one up to this length.
+_IDENTITY_QUESTION_MAX_CHARS = 200
+
+
+def _identity_question_text(question: str) -> str | None:
+    """``question`` as the whole-message identity patterns read it: whitespace
+    collapsed, or ``None`` when it is too long to be such a question."""
+    collapsed = " ".join(question.split())
+    return collapsed if len(collapsed) <= _IDENTITY_QUESTION_MAX_CHARS else None
 
 
 def _is_the_company_name(subject: str, company_name: str | None) -> bool:
@@ -2523,9 +2536,14 @@ def _asks_company_facts(question: str, company_name: str | None = None) -> froze
     signals = _company_name_signals(company_name)
     if signals and re.search(r"\b(?:" + "|".join(map(re.escape, signals)) + r")\b", question, re.IGNORECASE):
         kinds.update(kind for kind, pattern in _FACT_NOUN_BY_KIND if pattern.search(question))
-    named = _ASKS_ABOUT_A_NAME_RE.search(question) if signals else None
-    if named and any(_is_the_company_name(subject, company_name) for subject in named.groups() if subject):
-        kinds.add("about")
+    identity = _identity_question_text(question)
+    if identity is not None:
+        if _ASKS_ABOUT_US_RE.search(identity):
+            kinds.add("about")
+        elif signals:
+            named = _ASKS_ABOUT_A_NAME_RE.search(identity)
+            if named and any(_is_the_company_name(subject, company_name) for subject in named.groups() if subject):
+                kinds.add("about")
     return frozenset(kinds)
 
 
