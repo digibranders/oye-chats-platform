@@ -28,7 +28,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.services import rag_service as rs
-from tests.test_conversational_turns_pipeline import _answered_first, _bot
+from tests.test_conversational_turns_pipeline import _ANSWER, _answered_first, _bot
 from tests.test_rag_pipeline_defects import _answer_text, _drive_stream
 
 _COMPANY = "CleanStart"
@@ -90,7 +90,14 @@ class TestAReferenceToAnEarlierTurn:
         import time
 
         started = time.perf_counter()
-        for text in ("not " * 5000, "we are " * 4000, "the third " * 4000, "sorry " + "x " * 10_000):
+        for text in (
+            "not " * 5000,
+            "we are " * 4000,
+            "the third " * 4000,
+            "sorry " + "x " * 10_000,
+            "who are you guys " * 1200,
+            "who are you " + "guys exactly again " * 1500,
+        ):
             rs._refers_to_an_earlier_turn(text)
             rs._asks_which_business_this_is(text, _COMPANY)
         assert time.perf_counter() - started < 0.5
@@ -106,6 +113,18 @@ class TestAnIdentityQuestion:
             "who are you",
             "is this cleanstart or eventus",
             "who do you work for",
+            # Production, 2026-09-30: "who are you guys exactly" was refused as
+            # off-topic three times out of three, because only one word was
+            # allowed after "who are you".
+            "who are you guys exactly",
+            "who r u guys",
+            "who are you people",
+            "who are you all exactly",
+            "so who are you guys again?",
+            "who are you lot",
+            "who are you folks exactly?",
+            "who are y'all",
+            "who are you as a company",
         ],
     )
     def test_asks_which_business_this_is(self, question):
@@ -117,6 +136,10 @@ class TestAnIdentityQuestion:
             "who are your clients",
             "which one is cheaper",
             "who are you partnered with",
+            "who are you guys partnering with",
+            "who are you guys exactly partnered with",
+            "who are you people to judge me",
+            "who are you all hiring this year",
             "is this free or paid",
             "is this eventus or globex",
             "what company is this laptop from",
@@ -208,13 +231,31 @@ class TestThePipeline:
         assert rs._no_info_pivot("Acme", support_enabled=False) not in _answer_text(frames)
 
     @pytest.mark.asyncio
-    async def test_an_identity_question_is_answered_with_nothing_retrieved(self, db, monkeypatch):
+    async def test_who_are_you_guys_exactly_is_never_refused(self, db, monkeypatch):
+        """Production, 2026-09-30, third visitor message on CleanStart: the judge
+        rejected the chunks and the visitor got the off-topic refusal."""
+        bot, cap, judge, _classifier = _bot(db, monkeypatch, "fgl-9", support=False)
+        judge.relevant = False
+
+        frames = await _drive_stream(bot, "who are you guys exactly", "fgl-9")
+
+        assert len(cap["prompts"]) == 1, "the question reached generation"
+        answer = _answer_text(frames)
+        assert answer.endswith(_ANSWER)
+        assert rs._no_info_pivot("Acme", support_enabled=False) not in answer
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("session_id", "question"),
+        [("fgl-4", "who am i talking to?"), ("fgl-10", "who are you guys exactly")],
+    )
+    async def test_an_identity_question_is_answered_with_nothing_retrieved(self, db, monkeypatch, session_id, question):
         """The answer is the bot's own configuration, so an empty retrieval is no
         reason to withhold it."""
-        bot, cap, judge, _classifier = _bot(db, monkeypatch, "fgl-4", support=False)
+        bot, cap, judge, _classifier = _bot(db, monkeypatch, session_id, support=False)
         monkeypatch.setattr(rs, "reciprocal_rank_fusion", lambda *a, **k: [])
 
-        frames = await _drive_stream(bot, "who am i talking to?", "fgl-4")
+        frames = await _drive_stream(bot, question, session_id)
 
         assert len(cap["prompts"]) == 1
         assert rs._no_info_pivot("Acme", support_enabled=False) not in _answer_text(frames)
