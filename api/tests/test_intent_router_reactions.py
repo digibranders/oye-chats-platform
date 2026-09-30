@@ -20,6 +20,7 @@ import pytest
 from app.services.intent_router import (
     CARE_NOTE,
     care_note,
+    carries_abuse,
     crisis_reply,
     follows_a_reaction_reply,
     is_verdict_on_the_chat,
@@ -456,3 +457,46 @@ def test_long_inputs_stay_fast(msg):
 )
 def test_a_verdict_on_the_chat_is_told_apart_from_a_customer_left_unanswered(msg, expected):
     assert is_verdict_on_the_chat(msg) is expected
+
+
+# ── Abuse read anywhere in a message, for text the bot would repeat back ─────
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "i need a refund you useless piece of shit bot",
+        "give me the fucking invoice",
+        "F*** this",
+        "a refund from this garbage bot",
+        "this is bullshit",
+        "the stupid form",
+        "what an IDIOT",
+    ],
+)
+def test_abuse_is_read_anywhere_in_a_message(text):
+    assert carries_abuse(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "the escalation matrix",
+        "a refund",
+        "my invoice for march",
+        "the shiitake order",
+        "a fuchsia sample",
+        "",
+        None,
+        7,
+    ],
+)
+def test_an_ordinary_request_carries_no_abuse(text):
+    assert carries_abuse(text) is False
+
+
+@pytest.mark.parametrize("text", ["f" * 50000, "fu" * 25000, "shit" * 12000, "f* " * 15000, "go to " * 8000])
+def test_the_abuse_search_is_linear_on_long_input(text):
+    started = time.perf_counter()
+    carries_abuse(text)
+    assert time.perf_counter() - started < 0.5

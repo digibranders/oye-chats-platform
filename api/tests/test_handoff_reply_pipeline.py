@@ -87,6 +87,29 @@ class TestTheHandoffTurnUsesTheFormWording:
         assert _messages(db, "handoff-request", role="bot")[-1].content == answer
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("message", "leaked"),
+        [
+            ("i need my api key sk_live_abcdefghij1234567 reset", "sk_live_abcdefghij1234567"),
+            ("i need a refund you useless piece of shit bot", "shit"),
+        ],
+    )
+    async def test_a_repeat_never_echoes_a_secret_or_abuse(self, db, monkeypatch, message, leaked):
+        """Review 2026-09-30: the named request put the visitor's pasted key, and
+        abuse, into the bot's reply and the stored transcript."""
+        bot, cap = _handoff_bot(db, monkeypatch, "handoff-unsafe-echo", team_online=False)
+
+        await _drive_stream(bot, "our account manager isnt responding for 3 days", "handoff-unsafe-echo")
+        frames = await _drive_stream(bot, message, "handoff-unsafe-echo")
+
+        answer = _answer_text(frames)
+        assert answer.endswith(handoff_reply(team_available=False, repeat=True)), answer
+        assert "your request for" not in answer
+        assert leaked not in answer
+        assert cap["prompts"] == []
+        assert all(leaked not in m.content for m in _messages(db, "handoff-unsafe-echo", role="bot"))
+
+    @pytest.mark.asyncio
     async def test_asking_for_a_person_again_keeps_the_plain_repeat(self, db, monkeypatch):
         bot, _cap = _handoff_bot(db, monkeypatch, "handoff-person-again")
 

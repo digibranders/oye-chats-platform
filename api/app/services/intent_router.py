@@ -463,6 +463,27 @@ _BOT_VERDICT_RE = re.compile(
     rf")(?:[\s,.!?]+(?:and\s+)?{_NO_ANSWER_CLAUSE})?)(?:[\s,.!?]+{_REACTION_TAIL}){{0,2}}$"
 )
 
+# The abuse and verdict words of the routes above, read anywhere in a message.
+# Those routes match a whole message, so a question that merely carries a swear
+# word still reaches retrieval. This search is for the other direction: text the
+# bot is about to repeat back (``handoff_reply.requested_thing``), where one
+# such word anywhere is reason enough not to. A word starts only where no letter
+# or digit precedes it and every repeat is bounded, so the search is linear.
+_ABUSIVE_WORD_RE = re.compile(
+    r"(?<!\w)(?:"
+    r"f\*+\w{0,6}|f+u+c+k+\w{0,6}|(?:bull)?shit\w{0,4}|assholes?|bitch(?:es|y)?|bastards?|idiots?|idiotic|morons?"
+    r"|damn(?:ed)?|crap(?:py)?|trash|garbage|rubbish|junk|sucks?|screw\s+you|shut\s+up|go\s+to\s+hell|wtf"
+    rf"|{_VERDICT_ADJECTIVE}"
+    r")(?!\w)",
+    re.IGNORECASE,
+)
+
+
+def carries_abuse(text: object) -> bool:
+    """Whether the text carries a swear word or a verdict word anywhere in it. Pure and linear."""
+    return isinstance(text, str) and bool(text) and _ABUSIVE_WORD_RE.search(text) is not None
+
+
 #: Faces a visitor sends at a reply that did not help. ``visitor_reaction``
 #: reads the same set: rolling eyes, unamused, pouting, angry, huffing, thumbs
 #: down, facepalm, expressionless, neutral, confused, disappointed, weary,

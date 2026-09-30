@@ -23,6 +23,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from app.core.langfuse_client import contains_secret
+from app.services.intent_router import carries_abuse
 from app.services.intent_service import detect_handoff_intent_keywords
 
 #: Greetings and fillers a request may open with: "hi, i need", "ok so can you send".
@@ -56,6 +58,19 @@ _PERSON_RE = re.compile(
 #: A word of the request: letters, digits and the punctuation names carry ("SOC 2", "e-mail", "what's").
 _REQUEST_WORD_RE = re.compile(r"^[\w'&/-]+$")
 _REQUEST_PUNCTUATION = ".,;:!?\"'()[]"
+#: How a request the reply can name begins: a plain noun phrase. "your request
+#: for to cancel my subscription" is not a sentence, and "help with the login",
+#: "it" and "everything" name no thing.
+_REQUEST_DETERMINERS = frozenset({"the", "a", "an", "my", "our"})
+#: A card, an account or a phone number, however it is spaced: six or more digits.
+_LONG_NUMBER_RE = re.compile(r"\d(?:[\s.-]?\d){5,}")
+#: Words addressed to the company, or claiming something of it, that would read
+#: as the bot's own in its reply: "a free lifetime licence promised by your CEO".
+_SECOND_PERSON_OR_PROMISE_RE = re.compile(
+    r"\b(?:you|your|yours|u|ur|y'?all|promis\w{0,4}|guarante\w{0,4}|owe[ds]?|owing|entitled|assured|agreed"
+    r"|committed|pledged|sworn?|told|said)\b",
+    re.IGNORECASE,
+)
 #: Longer than this and the words are a story, not a thing the reply can name.
 _MAX_REQUEST_WORDS = 8
 _MAX_REQUEST_CHARS = 60
@@ -70,12 +85,24 @@ def requested_thing(message: object) -> str | None:
     repeat handoff reply repeats back so the visitor knows it was heard. None
     when the message asks for a person or the team (a handoff repeat says the
     form line instead), opens with no request verb ("escalation matrix?"), or
-    names something too long to repeat. Pure and linear.
+    names something too long to repeat.
+
+    The words go into the bot's reply and the stored transcript, so nothing
+    unsafe is repeated either (review, 2026-09-30: "i need my api key
+    sk_live_... reset" put the key back into both, undoing the redaction of the
+    visitor's message). None when the message carries a secret, a run of six or
+    more digits (a card, an account, a phone number) or abuse, when the request
+    is worded at the company or as a promise ("a free lifetime licence promised
+    by your CEO"), and when it does not begin as a plain noun phrase ("to cancel
+    my subscription", "help with the login"). The plain repeat line is said
+    instead. Pure and linear.
     """
     if not isinstance(message, str):
         return None
     text = " ".join(message.split())
     if not text or len(text) > _MAX_MESSAGE_CHARS or detect_handoff_intent_keywords(text):
+        return None
+    if contains_secret(text) or _LONG_NUMBER_RE.search(text) is not None or carries_abuse(text):
         return None
     opener = _REQUEST_OPENER_RE.match(text)
     if opener is None:
@@ -91,8 +118,10 @@ def requested_thing(message: object) -> str | None:
         not words
         or len(words) > _MAX_REQUEST_WORDS
         or len(named) > _MAX_REQUEST_CHARS
+        or words[0].lower() not in _REQUEST_DETERMINERS
         or any(_REQUEST_WORD_RE.match(word) is None for word in words)
         or _PERSON_RE.search(named) is not None
+        or _SECOND_PERSON_OR_PROMISE_RE.search(named) is not None
     ):
         return None
     return named

@@ -212,13 +212,14 @@ class TestRequestedThing:
             ("I need the escalation matrix NOW!!", "the escalation matrix"),
             ("ok so i need the escalation matrix asap please", "the escalation matrix"),
             ("can you send me the SLA document please", "the SLA document"),
-            ("could someone share your onboarding checklist", "your onboarding checklist"),
+            ("could someone share an onboarding checklist", "an onboarding checklist"),
             ("we need a copy of the contract", "a copy of the contract"),
             ("i want a refund", "a refund"),
             ("send me the invoice for march", "the invoice for march"),
             ("we are looking for a quote for 50 seats", "a quote for 50 seats"),
             ("i'd like the audit report, thanks", "the audit report"),
-            ("hi, i need help with the portal login", "help with the portal login"),
+            ("i need my invoice for order 12345", "my invoice for order 12345"),
+            ("we want our onboarding plan", "our onboarding plan"),
         ],
     )
     def test_a_request_is_named_in_the_visitor_words(self, message, expected):
@@ -254,7 +255,47 @@ class TestRequestedThing:
     @pytest.mark.parametrize(
         "message",
         [
+            # A secret: naming it would undo the redaction of the stored message.
+            "i need my api key sk_live_abcdefghij1234567 reset",
+            "i need the key AKIAIOSFODNN7EXAMPLE rotated",
+            # Abuse is never repeated back.
+            "i need a refund you useless piece of shit bot",
+            "i want a refund from this garbage bot",
+            "i need the fucking invoice",
+            # "your request for to cancel my subscription" is not a sentence.
+            "i need to cancel my subscription today",
+            "we want to upgrade our plan",
+            # A card, account or phone number.
+            "i need a refund on card 4111 1111 1111 1111",
+            "i need a refund on card 4111111111111111",
+            "i want a callback on 98765-43210",
+            "we need the statement for account 123456",
+            # A promise, or words about the company, put in the bot's mouth.
+            "i need a free lifetime licence promised by your CEO",
+            "i want the discount you guaranteed",
+            "i need the refund i was promised",
+            "could someone share your onboarding checklist",
+            "send me the discount u owe me",
+            # Not a plain noun phrase.
+            "hi, i need help with the portal login",
+            "i need it",
+            "i want this fixed",
+            "send me everything",
+        ],
+    )
+    def test_nothing_unsafe_or_ungrammatical_is_repeated_back(self, message):
+        """Review 2026-09-30: the reply and the stored message echoed the
+        visitor's words unread, a live API key and abuse among them."""
+        assert requested_thing(message) is None
+
+    @pytest.mark.parametrize(
+        "message",
+        [
             "i need " * 5000,
+            "i need the " + "1 " * 5000,
+            "i need the " + "f" * 5000,
+            "i need the " + "shit" * 3000,
+            "i need the key " + "sk_live_" * 2000,
             "please " * 5000 + "send me the brochure",
             "i need the brochure " + "now " * 5000,
             "can you " * 3000 + "x",
