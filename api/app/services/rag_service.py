@@ -90,7 +90,7 @@ from app.services.email_service import (
     send_qualified_lead_email,
 )
 from app.services.groundedness_gate import check_groundedness, should_sample
-from app.services.handoff_reply import handoff_reply, unhelped_offer
+from app.services.handoff_reply import handoff_reply, handoff_waiting_reply, requested_thing, unhelped_offer
 from app.services.intent_router import (
     care_note,
     crisis_reply,
@@ -9911,7 +9911,10 @@ async def rag_pipeline_stream(
             # Rules only, and pure: a message that does not read as chasing a
             # reply costs nothing and loads no session. Only after the form was
             # offered in this conversation, on a bot whose live chat can still take
-            # the visitor, and in English, like the handoff reply itself.
+            # the visitor, and in English, like the handoff reply itself. The
+            # reply says sorry for the wait before the form line: on the
+            # 2026-09-28 evaluation the bare repeat line left the wait
+            # unacknowledged on both production bots (x-human-nobody-replying).
             if live_chat_on and not _judges_bypassed and visitor_reaction.is_waiting_for_a_person(question):
                 _wait_filters = [ChatSession.id == session_id]
                 if bid:
@@ -9924,7 +9927,7 @@ async def rag_pipeline_stream(
                     _wait_text = (
                         _care_note
                         + _name_ack_prefix(_flow_name, _just_named, language)
-                        + handoff_reply(team_available=bool(_team_online), repeat=True)
+                        + handoff_waiting_reply(team_available=bool(_team_online))
                     )
                     # Fixed text, saved before the first frame like the urgent reply.
                     _bot_msg = add_chat_message(
@@ -11142,10 +11145,18 @@ async def rag_pipeline_stream(
                     session=session_id,
                     bot_id=bid,
                 )
+                # A repeat that asks for something new ("i need the escalation
+                # matrix now" after the support reply) names it, so the visitor
+                # hears the request was noted and not the same form line again
+                # (evaluation 2026-09-28, x-support-escalation, both bots).
                 _handoff_text = (
                     _care_note
                     + _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name)
-                    + handoff_reply(team_available=bool(_team_online), repeat=_handoff_repeat)
+                    + handoff_reply(
+                        team_available=bool(_team_online),
+                        repeat=_handoff_repeat,
+                        request=requested_thing(question) if _handoff_repeat else None,
+                    )
                 )
                 yield _stream_metadata(session_id, [], language)
                 yield _handoff_text

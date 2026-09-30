@@ -1200,6 +1200,8 @@ REACTION_REPLY_LEADS = (
     _MEDICAL_REPEAT_LEAD,
     "Sorry about that.",
     "Understood.",
+    # ``visitor_reaction.DISSATISFIED_REPEAT_ACK``, kept in step by its tests.
+    "Sorry, I know this is taking your time.",
 )
 
 
