@@ -78,6 +78,7 @@ from app.services.document_request import (
     decide_document_intent,
     document_reply,
     fallback_document_intent,
+    is_another_kind,
     looks_like_a_document_request,
     mentions_document,
     names_a_topic,
@@ -1449,7 +1450,7 @@ def _mark_media_card_shown(chat_session, card: dict | None) -> None:
 
 
 def _referred_documents(
-    history: list, company_name: str | None, catalog: list[dict], owned: frozenset[str]
+    question: str, history: list, company_name: str | None, catalog: list[dict], owned: frozenset[str]
 ) -> DocumentPick | None:
     """The files a request that points back ("is there a pdf of this") means, or None.
 
@@ -1460,6 +1461,12 @@ def _referred_documents(
     whose files are picked as that message would have picked them: an "ok" or
     an earlier "is there a pdf of this" in between names nothing and is walked
     past. ``history`` ends with the current message.
+
+    A file is only handed back for a request it fits. ``question`` naming
+    another kind of document ("pls share a brochure" after a reply carrying a
+    case study) is not pointing at that file, so it is left out, and with
+    nothing left the request is answered on its own words (review, 2026-09-30:
+    it got "Here you go: **aurascape case study**").
     """
     earlier = list(history or [])[:-1]
     last_bot = next((m for m in reversed(earlier) if _msg_role(m) == "bot"), None)
@@ -1474,13 +1481,15 @@ def _referred_documents(
             and is_owned_file_url(card.get("url"), owned)
         )
         if docs:
-            return DocumentPick(docs=docs[:2], exact=True)
+            fitting = [card for card in docs if not is_another_kind(question, card)]
+            return DocumentPick(docs=fitting[:2], exact=True) if fitting else None
     for previous in (m for m in reversed(earlier) if _msg_role(m) == "user"):
         content = _msg_content(previous)
         if not names_a_topic(content, company_name):
             continue
         pick = pick_documents(content, company_name, catalog)
-        return pick if pick.docs else None
+        fitting = [card for card in pick.docs if not is_another_kind(question, card)]
+        return DocumentPick(docs=fitting, exact=pick.exact) if fitting else None
     return None
 
 
@@ -11051,9 +11060,13 @@ async def rag_pipeline_stream(
                 # "is there a pdf of this i can share with my boss" points back: it
                 # means the file the last reply carried, or the topic of the nearest
                 # earlier visitor message that names one. A request naming no topic
-                # is read the same way.
+                # is read the same way, unless it names another kind of document
+                # than that file: "pls share a brochure" is not the case study the
+                # last reply carried.
                 if _prior_turns and (refers_back(question) or not _topic_named) and not (_pick.docs and _pick.exact):
-                    _pick = _referred_documents(history, _company_name, _bot_catalog or [], _owned_media) or _pick
+                    _pick = (
+                        _referred_documents(question, history, _company_name, _bot_catalog or [], _owned_media) or _pick
+                    )
                 # A pricing question belongs to the pricing gate, whichever way the
                 # gate went. "can you send me your pricing pdf?" on a bot with a
                 # pricing page is answered from that page (the gate narrowed the

@@ -1236,3 +1236,92 @@ async def test_a_request_that_names_no_topic_takes_the_topic_from_the_search_rew
     meta = _final_meta(frames)
     assert meta["media_card"]["url"] == RED_DATASHEET, _answer_text(frames)
     assert "media_secondary" not in meta
+
+
+# ── A card is reused only for a request it fits ──────────────────────────────
+# Review 2026-09-30.
+
+CASE_STUDY = "https://acme.com/files/aurascape-case-study.pdf"
+CASE_STUDY_FILE = {"url": CASE_STUDY, "name": "aurascape-case-study.pdf"}
+
+
+@pytest.mark.asyncio
+async def test_a_brochure_request_after_a_case_study_card_is_not_answered_with_the_case_study(
+    db, monkeypatch, classifier
+):
+    """ "pls share a brochure" after a reply carrying a case-study card got "Here
+    you go: **aurascape case study**": the card was reused for a request that
+    names another kind of document."""
+    bot = _bot(db, "docs-other-kind")
+    cap = _stub_pipeline(monkeypatch, retrieved=(_doc("Aurascape cut its alert noise."),), support=True)
+    _catalog(monkeypatch, [{"files": [CASE_STUDY_FILE]}])
+    classifier.answer = "send"
+
+    first = await _drive_stream(bot, "send me the aurascape case study", "docs-other-kind")
+    assert _final_meta(first)["media_card"]["url"] == CASE_STUDY, "precondition: the last reply carries the card"
+
+    frames = await _drive_stream(bot, "pls share a brochure", "docs-other-kind")
+
+    answer = _answer_text(frames)
+    assert "aurascape case study" not in answer
+    assert "Here you go" not in answer
+    assert "media_card" not in _final_meta(frames)
+    assert "I don't have a downloadable document for that here" in answer
+    assert cap["prompts"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_brochure_request_after_a_case_study_card_gets_the_nearest_overview(db, monkeypatch, classifier):
+    bot = _bot(db, "docs-other-kind-overview")
+    _stub_pipeline(monkeypatch, retrieved=(_doc("Aurascape cut its alert noise."),), support=True)
+    _catalog(monkeypatch, [{"files": [CASE_STUDY_FILE, {"url": SOC, "name": "SOC-as-a-Service-Datasheet.pdf"}]}])
+    classifier.answer = "send"
+
+    await _drive_stream(bot, "send me the aurascape case study", "docs-other-kind-overview")
+    frames = await _drive_stream(bot, "pls share a brochure", "docs-other-kind-overview")
+
+    assert _final_meta(frames)["media_card"]["url"] == SOC
+    assert _answer_text(frames).endswith(
+        "I don't have that exact document, but **SOC as a Service Datasheet** is available to download below."
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_pdf_of_this_after_a_case_study_card_still_gets_the_case_study(db, monkeypatch, classifier):
+    bot = _bot(db, "docs-same-card")
+    _stub_pipeline(monkeypatch, retrieved=(_doc("Aurascape cut its alert noise."),), support=True)
+    _catalog(monkeypatch, [{"files": [CASE_STUDY_FILE, {"url": SOC, "name": "SOC-as-a-Service-Datasheet.pdf"}]}])
+    classifier.answer = "send"
+
+    await _drive_stream(bot, "send me the aurascape case study", "docs-same-card")
+    frames = await _drive_stream(bot, PDF_OF_THIS, "docs-same-card")
+
+    assert _final_meta(frames)["media_card"]["url"] == CASE_STUDY
+    assert _answer_text(frames).endswith("Here you go: **aurascape case study** is ready to download below.")
+
+
+@pytest.mark.asyncio
+async def test_a_pdf_of_this_with_nothing_to_point_at_offers_no_unrelated_datasheet(db, monkeypatch, classifier):
+    """ "send me a pdf of this" after an answer about office hours was offered
+    the catalog's datasheets through the brochure fallback."""
+    bot = _bot(db, "docs-nothing-to-point-at")
+    _stub_pipeline(monkeypatch, retrieved=(_doc("Acme is open 9 to 5."),), support=True)
+    monkeypatch.setattr(rs, "_topical_media_card", lambda *_a, **_k: None)
+    _catalog(
+        monkeypatch,
+        [
+            {
+                "files": [
+                    {"url": SOC, "name": "SOC-as-a-Service-Datasheet.pdf"},
+                    {"url": RED_DATASHEET, "name": "Red-Teaming-Datasheet.pdf"},
+                ]
+            }
+        ],
+    )
+
+    await _drive_stream(bot, "what are your office hours", "docs-nothing-to-point-at")
+    classifier.answer = "send"
+    frames = await _drive_stream(bot, "send me a pdf of this", "docs-nothing-to-point-at")
+
+    assert "media_card" not in _final_meta(frames)
+    assert "I don't have a downloadable document for that here" in _answer_text(frames)

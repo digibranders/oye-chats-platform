@@ -24,6 +24,7 @@ from app.services.document_request import (
     decide_document_intent,
     document_reply,
     fallback_document_intent,
+    is_another_kind,
     is_document_request,
     mentions_document,
     names_a_topic,
@@ -982,6 +983,68 @@ def test_a_generic_request_with_only_other_kinds_still_gets_no_file(msg):
     """A case study or a report is plainly not the overview asked for."""
     catalog = _catalog("https://acme.com/files/Globex-Case-Study.pdf", BREACH_REPORT)
     assert pick_documents(msg, "Acme", catalog).docs == []
+
+
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "send me a pdf of this",
+        "is there a pdf of this?? need to fwd to my boss",
+        "send me the pdf",
+        "can i download it",
+        "any file i can share with my team",
+    ],
+)
+def test_a_request_naming_no_brochure_never_gets_the_datasheet_fallback(msg):
+    """Review 2026-09-30: "send me a pdf of this" names no overview, and was
+    offered whichever datasheets the catalog held."""
+    pick = pick_documents(msg, "Acme", _catalog(SOC, "https://acme.com/files/Red-Teaming-Datasheet.pdf"))
+    assert pick.docs == []
+
+
+@pytest.mark.parametrize(
+    "msg", ["send me your company overview pdf", "do you have a company profile", "share a product overview document"]
+)
+def test_a_profile_or_overview_request_gets_the_datasheet_fallback(msg):
+    pick = pick_documents(msg, "Acme", _catalog(SOC))
+    assert [d["url"] for d in pick.docs] == [SOC]
+    assert pick.exact is False
+
+
+@pytest.mark.parametrize("msg", ["send me a pdf", "send me your company overview pdf"])
+def test_a_request_naming_no_kind_still_gets_the_company_profile(msg):
+    pick = pick_documents(msg, "Acme", _catalog(SOC, PROFILE))
+    assert [d["url"] for d in pick.docs] == [PROFILE]
+
+
+CASE_STUDY_CARD = {
+    "type": "download",
+    "url": "https://acme.com/files/aurascape-case-study.pdf",
+    "name": "aurascape-case-study.pdf",
+}
+
+
+@pytest.mark.parametrize(
+    ("msg", "expected"),
+    [
+        ("pls share a brochure", True),
+        ("send me the datasheet", True),
+        ("can you send your company profile", True),
+        ("is there a pdf of this", False),
+        ("send it again", False),
+        ("can i get that case study", False),
+        ("share the case study and a brochure", False),
+        ("", False),
+        (None, False),
+    ],
+)
+def test_a_card_of_another_kind_than_the_one_named(msg, expected):
+    assert is_another_kind(msg, CASE_STUDY_CARD) is expected
+
+
+@pytest.mark.parametrize("card", [None, {}, {"type": "download", "url": RED, "name": "Red-Teaming.pdf"}, "x"])
+def test_a_card_that_says_no_kind_is_never_another_kind(card):
+    assert is_another_kind("pls share a brochure", card) is False
 
 
 def test_the_company_profile_still_beats_the_datasheet_fallback():
